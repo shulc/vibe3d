@@ -7410,29 +7410,66 @@ struct Mesh {
             float da = dv[a], db = dv[b];
             if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
 
-            float t = da / (da - db);
-            Vec3 vm = Vec3(
-                vertices[a].x + t * (vertices[b].x - vertices[a].x),
-                vertices[a].y + t * (vertices[b].y - vertices[a].y),
-                vertices[a].z + t * (vertices[b].z - vertices[a].z));
-            uint vi = addVertex(vm);
-            isCutVert.length = vertices.length; // grow after addVertex
-            isCutVert[vi] = true;
+            insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
+        }
 
-            // Insert vi between (a,b) or (b,a) in every incident face winding.
-            foreach (ref face; faces) {
-                for (size_t k = 0; k < face.length; k++) {
-                    uint fa = face[k];
-                    uint fb = face[(k + 1) % face.length];
-                    if ((fa == a && fb == b) || (fa == b && fb == a)) {
-                        face = face[0 .. k + 1] ~ [vi] ~ face[k + 1 .. $];
-                        break;
-                    }
+        // Pass 2 + finalize: split all eligible faces (all-true mask = empty).
+        return rebuildFacesWithChordSplits([], isCutVert);
+    }
+
+    // -----------------------------------------------------------------------
+    // insertEdgePoint — factored from cutByPlane Pass-1.
+    //
+    // Adds a lerp vertex at parameter t along edge ei (t ∈ [0,1]: 0 = edges[ei][0],
+    // 1 = edges[ei][1]) and splices it between the two endpoints in every face
+    // winding that contains the pair.  Grows isCutVert as needed and marks the
+    // new vertex.  Returns the new vertex index.
+    //
+    // Non-manifold edges (3+ incident faces) are out of scope for v1; the splice
+    // scans all face windings and inserts into every face that contains the pair.
+    // -----------------------------------------------------------------------
+    private uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert) {
+        uint a = edges[ei][0], b = edges[ei][1];
+        Vec3 vm = Vec3(
+            vertices[a].x + t * (vertices[b].x - vertices[a].x),
+            vertices[a].y + t * (vertices[b].y - vertices[a].y),
+            vertices[a].z + t * (vertices[b].z - vertices[a].z));
+        uint vi = addVertex(vm);
+        if (isCutVert.length < vertices.length)
+            isCutVert.length = vertices.length; // grow after addVertex
+        isCutVert[vi] = true;
+
+        // Splice vi between (a,b) or (b,a) in every incident face winding.
+        foreach (ref face; faces) {
+            for (size_t k = 0; k < face.length; k++) {
+                uint fa = face[k];
+                uint fb = face[(k + 1) % face.length];
+                if ((fa == a && fb == b) || (fa == b && fb == a)) {
+                    face = face[0 .. k + 1] ~ [vi] ~ face[k + 1 .. $];
+                    break;
                 }
             }
         }
+        return vi;
+    }
 
-        // Pass 2 — face split: build new parallel arrays (mirrors weldVerticesByMask).
+    // -----------------------------------------------------------------------
+    // rebuildFacesWithChordSplits — factored from cutByPlane Pass-2 + finalize.
+    //
+    // For each face fi eligible by splitFaceMask (empty mask = all faces): if the
+    // face has exactly 2 non-adjacent cut vertices, split it along the chord.
+    // Copies non-eligible or non-qualifying faces whole.  Applies the new face
+    // arrays, rebuilds edges/loops, syncs selection, commits the change.
+    //
+    // cutByPlane passes an empty mask so every face is eligible — preserving the
+    // original behaviour exactly.  edgeSlice passes a path-only mask to avoid
+    // splitting faces adjacent to the path but not on it.
+    //
+    // Returns the number of faces split; 0 = no-op (caller owns snapshot/undo).
+    // -----------------------------------------------------------------------
+    private size_t rebuildFacesWithChordSplits(
+        const bool[] splitFaceMask, const bool[] isCutVert)
+    {
         size_t origFaceCount = faces.length;
         uint[][] newFacesArr;
         bool[]   newSubpatch;
@@ -7447,7 +7484,18 @@ struct Mesh {
             int   ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             uint  mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
 
-            // Collect positions in the winding where the vertex is a cut point.
+            // Faces not in the mask are copied whole (never split).
+            bool eligible = (splitFaceMask.length == 0) ||
+                            (fi < splitFaceMask.length && splitFaceMask[fi]);
+            if (!eligible) {
+                newFacesArr ~= face.dup;
+                newSubpatch ~= sub;
+                newOrder    ~= ord;
+                newMaterial ~= mat;
+                continue;
+            }
+
+            // Collect winding positions of cut vertices.
             size_t[] hits;
             foreach (k; 0 .. face.length)
                 if (face[k] < isCutVert.length && isCutVert[face[k]])
@@ -7492,7 +7540,7 @@ struct Mesh {
             newOrder    ~= ord;
             newMaterial ~= mat;
 
-            // f2 (appended slot) — BOTH must carry parent attrs (OBJ2).
+            // f2 (appended slot) — BOTH halves carry parent attrs.
             newFacesArr ~= f2;
             newSubpatch ~= sub;
             newOrder    ~= ord;
@@ -7503,7 +7551,7 @@ struct Mesh {
 
         if (nSplit == 0) return 0;
 
-        // Apply new face arrays (mirrors weldVerticesByMask pattern at mesh.d:535-558).
+        // Apply new face arrays (mirrors weldVerticesByMask pattern).
         faces._store = newFacesArr;
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
@@ -7517,6 +7565,157 @@ struct Mesh {
         commitChange(MeshEditScope.Geometry);
 
         return nSplit;
+    }
+
+    // -----------------------------------------------------------------------
+    // edgeIndexOfVerts — look up an edge by its two endpoint indices.
+    //
+    // Returns the index in edges[] for the undirected edge {a, b}, or ~0u if
+    // no such edge exists (requires buildLoops() to have been called).
+    // -----------------------------------------------------------------------
+    private uint edgeIndexOfVerts(uint a, uint b) {
+        auto p = edgeKey(a, b) in edgeIndexMap;
+        return p ? *p : ~0u;
+    }
+
+    // -----------------------------------------------------------------------
+    // edgeSlice — cut a strip from edge edgeA to edge edgeB.
+    //
+    // Finds the shortest dual-graph path (BFS over face adjacency) from any face
+    // incident to edgeA to any face incident to edgeB.  Inserts a cut point on
+    // each edge of the path (tA on edgeA, 0.5 on interior edges, tB on edgeB),
+    // then splits every crossed face along the chord between its two cut points.
+    // Adjacent faces on the path share the cut vertex at their common edge by the
+    // SAME index (index-share / no T-junctions), identical to cutByPlane.
+    //
+    // tA, tB: position along edgeA/edgeB measured from edges[][0] to edges[][1].
+    // The internal endpoint ordering is opaque (dedup order); default 0.5 is
+    // always safe and symmetric.  Non-0.5 values follow the stored edge order.
+    //
+    // Returns the number of faces split; 0 = no-op (dead-end / same edge / OOB).
+    // Caller owns snapshot/undo — this method does NOT capture a snapshot.
+    //
+    // Non-manifold meshes (edges shared by 3+ faces) are out of scope for v1.
+    // -----------------------------------------------------------------------
+    size_t edgeSlice(uint edgeA, uint edgeB,
+                     float tA = 0.5f, float tB = 0.5f, float eps = 1e-5f)
+    {
+        if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
+            return 0;
+        if (edgeA >= edges.length || edgeB >= edges.length) return 0;
+        if (edgeA == edgeB) return 0;
+
+        // Clamp t-params so cut points are always interior to the edge.
+        if (tA < eps)          tA = eps;
+        if (tA > 1.0f - eps)   tA = 1.0f - eps;
+        if (tB < eps)          tB = eps;
+        if (tB > 1.0f - eps)   tB = 1.0f - eps;
+
+        // Collect faces incident to each edge (1-2 faces on a manifold mesh).
+        uint[] facesAArr, facesBArr;
+        foreach (f; facesAroundEdge(edgeA)) facesAArr ~= f;
+        foreach (f; facesAroundEdge(edgeB)) facesBArr ~= f;
+        if (facesAArr.length == 0) return 0;
+
+        // Sort ascending for deterministic lowest-index preference.
+        import std.algorithm : sort;
+        sort(facesAArr);
+        sort(facesBArr);
+
+        // Fast-lookup set for facesB.
+        bool[uint] facesBSet;
+        foreach (f; facesBArr) facesBSet[f] = true;
+
+        uint[] pathFaces;
+        uint[] interiorEdges;
+
+        // Case (a): edgeA and edgeB already share a face → single split.
+        uint sharedFace = ~0u;
+        foreach (f; facesAArr) {
+            if (f in facesBSet) { sharedFace = f; break; }
+        }
+
+        if (sharedFace != ~0u) {
+            pathFaces     = [sharedFace];
+            interiorEdges = [];
+        } else {
+            // Case (b): BFS over the face dual graph.
+            // Nodes = faces; arcs = shared edges between adjacent faces.
+            // Multi-source from facesAArr; terminate at the first face in facesBSet.
+            uint[]     queue;
+            bool[uint] visited;
+            uint[uint] parentFace;  // parentFace[g] = face we came from
+            uint[uint] parentEdge;  // parentEdge[g] = shared edge we crossed
+
+            foreach (f; facesAArr) {
+                visited[f] = true;
+                queue ~= f;
+            }
+
+            uint goal = ~0u;
+            while (queue.length > 0) {
+                uint f = queue[0];
+                queue = queue[1 .. $];
+
+                if (f in facesBSet) { goal = f; break; }
+
+                // Walk the face's half-edge ring; cross each twin to an unvisited neighbour.
+                uint startLi = (f < faceLoop.length) ? faceLoop[f] : ~0u;
+                if (startLi == ~0u) continue;
+                uint li = startLi;
+                do {
+                    uint twin = loops[li].twin;
+                    if (twin != ~0u) {
+                        uint g = loops[twin].face;
+                        if (!(g in visited)) {
+                            visited[g]    = true;
+                            parentFace[g] = f;
+                            parentEdge[g] = loopEdge[li];
+                            queue ~= g;
+                        }
+                    }
+                    li = loops[li].next;
+                } while (li != startLi);
+            }
+
+            if (goal == ~0u) return 0; // no path (disconnected or boundary blocks)
+
+            // Reconstruct ordered face path by walking parentFace back to a root.
+            uint cur = goal;
+            while (cur in parentFace) {
+                interiorEdges = [parentEdge[cur]] ~ interiorEdges;
+                pathFaces     = [parentFace[cur]] ~ pathFaces;
+                cur = parentFace[cur];
+            }
+            pathFaces ~= [goal];
+        }
+
+        // Ordered cut-edge list: edgeA, interior..., edgeB.
+        uint[] cutEdges = [edgeA] ~ interiorEdges ~ [edgeB];
+
+        // t-params: tA first, tB last, 0.5 for each interior edge.
+        float[] cutT;
+        cutT.length  = cutEdges.length;
+        cutT[0]      = tA;
+        cutT[$ - 1]  = tB;
+        foreach (i; 1 .. cutT.length - 1) cutT[i] = 0.5f;
+
+        // --- Pass 1: insert cut points ---
+        // Uses original edge indices; face windings are modified in-place but
+        // face count (faces.length) is stable across Pass-1.
+        bool[] isCutVert;
+        isCutVert.length = vertices.length;
+        foreach (i, ei; cutEdges)
+            insertEdgePoint(ei, cutT[i], isCutVert);
+
+        // --- Pass 2: split only the path faces ---
+        size_t origFaceCount = faces.length; // stable across Pass-1
+        bool[] splitMask;
+        splitMask.length = origFaceCount;
+        foreach (f; pathFaces)
+            if (f < origFaceCount) splitMask[f] = true;
+
+        return rebuildFacesWithChordSplits(splitMask, isCutVert);
     }
 
 }
@@ -12104,6 +12303,122 @@ unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 
     foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after cut");
     // No degenerate faces.
     foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-faces");
+}
+
+// ---------------------------------------------------------------------------
+// edgeSlice unittests
+// ---------------------------------------------------------------------------
+
+unittest { // edgeSlice: 3×1 quad strip — index-share (no T-junction) + 6 faces / 12 verts
+    // Grid:
+    //  4--5--6--7
+    //  |  |  |  |
+    //  0--1--2--3
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0), Vec3(3,0,0),
+        Vec3(0,1,0), Vec3(1,1,0), Vec3(2,1,0), Vec3(3,1,0),
+    ];
+    m.addFace([0u,1u,5u,4u]);
+    m.addFace([1u,2u,6u,5u]);
+    m.addFace([2u,3u,7u,6u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    uint eLeft  = m.edgeIndexOfVerts(0, 4);
+    uint eRight = m.edgeIndexOfVerts(3, 7);
+    assert(eLeft  != ~0u, "edge(0,4) must exist");
+    assert(eRight != ~0u, "edge(3,7) must exist");
+
+    size_t nSplit = m.edgeSlice(eLeft, eRight);
+
+    assert(nSplit == 3, "3 quads split → nSplit==3");
+    assert(m.faces.length  == 6,  "3×2 = 6 faces after strip cut");
+    assert(m.vertices.length == 12, "8 + 4 cut-points = 12 verts");
+
+    // No orphan vertices.
+    import std.conv : to;
+    bool[] refd = new bool[](m.vertices.length);
+    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+    foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after edgeSlice");
+
+    // No degenerate faces.
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after edgeSlice");
+
+    // Index-share: the cut point on interior edge (1,5) must be referenced
+    // by exactly 2 sub-faces with the SAME vertex index (no T-junction).
+    uint cutMid15 = ~0u;
+    foreach (vi; 0 .. cast(uint)m.vertices.length) {
+        auto v = m.vertices[vi];
+        if (v.x > 0.99f && v.x < 1.01f &&
+            v.y > 0.49f && v.y < 0.51f && v.z == 0)
+            cutMid15 = vi;
+    }
+    assert(cutMid15 != ~0u, "cut point on edge(1,5) must exist");
+    int cnt15 = 0;
+    foreach (face; m.faces) foreach (vi; face) if (vi == cutMid15) cnt15++;
+    // v9 is shared by both sub-faces of face0 AND both sub-faces of face1
+    // (it is the entry point of one and exit point of the other across the
+    // shared half-edge).  4 references = 1 unique index across all 4 users.
+    assert(cnt15 == 4,
+        "interior cut vertex (1,5 mid) must appear in exactly 4 sub-faces (index-share)");
+
+    // Likewise for interior edge (2,6).
+    uint cutMid26 = ~0u;
+    foreach (vi; 0 .. cast(uint)m.vertices.length) {
+        auto v = m.vertices[vi];
+        if (v.x > 1.99f && v.x < 2.01f &&
+            v.y > 0.49f && v.y < 0.51f && v.z == 0)
+            cutMid26 = vi;
+    }
+    assert(cutMid26 != ~0u, "cut point on edge(2,6) must exist");
+    int cnt26 = 0;
+    foreach (face; m.faces) foreach (vi; face) if (vi == cutMid26) cnt26++;
+    // Same reasoning: v10 is shared by both sub-faces of face1 AND face2.
+    assert(cnt26 == 4,
+        "interior cut vertex (2,6 mid) must appear in exactly 4 sub-faces (index-share)");
+}
+
+unittest { // edgeSlice: single shared face (cube bottom) — 7 faces, 10 verts
+    auto m = makeCube();
+    // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it.
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(4, 5);
+    assert(eA != ~0u, "edge(0,1) must exist on cube");
+    assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+    size_t nSplit = m.edgeSlice(eA, eB);
+
+    assert(nSplit == 1, "single shared face: 1 split");
+    assert(m.faces.length  == 7,  "6 faces → 7 after single split");
+    assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
+
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate faces");
+
+    import std.conv : to;
+    bool[] refd2 = new bool[](m.vertices.length);
+    foreach (face; m.faces) foreach (vi; face) refd2[vi] = true;
+    foreach (i, r; refd2) assert(r, "vertex " ~ i.to!string ~ " orphaned after single-face edgeSlice");
+}
+
+unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0
+    auto m = makeCube();
+    size_t origFaces = m.faces.length;
+    size_t origVerts = m.vertices.length;
+
+    uint e0 = m.edgeIndexOfVerts(0, 1);
+
+    // Same edge: always a no-op.
+    assert(m.edgeSlice(e0, e0) == 0, "same edge must return 0");
+    assert(m.faces.length    == origFaces, "mesh unchanged after same-edge no-op");
+    assert(m.vertices.length == origVerts, "mesh unchanged after same-edge no-op");
+
+    // Out-of-bounds edge index: no-op.
+    uint oob = cast(uint)m.edges.length;
+    assert(m.edgeSlice(oob, e0) == 0, "oob edgeA must return 0");
+    assert(m.edgeSlice(e0, oob) == 0, "oob edgeB must return 0");
+    assert(m.faces.length    == origFaces, "mesh unchanged after oob no-op");
+    assert(m.vertices.length == origVerts, "mesh unchanged after oob no-op");
 }
 
 unittest { // bridgeLoopsPaired: exact-correspondence quad emission
