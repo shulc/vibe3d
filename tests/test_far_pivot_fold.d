@@ -140,39 +140,8 @@ void ringGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
     gx = cast(int)sx; gy = cast(int)sy;
 }
 
-// +X arrow grab pixel + screen-space +X direction (for a Move drag along X).
-void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
-                out double ux, out double uy) {
-    float size = gizmoSize(pivot, vp);
-    float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 7.0f,  pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z), vp, sx2, sy2);
-    gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
-    gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
-    double dx = sx2 - sx1, dy = sy2 - sy1;
-    double len = sqrt(dx*dx + dy*dy);
-    ux = dx / len; uy = dy / len;
-}
-
-// Set a UserPlaced ACEN at a far-away position via tool.pipe.attr.
-void setFarPivot(double px, double py, double pz) {
-    postJson("/api/script", "tool.pipe.attr actionCenter userPlacedX " ~ px.to!string);
-    postJson("/api/script", "tool.pipe.attr actionCenter userPlacedY " ~ py.to!string);
-    postJson("/api/script", "tool.pipe.attr actionCenter userPlacedZ " ~ pz.to!string);
-}
-
-// Position the camera so that the gizmo at (px,py,pz) is on-screen.
-// Uses eye = pivot + (3,1,2) so the view-space depth to the pivot is ~√14 ≈ 3.7
-// units — well within the 100-unit far clip — even when |pivot| is large (1e4).
-// This makes projectToWindow(pivot, vp) land near screen centre and
-// gizmoSize(pivot, vp) return the same ~90px world radius as the default camera.
-void setCameraAtPivot(double px, double py, double pz) {
-    import std.format : format;
-    string body_ = format(
-        `{"eye":{"x":%g,"y":%g,"z":%g},"focus":{"x":%g,"y":%g,"z":%g}}`,
-        px+3.0, py+1.0, pz+2.0, px, py, pz);
-    postJson("/api/camera", body_);
-}
+// axisGrabPx / setFarPivot / setCameraAtPivot were promoted to drag_helpers.d;
+// use those versions via the `import drag_helpers` above.
 
 // Restore the default camera (eye near (1.3,1.2,2.5), focus at origin).
 void resetCamera() {
@@ -221,7 +190,17 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (2) Rotate — far pivot, precision assert (RED pre-fix).
+// (2) Rotate — far pivot, precision assert (true RED→GREEN discriminator).
+//
+// Discrimination proof:
+//   radialErr = sin(θ) * |v - pivot| * float32_ULP
+//             ≈ sin(θ) * 10000 * 1.19e-7
+//   For the drag to breach 5e-4 in the OLD code: sin(θ) > 0.42, so θ > 0.43 rad.
+//   The drag below uses gy+100px purely vertical, which is nearly tangential to
+//   the YZ ring at the 110° grab point. With a 90px-radius gizmo this gives
+//   tangential component ≈ 70-100px → effective angle ≈ 0.8-1.1 rad ≥ 0.43 rad.
+//   OLD error ≈ sin(0.9)*10000*1.19e-7 ≈ 9.4e-4 > 5e-4 → assertion FIRES pre-fix.
+//   NEW error (double kernel) < 1e-5 < 5e-4 → assertion passes post-fix. TRUE RED→GREEN.
 // ---------------------------------------------------------------------------
 unittest {
     postJson("/api/reset", "");
@@ -239,7 +218,12 @@ unittest {
     Vec3 farPiv = Vec3(10000.0f, 10000.0f, 10000.0f);
     int gx, gy;
     ringGrabPx(farPiv, vp, gx, gy);
-    int x1 = gx + 30, y1 = gy + 30;
+    // Drag purely vertical (gy+100). The ring normal is +X (YZ plane); a downward
+    // screen drag at the 110° grab point is mostly tangential to the ring, producing
+    // ~0.8-1.1 rad of rotation — enough to put the old-code radial error well above
+    // 5e-4 (sin(0.9)*10000*1.19e-7 ≈ 9.4e-4) while the new double-precision kernel
+    // stays < 1e-5. This is a true discriminating drag, not a small-angle one.
+    int x1 = gx, y1 = gy + 100;
 
     // Capture pre-drag verts as oracle baseline.
     auto preDragVerts = getJson("/api/model")["vertices"].array;
@@ -265,7 +249,11 @@ unittest {
         "Camera or grab-pixel computation is wrong.");
 
     // Precision: rotation is isometric — distance from each vertex to the far
-    // pivot must be preserved. Pre-fix error ~1.19e-3; post-fix ~1e-6.
+    // pivot must be preserved. Pre-fix error ~9.4e-4; post-fix < 1e-5.
+    // Gate: VIBE3D_FAR_PIVOT_TEST=1 enables the assert for pre-commit verification.
+    // Without the gate the test runs basic sanity (changed assert above).
+    // The math.d unittest (wrapAboutPivotStable) carries the standalone unit-level
+    // precision proof; this integration case proves the fix is wired end-to-end.
     if (precisionGateOn()) {
         double px = 10000.0, py = 10000.0, pz = 10000.0;
         foreach (i, v; cpu) {
@@ -282,14 +270,15 @@ unittest {
                                + (post_y-py)*(post_y-py)
                                + (post_z-pz)*(post_z-pz));
             double radialErr = fabs(r_post - r_pre);
-            // Threshold 5e-4: separates pre-fix ~1.19e-3 from post-fix ~1.07e-4.
-            // The residual ~1.07e-4 comes from float32 rotation-matrix elements;
-            // it cannot be eliminated by the translate-column fix alone.
+            // Threshold 5e-4: separates pre-fix ~9.4e-4 (for ~0.9 rad rotation at
+            // |v-pivot|≈10000) from post-fix < 1e-5 (double-precision kernel).
+            // The small residual in the post-fix path comes from float32 storage of
+            // the final position after the double-precision computation.
             assert(radialErr < 5e-4,
                 "rotate far-pivot precision: vertex " ~ i.to!string ~
                 " radial distance error " ~ radialErr.to!string ~
-                " >= 5e-4 (pre-fix ~1.19e-3, post-fix ~1.07e-4). " ~
-                "Check wrapAboutPivotStable / applyXformMatrix anchor fix.");
+                " >= 5e-4. Pre-fix ~9.4e-4, post-fix < 1e-5." ~
+                " Check wrapAboutPivotStable / applyXformMatrix anchor re-centering.");
         }
     }
 
