@@ -75,6 +75,13 @@ class HttpServer {
     // screenshot diff.
     private alias SnapLastProvider = string delegate();
     private SnapLastProvider snapLastProvider;
+    // /api/path — POST {"t":<float>} or GET ?t=. Evaluates the PATH stage
+    // at the requested t and returns value/tangent/length. Marshaled onto
+    // the main thread via tickPath() — mirrors the toolpipeEvalProvider
+    // pattern (NOT snapLastProvider's direct-read pattern) since path
+    // evaluation touches live mesh vertices.
+    private alias PathQueryProvider = string delegate(float t);
+    private PathQueryProvider pathQueryProvider;
     private alias ResetHandler = void delegate(string primitiveType, bool empty, int param);
     private ResetHandler resetHandler;
     // POST /api/camera — sync bridge to set the live View. Used by
@@ -134,6 +141,16 @@ class HttpServer {
     private shared long pipeEvalCompletedEpoch;
     private string pendingPipeEvalResult;
     private string pendingPipeEvalError;
+
+    // /api/path has its own epoch pair — MUST NOT share pipeEval's pair.
+    // A concurrent /api/path + /api/toolpipe/eval would cross-trip each
+    // other's spin if they shared epochs (each completed-bump would satisfy
+    // the other's spin, returning torn/empty results).
+    private shared long pathSubmittedEpoch;
+    private shared long pathCompletedEpoch;
+    private float  pendingPathT;
+    private string pendingPathResult;
+    private string pendingPathError;
 
     // ----- /api/command synchronous bridge ---------------------------------
     // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
@@ -339,6 +356,13 @@ class HttpServer {
     /// and per-cluster pivots/axes when ACEN/AXIS are in cluster mode.
     public void setToolPipeEvalProvider(ToolPipeEvalProvider provider) {
         this.toolpipeEvalProvider = provider;
+    }
+
+    /// PATH stage evaluation endpoint provider. Marshaled onto the main
+    /// thread via tickPath() (same epoch-handshake shape as
+    /// toolpipeEvalProvider — NOT the direct-read snapLastProvider).
+    public void setPathQueryProvider(PathQueryProvider provider) {
+        this.pathQueryProvider = provider;
     }
 
     /// Phase 7.3 — `/api/snap` query endpoint. Provider takes the raw
@@ -859,6 +883,53 @@ class HttpServer {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
                                    ~ pendingPipeEvalError.replace("\"", "\\\"") ~ "\"}";
+                }
+            }
+        } else if (request.path.startsWith("/api/path")) {
+            response.headers["Content-Type"] = "application/json";
+            if (pathQueryProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"path query provider not set"}`;
+            } else {
+                // Parse t from POST body or GET query string.
+                float t = 0.5f;
+                try {
+                    if (request.method == "POST" && request.body.length > 0) {
+                        auto bj = parseJSON(request.body);
+                        if (auto tp = "t" in bj.object) {
+                            if      (tp.type == JSONType.float_)   t = cast(float)tp.floating;
+                            else if (tp.type == JSONType.integer)  t = cast(float)tp.integer;
+                            else if (tp.type == JSONType.uinteger) t = cast(float)tp.uinteger;
+                        }
+                    } else {
+                        string ts = parseQueryString(request.path, "t", "");
+                        if (ts.length > 0) {
+                            import std.conv : to;
+                            t = ts.to!float;
+                        }
+                    }
+                } catch (Exception) {}
+                // Marshal onto the main thread via the dedicated epoch pair.
+                pendingPathT      = t;
+                pendingPathResult = "";
+                pendingPathError  = "";
+                long my = atomicOp!"+="(pathSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(pathCompletedEpoch) < my) {
+                    if (++iters > maxIters) {
+                        pendingPathError = "timeout waiting for main thread";
+                        break;
+                    }
+                    Thread.sleep(2.msecs);
+                }
+                if (pendingPathError.length == 0) {
+                    response.statusCode = 200;
+                    response.body = pendingPathResult;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"path query failed","message":"` ~
+                                   pendingPathError.replace("\"", "\\\"") ~ `"}`;
                 }
             }
         } else if (request.path == "/api/toolpipe") {
@@ -1712,6 +1783,29 @@ class HttpServer {
             pendingPipeEvalError = e.msg;
         }
         atomicStore(pipeEvalCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick path query — call once per frame from the main loop, next to
+     * tickPipeEval(). Services a pending /api/path request on the main
+     * thread (where the mesh is consistent) via the pathQueryProvider.
+     *
+     * Owns the separate pathSubmittedEpoch/pathCompletedEpoch pair —
+     * MUST NOT share with pipeEvalSubmittedEpoch/pipeEvalCompletedEpoch.
+     */
+    public void tickPath() {
+        long sub = atomicLoad(pathSubmittedEpoch);
+        long cmp = atomicLoad(pathCompletedEpoch);
+        if (sub <= cmp) return;
+        try {
+            if (pathQueryProvider !is null)
+                pendingPathResult = pathQueryProvider(pendingPathT);
+            else
+                pendingPathError = "path query provider not set";
+        } catch (Exception e) {
+            pendingPathError = e.msg;
+        }
+        atomicStore(pathCompletedEpoch, sub);
     }
 
     /**

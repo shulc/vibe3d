@@ -129,6 +129,7 @@ import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
+import commands.path.define    : PathDefineCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneRotateCommand, WorkplaneOffsetCommand,
                                 WorkplaneAlignToSelectionCommand;
@@ -1835,6 +1836,8 @@ void main(string[] args) {
         g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
+        import toolpipe.stages.path : PathStage;
+        g_pipeCtx.pipeline.add(new PathStage(() => &mesh()));
     }
 
     // Main-loop flag — declared up here so command factories
@@ -2234,6 +2237,10 @@ void main(string[] args) {
             new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.mode"] = () => cast(Command)
             new SnapModeCommand(&mesh(), cameraView, editMode);
+    }
+    {
+        reg.commandFactories["path.define"] = () => cast(Command)
+            new PathDefineCommand(&mesh(), cameraView, editMode);
     }
     {
         Command delegate() makeAiFactory(AiToggleAction action) {
@@ -3433,6 +3440,48 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // /api/path — evaluate the PATH stage at a requested t and return
+        // value/tangent/length as JSON. Marshaled onto the main thread via
+        // tickPath() using a dedicated epoch pair (NOT the pipeEval pair).
+        httpServer.setPathQueryProvider((float t) {
+            import std.array         : appender;
+            import std.format        : format;
+            import toolpipe.pipeline : g_pipeCtx;
+            import toolpipe.packets  : SubjectPacket, PathPacket;
+            import operator          : VectorStack;
+            import path              : pathValue, pathTangent, pathLength;
+
+            if (g_pipeCtx is null)
+                return `{"error":"pipeline not initialised"}`;
+
+            SubjectPacket subj;
+            subj.mesh     = &mesh();
+            subj.editMode = editMode;
+            subj.viewport = cameraView.viewport();
+
+            VectorStack vts;
+            vts.put(&subj);
+            g_pipeCtx.pipeline.evaluate(vts);
+
+            auto pp = vts.get!PathPacket();
+            if (pp is null || !pp.enabled)
+                return `{"enabled":false}`;
+
+            import math : Vec3;
+            Vec3  val = pathValue  (pp.knots, pp.closed, t);
+            Vec3  tan = pathTangent(pp.knots, pp.closed, t);
+            float len = pathLength (pp.knots, pp.closed, 0.0f, t);
+
+            // Use %f for all floats to ensure decimal points are always
+            // present in the JSON output (prevents integer-type parse on
+            // values like 0.0, 1.0, 2.0 where %g would strip the point).
+            return format(
+                `{"enabled":true,"value":[%f,%f,%f],"tangent":[%f,%f,%f],"length":%f}`,
+                val.x, val.y, val.z,
+                tan.x, tan.y, tan.z,
+                len);
+        });
+
         // Helper: inject _positional args from the argstring pipeline into
         // tool.* commands. Called from inside setCommandHandler after the
         // generic injectParamsInto pass. Extracted to keep the handler tidy.
@@ -3622,6 +3671,17 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             fas.setAxis(pos[0].str);
+                    }
+                }
+            } else if (auto pdc = cast(PathDefineCommand)cmd) {
+                // path.define <csv-verts> [closed]
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            pdc.setVertsCsv(pos[0].str);
+                        if (pos.length >= 2 && pos[1].type == JSONType.string)
+                            pdc.setClosed(pos[1].str == "true");
                     }
                 }
             }
@@ -6330,6 +6390,7 @@ void main(string[] args) {
             httpServer.tickReset();
             httpServer.tickModel();
             httpServer.tickPipeEval();
+            httpServer.tickPath();
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
