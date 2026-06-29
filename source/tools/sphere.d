@@ -523,6 +523,10 @@ private:
     // Single-source hover/capture arbiter for the radius handles + mover.
     ToolHandles   toolHandles;
 
+    // When true, the tool presents as "Ellipsoid": globe-builder locked,
+    // `method` and `order` params hidden.  Default false = Sphere.
+    bool ellipsoidMode_;
+
     static immutable Vec3[6] RAD_AXES = [
         Vec3( 1, 0, 0), Vec3(-1, 0, 0),
         Vec3( 0, 1, 0), Vec3( 0,-1, 0),
@@ -530,10 +534,11 @@ private:
     ];
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
-        this.meshSrc_ = meshSrc;
-        this.gpu       = gpu;
-        this.litShader = litShader;
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
+        this.meshSrc_       = meshSrc;
+        this.gpu            = gpu;
+        this.litShader      = litShader;
+        this.ellipsoidMode_ = ellipsoidMode;
         mover = new MoveHandler(Vec3(0, 0, 0));
         mover.circleXY.setVisible(false);
         mover.circleYZ.setVisible(false);
@@ -557,10 +562,28 @@ public:
         this.factory = factory;
     }
 
-    override string name() const { return "Sphere"; }
+    override string name() const { return ellipsoidMode_ ? "Ellipsoid" : "Sphere"; }
 
     override Param[] params() {
         import params : IntEnumEntry;
+        // Ellipsoid mode: globe-locked, method and order hidden.
+        if (ellipsoidMode_) {
+            return [
+                Param.float_("cenX",  "Position X", &params_.cenX,  0.0f),
+                Param.float_("cenY",  "Position Y", &params_.cenY,  0.0f),
+                Param.float_("cenZ",  "Position Z", &params_.cenZ,  0.0f),
+                Param.float_("sizeX", "Radius X",   &params_.sizeX, 0.5f).min(0.0f),
+                Param.float_("sizeY", "Radius Y",   &params_.sizeY, 0.5f).min(0.0f),
+                Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 0.5f).min(0.0f),
+                Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256),
+                Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256),
+                Param.intEnum_("axis", "Axis", &params_.axis,
+                    [IntEnumEntry(0, "x", "X"),
+                     IntEnumEntry(1, "y", "Y"),
+                     IntEnumEntry(2, "z", "Z")],
+                    1),
+            ];
+        }
         return [
             Param.intEnum_("method", "Sphere Mode", &params_.method,
                 [IntEnumEntry(0, "globe", "Globe"),
@@ -596,6 +619,8 @@ public:
     }
 
     override void activate() {
+        // Globe-lock: prevent qball/tess from slipping in via a reused instance.
+        if (ellipsoidMode_) params_.method = 0;
         state          = SphereState.Idle;
         meshChanged    = false;
         moverDragAxis  = -1;
