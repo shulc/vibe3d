@@ -207,7 +207,8 @@ unittest { // Local — currently degrades to Auto basis (workplane).
     assert(rx == rx && uy == uy && fz == fz, "Local published NaN");
 }
 
-unittest { // Screen — degrades to Auto basis (workplane). Smoke test.
+unittest { // Screen — camera-remap basis (right=camUp, up=camRight, fwd=camFwd).
+           // Smoke test: mode label set + finite non-NaN vectors.
     resetCube();
     postJson("/api/command", "tool.pipe.attr axis mode screen");
     auto a = getAxisAttrs();
