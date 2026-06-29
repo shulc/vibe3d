@@ -86,8 +86,9 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
 import commands.mesh.duplicate_ : MeshDuplicate;
-import commands.mesh.mirror_    : MeshMirror;
-import commands.mesh.array_     : MeshArray;
+import commands.mesh.mirror_      : MeshMirror;
+import commands.mesh.symmetrize   : MeshSymmetrize;
+import commands.mesh.array_       : MeshArray;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.vert_merge : MeshVertMerge;
 import commands.mesh.vert_join  : MeshVertJoin;
@@ -2361,6 +2362,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.mirror"] = () => cast(Command)
         new MeshMirror(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.symmetrize"] = () => cast(Command)
+        new MeshSymmetrize(&mesh(), cameraView, editMode, &gpu,
+                           &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.array"] = () => cast(Command)
         new MeshArray(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
