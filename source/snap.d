@@ -598,6 +598,14 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // Stage 2: WorldAxis LINE constraints (constraint tier).
     // Three infinite lines through origin along world X, Y, Z.
     // Scope-independent (pass in all scope modes).
+    //
+    // vibe3d-divergence: this path anchors the lines at world origin (0,0,0),
+    // making it a transform-tool-scoped constraint available under any tool
+    // that calls snapCursor with the WorldAxis bit. The reference scopes
+    // worldAxis to Pen (and Mirror), anchored on the PRIOR vertex; that
+    // Pen-scoped variant lives in source/tools/pen.d (applyPenGuide). Both
+    // paths coexist: Pen suppresses this bit via snapLocalHit's excludeTypes
+    // so origin-based and prior-vertex-based worldAxis never double-apply.
     // -----------------------------------------------------------------------
     if ((cfg.enabledTypes & SnapType.WorldAxis)
             && typeEligible(SnapType.WorldAxis, cfg.snapScope)) {

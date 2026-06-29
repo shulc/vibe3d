@@ -263,6 +263,27 @@ Vec3 transformDir(in float[16] m, Vec3 v) @nogc nothrow {
     );
 }
 
+/// Read the current SnapPacket from the live ToolPipeContext.
+/// Returns a default-init packet (enabled=false) when g_pipeCtx is null.
+/// Used by tools that need snap configuration (enabled bits, innerRangePx)
+/// without triggering snapping logic — e.g. the Pen guide constraint
+/// evaluator reads this to check which guide bits are active.
+SnapPacket currentSnapPacket(const ref Mesh mesh, EditMode editMode,
+                              const ref Viewport vp)
+{
+    if (g_pipeCtx is null) return SnapPacket.init;
+    SubjectPacket subj;
+    subj.mesh     = cast(Mesh*)&mesh;
+    subj.editMode = editMode;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    g_pipeCtx.pipeline.evaluate(vts);
+    auto snapPkt = vts.get!SnapPacket();
+    if (snapPkt is null) return SnapPacket.init;
+    return *snapPkt;
+}
+
 /// Run SNAP against a workplane-local hit. Each Create-tool computes
 /// the cursor's intersection with the construction plane in LOCAL
 /// workplane coordinates via `rayPlaneIntersect(localEye, localRay,
@@ -282,13 +303,21 @@ Vec3 transformDir(in float[16] m, Vec3 v) @nogc nothrow {
 /// don't have a "moving set" the way MoveTool's drag does, and
 /// snapping a primitive's first corner to a selected vertex is a
 /// legitimate gesture.
+///
+/// `excludeTypes` (default 0 = no change) lets callers suppress specific
+/// SnapType bits from the shared pipeline packet before `snapCursor` runs.
+/// The Pen uses this to prevent the transform-scoped WorldAxis-through-origin
+/// (snap.d Stage 2) from firing during pen clicks — the Pen handles those
+/// guide types itself via applyPenGuide. All other Create-tools pass 0 and
+/// are byte-identical to the pre-guide code path.
 SnapResult snapLocalHit(ref Vec3 hitLocal,
                         in WorkplaneFrame frame,
                         int sx, int sy,
                         const ref Viewport vp,
                         const ref Mesh mesh,
                         EditMode editMode,
-                        const(uint)[] excludeVerts = [])
+                        const(uint)[] excludeVerts = [],
+                        uint excludeTypes = 0)
 {
     SnapResult sr;
     if (g_pipeCtx is null) return sr;
@@ -302,8 +331,14 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
     auto snapPkt = vts.get!SnapPacket();
     if (snapPkt is null || !snapPkt.enabled) return sr;
 
+    // Apply exclusion mask: the caller can suppress certain SnapType bits so
+    // it can handle those constraint types itself. Default 0 = no change
+    // (backward-compatible for all non-Pen Create-tools).
+    SnapPacket localPkt = *snapPkt;
+    localPkt.enabledTypes &= ~excludeTypes;
+
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
-    sr = snapCursor(hitWorld, sx, sy, vp, mesh, *snapPkt, excludeVerts);
+    sr = snapCursor(hitWorld, sx, sy, vp, mesh, localPkt, excludeVerts);
     if (sr.snapped)
         hitLocal = transformPoint(frame.toLocal, sr.worldPos);
     return sr;
