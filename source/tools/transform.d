@@ -538,7 +538,7 @@ protected:
     // after release). Paired with notifyAcenUserPlaced from the wrapper's
     // click-pick (takeVert/takeEdge/takeFace). No-op when no ACEN stage is
     // registered. PUBLIC for the wrapper→sub-tool (sibling-instance) reason.
-    public void notifyAcenElementVerts(const(uint)[] verts, Vec3 anchor) {
+    public void notifyAcenElementVerts(const(uint)[] verts) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
@@ -546,7 +546,7 @@ protected:
         auto ac = cast(ActionCenterStage)
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
-        ac.setElementVerts(verts, anchor);
+        ac.setElementVerts(verts);
     }
 
     // Display soft-pin hooks (BUG-1: Move gizmo settle, falloff-independent).

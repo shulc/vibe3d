@@ -7499,7 +7499,7 @@ void main(string[] args) {
 
         // Tool-driven multi-type hover priority resolution: when an
         // active tool (e.g. XfrmTransformTool with falloff.element
-        // in Auto/AutoCent mode) picks across vert/edge/face
+        // in Auto mode) picks across vert/edge/face
         // simultaneously, only ONE of
         // them should highlight per cursor position — vert first,
         // then edge, then face. Without this the cursor over a
