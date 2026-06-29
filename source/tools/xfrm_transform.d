@@ -74,8 +74,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import ai.interaction : AiInteractionPhase;
-import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
-               closestPointOnSegmentToRay, translationMatrix,
+import math : Vec3, Viewport, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
                identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
                frameMatrix, frameMatrixInverse;
@@ -1291,13 +1290,10 @@ public:
         auto fs = activeFalloffStage();
         if (fs is null || fs.type != FalloffType.Element) return false;
         final switch (fs.elementMode) {
-            case ElementMode.Auto:
-            case ElementMode.AutoCent: return true;
-            case ElementMode.Vertex:   return type == EditMode.Vertices;
-            case ElementMode.Edge:
-            case ElementMode.EdgeCent: return type == EditMode.Edges;
-            case ElementMode.Polygon:
-            case ElementMode.PolyCent: return type == EditMode.Polygons;
+            case ElementMode.Auto:    return true;
+            case ElementMode.Vertex:  return type == EditMode.Vertices;
+            case ElementMode.Edge:    return type == EditMode.Edges;
+            case ElementMode.Polygon: return type == EditMode.Polygons;
         }
     }
 
@@ -4397,17 +4393,10 @@ private:
 
     // Element-falloff click-pick. Reads the GPU-resolved hover state
     // (g_hoveredVertex/Edge/Face — published by app.d after each
-    // render frame) and pushes the picked element's anchor point
-    // through ACEN.setUserPlaced (via notifyAcenUserPlaced). The
-    // anchor depends on the FalloffStage's `elementMode`:
-    //
-    //   - `*Cent` variants (AutoCent / EdgeCent / PolyCent): element
-    //     centroid (edge midpoint / Newell-method polygon centroid).
-    //   - Non-Cent variants (Auto / Edge / Polygon): exact click-point
-    //     on the element — closest point on the edge segment to the
-    //     picking ray (edges) or ray ∩ face plane (polygons). This
-    //     follows the per-mode distinction (e.g. `polygon` →
-    //     intersection of click + polygon; `polyCent` → centroid).
+    // render frame) and pushes the picked element's centroid through
+    // ACEN.setUserPlaced (via notifyAcenUserPlaced). The anchor is
+    // always the element centroid (vertex position, edge midpoint,
+    // face centroid) — click-position does not affect it.
     //
     // FalloffStage's connectMask is also updated (mask seed is the
     // picked element's vert ring). Pick-type restricted by the
@@ -4418,36 +4407,26 @@ private:
         if (stage is null || stage.type != FalloffType.Element) return false;
 
         ElementMode em = stage.elementMode;
-        bool autoMode = (em == ElementMode.Auto) || (em == ElementMode.AutoCent);
+        bool autoMode = (em == ElementMode.Auto);
         bool wantV = autoMode || (em == ElementMode.Vertex);
-        bool wantE = autoMode || (em == ElementMode.Edge)
-                              || (em == ElementMode.EdgeCent);
-        bool wantF = autoMode || (em == ElementMode.Polygon)
-                              || (em == ElementMode.PolyCent);
-        // Non-Cent variants (Auto / Edge / Polygon) use the exact
-        // click-point on the element instead of its centroid.
-        // EdgeCent / PolyCent / AutoCent and the *Cent-only modes
-        // fall back to centroid. Vertex has no distinction (vertex
-        // IS the click target).
-        bool clickPointE = (em == ElementMode.Auto) || (em == ElementMode.Edge);
-        bool clickPointF = (em == ElementMode.Auto) || (em == ElementMode.Polygon);
+        bool wantE = autoMode || (em == ElementMode.Edge);
+        bool wantF = autoMode || (em == ElementMode.Polygon);
 
         if (wantV && g_hoveredVertex >= 0
             && g_hoveredVertex < cast(int)mesh.vertices.length)
             return takeVert(stage, g_hoveredVertex);
         if (wantE && g_hoveredEdge >= 0
             && g_hoveredEdge < cast(int)mesh.edges.length)
-            return takeEdge(stage, g_hoveredEdge, clickPointE, mx, my);
+            return takeEdge(stage, g_hoveredEdge);
         if (wantF && g_hoveredFace >= 0
             && g_hoveredFace < cast(int)mesh.faces.length)
-            return takeFace(stage, g_hoveredFace, clickPointF, mx, my);
+            return takeFace(stage, g_hoveredFace);
         return false;
     }
 
     // Per take*, two pieces are written:
-    //   1. ACEN.userPlaced ← picked element's anchor point (gizmo
-    //      pivot + falloff sphere anchor). Either the centroid
-    //      (*Cent modes) or the exact click-point on the element.
+    //   1. ACEN.userPlaced ← picked element's centroid (gizmo
+    //      pivot + falloff sphere anchor).
     //   2. FalloffStage.anchorRing ← picked element's vert indices
     //      (every one gets weight=1 in elementWeight, so the picked
     //      element drags as a rigid unit regardless of sphere radius).
@@ -4459,62 +4438,33 @@ private:
         stage.anchorRing = [cast(uint)vi];
         // ACEN.Element tracks the picked element LIVE (the gizmo follows it
         // under the drag instead of being dragged to the moving-set centroid).
-        // anchor = the vertex itself (offset 0).
-        notifyAcenElementVerts(stage.anchorRing, mesh.vertices[vi]);
+        notifyAcenElementVerts(stage.anchorRing);
         updateConnectMask(stage, vi);
         return true;
     }
 
-    bool takeEdge(FalloffStage stage, int ei, bool clickPoint,
-                  int mx, int my) {
+    bool takeEdge(FalloffStage stage, int ei) {
         auto edge = mesh.edges[ei];
         Vec3 a = mesh.vertices[edge[0]];
         Vec3 b = mesh.vertices[edge[1]];
-        Vec3 anchor = clickPoint
-            ? closestPointOnSegmentToRay(a, b, cachedVp.eye,
-                                         screenRay(cast(float)mx,
-                                                   cast(float)my,
-                                                   cachedVp))
-            : (a + b) * 0.5f;
+        // Anchor = edge midpoint (centroid of the two endpoints), click-independent.
+        Vec3 anchor = (a + b) * 0.5f;
         notifyAcenUserPlaced(anchor);
         stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
-        // anchor = the click point ON the edge (bare Edge mode) or its midpoint
-        // (EdgeCent) — the gizmo sits there, not always at the midpoint.
-        notifyAcenElementVerts(stage.anchorRing, anchor);
+        notifyAcenElementVerts(stage.anchorRing);
         updateConnectMask(stage, cast(int)edge[0]);
         return true;
     }
 
-    bool takeFace(FalloffStage stage, int fi, bool clickPoint,
-                  int mx, int my) {
-        Vec3 anchor;
-        bool gotClickHit = false;
-        if (clickPoint) {
-            // Ray ∩ face plane. The face was already hit by the
-            // picker (g_hoveredFace >= 0) so the ray crosses the
-            // plane; rayPlaneIntersect only returns false for ray ∥
-            // plane (effectively edge-on, which the picker also
-            // rejects). Fall back to the centroid if the projection
-            // misbehaves — same anchor the *Cent path uses.
-            Vec3 n = mesh.faceNormal(cast(uint)fi);
-            Vec3 c = mesh.faceCentroid(cast(uint)fi);
-            Vec3 dir = screenRay(cast(float)mx, cast(float)my, cachedVp);
-            Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, dir, c, n, hit)) {
-                anchor       = hit;
-                gotClickHit  = true;
-            }
-        }
-        if (!gotClickHit)
-            anchor = mesh.faceCentroid(cast(uint)fi);
+    bool takeFace(FalloffStage stage, int fi) {
+        // Anchor = face centroid (vertex average), click-independent.
+        Vec3 anchor = mesh.faceCentroid(cast(uint)fi);
         notifyAcenUserPlaced(anchor);
         auto face = mesh.faces[fi];
         stage.anchorRing.length = face.length;
         foreach (i, vi; face)
             stage.anchorRing[i] = vi;
-        // anchor = the click point on the face (bare Polygon) or its centroid
-        // (PolyCent) — the gizmo sits there.
-        notifyAcenElementVerts(stage.anchorRing, anchor);
+        notifyAcenElementVerts(stage.anchorRing);
         if (face.length > 0)
             updateConnectMask(stage, cast(int)face[0]);
         return true;
