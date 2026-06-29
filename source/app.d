@@ -53,6 +53,7 @@ import tools.torus;
 import tools.pen;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
+import tools.poly_extrude : PolyExtrudeTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -84,6 +85,8 @@ import commands.mesh.spin_edge;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
+import commands.mesh.face_extrude : MeshFaceExtrude;
+import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
 import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
@@ -1822,6 +1825,8 @@ void main(string[] args) {
     // edgeExtrudeEditFactory.
     auto edgeExtendEditFactory = () => new MeshEdgeExtendEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
+    auto polyExtrudeEditFactory = () => new MeshFaceExtrudeEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache, &edgeCache, &faceCache);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -2024,6 +2029,17 @@ void main(string[] args) {
         auto t = new EdgeExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
                                      &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, edgeExtrudeEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Face Extrude — interactive (drag → distance along region normal) + headless
+    // (tool.attr poly.extrude distance <v>; tool.doApply). Topology-creating
+    // tool: own typed edit factory (MeshFaceExtrudeEdit, snapshot-only undo).
+    // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
+    reg.toolFactories["poly.extrude"] = () {
+        auto t = new PolyExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
+                                     &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, polyExtrudeEditFactory);
         return cast(Tool)t;
     };
 
@@ -2376,6 +2392,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
         new MeshPolygonInset(&mesh(), cameraView, editMode, &gpu,
                              &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["poly.extrude"] = () => cast(Command)
+        new MeshFaceExtrude(&mesh(), cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
         new MeshEdgeExtend(&mesh(), cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
