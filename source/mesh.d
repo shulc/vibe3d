@@ -821,6 +821,49 @@ struct Mesh {
         return removed;
     }
 
+    /// Reverse the winding (vertex order) of every face selected by `mask`,
+    /// inverting its normal. The undirected edge set is invariant under a
+    /// winding flip (consecutive pairs are the same undirected set after
+    /// reversal), so edges[] and edgeIndexMap are left intact; only the
+    /// half-edge loops are re-synced via buildLoops() — NOT rebuildEdges().
+    /// PolyVertex (per-corner UV / color) maps are RELOCATED to follow the
+    /// reversed corner order so UVs stay glued to their corners (R5): for
+    /// each flipped face, new loop faceLoop[fi]+j maps to old loop
+    /// faceLoop[fi]+(N-1-j); non-flipped faces use the identity mapping.
+    /// Empty mask (all-false) is a no-op that returns 0.
+    size_t flipFacesByMask(in bool[] mask) {
+        import std.algorithm.mutation : reverse;
+        if (mask.length != faces.length) return 0;
+        const bool needUV = hasPolyVertexMap();
+        size_t flipped = 0;
+        foreach (fi; 0 .. faces.length) {
+            if (!mask[fi]) continue;
+            if (faces[fi].length < 3) continue;   // degenerate guard
+            reverse(faces[fi]);                    // reverse vertex list in-place
+            ++flipped;
+        }
+        if (flipped == 0) return 0;
+        if (needUV) {
+            // Build oldLoopOfNewLoop BEFORE buildLoops.  faceLoop[] is still
+            // the pre-flip CSR (arity is preserved ⇒ offsets are identical):
+            //   new loop faceLoop[fi]+j  ←  old loop faceLoop[fi]+(N-1-j)
+            // Non-flipped and degenerate faces use the identity mapping.
+            auto oldLoopOfNewLoop = new uint[](loops.length);
+            foreach (fi; 0 .. faces.length) {
+                const uint base = faceLoop[fi];
+                const uint n    = cast(uint) faces[fi].length;
+                if (mask[fi] && n >= 3)
+                    foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + (n - 1 - j);
+                else
+                    foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + j;
+            }
+            remapPolyVertexMaps(oldLoopOfNewLoop); // BEFORE buildLoops ⇒ resize no-ops
+        }
+        buildLoops();   // re-sync loops/loopEdge; NOT rebuildEdges (edge set invariant)
+        commitChange(MeshEditScope.Geometry);
+        return flipped;
+    }
+
     /// Dissolve the vertices marked true in `mask`: each selected vert
     /// is dropped from every face's boundary list (a quad becomes a
     /// triangle, a triangle becomes degenerate and the face is dropped).
@@ -6921,6 +6964,146 @@ unittest { // ring verts → cage-edge-index mask (the edge-loop HOVER mask path
         if (auto p = edgeKey(a, b) in m.edgeIndexMap) seedMask[*p] = true;
     }
     assert(seedMask[0]);            // edge 0 (the hovered seed) is lit
+}
+
+unittest { // flipFacesByMask: winding reversed, normal negated, edge set invariant, self-inverse
+    import std.algorithm : sort;
+    import std.conv : to;
+    import mesh_edit_delta : MeshEditScope;
+
+    Mesh m = makeCube();
+    Mesh ref_ = makeCube(); // pristine reference for other-face comparison
+
+    // Capture pre-flip state for face 0.
+    auto face0Before = m.faces[0].dup;
+    Vec3 norm0Before = m.faceNormal(0);
+
+    // Capture the edge multiset (sorted canonical keys, order-independent).
+    ulong[] edgesBefore;
+    foreach (e; m.edges) edgesBefore ~= edgeKey(e[0], e[1]);
+    edgesBefore.sort();
+
+    // Flip face 0 only.
+    auto mask = new bool[](m.faces.length);
+    mask[0] = true;
+    const n = m.flipFacesByMask(mask);
+    assert(n == 1, "flipFacesByMask should report 1 flipped face");
+
+    // Winding must be reversed.
+    auto face0After = m.faces[0].dup;
+    assert(face0After.length == face0Before.length, "face 0 arity changed");
+    foreach (i; 0 .. face0Before.length)
+        assert(face0After[i] == face0Before[face0Before.length - 1 - i],
+               "face 0 corner " ~ i.to!string ~ " not reversed");
+
+    // Normal must be negated (dot product < -0.99).
+    Vec3 norm0After = m.faceNormal(0);
+    assert(dot(norm0After, norm0Before) < -0.99f,
+           "face 0 normal not negated after flip");
+
+    // Edge set must be invariant (R1 guard).
+    ulong[] edgesAfter;
+    foreach (e; m.edges) edgesAfter ~= edgeKey(e[0], e[1]);
+    edgesAfter.sort();
+    assert(edgesAfter == edgesBefore, "edge set changed after flip (R1 violated)");
+
+    // Other faces must be unchanged.
+    foreach (fi; 1 .. m.faces.length)
+        assert(m.faces[fi][] == ref_.faces[fi][],
+               "untouched face " ~ fi.to!string ~ " changed after flip");
+
+    // Self-inverse: flip face 0 a second time must restore original winding.
+    m.flipFacesByMask(mask);
+    assert(m.faces[0][] == face0Before[], "flip∘flip ≠ identity for face winding");
+
+    // Empty mask (all-false) must be a no-op that returns 0.
+    auto zeroMask = new bool[](m.faces.length);
+    const n2 = m.flipFacesByMask(zeroMask);
+    assert(n2 == 0, "all-false mask must return 0");
+    assert(m.faces[0][] == face0Before[], "all-false mask must not mutate faces");
+}
+
+unittest { // flipFacesByMask: PolyVertex (UV) map follows reversed winding (R5)
+    import std.conv : to;
+
+    // Build a 2-face mesh (two quads sharing one edge) and attach a UV map.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), // 0
+        Vec3(1,0,0), // 1
+        Vec3(1,1,0), // 2
+        Vec3(0,1,0), // 3
+        Vec3(2,0,0), // 4
+        Vec3(2,1,0), // 5
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);  // face 0: 4 corners at loops 0..3
+    m.addFace([1u, 4u, 5u, 2u]);  // face 1: 4 corners at loops 4..7
+    m.buildLoops();
+
+    // Register a PolyVertex UV map (dim=2).
+    auto uvMap = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uvMap !is null, "failed to register UV map");
+
+    // Assign distinct per-corner UV values so reversal is detectable.
+    uvMap.data = [
+        0.0f, 0.0f,   // loop 0: face0 corner 0
+        1.0f, 0.0f,   // loop 1: face0 corner 1
+        1.0f, 1.0f,   // loop 2: face0 corner 2
+        0.0f, 1.0f,   // loop 3: face0 corner 3
+        1.0f, 0.0f,   // loop 4: face1 corner 0
+        2.0f, 0.0f,   // loop 5: face1 corner 1
+        2.0f, 1.0f,   // loop 6: face1 corner 2
+        1.0f, 1.0f,   // loop 7: face1 corner 3
+    ];
+    auto origData = uvMap.data.dup;
+
+    // Flip face 0 only.
+    auto mask = new bool[](m.faces.length);
+    mask[0] = true;
+    m.flipFacesByMask(mask);
+
+    // After flip, face 0's new corner j must carry the UV that was at old
+    // corner (N-1-j): new corner 0 ← old corner 3, etc.
+    auto mapAfter = m.meshMap(kUvMapName);
+    assert(mapAfter !is null, "UV map lost after flip");
+
+    const uint base0 = m.faceLoop[0]; // = 0 (arity preserved, same CSR offsets)
+    const uint n0    = cast(uint) m.faces[0].length; // = 4
+    foreach (j; 0 .. n0) {
+        const size_t newSlot = (base0 + j) * 2;
+        const size_t oldSlot = (base0 + (n0 - 1 - j)) * 2;
+        assert(mapAfter.data[newSlot]     == origData[oldSlot],
+               "UV u at new corner " ~ j.to!string ~ " not relocated");
+        assert(mapAfter.data[newSlot + 1] == origData[oldSlot + 1],
+               "UV v at new corner " ~ j.to!string ~ " not relocated");
+    }
+
+    // Face 1 corners must be byte-identical (untouched face).
+    const uint base1 = m.faceLoop[1]; // = 4
+    const uint n1    = cast(uint) m.faces[1].length; // = 4
+    foreach (j; 0 .. n1) {
+        const size_t slot = (base1 + j) * 2;
+        assert(mapAfter.data[slot]     == origData[slot],
+               "face1 UV u changed unexpectedly at corner " ~ j.to!string);
+        assert(mapAfter.data[slot + 1] == origData[slot + 1],
+               "face1 UV v changed unexpectedly at corner " ~ j.to!string);
+    }
+
+    // Self-inverse for UVs: flipping face 0 again must restore every value.
+    m.flipFacesByMask(mask);
+    auto mapRestored = m.meshMap(kUvMapName);
+    assert(mapRestored !is null, "UV map lost after second flip");
+    assert(mapRestored.data == origData,
+           "flip∘flip must restore all UV per-corner values exactly");
+
+    // No-UV-map branch: kernel must not crash and must NOT call remapPolyVertexMaps.
+    Mesh mNoUV = makeCube();
+    assert(mNoUV.meshMap(kUvMapName) is null, "makeCube should register no UV map");
+    auto noUVMask = new bool[](mNoUV.faces.length);
+    noUVMask[0] = true;
+    const nNoUV = mNoUV.flipFacesByMask(noUVMask);
+    assert(nNoUV == 1, "no-UV mesh: should report 1 flipped");
+    assert(mNoUV.meshMap(kUvMapName) is null, "no UV map should remain absent");
 }
 
 // ---------------------------------------------------------------------------
