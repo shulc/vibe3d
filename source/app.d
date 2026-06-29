@@ -1993,6 +1993,16 @@ void main(string[] args) {
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.sphere", reg.toolFactories["prim.sphere"]);
 
+    reg.toolFactories["prim.ellipsoid"] = () {
+        auto t = new SphereTool(() => &mesh(), &gpu, litShader, /*ellipsoidMode=*/true);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["prim.ellipsoid"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.ellipsoid", reg.toolFactories["prim.ellipsoid"]);
+
     reg.toolFactories["prim.cylinder"] = () {
         auto t = new CylinderTool(() => &mesh(), &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);

@@ -53,6 +53,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.sphere method:globe cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:24 axis:1"
+          - label: Ellipsoid
+            action: { kind: tool, id: prim.ellipsoid }
+            ctrl:
+              label: "Unit Ellipsoid"
+              action:
+                kind: script
+                lines:
+                  - "prim.ellipsoid cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:1.0 sizeZ:0.5 sides:24 segments:24 axis:1"
           - label: Cylinder
             action: { kind: tool, id: prim.cylinder }
             ctrl:
