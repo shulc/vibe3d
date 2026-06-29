@@ -4767,6 +4767,69 @@ struct Mesh {
         return -1;
     }
 
+    /// Reconnect the shared edge of two adjacent triangles to the other diagonal
+    /// of the combined quad boundary.  Returns true iff the mesh was mutated.
+    ///
+    /// Guards (all → false, no crash):
+    ///   - `ei` out of range.
+    ///   - Edge not shared by exactly 2 faces (boundary or non-manifold).
+    ///   - The two faces are not both triangles.  Quad-quad spin direction is
+    ///     Phase-0 capture-gated and deferred; n-gon pairs are skipped.
+    ///   - Prospective new diagonal already exists in the mesh (fold-over guard).
+    ///
+    /// Vertex count never changes; only face vertex lists and the derived
+    /// edge + half-edge structure are rewritten.
+    bool spinEdge(uint ei) {
+        if (ei >= edges.length) return false;
+
+        // Collect at most 2 incident faces (EdgeFaceRange cap).
+        uint[2] incFaces;
+        uint nFaces = 0;
+        foreach (fi; facesAroundEdge(ei)) incFaces[nFaces++] = fi;
+        if (nFaces != 2) return false;   // boundary or non-manifold
+
+        uint f1i = incFaces[0], f2i = incFaces[1];
+
+        // Only tri–tri handled now; quad direction is Phase-0 capture-gated.
+        if (faces[f1i].length != 3 || faces[f2i].length != 3) return false;
+
+        uint a = edges[ei][0], b = edges[ei][1];
+        ulong ek = edgeKey(a, b);
+
+        int j1 = findEdgeInFace(f1i, ek);
+        int j2 = findEdgeInFace(f2i, ek);
+        if (j1 < 0 || j2 < 0) return false;  // shouldn't happen, defensive
+
+        // Orient so f1i traverses a→b (faces[f1i][j1] == a).
+        // findEdgeInFace guarantees faces[f1i][j1] ∈ {a, b}.
+        if (faces[f1i][j1] == b) {
+            uint tmp = f1i; f1i = f2i; f2i = tmp;
+            int jtmp = j1; j1 = j2; j2 = jtmp;
+        }
+        // Invariant after possible swap:
+        //   faces[f1i][j1]         == a   (a→b dart in f1)
+        //   faces[f1i][(j1+1)%3]   == b
+        //   faces[f2i][j2]         == b   (b→a dart in f2)
+        //   faces[f2i][(j2+1)%3]   == a
+
+        uint p = faces[f1i][(j1 + 2) % 3];   // third vertex of f1 (opposite a–b)
+        uint q = faces[f2i][(j2 + 2) % 3];   // third vertex of f2 (opposite b–a)
+
+        // Fold-over / degenerate guard.
+        if (p == q) return false;
+        if (edgeIndex(p, q) != ~0u) return false;
+
+        // Build new face pair from merged boundary [b, p, a, q]; new diagonal p–q.
+        //   face1 = [p, a, q],  face2 = [q, b, p]
+        faces[f1i] = [p, a, q];
+        faces[f2i] = [q, b, p];
+
+        rebuildEdges();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return true;
+    }
+
     /// Walk an edge loop starting from `startEdge` in the direction given by
     /// `startFace`.  Returns ordered edge indices; `startEdge` is first.
     /// Stops at non-quad faces, boundaries, or when the loop closes.
@@ -7566,6 +7629,73 @@ unittest { // insetFacesByMask: single flat quad — no-op guard + inner corners
     assert(hasVert( 0.4f, -0.4f), "inner corner ( 0.4,0,-0.4) missing");
     assert(hasVert( 0.4f,  0.4f), "inner corner ( 0.4,0, 0.4) missing");
     assert(hasVert(-0.4f,  0.4f), "inner corner (-0.4,0, 0.4) missing");
+}
+
+unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
+    // ---- case 1: successful tri–tri spin ----
+    // Four vertices of a unit quad split along diagonal 0–2.
+    //   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1)
+    //   f0=[0,1,2]  f1=[0,2,3]   shared edge: 0–2
+    // After spin: new edge 1–3; faces become {0,1,3} and {1,2,3}.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([0u, 2u, 3u]);
+    m.buildLoops();
+
+    uint ei02 = m.edgeIndex(0, 2);
+    assert(ei02 != ~0u, "shared edge 0-2 must exist before spin");
+
+    bool ok = m.spinEdge(ei02);
+    assert(ok, "spinEdge must return true on a valid tri pair");
+
+    // Old diagonal absent; new diagonal present.
+    assert(m.edgeIndex(0, 2) == ~0u, "edge 0-2 must be absent after spin");
+    assert(m.edgeIndex(1, 3) != ~0u, "edge 1-3 must exist after spin");
+
+    // Counts unchanged: 4 verts, 5 edges, 2 faces.
+    assert(m.vertices.length == 4, "vertex count unchanged");
+    assert(m.edges.length    == 5, "edge count unchanged");
+    assert(m.faces.length    == 2, "face count unchanged");
+
+    // Face vertex sets must be {0,1,3} and {1,2,3} (order-independent).
+    bool[uint] f0s, f1s;
+    foreach (v; m.faces[0]) f0s[v] = true;
+    foreach (v; m.faces[1]) f1s[v] = true;
+    bool has013 = (0u in f0s && 1u in f0s && 3u in f0s)
+               || (0u in f1s && 1u in f1s && 3u in f1s);
+    bool has123 = (1u in f0s && 2u in f0s && 3u in f0s)
+               || (1u in f1s && 2u in f1s && 3u in f1s);
+    assert(has013, "one face must be {0,1,3}");
+    assert(has123, "one face must be {1,2,3}");
+
+    // ---- case 2: boundary edge → no-op ----
+    Mesh m2;
+    m2.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0.5f,0,1)];
+    m2.addFace([0u, 1u, 2u]);
+    m2.buildLoops();
+
+    uint bEi = m2.edgeIndex(0, 1);
+    assert(bEi != ~0u);
+    assert(!m2.spinEdge(bEi), "spinEdge on boundary edge must return false");
+    assert(m2.faces.length  == 1, "faces unchanged after boundary no-op");
+    assert(m2.edges.length  == 3, "edges unchanged after boundary no-op");
+
+    // ---- case 3: fold-over guard — prospective diagonal already exists ----
+    // [0,1,2] + [0,2,3] share edge 0-2.  [1,2,3] adds edge 1-3 → spin blocked.
+    Mesh m3;
+    m3.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0.5f,0,1), Vec3(0.5f,0.5f,0.5f)];
+    m3.addFace([0u, 1u, 2u]);
+    m3.addFace([0u, 2u, 3u]);
+    m3.addFace([1u, 2u, 3u]);
+    m3.buildLoops();
+
+    uint ei02m3 = m3.edgeIndex(0, 2);
+    assert(ei02m3 != ~0u);
+    assert(!m3.spinEdge(ei02m3),
+           "spinEdge must be no-op when new diagonal already exists");
+    assert(m3.edgeIndex(1, 3) != ~0u, "edge 1-3 still present after fold-over guard");
+    assert(m3.edgeIndex(0, 2) != ~0u, "edge 0-2 still present (no spin happened)");
 }
 
 // ---------------------------------------------------------------------------
