@@ -6037,6 +6037,194 @@ struct Mesh {
         return N;
     }
 
+    // ---------------------------------------------------------------------------
+    // Mesh hygiene kernels
+    // ---------------------------------------------------------------------------
+
+    /// Drop faces whose unordered vertex set equals an earlier face (duplicate
+    /// faces). The first occurrence (lowest face index) is kept; all later
+    /// duplicates are removed. Winding order is ignored — two faces with the same
+    /// vertices in reversed order are considered duplicates. Returns the number of
+    /// faces removed, or 0 if the mesh had no duplicate faces.
+    size_t unifyFaces() {
+        if (faces.length < 2) return 0;
+        // TODO perf: use a hash-bucket (Set of sorted vertex keys) for O(F) instead of
+        // O(F²) per-pair scan — fine at editor scale, expensive for large bulk imports.
+        bool[] mask;
+        mask.length = faces.length;
+        foreach (i; 0 .. faces.length) {
+            if (mask[i]) continue;  // already slated for removal
+            foreach (j; i + 1 .. faces.length) {
+                if (mask[j]) continue;
+                if (makePolyVertexSetMatch_(faces[i][], faces[j][]))
+                    mask[j] = true;
+            }
+        }
+        bool anyMarked = false;
+        foreach (b; mask) if (b) { anyMarked = true; break; }
+        if (!anyMarked) return 0;
+        return deleteFacesByMask(mask);
+    }
+
+    /// Collapse consecutive duplicate vertex indices within each face (including
+    /// the wrap-around position), then drop any face that has fewer than 3 distinct
+    /// vertex entries or a zero Newell normal magnitude (< 1e-6). The Newell test
+    /// uses the raw cross-product-sum magnitude — NOT faceNormal(), which returns
+    /// a unit vector and cannot distinguish zero-area from finite-area faces.
+    ///
+    /// If no face is changed or removed the function returns 0 WITHOUT calling
+    /// commitChange — no spurious topology version bump on a clean mesh.
+    /// Otherwise rebuilds edges/loops/selection and issues a Geometry commit.
+    /// Returns: faces removed + faces rewritten (both count as affected).
+    size_t cleanDegenerateFaces() {
+        if (faces.length == 0) return 0;
+
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        uint[] oldLoopOfNewLoop;
+
+        uint[][] newFaces;
+        bool[]   newSubpatch;
+        int[]    newOrder;
+        uint[]   newMaterial;
+        newFaces.reserve(faces.length);
+        newSubpatch.reserve(faces.length);
+        newOrder.reserve(faces.length);
+        newMaterial.reserve(faces.length);
+
+        size_t removed = 0;
+        size_t fixed   = 0;
+
+        foreach (fi, ref face; faces) {
+            // Collapse consecutive duplicate vertex indices (+ wrap-around dup).
+            uint[] f;
+            uint[] srcCorner;  // original corner index for each kept entry
+            f.reserve(face.length);
+            if (remapUv) srcCorner.reserve(face.length);
+            foreach (k, vid; face) {
+                if (f.length == 0 || f[$ - 1] != vid) {
+                    f ~= vid;
+                    if (remapUv) srcCorner ~= cast(uint)k;
+                }
+            }
+            // Wrap-around dup: last vertex equals first.
+            while (f.length >= 2 && f[$ - 1] == f[0]) {
+                f = f[0 .. $ - 1];
+                if (remapUv && srcCorner.length > 0)
+                    srcCorner = srcCorner[0 .. $ - 1];
+            }
+
+            // Drop: fewer than 3 distinct vertex entries after dedup.
+            if (f.length < 3) {
+                ++removed;
+                continue;
+            }
+
+            // Drop zero-area faces: raw Newell normal magnitude test
+            // (identical to makePolygonFromVerts step 4 — NOT faceNormal()).
+            {
+                float nx = 0, ny = 0, nz = 0;
+                foreach (i; 0 .. f.length) {
+                    Vec3 a = vertices[f[i]];
+                    Vec3 b = vertices[f[(i + 1) % f.length]];
+                    nx += (a.y - b.y) * (a.z + b.z);
+                    ny += (a.z - b.z) * (a.x + b.x);
+                    nz += (a.x - b.x) * (a.y + b.y);
+                }
+                float len = sqrt(nx*nx + ny*ny + nz*nz);
+                if (len < 1e-6f) {
+                    ++removed;
+                    continue;
+                }
+            }
+
+            // Face is kept; count it as fixed if its arity changed.
+            if (f.length != face.length) ++fixed;
+            newFaces    ~= f;
+            newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+            newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+            newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+            if (remapUv)
+                foreach (sc; srcCorner)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
+        }
+
+        // Early return: nothing changed — no commitChange, no version bump.
+        if (removed == 0 && fixed == 0) return 0;
+
+        faces              = newFaces;
+        setFaceSubpatchFrom(newSubpatch);
+        faceSelectionOrder = newOrder;
+        faceMaterial       = newMaterial;
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+
+        clearFaceSelectionResize();
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        compactUnreferenced();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return removed + fixed;
+    }
+
+    /// Sequential mesh hygiene sweep. Stage order ensures weld-created degenerate
+    /// and duplicate faces are caught by later stages:
+    ///   1. weldCoincidentVertices  (if mergeVerts)   — must run first
+    ///   2. cleanDegenerateFaces    (if dropDegenerate)
+    ///   3. unifyFaces              (if unify)
+    ///   4. compactUnreferenced     (if removeOrphans — intermediate)
+    ///   5. dissolveDegree2Verts    (if dissolve2Valent — opt-in, default OFF)
+    ///   6. compactUnreferenced     (if removeOrphans — final)
+    ///
+    /// Note: cleanDegenerateFaces and unifyFaces call compactUnreferenced
+    /// internally when they do work, so those stages imply orphan removal as a
+    /// side effect when they fire.  removeOrphans:false only fully preserves
+    /// floating vertices when none of the other active stages fires either.
+    ///
+    /// Returns per-stage counts. All-zero means nothing changed (true no-op;
+    /// a nominal all-off run with a pre-existing orphan does NOT mutate).
+    CleanupResult cleanupMesh(CleanupOptions o = CleanupOptions.init) {
+        CleanupResult r;
+        if (o.mergeVerts)      r.welded       = weldCoincidentVertices(o.weldEpsSq);
+        if (o.dropDegenerate)  r.degenerate   = cleanDegenerateFaces();
+        if (o.unify)           r.unified      = unifyFaces();
+        if (o.removeOrphans)   r.orphans      = compactUnreferenced();
+        if (o.dissolve2Valent) r.dissolved    = dissolveDegree2Verts();
+        if (o.removeOrphans)   r.finalOrphans = compactUnreferenced();
+        return r;
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// CleanupOptions / CleanupResult  (used by Mesh.cleanupMesh)
+// ---------------------------------------------------------------------------
+
+/// Options for Mesh.cleanupMesh(). All boolean stages default to their most
+/// commonly useful values. `weldEpsSq` is the squared linear weld distance;
+/// the default 1e-10 corresponds to a linear threshold of 1e-5, matching the
+/// "auto" range of vert.merge.
+struct CleanupOptions {
+    bool   dropDegenerate  = true;   /// Remove degenerate / zero-area faces.
+    bool   unify           = true;   /// Remove faces with a duplicate vertex set.
+    bool   removeOrphans   = true;   /// Remove unreferenced (floating) vertices.
+    bool   dissolve2Valent = false;  /// Dissolve 2-valent vertices (opt-in).
+    bool   mergeVerts      = true;   /// Weld coincident vertices first.
+    double weldEpsSq       = 1e-10;  /// Weld threshold in squared distance.
+}
+
+/// Per-stage counts returned by Mesh.cleanupMesh().
+struct CleanupResult {
+    size_t welded;       /// Vertices merged by weldCoincidentVertices.
+    size_t degenerate;   /// Faces removed/rewritten by cleanDegenerateFaces.
+    size_t unified;      /// Faces removed by unifyFaces.
+    size_t orphans;      /// Vertices removed by the intermediate compactUnreferenced.
+    size_t dissolved;    /// Vertices removed by dissolveDegree2Verts.
+    size_t finalOrphans; /// Vertices removed by the final compactUnreferenced (only runs when removeOrphans is set).
+    /// True if any stage reported work done.
+    bool anyAffected() const {
+        return welded + degenerate + unified + orphans + dissolved + finalOrphans > 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9480,4 +9668,231 @@ unittest { // non-convex (concave) click order is ACCEPTED as-is (trust click or
     int fi = m.makePolygonFromVerts([0, 1, 2, 3, 4], false);
     assert(fi == 0, "concave click order must be accepted");
     assert(m.faces[0][] == [0u, 1u, 2u, 3u, 4u], "concave order must not be reordered");
+}
+
+// ---------------------------------------------------------------------------
+// unifyFaces unittests
+// ---------------------------------------------------------------------------
+
+unittest { // duplicate face (reversed winding) removed; lowest-index kept
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    // Install both faces directly — makePolygonFromVerts would reject the dup.
+    m.faces = [[0u,1u,2u,3u], [3u,2u,1u,0u]]; // same vertex set, reversed winding
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    size_t removed = m.unifyFaces();
+    assert(removed == 1, "expected 1 face removed, got " ~ uintToStr(removed));
+    assert(m.faces.length == 1, "expected 1 face remaining");
+    // First occurrence (index 0) must be the survivor.
+    assert(m.faces[0][] == [0u,1u,2u,3u], "lowest-index face must be kept");
+}
+
+unittest { // no duplicate faces → no-op, version unchanged
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    m.buildLoops();
+    m.faces = [[0u,1u,2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    const verBefore = m.topologyVersion;
+    size_t removed = m.unifyFaces();
+    assert(removed == 0, "single face: no dup to remove");
+    assert(m.topologyVersion == verBefore, "no-op must not bump topology version");
+}
+
+// ---------------------------------------------------------------------------
+// cleanDegenerateFaces unittests
+// ---------------------------------------------------------------------------
+
+unittest { // literal 2-vertex face removed (only exercisable via direct assignment)
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    // 2-vertex face: bypasses makePolygonFromVerts guard (which requires ≥3 entries).
+    m.faces = [[0u, 1u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    size_t n = m.cleanDegenerateFaces();
+    assert(n >= 1, "2-vertex face must be removed");
+    assert(m.faces.length == 0, "no faces should remain");
+}
+
+unittest { // face [0,1,1]: 3 entries, <3 distinct → removed
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    m.faces = [[0u, 1u, 1u]];  // repeated vert 1 → collapses to [0,1] → dropped
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    size_t n = m.cleanDegenerateFaces();
+    assert(n >= 1, "[0,1,1] must be removed (<3 distinct after dedup)");
+    assert(m.faces.length == 0);
+}
+
+unittest { // consecutive-dup rewritten: [0,1,1,2,3] → [0,1,2,3], face kept
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    // Face with a consecutively duplicated vert; after collapse → valid quad.
+    m.faces = [[0u, 1u, 1u, 2u, 3u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    size_t n = m.cleanDegenerateFaces();
+    assert(n == 1, "rewritten face counts as 1 affected");
+    assert(m.faces.length == 1, "face must be kept after rewrite");
+    assert(m.faces[0].length == 4, "expect 4 verts after removing consecutive dup");
+}
+
+unittest { // zero-area collinear triangle removed
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0)]; // three points on x-axis
+    m.faces = [[0u, 1u, 2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    size_t n = m.cleanDegenerateFaces();
+    assert(n >= 1, "zero-area (collinear) face must be removed");
+    assert(m.faces.length == 0);
+}
+
+unittest { // clean triangle → no-op, no commitChange (topology version unchanged)
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    m.faces = [[0u, 1u, 2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    const verBefore = m.topologyVersion;
+    size_t n = m.cleanDegenerateFaces();
+    assert(n == 0, "clean mesh: expected no changes");
+    assert(m.topologyVersion == verBefore, "no version bump on clean mesh (early-return)");
+}
+
+// ---------------------------------------------------------------------------
+// cleanupMesh unittests
+// ---------------------------------------------------------------------------
+
+// Helper: convert size_t to string for assert messages.
+private string uintToStr(size_t v) {
+    if (v == 0) return "0";
+    char[20] buf;
+    size_t i = buf.length;
+    do { buf[--i] = cast(char)('0' + v % 10); v /= 10; } while (v);
+    return buf[i .. $].idup;
+}
+
+unittest { // all-dirty mesh: each stage fires correctly
+    // Layout:
+    //   verts 0-3: quad [0,1,2,3]              positions (0,0,0)-(1,0,0)-(1,1,0)-(0,1,0)
+    //   vert 4:    (0.5,0,0) — used in zero-area triangle [0,4,1] (collinear)
+    //   vert 5:    (0,0,0)   — coincident with vert 0; used in face [5,6,7]
+    //   verts 6-7: (2,0,0),(2,1,0) — for valid triangle [5,6,7] → [0,6,7] after weld
+    //   vert 8:    (9,9,9)   — pure orphan (not in any face)
+    //   face [0,1,2,3]: valid quad
+    //   face [0,1,2,3]: duplicate of above
+    //   face [0,4,1]:   zero-area (collinear on x-axis) → cleanDegenerateFaces drops it
+    //   face [5,6,7]:   valid, becomes [0,6,7] after weld of 5→0
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),   // 0-3
+        Vec3(0.5f,0,0),                                          // 4 (collinear)
+        Vec3(0,0,0),                                             // 5 (coincident with 0)
+        Vec3(2,0,0), Vec3(2,1,0),                               // 6-7
+        Vec3(9,9,9),                                             // 8 (orphan)
+    ];
+    m.faces = [
+        [0u,1u,2u,3u],
+        [0u,1u,2u,3u],  // duplicate
+        [0u,4u,1u],     // zero-area (0, 0.5, 1 on x-axis)
+        [5u,6u,7u],     // valid triangle (5 coincident with 0)
+    ];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    auto r = m.cleanupMesh();
+
+    // Stage counts — each stage that fired must be non-zero.
+    assert(r.welded     >= 1, "weld: vert 5→0 expected; got " ~ uintToStr(r.welded));
+    assert(r.degenerate >= 1, "degenerate: zero-area [0,4,1] expected; got " ~ uintToStr(r.degenerate));
+    assert(r.unified    >= 1, "unified: duplicate [0,1,2,3] expected; got " ~ uintToStr(r.unified));
+    assert(r.dissolved  == 0, "dissolve2Valent is off by default");
+    // Note: r.orphans may be 0 even though orphan verts were removed, because
+    // cleanDegenerateFaces() / unifyFaces() each call compactUnreferenced()
+    // internally — by the time cleanupMesh's own intermediate compact runs,
+    // the orphans are already gone. The geometry counts below verify correctness.
+
+    // Final geometry: verts {0,1,2,3,6,7} only; faces [0,1,2,3] and [0,6,7]
+    assert(m.faces.length == 2, "expected 2 faces, got " ~ uintToStr(m.faces.length));
+    assert(m.vertices.length == 6, "expected 6 verts, got " ~ uintToStr(m.vertices.length));
+    assert(r.anyAffected(), "anyAffected must be true");
+}
+
+unittest { // weld-creates-a-duplicate order guard (regression)
+    // Two coincident verts A(0)=B(3) + faces [A,1,2] and [B,1,2].
+    // Correct order: weld B→A first, then unifyFaces removes the dup.
+    // Wrong order (unify-before-weld): dup survives because they look distinct pre-weld.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0),  // 0,1,2
+        Vec3(0,0,0),                              // 3 = coincident with 0
+    ];
+    m.faces = [[0u,1u,2u], [3u,1u,2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    auto r = m.cleanupMesh();
+
+    assert(r.welded >= 1, "weld: vert 3→0 expected");
+    assert(r.unified >= 1, "unify: weld-created dup must be caught");
+    assert(m.faces.length == 1, "expected 1 face; weld-dup must be removed");
+    assert(m.vertices.length == 3, "expected 3 verts after compact");
+}
+
+unittest { // removeOrphans:false: orphan vert preserved; no stage fires → no-op
+    // Triangle + one floating vert (orphan).  No dirty geometry → all other stages
+    // are no-ops.  With removeOrphans:false the orphan must survive untouched.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(9,9,9)]; // vert 3 = orphan
+    m.faces = [[0u,1u,2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    CleanupOptions o;
+    o.removeOrphans = false;
+    auto r = m.cleanupMesh(o);
+
+    assert(!r.anyAffected(), "clean mesh + removeOrphans:false: no stage should fire");
+    assert(m.vertices.length == 4, "orphan must survive when removeOrphans is false");
+}
+
+unittest { // all-stages-off + orphan: true no-op, topology version unchanged
+    // This is the contract test: before the fix, the unconditional final
+    // compactUnreferenced would mutate the mesh and bump the topology version
+    // even with every stage disabled.  With the fix this is a genuine no-op.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(9,9,9)]; // vert 3 = orphan
+    m.faces = [[0u,1u,2u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    const verBefore = m.topologyVersion;
+
+    CleanupOptions o;
+    o.mergeVerts      = false;
+    o.dropDegenerate  = false;
+    o.unify           = false;
+    o.removeOrphans   = false;
+    o.dissolve2Valent = false;
+    auto r = m.cleanupMesh(o);
+
+    assert(!r.anyAffected(), "all-stages-off must return no-op result");
+    assert(m.vertices.length == 4, "orphan must not be removed with all stages off");
+    assert(m.topologyVersion == verBefore,
+        "topology version must not change on a true no-op (no-op contract)");
 }
