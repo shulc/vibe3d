@@ -1,6 +1,5 @@
-// Element Move, elementMode=polygon (bare): the gizmo must land at the CLICK
-// POINT on the picked face — NOT the face centroid. (polyCent uses the centroid,
-// covered by test_element_pick_fresh_hover.)
+// Element Move, elementMode=polygon: the gizmo must land at the face CENTROID
+// regardless of where on the face the click lands — anchor is click-independent.
 
 import std.net.curl;
 import std.json;
@@ -81,15 +80,15 @@ unittest {
         cam.vpX,cam.vpY,cam.width,cam.height, cpx+1, cpy);
     playAndWait(up); settle();
 
-    float dClick = sqrt((p.x-fClick.x)*(p.x-fClick.x)+(p.y-fClick.y)*(p.y-fClick.y)+(p.z-fClick.z)*(p.z-fClick.z));
     float dCent  = sqrt((p.x-fCent.x)*(p.x-fCent.x)+(p.y-fCent.y)*(p.y-fCent.y)+(p.z-fCent.z)*(p.z-fCent.z));
-    assert(dClick < 0.12f,
-        "polygon-mode gizmo must land at the click point on the face " ~
-        "(" ~ fClick.x.to!string ~ "," ~ fClick.y.to!string ~ "," ~ fClick.z.to!string ~ "); got (" ~
-        p.x.to!string ~ "," ~ p.y.to!string ~ "," ~ p.z.to!string ~ ") distClick=" ~ dClick.to!string);
-    assert(dClick < dCent,
-        "gizmo should be closer to the click point than the face centroid; " ~
-        "distClick=" ~ dClick.to!string ~ " distCent=" ~ dCent.to!string);
+    float dClick = sqrt((p.x-fClick.x)*(p.x-fClick.x)+(p.y-fClick.y)*(p.y-fClick.y)+(p.z-fClick.z)*(p.z-fClick.z));
+    assert(dCent < 0.12f,
+        "polygon-mode gizmo must land at the face CENTROID (click-independent) " ~
+        "(" ~ fCent.x.to!string ~ "," ~ fCent.y.to!string ~ "," ~ fCent.z.to!string ~ "); got (" ~
+        p.x.to!string ~ "," ~ p.y.to!string ~ "," ~ p.z.to!string ~ ") distCent=" ~ dCent.to!string);
+    assert(dCent < dClick,
+        "gizmo should be closer to the face centroid than the (off-centre) click point; " ~
+        "distCent=" ~ dCent.to!string ~ " distClick=" ~ dClick.to!string);
 
     pj("/api/script","tool.set xfrm.elementMove off");
     settle();

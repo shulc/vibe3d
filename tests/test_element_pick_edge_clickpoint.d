@@ -1,10 +1,11 @@
-// Element Move, elementMode=edge: the gizmo must land at the CLICK POINT on the
-// picked edge — NOT the edge midpoint. (EdgeCent would use the midpoint.)
+// Element Move, elementMode=edge: the gizmo must land at the edge MIDPOINT
+// regardless of where along the edge the click lands — anchor is click-independent
+// (centroid of the two endpoints).
 //
 // Robust to camera/geometry: discovers a pickable edge at runtime (hovers each
 // edge's midpoint pixel until hover.edge resolves), then clicks 75% toward one
-// endpoint and checks the resulting action-center anchor sits there, not at the
-// midpoint.
+// endpoint and checks the resulting action-center anchor sits at the midpoint,
+// NOT at the click point.
 
 import std.net.curl;
 import std.json;
@@ -100,15 +101,15 @@ unittest {
         cam.vpX,cam.vpY,cam.width,cam.height, cpx+1, cpy);
     playAndWait(up); settle();
 
-    float dClick = sqrt((p.x-click.x)*(p.x-click.x)+(p.y-click.y)*(p.y-click.y)+(p.z-click.z)*(p.z-click.z));
     float dMid   = sqrt((p.x-mid.x)*(p.x-mid.x)+(p.y-mid.y)*(p.y-mid.y)+(p.z-mid.z)*(p.z-mid.z));
-    assert(dClick < 0.12f,
-        "edge-mode gizmo must land at the click point " ~
-        "(" ~ click.x.to!string ~ "," ~ click.y.to!string ~ "," ~ click.z.to!string ~ "); got (" ~
-        p.x.to!string ~ "," ~ p.y.to!string ~ "," ~ p.z.to!string ~ ") distClick=" ~ dClick.to!string);
-    assert(dClick < dMid,
-        "gizmo should be closer to the click point than the edge midpoint; " ~
-        "distClick=" ~ dClick.to!string ~ " distMid=" ~ dMid.to!string);
+    float dClick = sqrt((p.x-click.x)*(p.x-click.x)+(p.y-click.y)*(p.y-click.y)+(p.z-click.z)*(p.z-click.z));
+    assert(dMid < 0.12f,
+        "edge-mode gizmo must land at the edge MIDPOINT (click-independent) " ~
+        "(" ~ mid.x.to!string ~ "," ~ mid.y.to!string ~ "," ~ mid.z.to!string ~ "); got (" ~
+        p.x.to!string ~ "," ~ p.y.to!string ~ "," ~ p.z.to!string ~ ") distMid=" ~ dMid.to!string);
+    assert(dMid < dClick,
+        "gizmo should be closer to the edge midpoint than the (off-centre) click point; " ~
+        "distMid=" ~ dMid.to!string ~ " distClick=" ~ dClick.to!string);
 
     pj("/api/script","tool.set xfrm.elementMove off");
     settle();

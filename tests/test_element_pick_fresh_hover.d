@@ -13,7 +13,7 @@
 // the tool sees the down event.
 //
 // The repro drives two element-pick gestures with the element-move preset
-// (a wide dist=4 sphere so any pick hauls the whole cube; elementMode=polyCent
+// (a wide dist=4 sphere so any pick hauls the whole cube; elementMode=polygon
 // so a face pick anchors at the face centroid → clean, predictable coords):
 //
 //   Gesture 1 — hover-settle THEN pick the +Y (top) face. The +Y face
@@ -150,14 +150,14 @@ string pickNoHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 }
 
 // Activate the element-move preset with a wide falloff sphere (dist 4) so a
-// pick anywhere hauls the whole cube, and elementMode=polyCent so a face pick
+// pick anywhere hauls the whole cube, and elementMode=polygon so a face pick
 // anchors at the FACE CENTROID (clean coords: +Y face → (0,0.5,0), +X face →
 // (0.5,0,0)). vert 6 pre-selected so the preset has a non-empty selection.
 void activateElementMovePreset() {
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
-    postJson("/api/command", "tool.pipe.attr falloff mode polyCent");
+    postJson("/api/command", "tool.pipe.attr falloff mode polygon");
     settle();
 }
 
