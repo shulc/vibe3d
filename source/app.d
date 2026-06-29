@@ -93,6 +93,7 @@ import commands.mesh.bevel : MeshBevel;
 import commands.mesh.face_extrude : MeshFaceExtrude;
 import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
 import commands.mesh.bridge : MeshBridge;
+import commands.mesh.thicken : MeshThicken;
 import commands.mesh.smooth_shift : MeshSmoothShift;
 import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
@@ -2452,6 +2453,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.julienne"] = () => cast(Command)
         new MeshJulienne(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.thicken"] = () => cast(Command)
+        new MeshThicken(&mesh(), cameraView, editMode, &gpu,
+                        &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
         new MeshSmoothShift(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
