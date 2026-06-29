@@ -109,6 +109,7 @@ import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.vert_merge    : MeshVertMerge;
 import commands.mesh.vert_join     : MeshVertJoin;
 import commands.mesh.collapse      : MeshCollapse;
+import commands.mesh.reduce        : MeshReduce;
 import commands.mesh.unify         : MeshUnify;
 import commands.mesh.cleanup       : MeshCleanup;
 import commands.mesh.make_polygon  : MeshMakePolygon;
@@ -2495,6 +2496,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.collapse"] = () => cast(Command)
         new MeshCollapse(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.reduce"] = () => cast(Command)
+        new MeshReduce(&mesh(), cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
         new MeshMakePolygon(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
