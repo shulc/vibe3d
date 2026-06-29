@@ -10,6 +10,8 @@ import viewcache;
 import snapshot : MeshSnapshot;
 import subpatch_osd : catmullClarkOsd;
 import change_bus : MeshEditScope;
+import params : Param;
+import commands.mesh.subdivide_faceted : runFacetedFamily;
 
 class Subdivide : Command, Operator {
     mixin OperatorActrCommon;
@@ -19,6 +21,7 @@ class Subdivide : Command, Operator {
     private FaceBoundsCache* fc;
     private void delegate() onTopologyChange;
     private MeshSnapshot snap;
+    private string mode_ = "ccsds";
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
@@ -33,6 +36,22 @@ class Subdivide : Command, Operator {
 
     override string name() const { return "mesh.subdivide"; }
 
+    /// Three subdivision modes:
+    ///   ccsds  — Catmull-Clark via OpenSubdiv (default, back-compat).
+    ///   flat   — Faceted/linear split (= mesh.subdivide_faceted).
+    ///   smooth — Faceted topology + one Laplacian relax pass (λ=0.5).
+    /// Note: this is a deliberate three-method subset; a fourth method exists
+    /// in the reference config but is intentionally out of scope for this task.
+    override Param[] params() {
+        return [
+            Param.enum_("mode", "Mode", &mode_,
+                [["ccsds",  "Catmull-Clark"],
+                 ["flat",   "Faceted"],
+                 ["smooth", "Smooth"]],
+                "ccsds")
+        ];
+    }
+
     override EditMode[] supportedModes() const {
         return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
     }
@@ -41,39 +60,44 @@ class Subdivide : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        // Selection-aware subdivision (refine only marked faces) only
-        // makes sense when the user could see and curate the face
-        // selection — i.e. in Polygons mode. In Vertices / Edges mode
-        // we ignore any stale `mesh.selectedFaces` from a prior
-        // polygon session and refine the whole cage. Full mesh
-        // snapshot — Catmull-Clark replaces the entire mesh (verts,
+        // Full mesh snapshot — the kernel replaces the entire mesh (verts,
         // edges, faces, selection, etc.).
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
-        bool polygonMode = editMode == EditMode.Polygons;
-        bool[] mask = (polygonMode && mesh.hasAnySelectedFaces())
-                      ? mesh.selectedFaces : null;
-        // Snapshot pre-subdivide selection so children of selected
-        // cage faces stay selected after the topology swap. `mask` is
-        // a slice into mesh.selectedFaces and dies with the swap, so
-        // dup before calling.
-        auto prevSelectedFaces = polygonMode
-            ? mesh.selectedFaces.dup : null;
-        uint[] faceOrigin;
-        *mesh = catmullClarkOsd(*mesh, mask, &faceOrigin);
-        mesh.resetSelection();
-        foreach (k, parentFi; faceOrigin) {
-            if (parentFi < prevSelectedFaces.length
-                && prevSelectedFaces[parentFi])
-                mesh.selectFace(cast(int)k);
+
+        if (mode_ == "flat" || mode_ == "smooth") {
+            // Flat and smooth share the faceted topology; runFacetedFamily
+            // handles selection rebuild and change-bus notification.
+            runFacetedFamily(mesh, editMode, mode_ == "smooth");
+        } else {
+            // ccsds (default): Catmull-Clark via OpenSubdiv.
+            // Selection-aware subdivision (refine only marked faces) only
+            // makes sense when the user could see and curate the face
+            // selection — i.e. in Polygons mode. In Vertices / Edges mode
+            // we ignore any stale `mesh.selectedFaces` from a prior
+            // polygon session and refine the whole cage.
+            bool polygonMode = editMode == EditMode.Polygons;
+            bool[] mask = (polygonMode && mesh.hasAnySelectedFaces())
+                          ? mesh.selectedFaces : null;
+            // `mask` is a slice into mesh.selectedFaces and dies with the
+            // swap, so snapshot the selection before calling.
+            auto prevSelectedFaces = polygonMode
+                ? mesh.selectedFaces.dup : null;
+            uint[] faceOrigin;
+            *mesh = catmullClarkOsd(*mesh, mask, &faceOrigin);
+            mesh.resetSelection();
+            foreach (k, parentFi; faceOrigin) {
+                if (parentFi < prevSelectedFaces.length
+                    && prevSelectedFaces[parentFi])
+                    mesh.selectFace(cast(int)k);
+            }
+            // Change-notification (Stage 1): Catmull-Clark REPLACED the whole
+            // mesh (new verts AND faces) — publish Geometry (Points|Polygons).
+            // noteChange (not commitChange): the `*mesh = ...` swap reset the
+            // fresh struct's version counters to 0; the bus only needs the
+            // class so caches rebuild.
+            mesh.noteChange(MeshEditScope.Geometry);
         }
-        // Change-notification (Stage 1): Catmull-Clark REPLACED the whole mesh
-        // (new verts AND faces) — publish the Geometry class (Points|Polygons).
-        // noteChange (not commitChange): the `*mesh = ...` swap reset the fresh
-        // struct's version counters to 0, and subdivide historically did not
-        // re-bump them; the bus only needs the class so caches rebuild. (Also
-        // keeps the Stage-1 shadow check quiet — the version DID change here.)
-        mesh.noteChange(MeshEditScope.Geometry);
         refreshCaches();
         return true;
     }
