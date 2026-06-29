@@ -17,12 +17,21 @@ import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
-                              transformPoint, transformDir, snapLocalHit;
+                              transformPoint, transformDir, snapLocalHit,
+                              currentSnapPacket;
+import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : abs;
+
+// Snap-type bits that PenTool handles via applyPenGuide (Pen-local guide
+// constraints). These bits are excluded from snapLocalHit at all Pen call
+// sites so the shared snap pipeline never applies the transform-scoped
+// WorldAxis-through-origin on top of the Pen-scoped prior-vertex variants.
+private enum uint guideBits =
+    SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 alias PenEditFactory = MeshBevelEdit delegate();
 
@@ -259,12 +268,16 @@ public:
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return true;
             // Snap the click position to the closest pipeline-enabled
-            // snap target (vertex / edge / face / grid). hit is rewritten
-            // in-place when a candidate falls within the SnapStage's
-            // innerRange. lastSnap stays populated so draw() can show
-            // the cyan element + yellow cursor marker.
+            // snap target (vertex / edge / face / grid). guideBits are
+            // excluded from snapLocalHit so the transform-scoped
+            // WorldAxis-through-origin never fires here. applyPenGuide
+            // is a no-op on the first click (vertices_ is empty), but
+            // the guideBits mask is still needed to prevent double-apply
+            // in future calls before the first vertex is appended.
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
+                                    *mesh, EditMode.Vertices, [], guideBits);
+            if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
+                applyPenGuide(hit, e.x, e.y);
             publishLastSnap(lastSnap);
             appendVertex(hit);
             params_.currentPoint = cast(int)vertices_.length - 1;
@@ -297,10 +310,15 @@ public:
                                Vec3(0, 0, 0), planeNormal, hit))
             return true;
 
-        // Snap the placed vertex to the closest pipeline-enabled
-        // snap target — same convention as the first-click path.
+        // Snap the placed vertex: discrete targets first (guideBits excluded
+        // from snapLocalHit); then Pen guide if no discrete snap won.
+        // Merge rule: discrete > guide > free. Box face-planes from snap.d
+        // survive snapLocalHit (not in guideBits) but lose to the guide when
+        // constraintType != None — a deliberate discrete>guide>free choice.
         lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                *mesh, EditMode.Vertices);
+                                *mesh, EditMode.Vertices, [], guideBits);
+        if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
+            applyPenGuide(hit, e.x, e.y);
         publishLastSnap(lastSnap);
 
         // Make Quads strip extension: after 2 anchor verts, each click adds
@@ -360,7 +378,12 @@ public:
             Vec3 hit;
             if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), pn, hit)) {
                 lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
+                                         *mesh, EditMode.Vertices, [], guideBits);
+                // Guide follows same discrete>guide merge rule. When Drawing,
+                // f==frame so applyPenGuide uses the same coordinate basis.
+                // Idle: applyPenGuide returns false (vertices_ empty) — no-op.
+                if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
+                    applyPenGuide(hit, e.x, e.y);
                 publishLastSnap(lastSnap);
             } else {
                 lastSnap = SnapResult.init;
@@ -388,14 +411,13 @@ public:
         if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                               Vec3(0, 0, 0), planeNormal, hit))
         {
-            // Snap the dragged vertex's new position too — same lastSnap
-            // already populated by the preview block above; reuse the
-            // already-computed snap target instead of re-querying. We
-            // exclude the dragged-vertex's own world position is moot
-            // here (the SnapStage walks `mesh` only, not the in-progress
-            // pen buffer), so no exclusion needed.
+            // Snap the dragged vertex's new position — same discrete>guide
+            // merge rule as the click paths. guideBits excluded from
+            // snapLocalHit; applyPenGuide applied when no discrete snap won.
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
+                                    *mesh, EditMode.Vertices, [], guideBits);
+            if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
+                applyPenGuide(hit, e.x, e.y);
             publishLastSnap(lastSnap);
             vertices_[dragVertIdx] = hit;
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
@@ -774,6 +796,105 @@ private:
         return params_.makeQuads ? 4 : 3;
     }
 
+    // Apply Pen-local guide constraints: straightLine / worldAxis / rightAngle.
+    //
+    // Anchor = prior vertex (vertices_[$-1]), direction from the prior segment
+    // for straightLine/rightAngle, world X/Y/Z through the prior vertex for
+    // worldAxis (Pen-scoped, differs from snap.d's origin-based WorldAxis).
+    //
+    // All arithmetic in LOCAL workplane coordinates. Candidates are projected
+    // to screen pixels to gate against cfg.innerRangePx. The nearest in-range
+    // candidate wins; ties between guide types resolved by screen distance.
+    //
+    // Returns true and writes hitLocal to the guide point when a candidate is
+    // within tolerance; returns false (hitLocal unchanged) otherwise.
+    // Stateless beyond vertices_ / frame / cachedVp — no new persistent fields.
+    private bool applyPenGuide(ref Vec3 hitLocal, int sx, int sy) {
+        if (vertices_.length < 1) return false;
+
+        auto cfg = currentSnapPacket(*mesh, EditMode.Vertices, cachedVp);
+        if (!cfg.enabled) return false;
+
+        Vec3  anchorL  = vertices_[$-1];
+        float bestDist = cfg.innerRangePx;
+        bool  found    = false;
+        Vec3  bestP;
+
+        // Project a LOCAL candidate point to screen; return pixel distance to
+        // (sx,sy). Returns float.infinity for behind-camera points.
+        float screenDist(Vec3 pL) {
+            Vec3  pW = toWorldP(pL);
+            float px_, py_, ndcZ;
+            if (!projectToWindowFull(pW, cachedVp, px_, py_, ndcZ))
+                return float.infinity;
+            float dx = px_ - cast(float)sx;
+            float dy = py_ - cast(float)sy;
+            return Vec3(dx, dy, 0).length;   // Vec3.length uses std.math.sqrt
+        }
+
+        void consider(Vec3 candL) {
+            float d = screenDist(candL);
+            if (d < bestDist) { bestDist = d; bestP = candL; found = true; }
+        }
+
+        // Segment direction in LOCAL (shared by straightLine + rightAngle).
+        // Computed only when needed and guarded against degenerate segments
+        // (nit 1: normalize has no zero-guard, a zero-length segment poisons
+        // both candidate directions via NaN).
+        Vec3 segL;
+        bool segValid = false;
+        if ((cfg.enabledTypes & (SnapType.StraightLine | SnapType.RightAngle))
+                && vertices_.length >= 2)
+        {
+            Vec3 segVec = vertices_[$-1] - vertices_[$-2];
+            if (segVec.length > 1e-6f) {
+                segL     = normalize(segVec);
+                segValid = true;
+            }
+        }
+
+        // straightLine: lock new point to the infinite extension of the prior
+        // segment (anchor = prior vertex, dir = prior-segment direction).
+        // Requires ≥2 prior vertices.
+        if ((cfg.enabledTypes & SnapType.StraightLine) && segValid)
+            consider(closestPointOnLineToRay(anchorL, segL,
+                                              localEye(), localRay(sx, sy)));
+
+        // worldAxis (Pen-scoped): X/Y/Z axes through the PRIOR vertex.
+        // Requires only ≥1 prior vertex (anchorL already set).
+        // The in-plane filter drops any world axis nearly parallel to the
+        // construction-plane normal (planeNormal, in LOCAL frame coords):
+        // snapping to it would move the vertex off the plane, which is never
+        // useful in Pen mode.  planeNormal is (1,0,0)/(0,1,0)/(0,0,1) in
+        // local space depending on which frame axis choosePlane found most
+        // face-on to the camera — it is NOT always local-Y.
+        if (cfg.enabledTypes & SnapType.WorldAxis) {
+            immutable Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
+            foreach (ax; worldAxes) {
+                Vec3 axL = transformDir(frame.toLocal, ax);
+                if (abs(dot(axL, planeNormal)) > 0.9f) continue;   // skip the plane-normal axis
+                consider(closestPointOnLineToRay(anchorL, axL,
+                                                  localEye(), localRay(sx, sy)));
+            }
+        }
+
+        // rightAngle: perpendicular to the prior segment, in the construction
+        // plane. Direction = cross(planeNormal, segL) — both in LOCAL, result
+        // also in LOCAL. A single infinite LINE covers both ±90° senses.
+        // Requires ≥2 prior vertices.
+        if ((cfg.enabledTypes & SnapType.RightAngle) && segValid) {
+            Vec3 perpL = cross(planeNormal, segL);
+            if (perpL.length > 1e-6f) {
+                perpL = normalize(perpL);
+                consider(closestPointOnLineToRay(anchorL, perpL,
+                                                  localEye(), localRay(sx, sy)));
+            }
+        }
+
+        if (found) { hitLocal = bestP; return true; }
+        return false;
+    }
+
     void commitPolygonWithUndo() {
         if (state != PenState.Drawing || vertices_.length < minCommitVerts()) return;
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
@@ -841,5 +962,110 @@ private:
 
         mesh.buildLoops();
         gpu.upload(*mesh);
+    }
+}
+
+// Pure guide-geometry unit tests — no HTTP harness, no app loop.
+// Covers the core math used by applyPenGuide so dub test catches regressions
+// independently of the interactive test suite.
+unittest {
+    import tools.create_common : transformDir, frameFromBasis;
+
+    // Helper: verify two floats agree to < 1e-5.
+    static bool near(float a, float b) { return abs(a - b) < 1e-5f; }
+
+    // --- straightLine candidate ---
+    // Closest point on infinite line (anchor=(0.2,0,0), dir=(1,0,0)) to a
+    // vertical ray at x=0.7, y=1, z=0 pointing straight down.
+    // Expected: (0.7, 0, 0).
+    {
+        import math : closestPointOnLineToRay;
+        Vec3 anchor = Vec3(0.2f, 0, 0);
+        Vec3 dir    = Vec3(1, 0, 0);
+        Vec3 p = closestPointOnLineToRay(anchor, dir,
+                                         Vec3(0.7f, 1, 0), Vec3(0, -1, 0));
+        assert(near(p.x, 0.7f) && near(p.y, 0) && near(p.z, 0));
+    }
+
+    // --- rightAngle direction: cross(planeNormal, segL) ---
+    // planeNormal = (0,1,0), segL = (1,0,0) → perp = (0,0,-1).
+    // Verify perp ⊥ segL AND perp ⊥ planeNormal (stays in-plane).
+    {
+        Vec3 pn   = Vec3(0, 1, 0);
+        Vec3 segL = Vec3(1, 0, 0);
+        Vec3 perp = cross(pn, segL);
+        assert(perp.length > 1e-6f);                      // non-degenerate
+        Vec3 perpN = normalize(perp);
+        assert(abs(dot(perpN, segL)) < 1e-6f);            // ⊥ segment
+        assert(abs(dot(perpN, pn))   < 1e-6f);            // stays in-plane
+        assert(near(perpN.x, 0) && near(perpN.z, -1.0f)); // specific direction
+    }
+
+    // --- worldAxis in-plane filter (aN case: planeNormal = local-Y) ---
+    // For the Z-workplane frame (normal=+Z, axis1=+X, axis2=+Y, origin=0):
+    // world +X and +Y land in the plane (local y≈0), world +Z maps to the
+    // plane normal (local y=1) and should be skipped.
+    // choosePlane gives planeNormal=(0,1,0) when aN wins (camBack ≈ frame.normal).
+    {
+        auto f = frameFromBasis(Vec3(0,0,1), Vec3(1,0,0), Vec3(0,1,0),
+                                Vec3(0,0,0));
+        Vec3 pn  = Vec3(0,1,0); // planeNormal in local coords (aN case)
+        Vec3 axX = transformDir(f.toLocal, Vec3(1,0,0)); // world +X
+        Vec3 axY = transformDir(f.toLocal, Vec3(0,1,0)); // world +Y
+        Vec3 axZ = transformDir(f.toLocal, Vec3(0,0,1)); // world +Z (plane normal)
+        assert(abs(dot(axX, pn)) < 0.1f);  // in-plane — should NOT be filtered
+        assert(abs(dot(axY, pn)) < 0.1f);  // in-plane — should NOT be filtered
+        assert(abs(dot(axZ, pn)) > 0.9f);  // plane-normal — SHOULD be filtered
+    }
+
+    // --- worldAxis in-plane filter: non-Y planeNormal (view-dependent regression) ---
+    // Default Y-up frame (normal=Y, axis1=X, axis2=Z) has identity toLocal,
+    // so axL == ax for every world axis.  choosePlane sets planeNormal=(0,0,1)
+    // in local space when aZ wins — i.e. when camBack is most aligned with
+    // frame.axis2 (world Z in the default frame).  In that case:
+    //   construction plane  = XY plane (normal = world Z = local (0,0,1))
+    //   in-plane axes       = world X (local (1,0,0)) and world Y (local (0,1,0))
+    //   plane-normal axis   = world Z (local (0,0,1))   ← must be filtered
+    //
+    // OLD code abs(axL.y) — wrong for this case:
+    //   world Z → axL=(0,0,1) → abs(axL.y)=0 → NOT filtered  ← misses the normal
+    //   world Y → axL=(0,1,0) → abs(axL.y)=1 → filtered       ← drops in-plane axis
+    //
+    // NEW code abs(dot(axL, planeNormal)):
+    //   world X → dot((1,0,0),(0,0,1))=0 → NOT filtered ✓
+    //   world Y → dot((0,1,0),(0,0,1))=0 → NOT filtered ✓
+    //   world Z → dot((0,0,1),(0,0,1))=1 → filtered     ✓
+    {
+        auto f  = frameFromBasis(Vec3(0,1,0), Vec3(1,0,0), Vec3(0,0,1), Vec3(0,0,0));
+        Vec3 pn = Vec3(0,0,1); // planeNormal in local coords (aZ case, world Z is normal)
+
+        immutable Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
+        // world Z (index 2) is the plane normal and must be filtered; X and Y must not.
+        foreach (size_t i, ax; worldAxes) {
+            Vec3 axL     = transformDir(f.toLocal, ax);
+            bool newPass = abs(dot(axL, pn)) > 0.9f;
+            assert(newPass == (i == 2),
+                   "worldAxis non-Y planeNormal: wrong filter result for axis index " ~
+                   cast(char)('0' + i));
+        }
+        // Red→green witness: confirm old abs(axL.y) was wrong.
+        Vec3 axZL = transformDir(f.toLocal, Vec3(0,0,1)); // world Z, the plane normal
+        Vec3 axYL = transformDir(f.toLocal, Vec3(0,1,0)); // world Y, an in-plane axis
+        // Old code: abs(axZL.y)=0 → did NOT filter world Z (missed the plane normal).
+        assert(abs(axZL.y) < 0.1f,
+               "RED witness: old abs(axL.y) must fail to filter world-Z plane-normal");
+        // Old code: abs(axYL.y)=1 → DID filter world Y (wrongly dropped in-plane axis).
+        assert(abs(axYL.y) > 0.9f,
+               "RED witness: old abs(axL.y) must wrongly filter in-plane world-Y axis");
+    }
+
+    // --- degenerate segment guard ---
+    // Two coincident prior vertices produce a zero-length segVec. Guard:
+    // segVec.length < 1e-6f, so normalize is never called (would yield NaN).
+    {
+        Vec3 v0 = Vec3(1, 0, 0);
+        Vec3 v1 = Vec3(1, 0, 0);  // same as v0
+        Vec3 segVec = v1 - v0;
+        assert(segVec.length < 1e-6f);  // guard triggers: guide inert
     }
 }
