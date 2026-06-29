@@ -62,12 +62,9 @@
 		"lwo2-writer": {
 			"version": "fc87b3f3dc719bbc2d75200949155c2484cdc2dd",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
-		},
-		"d-onnxruntime": {
-			"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
-			"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
 		}
 	},
+	"_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency — it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
 	"subConfigurations": {
 		"lwo2-writer": "core",
 		"bindbc-assimp6": "static"
@@ -100,12 +97,26 @@
 	"configurations": [
 		{
 			"name": "modeling",
-			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`)."
+			"versions": [
+				"WithAI"
+			],
+			"dependencies": {
+				"d-onnxruntime": {
+					"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
+				}
+			},
+			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`). Includes the AI candidate ranker (version WithAI + d-onnxruntime)."
+		},
+		{
+			"name": "modeling-noai",
+			"_comment": "AI-less modeling build (Windows 7 target). Same as `modeling` but WithAI is undefined and d-onnxruntime is NOT pulled in, so source/ai/onnx_backend.d compiles to an empty module and the statusline AI button renders as a disabled placeholder. The pure-D AI heuristics still compile but are unreachable (master switch stays off). Rationale: onnxruntime.dll statically imports api-ms-win-core-path-l1-1-0.dll (Windows 8+) — omitting it is the prerequisite for a binary that can load on Windows 7. CI's Win7 zip pairs this config with app-local UCRT + VC++ runtime DLLs."
 		},
 		{
 			"name": "with-render",
 			"versions": [
-				"WithRender"
+				"WithRender",
+				"WithAI"
 			],
 			"dependencies": {
 				"bindbc-rpr": {
@@ -115,9 +126,13 @@
 				"d-cycles": {
 					"version": "a69f99794fab25b4902e0523052e5c4b6bef0941",
 					"repository": "git+https://github.com/shulc/D-Cycles.git"
+				},
+				"d-onnxruntime": {
+					"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
 				}
 			},
-			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender). The default `modeling` config never references these so `dub build` works on machines that have neither repo. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md."
+			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender) plus the AI ranker. The default `modeling` config never references the render repos so `dub build` works on machines that have neither. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md."
 		}
 	]
 }

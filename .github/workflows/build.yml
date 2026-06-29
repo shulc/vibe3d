@@ -338,6 +338,58 @@ jobs:
           name: zip-${{ matrix.name }}
           path: vibe3d-${{ matrix.name }}.zip
 
+      # ---- Windows 7 variant -------------------------------------------------
+      # A second Windows artifact built from the `modeling-noai` config: the AI
+      # candidate ranker (d-onnxruntime) is dropped, so the exe no longer imports
+      # onnxruntime.dll and therefore no longer pulls api-ms-win-core-path-l1-1-0
+      # .dll (a Windows 8+ apiset that does not exist on Win7). The statusline
+      # "AI" button renders as a disabled placeholder. The zip bundles BOTH the
+      # VC++ runtime AND the UCRT app-local DLLs (ucrtbase.dll + api-ms-win-crt-*)
+      # because Windows 7 has neither in-box (Win10+ ships the UCRT; on Win7 it
+      # otherwise needs KB2999226).
+      - name: Build + zip Win7 variant (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          dub build --config=modeling-noai --compiler=ldc2 --build=release --d-version=ReleaseBuild
+          if ($LASTEXITCODE -ne 0) { throw "modeling-noai (Win7) build failed" }
+
+          $stage = "win7-stage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item '${{ matrix.binary }}' "$stage\"
+          Copy-Item SDL2.dll "$stage\"
+          Copy-Item -Recurse config "$stage\config"
+          Copy-Item -Recurse assets "$stage\assets"
+
+          # VC++ runtime (same rationale as the modeling zip above).
+          $crtDir = $null
+          if ($env:VCToolsRedistDir) {
+            $crtDir = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $crtDir) {
+            $crtDir = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $crtDir) { throw "VC++ CRT redist folder not found (VCToolsRedistDir=$env:VCToolsRedistDir)" }
+          Copy-Item "$($crtDir.FullName)\*.dll" "$stage\"
+
+          # UCRT app-local: Windows 7 has no in-box Universal CRT. Shipped with the
+          # Windows 10 SDK under Redist\<ver>\ucrt\DLLs\x64 (ucrtbase.dll + the
+          # api-ms-win-crt-* forwarders). Pick the newest SDK present.
+          $ucrt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Redist\*\ucrt\DLLs\x64' -Directory -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $ucrt) { throw "UCRT app-local redist not found - install a Windows 10 SDK (Redist\*\ucrt\DLLs\x64)" }
+          Copy-Item "$($ucrt.FullName)\*.dll" "$stage\"
+          Write-Host "[win7] staged $((Get-ChildItem "$stage\*.dll").Count) DLLs (VC++ runtime + UCRT app-local)"
+
+          Compress-Archive -Path "$stage\*" -DestinationPath vibe3d-windows-win7.zip -Force
+
+      - name: Upload Win7 zip (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zip-windows-win7
+          path: vibe3d-windows-win7.zip
+
   # Heavy with-render variant. Builds D-Cycles (Blender LFS submodule
   # ~5 GB + CMake compile of Cycles) + bundles the Cycles + RPR runtime
   # libs into a self-contained zip. Gated by the resolved with_render flag
@@ -501,6 +553,8 @@ jobs:
           NIGHTLY: ${{ needs.check.outputs.nightly }}
         run: |
           ASSETS=( vibe3d-linux.zip vibe3d-macos-arm64.zip vibe3d-macos-x64.zip vibe3d-windows.zip )
+          # Win7 (modeling-noai) variant — built alongside the Windows modeling zip.
+          [[ -f vibe3d-windows-win7.zip   ]] && ASSETS+=( vibe3d-windows-win7.zip )
           # Append with-render assets only if their build job actually ran.
           [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
           [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
