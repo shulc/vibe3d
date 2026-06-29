@@ -7132,6 +7132,194 @@ struct Mesh {
         return collapses;
     }
 
+    /// Cut the whole mesh with the infinite plane {x : dot(n, x-p) == 0}.
+    ///
+    /// Pass 1: for each straddling edge, insert one shared crossing vertex into
+    /// every incident face's winding (one addVertex per edge, keyed on edge
+    /// identity — same dedup convention as MeshSplitEdge; guarantees no T-junctions).
+    /// On-plane existing vertices (|d| <= eps) are crossing points with no new vertex.
+    ///
+    /// Pass 2: for each face with exactly 2 non-adjacent cut points, split into
+    /// two sub-faces along the chord. Adjacent-hit guard: when the two cut positions
+    /// are consecutive in the winding (chord == existing edge), the split is skipped.
+    ///
+    /// Per-face attributes (faceMaterial, Subpatch bit, faceSelectionOrder) are
+    /// copied to both sub-faces (mirrors weldVerticesByMask bookkeeping). faceLoop
+    /// arrays are rebuilt wholesale by buildLoops in finalize.
+    ///
+    /// Returns the number of faces actually split; 0 = no effective cut.
+    /// Caller owns snapshot/undo — this method does NOT capture a snapshot.
+    size_t cutByPlane(Vec3 p, Vec3 n, float eps = 1e-5f) {
+        if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
+            return 0;
+
+        // Signed distances: d[v] = dot(n, v - p)
+        float[] dv;
+        dv.length = vertices.length;
+        bool[] onPlane;
+        onPlane.length = vertices.length;
+        foreach (vi; 0 .. vertices.length) {
+            Vec3 v = vertices[vi];
+            dv[vi] = n.x * (v.x - p.x) + n.y * (v.y - p.y) + n.z * (v.z - p.z);
+            onPlane[vi] = (dv[vi] >= -eps && dv[vi] <= eps);
+        }
+
+        // Pre-check: determine whether any face will actually be split.
+        // Avoids touching the mesh (no addVertex calls) when the plane misses.
+        // Simulates the post-insertion winding positions to test adjacency.
+        {
+            bool anyWillSplit = false;
+            foreach (fi; 0 .. faces.length) {
+                auto face = faces[fi];
+                size_t insertsBefore = 0; // cumulative insertions tracking winding shifts
+                size_t[] hitPos;
+                foreach (k; 0 .. face.length) {
+                    uint a = face[k];
+                    uint b = face[(k + 1) % face.length];
+                    if (onPlane[a])
+                        hitPos ~= k + insertsBefore;
+                    if (!onPlane[a] && !onPlane[b]) {
+                        float da = dv[a], db = dv[b];
+                        if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
+                            // straddle — new vert inserted after position k
+                            insertsBefore++;
+                            hitPos ~= k + insertsBefore;
+                        }
+                    }
+                }
+                if (hitPos.length != 2) continue;
+                size_t i = hitPos[0], j = hitPos[1];
+                size_t newLen = face.length + insertsBefore;
+                bool adj = (j == i + 1) || (i == 0 && j == newLen - 1);
+                if (!adj) { anyWillSplit = true; break; }
+            }
+            if (!anyWillSplit) return 0;
+        }
+
+        // Pass 1 — edge subdivide: for each straddling edge insert one crossing
+        // vertex into every incident face winding (T-junction prevention).
+        bool[] isCutVert;
+        isCutVert.length = vertices.length;
+        foreach (vi; 0 .. vertices.length)
+            isCutVert[vi] = onPlane[vi];
+
+        size_t origEdgeCount = edges.length;
+        foreach (ei; 0 .. origEdgeCount) {
+            uint a = edges[ei][0], b = edges[ei][1];
+            if (a >= dv.length || b >= dv.length) continue;
+            if (onPlane[a] || onPlane[b]) continue; // endpoint on-plane: skip new vert
+            float da = dv[a], db = dv[b];
+            if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
+
+            float t = da / (da - db);
+            Vec3 vm = Vec3(
+                vertices[a].x + t * (vertices[b].x - vertices[a].x),
+                vertices[a].y + t * (vertices[b].y - vertices[a].y),
+                vertices[a].z + t * (vertices[b].z - vertices[a].z));
+            uint vi = addVertex(vm);
+            isCutVert.length = vertices.length; // grow after addVertex
+            isCutVert[vi] = true;
+
+            // Insert vi between (a,b) or (b,a) in every incident face winding.
+            foreach (ref face; faces) {
+                for (size_t k = 0; k < face.length; k++) {
+                    uint fa = face[k];
+                    uint fb = face[(k + 1) % face.length];
+                    if ((fa == a && fb == b) || (fa == b && fb == a)) {
+                        face = face[0 .. k + 1] ~ [vi] ~ face[k + 1 .. $];
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pass 2 — face split: build new parallel arrays (mirrors weldVerticesByMask).
+        size_t origFaceCount = faces.length;
+        uint[][] newFacesArr;
+        bool[]   newSubpatch;
+        int[]    newOrder;
+        uint[]   newMaterial;
+        newFacesArr.reserve(origFaceCount + origFaceCount / 2);
+
+        size_t nSplit = 0;
+        foreach (fi; 0 .. origFaceCount) {
+            uint[] face = faces[fi];
+            bool  sub = isFaceSubpatch(fi);
+            int   ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+            uint  mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+
+            // Collect positions in the winding where the vertex is a cut point.
+            size_t[] hits;
+            foreach (k; 0 .. face.length)
+                if (face[k] < isCutVert.length && isCutVert[face[k]])
+                    hits ~= k;
+
+            if (hits.length != 2) {
+                newFacesArr ~= face.dup;
+                newSubpatch ~= sub;
+                newOrder    ~= ord;
+                newMaterial ~= mat;
+                continue;
+            }
+
+            size_t i = hits[0], j = hits[1]; // i < j always (scanned in order)
+
+            // Adjacent-hit guard: chord == existing edge → degenerate 2-gon, skip.
+            bool adj = (j == i + 1) || (i == 0 && j == face.length - 1);
+            if (adj) {
+                newFacesArr ~= face.dup;
+                newSubpatch ~= sub;
+                newOrder    ~= ord;
+                newMaterial ~= mat;
+                continue;
+            }
+
+            // Split: f1 = face[i..j+1], f2 = face[j..] ~ face[0..i+1].
+            uint[] f1 = face[i .. j + 1].dup;
+            uint[] f2 = (face[j .. $] ~ face[0 .. i + 1]).dup;
+
+            if (f1.length < 3 || f2.length < 3) {
+                // Degenerate — guard above should prevent this; keep whole.
+                newFacesArr ~= face.dup;
+                newSubpatch ~= sub;
+                newOrder    ~= ord;
+                newMaterial ~= mat;
+                continue;
+            }
+
+            // f1 (replaces parent slot)
+            newFacesArr ~= f1;
+            newSubpatch ~= sub;
+            newOrder    ~= ord;
+            newMaterial ~= mat;
+
+            // f2 (appended slot) — BOTH must carry parent attrs (OBJ2).
+            newFacesArr ~= f2;
+            newSubpatch ~= sub;
+            newOrder    ~= ord;
+            newMaterial ~= mat;
+
+            nSplit++;
+        }
+
+        if (nSplit == 0) return 0;
+
+        // Apply new face arrays (mirrors weldVerticesByMask pattern at mesh.d:535-558).
+        faces._store = newFacesArr;
+        setFaceSubpatchFrom(newSubpatch);
+        faceSelectionOrder = newOrder;
+        faceMaterial       = newMaterial;
+        clearFaceSelectionResize();
+
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        buildLoops();
+        syncSelection();
+        commitChange(MeshEditScope.Geometry);
+
+        return nSplit;
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -11628,4 +11816,93 @@ unittest { // weightMapNames + addWeightMap + vertexWeight + setVertexWeight
     assert(m.weightMapNames().length == 0);
     assert(m.vertexWeight("missing", 0) == 0.0f);
     assert(!m.setVertexWeight("missing", 0, 1.0f));
+}
+
+// ---------------------------------------------------------------------------
+// cutByPlane unittests
+// ---------------------------------------------------------------------------
+
+unittest { // cutByPlane: single quad split at x=0.5 — T-junction (index-share) + attr carry-over
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    // Set non-default material on face 0 and enable subpatch.
+    m.surfaces ~= Surface("TestMat", Vec3(1,0,0));
+    m.faceMaterial[0] = 1;
+    m.setSubpatch(0, true);
+
+    // Cut at x=0.5 (normal along X).
+    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+
+    assert(nSplit == 1, "single quad should produce 1 split");
+    assert(m.faces.length == 2, "2 sub-faces after cut");
+    // Edge (0,1): d[0]=-0.5, d[1]=0.5 → new vert v4 at (0.5,0,0)
+    // Edge (3,2): d[3]=-0.5, d[2]=0.5 → new vert v5 at (0.5,1,0)
+    assert(m.vertices.length == 6, "4 original + 2 crossing verts");
+
+    // T-junction check: both sub-faces must share the SAME vertex index at
+    // each cut point (same index = same addVertex call, no T-junction).
+    uint[] f0 = m.faces[0];
+    uint[] f1 = m.faces[1];
+    // Find vertex indices at x=0.5 in each face.
+    uint[] cuts0, cuts1;
+    foreach (vi; f0) if (m.vertices[vi].x > 0.49f && m.vertices[vi].x < 0.51f) cuts0 ~= vi;
+    foreach (vi; f1) if (m.vertices[vi].x > 0.49f && m.vertices[vi].x < 0.51f) cuts1 ~= vi;
+    assert(cuts0.length == 2, "f0 must have 2 cut verts");
+    assert(cuts1.length == 2, "f1 must have 2 cut verts");
+    import std.algorithm : canFind;
+    foreach (vi; cuts0)
+        assert(cuts1.canFind(vi), "cut vert index must be shared between both sub-faces (T-junction check)");
+
+    // Per-face attr carry-over (OBJ2): both sub-faces inherit material 1 and subpatch.
+    assert(m.faceMaterial.length >= 2, "faceMaterial must cover both sub-faces");
+    assert(m.faceMaterial[0] == 1, "f0 must inherit parent material 1");
+    assert(m.faceMaterial[1] == 1, "f1 must inherit parent material 1");
+    assert(m.isFaceSubpatch(0), "f0 must inherit subpatch bit");
+    assert(m.isFaceSubpatch(1), "f1 must inherit subpatch bit");
+
+    // Topology sanity.
+    assert(m.edges.length > 0, "edges must be rebuilt");
+    assert(m.loops.length == m.faces[0].length + m.faces[1].length, "loops must match arity sum");
+}
+
+unittest { // cutByPlane: adjacent-hit guard — plane at y=0.5 on cube (on-vertex row, no degenerate 2-gons)
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+
+    // Plane at y=0.5 snaps top-row verts on-plane; side faces have adjacent hits → no splits.
+    size_t nSplit = m.cutByPlane(Vec3(0, 0.5f, 0), Vec3(0, 1, 0));
+
+    assert(nSplit == 0, "plane at top-vertex row must produce 0 splits (adjacent-hit guard)");
+    assert(m.faces.length == 6, "face count must stay 6 (cube)");
+    assert(m.vertices.length == 8, "vertex count must stay 8 (no new verts)");
+    // No 2-vertex faces.
+    foreach (fi, face; m.faces)
+        assert(face.length >= 3, "no degenerate 2-vertex faces must exist");
+}
+
+unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 orphans
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+
+    // Cut at y=0 through the cube middle; 4 side faces straddle, 2 caps don't.
+    size_t nSplit = m.cutByPlane(Vec3(0, 0, 0), Vec3(0, 1, 0));
+
+    assert(nSplit == 4, "4 side faces split by mid-plane cut");
+    assert(m.faces.length == 10, "6 faces → 4 split (×2) + 2 unchanged = 10");
+    assert(m.vertices.length == 12, "8 original + 4 crossing verts = 12");
+    // No orphan vertices.
+    import std.conv : to;
+    bool[] refd = new bool[](m.vertices.length);
+    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+    foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after cut");
+    // No degenerate faces.
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-faces");
 }
