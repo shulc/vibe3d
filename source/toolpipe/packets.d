@@ -447,15 +447,33 @@ struct SymmetryPacket {
 /// enabled types wins. Covers the snap-element-mode types plus grid /
 /// workplane variants — see doc/snap_plan.md.
 enum SnapType : uint {
-    None       = 0,
-    Vertex     = 1 << 0,   // 7.3a
-    Edge       = 1 << 1,   // 7.3b
-    EdgeCenter = 1 << 2,   // 7.3b
-    Polygon    = 1 << 3,   // 7.3b
-    PolyCenter = 1 << 4,   // 7.3b
-    Grid       = 1 << 5,   // 7.3c
-    Workplane  = 1 << 6,   // 7.3c
+    None         = 0,
+    Vertex       = 1 << 0,   // 7.3a
+    Edge         = 1 << 1,   // 7.3b
+    EdgeCenter   = 1 << 2,   // 7.3b
+    Polygon      = 1 << 3,   // 7.3b
+    PolyCenter   = 1 << 4,   // 7.3b
+    Grid         = 1 << 5,   // 7.3c
+    Workplane    = 1 << 6,   // 7.3c
+    // Stage 1: six new constraint-target + item-scope types.
+    // Bits 7-12; must not collide with the existing ≤bit6 types.
+    Pivot        = 1 << 7,   // item pivot world point (Stage 3)
+    Intersection = 1 << 8,   // screen-space edge crossing (Stage 6)
+    WorldAxis    = 1 << 9,   // LINE constraint along X/Y/Z through origin (Stage 2)
+    StraightLine = 1 << 10,  // LINE constraint along active axis (Stage 7, unwired)
+    RightAngle   = 1 << 11,  // PLANE constraint normal = active axis (Stage 7, unwired)
+    Box          = 1 << 12,  // AABB corners (discrete) + face planes (constraint) (Stage 4)
 }
+
+/// Snap scope — filters which enabled types are consulted in a query.
+/// `Global`    = all enabled types (modeless default).
+/// `Component` = only mesh-geometry types (Vertex/Edge/EdgeCenter/Polygon/
+///               PolyCenter/Intersection) + scope-independent guides.
+/// `Item`      = only item-frame types (Pivot/Box) + scope-independent guides.
+/// Guide/grid/constraint types (Grid/Workplane/WorldAxis/StraightLine/
+/// RightAngle) are scope-independent — they pass in every mode.
+/// See snap.d `typeEligible` for the authoritative predicate.
+enum SnapMode { Global, Component, Item }
 
 /// Snap configuration — published by SNAP stage in 7.3. The actual
 /// snap math runs in `source/snap.d`'s `snapCursor()` (called on every
@@ -467,11 +485,14 @@ enum SnapType : uint {
 /// the resolved grid step, so snap.d's Grid / Workplane candidate
 /// generators don't need to walk the pipeline themselves.
 struct SnapPacket {
-    bool   enabled       = false;     // master on/off (X key)
-    uint   enabledTypes  = SnapType.Vertex
-                         | SnapType.EdgeCenter
-                         | SnapType.PolyCenter
-                         | SnapType.Grid;
+    bool     enabled       = false;     // master on/off (X key)
+    uint     enabledTypes  = SnapType.Vertex
+                           | SnapType.EdgeCenter
+                           | SnapType.PolyCenter
+                           | SnapType.Grid;
+    // Stage 1: snap scope (Global/Component/Item). Named `snapScope` because
+    // `scope` is a D reserved keyword. Default Global = all types eligible.
+    SnapMode snapScope     = SnapMode.Global;
     float  innerRangePx  = 8.0f;       // snap fires when cursor within this
     float  outerRangePx  = 24.0f;      // candidate highlights when within this
     bool   fixedGrid     = false;      // grid uses fixedGridSize, not dynamic
