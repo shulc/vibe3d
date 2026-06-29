@@ -2791,6 +2791,54 @@ struct Mesh {
         return exEdges.length;
     }
 
+    /// Vertex Extrude: additive, faceless. For each vertex selected in `mask`,
+    /// spawns a duplicate vertex offset along the averaged face-normal (or
+    /// (0,1,0) when the vertex has no incident faces) and connects
+    /// original→duplicate with a new wire edge. Selection moves to the new
+    /// vertices on return. Calls buildLoops (NOT rebuildEdges — wire edges must
+    /// survive). Returns the number of new vertices added (0 on no-op).
+    ///
+    /// Ordering invariant: selected indices are gathered from `mask` BEFORE any
+    /// addVertex / resize call that would grow or corrupt the arrays.
+    size_t extrudeVerticesByMask(in bool[] mask, float offset)
+    {
+        if (mask.length != vertices.length) return 0;
+        if (offset == 0.0f) return 0;
+
+        // Snapshot selected indices before any mutation.
+        uint[] sel;
+        foreach (i; 0 .. mask.length)
+            if (mask[i]) sel ~= cast(uint)i;
+        if (sel.length == 0) return 0;
+
+        uint[] newVerts;
+        newVerts.reserve(sel.length);
+        foreach (v; sel)
+        {
+            // Averaged vertex normal over incident faces.
+            Vec3 dir = Vec3(0, 0, 0);
+            foreach (fi; facesAroundVertex(v))
+                dir = dir + faceNormal(cast(uint)fi);
+            float len = dir.length;
+            dir = (len > 1e-6f) ? dir * (1.0f / len) : Vec3(0, 1, 0);
+
+            uint nv = addVertex(vertices[v] + dir * offset);
+            addEdge(v, nv);
+            newVerts ~= nv;
+        }
+
+        resizeVertexSelection();
+        resizeEdgeSelection();
+        buildLoops();
+
+        // Move selection to the extruded (new) vertices.
+        clearVertexSelection();
+        foreach (nv; newVerts)
+            selectVertex(cast(int)nv);
+
+        return newVerts.length;
+    }
+
     /// Edge Extend: ADDITIVE, non-manifold. Per selected edge (with ≥1 adjacent
     /// face) adds 2 ridge verts + 1 bridge quad; the source mesh is NOT modified
     /// (the source edge becomes 3-face non-manifold; ring adjacency at that edge is
@@ -12212,4 +12260,55 @@ unittest { // thickenSurface: symmetric mode places originals at ±t/2
         assert(abs(m.vertices[i].z - 0.2f) < 1e-5f, "symmetric: outer vert at +0.2");
     foreach (i; 4 .. 8)
         assert(abs(m.vertices[i].z + 0.2f) < 1e-5f, "symmetric: inner vert at -0.2");
+}
+
+// extrudeVerticesByMask: cube corner 0 at (-0.5,-0.5,-0.5).
+// Corner 0 is incident to 3 faces whose normals are (0,0,-1)+(-1,0,0)+(0,-1,0)
+// = (-1,-1,-1), normalized → direction = normalize(-1,-1,-1).
+// Expected: +1 vertex, +1 edge; new vertex at corner + dir*0.5; selection
+// moves to new vertex only.
+unittest {
+    import std.math : abs, sqrt;
+    auto m = makeCube();
+    const size_t oldV = m.vertices.length; // 8
+    const size_t oldE = m.edges.length;    // 12
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;  // corner (-0.5,-0.5,-0.5)
+    size_t added = m.extrudeVerticesByMask(mask, 0.5f);
+
+    assert(added == 1,                    "extrudeVerticesByMask: should add 1 vertex");
+    assert(m.vertices.length == oldV + 1, "extrudeVerticesByMask: vertex count +1");
+    assert(m.edges.length    == oldE + 1, "extrudeVerticesByMask: edge count +1");
+
+    // New vertex is at index oldV.
+    const float inv3 = 1.0f / sqrt(3.0f);
+    Vec3 expected = Vec3(-0.5f, -0.5f, -0.5f) + Vec3(-inv3, -inv3, -inv3) * 0.5f;
+    Vec3 got = m.vertices[oldV];
+    assert(abs(got.x - expected.x) < 1e-5f, "extrudeVerticesByMask: x mismatch");
+    assert(abs(got.y - expected.y) < 1e-5f, "extrudeVerticesByMask: y mismatch");
+    assert(abs(got.z - expected.z) < 1e-5f, "extrudeVerticesByMask: z mismatch");
+
+    // Wire edge (0 → oldV) must exist.
+    bool edgeFound = false;
+    foreach (e; m.edges)
+        if ((e[0] == 0 && e[1] == cast(uint)oldV) ||
+            (e[1] == 0 && e[0] == cast(uint)oldV))
+            edgeFound = true;
+    assert(edgeFound, "extrudeVerticesByMask: wire edge not found");
+
+    // Selection must have moved: only the new vertex selected.
+    assert( m.isVertexSelected(oldV), "extrudeVerticesByMask: new vertex not selected");
+    assert(!m.isVertexSelected(0),    "extrudeVerticesByMask: original vertex still selected");
+}
+
+// extrudeVerticesByMask: offset=0 is a no-op.
+unittest {
+    auto m = makeCube();
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    size_t added = m.extrudeVerticesByMask(mask, 0.0f);
+    assert(added == 0,                     "extrudeVerticesByMask: offset=0 must be no-op");
+    assert(m.vertices.length == 8,         "extrudeVerticesByMask: offset=0 must not add verts");
+    assert(m.edges.length    == 12,        "extrudeVerticesByMask: offset=0 must not add edges");
 }
