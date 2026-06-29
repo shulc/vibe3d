@@ -138,6 +138,7 @@ enum FalloffType : uint {
     Element   = 6,   // Stage 14.1 — sphere around picked element centroid (xfrm.elementMove preset)
     Selection = 7,   // D.7 — `falloff.selection`; selected=1.0, unselected decays by BFS hop distance from selection (xfrm.flex preset)
     Composite = 8,   // multi-falloff — weight = Mix-Mode accumulation of `contributors` (each sub-packet carries its own `mix`)
+    VertexMap = 9,   // per-vertex weight read from a named Point dim-1 MeshMap; defaults to 1.0 for unregistered / out-of-range vertices
 }
 
 /// Falloff Mix Mode — how a contributor's per-vertex weight combines with
@@ -346,6 +347,12 @@ struct FalloffPacket {
     // → 1; unselected → 0. Empty slice degenerates to "no
     // falloff" (caller multiplies by 1.0 for every vert).
     const(float)[] selectionWeights;
+
+    // VertexMap: pre-baked per-vert weights read from a named Point
+    // dim-1 MeshMap. Values are clamped to [0, 1] at READ time in
+    // falloff.d so the slice stays raw (future parity modes may want
+    // the un-clamped data). Empty slice degenerates to full influence.
+    const(float)[] vertexMapWeights;
 
     // Compound passes — exponent the SCALE kernel applies to
     // the per-axis factor: `s_eff = (1 + (s-1)·w) ^ compoundPasses`.
