@@ -84,6 +84,7 @@ import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
+import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
@@ -2434,6 +2435,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.edgeJoin"] = () => cast(Command)
+        new MeshEdgeJoin(&mesh(), cameraView, editMode, &gpu,
+                         &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.spinEdge"] = () => cast(Command)
         new MeshSpinEdge(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
