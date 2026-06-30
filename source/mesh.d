@@ -258,6 +258,7 @@ struct Mesh {
     // doc/material_groups_plan.md for the data-model rationale.
     Surface[] surfaces;
     uint[]    faceMaterial;
+    uint[]    facePart;     /// per-face "part" id (parallel to faceMaterial; read sites defend fi<len?:0)
     // Monotonic counter bumped on any topology or vertex-position change that
     // invalidates the subpatch preview. Mutators that touch geometry should
     // increment this so cached previews can detect the change.
@@ -416,6 +417,7 @@ struct Mesh {
         faceSelectionOrder.length   = faces.length;
         resizeSubpatch();
         faceMaterial.length         = faces.length;
+        facePart.length             = faces.length;
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
@@ -455,6 +457,7 @@ struct Mesh {
         if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
         if (isSubpatch.length           < faces.length)    resizeSubpatch();
         if (faceMaterial.length         < faces.length)    faceMaterial.length         = faces.length;
+        if (facePart.length             < faces.length)    facePart.length             = faces.length;
     }
 
     // Rebuild the deduplicated `edges` array from the current `faces`.
@@ -536,6 +539,7 @@ struct Mesh {
         bool[]   newSubpatch;
         int[]    newOrder;
         uint[]   newMaterial;
+        uint[]   newPart;
         newFaces.reserve(faces.length);
         foreach (fi, ref face; faces) {
             uint[] f;
@@ -550,12 +554,14 @@ struct Mesh {
                 newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+                newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
             }
         }
         faces              = newFaces;
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        facePart           = newPart;
         clearFaceSelectionResize();
 
         rebuildEdges();
@@ -1196,6 +1202,7 @@ struct Mesh {
         if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
         if (isSubpatch.length > faces.length) resizeSubpatch();
         if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
+        if (facePart.length     > faces.length) facePart.length     = faces.length;
 
         // Geometry-class: coincident verts merged, faces/edges rebuilt.
         commitChange(MeshEditScope.Geometry);
@@ -1282,11 +1289,13 @@ struct Mesh {
         bool[]   keptSubpatch;
         int[]    keptOrder;
         uint[]   keptMaterial;
+        uint[]   keptPart;
         size_t   removed = 0;
         keptFaces.reserve(faces.length);
         keptSubpatch.reserve(faces.length);
         keptOrder.reserve(faces.length);
         keptMaterial.reserve(faces.length);
+        keptPart.reserve(faces.length);
         // Class B tracker hook — accumulate the dropped (filtered-out) faces so
         // a RemoveFaces entry can re-insert them on revert. Inert unless a batch
         // is open. Indices are the PRE-filter face indices (the space the entry
@@ -1294,6 +1303,7 @@ struct Mesh {
         uint[]   droppedFaceIdx;
         uint[][] droppedFaceLists;
         uint[]   droppedFaceMat;
+        uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         const bool recDelete = editRecorder_ !is null;
         // PolyVertex remap, mechanism (a): surviving faces keep their corner
@@ -1310,6 +1320,7 @@ struct Mesh {
                     droppedFaceIdx   ~= cast(uint)i;
                     droppedFaceLists ~= f.dup;
                     droppedFaceMat   ~= (i < faceMaterial.length ? faceMaterial[i] : 0u);
+                    droppedFacePart  ~= (i < facePart.length    ? facePart[i]    : 0u);
                     droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
                 }
                 continue;
@@ -1318,6 +1329,7 @@ struct Mesh {
             keptSubpatch ~= (i < isSubpatch.length        ? isSubpatch[i]        : false);
             keptOrder    ~= (i < faceSelectionOrder.length ? faceSelectionOrder[i] : 0);
             keptMaterial ~= (i < faceMaterial.length      ? faceMaterial[i]      : 0u);
+            keptPart     ~= (i < facePart.length          ? facePart[i]          : 0u);
             if (remapUv)
                 foreach (c; 0 .. f.length)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)i, cast(uint)c);
@@ -1325,11 +1337,12 @@ struct Mesh {
         if (removed == 0) return 0;
         if (recDelete)
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
-                                            droppedFaceMat, droppedFaceSub);
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub);
         faces              = keptFaces;
         setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
+        facePart           = keptPart;
         // PolyVertex relocate (a): per-corner values follow their surviving
         // corners. Done now (before the tail buildLoops); the loop layout this
         // produces is exactly what buildLoops rebuilds from the new `faces`, so
@@ -1421,10 +1434,12 @@ struct Mesh {
         bool[]   newSubpatch;
         int[]    newOrder;
         uint[]   newMaterial;
+        uint[]   newPart;
         newFaces.reserve(faces.length);
         newSubpatch.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
+        newPart.reserve(faces.length);
         // Class B tracker hook accumulators — inert unless a batch is open.
         // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
         // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
@@ -1437,6 +1452,7 @@ struct Mesh {
         uint[]   removedFaceIdx;
         uint[][] removedFaceLists;
         uint[]   removedFaceMat;
+        uint[]   removedFacePart;
         uint[]   removedFaceSub;
         // PolyVertex remap, mechanism (b): a masked corner is dropped from its
         // face's corner LIST, so new corner `j` of a surviving face came from a
@@ -1464,6 +1480,7 @@ struct Mesh {
                 newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+                newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
                 if (remapUv)
                     foreach (kc; keptCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
@@ -1473,6 +1490,7 @@ struct Mesh {
                 removedFaceIdx   ~= cast(uint)newFaces.length;
                 removedFaceLists ~= f.dup;
                 removedFaceMat   ~= (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+                removedFacePart  ~= (fi < facePart.length    ? facePart[fi]    : 0u);
                 removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
             }
         }
@@ -1482,12 +1500,13 @@ struct Mesh {
             // matching the post-shrink index space both were recorded in.
             editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
             editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
-                                            removedFaceMat, removedFaceSub);
+                                            removedFaceMat, removedFacePart, removedFaceSub);
         }
         faces              = newFaces;
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        facePart           = newPart;
         // PolyVertex relocate (b): per-corner values follow surviving corners
         // through the arity change. Before the tail buildLoops/compact.
         if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
@@ -1626,6 +1645,7 @@ struct Mesh {
         bool[]   newPolySubpatch;
         int[]    newPolyOrder;
         uint[]   newPolyMaterial;
+        uint[]   newPolyPart;
         // Parallel to newPolyList: the OLD loop index that produced each merged
         // corner (mechanism b). `~0u` ⇒ no traceable source ⇒ zero-fill.
         uint[][] newPolySrcLoop;
@@ -1698,6 +1718,7 @@ struct Mesh {
             newPolySubpatch  ~= (firstFi < cast(int)isSubpatch.length        ? isSubpatch[firstFi]        : false);
             newPolyOrder     ~= (firstFi < cast(int)faceSelectionOrder.length ? faceSelectionOrder[firstFi] : 0);
             newPolyMaterial  ~= (firstFi < cast(int)faceMaterial.length      ? faceMaterial[firstFi]      : 0u);
+            newPolyPart      ~= (firstFi < cast(int)facePart.length          ? facePart[firstFi]          : 0u);
             if (remapUv) newPolySrcLoop ~= polySrc;
         }
 
@@ -1718,11 +1739,13 @@ struct Mesh {
         uint[]   droppedFaceIdx;
         uint[][] droppedFaceLists;
         uint[]   droppedFaceMat;
+        uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         uint[][] keptFaces;
         bool[]   keptSubpatch;
         int[]    keptOrder;
         uint[]   keptMaterial;
+        uint[]   keptPart;
         // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
         uint[] oldLoopOfNewLoop;
         foreach (fi; 0 .. nFaces) {
@@ -1735,6 +1758,7 @@ struct Mesh {
                     droppedFaceIdx   ~= cast(uint)keptFaces.length;
                     droppedFaceLists ~= faces[fi].dup;
                     droppedFaceMat   ~= (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+                    droppedFacePart  ~= (fi < facePart.length    ? facePart[fi]    : 0u);
                     droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
                 }
                 continue;
@@ -1743,6 +1767,7 @@ struct Mesh {
             keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
             keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+            keptPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
             // Kept faces preserve arity → corner c maps to old loop fi/c (a).
             if (remapUv)
                 foreach (c; 0 .. faces[fi].length)
@@ -1755,6 +1780,7 @@ struct Mesh {
             keptSubpatch ~= newPolySubpatch[i];
             keptOrder    ~= newPolyOrder[i];
             keptMaterial ~= newPolyMaterial[i];
+            keptPart     ~= newPolyPart[i];
             // Merged poly corners → the old loop traced during the boundary
             // walk (~0u where the walk could not trace a source) (b).
             if (remapUv) oldLoopOfNewLoop ~= newPolySrcLoop[i];
@@ -1764,7 +1790,7 @@ struct Mesh {
             // merged polys truncate FIRST (restoring the kept-only array), then
             // the dropped component faces re-insert into the post-drop space.
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
-                                            droppedFaceMat, droppedFaceSub);
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub);
             uint[][] mergedLists;
             mergedLists.length = newPolyList.length;
             foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
@@ -1775,6 +1801,7 @@ struct Mesh {
         setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
+        facePart           = keptPart;
         // PolyVertex relocate (b): per-corner values follow the merged/kept
         // corners. Before the tail buildLoops (which then no-ops the resize).
         if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
@@ -1822,6 +1849,7 @@ struct Mesh {
         bool[]   newSubpatch;
         int[]    newOrder;
         uint[]   newMaterial;
+        uint[]   newPart;
         uint[]   faceOrigin;   // faceOrigin[new_fi] = original fi
 
         size_t changed = 0;
@@ -1831,6 +1859,7 @@ struct Mesh {
             bool sub = isFaceSubpatch(fi);
             int  ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             uint mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+            uint prt = (fi < facePart.length           ? facePart[fi]           : 0u);
 
             if (!mask[fi] || f.length <= 3) {
                 // Pass through untouched.
@@ -1838,6 +1867,7 @@ struct Mesh {
                 newSubpatch ~= sub;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
+                newPart     ~= prt;
                 faceOrigin  ~= cast(uint)fi;
                 if (remapUv)
                     foreach (c; 0 .. f.length)
@@ -1852,6 +1882,7 @@ struct Mesh {
                     newSubpatch ~= sub;
                     newOrder    ~= ord;
                     newMaterial ~= mat;
+                    newPart     ~= prt;
                     faceOrigin  ~= cast(uint)fi;
                     if (remapUv) {
                         // Triangle corners map to old corners 0, i, i+1 of fi.
@@ -1869,6 +1900,7 @@ struct Mesh {
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        facePart           = newPart;
         if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
         clearFaceSelectionResize();
         rebuildEdges();
@@ -3018,6 +3050,7 @@ struct Mesh {
         foreach (bi; 0 .. faces.length - firstBridge) {
             uint srcFace = bridgeMaterialSrc[bi];
             faceMaterial       ~= (srcFace < faceMaterial.length ? faceMaterial[srcFace] : 0u);
+            facePart           ~= (srcFace < facePart.length     ? facePart[srcFace]     : 0u);
             faceSelectionOrder ~= 0;
         }
         resizeSubpatch();
@@ -3610,10 +3643,11 @@ struct Mesh {
         //     edge, all inheriting the same orienting-face material.
         foreach (bi, ref e; exEdges) {
             int orientFace = orientFaceOf(e);
-            uint mat = (orientFace < faceMaterial.length
-                        ? faceMaterial[orientFace] : 0u);
+            uint mat  = (orientFace < faceMaterial.length ? faceMaterial[orientFace] : 0u);
+            uint part = (orientFace < facePart.length     ? facePart[orientFace]     : 0u);
             foreach (k; 1 .. N + 1) {
                 faceMaterial       ~= mat;
+                facePart           ~= part;
                 faceSelectionOrder ~= 0;
             }
         }
@@ -3758,6 +3792,7 @@ struct Mesh {
         faceSelectionOrder.length = faces.length;
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -3766,6 +3801,7 @@ struct Mesh {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
             setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
+            facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
         }
         resizeVertexSelection();
@@ -3784,11 +3820,13 @@ struct Mesh {
                 int[]    keptOrder;
                 bool[]   keptSelected;
                 uint[]   keptMaterial;
+                uint[]   keptPart;
                 keptFaces   .reserve(faces.length);
                 keptSubpatch.reserve(faces.length);
                 keptOrder   .reserve(faces.length);
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
+                keptPart    .reserve(faces.length);
                 foreach (fi, ref f; faces) {
                     auto sorted = f.dup;
                     sort(sorted);
@@ -3800,12 +3838,14 @@ struct Mesh {
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
                 }
                 faces              = keptFaces;
                 setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
                 setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
+                facePart           = keptPart;
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -3885,6 +3925,7 @@ struct Mesh {
         faceSelectionOrder.length = faces.length;
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -3897,6 +3938,7 @@ struct Mesh {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
             setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
+            facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
         }
         resizeVertexSelection();
@@ -3920,11 +3962,13 @@ struct Mesh {
                 int[]    keptOrder;
                 bool[]   keptSelected;
                 uint[]   keptMaterial;
+                uint[]   keptPart;
                 keptFaces   .reserve(faces.length);
                 keptSubpatch.reserve(faces.length);
                 keptOrder   .reserve(faces.length);
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
+                keptPart    .reserve(faces.length);
                 foreach (fi, ref f; faces) {
                     auto sorted = f.dup;
                     sort(sorted);
@@ -3936,12 +3980,14 @@ struct Mesh {
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
                 }
                 faces              = keptFaces;
                 setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
                 setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
+                facePart           = keptPart;
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -4026,6 +4072,7 @@ struct Mesh {
         faceSelectionOrder.length = faces.length;
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
         // Mark the new mirrored faces as the active selection; clear
         // the originals' face-selection bits (they keep their geometry
         // unchanged but lose the "this is selected" tag, matching
@@ -4038,6 +4085,7 @@ struct Mesh {
             size_t newFi = origFaceCount + k;
             setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+            facePart[newFi]     = (fi < facePart.length     ? facePart[fi]     : 0u);
             selectFace(cast(int)newFi);
         }
 
@@ -4068,11 +4116,13 @@ struct Mesh {
                 int[]    keptOrder;
                 bool[]   keptSelected;
                 uint[]   keptMaterial;
+                uint[]   keptPart;
                 keptFaces   .reserve(faces.length);
                 keptSubpatch.reserve(faces.length);
                 keptOrder   .reserve(faces.length);
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
+                keptPart    .reserve(faces.length);
                 foreach (fi, ref f; faces) {
                     auto sorted = f.dup;
                     sort(sorted);
@@ -4084,12 +4134,14 @@ struct Mesh {
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
                 }
                 faces              = keptFaces;
                 setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
                 setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
+                facePart           = keptPart;
 
                 // Edges may now reference verts that were welded but
                 // are still recorded as endpoints; re-derive from the
@@ -4169,6 +4221,7 @@ struct Mesh {
         faceSelectionOrder.length = faces.length;
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
         // Clear old face selection first; only new duplicates remain selected.
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
@@ -4178,6 +4231,7 @@ struct Mesh {
             size_t newFi = origFaceCount + k;
             setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+            facePart[newFi]     = (fi < facePart.length     ? facePart[fi]     : 0u);
             selectFace(cast(int)newFi);
         }
 
@@ -4198,8 +4252,8 @@ struct Mesh {
     /// `clipVerts` are appended to `vertices`. Each face in `clipFaces`
     /// stores 0-based indices into `clipVerts`; they are remapped by
     /// `+vertexBase` (the pre-append vertex count) before being added to
-    /// `faces`. `clipSubpatch` and `clipMaterial` are per-face parallel
-    /// arrays sourced from the clipboard.
+    /// `faces`. `clipSubpatch`, `clipMaterial`, and `clipPart` are per-face
+    /// parallel arrays sourced from the clipboard.
     ///
     /// After appending, selection switches to the new faces only: all
     /// pre-existing faces are deselected; each new face is selected in
@@ -4209,7 +4263,8 @@ struct Mesh {
     /// at the end — no per-face hooks or addFace calls (which would each
     /// fire commitChange). Returns the number of faces appended; 0 = no-op.
     size_t appendGeometry(in Vec3[] clipVerts, in uint[][] clipFaces,
-                          in bool[] clipSubpatch, in uint[] clipMaterial) {
+                          in bool[] clipSubpatch, in uint[] clipMaterial,
+                          in uint[] clipPart = null) {
         if (clipFaces.length == 0) return 0;
 
         const size_t vertBase      = vertices.length;
@@ -4235,6 +4290,7 @@ struct Mesh {
         faceSelectionOrder.length = faces.length;
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
 
         // Deselect all pre-existing faces; only pasted faces end up selected.
         foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);
@@ -4245,6 +4301,7 @@ struct Mesh {
             size_t newFi = origFaceCount + k;
             setFaceSubpatch(newFi, (k < clipSubpatch.length ? clipSubpatch[k] : false));
             faceMaterial[newFi] = (k < clipMaterial.length ? clipMaterial[k] : 0u);
+            facePart[newFi]     = (k < clipPart.length     ? clipPart[k]     : 0u);
             selectFace(cast(int)newFi);
         }
 
@@ -4396,6 +4453,7 @@ struct Mesh {
         // Order: [non-selected originals] + [cap clones] + [wall quads].
         uint[][] newFaces;
         uint[]   newMat;
+        uint[]   newPart;
         int[]    newOrd;
         bool[]   newSub;
 
@@ -4404,6 +4462,7 @@ struct Mesh {
             if (mask[fi]) continue;
             newFaces ~= faces[fi];
             newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
             newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
             newSub   ~= isFaceSubpatch(fi);
         }
@@ -4417,6 +4476,7 @@ struct Mesh {
             foreach (k, vid; src) cloned[k] = vertMap[vid];
             newFaces ~= cloned;
             newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+            newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
             newOrd   ~= 0;
             newSub   ~= isFaceSubpatch(fi);
         }
@@ -4440,14 +4500,16 @@ struct Mesh {
             // Wall traverses the shared top edge in the opposite direction.
             if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
             else          newFaces ~= [cloneA, cloneB, b, a];
-            newMat ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
-            newOrd ~= 0;
-            newSub ~= false;
+            newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
+            newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
+            newOrd  ~= 0;
+            newSub  ~= false;
         }
 
         // Assign reconstructed arrays.
         faces              = newFaces;
         faceMaterial       = newMat;
+        facePart           = newPart;
         faceSelectionOrder = newOrd;
         // Rebuild faceMarks from scratch: resize+zero ALL bits (clears both
         // Select and stale Subpatch from the old ordering), then set Subpatch.
@@ -5466,16 +5528,19 @@ struct Mesh {
         if (processed == 0) return 0;
 
         // Attribute carry-over for appended fan tris.
-        // addFace grows PolyVertex maps but NOT faceMaterial/faceMarks.
-        // Save original faceMaterial length for the source-read guard, then
-        // grow both arrays (D zero-fills new slots).
-        const size_t origMatLen = faceMaterial.length;
+        // addFace grows PolyVertex maps but NOT faceMaterial/facePart/faceMarks.
+        // Save original array lengths for the source-read guard, then
+        // grow all arrays (D zero-fills new slots).
+        const size_t origMatLen  = faceMaterial.length;
+        const size_t origPartLen = facePart.length;
         resizeSubpatch();               // grows faceMarks to faces.length
-        faceMaterial.length = faces.length; // grows faceMaterial to faces.length
+        faceMaterial.length = faces.length;
+        facePart.length     = faces.length;
         foreach (k; 0 .. appendedFi.length) {
             const uint newFi = appendedFi[k];
             const uint srcFi  = fanSrc[k];
-            faceMaterial[newFi] = (srcFi < origMatLen ? faceMaterial[srcFi] : 0u);
+            faceMaterial[newFi] = (srcFi < origMatLen  ? faceMaterial[srcFi] : 0u);
+            facePart[newFi]     = (srcFi < origPartLen ? facePart[srcFi]     : 0u);
             setFaceSubpatch(newFi, isFaceSubpatch(srcFi));
         }
 
@@ -5711,6 +5776,7 @@ struct Mesh {
         // Rebuild face arrays using the extrudeFacesByMask idiom.
         uint[][] newFaces;
         uint[]   newMat;
+        uint[]   newPart;
         int[]    newOrd;
         bool[]   newSub;
 
@@ -5732,9 +5798,10 @@ struct Mesh {
                 }
                 newFaces ~= rebuilt;
             }
-            newMat ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
-            newOrd ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
-            newSub ~= isFaceSubpatch(fi);
+            newMat  ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newOrd  ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub  ~= isFaceSubpatch(fi);
         }
 
         // Emit one chamfer quad per ok edge.
@@ -5744,6 +5811,7 @@ struct Mesh {
             auto q = qEdges[qi];
             newFaces ~= [q.ipLv0, q.ipLv1, q.ipRv1, q.ipRv0];
             newMat   ~= 0u;
+            newPart  ~= 0u;
             newOrd   ~= 0;
             newSub   ~= false;
         }
@@ -5751,6 +5819,7 @@ struct Mesh {
         // Assign reconstructed arrays.
         faces              = newFaces;
         faceMaterial       = newMat;
+        facePart           = newPart;
         faceSelectionOrder = newOrd;
 
         // Rebuild faceMarks: zero all, then restore subpatch bits.
@@ -5904,6 +5973,7 @@ struct Mesh {
         // single rebuild pass: rewritten faces then cap faces
         uint[][] newFaces;
         uint[]   newMat;
+        uint[]   newPart;
         int[]    newOrd;
         bool[]   newSub;
 
@@ -5924,9 +5994,10 @@ struct Mesh {
                 }
                 newFaces ~= rebuilt;
             }
-            newMat ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
-            newOrd ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
-            newSub ~= isFaceSubpatch(cast(uint)fi);
+            newMat  ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newOrd  ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub  ~= isFaceSubpatch(cast(uint)fi);
         }
 
         // (b) cap faces — attrs carried from capSrc, not the chamfer 0u literal
@@ -5963,6 +6034,7 @@ struct Mesh {
             uint srcFi = capSrc[vi];
             newFaces ~= capRing;
             newMat   ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+            newPart  ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
             newOrd   ~= 0;
             newSub   ~= isFaceSubpatch(srcFi);
         }
@@ -5970,6 +6042,7 @@ struct Mesh {
         // (c) commit arrays
         faces              = newFaces;
         faceMaterial       = newMat;
+        facePart           = newPart;
         faceSelectionOrder = newOrd;
 
         faceMarks.length = faces.length;
@@ -7519,10 +7592,12 @@ struct Mesh {
         bool[]   newSubpatch;
         int[]    newOrder;
         uint[]   newMaterial;
+        uint[]   newPart;
         newFaces.reserve(faces.length);
         newSubpatch.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
+        newPart.reserve(faces.length);
 
         size_t removed = 0;
         size_t fixed   = 0;
@@ -7576,6 +7651,7 @@ struct Mesh {
             newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
             newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+            newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
             if (remapUv)
                 foreach (sc; srcCorner)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -7588,6 +7664,7 @@ struct Mesh {
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        facePart           = newPart;
         if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
 
         clearFaceSelectionResize();
@@ -8201,6 +8278,7 @@ struct Mesh {
         bool[]   newSubpatch;
         int[]    newOrder;
         uint[]   newMaterial;
+        uint[]   newPart;
         newFacesArr.reserve(origFaceCount + origFaceCount / 2);
 
         size_t nSplit = 0;
@@ -8209,6 +8287,7 @@ struct Mesh {
             bool  sub = isFaceSubpatch(fi);
             int   ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             uint  mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+            uint  prt = (fi < facePart.length           ? facePart[fi]           : 0u);
 
             // Faces not in the mask are copied whole (never split).
             bool eligible = (splitFaceMask.length == 0) ||
@@ -8218,6 +8297,7 @@ struct Mesh {
                 newSubpatch ~= sub;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
+                newPart     ~= prt;
                 continue;
             }
 
@@ -8232,6 +8312,7 @@ struct Mesh {
                 newSubpatch ~= sub;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
+                newPart     ~= prt;
                 continue;
             }
 
@@ -8244,6 +8325,7 @@ struct Mesh {
                 newSubpatch ~= sub;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
+                newPart     ~= prt;
                 continue;
             }
 
@@ -8257,6 +8339,7 @@ struct Mesh {
                 newSubpatch ~= sub;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
+                newPart     ~= prt;
                 continue;
             }
 
@@ -8265,12 +8348,14 @@ struct Mesh {
             newSubpatch ~= sub;
             newOrder    ~= ord;
             newMaterial ~= mat;
+            newPart     ~= prt;
 
             // f2 (appended slot) — BOTH halves carry parent attrs.
             newFacesArr ~= f2;
             newSubpatch ~= sub;
             newOrder    ~= ord;
             newMaterial ~= mat;
+            newPart     ~= prt;
 
             nSplit++;
         }
@@ -8282,6 +8367,7 @@ struct Mesh {
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        facePart           = newPart;
         clearFaceSelectionResize();
 
         rebuildEdges();
@@ -13957,4 +14043,64 @@ unittest {
     assert(n == 0,                "bevelVert no-op: expected 0 processed");
     assert(m.vertices.length == 8, "bevelVert no-op: vertex count unchanged");
     assert(m.faces.length    == 6, "bevelVert no-op: face count unchanged");
+}
+
+// facePart inheritance unittests — parallel to the faceMaterial ones above.
+
+unittest { // cutByPlane: facePart must carry over to both split halves
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    m.facePart.length = 1;
+    m.facePart[0] = 5u;
+
+    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+    assert(nSplit == 1, "facePart/cutByPlane: expected 1 split");
+    assert(m.faces.length == 2, "facePart/cutByPlane: expected 2 faces");
+    assert(m.facePart.length >= 2, "facePart must cover both sub-faces");
+    assert(m.facePart[0] == 5u, "f0 must inherit parent facePart 5");
+    assert(m.facePart[1] == 5u, "f1 must inherit parent facePart 5");
+}
+
+unittest { // splitFaceByVertices: facePart must carry over to both halves
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    m.facePart.length = 1;
+    m.facePart[0] = 3u;
+
+    size_t n = m.splitFaceByVertices(0, 0, 2);
+    assert(n == 1, "facePart/splitFaceByVertices: expected 1 split");
+    assert(m.facePart.length >= 2, "facePart must cover both halves");
+    assert(m.facePart[0] == 3u, "f0 must carry parent facePart 3");
+    assert(m.facePart[1] == 3u, "f1 must carry parent facePart 3");
+}
+
+unittest { // spikeFacesByMask: facePart must carry to all fan tris
+    import std.conv : to;
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1)); m.addVertex(Vec3(-1, 0,  1));
+    m.addVertex(Vec3( 1, 0,  1)); m.addVertex(Vec3( 1, 0, -1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    m.facePart.length = 1;
+    m.facePart[0] = 9u;
+
+    bool[] mask = [true];
+    size_t n = m.spikeFacesByMask(mask, 0.5f);
+    assert(n == 1, "facePart/spike: expected 1 face processed");
+    assert(m.faces.length == 4, "facePart/spike: expected 4 fan tris");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.facePart.length > fi && m.facePart[fi] == 9u,
+               "facePart not carried to fan tri " ~ fi.to!string);
 }

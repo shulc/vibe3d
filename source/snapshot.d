@@ -42,6 +42,7 @@ struct MeshSnapshot {
     int      faceSelectionOrderCounter;
     Surface[] surfaces;
     uint[]    faceMaterial;
+    uint[]    facePart;
     MeshMap[] meshMaps;
     bool     filled = false;
 
@@ -63,6 +64,7 @@ struct MeshSnapshot {
         s.faceSelectionOrderCounter   = mesh.faceSelectionOrderCounter;
         s.surfaces             = mesh.surfaces.dup;
         s.faceMaterial         = mesh.faceMaterial.dup;
+        s.facePart             = mesh.facePart.dup;
         // Deep-dup each map (its `data` too) so later mesh mutations don't
         // alias the snapshot — MeshMap.dup dups the float[] data.
         s.meshMaps             = mesh.meshMaps.map!(mm => mm.dup).array;
@@ -89,6 +91,7 @@ struct MeshSnapshot {
         mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
         mesh.surfaces                    = surfaces.dup;
         mesh.faceMaterial                = faceMaterial.dup;
+        mesh.facePart                    = facePart.dup;
         // Restore the map registry (deep-dup so the live mesh doesn't alias
         // the snapshot's data). buildLoops below rebuilds loops/edges; the
         // restored maps' lengths already match the restored geometry because
@@ -146,6 +149,7 @@ struct MeshSnapshot {
         mesh.faces        = faces.map!(f => f.dup).array;
         mesh.surfaces     = surfaces.dup;
         mesh.faceMaterial = faceMaterial.dup;
+        mesh.facePart     = facePart.dup;
         mesh.meshMaps     = meshMaps.map!(mm => mm.dup).array;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
