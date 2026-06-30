@@ -2121,7 +2121,8 @@ string meshToJson(size_t vertexCount, size_t edgeCount, size_t faceCount) {
 string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount,
                           float[] vertices, uint[2][] edges,
                           uint[][] faces, bool[] isSubpatch,
-                          Surface[] surfaces, uint[] faceMaterial) {
+                          Surface[] surfaces, uint[] faceMaterial,
+                          uint[] facePart = null) {
     import std.format : format;
     import std.array : appender;
     import std.string : join;
@@ -2189,6 +2190,12 @@ string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount
     for (size_t i = 0; i < faceMaterial.length; ++i) {
         if (i > 0) json ~= ", ";
         json ~= format("%d", faceMaterial[i]);
+    }
+    json ~= "], ";
+    json ~= "\"facePart\": [";
+    for (size_t i = 0; i < facePart.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= format("%d", facePart[i]);
     }
     json ~= "]";
     json ~= "}";

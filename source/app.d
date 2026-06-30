@@ -88,6 +88,7 @@ import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.set_material;
+import commands.mesh.set_part;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.add_point : MeshAddPoint;
@@ -2506,6 +2507,8 @@ void main(string[] args) {
         new SubpatchToggle(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.setMaterial"] = () => cast(Command)
         new MeshSetMaterial(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.setPart"] = () => cast(Command)
+        new MeshSetPart(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
@@ -3079,9 +3082,12 @@ void main(string[] args) {
             uint[] matCopy = new uint[](m.faces.length);
             for (size_t i = 0; i < m.faces.length; i++)
                 matCopy[i] = i < m.faceMaterial.length ? m.faceMaterial[i] : 0u;
+            uint[] partCopy = new uint[](m.faces.length);
+            for (size_t i = 0; i < m.faces.length; i++)
+                partCopy[i] = i < m.facePart.length ? m.facePart[i] : 0u;
             return meshToJsonDetailed(
                 m.vertices.length, m.edges.length, m.faces.length,
-                verts, edgesCopy, facesCopy, subCopy, surfacesCopy, matCopy);
+                verts, edgesCopy, facesCopy, subCopy, surfacesCopy, matCopy, partCopy);
         }
 
         httpServer.setDetailedModelDataProvider(() => meshToDetailedJson(mesh));
