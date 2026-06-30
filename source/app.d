@@ -60,6 +60,7 @@ import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
 import tools.poly_bevel : PolyBevelTool;
 import tools.edge_bevel : EdgeBevelTool;
+import tools.reduce : ReductionTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -113,6 +114,7 @@ import commands.mesh.vertex_new    : MeshVertexNew;
 import commands.mesh.vertex_center : MeshCenterVertices;
 import commands.mesh.vertex_set    : MeshSetPosition;
 import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.reduce_edit : MeshReduceEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
 import commands.mesh.flip    : MeshFlip;
@@ -1856,6 +1858,8 @@ void main(string[] args) {
                                                    &gpu, &vertexCache, &edgeCache, &faceCache);
     auto bevelEditFactory = () => new MeshBevelEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
+    auto reduceEditFactory = () => new MeshReduceEdit(&mesh(), cameraView, editMode,
+                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
     auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
     // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
@@ -2156,6 +2160,16 @@ void main(string[] args) {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Mesh Reduction — interactive + headless (ratio, preserveBoundary params).
+    // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshReduceEdit.
+    // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
+    reg.toolFactories["mesh.reduceTool"] = () {
+        auto t = new ReductionTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, reduceEditFactory);
         return cast(Tool)t;
     };
 
