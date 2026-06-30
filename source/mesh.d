@@ -5331,6 +5331,103 @@ struct Mesh {
         return processed;
     }
 
+    /// Per-face spikey: for each face flagged true in `mask`, add a new apex
+    /// vertex at the face centroid displaced along the face normal, then replace
+    /// the face with a triangle fan to that apex (one tri per original edge).
+    ///
+    /// Displacement formula (D1-B, SDK-faithful): `disp = amount * (perimeter/N)`
+    /// where perimeter = sum of edge lengths and N = vertex count. On a unit-edge
+    /// face (N=4, perimeter=4) `disp == amount`. `amount == 0` is NOT a no-op —
+    /// it produces an in-place fan-triangulate (apex at centroid, zero offset).
+    ///
+    /// The original face slot `fi` is replaced in-place with the first fan tri
+    /// `[v0, v1, apex]`, preserving `faceMarks[fi]` (select + subpatch flag) and
+    /// `faceMaterial[fi]`. The remaining N-1 fan tris are appended via `addFace`
+    /// with the parent face's material and subpatch flag carried over. All
+    /// appended fan tris are also selected (D3: select whole spike).
+    ///
+    /// Returns the number of faces processed (> 0 on success; 0 means nothing in
+    /// `mask` had ≥ 3 verts — caller should discard snapshot).
+    size_t spikeFacesByMask(const bool[] mask, float amount) {
+        size_t processed = 0;
+        const size_t nFaces = faces.length; // snapshot before appending fan tris
+
+        // Parallel lists: for each appended fan tri, record its face index
+        // (captured at addFace time = faces.length-1) and its source face fi.
+        uint[] appendedFi;
+        uint[] fanSrc;
+
+        foreach (fi; 0 .. nFaces) {
+            if (fi >= mask.length || !mask[fi]) continue;
+            const uint[] origFaceVerts = faces[fi].dup;
+            const int    N             = cast(int)origFaceVerts.length;
+            if (N < 3) continue;
+
+            // Compute centroid and normal BEFORE mutating faces[fi].
+            const Vec3 c = faceCentroid(cast(uint)fi);
+            const Vec3 n = faceNormal(cast(uint)fi);
+
+            // Perimeter = sum of edge lengths around the face ring.
+            float perimeter = 0f;
+            foreach (i; 0 .. N) {
+                Vec3  a  = vertices[origFaceVerts[i]];
+                Vec3  b  = vertices[origFaceVerts[(i + 1) % N]];
+                float dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+                perimeter += sqrt(dx*dx + dy*dy + dz*dz);
+            }
+
+            // D1-B: displacement = amount * average edge length.
+            float disp = amount * (perimeter / cast(float)N);
+            uint apex = addVertex(c + n * disp);
+
+            // In-place replace: first fan tri [v0, v1, apex] stays in slot fi,
+            // automatically preserving faceMarks[fi] (Select + Subpatch bits)
+            // and faceMaterial[fi].
+            faces[fi] = [origFaceVerts[0], origFaceVerts[1], apex];
+
+            // Append the remaining N-1 fan tris [vi, vi+1, apex] for i=1..N-1.
+            foreach (i; 1 .. N) {
+                uint newFi = cast(uint)faces.length; // capture BEFORE addFace grows
+                addFace([origFaceVerts[i], origFaceVerts[(i + 1) % N], apex]);
+                appendedFi ~= newFi;
+                fanSrc     ~= cast(uint)fi;
+            }
+
+            ++processed;
+        }
+
+        if (processed == 0) return 0;
+
+        // Attribute carry-over for appended fan tris.
+        // addFace grows PolyVertex maps but NOT faceMaterial/faceMarks.
+        // Save original faceMaterial length for the source-read guard, then
+        // grow both arrays (D zero-fills new slots).
+        const size_t origMatLen = faceMaterial.length;
+        resizeSubpatch();               // grows faceMarks to faces.length
+        faceMaterial.length = faces.length; // grows faceMaterial to faces.length
+        foreach (k; 0 .. appendedFi.length) {
+            const uint newFi = appendedFi[k];
+            const uint srcFi  = fanSrc[k];
+            faceMaterial[newFi] = (srcFi < origMatLen ? faceMaterial[srcFi] : 0u);
+            setFaceSubpatch(newFi, isFaceSubpatch(srcFi));
+        }
+
+        // Tail — correct order: syncSelection BEFORE selectFace so that
+        // faceSelectionOrder (grown by syncSelection) is in bounds for appended
+        // indices. buildLoops also calls resizePolyVertexMaps which zeroes UV maps
+        // when the arity change produces a length mismatch (per-corner UV carry is
+        // out of scope for v1, consistent with inset/bevel).
+        rebuildEdges();
+        buildLoops();
+        syncSelection();  // grows faceSelectionOrder et al. to faces.length
+
+        // D3: select all appended fan tris (slot fi stays selected via in-place).
+        foreach (newFi; appendedFi) selectFace(cast(int)newFi);
+
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return processed;
+    }
+
     /// Edge bevel (Candidate A — slide-along-adjacent-edge): replace each
     /// qualifying selected edge with a flat 4-vertex chamfer strip.
     ///
@@ -13390,4 +13487,100 @@ unittest { // splitFaceByVertices: same-vert / OOB / not-in-face → all return 
     assert(m.splitFaceByVertices(0, 0, 99)  == 0, "OOB vert: must return 0");
     assert(m.splitFaceByVertices(5, 0,  2)  == 0, "OOB face: must return 0");
     assert(m.faces.length == 1,                   "guards: face count unchanged");
+}
+
+// spikeFacesByMask unittests
+// ---------------------------------------------------------------------------
+
+// Basic: one quad → 4 tri fan, 1 apex at centroid + normal*disp.
+unittest {
+    import std.math : abs, sqrt, fabs;
+    import std.conv : to;
+    // Single 2×2 quad in the XZ plane (Y=0).
+    // Winding (-1,0,-1),(-1,0,1),(1,0,1),(1,0,-1) gives +Y normal via Newell.
+    // (Verified: ny = Σ(a.z-b.z)*(a.x+b.x) over the 4 edges = +8 > 0.)
+    // Centroid = (0,0,0); perimeter = 4*2 = 8; N=4; disp = amount*(8/4) = amount*2
+    // With amount=0.5: disp = 1.0 → apex at (0,1,0).
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1));
+    m.addVertex(Vec3(-1, 0,  1));
+    m.addVertex(Vec3( 1, 0,  1));
+    m.addVertex(Vec3( 1, 0, -1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    // Assign non-default material + subpatch to the face before spiking.
+    m.faceMaterial[0] = 7u;
+    m.setFaceSubpatch(0, true);
+
+    bool[] mask = [true];
+    size_t n = m.spikeFacesByMask(mask, 0.5f);
+
+    assert(n == 1,                 "spikey: expected 1 face processed");
+    assert(m.faces.length  == 4,   "spikey: 1 quad → 4 fan tris");
+    assert(m.vertices.length == 5, "spikey: 4 original + 1 apex");
+
+    // Apex should be at (0, 0 + 1.0, 0) = (0, 1, 0).
+    Vec3 apex;
+    bool apexFound = false;
+    foreach (v; m.vertices) {
+        float dx = v.x - 0f, dy = v.y - 1.0f, dz = v.z - 0f;
+        if (sqrt(dx*dx + dy*dy + dz*dz) < 1e-5f) { apex = v; apexFound = true; break; }
+    }
+    assert(apexFound, "spikey: apex not at expected position (0,1,0)");
+
+    // All 4 fan tris must carry parent material (7) and subpatch flag.
+    foreach (fi; 0 .. m.faces.length) {
+        assert(m.faceMaterial.length > fi && m.faceMaterial[fi] == 7u,
+               "spikey: material not carried to fan tri " ~ fi.to!string);
+        assert(m.isFaceSubpatch(fi),
+               "spikey: subpatch not carried to fan tri " ~ fi.to!string);
+    }
+
+    // Hole-free: every undirected edge shared by ≤ 2 faces.
+    int[ulong] undirected;
+    foreach (f; m.faces) {
+        foreach (k; 0 .. f.length) {
+            ulong a = f[k], b = f[(k + 1) % f.length];
+            ulong lo = a < b ? a : b, hi = a < b ? b : a;
+            undirected[(lo << 32) | hi]++;
+        }
+    }
+    foreach (_, c; undirected) assert(c <= 2, "spikey: non-manifold edge found");
+}
+
+// No-op: mask with no face ≥3 verts → returns 0, mesh unchanged.
+unittest {
+    auto m = makeCube();
+    bool[] mask = new bool[](m.faces.length); // all false
+    size_t n = m.spikeFacesByMask(mask, 1.0f);
+    assert(n == 0, "spikey no-op: expected 0 processed");
+    assert(m.faces.length == 6, "spikey no-op: face count must not change");
+    assert(m.vertices.length == 8, "spikey no-op: vertex count must not change");
+}
+
+// amount=0: fan-triangulate in place (apex at centroid, zero offset).
+unittest {
+    import std.math : sqrt;
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1));
+    m.addVertex(Vec3( 1, 0, -1));
+    m.addVertex(Vec3( 1, 0,  1));
+    m.addVertex(Vec3(-1, 0,  1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask = [true];
+    size_t n = m.spikeFacesByMask(mask, 0.0f);
+    assert(n == 1,                "spikey amount=0: expected 1 processed");
+    assert(m.faces.length  == 4,  "spikey amount=0: 1 quad → 4 tris");
+    assert(m.vertices.length == 5,"spikey amount=0: 4 + 1 apex at centroid");
+    // Apex at centroid = (0,0,0)
+    bool found = false;
+    foreach (v; m.vertices) {
+        float d2 = v.x*v.x + v.y*v.y + v.z*v.z;
+        if (d2 < 1e-10f) { found = true; break; }
+    }
+    assert(found, "spikey amount=0: apex must be at centroid (0,0,0)");
 }
