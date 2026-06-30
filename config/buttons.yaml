@@ -113,13 +113,7 @@ panels:
             action: { kind: tool, id: pen }
           - label: Vertex
             action: { kind: tool, id: prim.vertex }
-  # Deform palette — mirrors MODO's Deform tool-palette layout. D.1
-  # of doc/deform_plan.md ships the 9 transform+falloff presets; the
-  # remaining MODO tools (Element Move, Flex, Push, Bend, Vortex,
-  # Sculpt, Smooth, Jitter, Quantize, Linear/Radial Align, Flare)
-  # are listed as disabled placeholders so the panel matches MODO's
-  # visual surface and future subphases (D.2..D.8) flip the flag
-  # one at a time as they land.
+  # Deform palette
   - title: Deform
     items:
       - title: Move
@@ -132,10 +126,14 @@ panels:
               action: { kind: tool, id: xfrm.softDrag } }
           - { label: "Soft Move",
               action: { kind: tool, id: xfrm.softMove } }
+          - { label: "Soft Transform",
+              action: { kind: tool, id: xfrm.softTransform } }
           - { label: "Shear",
               action: { kind: tool, id: xfrm.shear } }
           - { label: "Smooth",
               action: { kind: tool, id: xfrm.smooth } }
+          - { label: "Mesh Smooth",
+              action: { kind: command, id: mesh.smooth } }
           - { label: "Jitter",
               action: { kind: tool, id: xfrm.jitter } }
           - { label: "Quantize",
@@ -156,6 +154,8 @@ panels:
         buttons:
           - { label: "Soft Scale",
               action: { kind: tool, id: xfrm.softScale } }
+          - { label: "Uniform Scale",
+              action: { kind: tool, id: xfrm.scaleUniform } }
           - { label: "Push",
               action: { kind: tool, id: xfrm.push } }
           - { label: "Sculpt", disable: true,
@@ -172,13 +172,7 @@ panels:
               action: { kind: command, id: mesh.radial_align } }
           - { label: "Linear Align",
               action: { kind: command, id: mesh.linear_align } }
-  # Duplicate palette — mirrors MODO's Duplicate tool-palette layout.
-  # PR-1..4 of doc/duplicate_plan.md ship the 4 mesh-frequency
-  # primitives; remaining MODO items (Radial Sweep, Bridge, Patch
-  # Curves, Curve / Bezier / Pen Extrude+Clone, Scatter Clone, Clone,
-  # Mesh Paint, Paste Tool, Duplicate Hierarchy) need separate
-  # subsystems (curves / instance graph / paint) and are tracked
-  # outside this tab.
+  # Duplicate palette
   - title: Duplicate
     items:
       - title: Commands
@@ -191,30 +185,85 @@ panels:
               action: { kind: command, id: mesh.array } }
           - { label: "Radial Array",
               action: { kind: command, id: mesh.radial_array } }
+          - { label: "Radial Sweep",
+              action: { kind: command, id: mesh.sweep } }
+          - { label: "Duplicate Layer",
+              action: { kind: command, id: layer.duplicate } }
   - title: Mesh Edit
     items:
+      - title: Slice
+        buttons:
+          - { label: "Loop Slice",   action: { kind: command, id: mesh.loopSlice } }
+          - { label: Julienne,       action: { kind: command, id: mesh.julienne } }
+          - { label: "Axis Slice",   action: { kind: command, id: mesh.axisSlice } }
+          - { label: "Screen Slice", action: { kind: command, id: mesh.screenSlice } }
+          - { label: "Edge Slice",   action: { kind: command, id: mesh.edgeSlice } }
       - title: Commands
         buttons:
-          - { label: Subdivide, action: { kind: command, id: mesh.subdivide } }
-          - { label: Faceted,   action: { kind: command, id: mesh.subdivide_faceted } }
+          - { label: Subdivide,  action: { kind: command, id: mesh.subdivide } }
+          - { label: Faceted,    action: { kind: command, id: mesh.subdivide_faceted } }
+          - { label: Subpatch,   action: { kind: command, id: mesh.subpatch_toggle } }
+          - { label: "Clean Up", action: { kind: command, id: mesh.cleanup } }
+      - title: Clipboard
+        buttons:
+          - { label: Cut,   action: { kind: command, id: mesh.cut } }
+          - { label: Copy,  action: { kind: command, id: mesh.copy } }
+          - { label: Paste, action: { kind: command, id: mesh.paste } }
   - title: Vertex
     items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,   action: { kind: command, id: mesh.vertexBevel } }
+          - { label: Extrude, action: { kind: command, id: mesh.vertexExtrude } }
       - title: Commands
         buttons:
-          - { label: Join,  action: { kind: command, id: vert.join } }
-          - { label: Merge, action: { kind: command, id: vert.merge } }
+          - { label: Join,         action: { kind: command, id: vert.join } }
+          - { label: Merge,        action: { kind: command, id: vert.merge } }
+          - { label: "Add Vertex", action: { kind: command, id: mesh.addVertex } }
+          - { label: Center,       action: { kind: command, id: mesh.centerVertices } }
+          - { label: Collapse,     action: { kind: command, id: mesh.collapse } }
+          - { label: Split,        action: { kind: command, id: mesh.vertexSplit } }
   - title: Edge
     items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,      action: { kind: tool,    id: edge.bevel } }
+          - { label: Slide,      action: { kind: tool,    id: edge.slide } }
+          - { label: "Add Loop", action: { kind: command, id: mesh.addLoop } }
+          - { label: "Add Point", action: { kind: command, id: mesh.addPoint } }
       - title: Commands
         buttons:
-          - { label: Extrude, action: { kind: tool, id: edge.extrude } }
-          - { label: Extend,  action: { kind: tool, id: edge.extend } }
+          - { label: Extrude, action: { kind: tool,    id: edge.extrude } }
+          - { label: Extend,  action: { kind: tool,    id: edge.extend } }
           - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
+          - { label: Spin,    action: { kind: command, id: mesh.spinEdge } }
+          - { label: Join,    action: { kind: command, id: mesh.edgeJoin } }
+          - { label: Split,   action: { kind: command, id: mesh.split_edge } }
   - title: Polygon
     items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,          action: { kind: command, id: mesh.bevel } }
+          - { label: "Smooth Shift", action: { kind: command, id: mesh.smooth_shift } }
+          - { label: Thicken,        action: { kind: command, id: mesh.thicken } }
+          - { label: Spikey,         action: { kind: command, id: mesh.spikey } }
+          - { label: Inset,          action: { kind: command, id: mesh.poly_inset } }
+          - { label: Reduce,         action: { kind: command, id: mesh.reduce } }
       - title: Commands
         buttons:
-          - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
+          - { label: Bridge,         action: { kind: command, id: mesh.bridge } }
+          - { label: "Make Polygon", action: { kind: command, id: mesh.makePolygon } }
+          - { label: Split,          action: { kind: command, id: mesh.splitFace } }
+          - { label: Triple,         action: { kind: command, id: mesh.triple } }
+          - { label: Quadruple,      action: { kind: command, id: mesh.quadruple } }
+          - { label: Flip,           action: { kind: command, id: mesh.flip } }
+          - { label: "Set Part",     action: { kind: command, id: mesh.setPart } }
+          - { label: "Set Material", action: { kind: command, id: mesh.setMaterial } }
+      - title: Reduce
+        buttons:
+          - { label: Merge,          action: { kind: command, id: mesh.mergeFaces } }
+          - { label: Unify,          action: { kind: command, id: poly.unify } }
+          - { label: Detriangulate,  action: { kind: command, id: mesh.detriangulate } }
   - title: Selection
     items:
       - title: Grow / Shrink
@@ -229,7 +278,26 @@ panels:
           - { label: Ring,    action: { kind: command, id: select.ring } }
           - { label: Connect, action: { kind: command, id: select.connect } }
           - { label: Between, action: { kind: command, id: select.between } }
-          - { label: Invert, action: { kind: command, id: select.invert } }          
+          - { label: Invert, action: { kind: command, id: select.invert } }
+  - title: UV
+    items:
+      - title: Create
+        buttons:
+          - { label: Project, action: { kind: command, id: uv.project } }
+          - { label: Relax,   action: { kind: command, id: uv.relax } }
+          - { label: Fit,     action: { kind: command, id: uv.fit } }
+      - title: Modify
+        buttons:
+          - { label: Flip,   action: { kind: command, id: uv.flip } }
+          - { label: Rotate, action: { kind: command, id: uv.rotate } }
+          - { label: Mirror, action: { kind: command, id: uv.mirror } }
+          - { label: Pack,   action: { kind: command, id: uv.pack } }
+      - title: Maps
+        buttons:
+          - { label: Delete, action: { kind: command, id: uv.delete } }
+          - { label: Rename, action: { kind: command, id: uv.rename } }
+          - { label: Copy,   action: { kind: command, id: uv.copy } }
+          - { label: Clear,  action: { kind: command, id: uv.clear } }
   - title: Viewport
     items:
       - { label: Fit,          action: { kind: command, id: viewport.fit } }
