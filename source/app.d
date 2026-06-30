@@ -127,6 +127,7 @@ import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.uv_transform;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
@@ -2572,6 +2573,12 @@ void main(string[] args) {
         new WeightmapRename(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
         new WeightmapSet(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.flip"] = () => cast(Command)
+        new UvFlip(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.mirror"] = () => cast(Command)
+        new UvMirror(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.rotate"] = () => cast(Command)
+        new UvRotate(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
         new MeshEdgeSlide(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
