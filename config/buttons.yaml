@@ -93,6 +93,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
+          - label: Arc
+            action: { kind: tool, id: prim.arc }
+            ctrl:
+              label: "Unit Arc"
+              action:
+                kind: script
+                lines:
+                  - "prim.arc cenX:0 cenY:0 cenZ:0 radius:0.5 startAngle:0 endAngle:180 segments:24 axis:1"
           - label: Pen
             action: { kind: tool, id: pen }
   # Deform palette — mirrors MODO's Deform tool-palette layout. D.1
