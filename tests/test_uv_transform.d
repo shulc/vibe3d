@@ -446,7 +446,7 @@ unittest {
     // 4 loops × 2 = 8 UV floats.  data.length MUST equal loops.length*2 or
     // native.d:626 silently drops the map (→ uv.flip throws "missing map").
     enum string v3d = `{
-  "formatVersion": 6,
+  "formatVersion": 7,
   "layers": [{
     "name": "UV Test",
     "visible": true,
@@ -472,7 +472,7 @@ unittest {
     assert(exists(tmpSave), "expected saved file at " ~ tmpSave);
 
     auto j = parseJSON(readText(tmpSave));
-    assert(j["formatVersion"].integer == 6);
+    assert(j["formatVersion"].integer == 7);
     auto meshJ = j["layers"][0]["mesh"];
     assert("uvMaps" in meshJ, "uvMaps must be present after uv.flip");
     auto uvData = meshJ["uvMaps"][0]["data"].array;
