@@ -60,6 +60,7 @@ import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
 import tools.poly_bevel : PolyBevelTool;
+import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
@@ -149,6 +150,7 @@ import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
 import commands.mesh.quantize;
 import commands.mesh.jitter;
+import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
 import commands.mesh.uv_transform;
@@ -2175,6 +2177,12 @@ void main(string[] args) {
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
+    reg.toolFactories["xfrm.magnet"] = () {
+        auto t = new MagnetTool(() => &mesh(), &gpu, &editMode,
+                                &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
 
     // Edge Bevel — interactive + headless (width param). Topology-creating tool:
     // reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Edges mode.
@@ -2700,6 +2708,9 @@ void main(string[] args) {
                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.jitter"] = () => cast(Command)
         new MeshJitter(&mesh(), cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.magnet"] = () => cast(Command)
+        new MeshMagnet(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.weightmap.create"] = () => cast(Command)
         new WeightmapCreate(&mesh(), cameraView, editMode);
