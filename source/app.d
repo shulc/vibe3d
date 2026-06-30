@@ -106,6 +106,9 @@ import commands.mesh.smooth_shift : MeshSmoothShift;
 import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
+import commands.mesh.vertex_new    : MeshVertexNew;
+import commands.mesh.vertex_center : MeshCenterVertices;
+import commands.mesh.vertex_set    : MeshSetPosition;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
@@ -2533,6 +2536,15 @@ void main(string[] args) {
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh(), cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.addVertex"] = () => cast(Command)
+        new MeshVertexNew(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.centerVertices"] = () => cast(Command)
+        new MeshCenterVertices(&mesh(), cameraView, editMode, &gpu,
+                               &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.setPosition"] = () => cast(Command)
+        new MeshSetPosition(&mesh(), cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.delete"] = () => cast(Command)
         new MeshDelete(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
