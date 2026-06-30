@@ -95,6 +95,7 @@ import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.vertex_extrude : MeshVertexExtrude;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
+import commands.mesh.spikey : MeshSpikey;
 import commands.mesh.bevel : MeshBevel;
 import commands.mesh.face_extrude : MeshFaceExtrude;
 import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
@@ -2485,6 +2486,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
         new MeshPolygonInset(&mesh(), cameraView, editMode, &gpu,
                              &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.spikey"] = () => cast(Command)
+        new MeshSpikey(&mesh(), cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.bevel"] = () => cast(Command)
         new MeshBevel(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
