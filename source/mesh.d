@@ -2009,6 +2009,28 @@ struct Mesh {
         return removeEdgesByMask(edgeMask);
     }
 
+    /// Merge the masked faces into one polygon per connected group by dissolving
+    /// EVERY interior edge shared by two masked faces, regardless of coplanarity
+    /// (selection is the only criterion). Boundary edges (one masked neighbour) are
+    /// kept. Disjoint masked groups each collapse to their own boundary n-gon.
+    /// Returns the number of edges dissolved.
+    ///
+    /// Unlike `detriangulateFacesByMask`, no coplanarity criterion is applied and
+    /// there is NO whole-mesh fallback: an empty mask dissolves nothing and
+    /// returns 0.
+    ///
+    /// v1 restrictions (inherited from `removeEdgesByMask`): collinear 2-valent
+    /// boundary vertices on the merged n-gon are NOT removed (e.g. merging two
+    /// coplanar quads sharing one edge yields a 6-corner n-gon, not a 4-corner
+    /// rectangle); concave / non-coplanar / non-simply-connected (holed) selections
+    /// produce a single boundary walk that may be non-planar or self-intersecting.
+    size_t mergeFacesByMask(in bool[] mask) {
+        if (mask.length != faces.length) return 0;
+        bool acceptAll(uint, uint, uint) { return true; }
+        bool[] edgeMask = selectMergeEdges(mask, &acceptAll, false /* region */);
+        return removeEdgesByMask(edgeMask);
+    }
+
     /// Edge Extrude: shift each selected edge outward along the average normal
     /// of its neighbor polygon(s) by `extrude`, inset the neighbor polygon(s) by
     /// `width` within their planes, and bridge with new faces. Boundary edges use
@@ -13213,4 +13235,48 @@ unittest {
     assert(m.addEdgePoint(ei, 1.0f) == uint.max, "addEdgePoint: t=1 must fail");
     assert(m.vertices.length == 8,               "addEdgePoint: guards must not mutate mesh");
     assert(m.edges.length    == 12,              "addEdgePoint: guards must not mutate edges");
+}
+
+unittest { // mergeFacesByMask: 2-quad strip → 1 six-corner n-gon; non-adjacent → no-op
+    import std.algorithm : sort;
+    import std.conv      : to;
+
+    // Build a flat 2×1 quad grid:
+    //   verts: 0=(0,0,0) 1=(1,0,0) 2=(2,0,0)
+    //          3=(0,0,1) 4=(1,0,1) 5=(2,0,1)
+    //   face 0 = [0,1,4,3], face 1 = [1,2,5,4]  (shared edge 1–4)
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0)); m.addVertex(Vec3(2,0,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1)); m.addVertex(Vec3(2,0,1));
+    m.addFace([0u,1u,4u,3u]);
+    m.addFace([1u,2u,5u,4u]);
+    m.buildLoops();
+
+    // Merge both faces — 1 interior edge (1–4) dissolved.
+    bool[] mask = [true, true];
+    size_t dissolved = m.mergeFacesByMask(mask);
+    assert(dissolved == 1, "expected 1 edge dissolved, got " ~ dissolved.to!string);
+    assert(m.faces.length == 1, "expected 1 merged face");
+
+    // The combined boundary has 6 corners (collinear midpoints 1 and 4 survive
+    // — v1 restriction: removeEdgesByMask does not dissolve 2-valent verts).
+    uint[] corners = m.faces[0].dup;
+    assert(corners.length == 6,
+           "merged face must have 6 corners (incl. collinear midpoints)");
+
+    // Corner index SET must equal {0,1,2,3,4,5} — all verts lie on the boundary.
+    sort(corners);
+    assert(corners == [0u,1u,2u,3u,4u,5u],
+           "merged face must reference all 6 verts");
+
+    // Non-adjacent mask (only face 0): no shared interior edges → 0 dissolved.
+    Mesh m2;
+    m2.addVertex(Vec3(0,0,0)); m2.addVertex(Vec3(1,0,0)); m2.addVertex(Vec3(2,0,0));
+    m2.addVertex(Vec3(0,0,1)); m2.addVertex(Vec3(1,0,1)); m2.addVertex(Vec3(2,0,1));
+    m2.addFace([0u,1u,4u,3u]);
+    m2.addFace([1u,2u,5u,4u]);
+    m2.buildLoops();
+    assert(m2.mergeFacesByMask([true, false]) == 0,
+           "single-face mask must dissolve nothing");
+    assert(m2.faces.length == 2, "face count unchanged on no-op");
 }
