@@ -116,6 +116,7 @@ import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
 import commands.mesh.screen_slice  : MeshScreenSlice;
 import commands.mesh.edge_slice    : MeshEdgeSlice;
 import commands.mesh.collapse      : MeshCollapse;
+import commands.mesh.vertex_split  : MeshVertexSplit;
 import commands.mesh.reduce        : MeshReduce;
 import commands.mesh.unify         : MeshUnify;
 import commands.mesh.cleanup       : MeshCleanup;
@@ -2547,6 +2548,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.collapse"] = () => cast(Command)
         new MeshCollapse(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.vertexSplit"] = () => cast(Command)
+        new MeshVertexSplit(&mesh(), cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.reduce"] = () => cast(Command)
         new MeshReduce(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
