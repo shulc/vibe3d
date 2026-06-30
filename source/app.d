@@ -3367,6 +3367,32 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // GET /api/registry — returns every registered command and tool
+        // factory id as JSON arrays. Read-only snapshot of post-startup-
+        // immutable AAs; served directly from the HTTP thread.
+        httpServer.setRegistryProvider(() {
+            import std.array     : appender;
+            import std.format    : format;
+            import std.algorithm : sort;
+            auto cmds  = reg.commandFactories.keys.dup;
+            auto tools = reg.toolFactories.keys.dup;
+            cmds.sort();
+            tools.sort();
+            auto buf = appender!string;
+            buf.put(`{"commands":[`);
+            foreach (i, k; cmds) {
+                if (i > 0) buf.put(",");
+                buf.put(format(`"%s"`, k));
+            }
+            buf.put(`],"tools":[`);
+            foreach (i, k; tools) {
+                if (i > 0) buf.put(",");
+                buf.put(format(`"%s"`, k));
+            }
+            buf.put(`]}`);
+            return buf.data;
+        });
+
         // Pipeline evaluation snapshot — runs pipeline.evaluate once with
         // the current mesh + selection + camera and returns the resulting
         // ActionCenterPacket / AxisPacket as JSON. The reference-diff

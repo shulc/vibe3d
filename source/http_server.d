@@ -47,6 +47,12 @@ class HttpServer {
     private int pendingModelLayer = -1;   // ?layer=N for the in-flight /api/model
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
+    // GET /api/registry — returns {"commands":[...],"tools":[...]} listing
+    // every registered command and tool factory id. Read-only snapshot of
+    // post-startup-immutable AAs; served directly from the HTTP thread
+    // (same thread-safety posture as toolpipeProvider).
+    private alias RegistryProvider = string delegate();
+    private RegistryProvider registryProvider;
     private alias ToolPipeProvider = string delegate();
     private ToolPipeProvider toolpipeProvider;
     // /api/toolpipe/eval — runs pipeline.evaluate once and returns the
@@ -343,6 +349,13 @@ class HttpServer {
 
     public void setRecordedEventsProvider(RecordedEventsProvider provider) {
         this.recordedEventsProvider = provider;
+    }
+
+    /// GET /api/registry — command and tool factory id arrays. Used by the
+    /// button-action resolver test to assert every button id resolves
+    /// without relying solely on the startup validator.
+    public void setRegistryProvider(RegistryProvider provider) {
+        this.registryProvider = provider;
     }
 
     /// Phase 7.0 — Tool Pipe inspection endpoint. The provider returns a
@@ -947,6 +960,23 @@ class HttpServer {
             } else {
                 response.statusCode = 200;
                 response.body = "{\"stages\":[]}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/registry" && request.method == "GET") {
+            if (registryProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = registryProvider();
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"registry provider failed\",\"message\":\"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 200;
+                response.body = "{\"commands\":[],\"tools\":[]}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/snap/last" && request.method == "GET") {
