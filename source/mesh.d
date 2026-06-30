@@ -575,6 +575,61 @@ struct Mesh {
         return welded;
     }
 
+    /// Weld vertex `drop` into vertex `keep`. `drop`'s incident faces are
+    /// rewritten to reference `keep`; `drop` is then removed; the surviving
+    /// vertex sits at `keep`'s position (target-position rule: snap source→target).
+    /// Reuses weldVerticesByMask — snaps the two coincident, then mask-welds.
+    ///
+    /// Shared-face rule (adjacency-aware):
+    ///  - ADJACENT same-face welds (keep & drop are consecutive corners in a face,
+    ///    including the head/tail wrap) are ALLOWED: weldVerticesByMask collapses
+    ///    the repeated adjacent corner cleanly, yielding a triangle. This is the
+    ///    standard edge-collapse case and is handled correctly by the kernel.
+    ///  - NON-ADJACENT same-face welds (keep & drop both appear in a face but are
+    ///    NOT consecutive) are REJECTED: they would leave [keep,A,keep,B] — a
+    ///    self-touching polygon that the kernel cannot collapse cleanly.
+    ///  - Two FACELESS verts cannot be welded: with no incident face,
+    ///    compactUnreferenced removes both as unreferenced (net vanish). If
+    ///    NEITHER keep NOR drop is referenced by any face, returns 0 (no-op).
+    ///    (If only one is faceless the other's faces absorb the merge normally.)
+    /// Returns 1 on success, 0 on no-op (same index / OOB / non-adjacent same-face /
+    /// both-faceless).
+    size_t weldVertexPair(uint keep, uint drop) {
+        if (keep == drop) return 0;
+        if (keep >= vertices.length || drop >= vertices.length) return 0;
+        // Shared-face adjacency guard + faceless check (one pass over faces).
+        // Adjacent same-face welds (consecutive corners including head/tail wrap)
+        // are ALLOWED: weldVerticesByMask strips the repeated adjacent corner to
+        // produce a clean triangle.  Non-adjacent same-face welds would leave
+        // [keep,A,keep,B] — a self-touching polygon — and are REJECTED.
+        bool keepRef = false, dropRef = false;
+        foreach (ref face; faces) {
+            int posKeep = -1, posDrop = -1;
+            foreach (i, vid; face) {
+                if (vid == keep) { posKeep = cast(int)i; keepRef = true; }
+                if (vid == drop) { posDrop = cast(int)i; dropRef = true; }
+            }
+            if (posKeep >= 0 && posDrop >= 0) {
+                // Both vertices appear in this face — check adjacency.
+                int diff = posKeep > posDrop ? posKeep - posDrop : posDrop - posKeep;
+                bool adjacent = (diff == 1) || (diff == cast(int)face.length - 1);
+                if (!adjacent) return 0;  // non-adjacent same-face: reject
+            }
+        }
+        // Faceless guard: both unreferenced → compactUnreferenced would remove
+        // both as orphans, giving a net vanish rather than a weld.
+        if (!keepRef && !dropRef) return 0;
+        // Snap drop to keep's position so weldVerticesByMask treats them as
+        // coincident. The surviving index is min(keep,drop); the surviving
+        // position is keep's (both positions are identical at this point).
+        vertices[drop] = vertices[keep];
+        bool[] mask;
+        mask.length = vertices.length;
+        mask[keep] = true;
+        mask[drop] = true;
+        return weldVerticesByMask(mask, 1e-12);
+    }
+
     /// Inverse of weldVerticesByMask: unweld each masked vertex so every
     /// incident face gets its own coincident copy. The vertex is kept in
     /// its lowest-indexed incident face; every later incident face (in
@@ -14704,4 +14759,123 @@ unittest { // extractSelectedEdgeChain: open chain, closed cycle, branching + mu
             "no selection: expected empty chain, got length "
             ~ chain.length.to!string);
     }
+}
+
+// weldVertexPair unittests
+unittest { // basic weld: two separate quads, weld cross-quad → count drops exactly 1
+    import std.math : abs;
+    import std.conv : to;
+    // Two separate quads with no shared vertices:
+    //   quad A: v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1) → face [0,1,2,3]
+    //   quad B: v4=(3,0,0) v5=(4,0,0) v6=(4,0,1) v7=(3,0,1) → face [4,5,6,7]
+    // Weld keep=1, drop=5: v1=(1,0,0) ← v5=(4,0,0).
+    // v1 and v5 share no face → weld must succeed (welded=1, 7 verts after).
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,0,1)); m.addVertex(Vec3(0,0,1));
+    m.addVertex(Vec3(3,0,0)); m.addVertex(Vec3(4,0,0));
+    m.addVertex(Vec3(4,0,1)); m.addVertex(Vec3(3,0,1));
+    m.addFace([0u,1u,2u,3u]);
+    m.addFace([4u,5u,6u,7u]);
+    m.buildLoops();
+
+    size_t welded = m.weldVertexPair(1, 5);
+    assert(welded == 1,
+        "weldVertexPair basic: expected welded=1, got " ~ welded.to!string);
+    // Exactly 1 vertex removed (not more — orphan removal must not over-count).
+    assert(m.vertices.length == 7,
+        "weldVertexPair basic: expected 7 vertices, got " ~ m.vertices.length.to!string);
+    // Survivor position = keep's (1,0,0).
+    bool foundKeep = false;
+    foreach (v; m.vertices) {
+        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y) < 1e-6f && abs(v.z) < 1e-6f)
+            foundKeep = true;
+    }
+    assert(foundKeep, "weldVertexPair basic: no vertex at keep position (1,0,0)");
+    // No face may have a repeated vertex index.
+    foreach (fi, face; m.faces) {
+        foreach (ai; 0 .. face.length) {
+            foreach (bi; ai + 1 .. face.length) {
+                assert(face[ai] != face[bi],
+                    "weldVertexPair basic: face " ~ fi.to!string
+                    ~ " has repeated index " ~ face[ai].to!string);
+            }
+        }
+    }
+    // Both faces must still be present (neither collapses to < 3 verts).
+    assert(m.faces.length == 2,
+        "weldVertexPair basic: expected 2 faces, got " ~ m.faces.length.to!string);
+}
+
+unittest { // non-adjacent same-face guard: opposite quad corners → 0 (no-op)
+    import std.conv : to;
+    // Single quad [0,1,2,3]; weld opposite corners 0 and 2 → shared-face guard.
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,0,1)); m.addVertex(Vec3(0,0,1));
+    m.addFace([0u,1u,2u,3u]);
+    m.buildLoops();
+
+    size_t vBefore = m.vertices.length;
+    size_t fBefore = m.faces.length;
+    size_t welded = m.weldVertexPair(0, 2);
+    assert(welded == 0,
+        "weldVertexPair shared-face: expected 0 (no-op), got " ~ welded.to!string);
+    assert(m.vertices.length == vBefore,
+        "weldVertexPair shared-face: vertices must not change");
+    assert(m.faces.length == fBefore,
+        "weldVertexPair shared-face: faces must not change");
+}
+
+unittest { // faceless guard: two isolated verts with no faces → 0 (no-op)
+    import std.conv : to;
+    Mesh m;
+    m.addVertex(Vec3(0,0,0));
+    m.addVertex(Vec3(0.001f,0,0));
+    // No faces — both verts are unreferenced.
+    size_t welded = m.weldVertexPair(0, 1);
+    assert(welded == 0,
+        "weldVertexPair faceless: expected 0 (no-op), got " ~ welded.to!string);
+    assert(m.vertices.length == 2,
+        "weldVertexPair faceless: must not remove vertices");
+}
+
+unittest { // adjacent same-face weld: edge collapse → succeeds, quad collapses to triangle
+    import std.math : abs;
+    import std.conv : to;
+    // Single quad [0,1,2,3]; weld adjacent corners keep=0 and drop=1.
+    // weldVerticesByMask remaps 1→0: face becomes [0,0,2,3]; the adjacent
+    // duplicate is stripped → [0,2,3], a valid triangle.
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,0,1)); m.addVertex(Vec3(0,0,1));
+    m.addFace([0u,1u,2u,3u]);
+    m.buildLoops();
+
+    size_t welded = m.weldVertexPair(0, 1);
+    assert(welded == 1,
+        "adjacent-weld: expected welded=1, got " ~ welded.to!string);
+    // One vertex removed: 4 → 3.
+    assert(m.vertices.length == 3,
+        "adjacent-weld: expected 3 vertices, got " ~ m.vertices.length.to!string);
+    // Quad collapses to a single triangle.
+    assert(m.faces.length == 1,
+        "adjacent-weld: expected 1 face, got " ~ m.faces.length.to!string);
+    assert(m.faces[0].length == 3,
+        "adjacent-weld: face must be a triangle, got length "
+        ~ m.faces[0].length.to!string);
+    // No repeated index in the resulting face.
+    foreach (ai; 0 .. m.faces[0].length)
+        foreach (bi; ai + 1 .. m.faces[0].length)
+            assert(m.faces[0][ai] != m.faces[0][bi],
+                "adjacent-weld: face has repeated vertex index at "
+                ~ ai.to!string ~ " and " ~ bi.to!string);
+    // Survivor position = keep (0,0,0); drop's original (1,0,0) must be absent.
+    bool foundKeep = false, foundDrop = false;
+    foreach (v; m.vertices) {
+        if (abs(v.x) < 1e-6f && abs(v.y) < 1e-6f && abs(v.z) < 1e-6f) foundKeep = true;
+        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y) < 1e-6f && abs(v.z) < 1e-6f) foundDrop = true;
+    }
+    assert(foundKeep, "adjacent-weld: survivor position (0,0,0) missing");
+    assert(!foundDrop, "adjacent-weld: drop position (1,0,0) must be absent after weld");
 }

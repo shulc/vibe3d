@@ -54,6 +54,7 @@ import tools.arc;
 import tools.tube;
 import tools.pen;
 import tools.vertex_place : VertexTool;
+import tools.drag_weld    : DragWeldTool;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
@@ -128,8 +129,9 @@ import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.sweep         : MeshSweep;
-import commands.mesh.vert_merge    : MeshVertMerge;
-import commands.mesh.vert_join     : MeshVertJoin;
+import commands.mesh.vert_merge        : MeshVertMerge;
+import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
+import commands.mesh.vert_join         : MeshVertJoin;
 import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
 import commands.mesh.screen_slice  : MeshScreenSlice;
 import commands.mesh.edge_slice    : MeshEdgeSlice;
@@ -2114,6 +2116,16 @@ void main(string[] args) {
         return cast(Tool)t;
     };
 
+    // Drag Weld — drag a source vertex onto a target vertex to weld them.
+    // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
+    // entry per completed gesture. Gated to Vertices mode.
+    reg.toolFactories["mesh.dragWeld"] = () {
+        auto t = new DragWeldTool(() => &mesh(), &gpu, litShader,
+                                  &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
     // Edge Extrude — interactive (drag → extrude/width) + headless
     // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
     // tool: own typed edit factory (MeshEdgeExtrudeEdit, not vxEditFactory),
@@ -2633,6 +2645,9 @@ void main(string[] args) {
     reg.commandFactories["vert.merge"] = () => cast(Command)
         new MeshVertMerge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.weldVertexPair"] = () => cast(Command)
+        new MeshWeldVertexPair(&mesh(), cameraView, editMode, &gpu,
+                               &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["poly.unify"] = () => cast(Command)
         new MeshUnify(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
