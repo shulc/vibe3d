@@ -32,6 +32,7 @@ import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
                     noteItemSelectionChange;
+import snapshot : MeshSnapshot;
 
 import std.json : JSONValue, JSONType;
 
@@ -142,6 +143,120 @@ final class LayerAdd : LayerCommandBase {
         // the prior explicit clamp) and re-establishes primary+selected.
         doc.setActive(prevActiveIndex);
         // Undo of an add is a remove; ActiveChanged via the hook.
+        noteLayerChange(LayerChange.Removed);
+        fireSwitchIfChanged(prevLayer, prevIdx);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// layer.duplicate — deep-copy the primary layer (or the layer at `index`) into
+// a new Layer, append it, and make the clone the selected primary. Model undo.
+//
+// Deep copy: MeshSnapshot.capture(src.mesh).restore(clone.mesh) dups every
+// array (vertices/edges/faces/marks/maps/surfaces/faceMaterial) and calls
+// buildLoops + resizeAllMeshMaps, so the clone's mesh is fully independent.
+// Name, xform (value struct → value copy), and parent are also copied;
+// visible is always set true on the clone.
+//
+// Undo: the clone is always the tail (appended by apply), so revert drops it
+// with a simple slice and restores the exact prior selection set + primary by
+// layer OBJECT IDENTITY (the LayerDelete review-#6 pattern).
+//
+// Redo: apply() re-creates a FRESH clone each time (linear undo → safe; the
+// old clone has no history-bound Mesh* that needs re-use, unlike LayerDelete
+// which reinserts the exact removed Layer to keep captured Mesh* alive).
+// ---------------------------------------------------------------------------
+
+final class LayerDuplicate : LayerCommandBase {
+    private int         indexArg = -1;    // -1 → primary (resolveIndex)
+    private size_t      addedIndex;
+    private Layer       added;            // the appended clone
+    private bool[Layer] prevSelected;     // full selection snapshot by identity
+    private Layer       prevPrimary;
+    private size_t      prevActiveIndex;
+    private bool        applied;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
+         void delegate(size_t, size_t) onSwitch) {
+        super(mesh, view, editMode, doc, onSwitch);
+    }
+
+    override string name()  const { return "layer.duplicate"; }
+    override string label() const { return "Duplicate Layer"; }
+    // Model-undo (default): duplicate creates geometry the user can lose via
+    // Ctrl+Z. Do NOT override cmdFlags() — Command.Model is the base default.
+
+    override Param[] params() {
+        return [ Param.int_("index", "Index", &indexArg, -1) ];
+    }
+
+    override bool apply() {
+        if (doc.layers.length == 0) return false;
+
+        prevActiveIndex = doc.activeIndex;
+        auto prevLayer  = doc.active();
+
+        // Snapshot the full prior selection set by layer identity, BEFORE
+        // setActive (which collapses to SET-of-one) so revert can restore any
+        // prior multi-selection exactly (LayerDelete review-#6 pattern).
+        prevPrimary  = prevLayer;
+        prevSelected = null;
+        foreach (l; doc.layers) prevSelected[l] = l.selected;
+
+        // Source: default -1 → primary; explicit index for test/scripted paths.
+        size_t srcIdx = resolveIndex(indexArg);
+        auto src = doc.layers[srcIdx];
+
+        // Build the clone — deep-copy the source mesh in place into a fresh
+        // Layer object (never alias the GC-managed arrays).
+        auto l2 = new Layer;
+        MeshSnapshot.capture(src.mesh).restore(l2.mesh);
+        l2.name    = src.name ~ " copy";
+        l2.visible = true;
+        l2.xform   = src.xform;    // ItemXform is a value struct → value copy
+        l2.parent  = src.parent;   // same parent ref; clone is never a target
+
+        // Append and make the clone the active primary (SET-of-one), BEFORE
+        // fireSwitchIfChanged so the hook reads the correct (new) active mesh.
+        doc.layers  ~= l2;
+        addedIndex   = doc.layers.length - 1;
+        doc.setActive(addedIndex);
+        added   = l2;
+        applied = true;
+
+        // Structural add: the switch hook contributes ActiveChanged iff the
+        // active OBJECT genuinely changed (it did — the clone has a new mesh
+        // address and is a different Layer object than prevLayer).
+        noteLayerChange(LayerChange.Added);
+        fireSwitchIfChanged(prevLayer, prevActiveIndex);
+        return true;
+    }
+
+    override bool revert() {
+        if (!applied) return false;
+
+        // Capture the current active BEFORE mutations so fireSwitchIfChanged
+        // knows what the screen was showing (the clone, which is about to go).
+        auto prevLayer = doc.active();
+        size_t prevIdx = doc.activeIndex;
+
+        // Drop the clone — it is always the tail (appended by apply).
+        if (addedIndex < doc.layers.length)
+            doc.layers = doc.layers[0 .. addedIndex];
+
+        // Restore the exact prior selection set by identity, then the prior
+        // primary (mirrors LayerDelete.revert, review #6). This handles any
+        // multi-selection that was active before the duplicate.
+        foreach (l; doc.layers) {
+            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
+            l.selected  = wasSel;
+        }
+        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
+        else                      doc.setActive(prevActiveIndex);
+
+        // Undo of a duplicate is effectively a remove; the switch hook fires
+        // because the active OBJECT changed from the clone back to prevPrimary.
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
@@ -780,6 +895,75 @@ final class LayerParent : LayerCommandBase {
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// In-module unittest — LayerDuplicate: apply/revert contract, deep-copy
+// independence, xform copy, SET-of-one invariant restore.
+//
+// Runs under `dub test --config=modeling` (the mandatory core-module gate —
+// no server needed; tests the command directly against a live Document).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+    import math : Vec3;
+    import std.math : isClose;
+
+    // One-layer doc with a cube (8 verts). Set a known xform on the source
+    // BEFORE duplicating so we can verify the value copy.
+    auto doc = Document.bootstrap(makeCube());
+    auto src = doc.layers[0];
+    src.xform.pos.x = 1.5f;
+
+    auto v   = new View(0, 0, 800, 600);
+    auto dup = new LayerDuplicate(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+
+    // --- apply ---------------------------------------------------------------
+    assert(dup.apply(), "apply must succeed");
+    assert(doc.layers.length == 2, "apply: layer count == 2");
+    assert(doc.primary is dup.added, "apply: primary is the clone");
+    assert(dup.added.selected, "apply: clone is selected");
+    assert(dup.added.visible, "apply: clone is visible");
+    // Name derived from the source — do NOT hard-code "Layer 1 copy" here;
+    // check against the actual source name so the test stays correct if the
+    // bootstrap name ever changes.
+    assert(dup.added.name == src.name ~ " copy",
+           "apply: clone name == source.name ~ ' copy'");
+
+    // --- deep-copy independence: distinct backing arrays ---------------------
+    assert(dup.added.mesh.vertices.ptr !is src.mesh.vertices.ptr,
+           "clone has its own vertex backing array (not an alias of the source)");
+    assert(dup.added.mesh.vertices.length == src.mesh.vertices.length,
+           "clone vertex count matches source");
+    foreach (i; 0 .. src.mesh.vertices.length)
+        assert(dup.added.mesh.vertices[i] == src.mesh.vertices[i],
+               "clone vertex positions match source element-wise");
+
+    // Mutate source vertex 0 — the clone must not see the change.
+    auto cloneV0 = dup.added.mesh.vertices[0];
+    src.mesh.vertices[0] = Vec3(99, 99, 99);
+    assert(dup.added.mesh.vertices[0] == cloneV0,
+           "editing source mesh does not affect the clone (deep copy verified)");
+
+    // --- xform value copy ----------------------------------------------------
+    assert(isClose(dup.added.xform.pos.x, 1.5f, 1e-6f),
+           "clone carries the source xform.pos.x");
+
+    // --- revert --------------------------------------------------------------
+    assert(dup.revert(), "revert must succeed");
+    assert(doc.layers.length == 1, "revert: back to 1 layer");
+    assert(doc.primary is src, "revert: source layer is primary again");
+    assert(src.selected, "revert: source is selected");
+    {
+        // SET-of-one invariant after revert.
+        size_t selCount = 0;
+        foreach (l; doc.layers) if (l.selected) ++selCount;
+        assert(selCount == 1, "revert: exactly one layer selected");
+    }
+
+    // --- single-layer duplicate: no 'refuse' guard (unlike layer.delete) ----
+    // (already proven above — apply succeeded on a single-layer doc.)
 }
 
 // ---------------------------------------------------------------------------
