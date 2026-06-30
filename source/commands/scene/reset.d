@@ -187,6 +187,12 @@ class SceneReset : Command {
                 s.reset();
         }
         if (onResetTool !is null) onResetTool();
+        // Clear the geometry clipboard so cross-test bleed cannot occur: a
+        // copy in one test must not survive into the next test's paste.
+        // The clipboard is NOT restored in revert() — it is non-undoable
+        // session state, same policy as the camera position.
+        import geometry_clipboard : geometryClipboard;
+        geometryClipboard.clear();
         // Bulk transition: the whole mesh was REPLACED — every cache must
         // invalidate. noteChange(All) (the `*mesh = ...` above reset the new
         // mesh's pending set + counters to 0, so this must come after it). We use

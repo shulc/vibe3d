@@ -4193,6 +4193,73 @@ struct Mesh {
         return toClone.length;
     }
 
+    /// Append externally-provided geometry (clipboard paste) to this mesh.
+    ///
+    /// `clipVerts` are appended to `vertices`. Each face in `clipFaces`
+    /// stores 0-based indices into `clipVerts`; they are remapped by
+    /// `+vertexBase` (the pre-append vertex count) before being added to
+    /// `faces`. `clipSubpatch` and `clipMaterial` are per-face parallel
+    /// arrays sourced from the clipboard.
+    ///
+    /// After appending, selection switches to the new faces only: all
+    /// pre-existing faces are deselected; each new face is selected in
+    /// insertion order. Vertex and edge selections are cleared.
+    ///
+    /// Single `rebuildEdges()` + `buildLoops()` + `commitChange(Geometry)`
+    /// at the end — no per-face hooks or addFace calls (which would each
+    /// fire commitChange). Returns the number of faces appended; 0 = no-op.
+    size_t appendGeometry(in Vec3[] clipVerts, in uint[][] clipFaces,
+                          in bool[] clipSubpatch, in uint[] clipMaterial) {
+        if (clipFaces.length == 0) return 0;
+
+        const size_t vertBase      = vertices.length;
+        const size_t origFaceCount = faces.length;
+
+        // Append clip verts verbatim.
+        foreach (ref v; clipVerts) vertices ~= v;
+
+        // Append remapped faces: each clip-local index shifts by vertBase.
+        foreach (ref f; clipFaces) {
+            uint[] remapped;
+            remapped.length = f.length;
+            foreach (k, vid; f) remapped[k] = cast(uint)(vid + vertBase);
+            faces ~= remapped;
+        }
+
+        // Re-derive edges from the (now larger) face list.
+        rebuildEdges();
+
+        // Grow subpatch / selection-order / face-selection / material arrays
+        // to the new face count. Mirroring duplicateSelectedFaces order.
+        resizeSubpatch();
+        faceSelectionOrder.length = faces.length;
+        resizeFaceSelection();
+        faceMaterial.length       = faces.length;
+
+        // Deselect all pre-existing faces; only pasted faces end up selected.
+        foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);
+        faceSelectionOrderCounter = 0;
+
+        // Assign clip metadata and select each new face.
+        foreach (k; 0 .. clipFaces.length) {
+            size_t newFi = origFaceCount + k;
+            setFaceSubpatch(newFi, (k < clipSubpatch.length ? clipSubpatch[k] : false));
+            faceMaterial[newFi] = (k < clipMaterial.length ? clipMaterial[k] : 0u);
+            selectFace(cast(int)newFi);
+        }
+
+        // Vertex/edge selections are invalidated by the edge rebuild and the
+        // new verts; clear them out.
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return clipFaces.length;
+    }
+
     /// Face Extrude: duplicate the selected polygon region as a lifted cap, bridge
     /// the region boundary with side quads, and offset the cap by `distance` along
     /// the averaged region normal. Region boundary = edges where exactly one
