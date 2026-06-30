@@ -1,16 +1,17 @@
 // Tests for mesh.spinEdge (Spin Edge kernel + command).
 //
-// Spin reconnects the shared edge of two adjacent triangle faces to the other
-// diagonal of the merged quad boundary.  Vertex count never changes; only
-// connectivity changes.  These tests therefore assert /api/model "edges" and
-// "faces" (connectivity), NOT vertex positions.
+// Spin reconnects the shared edge of two adjacent triangle or quad faces to the
+// other diagonal of the merged boundary polygon.  Vertex count never changes;
+// only connectivity changes.  These tests therefore assert /api/model "edges"
+// and "faces" (connectivity), NOT vertex positions.
 //
 // Mesh geometry is injected via /api/load-mesh so the tests are independent of
 // the default cube primitive.  Edge indices are looked up by endpoint pair from
 // the model JSON, never hard-coded (they shift after each operation per Risk 5).
 //
-// Phase-0 note: quad-quad spin direction is capture-gated and deferred.  The
-// quad no-op test (case 4) confirms the guard fires cleanly.
+// Quad-quad spin (cases 4–4e): the shared edge of two adjacent quads is
+// re-diagonalized to the (c,e) diagonal (vibe3d default; Phase-0 reference
+// capture deferred — see doc/spin_quads_plan.md).
 
 import std.net.curl;
 import std.json;
@@ -193,35 +194,149 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4 — Quad-pair no-op (Phase-0 capture-gated): two quads sharing an edge.
-//          Spin must be a clean no-op until the reference direction is captured.
+// Case 4 — Quad-pair spin: two adjacent quads re-diagonalized to (c,e).
+//          New diagonal 3–4; face sets {0,1,3,4} and {2,3,4,5}.
+//          vibe3d default direction; Phase-0 reference capture deferred.
 // ---------------------------------------------------------------------------
+
+// Two quads sharing edge 1–2.
+//   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1) v4=(2,0,0) v5=(2,0,1)
+//   face 0 = [0,1,2,3],  face 1 = [1,4,5,2]   shared edge: 1–2
+//   After spin (c=3, e=4): diagonal 3–4; faces {0,1,3,4} and {2,3,4,5}.
+enum string TWOQUAD_MESH =
+    `{"vertices":[[0,0,0],[1,0,0],[1,0,1],[0,0,1],[2,0,0],[2,0,1]],` ~
+    ` "faces":[[0,1,2,3],[1,4,5,2]]}`;
+
 unittest {
     postReset();
-    // Six vertices; two quads sharing edge 1–2.
-    //   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1) v4=(2,0,0) v5=(2,0,1)
-    //   face 0 = [0,1,2,3],  face 1 = [1,4,5,2]   shared edge: 1–2
-    postLoadMesh(
-        `{"vertices":[[0,0,0],[1,0,0],[1,0,1],[0,0,1],[2,0,0],[2,0,1]],` ~
-        ` "faces":[[0,1,2,3],[1,4,5,2]]}`);
+    postLoadMesh(TWOQUAD_MESH);
     auto before = getModel();
+    assert(before["vertexCount"].integer == 6);
+    assert(before["edgeCount"].integer   == 7);
+    assert(before["faceCount"].integer   == 2);
 
     int eiShared = edgeIdx(before, 1, 2);
     assert(eiShared >= 0, "shared quad edge 1-2 must exist");
     postSelect("edges", [eiShared]);
 
-    // Command returns a result — what matters is the mesh is unchanged.
-    postCommandRaw("mesh.spinEdge");
+    postCommand("mesh.spinEdge");   // must succeed (status == ok)
+
+    auto after = getModel();
+
+    // Counts unchanged.
+    assert(after["vertexCount"].integer == 6, "vertex count must not change on quad spin");
+    assert(after["edgeCount"].integer   == 7, "edge count must not change on quad spin");
+    assert(after["faceCount"].integer   == 2, "face count must not change on quad spin");
+
+    // Old diagonal 1–2 gone; new diagonal 3–4 present.
+    assert(edgeIdx(after, 1, 2) < 0, "edge 1-2 must be gone after quad spin");
+    assert(edgeIdx(after, 3, 4) >= 0, "edge 3-4 must exist after quad spin");
+
+    // New face vertex sets (order-independent).
+    assert(faceWithVerts(after, [0, 1, 3, 4]), "face {0,1,3,4} must exist after quad spin");
+    assert(faceWithVerts(after, [2, 3, 4, 5]), "face {2,3,4,5} must exist after quad spin");
+}
+
+// ---------------------------------------------------------------------------
+// Case 4b — Quad spin undo: after spin, undo restores original connectivity.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    postLoadMesh(TWOQUAD_MESH);
+    auto before = getModel();
+
+    int eiShared = edgeIdx(before, 1, 2);
+    assert(eiShared >= 0);
+    postSelect("edges", [eiShared]);
+    postCommand("mesh.spinEdge");
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+
+    auto restored = getModel();
+    assert(restored["vertexCount"].integer == 6, "verts restored on quad undo");
+    assert(restored["edgeCount"].integer   == 7, "edges restored on quad undo");
+    assert(restored["faceCount"].integer   == 2, "faces restored on quad undo");
+
+    // Original diagonal 1–2 must be back; new diagonal 3–4 must be gone.
+    assert(edgeIdx(restored, 1, 2) >= 0, "edge 1-2 must be restored after quad undo");
+    assert(edgeIdx(restored, 3, 4) < 0,  "edge 3-4 must be absent after quad undo");
+    assert(faceWithVerts(restored, [0, 1, 2, 3]), "face {0,1,2,3} must be restored");
+    assert(faceWithVerts(restored, [1, 2, 4, 5]), "face {1,2,4,5} must be restored");
+}
+
+// ---------------------------------------------------------------------------
+// Case 4c — Quad polygon scope: both quads selected; shared interior edge spun.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    postLoadMesh(TWOQUAD_MESH);
+
+    postSelect("polygons", [0, 1]);
+    postCommand("mesh.spinEdge");
+
+    auto after = getModel();
+    assert(after["vertexCount"].integer == 6, "vertex count unchanged (quad poly scope)");
+    assert(after["edgeCount"].integer   == 7, "edge count unchanged (quad poly scope)");
+    assert(after["faceCount"].integer   == 2, "face count unchanged (quad poly scope)");
+
+    assert(edgeIdx(after, 1, 2) < 0,  "edge 1-2 must be gone (quad poly scope)");
+    assert(edgeIdx(after, 3, 4) >= 0, "edge 3-4 must exist (quad poly scope)");
+    assert(faceWithVerts(after, [0, 1, 3, 4]), "face {0,1,3,4} must exist (quad poly scope)");
+    assert(faceWithVerts(after, [2, 3, 4, 5]), "face {2,3,4,5} must exist (quad poly scope)");
+}
+
+// ---------------------------------------------------------------------------
+// Case 4d — Mixed tri–quad reject: triangle and quad sharing an edge → no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    postLoadMesh(
+        `{"vertices":[[0,0,0],[1,0,0],[1,0,1],[2,0,0],[2,0,1]],` ~
+        ` "faces":[[0,1,2],[1,3,4,2]]}`);
+    auto before = getModel();
+
+    int eiShared = edgeIdx(before, 1, 2);
+    assert(eiShared >= 0, "shared edge 1-2 must exist for mixed case");
+    postSelect("edges", [eiShared]);
+
+    postCommandRaw("mesh.spinEdge");   // mixed pair → no-op, status != ok
 
     auto after = getModel();
     assert(after["vertexCount"].integer == before["vertexCount"].integer,
-           "vertex count must not change on quad no-op");
+           "vertex count unchanged on mixed tri-quad no-op");
     assert(after["edgeCount"].integer   == before["edgeCount"].integer,
-           "edge count must not change on quad no-op");
+           "edge count unchanged on mixed tri-quad no-op");
     assert(after["faceCount"].integer   == before["faceCount"].integer,
-           "face count must not change on quad no-op");
-    assert(edgeIdx(after, 1, 2) >= 0,
-           "shared edge 1-2 must still exist after quad no-op");
+           "face count unchanged on mixed tri-quad no-op");
+    assert(edgeIdx(after, 1, 2) >= 0, "shared edge 1-2 must still exist");
+}
+
+// ---------------------------------------------------------------------------
+// Case 4e — Quad fold-over reject: prospective new diagonal c–e already exists.
+//           f0=[0,1,2,3] + f1=[1,4,5,2] share edge 1–2 (c=3, e=4).
+//           Triangle [3,4,5] pre-creates edge 3–4 → spin must be no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    postLoadMesh(
+        `{"vertices":[[0,0,0],[1,0,0],[1,0,1],[0,0,1],[2,0,0],[2,0,1]],` ~
+        ` "faces":[[0,1,2,3],[1,4,5,2],[3,4,5]]}`);
+    auto before = getModel();
+
+    int eiShared = edgeIdx(before, 1, 2);
+    assert(eiShared >= 0, "shared quad edge 1-2 must exist");
+    assert(edgeIdx(before, 3, 4) >= 0, "edge 3-4 must pre-exist (fold-over setup)");
+
+    postSelect("edges", [eiShared]);
+    postCommandRaw("mesh.spinEdge");   // fold-over blocked → no-op
+
+    auto after = getModel();
+    assert(after["vertexCount"].integer == before["vertexCount"].integer);
+    assert(after["edgeCount"].integer   == before["edgeCount"].integer);
+    assert(after["faceCount"].integer   == before["faceCount"].integer);
+    assert(edgeIdx(after, 1, 2) >= 0, "edge 1-2 must survive quad fold-over guard");
+    assert(edgeIdx(after, 3, 4) >= 0, "edge 3-4 must still exist after quad fold-over guard");
 }
 
 // ---------------------------------------------------------------------------
