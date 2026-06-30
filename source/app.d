@@ -143,7 +143,8 @@ import commands.mesh.jitter;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
 import commands.mesh.uv_transform;
-import commands.mesh.uv_project : UvProject;
+import commands.mesh.uv_project  : UvProject;
+import commands.mesh.uv_map_util;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
@@ -2658,6 +2659,14 @@ void main(string[] args) {
         new UvRotate(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.project"] = () => cast(Command)
         new UvProject(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.delete"] = () => cast(Command)
+        new UvDelete(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.rename"] = () => cast(Command)
+        new UvRename(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.copy"] = () => cast(Command)
+        new UvCopy(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.clear"] = () => cast(Command)
+        new UvClear(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
         new MeshEdgeSlide(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
