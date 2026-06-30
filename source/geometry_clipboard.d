@@ -16,6 +16,7 @@ struct GeometryClip {
     uint[][] faces;
     bool[]   subpatch;  /// per-face subpatch flag (parallel to faces[])
     uint[]   material;  /// per-face material index (parallel to faces[])
+    uint[]   part;      /// per-face part id (parallel to faces[])
 
     bool empty() const { return faces.length == 0; }
 
@@ -24,6 +25,7 @@ struct GeometryClip {
         faces    = null;
         subpatch = null;
         material = null;
+        part     = null;
     }
 
     /// Build a clip from the currently selected faces of `m`.
@@ -63,6 +65,7 @@ struct GeometryClip {
             // Non-allocating isFaceSubpatch avoids the O(F²) isSubpatch[] trap.
             clip.subpatch ~= m.isFaceSubpatch(fi);
             clip.material ~= (fi < m.faceMaterial.length ? m.faceMaterial[fi] : 0u);
+            clip.part     ~= (fi < m.facePart.length     ? m.facePart[fi]     : 0u);
         }
 
         return clip;

@@ -59,7 +59,7 @@ struct MeshOpEntry {
         RemoveVerts,    // vIdx = removed indices (pre-removal space); pos = positions
         SetPos,         // vIdx = moved indices; posBefore / posAfter (reserved Ph1)
         AddFaces,       // fIdx = [F0..F1); faceLists = appended vertex-lists
-        RemoveFaces,    // fIdx = removed indices; faceLists; faceMat; faceSub
+        RemoveFaces,    // fIdx = removed indices; faceLists; faceMat; facePrt; faceSub
         ReshapeFaces,   // fIdx; faceListsBefore / faceListsAfter
         Reindex,        // perm = old->new vertex remap (~0u = dropped)
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
@@ -84,6 +84,7 @@ struct MeshOpEntry {
     Vec3[]    pos, posBefore, posAfter;
     uint[][]  faceLists, faceListsBefore, faceListsAfter;
     uint[]    faceMat;                 // RemoveFaces: per-face material
+    uint[]    facePrt;                 // RemoveFaces: per-face part id
     uint[]    faceSub;                 // RemoveFaces: per-face subpatch bit (0/1)
     uint[]    perm;                    // Reindex: old->new remap
 
@@ -275,13 +276,14 @@ struct MeshEditTracker {
     }
 
     // --- Class B: coarse bulk-op deltas -----------------------------------
-    void recordRemoveFaces(in uint[] idx, in uint[][] lists, in uint[] mat, in uint[] sub) {
+    void recordRemoveFaces(in uint[] idx, in uint[][] lists, in uint[] mat, in uint[] prt, in uint[] sub) {
         if (idx.length == 0) return;
         MeshOpEntry e;
         e.kind      = MeshOpEntry.Kind.RemoveFaces;
         e.fIdx      = idx.dup;
         e.faceLists = dupLists(lists);
         e.faceMat   = mat.dup;
+        e.facePrt   = prt.dup;
         e.faceSub   = sub.dup;
         log_ ~= e;
     }
@@ -437,7 +439,7 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
                 m.faces.length = f0;
             break;
         case MeshOpEntry.Kind.RemoveFaces:
-            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.faceSub);
+            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.facePrt, e.faceSub);
             break;
         case MeshOpEntry.Kind.ReshapeFaces:
             // NEGATIVE CONTROL (test only): stub ReshapeFaces^-1 to a no-op
@@ -586,7 +588,7 @@ private void removeFacesForward(ref Mesh m, in uint[] idx) {
 }
 
 private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
-                                in uint[] mat, in uint[] sub) {
+                                in uint[] mat, in uint[] prt, in uint[] sub) {
     // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
     // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
     // the face re-insertion inverse is load-bearing (without it the deleted
@@ -597,7 +599,7 @@ private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
         if (fi <= m.faces.length)
             m.faces.insertInPlace(fi, lists[i].dup);
     }
-    // Restore parallel per-face arrays (material / subpatch) where carried.
+    // Restore parallel per-face arrays (material / part / subpatch) where carried.
     // The face selection/order arrays are restored by the SelectionDelta /
     // whole-array path, not here.
     if (mat.length == idx.length) {
@@ -605,6 +607,18 @@ private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
             if (fi < m.faceMaterial.length) {
                 m.faceMaterial.insertInPlace(fi, mat[i]);
             }
+        }
+    }
+    if (prt.length == idx.length) {
+        foreach (i, fi; idx) {
+            if (fi <= m.facePart.length)
+                m.facePart.insertInPlace(fi, prt[i]);
+        }
+    } else {
+        // prt not carried (old delta): insert 0u to keep length aligned.
+        foreach (i, fi; idx) {
+            if (fi <= m.facePart.length)
+                m.facePart.insertInPlace(fi, 0u);
         }
     }
     if (sub.length == idx.length) {
@@ -674,6 +688,7 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     m.faceMarks.length            = m.faces.length;
     m.faceSelectionOrder.length   = m.faces.length;
     m.faceMaterial.length         = m.faces.length;
+    m.facePart.length             = m.faces.length;
     m.resizeAllMeshMaps();
     // Endpoint-keyed edge selection (doc §1.3). Applied here — AFTER rebuildEdges
     // re-derived `edges` + edgeIndexMap — because edge indices are unstable
