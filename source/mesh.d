@@ -5776,6 +5776,222 @@ struct Mesh {
         return processed;
     }
 
+    /// Vertex bevel: for each selected interior-manifold vertex v, split each
+    /// incident edge at v + amount*normalize(other−v) (one new vertex per edge,
+    /// shared by the two adjacent faces), rewrite every incident face to replace
+    /// v with its two split points in face-ring order, and append an
+    /// outward-wound cap N-gon through those split points.
+    ///
+    /// Interior-manifold guard: every incident edge of v must be shared by
+    /// exactly 2 faces and valence must be ≥ 3. Boundary and wire-edge vertices
+    /// are silently skipped. Adjacent selected vertices are handled via a greedy
+    /// vertex-disjoint selection so no two accepted vertices share an edge.
+    ///
+    /// Cap material/subpatch are carried from one incident face of v — NOT the
+    /// chamfer-literal 0u. Rewritten-face attributes are 1:1 from the original
+    /// slot.
+    ///
+    /// Returns the count of vertices actually processed (0 ⇒ no-op, caller
+    /// should discard snapshot).
+    size_t bevelVerticesByMask(const bool[] mask, float amount) {
+        if (mask.length != vertices.length) return 0;
+        if (amount < 1e-6f) return 0;
+
+        // local helpers
+        uint succInFace_(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length)
+                if (f[k] == v) return f[(k+1)%f.length];
+            return uint.max;
+        }
+        uint predInFace_(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length)
+                if (f[k] == v) return f[(k + f.length - 1)%f.length];
+            return uint.max;
+        }
+
+        // edge→(≤2 faces) adjacency, one pass
+        int[2][ulong] edgeFacesMap;
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k+1)%f.length]);
+                auto p = key in edgeFacesMap;
+                if (p is null) edgeFacesMap[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // greedy vertex-disjoint acceptance
+        bool[] accepted           = new bool[](vertices.length);
+        bool[] neighborOfAccepted = new bool[](vertices.length);
+        size_t processed          = 0;
+
+        foreach (vi; 0 .. cast(uint)vertices.length) {
+            if (vi >= mask.length || !mask[vi]) continue;
+            if (neighborOfAccepted[vi]) continue;
+
+            // incident edges in half-edge ring order
+            uint[] incEdges;
+            foreach (ei; edgesAroundVertex(vi)) incEdges ~= ei;
+            if (incEdges.length < 3) continue;
+
+            // interior-manifold: every incident edge shared by exactly 2 faces
+            bool manifold = true;
+            foreach (ei; incEdges) {
+                ulong key = edgeKeyOrdered(edges[ei][0], edges[ei][1]);
+                auto fp = key in edgeFacesMap;
+                if (fp is null || (*fp)[0] < 0 || (*fp)[1] < 0) {
+                    manifold = false; break;
+                }
+            }
+            if (!manifold) continue;
+
+            accepted[vi] = true;
+            ++processed;
+            foreach (ei; incEdges) {
+                uint other = edgeOtherVertex(cast(uint)ei, vi);
+                if (other < neighborOfAccepted.length)
+                    neighborOfAccepted[other] = true;
+            }
+        }
+        if (processed == 0) return 0;
+
+        // Freeze original count before addVertex grows the array.
+        const uint origVertCount = cast(uint)vertices.length;
+
+        // one split vertex per incident edge of each accepted v
+        uint[ulong]  splitByKey;  // edgeKeyOrdered(a,b) → new vertex index
+        uint[][uint] capRings;    // vi → ordered split-vert indices for cap
+        uint[uint]   capSrc;      // vi → one incident fi (attr carry)
+
+        foreach (vi; 0 .. origVertCount) {
+            if (!accepted[vi]) continue;
+
+            uint[] ring;
+            foreach (ei; edgesAroundVertex(vi)) {
+                ulong key = edgeKeyOrdered(edges[ei][0], edges[ei][1]);
+                if (key !in splitByKey) {
+                    uint other = edgeOtherVertex(cast(uint)ei, vi);
+                    Vec3 sp = vertices[vi] +
+                              amount * safeNormalize(vertices[other] - vertices[vi]);
+                    splitByKey[key] = addVertex(sp);
+                }
+                ring ~= splitByKey[key];
+            }
+            capRings[vi] = ring;
+
+            foreach (fi; facesAroundVertex(vi)) { capSrc[vi] = cast(uint)fi; break; }
+        }
+
+        // per-face substitution map: accepted vi → [sp_pred, sp_succ]
+        struct VertSub { uint oldV; uint[] newVs; }
+        VertSub[][uint] faceSubs;
+
+        foreach (vi; 0 .. origVertCount) {
+            if (!accepted[vi]) continue;
+            foreach (fi; facesAroundVertex(vi)) {
+                uint p    = predInFace_(cast(uint)fi, vi);
+                uint s    = succInFace_(cast(uint)fi, vi);
+                uint spPV = splitByKey[edgeKeyOrdered(p, vi)];
+                uint spVS = splitByKey[edgeKeyOrdered(vi, s)];
+                faceSubs.require(cast(uint)fi) ~= VertSub(vi, [spPV, spVS]);
+            }
+        }
+
+        // single rebuild pass: rewritten faces then cap faces
+        uint[][] newFaces;
+        uint[]   newMat;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        // (a) surviving / substituted faces
+        foreach (fi; 0 .. faces.length) {
+            auto orig  = faces[fi];
+            auto subsP = cast(uint)fi in faceSubs;
+            if (subsP is null) {
+                newFaces ~= orig.dup;
+            } else {
+                uint[][uint] repl;
+                foreach (s; *subsP) repl[s.oldV] = s.newVs;
+                uint[] rebuilt;
+                foreach (v; orig) {
+                    auto rp = v in repl;
+                    if (rp is null) rebuilt ~= v;
+                    else            rebuilt ~= *rp;
+                }
+                newFaces ~= rebuilt;
+            }
+            newMat ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newOrd ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub ~= isFaceSubpatch(cast(uint)fi);
+        }
+
+        // (b) cap faces — attrs carried from capSrc, not the chamfer 0u literal
+        size_t capStart = newFaces.length;
+        foreach (vi; 0 .. origVertCount) {
+            if (!accepted[vi]) continue;
+
+            uint[] capRing = capRings[vi].dup;
+            int    Ncap    = cast(int)capRing.length;
+
+            // outward-winding check: Newell normal vs averaged incident-face normal
+            Vec3 newellN = Vec3(0, 0, 0);
+            foreach (k; 0 .. Ncap) {
+                Vec3 a = vertices[capRing[k]];
+                Vec3 b = vertices[capRing[(k+1)%Ncap]];
+                newellN.x += (a.y - b.y) * (a.z + b.z);
+                newellN.y += (a.z - b.z) * (a.x + b.x);
+                newellN.z += (a.x - b.x) * (a.y + b.y);
+            }
+            Vec3 avgFaceN = Vec3(0, 0, 0);
+            foreach (fi; facesAroundVertex(vi)) {
+                Vec3 fn = faceNormal(cast(uint)fi);
+                avgFaceN.x += fn.x; avgFaceN.y += fn.y; avgFaceN.z += fn.z;
+            }
+            float dot = newellN.x*avgFaceN.x +
+                        newellN.y*avgFaceN.y +
+                        newellN.z*avgFaceN.z;
+            if (dot < 0) {
+                for (int lo = 0, hi = Ncap - 1; lo < hi; ++lo, --hi) {
+                    uint tmp = capRing[lo]; capRing[lo] = capRing[hi]; capRing[hi] = tmp;
+                }
+            }
+
+            uint srcFi = capSrc[vi];
+            newFaces ~= capRing;
+            newMat   ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+            newOrd   ~= 0;
+            newSub   ~= isFaceSubpatch(srcFi);
+        }
+
+        // (c) commit arrays
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        faceSelectionOrder = newOrd;
+
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
+        faceSelectionOrderCounter = 0;
+        foreach (fi; capStart .. faces.length)
+            selectFace(cast(int)fi);
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return processed;
+    }
+
     /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
     /// In debug builds, asserts that `vi` is actually one of the edge's endpoints.
     pragma(inline, true)
@@ -13650,4 +13866,95 @@ unittest {
         if (d2 < 1e-10f) { found = true; break; }
     }
     assert(found, "spikey amount=0: apex must be at centroid (0,0,0)");
+}
+
+// bevelVerticesByMask unittests
+// ---------------------------------------------------------------------------
+
+// Basic: cube corner 0, amount=0.2 → 3 new verts (8→10), 1 cap tri + 3
+// pentagons (6→7 faces). Material and subpatch carried from incident face.
+unittest {
+    import std.math : sqrt;
+    import std.conv : to;
+
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+
+    // Assign non-default material + subpatch to one incident face of vertex 0.
+    uint incFi = uint.max;
+    foreach (fi; m.facesAroundVertex(0)) { incFi = fi; break; }
+    assert(incFi != uint.max, "bevelVert: no incident face at vertex 0");
+    m.faceMaterial[incFi] = 7u;
+    m.setFaceSubpatch(incFi, true);
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    size_t n = m.bevelVerticesByMask(mask, 0.2f);
+
+    assert(n == 1,
+           "bevelVert: expected 1 processed, got " ~ n.to!string);
+    assert(m.vertices.length == 10,
+           "bevelVert: expected 10 verts, got " ~ m.vertices.length.to!string);
+    assert(m.faces.length == 7,
+           "bevelVert: expected 7 faces, got " ~ m.faces.length.to!string);
+
+    // Tally arities: exactly 1 tri (cap) + 3 pentagons.
+    int triCount = 0, pentCount = 0;
+    bool capSubpatch = false;
+    bool capMat7     = false;
+    foreach (fi; 0 .. m.faces.length) {
+        int arity = cast(int)m.faces[fi].length;
+        if (arity == 3) {
+            ++triCount;
+            if (m.isFaceSubpatch(cast(uint)fi)) capSubpatch = true;
+            if (m.faceMaterial[fi] == 7u)        capMat7     = true;
+        } else if (arity == 5) {
+            ++pentCount;
+        }
+    }
+    assert(triCount  == 1, "bevelVert: expected 1 cap tri, got "    ~ triCount.to!string);
+    assert(pentCount == 3, "bevelVert: expected 3 pentagons, got " ~ pentCount.to!string);
+    assert(capSubpatch, "bevelVert: cap must carry subpatch from incident face");
+    assert(capMat7,     "bevelVert: cap must carry material 7 from incident face");
+
+    // Split verts at expected positions (amount=0.2, unit-cube edges).
+    // Corner 0 = (-0.5,-0.5,-0.5); neighbours at (+0.5,-0.5,-0.5),
+    // (-0.5,+0.5,-0.5), (-0.5,-0.5,+0.5).
+    Vec3[3] expected = [Vec3(-0.3f,-0.5f,-0.5f),
+                        Vec3(-0.5f,-0.3f,-0.5f),
+                        Vec3(-0.5f,-0.5f,-0.3f)];
+    bool[3] found;
+    foreach (v; m.vertices) {
+        foreach (j; 0 .. 3) {
+            Vec3 e = expected[j];
+            float d = sqrt((v.x-e.x)*(v.x-e.x) +
+                           (v.y-e.y)*(v.y-e.y) +
+                           (v.z-e.z)*(v.z-e.z));
+            if (d < 1e-4f) found[j] = true;
+        }
+    }
+    foreach (j; 0 .. 3)
+        assert(found[j], "bevelVert: split vert " ~ j.to!string ~ " not found");
+
+    // Original corner 0 must have been compacted away.
+    bool origPresent = false;
+    foreach (v; m.vertices) {
+        float d = sqrt((v.x+0.5f)*(v.x+0.5f) +
+                       (v.y+0.5f)*(v.y+0.5f) +
+                       (v.z+0.5f)*(v.z+0.5f));
+        if (d < 1e-4f) { origPresent = true; break; }
+    }
+    assert(!origPresent, "bevelVert: original corner 0 must be compacted away");
+}
+
+// No-op: amount=0 → returns 0, mesh unchanged.
+unittest {
+    auto m = makeCube();
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    size_t n = m.bevelVerticesByMask(mask, 0.0f);
+    assert(n == 0,                "bevelVert no-op: expected 0 processed");
+    assert(m.vertices.length == 8, "bevelVert no-op: vertex count unchanged");
+    assert(m.faces.length    == 6, "bevelVert no-op: face count unchanged");
 }
