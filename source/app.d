@@ -85,6 +85,7 @@ import commands.mesh.quadruple   : MeshQuadruple;
 import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
+import commands.mesh.set_material;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.add_point : MeshAddPoint;
@@ -2470,6 +2471,8 @@ void main(string[] args) {
                            () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.setMaterial"] = () => cast(Command)
+        new MeshSetMaterial(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
