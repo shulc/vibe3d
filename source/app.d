@@ -87,6 +87,7 @@ import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.add_point : MeshAddPoint;
+import commands.mesh.split_face  : MeshSplitFace;
 import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
@@ -2460,6 +2461,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.addPoint"] = () => cast(Command)
         new MeshAddPoint(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.splitFace"] = () => cast(Command)
+        new MeshSplitFace(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.edgeJoin"] = () => cast(Command)
         new MeshEdgeJoin(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
