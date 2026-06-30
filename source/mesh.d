@@ -7574,6 +7574,218 @@ struct Mesh {
         return F0 + rimTotal;
     }
 
+    // ------------------------------------------------------------------
+    // Profile extraction and revolve (surface of revolution)
+    // ------------------------------------------------------------------
+
+    /// Extract a single ordered vertex chain from the currently selected edges.
+    /// Returns the ordered vertex list and sets `isClosed` accordingly.
+    ///
+    /// Closed cycle (all participating vertices degree 2):
+    ///   `isClosed = true`; chain length >= 3.
+    ///
+    /// Open chain (exactly two degree-1 endpoints):
+    ///   `isClosed = false`; chain walked endpoint-to-endpoint; length >= 2.
+    ///
+    /// Returns [] if: no edges selected, any vertex degree > 2 (branching),
+    /// more than one connected component, or chain too short for its type.
+    ///
+    /// Note: walk start is arbitrary (AA iteration order), so chain direction
+    /// — and hence the swept surface's in/out normal — is not pinned
+    /// (vibe3d-divergence, v1; see doc/radial_sweep_plan.md Phase 4).
+    uint[] extractSelectedEdgeChain(out bool isClosed) const {
+        isClosed = false;
+
+        // Build adjacency restricted to selected edges.
+        uint[][uint] adj;
+        foreach (ei; 0 .. edges.length) {
+            if (ei >= edgeMarks.length) continue;
+            if (!(edgeMarks[ei] & Marks.Select)) continue;
+            uint a = edges[ei][0], b = edges[ei][1];
+            adj[a] ~= b;
+            adj[b] ~= a;
+        }
+        if (adj.length == 0) return [];
+
+        // Reject any branching vertex (degree > 2).
+        foreach (v, nbrs; adj)
+            if (nbrs.length > 2) return [];
+
+        // Find degree-1 endpoint vertices.
+        uint startV        = uint.max;
+        uint endpointCount = 0;
+        foreach (v, nbrs; adj) {
+            if (nbrs.length == 1) {
+                ++endpointCount;
+                if (startV == uint.max) startV = v;
+            }
+        }
+
+        if (endpointCount == 0) {
+            // All degree 2 → closed cycle; pick any start vertex.
+            isClosed = true;
+            foreach (v, nbrs; adj) { startV = v; break; }
+        } else if (endpointCount == 2) {
+            // Two endpoints → open chain; startV already set to one endpoint.
+            isClosed = false;
+        } else {
+            return [];   // malformed degree combination
+        }
+
+        // Walk from startV, avoiding backtracking.
+        bool[uint] visited;
+        uint[] chain;
+        uint cur  = startV;
+        uint prev = uint.max;
+        while (cur !in visited) {
+            visited[cur] = true;
+            chain ~= cur;
+            // Pick the neighbor that is not the previous vertex.
+            uint next = uint.max;
+            foreach (n; adj[cur])
+                if (n != prev) { next = n; break; }
+            if (next == uint.max) break;   // reached far endpoint (degree 1)
+            prev = cur;
+            cur  = next;
+        }
+
+        // Validate closure / minimum chain length.
+        if (isClosed) {
+            if (cur != startV) return [];   // didn't close → multi-component
+            if (chain.length < 3) return [];
+        } else {
+            if (chain.length < 2) return [];
+        }
+
+        // Single-component: every adj vertex must have been visited.
+        foreach (v, nbrs; adj)
+            if (v !in visited) { isClosed = false; return []; }
+
+        return chain;
+    }
+
+    /// Sweep a vertex chain (profile) around a principal axis to form a
+    /// surface of revolution.
+    ///
+    /// `profile`       — ordered vertex indices in this mesh.
+    /// `profileClosed` — true: treat as a closed ring (M quads/step via
+    ///                   `bridgeLoopsPaired`; profile.length >= 3 required);
+    ///                   false: open strip (M-1 quads/step).
+    /// `count`         — total profile copies including the original (>= 2).
+    /// `axis`          — 'X', 'Y', or 'Z'.
+    /// `center`        — rotation pivot point.
+    /// `angle`         — total sweep angle in radians (nonzero).
+    ///
+    /// Closed sweep (|angle − 2π| < 1e-3 or angle >= 2π):
+    ///   stepAngle = angle/count; last bridge reuses ring[0]'s original verts
+    ///   (no seam duplicate — mirrors `radialArrayFaces` steps 1..count-1).
+    ///
+    /// Open arc (angle < 2π − 1e-3):
+    ///   stepAngle = angle/(count-1); endpoints land exactly at 0 and `angle`.
+    ///   Intentional divergence from `radialArrayFaces` (which excludes the
+    ///   copy at the total angle); an arc sweep wants inclusive endpoints.
+    ///
+    /// Selection finalise: deselects pre-existing faces, selects swept faces,
+    /// clears vertex and edge selection (mirrors `radialArrayFaces` :3807-3810).
+    ///
+    /// Winding: profile walk direction is arbitrary (vibe3d-divergence, v1);
+    /// global in-vs-out orientation is unspecified. The uniform quad formula
+    /// guarantees globally consistent winding per step. Pinning outward-vs-
+    /// inward is deferred (doc/radial_sweep_plan.md Phase 4).
+    ///
+    /// Open-profile sweeps leave boundary loops at the profile endpoints;
+    /// end-cap generation is deferred (doc/radial_sweep_plan.md Phase 4).
+    ///
+    /// Returns faces added (> 0) on success, 0 on guard failure or no-op.
+    size_t revolveProfile(const(uint)[] profile, bool profileClosed,
+                          int count, char axis, Vec3 center, float angle) {
+        import math : mulMV, pivotRotationMatrix;
+        import std.math : abs;
+
+        // Guards.
+        if (profile.length < 2) return 0;
+        if (profileClosed && profile.length < 3) return 0;
+        if (count < 2) return 0;
+        if (axis != 'X' && axis != 'Y' && axis != 'Z') return 0;
+        if (abs(angle) < 1e-6f) return 0;
+
+        Vec3 axisVec;
+        if      (axis == 'X') axisVec = Vec3(1, 0, 0);
+        else if (axis == 'Y') axisVec = Vec3(0, 1, 0);
+        else                  axisVec = Vec3(0, 0, 1);
+
+        // Closed-sweep detection: |angle − 2π| < 1e-3 or angle >= 2π.
+        immutable float tau         = 6.283185307f;   // 2π
+        immutable bool  sweepClosed = abs(angle - tau) < 1e-3f || angle >= tau;
+        immutable float stepAngle   = sweepClosed
+            ? angle / cast(float)count
+            : angle / cast(float)(count - 1);
+
+        // Snapshot pre-mutation face count for selection finalise.
+        const size_t origFaceCount = faces.length;
+
+        // Build per-step rings.
+        // ring[0] = existing profile verts (no copy);
+        // ring[k] (k >= 1) = new rotated copies appended to vertices[].
+        uint[][] rings;
+        rings.length = count;
+        rings[0] = profile.dup;
+
+        foreach (step; 1 .. count) {
+            float ang  = stepAngle * cast(float)step;
+            auto  rotM = pivotRotationMatrix(center, axisVec, ang);
+            uint[] ring;
+            ring.length = profile.length;
+            foreach (k, vid; profile) {
+                Vec3 p  = vertices[vid];
+                auto v4 = Vec4(p.x, p.y, p.z, 1.0f);
+                auto r4 = mulMV(rotM, v4);
+                ring[k] = addVertex(Vec3(r4.x, r4.y, r4.z));
+            }
+            rings[step] = ring;
+        }
+
+        // Bridge consecutive rings into quad faces.
+        size_t facesAdded = 0;
+        immutable int lastBridge = sweepClosed ? count - 1 : count - 2;
+        foreach (i; 0 .. lastBridge + 1) {
+            int           nextIdx = sweepClosed ? (i + 1) % count : i + 1;
+            const(uint)[] ringA   = rings[i];
+            const(uint)[] ringB   = rings[nextIdx];
+
+            if (profileClosed) {
+                // bridgeLoopsPaired: M quads with closed wrap [A[i],A[i+1],B[i+1],B[i]].
+                facesAdded += bridgeLoopsPaired(ringA, ringB);
+            } else {
+                // Open strip: M-1 quads, no wrap; same winding as bridgeLoopsPaired.
+                const size_t M = profile.length;
+                foreach (j; 0 .. M - 1) {
+                    addFace([ringA[j], ringA[j + 1], ringB[j + 1], ringB[j]]);
+                    ++facesAdded;
+                }
+            }
+        }
+
+        if (facesAdded == 0) return 0;
+
+        // Finalise: rebuild half-edge maps and grow selection arrays.
+        buildLoops();
+        syncSelection();
+
+        // Deselect pre-existing faces; select only the newly swept faces.
+        foreach (fi; 0 .. origFaceCount)
+            deselectFace(cast(int)fi);
+        faceSelectionOrderCounter = 0;
+        foreach (fi; origFaceCount .. faces.length)
+            selectFace(cast(int)fi);
+
+        // Clear vertex and edge selection (mirrors radialArrayFaces :3807-3810).
+        clearVertexSelection();
+        clearEdgeSelection();
+
+        return facesAdded;
+    }
+
     // ---------------------------------------------------------------------------
     // Mesh hygiene kernels
     // ---------------------------------------------------------------------------
@@ -14260,4 +14472,236 @@ unittest { // spikeFacesByMask: facePart must carry to all fan tris
     foreach (fi; 0 .. m.faces.length)
         assert(m.facePart.length > fi && m.facePart[fi] == 9u,
                "facePart not carried to fan tri " ~ fi.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// revolveProfile unittests
+// ---------------------------------------------------------------------------
+
+unittest { // revolveProfile (a): closed ring 360° — 16 quads, 16 verts, manifold, 0 boundary loops
+    import std.math : PI;
+    import std.conv : to;
+
+    // Square closed cross-section at x=2 from the Y axis.
+    // Closing edges complete the ring (needed for bridgeLoopsPaired topology but
+    // not structurally required — revolveProfile only reads vertex positions via
+    // the vertex index array, not edge topology).
+    Mesh m;
+    m.addVertex(Vec3(2, 0, 0));  // v0
+    m.addVertex(Vec3(2, 1, 0));  // v1
+    m.addVertex(Vec3(2, 1, 1));  // v2
+    m.addVertex(Vec3(2, 0, 1));  // v3
+    m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3); m.addEdge(3, 0);
+    m.buildLoops();
+
+    // Revolve 360°, 4 steps.
+    // Closed sweep: 4 rings × 4 bridge steps × 4 quads/step = 16 faces.
+    // Vertex count: ring[0]=4 original + rings[1..3]=3×4 = 4+12 = 16 (no seam dup).
+    size_t added = m.revolveProfile([0u, 1u, 2u, 3u], /*profileClosed*/true,
+                                    /*count*/4, 'Y', Vec3(0, 0, 0),
+                                    cast(float)(2 * PI));
+    assert(added == 16,
+        "closed 360°: revolveProfile returned " ~ added.to!string ~ ", expected 16");
+    assert(m.faces.length == 16,
+        "closed 360°: faces.length == " ~ m.faces.length.to!string ~ ", expected 16");
+    assert(m.vertices.length == 16,
+        "closed 360°: vertices.length == " ~ m.vertices.length.to!string
+        ~ " (expected 16, no seam dup)");
+
+    // Manifold: every face-edge must appear exactly twice across all faces.
+    int[ulong] edgeInc;
+    foreach (fi; 0 .. m.faces.length) {
+        const f = m.faces[fi];
+        foreach (k; 0 .. f.length) {
+            uint a = f[k], b = f[(k + 1) % f.length];
+            ulong key = a < b ? (cast(ulong)a << 32) | b
+                              : (cast(ulong)b << 32) | a;
+            edgeInc[key]++;
+        }
+    }
+    foreach (key, cnt; edgeInc)
+        assert(cnt == 2,
+            "closed 360°: edge " ~ key.to!string ~ " has incidence " ~ cnt.to!string
+            ~ " (expected exactly 2 — surface must be manifold)");
+
+    // Watertight: zero boundary loops.
+    auto bLoops = m.boundaryLoops();
+    assert(bLoops.length == 0,
+        "closed 360°: expected 0 boundary loops, got " ~ bLoops.length.to!string);
+}
+
+unittest { // revolveProfile (b): open strip, partial arc — 4 quads, 9 verts, 1 boundary loop
+    import std.math : PI;
+    import std.conv : to;
+
+    // 3-vert polyline along the X axis; open-strip profile (profileClosed=false).
+    // Verts in the y=0 plane: all rotated verts also remain in y=0 (Y-axis rotation
+    // preserves y).  Face normals all point in +Y (verified analytically).
+    Mesh m;
+    m.addVertex(Vec3(1, 0, 0));  // v0
+    m.addVertex(Vec3(2, 0, 0));  // v1
+    m.addVertex(Vec3(3, 0, 0));  // v2
+    m.addEdge(0, 1); m.addEdge(1, 2);
+    m.buildLoops();
+
+    // Open 90° arc, 3 copies.
+    // stepAngle = (π/2)/(3-1) = π/4.
+    // Bridges: (0→1), (1→2).  Each step: M-1 = 2 quads.  Total = 4 quads.
+    // Vertex count: 3 original + 2 new rings × 3 = 9.
+    size_t added = m.revolveProfile([0u, 1u, 2u], /*profileClosed*/false,
+                                    /*count*/3, 'Y', Vec3(0, 0, 0),
+                                    cast(float)(PI * 0.5));
+    assert(added == 4,
+        "open arc 90°: revolveProfile returned " ~ added.to!string ~ ", expected 4");
+    assert(m.faces.length == 4,
+        "open arc 90°: faces.length == " ~ m.faces.length.to!string ~ ", expected 4");
+    assert(m.vertices.length == 9,
+        "open arc 90°: vertices.length == " ~ m.vertices.length.to!string
+        ~ ", expected 9");
+
+    // All new faces must be quads with globally consistent winding.
+    Vec3 refN = m.faceNormal(0);
+    foreach (fi; 0 .. m.faces.length) {
+        assert(m.faces[fi].length == 4,
+            "open arc 90°: face " ~ fi.to!string ~ " is not a quad");
+        Vec3 fn = m.faceNormal(cast(uint)fi);
+        float dt = fn.x * refN.x + fn.y * refN.y + fn.z * refN.z;
+        assert(dt > 0.0f,
+            "open arc 90°: face " ~ fi.to!string ~ " has inconsistent winding");
+    }
+
+    // Open partial arc: one boundary loop (the rectangular perimeter).
+    auto bLoops = m.boundaryLoops();
+    assert(bLoops.length == 1,
+        "open arc 90°: expected 1 boundary loop (perimeter), got "
+        ~ bLoops.length.to!string);
+}
+
+unittest { // revolveProfile (c): guard rejections — all must return 0, mesh unchanged
+    import std.math : PI;
+    import std.conv : to;
+
+    Mesh m;
+    m.addVertex(Vec3(1, 0, 0));  // v0
+    m.addVertex(Vec3(2, 0, 0));  // v1
+    m.addVertex(Vec3(3, 0, 0));  // v2
+
+    immutable float tau = cast(float)(2 * PI);
+    uint[] p3 = [0u, 1u, 2u];
+
+    // count < 2
+    assert(m.revolveProfile(p3, false, 1, 'Y', Vec3(0,0,0), tau) == 0,
+        "guard count<2: expected 0");
+    assert(m.faces.length == 0, "guard count<2: mesh must be unchanged");
+
+    // bad axis character
+    assert(m.revolveProfile(p3, false, 4, 'W', Vec3(0,0,0), tau) == 0,
+        "guard bad axis: expected 0");
+    assert(m.faces.length == 0, "guard bad axis: mesh must be unchanged");
+
+    // zero angle
+    assert(m.revolveProfile(p3, false, 4, 'Y', Vec3(0,0,0), 0.0f) == 0,
+        "guard zero angle: expected 0");
+    assert(m.faces.length == 0, "guard zero angle: mesh must be unchanged");
+
+    // profile.length < 2
+    assert(m.revolveProfile([0u], false, 4, 'Y', Vec3(0,0,0), tau) == 0,
+        "guard profile<2: expected 0");
+    assert(m.faces.length == 0, "guard profile<2: mesh must be unchanged");
+
+    // closed profile with < 3 verts
+    assert(m.revolveProfile([0u, 1u], true, 4, 'Y', Vec3(0,0,0), tau) == 0,
+        "guard closed<3: expected 0");
+    assert(m.faces.length == 0, "guard closed<3: mesh must be unchanged");
+
+    // Vertex count must also be untouched: only the 3 verts we added.
+    assert(m.vertices.length == 3,
+        "guards: vertices.length must remain 3, got " ~ m.vertices.length.to!string);
+}
+
+unittest { // extractSelectedEdgeChain: open chain, closed cycle, branching + multi-component rejections, empty
+    import std.conv : to;
+
+    // (1) Open chain: v0-v1-v2-v3 (3 edges, endpoints at v0 and v3).
+    {
+        Mesh m;
+        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3);
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+        bool closed;
+        auto chain = m.extractSelectedEdgeChain(closed);
+        assert(!closed, "open chain: expected isClosed=false");
+        assert(chain.length == 4,
+            "open chain: expected 4 verts, got " ~ chain.length.to!string);
+        assert((chain[0] == 0 && chain[$-1] == 3)
+            || (chain[0] == 3 && chain[$-1] == 0),
+            "open chain: endpoints must be v0 and v3");
+    }
+
+    // (2) Closed cycle: v0-v1-v2-v3-v0 (4 edges, all degree 2).
+    {
+        Mesh m;
+        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3); m.addEdge(3, 0);
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+        bool closed;
+        auto chain = m.extractSelectedEdgeChain(closed);
+        assert(closed, "closed cycle: expected isClosed=true");
+        assert(chain.length == 4,
+            "closed cycle: expected 4 verts, got " ~ chain.length.to!string);
+    }
+
+    // (3) Branching vertex (degree 3): v0-v1, v1-v2, v1-v3 → must reject.
+    {
+        Mesh m;
+        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(1, 3);
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+        bool closed;
+        auto chain = m.extractSelectedEdgeChain(closed);
+        assert(chain.length == 0,
+            "branching vertex: expected rejection (empty chain), got length "
+            ~ chain.length.to!string);
+    }
+
+    // (4) Two disconnected edges (multi-component, 4 degree-1 endpoints) → must reject.
+    {
+        Mesh m;
+        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+        m.addEdge(0, 1); m.addEdge(2, 3);
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+        bool closed;
+        auto chain = m.extractSelectedEdgeChain(closed);
+        assert(chain.length == 0,
+            "multi-component: expected rejection, got length "
+            ~ chain.length.to!string);
+    }
+
+    // (5) No edges selected → empty result.
+    {
+        Mesh m;
+        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+        m.addEdge(0, 1); m.addEdge(1, 2);
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        // edgeMarks grown to cover 2 edges but Select bit NOT set.
+
+        bool closed;
+        auto chain = m.extractSelectedEdgeChain(closed);
+        assert(chain.length == 0,
+            "no selection: expected empty chain, got length "
+            ~ chain.length.to!string);
+    }
 }
