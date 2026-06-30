@@ -7754,6 +7754,30 @@ struct Mesh {
     }
 
     // -----------------------------------------------------------------------
+    // addEdgePoint — public entry point: insert one vertex at parameter t along
+    // edge ei (open interval t ∈ (0,1)), re-derive edges from faces, and call
+    // buildLoops().  Returns the new vertex index, or uint.max if guards fail.
+    //
+    // Unlike insertEdgeLoops (ring-walk, quad-only), this touches only the
+    // seed edge's incident faces — no quad/ring restriction; triangle edges
+    // work too.  Selection state is left unchanged; the caller owns that.
+    // -----------------------------------------------------------------------
+    uint addEdgePoint(uint ei, float t) {
+        if (ei >= edges.length)        return uint.max;
+        if (t <= 0.0f || t >= 1.0f)   return uint.max;
+        bool[] isCutVert; // local throwaway — not used outside this call
+        uint vi = insertEdgePoint(ei, t, isCutVert);
+        // Re-derive edges from faces (deduped via edgeIndexMap).
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref face; faces)
+            foreach (k; 0 .. face.length)
+                addEdge(face[k], face[(k + 1) % face.length]);
+        buildLoops();
+        return vi;
+    }
+
+    // -----------------------------------------------------------------------
     // rebuildFacesWithChordSplits — factored from cutByPlane Pass-2 + finalize.
     //
     // For each face fi eligible by splitFaceMask (empty mask = all faces): if the
@@ -13148,4 +13172,45 @@ unittest { // Point-domain map (weight map) values propagate to copies
     // Unrelated vertices must remain at 0.
     assert(m.vertexWeight("split_wt", 0) == 0.0f,
            "splitVerticesByMask/Point-map: unrelated vertex must stay 0");
+}
+
+// addEdgePoint: midpoint t=0.5 on cube edge {0,1} → +1 vertex at (0,-0.5,-0.5),
+// both incident faces share the new index (no T-junction), bare 0-1 adjacency gone.
+unittest {
+    import std.math : abs;
+    auto m = makeCube();
+    // Edge {0,1} is stored as [1,0] (first occurrence in addFace([0,3,2,1]) is
+    // the 1→0 step at winding position k=3).  Midpoint is orientation-independent.
+    uint ei = m.edgeIndexMap[edgeKey(0, 1)];
+    uint vi = m.addEdgePoint(ei, 0.5f);
+    assert(vi != uint.max,           "addEdgePoint: must succeed on valid cube edge");
+    assert(m.vertices.length == 9,   "addEdgePoint: V must be 9 after midpoint split");
+    // Midpoint of {0,1}: verts 0=(-0.5,-0.5,-0.5) and 1=(0.5,-0.5,-0.5) → (0,-0.5,-0.5).
+    assert(abs(m.vertices[vi].x - 0.0f) < 1e-5f, "addEdgePoint: new vert x must be 0");
+    assert(abs(m.vertices[vi].y + 0.5f) < 1e-5f, "addEdgePoint: new vert y must be -0.5");
+    assert(abs(m.vertices[vi].z + 0.5f) < 1e-5f, "addEdgePoint: new vert z must be -0.5");
+    // No face may still have a bare 0→1 or 1→0 adjacency (index-shared).
+    foreach (face; m.faces) {
+        for (size_t k = 0; k < face.length; k++) {
+            uint fa = face[k], fb = face[(k + 1) % face.length];
+            assert(!((fa == 0 && fb == 1) || (fa == 1 && fb == 0)),
+                   "addEdgePoint: bare 0-1 edge must not remain in any face");
+        }
+    }
+    // Exactly two faces contain the new vertex (the two former incident faces).
+    int facesWithVi = 0;
+    foreach (face; m.faces)
+        foreach (v; face)
+            if (v == vi) { facesWithVi++; break; }
+    assert(facesWithVi == 2, "addEdgePoint: exactly 2 faces must contain the new vertex");
+}
+
+// addEdgePoint: open-interval guards reject t=0 and t=1 without mutation.
+unittest {
+    auto m = makeCube();
+    uint ei = m.edgeIndexMap[edgeKey(0, 1)];
+    assert(m.addEdgePoint(ei, 0.0f) == uint.max, "addEdgePoint: t=0 must fail");
+    assert(m.addEdgePoint(ei, 1.0f) == uint.max, "addEdgePoint: t=1 must fail");
+    assert(m.vertices.length == 8,               "addEdgePoint: guards must not mutate mesh");
+    assert(m.edges.length    == 12,              "addEdgePoint: guards must not mutate edges");
 }
