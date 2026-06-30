@@ -8064,6 +8064,53 @@ struct Mesh {
         return rebuildFacesWithChordSplits(splitMask, isCutVert);
     }
 
+    // -----------------------------------------------------------------------
+    // splitFaceByVertices — split a face along a chord between two of its
+    // existing, non-adjacent winding vertices.
+    //
+    // Creates two child faces that together tile the parent area.  No new
+    // vertices or edge-midpoints are inserted — the chord connects vA and vB
+    // directly.  Per-face attributes (material, subpatch flag) are carried to
+    // both halves automatically by rebuildFacesWithChordSplits.
+    //
+    // Mask scoping: vA/vB appear in other faces too; splitFaceMask limits the
+    // eligible set to faceIdx alone so no other face is touched.
+    //
+    // Returns 1 on success, 0 for any no-op condition:
+    //   - faces or vertices empty
+    //   - faceIdx or vA/vB out of bounds
+    //   - vA == vB
+    //   - vA or vB absent from the face winding
+    //   - vA and vB are adjacent in the winding (chord == existing edge)
+    //
+    // Caller owns snapshot/undo — this method does NOT capture a snapshot.
+    // -----------------------------------------------------------------------
+    public size_t splitFaceByVertices(uint faceIdx, uint vA, uint vB)
+    {
+        if (faces.length == 0 || vertices.length == 0) return 0;
+        if (faceIdx >= faces.length) return 0;
+        if (vA >= vertices.length || vB >= vertices.length) return 0;
+        if (vA == vB) return 0;
+
+        // Both vA and vB must appear in the face winding.
+        bool foundA = false, foundB = false;
+        foreach (v; faces[faceIdx]) {
+            if (v == vA) foundA = true;
+            if (v == vB) foundB = true;
+        }
+        if (!foundA || !foundB) return 0;
+
+        // Build cut-vertex mask restricted to faceIdx only.
+        bool[] isCutVert = new bool[](vertices.length);
+        isCutVert[vA] = true;
+        isCutVert[vB] = true;
+
+        bool[] splitFaceMask = new bool[](faces.length);
+        splitFaceMask[faceIdx] = true;
+
+        return rebuildFacesWithChordSplits(splitFaceMask, isCutVert);
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -13279,4 +13326,68 @@ unittest { // mergeFacesByMask: 2-quad strip → 1 six-corner n-gon; non-adjacen
     assert(m2.mergeFacesByMask([true, false]) == 0,
            "single-face mask must dissolve nothing");
     assert(m2.faces.length == 2, "face count unchanged on no-op");
+}
+
+// splitFaceByVertices unittests
+// ---------------------------------------------------------------------------
+
+unittest { // splitFaceByVertices: quad split along diagonal {0,2} → two tris + attr carry
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    // Set non-default attrs before the split to prove carry-over.
+    m.surfaces ~= Surface("TestMat", Vec3(1, 0, 0));
+    m.faceMaterial[0] = 1u;
+    m.setSubpatch(0, true);
+
+    size_t n = m.splitFaceByVertices(0, 0, 2);
+    assert(n == 1,               "splitFaceByVertices: expected 1 split");
+    assert(m.faces.length == 2,  "splitFaceByVertices: expected 2 faces");
+    assert(m.edges.length == 5,  "splitFaceByVertices: expected 5 edges (4 boundary + 1 chord)");
+
+    // Winding: i=0, j=2 in the scan → f1=[0,1,2], f2=[2,3,0].
+    bool hasF1 = false, hasF2 = false;
+    foreach (f; m.faces) {
+        if (f[] == [0u,1u,2u]) hasF1 = true;
+        if (f[] == [2u,3u,0u]) hasF2 = true;
+    }
+    assert(hasF1, "splitFaceByVertices: expected face [0,1,2]");
+    assert(hasF2, "splitFaceByVertices: expected face [2,3,0]");
+
+    // Attr carry: both halves must inherit material=1 and subpatch flag.
+    assert(m.faceMaterial.length >= 2,       "splitFaceByVertices: faceMaterial must cover both halves");
+    assert(m.faceMaterial[0] == 1u,          "splitFaceByVertices: f0 must carry parent material");
+    assert(m.faceMaterial[1] == 1u,          "splitFaceByVertices: f1 must carry parent material");
+    assert(m.isFaceSubpatch(0),              "splitFaceByVertices: f0 must carry parent subpatch flag");
+    assert(m.isFaceSubpatch(1),              "splitFaceByVertices: f1 must carry parent subpatch flag");
+}
+
+unittest { // splitFaceByVertices: adjacent verts → no-op (returns 0, mesh unchanged)
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    // Standard-adjacent: 0→1 and wrap-adjacent: 3→0.
+    assert(m.splitFaceByVertices(0, 0, 1) == 0, "adjacent: must return 0");
+    assert(m.splitFaceByVertices(0, 3, 0) == 0, "wrap-adjacent: must return 0");
+    assert(m.faces.length == 1,                 "adjacent no-op: face count unchanged");
+    assert(m.edges.length == 4,                 "adjacent no-op: edge count unchanged");
+}
+
+unittest { // splitFaceByVertices: same-vert / OOB / not-in-face → all return 0
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    assert(m.splitFaceByVertices(0, 0,  0)  == 0, "same-vert: must return 0");
+    assert(m.splitFaceByVertices(0, 0, 99)  == 0, "OOB vert: must return 0");
+    assert(m.splitFaceByVertices(5, 0,  2)  == 0, "OOB face: must return 0");
+    assert(m.faces.length == 1,                   "guards: face count unchanged");
 }
