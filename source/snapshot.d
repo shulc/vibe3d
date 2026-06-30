@@ -153,16 +153,18 @@ struct MeshSnapshot {
         // Topology-safety check: keep current marks only when element counts
         // are unchanged (pure transform — no elements added or removed).
         // If topology changed, the snapshot marks are the safe fallback.
-        // INVARIANT this relies on: every op reachable via ToolDoApplyCommand
-        // either preserves element count AND identity/order (transforms) or
-        // strictly grows the count (extrude/extend) — so a count match implies
-        // the live marks still index the same elements. A future doApply op
-        // that net-preserves count while swapping elements (e.g. weld-after-add)
-        // would defeat this check and need a topology hash instead.
+        //
+        // IMPORTANT: compare the PRE-RESTORE live counts (captured above in
+        // liveXxxMarks.length) against the snapshot counts — NOT mesh.xxx.length
+        // after the restore.  After restore, mesh.xxx.length trivially equals
+        // xxx.length (we just wrote from the snapshot), so the post-restore
+        // comparison would always report "unchanged" even for topology-shrinking
+        // ops like mesh.reduce, making the live-marks loop walk out-of-bounds
+        // when the reduced mesh had fewer elements than the snapshot.
         bool topologyUnchanged =
-            mesh.vertices.length == vertices.length &&
-            mesh.edges.length    == edges.length    &&
-            mesh.faces.length    == faces.length;
+            liveVertexMarks.length == vertices.length &&
+            liveEdgeMarks.length   == edges.length    &&
+            liveFaceMarks.length   == faces.length;
 
         if (topologyUnchanged) {
             // Pure transform: splice the live selection marks back in,
