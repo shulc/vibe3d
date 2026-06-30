@@ -115,6 +115,9 @@ import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
 import commands.mesh.flip    : MeshFlip;
 import commands.mesh.duplicate_ : MeshDuplicate;
+import commands.mesh.copy_      : MeshCopy;
+import commands.mesh.paste_     : MeshPaste;
+import commands.mesh.cut_       : MeshCut;
 import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
@@ -2561,6 +2564,15 @@ void main(string[] args) {
     reg.commandFactories["mesh.duplicate"] = () => cast(Command)
         new MeshDuplicate(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.copy"] = () => cast(Command)
+        new MeshCopy(&mesh(), cameraView, editMode, &gpu,
+                     &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.paste"] = () => cast(Command)
+        new MeshPaste(&mesh(), cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.cut"] = () => cast(Command)
+        new MeshCut(&mesh(), cameraView, editMode, &gpu,
+                    &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.mirror"] = () => cast(Command)
         new MeshMirror(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
