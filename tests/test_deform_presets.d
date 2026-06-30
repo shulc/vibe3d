@@ -117,6 +117,10 @@ unittest { // bulge = Scale + Radial
     assertPreset("xfrm.bulge", "radial", "false");
 }
 
+unittest { // softTransform = unified transform (T+R+S all banks) + Radial falloff
+    assertPreset("xfrm.softTransform", "radial", "false");
+}
+
 // -------------------------------------------------------------------------
 // Each preset, once activated, leaves the falloff configured so that the
 // underlying transform's per-vertex math sees a non-trivial weight on the
