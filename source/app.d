@@ -50,6 +50,7 @@ import tools.cylinder;
 import tools.cone;
 import tools.capsule;
 import tools.torus;
+import tools.arc;
 import tools.pen;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
@@ -2047,6 +2048,16 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.torus", reg.toolFactories["prim.torus"]);
+
+    reg.toolFactories["prim.arc"] = () {
+        auto t = new ArcTool(() => &mesh(), &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["prim.arc"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.arc", reg.toolFactories["prim.arc"]);
 
     // Pen has no headless path — interactive only. Tool factory
     // only; no commandFactories entry. See doc/pen_plan.md.
