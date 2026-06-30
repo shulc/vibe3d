@@ -111,6 +111,8 @@ panels:
                   - "prim.arc cenX:0 cenY:0 cenZ:0 radius:0.5 startAngle:0 endAngle:180 segments:24 axis:1"
           - label: Pen
             action: { kind: tool, id: pen }
+          - label: Vertex
+            action: { kind: tool, id: prim.vertex }
   # Deform palette — mirrors MODO's Deform tool-palette layout. D.1
   # of doc/deform_plan.md ships the 9 transform+falloff presets; the
   # remaining MODO tools (Element Move, Flex, Push, Bend, Vortex,

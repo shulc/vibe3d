@@ -53,6 +53,7 @@ import tools.torus;
 import tools.arc;
 import tools.tube;
 import tools.pen;
+import tools.vertex_place : VertexTool;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
@@ -2090,6 +2091,16 @@ void main(string[] args) {
     reg.toolFactories["pen"] = () {
         auto t = new PenTool(() => &mesh(), &gpu, litShader,
                              &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Vertex placement — interactive only; one click = one isolated vertex.
+    // No commandFactories entry: headless geometry creation uses mesh.addVertex
+    // (task 0131).
+    reg.toolFactories["prim.vertex"] = () {
+        auto t = new VertexTool(() => &mesh(), &gpu, litShader,
+                                &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
