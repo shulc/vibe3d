@@ -150,6 +150,7 @@ import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
 import commands.mesh.uv_pack     : UvFit, UvPack;
 import commands.mesh.uv_map_util;
+import commands.mesh.uv_relax  : UvRelax;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
@@ -2693,6 +2694,8 @@ void main(string[] args) {
         new UvCopy(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.clear"] = () => cast(Command)
         new UvClear(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.relax"] = () => cast(Command)
+        new UvRelax(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
         new MeshEdgeSlide(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
