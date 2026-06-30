@@ -69,6 +69,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.cylinder cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
+          - label: Tube
+            action: { kind: tool, id: prim.tube }
+            ctrl:
+              label: "Unit Tube"
+              action:
+                kind: script
+                lines:
+                  - "prim.tube cenX:0 cenY:0 cenZ:0 outerRadius:0.5 innerRadius:0.25 height:1 segments:24 axis:1 cap:true"
           - label: Cone
             action: { kind: tool, id: prim.cone }
             ctrl:
