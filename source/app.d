@@ -62,6 +62,7 @@ import tools.poly_extrude : PolyExtrudeTool;
 import tools.poly_bevel : PolyBevelTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.reduce : ReductionTool;
+import tools.clone_tool : CloneTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -127,6 +128,8 @@ import commands.mesh.cut_       : MeshCut;
 import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
+import commands.mesh.clone_       : MeshClone;
+import commands.mesh.clone_edit   : MeshCloneEdit;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.sweep         : MeshSweep;
 import commands.mesh.vert_merge        : MeshVertMerge;
@@ -1867,6 +1870,8 @@ void main(string[] args) {
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
     auto reduceEditFactory = () => new MeshReduceEdit(&mesh(), cameraView, editMode,
                                                       &gpu, &vertexCache, &edgeCache, &faceCache);
+    auto cloneEditFactory = () => new MeshCloneEdit(&mesh(), cameraView, editMode,
+                                                    &gpu, &vertexCache, &edgeCache, &faceCache);
     auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
     // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
@@ -2187,6 +2192,17 @@ void main(string[] args) {
         auto t = new ReductionTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, reduceEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Clone — interactive drag-place a single copy of the selection (offset
+    // by the drag delta on the most-facing screen plane).  Snapshot undo via
+    // MeshCloneEdit; gated to Polygons mode.  Drag→offset feel is a
+    // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
+    reg.toolFactories["mesh.clone"] = () {
+        auto t = new CloneTool(() => &mesh(), &gpu, &editMode,
+                               &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, cloneEditFactory);
         return cast(Tool)t;
     };
 
@@ -2632,6 +2648,9 @@ void main(string[] args) {
                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.array"] = () => cast(Command)
         new MeshArray(&mesh(), cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.clone"] = () => cast(Command)
+        new MeshClone(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.radial_array"] = () => cast(Command)
         new MeshRadialArray(&mesh(), cameraView, editMode, &gpu,
