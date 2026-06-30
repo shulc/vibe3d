@@ -127,6 +127,7 @@ import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
 import commands.mesh.radial_array_ : MeshRadialArray;
+import commands.mesh.sweep         : MeshSweep;
 import commands.mesh.vert_merge    : MeshVertMerge;
 import commands.mesh.vert_join     : MeshVertJoin;
 import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
@@ -2620,6 +2621,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.radial_array"] = () => cast(Command)
         new MeshRadialArray(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.sweep"] = () => cast(Command)
+        new MeshSweep(&mesh(), cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
     // Aliases — select.delete and select.remove delegate to the
     // same factory delegates as mesh.delete / mesh.remove respectively.
     reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];
