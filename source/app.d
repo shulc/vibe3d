@@ -82,6 +82,7 @@ import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
 import commands.mesh.quadruple   : MeshQuadruple;
 import commands.mesh.detriangulate : MeshDetriangulate;
+import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
@@ -2447,6 +2448,10 @@ void main(string[] args) {
         new MeshDetriangulate(&mesh(), cameraView, editMode,
                               &gpu, &vertexCache, &edgeCache, &faceCache,
                               () => setActiveTool(null));
+    reg.commandFactories["mesh.mergeFaces"] = () => cast(Command)
+        new MeshMergeFaces(&mesh(), cameraView, editMode,
+                           &gpu, &vertexCache, &edgeCache, &faceCache,
+                           () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
