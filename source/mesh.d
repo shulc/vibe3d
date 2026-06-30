@@ -569,6 +569,80 @@ struct Mesh {
         return welded;
     }
 
+    /// Inverse of weldVerticesByMask: unweld each masked vertex so every
+    /// incident face gets its own coincident copy. The vertex is kept in
+    /// its lowest-indexed incident face; every later incident face (in
+    /// face-index order) gets a fresh addVertex(pos) and its corner
+    /// rewritten. Returns the number of copies created.
+    ///
+    /// Granularity: one copy per incident face (v1). Per-fan grouping
+    /// (splitting only at topological seams on non-manifold vertices) is
+    /// a documented non-goal for v1.
+    ///
+    /// Point-domain MeshMap values (e.g. weight maps) are propagated to
+    /// every coincident copy in the tail, AFTER resizeVertexSelection()
+    /// has grown and zero-filled the new map rows. Copying map values
+    /// inside the corner loop would be OOB once any weight map exists
+    /// (addVertex does not resize MeshMap data). PolyVertex maps are
+    /// untouched: the op preserves face/corner count and order, so
+    /// loop-indexed UV values relocate correctly through buildLoops.
+    size_t splitVerticesByMask(in bool[] mask) {
+        if (mask.length != vertices.length) return 0;
+
+        // Per-vertex "first incident face already claimed" flag.
+        bool[] claimed;
+        claimed.length = vertices.length;
+
+        // Deferred (src, dst) pairs for Point-map value propagation.
+        // MUST NOT copy map values here: addVertex appends to vertices[]
+        // but does NOT resize MeshMap.data — writing data[nv*dim..] would
+        // be OOB the instant any weight map is registered. The copy
+        // happens in the tail, after resizeVertexSelection() below.
+        uint[2][] copyPairs;
+        size_t copies = 0;
+
+        foreach (fi; 0 .. faces.length) {
+            foreach (ref corner; faces[fi]) {
+                const uint v = corner;
+                if (v >= mask.length || !mask[v]) continue;
+                if (!claimed[v]) {
+                    claimed[v] = true;  // first incident face keeps original
+                    continue;
+                }
+                // Later incident face: add a coincident copy and rewrite corner.
+                const Vec3 p = vertices[v];  // read position before addVertex
+                const uint nv = addVertex(p);
+                corner = nv;
+                copyPairs ~= [v, nv];
+                ++copies;
+            }
+        }
+
+        if (copies == 0) return 0;
+
+        rebuildEdges();
+        // Grow vertexMarks, vertexSelectionOrder, and Point-domain MeshMap
+        // data arrays to cover the newly appended vertices (zero-filled).
+        resizeVertexSelection();
+
+        // Propagate Point-domain map values from source to each copy.
+        // Runs AFTER resizeVertexSelection() — the destination rows exist
+        // only once the resize above has extended data[].
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.Point) continue;
+            const ubyte d = m.dim;
+            foreach (pair; copyPairs) {
+                const size_t src = pair[0] * d;
+                const size_t dst = pair[1] * d;
+                m.data[dst .. dst + d] = m.data[src .. src + d];
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return copies;
+    }
+
     /// Move every vertex marked true in `mask` to `target`. No welding
     /// happens here; the verts merely coincide in space. Combine with
     /// weldVerticesByMask() to collapse them into one. Used by
@@ -12985,4 +13059,93 @@ unittest {
     assert(added == 0,                     "extrudeVerticesByMask: offset=0 must be no-op");
     assert(m.vertices.length == 8,         "extrudeVerticesByMask: offset=0 must not add verts");
     assert(m.edges.length    == 12,        "extrudeVerticesByMask: offset=0 must not add edges");
+}
+
+// ---------------------------------------------------------------------------
+// splitVerticesByMask unittests
+// ---------------------------------------------------------------------------
+
+unittest { // cube corner v6 (3 incident faces) → 2 copies, 10 verts, 6 faces
+    // makeCube faces:
+    //   fi=0: [0,3,2,1]  fi=1: [4,5,6,7]  fi=2: [0,4,7,3]
+    //   fi=3: [1,2,6,5]  fi=4: [3,7,6,2]  fi=5: [0,1,5,4]
+    // v6=(+0.5,+0.5,+0.5) appears in fi=1,3,4.
+    // First encounter (fi=1) keeps original; fi=3 → v8; fi=4 → v9.
+    auto m = makeCube();
+    bool[] mask = new bool[](m.vertices.length);
+    mask[6] = true;
+    size_t copies = m.splitVerticesByMask(mask);
+    assert(copies == 2,               "splitVerticesByMask: expected 2 copies for corner v6");
+    assert(m.vertices.length == 10,   "splitVerticesByMask: expected 10 verts");
+    assert(m.faces.length    == 6,    "splitVerticesByMask: face count must not change");
+
+    // The 3 faces that originally contained v6 must now reference 3 distinct
+    // indices, all at position (+0.5, +0.5, +0.5).
+    import std.math : fabs;
+    uint[3] splitIdxs = [6u, 8u, 9u];  // deterministic: fi=1 keeps 6, fi=3→8, fi=4→9
+    foreach (si; splitIdxs) {
+        assert(si < m.vertices.length, "splitVerticesByMask: split index out of range");
+        Vec3 p = m.vertices[si];
+        assert(fabs(p.x - 0.5f) < 1e-6f && fabs(p.y - 0.5f) < 1e-6f && fabs(p.z - 0.5f) < 1e-6f,
+               "splitVerticesByMask: copy position mismatch");
+    }
+    assert(splitIdxs[0] != splitIdxs[1] && splitIdxs[1] != splitIdxs[2],
+           "splitVerticesByMask: copies must be distinct indices");
+
+    // The three faces that touch v6 now each hold a different index.
+    // fi=1→v6, fi=3→v8, fi=4→v9.
+    bool v6InF1, v8InF3, v9InF4;
+    foreach (vid; m.faces[1]) if (vid == 6) v6InF1 = true;
+    foreach (vid; m.faces[3]) if (vid == 8) v8InF3 = true;
+    foreach (vid; m.faces[4]) if (vid == 9) v9InF4 = true;
+    assert(v6InF1, "splitVerticesByMask: fi=1 must keep v6");
+    assert(v8InF3, "splitVerticesByMask: fi=3 must get v8");
+    assert(v9InF4, "splitVerticesByMask: fi=4 must get v9");
+
+    // Faces that did not contain v6 are unchanged (no v8/v9 in them).
+    foreach (vid; m.faces[0]) assert(vid != 8 && vid != 9, "splitVerticesByMask: fi=0 must be untouched");
+    foreach (vid; m.faces[2]) assert(vid != 8 && vid != 9, "splitVerticesByMask: fi=2 must be untouched");
+    foreach (vid; m.faces[5]) assert(vid != 8 && vid != 9, "splitVerticesByMask: fi=5 must be untouched");
+}
+
+unittest { // vertex with exactly 1 incident face → no-op, returns 0
+    // Build a single triangle: v0, v1, v2.  v0 is in only 1 face.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u]);
+    m.buildLoops();
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;  // v0 is in face 0 only
+    size_t copies = m.splitVerticesByMask(mask);
+    assert(copies == 0,              "splitVerticesByMask: single-incident vertex must be no-op");
+    assert(m.vertices.length == 3,   "splitVerticesByMask: no-op must not add verts");
+    assert(m.faces.length    == 1,   "splitVerticesByMask: no-op must not change face count");
+}
+
+unittest { // Point-domain map (weight map) values propagate to copies
+    // This is the only assertion that exercises the deferred Point-map copy
+    // path.  If map values were copied inside the corner loop (before
+    // resizeVertexSelection), the write would be OOB → RangeError.
+    auto m = makeCube();
+    auto wm = m.addWeightMap("split_wt");
+    assert(wm !is null);
+    m.setVertexWeight("split_wt", 6, 0.75f);
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[6] = true;
+    size_t copies = m.splitVerticesByMask(mask);
+    assert(copies == 2, "splitVerticesByMask/Point-map: expected 2 copies");
+
+    import std.math : fabs;
+    // v6 (kept), v8 (copy 1), v9 (copy 2) must all carry 0.75.
+    assert(fabs(m.vertexWeight("split_wt", 6) - 0.75f) < 1e-6f,
+           "splitVerticesByMask/Point-map: original v6 weight must be preserved");
+    assert(fabs(m.vertexWeight("split_wt", 8) - 0.75f) < 1e-6f,
+           "splitVerticesByMask/Point-map: v8 copy must carry source weight");
+    assert(fabs(m.vertexWeight("split_wt", 9) - 0.75f) < 1e-6f,
+           "splitVerticesByMask/Point-map: v9 copy must carry source weight");
+    // Unrelated vertices must remain at 0.
+    assert(m.vertexWeight("split_wt", 0) == 0.0f,
+           "splitVerticesByMask/Point-map: unrelated vertex must stay 0");
 }
