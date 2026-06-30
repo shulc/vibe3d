@@ -1,5 +1,5 @@
 // HTTP tests for the weightMaps v6 codec round-trip.
-// Exercises: save emits formatVersion==6, weightMaps block present when maps
+// Exercises: save emits formatVersion==7, weightMaps block present when maps
 // exist, absent when empty, and round-trip preserves values.
 
 import std.net.curl;
@@ -35,7 +35,7 @@ bool approxEq(double a, double b, double eps = 1e-5) {
 
 // --------------------------------------------------------------------------
 
-unittest { // save emits formatVersion 6
+unittest { // save emits formatVersion 7
     enum string path = "/tmp/vibe3d-test-weightmap-version.v3d";
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
@@ -45,8 +45,8 @@ unittest { // save emits formatVersion 6
     assert(exists(path), "expected " ~ path ~ " after save");
 
     auto j = parseJSON(readText(path));
-    assert(j["formatVersion"].integer == 6,
-        "writer must emit formatVersion 6, got "
+    assert(j["formatVersion"].integer == 7,
+        "writer must emit formatVersion 7, got "
         ~ j["formatVersion"].integer.to!string);
 }
 
@@ -80,7 +80,7 @@ unittest { // weightMaps round-trip: create map, save, reload, verify
 
     // Inspect the saved JSON directly.
     auto j = parseJSON(readText(path));
-    assert(j["formatVersion"].integer == 6);
+    assert(j["formatVersion"].integer == 7);
     auto mesh = j["layers"][0]["mesh"];
     assert("weightMaps" in mesh, "weightMaps key must exist after save");
     auto wm = mesh["weightMaps"].array;
