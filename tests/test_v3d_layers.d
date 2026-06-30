@@ -1,4 +1,4 @@
-// Tests for the layered (formatVersion 6) `.v3d` document schema.
+// Tests for the layered (formatVersion 7) `.v3d` document schema.
 //
 // Selection-types Stage 3: the Document round-trips through `.v3d` with the
 // item-selection SET persisted. Files are written as v5 — a `layers` array
@@ -68,8 +68,8 @@ unittest { // a save emits the v5 layered shape (formatVersion + primaryLayer + 
     // Read the raw file: this is the writer under test, so we inspect bytes.
     auto doc = parseJSON(readText(path));
 
-    assert(doc["formatVersion"].integer == 6,
-        "writer must emit formatVersion 6, got "
+    assert(doc["formatVersion"].integer == 7,
+        "writer must emit formatVersion 7, got "
         ~ doc["formatVersion"].integer.to!string);
 
     // v5 names the edit target via primaryLayer (NOT activeLayer).
@@ -156,7 +156,7 @@ unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary ident
     // selected set + primary in the v5 shape.
     enum string path = "/tmp/vibe3d-test-v3-multilayer.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":2,"layers":[`
+        `{"formatVersion":7,"primaryLayer":2,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}},`
         ~ `{"name":"Quad","visible":true,"selected":false,`
@@ -185,7 +185,7 @@ unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary ident
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto saved = parseJSON(readText(outp));
 
-    assert(saved["formatVersion"].integer == 6, "re-save is v6");
+    assert(saved["formatVersion"].integer == 7, "re-save is v7");
     assert(saved["primaryLayer"].integer == 2,
         "re-save preserves primary index 2, got "
         ~ saved["primaryLayer"].integer.to!string);
@@ -205,7 +205,7 @@ unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary ident
 
 unittest { // a v4 file with an empty "layers" array is rejected cleanly
     enum string path = "/tmp/vibe3d-test-v3-emptylayers.v3d";
-    write(path, `{"formatVersion":6,"primaryLayer":0,"layers":[]}`);
+    write(path, `{"formatVersion":7,"primaryLayer":0,"layers":[]}`);
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
@@ -223,7 +223,7 @@ unittest { // an out-of-range primaryLayer is clamped, not rejected
     // primaryLayer 5 with a single layer must clamp to index 0 and load fine.
     enum string path = "/tmp/vibe3d-test-v3-badprimary.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":5,"layers":[`
+        `{"formatVersion":7,"primaryLayer":5,"layers":[`
         ~ `{"name":"Only","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
@@ -245,7 +245,7 @@ unittest { // an inconsistent v4 file (primary marked deselected) is forced sele
     // the re-saved file shows it selected.
     enum string path = "/tmp/vibe3d-test-v3-inconsistent.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":0,"layers":[`
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
         ~ `{"name":"Only","visible":true,"selected":false,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
@@ -337,7 +337,7 @@ unittest { // per-corner UV round-trips byte-exact through load -> save
     // in the same order, so an exact match proves the corner correspondence held.
     enum string path = "/tmp/vibe3d-test-v4-uv-in.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":0,"layers":[`
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]],`
         ~ `"uvMaps":[{"name":"uv","dim":2,`
@@ -388,7 +388,7 @@ unittest { // a wrong-length uvMaps entry is ignored tolerantly (file still load
     // never registered) — proving the tolerant skip, not a crash.
     enum string path = "/tmp/vibe3d-test-v4-uv-badlen.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":0,"layers":[`
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]],`
         ~ `"uvMaps":[{"name":"uv","dim":2,"data":[0.1,0.2, 0.3,0.4]}]}}`
@@ -422,7 +422,7 @@ unittest { // a multi-layer doc round-trips UV on ONE layer, none on the other
     // own mesh sub-object), so they must not bleed across layers.
     enum string path = "/tmp/vibe3d-test-v4-uv-multilayer.v3d";
     write(path,
-        `{"formatVersion":6,"primaryLayer":0,"layers":[`
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
         ~ `{"name":"Quad","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
         ~ `"faces":[[0,1,2,3]],`

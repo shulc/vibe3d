@@ -10,7 +10,7 @@
 // asserts the per-corner UVs survive the whole journey within tolerance:
 //
 //     OBJ-with-UV  --importViaAssimp-->  Mesh (welded, "uv" map)     [import leg]
-//                  --writeV3d----------> .v3d  (formatVersion 6)     [.v3d save]
+//                  --writeV3d----------> .v3d  (formatVersion 7)     [.v3d save]
 //                  --readV3d-----------> Mesh                        [.v3d load]
 //                  --exportViaAssimp---> glTF                        [export leg]
 //                  --importViaAssimp---> Mesh                        [re-import]
@@ -104,7 +104,7 @@ private Mesh saveLoadV3d(const ref Mesh m, string name) {
     assert(j["formatVersion"].integer == kV3dFormatVersion,
         format(".v3d %s: formatVersion %d != %d",
                name, j["formatVersion"].integer, kV3dFormatVersion));
-    assert(kV3dFormatVersion == 6, "this milestone's .v3d format version is 6");
+    assert(kV3dFormatVersion == 7, "this milestone's .v3d format version is 7");
 
     Mesh loaded;
     assert(readV3d(path, loaded), "readV3d failed for " ~ name);

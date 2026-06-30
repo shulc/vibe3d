@@ -103,9 +103,10 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 /// 4 when the per-corner `uvMaps` block was added (UV-maps Stage 3); bumped to 5
 /// when the optional per-layer `xform` block was added (per-item channels Phase
 /// 1); bumped to 6 when the optional per-mesh `weightMaps` block was added
-/// (per-vertex named weight maps, dim=1 Point domain). v5 and earlier files are
-/// now rejected (deliberate clean break — no external clients, no migration).
-enum int kV3dFormatVersion = 6;
+/// (per-vertex named weight maps, dim=1 Point domain); bumped to 7 when the
+/// optional per-face `facePart` array was added (per-face numeric part id).
+/// v6 and earlier files are now rejected (deliberate clean break — no migration).
+enum int kV3dFormatVersion = 7;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -154,6 +155,21 @@ JSONValue meshToJson(ref const Mesh mesh)
         faceMat ~= JSONValue(cast(long) mat);
     }
     m["faceMaterial"] = JSONValue(faceMat);
+
+    // Per-face part id (defaults to 0 when unset). Optional: omit when all 0.
+    bool anyNonZeroPart = false;
+    foreach (fi, _; mesh.faces)
+        if (fi < mesh.facePart.length && mesh.facePart[fi] != 0u)
+            { anyNonZeroPart = true; break; }
+    if (anyNonZeroPart) {
+        JSONValue[] facePrt;
+        facePrt.reserve(mesh.faces.length);
+        foreach (fi, _; mesh.faces) {
+            const uint prt = (fi < mesh.facePart.length) ? mesh.facePart[fi] : 0u;
+            facePrt ~= JSONValue(cast(long) prt);
+        }
+        m["facePart"] = JSONValue(facePrt);
+    }
 
     // Surface registry. JSON keys are the short editor names; they map onto
     // the Surface struct's verbose field names (diffuse → diffuseAmount, …).
@@ -261,7 +277,7 @@ private bool xformToJson(ref const ItemXform x, out JSONValue xj)
 }
 
 /// Serialize a whole `Document` (every layer + which layer is primary) to a
-/// `.v3d` document at `path` under `formatVersion: 6`. Each layer persists its
+/// `.v3d` document at `path` under `formatVersion: 7`. Each layer persists its
 /// `selected` flag (the item-selection SET); `primaryLayer` names the edit
 /// target. There is NO `background` key (it derives from `visible && !selected`)
 /// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer also
@@ -303,16 +319,16 @@ void writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// ONLY `formatVersion == kV3dFormatVersion` (v6) — every earlier shape
-/// (v1/v2/v3/v4/v5) is rejected at the version gate (clean break, no migration).
-/// A v6 file carries a `layers` array (each entry persisting its `selected` flag,
+/// ONLY `formatVersion == kV3dFormatVersion` (v7) — every earlier shape
+/// (v1/v2/v3/v4/v5/v6) is rejected at the version gate (clean break, no migration).
+/// A v7 file carries a `layers` array (each entry persisting its `selected` flag,
 /// plus an optional `xform` item-transform block and an optional `weightMaps`
 /// block per mesh) plus a `primaryLayer` index naming the edit target; the
 /// reader re-asserts the selection-set invariants via the Document mutators
 /// (`setActive` / `selectItem` / `setPrimary`), forcing the primary selected +
 /// visible if the file is inconsistent. Returns false (logging via the io
 /// subsystem, like importLWO) on a missing file, malformed JSON, a
-/// `formatVersion` other than v6, structurally wrong content, an empty `layers`
+/// `formatVersion` other than v7, structurally wrong content, an empty `layers`
 /// array, or an out-of-range vertex index — and leaves the caller's `document`
 /// UNTOUCHED in every reject case (all layers are parsed into a temporary before
 /// the single atomic swap below).
@@ -344,10 +360,10 @@ bool readV3d(string path, ref Document document)
             return false;
         }
 
-        // Version gate (clean break). The reader accepts EXACTLY v6 — a newer
-        // file we can't parse, OR a legacy v1/v2/v3/v4/v5 file, is rejected here
+        // Version gate (clean break). The reader accepts EXACTLY v7 — a newer
+        // file we can't parse, OR a legacy v1/v2/v3/v4/v5/v6 file, is rejected here
         // (the document is untouched). A missing `formatVersion` (the implicit v1
-        // shape) is likewise rejected. Unknown fields WITHIN v6 are ignored.
+        // shape) is likewise rejected. Unknown fields WITHIN v7 are ignored.
         int ver = 0;   // 0 = "no formatVersion key" → not v4 → reject
         if (auto vp = "formatVersion" in doc) {
             if (vp.type == JSONType.integer)
@@ -592,6 +608,24 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: facePart ---
+    uint[] facePart;
+    if (auto fpp = "facePart" in m) {
+        if (fpp.type == JSONType.array) {
+            facePart.reserve(fpp.array.length);
+            foreach (pj; fpp.array) {
+                if (pj.type == JSONType.uinteger)
+                    facePart ~= cast(uint) pj.uinteger;
+                else if (pj.type == JSONType.integer)
+                    facePart ~= cast(uint) pj.integer;
+                else
+                    facePart ~= 0u;
+            }
+        } else {
+            v3dWarn("ignoring non-array \"facePart\"");
+        }
+    }
+
     // --- optional: surfaces ---
     Surface[] surfaces;
     if (auto surfp = "surfaces" in m) {
@@ -725,12 +759,15 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         if (flag) ++subpatchCount;
     }
 
-    // Surfaces + per-face material. Grow faceMaterial to one entry per face
-    // (entries beyond what the file listed default to 0).
+    // Surfaces + per-face material + per-face part. Grow arrays to one entry per
+    // face (entries beyond what the file listed default to 0).
     mesh.surfaces = surfaces;
     mesh.faceMaterial.length = mesh.faces.length;
     foreach (fi; 0 .. mesh.faces.length)
         mesh.faceMaterial[fi] = (fi < faceMaterial.length) ? faceMaterial[fi] : 0u;
+    mesh.facePart.length = mesh.faces.length;
+    foreach (fi; 0 .. mesh.faces.length)
+        mesh.facePart[fi] = (fi < facePart.length) ? facePart[fi] : 0u;
 
     // Apply the staged PolyVertex (per-corner) maps now that `loops` exists.
     // `data` is in CSR loop order (D6), 1:1 with `mesh.loops`, so the alignment
