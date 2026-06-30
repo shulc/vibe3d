@@ -16,46 +16,8 @@ module uv_relax;
 /// and smoothSubdivide (mesh.d:10120-10134), lifted into UV space.  The exact
 /// smoothing law is a vibe3d-divergence; capture-gated parity deferred.
 
-import mesh    : Mesh, MeshMap;
-import std.math : fabs;
-
-private enum float epsUV = 1e-6f;
-
-private bool uvEq(const float[] data, size_t i, size_t j) {
-    return fabs(data[i * 2]     - data[j * 2])     < epsUV
-        && fabs(data[i * 2 + 1] - data[j * 2 + 1]) < epsUV;
-}
-
-// ---------------------------------------------------------------------------
-// Union-find with two-hop path compression + union-by-size.
-// ---------------------------------------------------------------------------
-
-private struct UnionFind {
-    uint[] parent;
-    uint[] sz;
-
-    void init(uint n) {
-        parent = new uint[](n);
-        sz     = new uint[](n);
-        foreach (i; 0 .. n) { parent[i] = i; sz[i] = 1; }
-    }
-
-    uint find(uint x) {
-        while (parent[x] != x) {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
-        }
-        return x;
-    }
-
-    void unite(uint a, uint b) {
-        a = find(a); b = find(b);
-        if (a == b) return;
-        if (sz[a] < sz[b]) { auto t = a; a = b; b = t; }
-        parent[b] = a;
-        sz[a] += sz[b];
-    }
-}
+import mesh     : Mesh, MeshMap;
+import uv_weld  : buildUvClasses, uvEq;
 
 // ---------------------------------------------------------------------------
 // Public kernel.
@@ -86,39 +48,12 @@ bool uvRelax(const ref Mesh m, MeshMap* uv,
     float[] data = uv.data;   // alias — mutations write through to the map
 
     // -----------------------------------------------------------------------
-    // 1.  Build UV-vertex weld via union-find.
-    //
-    // For each interior half-edge L (twin T = L.twin != ~0u):
-    //   a-side: if uv[L]      ≈ uv[next(T)] → unite(L, next(T))
-    //   b-side: if uv[next(L)] ≈ uv[T]       → unite(next(L), T)
-    //
-    // Iterating over all loops visits each twin pair twice (once as (L,T) and
-    // once as (T,L)); unite() is idempotent so the duplicates are harmless.
+    // 1+2.  Build UV-vertex weld + compact class IDs (delegated to uv_weld).
     // -----------------------------------------------------------------------
-    UnionFind uf;
-    uf.init(cast(uint)nL);
-
-    foreach (L; 0 .. nL) {
-        const uint T = m.loops[L].twin;
-        if (T == uint.max) continue;
-        const uint nL_ = m.loops[L].next;
-        const uint nT  = m.loops[T].next;
-        if (uvEq(data, L, nT))  uf.unite(cast(uint)L, nT);
-        if (uvEq(data, nL_, T)) uf.unite(nL_, T);
-    }
-
-    // -----------------------------------------------------------------------
-    // 2.  Compact class IDs: map each root loop to a contiguous id in
-    //     [0, nClasses).
-    // -----------------------------------------------------------------------
-    uint[] rep     = new uint[](nL);
-    uint[] classId = new uint[](nL);
-    classId[] = uint.max;
-    uint nClasses = 0;
-
-    foreach (L; 0 .. nL) rep[L] = uf.find(cast(uint)L);
-    foreach (L; 0 .. nL)
-        if (classId[rep[L]] == uint.max) classId[rep[L]] = nClasses++;
+    auto cls      = buildUvClasses(m, data, null);
+    uint[] rep     = cls.rep;
+    uint[] classId = cls.classId;
+    uint   nClasses = cls.nClasses;
 
     // -----------------------------------------------------------------------
     // 3.  Pin classification.
