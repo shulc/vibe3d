@@ -2200,11 +2200,13 @@ void main(string[] args) {
     // layer.* commands (layers Stage 2) — mutate the one Document; the
     // active-index movers (add/delete/select) fire onActiveLayerChanged.
     {
-        import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
-                                          LayerRename, LayerSetVisible,
+        import commands.layer.commands : LayerAdd, LayerDelete, LayerDuplicate,
+                                          LayerSelect, LayerRename, LayerSetVisible,
                                           LayerReorder, LayerAttr, LayerParent;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.duplicate"] = () => cast(Command)
+            new LayerDuplicate(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.delete"] = () => cast(Command)
             new LayerDelete(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.reorder"] = () => cast(Command)
