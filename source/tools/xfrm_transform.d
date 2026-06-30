@@ -248,6 +248,13 @@ public:
     bool flagT = true;
     bool flagR = true;
     bool flagS = true;
+    // Uniform scale preset: when true, locks all three scale axes to one
+    // factor. The single `uniformScale` param fans its value into
+    // run.s=(v,v,v); only the centre disc handle is live (per-axis
+    // arrows and plane circles are suppressed). Set via the hidden
+    // `uniform` bool param (preset attr `uniform: "true"`).
+    bool  uniform    = false;
+    float uniformVal = 1.0f;
     // Handle family selector: 0=Move, 1=Rotate, 2=Scale,
     // 3=Uniform Scale. Presentation is separate: bare Transform uses
     // compact combined handles, while per-mode presets use the full bank.
@@ -937,10 +944,23 @@ public:
     }
 
     override Param[] params() {
+        // In uniform mode, hide the per-axis SX/SY/SZ rows and show a single
+        // "uniformScale" row instead (forms engine shows only non-hidden params).
+        // The reverse applies in non-uniform mode: uniformScale is hidden so it
+        // never appears for the standard scale/TransformScale presets.
+        auto pSX = Param.float_("SX", "Scale X", &run.s.x, 1.0f);
+        auto pSY = Param.float_("SY", "Scale Y", &run.s.y, 1.0f);
+        auto pSZ = Param.float_("SZ", "Scale Z", &run.s.z, 1.0f);
+        auto pUS = Param.float_("uniformScale", "Scale",   &uniformVal, 1.0f);
+        if (uniform) { pSX = pSX.hidden(); pSY = pSY.hidden(); pSZ = pSZ.hidden(); }
+        else         { pUS = pUS.hidden(); }
         return [
             Param.bool_ ("T",  "Translate", &flagT, true),
             Param.bool_ ("R",  "Rotate",    &flagR, true),
             Param.bool_ ("S",  "Scale",     &flagS, true),
+            // Hidden bool: set by the preset's `uniform: "true"` attr.
+            // Controls single-factor lock (uniformScale param + disc-only handle).
+            Param.bool_ ("uniform", "Uniform Scale", &uniform, false).hidden(),
             Param.int_  ("H",  "Handle Family", &handleFamily, 0).hidden(),
             Param.enum_ ("presentation", "Handle Presentation",
                          &handlePresentation,
@@ -960,10 +980,18 @@ public:
                          &rotFalloffBlend,
                          [["linear", "Linear (matrix)"], ["arc", "Arc (angle)"]],
                          "linear").hidden(),
-            Param.float_("SX", "Scale X",     &run.s.x,     1.0f),
-            Param.float_("SY", "Scale Y",     &run.s.y,     1.0f),
-            Param.float_("SZ", "Scale Z",     &run.s.z,     1.0f),
+            pSX, pSY, pSZ,
+            pUS,
         ];
+    }
+
+    // Fan a uniformScale write into all three scale axes.
+    // Only reacts to "uniformScale" — all other attr writes are no-ops here
+    // (the per-axis SX/SY/SZ params bind directly to run.s.x/y/z so they
+    // take effect through the Param pointer without needing this hook).
+    override void onParamChanged(string name) {
+        if (uniform && name == "uniformScale")
+            run.s = Vec3(uniformVal, uniformVal, uniformVal);
     }
 
     // When the config-driven transform form is rendering (forms_engine_plan.md
@@ -984,7 +1012,23 @@ public:
         if (suppressTRSProperties) return;   // form owns all TRS value rows
         if (flagT) moveSub.drawProperties();
         if (flagR) rotateSub.drawProperties();
-        if (flagS) scaleSub.drawProperties();
+        if (flagS) {
+            if (uniform) {
+                // Single "Scale" row seeded from wrapper truth each frame
+                // (run.s.x == y == z in uniform mode). Mirrors the
+                // scaleSub.drawProperties() propScale-seed pattern but
+                // fans the single edit value back into all three axes.
+                import ImGui = d_imgui;
+                uniformVal = publishedScale().x;
+                ImGui.DragFloat("Scale", &uniformVal, 0.01f, 0.0f, float.max, "%.4f");
+                if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+                    if (uniformVal < 0.0f) uniformVal = 0.0f;
+                    run.s = Vec3(uniformVal, uniformVal, uniformVal);
+                }
+            } else {
+                scaleSub.drawProperties();
+            }
+        }
     }
 
     // ----- Embed seam (Edge Extend Phase 4a, doc/edge_extend_plan.md §4.1
@@ -1220,6 +1264,13 @@ public:
         if (flagT)
             moveSub.handler.centerBox.setVisible(!elementPickActive());
 
+        // Uniform scale mode: propagate the draw-suppression flag to the
+        // handler so only the centre disc is rendered (arrows/circles are
+        // gated inside ScaleHandler.draw by this flag — updateGeometry()
+        // would override a plain setVisible(false) on arrows each frame).
+        if (flagS)
+            scaleSub.handler.uniformMode = uniform;
+
         if (compactPresentation()) {
             // Bare Transform draws scale boxes at the same screen-space endpoints
             // as move arrows. Register scale first so hover and click prefer the
@@ -1232,7 +1283,14 @@ public:
 
         if (flagT) moveSub.registerHandles(th, MOVE_BASE);
         if (flagR) rotateSub.registerHandles(th, ROT_BASE);
-        if (flagS) scaleSub.registerHandles(th, SCALE_BASE);
+        if (flagS) {
+            if (uniform)
+                // Uniform preset: only the centre disc is interactive.
+                // Part id SCALE_BASE+3 matches centerDisk's slot in registerHandles.
+                th.add(scaleSub.handler.centerDisk, SCALE_BASE + 3);
+            else
+                scaleSub.registerHandles(th, SCALE_BASE);
+        }
     }
 
     // Direct handle to the embedded Move sub-tool so the host can drive the Move

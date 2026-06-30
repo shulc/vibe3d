@@ -251,3 +251,11 @@ presets:
       S: "true"
       H: "0"
       presentation: "compact"
+
+  # Uniform scale: locks all three axes to a single factor.
+  # One numeric `uniformScale` param + centre disc handle only.
+  # base: scale (flagS=true, handleFamily=2, presentation=full).
+  - id: xfrm.scaleUniform
+    base: scale
+    attrs:
+      uniform: "true"

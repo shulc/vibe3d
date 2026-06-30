@@ -1218,6 +1218,10 @@ class ScaleHandler : Handler {
     CenterDiskGizmo centerDisk;
     CircleHandler   circleXY, circleYZ, circleXZ;
     Vec3 viewDir;
+    // When true (uniform-scale preset), only the centre disc is drawn and
+    // registered for hover/click; per-axis arrows and plane circles are
+    // suppressed. Set each frame from XfrmTransformTool.registerGizmoHandles.
+    public bool uniformMode = false;
     private Vec3 scaleAccum = Vec3(1, 1, 1);
     // World-space orientation triple — see MoveHandler.axisX/Y/Z.
     Vec3 axisX = Vec3(1, 0, 0);
@@ -1323,27 +1327,33 @@ class ScaleHandler : Handler {
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         updateGeometry(vp);
-        circleXY.draw(shader, vp);
-        circleYZ.draw(shader, vp);
-        circleXZ.draw(shader, vp);
-        arrowX.draw(shader, vp);
-        arrowY.draw(shader, vp);
-        arrowZ.draw(shader, vp);
+        if (!uniformMode) {
+            circleXY.draw(shader, vp);
+            circleYZ.draw(shader, vp);
+            circleXZ.draw(shader, vp);
+            arrowX.draw(shader, vp);
+            arrowY.draw(shader, vp);
+            arrowZ.draw(shader, vp);
+        }
         centerDisk.draw(shader, vp);
-        if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.draw(shader, vp);
-        if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.draw(shader, vp);
-        if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.draw(shader, vp);
+        if (!uniformMode) {
+            if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.draw(shader, vp);
+            if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.draw(shader, vp);
+            if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.draw(shader, vp);
+        }
     }
 
     void drawAxisBoxesOnly(const ref Shader shader, const ref Viewport vp)
     {
         updateGeometry(vp);
-        arrowX.drawHeadOnly(shader, vp);
-        arrowY.drawHeadOnly(shader, vp);
-        arrowZ.drawHeadOnly(shader, vp);
-        if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.drawHeadOnly(shader, vp);
-        if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.drawHeadOnly(shader, vp);
-        if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.drawHeadOnly(shader, vp);
+        if (!uniformMode) {
+            arrowX.drawHeadOnly(shader, vp);
+            arrowY.drawHeadOnly(shader, vp);
+            arrowZ.drawHeadOnly(shader, vp);
+            if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.drawHeadOnly(shader, vp);
+            if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.drawHeadOnly(shader, vp);
+            if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.drawHeadOnly(shader, vp);
+        }
     }
 }
 
