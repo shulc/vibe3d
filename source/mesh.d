@@ -6572,15 +6572,24 @@ struct Mesh {
         return -1;
     }
 
-    /// Reconnect the shared edge of two adjacent triangles to the other diagonal
-    /// of the combined quad boundary.  Returns true iff the mesh was mutated.
+    /// Reconnect the shared edge of two adjacent triangles or quads to the other
+    /// diagonal of the combined boundary polygon.  Returns true iff the mesh was
+    /// mutated.
+    ///
+    /// Supported pairs: tri–tri (n=3) and quad–quad (n=4).
+    /// Quad direction: new diagonal = (c, e) where c = successor-of-b in f1 and
+    ///   e = successor-of-a in f2.  This is the vibe3d default (vibe3d-divergence;
+    ///   Phase-0 reference capture deferred — see doc/spin_quads_plan.md).
+    ///   Period: 2 for tri pairs, 3 for quad pairs (a second spin advances to the
+    ///   (d,f) diagonal, not back to the original).
     ///
     /// Guards (all → false, no crash):
     ///   - `ei` out of range.
     ///   - Edge not shared by exactly 2 faces (boundary or non-manifold).
-    ///   - The two faces are not both triangles.  Quad-quad spin direction is
-    ///     Phase-0 capture-gated and deferred; n-gon pairs are skipped.
-    ///   - Prospective new diagonal already exists in the mesh (fold-over guard).
+    ///   - Faces have different lengths, or length ∉ {3, 4} (mixed or n-gon pair).
+    ///   - Any two of the 2n boundary vertices coincide (covers fold-over and the
+    ///     "two faces share two edges" non-manifold cases such as d==e or c==f).
+    ///   - Prospective new diagonal c–e already exists in the mesh (fold-over guard).
     ///
     /// Vertex count never changes; only face vertex lists and the derived
     /// edge + half-edge structure are rewritten.
@@ -6595,8 +6604,9 @@ struct Mesh {
 
         uint f1i = incFaces[0], f2i = incFaces[1];
 
-        // Only tri–tri handled now; quad direction is Phase-0 capture-gated.
-        if (faces[f1i].length != 3 || faces[f2i].length != 3) return false;
+        // Support n∈{3,4} pairs only; both faces must have equal length.
+        uint n = cast(uint)faces[f1i].length;
+        if (faces[f2i].length != n || (n != 3 && n != 4)) return false;
 
         uint a = edges[ei][0], b = edges[ei][1];
         ulong ek = edgeKey(a, b);
@@ -6613,21 +6623,43 @@ struct Mesh {
         }
         // Invariant after possible swap:
         //   faces[f1i][j1]         == a   (a→b dart in f1)
-        //   faces[f1i][(j1+1)%3]   == b
+        //   faces[f1i][(j1+1)%n]   == b
         //   faces[f2i][j2]         == b   (b→a dart in f2)
-        //   faces[f2i][(j2+1)%3]   == a
+        //   faces[f2i][(j2+1)%n]   == a
 
-        uint p = faces[f1i][(j1 + 2) % 3];   // third vertex of f1 (opposite a–b)
-        uint q = faces[f2i][(j2 + 2) % 3];   // third vertex of f2 (opposite b–a)
+        uint c = faces[f1i][(j1 + 2) % n];   // successor of b in f1  (= p for n=3)
+        uint e = faces[f2i][(j2 + 2) % n];   // successor of a in f2  (= q for n=3)
+        uint d  = (n == 4) ? faces[f1i][(j1 + 3) % n] : 0;  // pred of a in f1 (quad)
+        uint f_ = (n == 4) ? faces[f2i][(j2 + 3) % n] : 0;  // pred of b in f2 (quad)
 
-        // Fold-over / degenerate guard.
-        if (p == q) return false;
-        if (edgeIndex(p, q) != ~0u) return false;
+        // Guard: all 2n boundary vertices must be distinct.
+        //   For n=3: reduces to c≠e (the only degenerate mode).
+        //   For n=4: covers c==e AND the "two faces share two edges" cases such as
+        //            d==e or c==f_ that pass nFaces==2 but build repeated-vertex faces.
+        if (n == 3) {
+            if (c == e) return false;
+        } else {
+            uint[6] bv = [a, b, c, d, e, f_];
+            foreach (ii; 0 .. 6)
+                foreach (jj; ii + 1 .. 6)
+                    if (bv[ii] == bv[jj]) return false;
+        }
 
-        // Build new face pair from merged boundary [b, p, a, q]; new diagonal p–q.
-        //   face1 = [p, a, q],  face2 = [q, b, p]
-        faces[f1i] = [p, a, q];
-        faces[f2i] = [q, b, p];
+        // Fold-over guard: prospective new diagonal c–e must not already exist.
+        if (edgeIndex(c, e) != ~0u) return false;
+
+        // Build new face pair; new shared diagonal = c–e.
+        if (n == 3) {
+            // Tri–tri: reproduces prior [p,a,q] / [q,b,p] with c=p, e=q.
+            faces[f1i] = [c, a, e];
+            faces[f2i] = [e, b, c];
+        } else {
+            // Quad–quad: hexagon boundary [a,e,f_,b,c,d]; split by diagonal c–e.
+            // Direction: (c,e) is the vibe3d default (vibe3d-divergence;
+            // Phase-0 reference capture deferred).
+            faces[f1i] = [c, d, a, e];
+            faces[f2i] = [e, f_, b, c];
+        }
 
         rebuildEdges();
         buildLoops();
@@ -11224,6 +11256,131 @@ unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
            "spinEdge must be no-op when new diagonal already exists");
     assert(m3.edgeIndex(1, 3) != ~0u, "edge 1-3 still present after fold-over guard");
     assert(m3.edgeIndex(0, 2) != ~0u, "edge 0-2 still present (no spin happened)");
+}
+
+unittest { // spinEdge: quad–quad spin, mixed reject, quad fold-over, d==e degenerate
+    // ---- case 4: quad–quad positive spin ----
+    // Six vertices, two quads sharing edge 1–2.
+    //   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1) v4=(2,0,0) v5=(2,0,1)
+    //   f0=[0,1,2,3]  f1=[1,4,5,2]   shared edge: 1–2
+    // After spin (c=3, e=4): new diagonal 3–4; newFace1={0,1,3,4}, newFace2={2,3,4,5}.
+    Mesh m4;
+    m4.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1),
+                   Vec3(2,0,0), Vec3(2,0,1)];
+    m4.addFace([0u, 1u, 2u, 3u]);
+    m4.addFace([1u, 4u, 5u, 2u]);
+    m4.buildLoops();
+
+    uint ei12 = m4.edgeIndex(1, 2);
+    assert(ei12 != ~0u, "shared edge 1-2 must exist before quad spin");
+
+    bool ok4 = m4.spinEdge(ei12);
+    assert(ok4, "spinEdge must return true on a valid quad pair");
+
+    // Old diagonal 1-2 gone; new diagonal 3-4 present.
+    assert(m4.edgeIndex(1, 2) == ~0u, "edge 1-2 must be absent after quad spin");
+    assert(m4.edgeIndex(3, 4) != ~0u, "edge 3-4 must exist after quad spin");
+
+    // Counts unchanged: 6 verts, 7 edges, 2 faces.
+    assert(m4.vertices.length == 6, "vertex count unchanged after quad spin");
+    assert(m4.edges.length    == 7, "edge count unchanged after quad spin");
+    assert(m4.faces.length    == 2, "face count unchanged after quad spin");
+
+    // Face vertex sets: {0,1,3,4} and {2,3,4,5} (order-independent).
+    bool[uint] q0s, q1s;
+    foreach (v; m4.faces[0]) q0s[v] = true;
+    foreach (v; m4.faces[1]) q1s[v] = true;
+    bool has0134 = (0u in q0s && 1u in q0s && 3u in q0s && 4u in q0s)
+                || (0u in q1s && 1u in q1s && 3u in q1s && 4u in q1s);
+    bool has2345 = (2u in q0s && 3u in q0s && 4u in q0s && 5u in q0s)
+                || (2u in q1s && 3u in q1s && 4u in q1s && 5u in q1s);
+    assert(has0134, "one face must be {0,1,3,4} after quad spin");
+    assert(has2345, "one face must be {2,3,4,5} after quad spin");
+    // Both faces must remain quads.
+    assert(m4.faces[0].length == 4, "face 0 must remain a quad");
+    assert(m4.faces[1].length == 4, "face 1 must remain a quad");
+
+    // ---- case 5: mixed tri–quad pair → no-op ----
+    // f0=[0,1,2] (tri) and f1=[1,3,4,2] (quad) share edge 1–2.
+    Mesh m5;
+    m5.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(2,0,0), Vec3(2,0,1)];
+    m5.addFace([0u, 1u, 2u]);
+    m5.addFace([1u, 3u, 4u, 2u]);
+    m5.buildLoops();
+
+    uint ei12m5 = m5.edgeIndex(1, 2);
+    assert(ei12m5 != ~0u, "shared edge 1-2 must exist for mixed case");
+    assert(!m5.spinEdge(ei12m5), "mixed tri–quad must return false");
+    assert(m5.faces[0].length == 3, "triangle unchanged after mixed no-op");
+    assert(m5.faces[1].length == 4, "quad unchanged after mixed no-op");
+    assert(m5.edgeIndex(1, 2) != ~0u, "edge 1-2 must survive mixed no-op");
+
+    // ---- case 6: quad fold-over guard ----
+    // Two quads sharing edge 1–2, plus a triangle [3,4,6] that pre-creates
+    // edge 3–4 (the prospective diagonal c–e).  spinEdge must return false.
+    Mesh m6;
+    m6.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1),
+                   Vec3(2,0,0), Vec3(2,0,1), Vec3(1,-1,0.5f)];
+    m6.addFace([0u, 1u, 2u, 3u]);   // quad; dart 1→2 at j=1
+    m6.addFace([1u, 4u, 5u, 2u]);   // quad; dart 2→1 at j=3
+    m6.addFace([3u, 4u, 6u]);       // triangle; adds edge 3–4 (= c–e diagonal)
+    m6.buildLoops();
+
+    uint ei12m6 = m6.edgeIndex(1, 2);
+    assert(ei12m6 != ~0u, "shared edge 1-2 must exist for quad fold-over case");
+    assert(m6.edgeIndex(3, 4) != ~0u, "edge 3-4 must pre-exist (fold-over setup)");
+    assert(!m6.spinEdge(ei12m6), "quad fold-over must return false");
+    assert(m6.edgeIndex(1, 2) != ~0u, "edge 1-2 must survive quad fold-over guard");
+    assert(m6.edgeIndex(3, 4) != ~0u, "edge 3-4 must still exist after guard");
+
+    // ---- case 7: d==e degenerate case (Risk 3a) ----
+    // Two quads sharing edge 1–2 where a boundary vertex coincides across faces.
+    //   f0=[0,1,2,3]: dart 1→2 at j=1; c=3, d=0.
+    //   f1=[2,1,0,4]: dart 2→1 at j=0; e=0, f_=4.
+    //   → d==e==0; "two faces share two edges" non-manifold — all-distinct guard
+    //     must fire and return false without mutating the mesh.
+    Mesh m7;
+    m7.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1), Vec3(2,0,1)];
+    m7.addFace([0u, 1u, 2u, 3u]);   // dart 1→2 at j=1; c=3, d=0
+    m7.addFace([2u, 1u, 0u, 4u]);   // dart 2→1 at j=0; e=0, f_=4 → d==e==0
+    m7.buildLoops();
+
+    uint ei12m7 = m7.edgeIndex(1, 2);
+    assert(ei12m7 != ~0u, "shared edge 1-2 must exist for degenerate case");
+    assert(!m7.spinEdge(ei12m7), "d==e degenerate case must return false");
+    // Mesh must be completely unmutated.
+    assert(m7.faces[0].length == 4, "face 0 unchanged after degenerate no-op");
+    assert(m7.faces[1].length == 4, "face 1 unchanged after degenerate no-op");
+    assert(m7.edgeIndex(1, 2) != ~0u, "edge 1-2 must still exist after degenerate no-op");
+
+    // ---- case 8: c==e degenerate — all-distinct guard is the SOLE catch ----
+    // Two quads sharing edge a–b (0–1) PLUS a third shared boundary vertex X=2,
+    // producing c == e == 2.  No self-loop edge 2–2 can exist in any mesh, so
+    // edgeIndex(2, 2) == ~0u and the fold-over guard is bypassed entirely.
+    // Only the all-distinct guard (bv[2]==bv[4]) catches this degeneracy.
+    //
+    //   v0=(1,0,0)  v1=(1,0,1)  v2=(0.5,1,0.5)  v3=(0,0,1)  v4=(2,0,0)
+    //   f0=[0,1,2,3]:  dart 0→1 at j=0; c = f0[(0+2)%4] = 2, d = f0[(0+3)%4] = 3
+    //   f1=[1,0,2,4]:  dart 1→0 at j=0; e = f1[(0+2)%4] = 2, f_ = f1[(0+3)%4] = 4
+    //   boundary verts = [a=0, b=1, c=2, d=3, e=2, f_=4] → bv[2]==bv[4].
+    //   Without the all-distinct guard, spinEdge would build degenerate faces
+    //   [2,3,0,2] and [2,4,1,2] (vertex 2 repeated) and return true — RED.
+    Mesh m8;
+    m8.vertices = [Vec3(1,0,0), Vec3(1,0,1), Vec3(0.5f,1,0.5f), Vec3(0,0,1), Vec3(2,0,0)];
+    m8.addFace([0u, 1u, 2u, 3u]);   // dart 0→1 at j=0 → c=2, d=3
+    m8.addFace([1u, 0u, 2u, 4u]);   // dart 1→0 at j=0 → e=2, f_=4 → c==e==2
+    m8.buildLoops();
+
+    uint ei01m8 = m8.edgeIndex(0, 1);
+    assert(ei01m8 != ~0u, "shared edge 0-1 must exist for c==e case");
+    // Confirm that the fold-over guard is bypassed: no self-loop edge 2–2 exists.
+    assert(m8.edgeIndex(2, 2) == ~0u, "no self-loop edge 2-2 should exist (fold-over guard bypassed)");
+    // Only the all-distinct guard blocks this; spinEdge must refuse.
+    assert(!m8.spinEdge(ei01m8), "c==e degenerate: all-distinct guard must return false");
+    // Mesh must be completely unmutated.
+    assert(m8.faces[0].length == 4, "face 0 unchanged after c==e no-op");
+    assert(m8.faces[1].length == 4, "face 1 unchanged after c==e no-op");
+    assert(m8.edgeIndex(0, 1) != ~0u, "edge 0-1 must still exist after c==e no-op");
 }
 
 unittest { // bridgeLoops: two parallel square rings → 4 quads, no new verts

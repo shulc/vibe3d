@@ -10,19 +10,21 @@ import shader;
 import viewcache;
 import snapshot : MeshSnapshot;
 
-/// Spin (rotate) the shared edge of two adjacent triangle faces to the other
-/// diagonal of the combined quad boundary.
+/// Spin (rotate) the shared edge of two adjacent triangle or quad faces to the
+/// other diagonal of the combined boundary polygon.
 ///
 /// Edge scope   — spin every selected qualifying edge.
 /// Polygon scope — spin the shared interior edges between pairs of selected
 ///                 faces that both qualify.
 /// Vertex scope  — explicit no-op guard (returns false before snapshot).
 ///
-/// Undo via full MeshSnapshot (same pattern as MeshSplitEdge).
+/// Supported face pairs: tri–tri (n=3) and quad–quad (n=4).
+/// Quad direction: new diagonal = (c, e) = (successor-of-b-in-f1,
+///   successor-of-a-in-f2); this is the vibe3d default (vibe3d-divergence;
+///   Phase-0 reference capture deferred — see doc/spin_quads_plan.md).
+/// Mixed tri↔quad pairs and n-gon (n≥5) pairs are silently skipped.
 ///
-/// Note: the quad-quad case is deferred pending a Phase-0 reference capture
-/// to determine the correct rotation direction.  Until then, only tri–tri
-/// pairs are processed; quad pairs are silently skipped.
+/// Undo via full MeshSnapshot (same pattern as MeshSplitEdge).
 class MeshSpinEdge : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
