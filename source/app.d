@@ -148,6 +148,7 @@ import commands.mesh.smooth;
 import commands.mesh.weightmap;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
+import commands.mesh.uv_pack     : UvFit, UvPack;
 import commands.mesh.uv_map_util;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
@@ -2680,6 +2681,10 @@ void main(string[] args) {
         new UvRotate(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.project"] = () => cast(Command)
         new UvProject(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.fit"] = () => cast(Command)
+        new UvFit(&mesh(), cameraView, editMode);
+    reg.commandFactories["uv.pack"] = () => cast(Command)
+        new UvPack(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.delete"] = () => cast(Command)
         new UvDelete(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.rename"] = () => cast(Command)
