@@ -51,6 +51,7 @@ import tools.cone;
 import tools.capsule;
 import tools.torus;
 import tools.arc;
+import tools.tube;
 import tools.pen;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
@@ -2024,6 +2025,16 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.cylinder", reg.toolFactories["prim.cylinder"]);
+
+    reg.toolFactories["prim.tube"] = () {
+        auto t = new TubeTool(() => &mesh(), &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["prim.tube"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.tube", reg.toolFactories["prim.tube"]);
 
     reg.toolFactories["prim.cone"] = () {
         auto t = new ConeTool(() => &mesh(), &gpu, litShader);
