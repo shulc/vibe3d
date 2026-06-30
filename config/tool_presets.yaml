@@ -58,6 +58,24 @@ presets:
       falloff:
         type: radial
 
+  # Unified transform (all three banks: translate, rotate, scale) with a
+  # radial soft-selection falloff. One tool.set gives move+rotate+scale all
+  # attenuated by distance from a radial falloff center, matching a combined
+  # soft-selection transform preset. The attrs block is explicit for
+  # documentation; xfrm.transform already defaults all three to true.
+  # NOTE: rotFalloffBlend is deliberately NOT set — the unified xfrm.transform
+  # path uses matrix-lerp for the rotate fold (same as xfrm.flex), not the
+  # angle-scaling (arc) mode of the standalone rotate presets.
+  - id: xfrm.softTransform
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+    pipe:
+      falloff:
+        type: radial
+
   # MODO ships xfrm.twist / xfrm.shear / xfrm.taper with `shape integer 0`
   # (Linear) — the falloff stage's default Smooth
   # shape would override this if not pinned here, leaving deform tools
