@@ -167,6 +167,18 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     }
 }
 
+/// Update the cached screen dimensions used by drawThickLines for the current
+/// FBO cell.  Call at the top of renderViewportSceneToFbo (after glViewport)
+/// so each cell supplies its own (w, h) before its overlay gizmos draw.
+/// Does NOT re-query uniform locations — cheap enough to call once per cell.
+/// Note: g_thickLine.screenW/H is now a per-cell scratch value, not a static
+/// config; initThickLineProgram sets the initial value but this overrides it
+/// per cell before every real draw.
+void setThickLineScreenSize(int w, int h) {
+    g_thickLine.screenW = cast(float)w;
+    g_thickLine.screenH = cast(float)h;
+}
+
 // Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
 // Fills *vbo with the created buffer object and returns the VAO.
 private GLuint buildVao3f(float[] data, out GLuint vbo) {
@@ -1718,4 +1730,21 @@ class ToolHandles {
             return false;
         return true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Unittests
+// ---------------------------------------------------------------------------
+
+// setThickLineScreenSize writes both cached dimensions without touching GL.
+// Guards against regressing to the global-init-only path (single cell).
+unittest {
+    float oldW = g_thickLine.screenW, oldH = g_thickLine.screenH;
+    scope(exit) { g_thickLine.screenW = oldW; g_thickLine.screenH = oldH; }
+    setThickLineScreenSize(320, 240);
+    assert(g_thickLine.screenW == 320.0f);
+    assert(g_thickLine.screenH == 240.0f);
+    setThickLineScreenSize(1920, 1080);
+    assert(g_thickLine.screenW == 1920.0f);
+    assert(g_thickLine.screenH == 1080.0f);
 }
