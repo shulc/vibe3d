@@ -1,6 +1,6 @@
 module viewport;
 
-import view       : View;
+import view       : View, ProjKind, ViewPreset;
 import viewcache  : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select : GpuSelectBuffer;
 import math       : Viewport;
@@ -25,12 +25,6 @@ import math       : Viewport;
 // Inert Phase-2..5 fields (proj, preset, indCenter, indScale, indRotate,
 // masterId) are declared here but unused in Phase 1.
 // ---------------------------------------------------------------------------
-
-/// Projection kind — inert until Phase 3.
-enum ProjKind { Perspective, Ortho }
-
-/// Named view preset — inert until Phase 3.
-enum ViewPreset { Perspective, Top, Bottom, Front, Back, Left, Right, Camera }
 
 // ---------------------------------------------------------------------------
 // ViewportFbo — Phase 2
@@ -155,8 +149,6 @@ final class Viewport3D {
     DirtyKey    lastKey;
 
     // Phase-2..5 inert fields — declared now, unused in Phase 1.
-    ProjKind   proj      = ProjKind.Perspective;
-    ViewPreset preset    = ViewPreset.Perspective;
     bool       indCenter = true;
     bool       indScale  = true;
     bool       indRotate = true;
@@ -168,6 +160,9 @@ final class Viewport3D {
 
     /// Return the current camera snapshot (calls camera.viewport()).
     Viewport snapshotOf() { return camera.viewport(); }
+
+    /// True when this viewport's camera is using orthographic projection.
+    bool isOrtho() const { return camera.projKind == ProjKind.Ortho; }
 }
 
 // ---------------------------------------------------------------------------
