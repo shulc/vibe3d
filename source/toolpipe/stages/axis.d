@@ -144,11 +144,6 @@ class AxisStage : Stage, Operator {
     static bool modeTracksSelection(Mode m) pure nothrow @nogc @safe {
         return m == Mode.Select || m == Mode.SelectAuto || m == Mode.Local;
     }
-    // Same predicate keyed by the AxisPacket.type int (= cast(int)mode), for
-    // consumers that only hold the published packet, not the stage instance.
-    static bool modeTracksSelection(int type) pure nothrow @nogc @safe {
-        return modeTracksSelection(cast(Mode) type);
-    }
     bool axisTracksSelection() const pure nothrow @nogc @safe {
         return modeTracksSelection(mode);
     }
