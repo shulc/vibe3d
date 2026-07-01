@@ -187,7 +187,8 @@ import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
-import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
+import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
+import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
@@ -489,6 +490,19 @@ private ItemSnapFrame buildItemFrame(Layer lyr)
     }
     return fr;
 }
+
+// ---------------------------------------------------------------------------
+// Module-level globals (interactive-session state; never read by --test)
+// ---------------------------------------------------------------------------
+
+/// Backing storage for the versioned imgui.ini path.  ImGui stores the raw
+/// char* without copying, so the string must outlive the context.  Set once
+/// before the first NewFrame; null in --test (byte-identity contract).
+private __gshared const(char)* g_layoutIniPathZ = null;
+
+/// Set true by the Reset Layout button to force a full dock-tree reseed on
+/// the next frame, independently of the process-lifetime dockLayoutDone flag.
+private __gshared bool g_forceLayoutReseed = false;
 
 // ---------------------------------------------------------------------------
 // Main
@@ -950,11 +964,35 @@ void main(string[] args) {
     // would capture it). Setting IniFilename = null before the first NewFrame
     // means windows always open at their programmatic default positions,
     // independent of cwd. Must run before any window is created/loaded.
-    version (ReleaseBuild) {
+    // Layout ini: versioned file in the user config dir for interactive
+    // sessions; strictly null in --test regardless of VIBE3D_CONFIG_DIR
+    // (that env var gates prefs, but ini must stay null for byte-identity
+    // across parallel workers). g_layoutIniPathZ keeps the char* alive for
+    // the full lifetime of the ImGui context (ImGui stores the raw pointer).
+    if (command.g_testMode) {
         io.IniFilename = null;
     } else {
-        if (command.g_testMode)
+        import prefs : prefsDir, layoutIniPath, kLayoutIniVersion;
+        import std.string : toStringz;
+        auto iniDir = prefsDir();
+        bool iniDirOk = false;
+        try { import std.file : mkdirRecurse; mkdirRecurse(iniDir); iniDirOk = true; }
+        catch (Exception) {}
+        if (iniDirOk) {
+            g_layoutIniPathZ = layoutIniPath(iniDir, kLayoutIniVersion).toStringz;
+            io.IniFilename   = g_layoutIniPathZ;
+            // MINOR 4: sweep old-version ini files (best-effort, non-fatal).
+            try {
+                import std.file : dirEntries, SpanMode, remove;
+                import std.path : baseName;
+                string keepBase = baseName(layoutIniPath(iniDir, kLayoutIniVersion));
+                foreach (e; dirEntries(iniDir, "imgui_layout_v*.ini", SpanMode.shallow))
+                    if (baseName(e.name) != keepBase)
+                        try { remove(e.name); } catch (Exception) {}
+            } catch (Exception) {}
+        } else {
             io.IniFilename = null;
+        }
     }
     // UI font: Inter (embedded vector TTF, SIL OFL — see assets/fonts/) at
     // 14px × uiScale with Cyrillic coverage. Replaces ImGui's built-in 13px
@@ -2330,6 +2368,8 @@ void main(string[] args) {
         new UiToolPropertiesCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.layerList"] = () => cast(Command)
         new UiLayerListCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.viewportProps"] = () => cast(Command)
+        new UiViewportPropsCommand(&mesh(), cameraView, editMode);
 
     // layer.* commands (layers Stage 2) — mutate the one Document; the
     // active-index movers (add/delete/select) fire onActiveLayerChanged.
@@ -4139,6 +4179,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             ull.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto uvp = cast(UiViewportPropsCommand)cmd) {
+                // ui.viewportProps <show|hide> (test-only).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            uvp.setVisible(pos[0].str);
                     }
                 }
             } else if (auto fad = cast(FalloffAddCommand)cmd) {
@@ -6297,13 +6346,16 @@ void main(string[] args) {
 
     void drawSidePanel() {
         pushPanelChromeStyle();
-        ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
-        ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
-        if (ImGui.Begin("Mesh Info", null,
-                        ImGuiWindowFlags.NoTitleBar |
-                        ImGuiWindowFlags.NoResize |
-                        ImGuiWindowFlags.NoMove   |
-                        ImGuiWindowFlags.NoCollapse))
+        // In --test: fixed rect + immovable flags reproduce today's exact
+        // layout (picking rect unchanged → byte-identical).
+        // Interactive: no fixed pos/size → floats/docks freely.
+        if (testMode) {
+            ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
+        }
+        int sidePanelFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
+        if (testMode) sidePanelFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
         {
             pushButtonBarStyle();
             scope(exit) popButtonBarStyle();
@@ -6459,13 +6511,13 @@ void main(string[] args) {
 
     void drawStatusBar() {
         pushPanelChromeStyle();
-        ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
-        ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
-        if (ImGui.Begin("Status line", null,
-                        ImGuiWindowFlags.NoTitleBar |
-                        ImGuiWindowFlags.NoResize |
-                        ImGuiWindowFlags.NoMove   |
-                        ImGuiWindowFlags.NoCollapse))
+        if (testMode) {
+            ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
+        }
+        int statusFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
+        if (testMode) statusFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        if (ImGui.Begin("Status line", null, statusFlags))
         {
             pushButtonBarStyle();
             scope(exit) popButtonBarStyle();
@@ -6678,13 +6730,13 @@ void main(string[] args) {
 
     void drawTabPanel() {
         pushPanelChromeStyle();
-        ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
-        ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
-        if (ImGui.Begin("Tab bar", null,
-                        ImGuiWindowFlags.NoTitleBar |
-                        ImGuiWindowFlags.NoResize   |
-                        ImGuiWindowFlags.NoMove     |
-                        ImGuiWindowFlags.NoCollapse))
+        if (testMode) {
+            ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
+        }
+        int tabFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
+        if (testMode) tabFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        if (ImGui.Begin("Tab bar", null, tabFlags))
         {
             pushButtonBarStyle();
             scope(exit) popButtonBarStyle();
@@ -6974,6 +7026,88 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
+    // Viewport Properties panel
+    // -------------------------------------------------------------------------
+    // Dockable panel that reflects and drives the active cell's Independence
+    // flags (indCenter / indScale / indRotate) and Master selector.  Every
+    // interaction dispatches through commandHandlerDelegate (same path as
+    // /api/command) — the panel NEVER mutates vpm directly.  Also hosts the
+    // Reset Layout button.
+    //
+    // Visibility: always shown in interactive mode; hidden in --test by default
+    // (opt-in via `ui.viewportProps show` + g_viewportPropsShown) so synthetic
+    // viewport drags can never be captured by it.
+    void drawViewportPropsPanel() {
+        import commands.ui.viewport_props : g_viewportPropsShown;
+        import std.json : JSONValue;
+        import std.conv : to;
+
+        pushPanelChromeStyle();
+        if (ImGui.Begin("Viewport Properties")) {
+            auto v = vpm.views[vpm.activeId];
+
+            ImGui.SeparatorText("Active Cell Independence");
+
+            bool ic = v.indCenter;
+            if (ImGui.Checkbox("Center", &ic) && commandHandlerDelegate !is null)
+                commandHandlerDelegate("viewport.indCenter",
+                                      ic ? `{"value":"yes"}` : `{"value":"no"}`);
+
+            ImGui.SameLine();
+            bool isc = v.indScale;
+            if (ImGui.Checkbox("Scale", &isc) && commandHandlerDelegate !is null)
+                commandHandlerDelegate("viewport.indScale",
+                                      isc ? `{"value":"yes"}` : `{"value":"no"}`);
+
+            ImGui.SameLine();
+            bool ir = v.indRotate;
+            if (ImGui.Checkbox("Rotate", &ir) && commandHandlerDelegate !is null)
+                commandHandlerDelegate("viewport.indRotate",
+                                      ir ? `{"value":"yes"}` : `{"value":"no"}`);
+
+            // Master selector
+            ImGui.Dummy(ImVec2(0, 2));
+            ImGui.SeparatorText("Master");
+            int mid = v.masterId;
+            string masterLabel = mid < 0 ? "Group master" : "Cell " ~ to!string(mid);
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpMaster", masterLabel)) {
+                bool grpSel = (mid < 0);
+                if (ImGui.Selectable("Group master", grpSel) && commandHandlerDelegate !is null)
+                    commandHandlerDelegate("viewport.master", `{"_positional":["-1"]}`);
+                if (grpSel) ImGui.SetItemDefaultFocus();
+                foreach (ci; 0 .. vpm.cellCount) {
+                    bool csel = (mid == ci);
+                    string clabel = "Cell " ~ to!string(ci);
+                    if (ImGui.Selectable(clabel, csel) && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("viewport.master",
+                            `{"_positional":["` ~ to!string(ci) ~ `"]}`);
+                    if (csel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            // Reset Layout button
+            ImGui.Dummy(ImVec2(0, 2));
+            ImGui.Separator();
+            if (ImGui.Button("Reset Layout")) {
+                g_forceLayoutReseed = true;
+                // Remove the persisted ini so the seed starts clean (best-effort).
+                if (!command.g_testMode && g_layoutIniPathZ !is null) {
+                    try {
+                        import std.file   : remove, exists;
+                        import std.string : fromStringz;
+                        string p = cast(string) fromStringz(g_layoutIniPathZ);
+                        if (exists(p)) remove(p);
+                    } catch (Exception) {}
+                }
+            }
+        }
+        ImGui.End();
+        popPanelChromeStyle();
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 2 — FBO scene render
     // -------------------------------------------------------------------------
     // Renders the active viewport's scene (mesh + grid + gizmos) into v.fbo.
@@ -6997,6 +7131,11 @@ void main(string[] args) {
         // viewport corner).
         glBindFramebuffer(GL_FRAMEBUFFER, v.fbo.fbo);
         glViewport(0, 0, v.fbo.w, v.fbo.h);
+        // Per-cell thick-line screen size. g_thickLine.screenW/H is now a
+        // per-cell scratch: each cell sets its own FBO size here before its
+        // overlay gizmos draw, so the geometry-shader line extrusion is
+        // always correct for the current cell (not the full window).
+        setThickLineScreenSize(v.fbo.w, v.fbo.h);
 
         glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -7475,84 +7614,154 @@ void main(string[] args) {
             // user's saved arrangement (persistence). In --test IniFilename is
             // null → GetNode is always null → the default layout applies →
             // test geometry unchanged.
+            // g_forceLayoutReseed allows an explicit Reset Layout action to
+            // reseed independently of the process-lifetime dockLayoutDone flag.
             static bool dockLayoutDone = false;
-            if (!dockLayoutDone && ImGui.DockBuilderGetNode(dockspaceId) is null) {
+            bool doSeed = (!dockLayoutDone && ImGui.DockBuilderGetNode(dockspaceId) is null)
+                       || g_forceLayoutReseed;
+            if (doSeed) {
+                if (g_forceLayoutReseed) g_forceLayoutReseed = false;
                 dockLayoutDone = true;
                 ImGui.DockBuilderRemoveNode(dockspaceId);
                 // AddNode(id, 0) creates the node; the per-frame DockSpace(id,…)
-                // call above re-applies the DockSpace flag each frame (heal), so
-                // the node resolves to a proper dockspace node. (The internal
-                // ImGuiDockNodeFlags_DockSpace bit is not in the shim's public
-                // subset; exposing it is a ph6 nicety.)
+                // call above re-applies the DockSpace flag each frame (heal).
                 ImGui.DockBuilderAddNode(dockspaceId, 0);
                 ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
-                ImGuiID rightId, centerId;
-                ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
-                                           &rightId, &centerId);
-                ImGui.DockBuilderDockWindow("Layers", rightId);
-                // Phase 4: dock Viewport##0 into the central node (Single layout
-                // default). In --test this window is never created (central node
-                // stays empty → PassthruCentralNode hole) so the seed is harmless.
-                ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+
+                if (!testMode) {
+                    // Interactive: full chrome + viewport seed.
+                    // Split order: top (Tab bar) → bottom (Status line) →
+                    // left (Mesh Info) → right (Layers/ToolProps/VPProps tabs)
+                    // → central node (Viewport##0).
+                    // Chrome DockBuilderDockWindow calls are !testMode only:
+                    // in --test these windows keep fixed rects (no conflict).
+                    ImGuiID topId, afterTop;
+                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Up, 0.04f,
+                                               &topId, &afterTop);
+                    ImGuiID botId, afterBot;
+                    ImGui.DockBuilderSplitNode(afterTop, ImGuiDir.Down, 0.05f,
+                                               &botId, &afterBot);
+                    ImGuiID leftId, afterLeft;
+                    ImGui.DockBuilderSplitNode(afterBot, ImGuiDir.Left, 0.12f,
+                                               &leftId, &afterLeft);
+                    ImGuiID rightId, centerId;
+                    ImGui.DockBuilderSplitNode(afterLeft, ImGuiDir.Right, 0.22f,
+                                               &rightId, &centerId);
+
+                    ImGui.DockBuilderDockWindow("Tab bar",            topId);
+                    ImGui.DockBuilderDockWindow("Status line",        botId);
+                    ImGui.DockBuilderDockWindow("Mesh Info",          leftId);
+                    // Right panel: Layers + Tool Properties + Viewport Properties
+                    // as tabs (multiple DockWindow on same nodeId → auto-tab-bar).
+                    ImGui.DockBuilderDockWindow("Layers",             rightId);
+                    ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
+                    ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
+                    // Central node: Viewport##0 (Single layout default).
+                    // In --test this window is never created → PassthruCentralNode
+                    // hole → picking rect unchanged (but we're in !testMode here).
+                    ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+                } else {
+                    // --test: minimal seed (Layers + Viewport##0 only, both
+                    // uncreated in test → harmless). Chrome panels keep their
+                    // fixed-rect paths. Central node stays the PassthruCentralNode
+                    // hole → layout.vp* picking rect unchanged → 324/324.
+                    ImGuiID rightId, centerId;
+                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
+                                               &rightId, &centerId);
+                    ImGui.DockBuilderDockWindow("Layers",     rightId);
+                    ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+                }
                 ImGui.DockBuilderFinish(dockspaceId);
             }
 
-            // Phase 4: separate layout-rebuild path (outside the one-shot seed
-            // guard) triggered by viewport.layout commands.  Rebuilds the
-            // DockBuilder tree to reflect the new cellCount / layout.
-            // MINOR-7: must be a distinct path so layout switches after startup
-            // (when dockLayoutDone==true) still take effect.
+            // Layout-rebuild path (outside the one-shot seed guard) triggered by
+            // viewport.layout commands. Ph6 MAJOR: central-node-scoped rebuild —
+            // clears ONLY the viewport-cell subtree via
+            // DockBuilderRemoveNodeChildNodes(centerId), leaving chrome edge nodes
+            // (Tab bar / Status line / Mesh Info / right-panel) intact so a
+            // viewport.layout switch never destroys the user's panel arrangement.
             if (vpm.layoutDirty) {
                 import viewport : LayoutPreset;
                 vpm.layoutDirty = false;
-                // Get the central node id by splitting off the Layers panel.
-                // Re-split from the dockspace root each time; Layers stays right.
-                ImGui.DockBuilderRemoveNode(dockspaceId);
-                ImGui.DockBuilderAddNode(dockspaceId, 0);
-                ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
-                ImGuiID rightId, centerId;
-                ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
-                                           &rightId, &centerId);
-                ImGui.DockBuilderDockWindow("Layers", rightId);
 
-                final switch (vpm.layout) {
-                    case LayoutPreset.Single:
-                        ImGui.DockBuilderDockWindow("Viewport##0", centerId);
-                        break;
-                    case LayoutPreset.SplitH: {
-                        ImGuiID leftId2, rightId2;
-                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Left, 0.5f,
-                                                   &leftId2, &rightId2);
-                        ImGui.DockBuilderDockWindow("Viewport##0", leftId2);
-                        ImGui.DockBuilderDockWindow("Viewport##1", rightId2);
-                        break;
+                ImGuiID cid = ImGui.centralNodeId(dockspaceId);
+                if (cid != 0) {
+                    // Scoped rebuild: clear cell subtree, re-split central node.
+                    ImGui.DockBuilderRemoveNodeChildNodes(cid);
+                    final switch (vpm.layout) {
+                        case LayoutPreset.Single:
+                            ImGui.DockBuilderDockWindow("Viewport##0", cid);
+                            break;
+                        case LayoutPreset.SplitH: {
+                            ImGuiID l2, r2;
+                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Left, 0.5f, &l2, &r2);
+                            ImGui.DockBuilderDockWindow("Viewport##0", l2);
+                            ImGui.DockBuilderDockWindow("Viewport##1", r2);
+                            break;
+                        }
+                        case LayoutPreset.SplitV: {
+                            ImGuiID t2, b2;
+                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Up, 0.5f, &t2, &b2);
+                            ImGui.DockBuilderDockWindow("Viewport##0", t2);
+                            ImGui.DockBuilderDockWindow("Viewport##1", b2);
+                            break;
+                        }
+                        case LayoutPreset.Quad: {
+                            ImGuiID t2, b2, tl, tr, bl, br;
+                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Up, 0.5f, &t2, &b2);
+                            ImGui.DockBuilderSplitNode(t2, ImGuiDir.Left, 0.5f, &tl, &tr);
+                            ImGui.DockBuilderSplitNode(b2, ImGuiDir.Left, 0.5f, &bl, &br);
+                            ImGui.DockBuilderDockWindow("Viewport##0", tl);
+                            ImGui.DockBuilderDockWindow("Viewport##1", tr);
+                            ImGui.DockBuilderDockWindow("Viewport##2", bl);
+                            ImGui.DockBuilderDockWindow("Viewport##3", br);
+                            break;
+                        }
                     }
-                    case LayoutPreset.SplitV: {
-                        ImGuiID topId, botId;
-                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Up, 0.5f,
-                                                   &topId, &botId);
-                        ImGui.DockBuilderDockWindow("Viewport##0", topId);
-                        ImGui.DockBuilderDockWindow("Viewport##1", botId);
-                        break;
+                    ImGui.DockBuilderFinish(dockspaceId);
+                } else {
+                    // Fallback: no central node yet (shouldn't happen after the
+                    // seed ran, but be safe). Full root rebuild so the layout
+                    // still takes effect.
+                    ImGui.DockBuilderRemoveNode(dockspaceId);
+                    ImGui.DockBuilderAddNode(dockspaceId, 0);
+                    ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
+                    ImGuiID rightId, cid2;
+                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
+                                               &rightId, &cid2);
+                    ImGui.DockBuilderDockWindow("Layers", rightId);
+                    final switch (vpm.layout) {
+                        case LayoutPreset.Single:
+                            ImGui.DockBuilderDockWindow("Viewport##0", cid2);
+                            break;
+                        case LayoutPreset.SplitH: {
+                            ImGuiID l2, r2;
+                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Left, 0.5f, &l2, &r2);
+                            ImGui.DockBuilderDockWindow("Viewport##0", l2);
+                            ImGui.DockBuilderDockWindow("Viewport##1", r2);
+                            break;
+                        }
+                        case LayoutPreset.SplitV: {
+                            ImGuiID t2, b2;
+                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Up, 0.5f, &t2, &b2);
+                            ImGui.DockBuilderDockWindow("Viewport##0", t2);
+                            ImGui.DockBuilderDockWindow("Viewport##1", b2);
+                            break;
+                        }
+                        case LayoutPreset.Quad: {
+                            ImGuiID t2, b2, tl, tr, bl, br;
+                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Up, 0.5f, &t2, &b2);
+                            ImGui.DockBuilderSplitNode(t2, ImGuiDir.Left, 0.5f, &tl, &tr);
+                            ImGui.DockBuilderSplitNode(b2, ImGuiDir.Left, 0.5f, &bl, &br);
+                            ImGui.DockBuilderDockWindow("Viewport##0", tl);
+                            ImGui.DockBuilderDockWindow("Viewport##1", tr);
+                            ImGui.DockBuilderDockWindow("Viewport##2", bl);
+                            ImGui.DockBuilderDockWindow("Viewport##3", br);
+                            break;
+                        }
                     }
-                    case LayoutPreset.Quad: {
-                        // Split top/bottom, then each in left/right.
-                        ImGuiID topId, botId;
-                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Up, 0.5f,
-                                                   &topId, &botId);
-                        ImGuiID tlId, trId, blId, brId;
-                        ImGui.DockBuilderSplitNode(topId, ImGuiDir.Left, 0.5f,
-                                                   &tlId, &trId);
-                        ImGui.DockBuilderSplitNode(botId, ImGuiDir.Left, 0.5f,
-                                                   &blId, &brId);
-                        ImGui.DockBuilderDockWindow("Viewport##0", tlId);
-                        ImGui.DockBuilderDockWindow("Viewport##1", trId);
-                        ImGui.DockBuilderDockWindow("Viewport##2", blId);
-                        ImGui.DockBuilderDockWindow("Viewport##3", brId);
-                        break;
-                    }
+                    ImGui.DockBuilderFinish(dockspaceId);
                 }
-                ImGui.DockBuilderFinish(dockspaceId);
             }
 
             ImGui.End();
@@ -7571,6 +7780,11 @@ void main(string[] args) {
         // it is always drawn (g_testMode false ⇒ guard passes).
         if (!command.g_testMode || g_layerListShown)
             drawLayerListPanel();
+
+        // ---- Viewport Properties (floating) ----
+        // Hidden in --test by default; opt-in via `ui.viewportProps show`.
+        if (!command.g_testMode || g_viewportPropsShown)
+            drawViewportPropsPanel();
 
         // ---- Tool Properties (floating) ----
         // In --test mode this window is hidden by default so synthetic mouse
@@ -8554,19 +8768,49 @@ void main(string[] args) {
                     _vcell.winW = cast(int)avail.x;
                     _vcell.winH = cast(int)avail.y;
 
-                    // Show this cell's FBO texture.
-                    if (_vcell.fbo.colorTex != 0)
-                        ImGui.Image(cast(int)_vcell.fbo.colorTex, avail,
-                                    ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                    else
-                        ImGui.Dummy(avail);
+                    // Full-avail invisible hover surface: drives
+                    // g_viewportWindowHovered so letterbox bars remain input-live.
+                    // Must come BEFORE the Image so IsItemHovered covers the whole
+                    // cell, not just the (possibly smaller) letterboxed image.
+                    // Guard zero-size avail: InvisibleButton asserts size != 0
+                    // (a collapsed/degenerate cell). Nothing to hover then.
+                    if (avail.x > 0.0f && avail.y > 0.0f) {
+                        ImGui.InvisibleButton("##vpHit" ~ to!string(k), avail,
+                                              ImGuiButtonFlags.MouseButtonLeft |
+                                              ImGuiButtonFlags.MouseButtonRight);
+                        if (ImGui.IsItemHovered(
+                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                            g_viewportWindowHovered = true;
+                    }
 
-                    // Any cell being hovered gates input through viewportInputAllowed().
-                    // The router (viewportUnderCursor) then pins the specific cell.
-                    if (ImGui.IsItemHovered(
-                            ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
-                            ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-                        g_viewportWindowHovered = true;
+                    // Centered letterbox: fit FBO logical size into avail,
+                    // preserving the FBO aspect. Kills one-frame stretch when
+                    // avail changes before the FBO is resized.
+                    // Cell window rect (winX/Y/W/H) is stamped from the full
+                    // avail above — picking uses the whole cell, not the sub-rect.
+                    {
+                        ImVec2 imgCursor = pos;
+                        ImVec2 drawSize  = avail;
+                        if (_vcell.fbo.colorTex != 0 && _vcell.fbo.w > 0 && _vcell.fbo.h > 0) {
+                            float texW   = cast(float)_vcell.fbo.w;
+                            float texH   = cast(float)_vcell.fbo.h;
+                            float scaleX = avail.x / texW;
+                            float scaleY = avail.y / texH;
+                            float scale  = scaleX < scaleY ? scaleX : scaleY;
+                            drawSize  = ImVec2(texW * scale, texH * scale);
+                            imgCursor = ImVec2(pos.x + (avail.x - drawSize.x) * 0.5f,
+                                               pos.y + (avail.y - drawSize.y) * 0.5f);
+                        }
+                        ImGui.SetCursorScreenPos(imgCursor);
+                        if (_vcell.fbo.colorTex != 0)
+                            ImGui.Image(cast(int)_vcell.fbo.colorTex, drawSize,
+                                        ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                        else {
+                            ImGui.SetCursorScreenPos(pos);
+                            ImGui.Dummy(avail);
+                        }
+                    }
 
                     // Active cell only: update outer vp + layout rect used by picks.
                     if (k == vpm.activeId) {
