@@ -4892,13 +4892,14 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
-            // Restore free-perspective camera mode so subsequent tests/operations
-            // don't inherit a leftover ortho preset from a prior test.
-            {
-                import view : ProjKind, ViewPreset;
-                cameraView.projKind   = ProjKind.Perspective;
-                cameraView.viewPreset = ViewPreset.Perspective;
-            }
+            // Restore the full viewport manager to its launch default so no
+            // viewport state (layout / cellCount / activeId / per-cell ortho
+            // preset / independence flags) bleeds into the next test on the
+            // shared --test instance. This is what CI's -j1 run exposed: a
+            // Quad-layout test left cellCount=4 + cells in Ortho, and the old
+            // reset only fixed the active cell's preset — every later pick /
+            // camera / drag test then ran against the wrong cell/rect.
+            vpm.resetToDefault();
             // The host now owns the no-tool falloff drag (step 3 of the
             // stage-gizmo refactor); a reset must drop any in-flight drag.
             pipeGizmoHost.cancelDrag();
@@ -7046,6 +7047,29 @@ void main(string[] args) {
         if (ImGui.Begin("Viewport Properties")) {
             auto v = vpm.views[vpm.activeId];
 
+            // Layout switcher: Single / 2-split H / 2-split V / Quad.
+            // Highlights the active preset; each button fires viewport.layout.
+            ImGui.SeparatorText("Layout");
+            {
+                import viewport : LayoutPreset;
+                static immutable string[4] lblNames = ["Single", "Split H", "Split V", "Quad"];
+                static immutable string[4] lblIds   = ["Single", "SplitH", "SplitV", "Quad"];
+                static immutable LayoutPreset[4] lblVals =
+                    [LayoutPreset.Single, LayoutPreset.SplitH,
+                     LayoutPreset.SplitV, LayoutPreset.Quad];
+                foreach (i; 0 .. 4) {
+                    if (i > 0) ImGui.SameLine();
+                    bool cur = (vpm.layout == lblVals[i]);
+                    if (cur) ImGui.PushStyleColor(ImGuiCol.Button,
+                                                  ImVec4(0.30f, 0.45f, 0.65f, 1.0f));
+                    if (ImGui.Button(lblNames[i]) && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("viewport.layout",
+                            `{"_positional":["` ~ lblIds[i] ~ `"]}`);
+                    if (cur) ImGui.PopStyleColor(1);
+                }
+            }
+
+            ImGui.Dummy(ImVec2(0, 2));
             ImGui.SeparatorText("Active Cell Independence");
 
             bool ic = v.indCenter;
