@@ -9,11 +9,25 @@ import shader : Shader;
 import drag   : screenAxisDelta, planeDragDelta;
 import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.stage    : Stage;
+import toolpipe.stage    : TaskCode;
+import toolpipe.stages.falloff : FalloffStage;
 import tools.create_common : pickWorkplaneFrame, WorkplaneFrame;
 
 import std.format : format;
 import std.math   : sqrt, abs;
+
+// Resolve the PRIMARY falloff (WGHT) stage — the same "first WGHT-task
+// stage" the pipeline registers before any `falloff.add` extras. Every
+// interactive gizmo / RMB-gesture site in this module addresses only the
+// primary (stacked "falloff#N" extras are edited exclusively via
+// `tool.pipe.attr falloff#N <attr>`, not the viewport handles), so this one
+// helper replaces the ~13 hand-rolled `foreach (...) { if (s.id() !=
+// "falloff") continue; ...; break; }` pipeline walks. Null-safe (returns
+// null when the pipeline isn't initialised or carries no WGHT stage).
+private FalloffStage primaryFalloffStage() {
+    if (g_pipeCtx is null) return null;
+    return cast(FalloffStage) g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+}
 
 // ---------------------------------------------------------------------------
 // FalloffLinearGizmo — interactive draggable handles for linear falloff
@@ -318,12 +332,9 @@ public:
             // the first step.
             h.pos = newPos;
             string attr = (activeLinear == 0) ? "start" : "end";
-            foreach (s; g_pipeCtx.pipeline.all()) {
-                if (s.id() != "falloff") continue;
-                (cast(Stage)s).setAttr(attr,
+            if (auto fs = primaryFalloffStage())
+                fs.setAttr(attr,
                     format("%g,%g,%g", newPos.x, newPos.y, newPos.z));
-                break;
-            }
             return true;
         }
 
@@ -339,12 +350,9 @@ public:
                                   centerHandle.pos.y + delta.y,
                                   centerHandle.pos.z + delta.z);
             centerHandle.pos = newCenter;
-            foreach (s; g_pipeCtx.pipeline.all()) {
-                if (s.id() != "falloff") continue;
-                (cast(Stage)s).setAttr("center",
+            if (auto fs = primaryFalloffStage())
+                fs.setAttr("center",
                     format("%g,%g,%g", newCenter.x, newCenter.y, newCenter.z));
-                break;
-            }
             return true;
         }
         // Size handle 1..6 → index 0..5 in RAD_AXES.
@@ -364,12 +372,9 @@ public:
         sz[axis] += d;
         if (sz[axis] < 0.0f) sz[axis] = 0.0f;
         sizeAtDragStart = Vec3(sz[0], sz[1], sz[2]);
-        foreach (s; g_pipeCtx.pipeline.all()) {
-            if (s.id() != "falloff") continue;
-            (cast(Stage)s).setAttr("size",
+        if (auto fs = primaryFalloffStage())
+            fs.setAttr("size",
                 format("%g,%g,%g", sz[0], sz[1], sz[2]));
-            break;
-        }
         return true;
     }
 
@@ -447,15 +452,9 @@ private float rmbScreenDragR0_     = 0;
 private bool  lmbScreenDragActive_ = false;
 
 bool screenFalloffActive() {
-    import toolpipe.stages.falloff : FalloffStage;
-    if (g_pipeCtx is null) return false;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto fs = cast(FalloffStage)s;
-        if (fs is null) return false;
-        return fs.type == FalloffType.Screen;
-    }
-    return false;
+    auto fs = primaryFalloffStage();
+    if (fs is null) return false;
+    return fs.type == FalloffType.Screen;
 }
 
 bool screenFalloffRMBDragging() { return rmbScreenDragActive_; }
@@ -476,15 +475,11 @@ bool screenFalloffOverlayVisible() {
 }
 
 private void pushScreenFalloff(float cx, float cy, float size) {
-    if (g_pipeCtx is null) return;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto st = cast(Stage)s;
-        st.setAttr("screenCx",   format("%g", cx));
-        st.setAttr("screenCy",   format("%g", cy));
-        st.setAttr("screenSize", format("%g", size));
-        break;
-    }
+    auto st = primaryFalloffStage();
+    if (st is null) return;
+    st.setAttr("screenCx",   format("%g", cx));
+    st.setAttr("screenCy",   format("%g", cy));
+    st.setAttr("screenSize", format("%g", size));
 }
 
 /// Push only the center (cx, cy) of the screen falloff disc, leaving
@@ -492,14 +487,10 @@ private void pushScreenFalloff(float cx, float cy, float size) {
 /// so the falloff re-centers at every fresh grab. Safe to call when
 /// the pipeline has no falloff stage (returns silently).
 void screenFalloffSetCenter(int x, int y) {
-    if (g_pipeCtx is null) return;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto st = cast(Stage)s;
-        st.setAttr("screenCx", format("%g", cast(float)x));
-        st.setAttr("screenCy", format("%g", cast(float)y));
-        break;
-    }
+    auto st = primaryFalloffStage();
+    if (st is null) return;
+    st.setAttr("screenCx", format("%g", cast(float)x));
+    st.setAttr("screenCy", format("%g", cast(float)y));
 }
 
 /// Begin RMB-radius gesture: re-center the falloff disc at (x, y) and
@@ -527,15 +518,9 @@ void screenFalloffRMBMotion(int x) {
 }
 
 private float readScreenFalloffSize() {
-    import toolpipe.stages.falloff : FalloffStage;
-    if (g_pipeCtx is null) return 1.0f;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto fs = cast(FalloffStage)s;
-        if (fs is null) return 1.0f;
-        return fs.screenSize > 1.0f ? fs.screenSize : 1.0f;
-    }
-    return 1.0f;
+    auto fs = primaryFalloffStage();
+    if (fs is null) return 1.0f;
+    return fs.screenSize > 1.0f ? fs.screenSize : 1.0f;
 }
 
 /// End the gesture. Returns true iff a drag was active (so app.d can
@@ -585,15 +570,9 @@ private Vec3        rmbRadialHpn_          = Vec3(1, 0, 0); // height-plane norm
 private Vec3        rmbRadialHeightStart_  = Vec3(0, 0, 0); // hit on height plane at second RMB-down
 
 bool radialFalloffActive() {
-    import toolpipe.stages.falloff : FalloffStage;
-    if (g_pipeCtx is null) return false;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto fs = cast(FalloffStage)s;
-        if (fs is null) return false;
-        return fs.type == FalloffType.Radial;
-    }
-    return false;
+    auto fs = primaryFalloffStage();
+    if (fs is null) return false;
+    return fs.type == FalloffType.Radial;
 }
 
 bool radialFalloffRMBDragging() {
@@ -602,16 +581,12 @@ bool radialFalloffRMBDragging() {
 }
 
 private void pushRadialFalloff(Vec3 center, Vec3 size) {
-    if (g_pipeCtx is null) return;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto st = cast(Stage)s;
-        st.setAttr("center",
-            format("%g,%g,%g", center.x, center.y, center.z));
-        st.setAttr("size",
-            format("%g,%g,%g", size.x,   size.y,   size.z));
-        break;
-    }
+    auto st = primaryFalloffStage();
+    if (st is null) return;
+    st.setAttr("center",
+        format("%g,%g,%g", center.x, center.y, center.z));
+    st.setAttr("size",
+        format("%g,%g,%g", size.x,   size.y,   size.z));
 }
 
 /// Compute the height-drag plane analogous to
@@ -794,13 +769,8 @@ bool radialFalloffRMBUp() {
             radialStage_ = RadialStage.Idle;
             return true;
         }
-        import toolpipe.stages.falloff : FalloffStage;
-        foreach (s; g_pipeCtx.pipeline.all()) {
-            if (s.id() != "falloff") continue;
-            auto fs = cast(FalloffStage)s;
-            if (fs !is null) rmbRadialFlatSize_ = fs.size;
-            break;
-        }
+        if (auto fs = primaryFalloffStage())
+            rmbRadialFlatSize_ = fs.size;
         radialStage_ = RadialStage.FirstDone;
         return true;
     }
@@ -836,15 +806,9 @@ private Vec3  rmbElementDragAnchor_ = Vec3(0, 0, 0);  // world hit at RMB-down
 private Vec3  rmbElementPlaneN_     = Vec3(0, 0, 1);  // camera-back at RMB-down
 
 bool elementFalloffActive() {
-    import toolpipe.stages.falloff : FalloffStage;
-    if (g_pipeCtx is null) return false;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto fs = cast(FalloffStage)s;
-        if (fs is null) return false;
-        return fs.type == FalloffType.Element;
-    }
-    return false;
+    auto fs = primaryFalloffStage();
+    if (fs is null) return false;
+    return fs.type == FalloffType.Element;
 }
 
 bool elementFalloffRMBDragging() { return rmbElementDragActive_; }
@@ -859,31 +823,25 @@ bool elementFalloffOverlayVisible() {
 }
 
 private void pushElementDist(float dist) {
-    if (g_pipeCtx is null) return;
-    foreach (s; g_pipeCtx.pipeline.all()) {
-        if (s.id() != "falloff") continue;
-        auto st = cast(Stage)s;
-        st.setAttr("dist", format("%g", dist));
-        break;
-    }
+    auto st = primaryFalloffStage();
+    if (st is null) return;
+    st.setAttr("dist", format("%g", dist));
 }
 
 private FalloffStageState readElementState() {
     // sphere centre = ACEN.center (single source of truth — same
-    // point the gizmo sits on); radius = FalloffStage.dist.
-    import toolpipe.stages.falloff : FalloffStage;
+    // point the gizmo sits on); radius = FalloffStage.dist. The
+    // falloff half goes through primaryFalloffStage() (WGHT task); the
+    // actionCenter half stays a direct task lookup (ACEN task) — this
+    // loop is the one site that mixes both, so only the falloff half
+    // collapses into the shared helper.
     import toolpipe.stages.actcenter : ActionCenterStage;
     FalloffStageState s;
     if (g_pipeCtx is null) return s;
-    foreach (st; g_pipeCtx.pipeline.all()) {
-        if (st.id() == "falloff") {
-            auto fs = cast(FalloffStage)st;
-            if (fs !is null) s.dist = fs.dist;
-        } else if (st.id() == "actionCenter") {
-            auto ac = cast(ActionCenterStage)st;
-            if (ac !is null) s.pickedCenter = ac.currentCenter();
-        }
-    }
+    if (auto fs = primaryFalloffStage())
+        s.dist = fs.dist;
+    if (auto ac = cast(ActionCenterStage) g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
+        s.pickedCenter = ac.currentCenter();
     return s;
 }
 
