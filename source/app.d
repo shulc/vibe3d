@@ -2914,23 +2914,19 @@ void main(string[] args) {
     reg.commandFactories["history.clear"] = () => cast(Command)
         new HistoryClear(&mesh(), cameraView, editMode,
                          () { history.clear(); });
-    // Test-automation only: flip the interactive edge-extrude undo-tracker toggle
+    // Test-automation only: flip the shared undo-tracker toggle
     // (VIBE3D_UNDO_TRACKER) at runtime so the parity-gate test can run the same
     // sequence under both the snapshot and the delta path in one instance.
     // Reuses HistoryClear's closure wrapper (SideEffect, unrecorded). Not in any
     // menu / UI; see doc/undo_change_tracker_plan.md Phase 2 §D.
     reg.commandFactories["undo.tracker.on"] = () => cast(Command)
         new HistoryClear(&mesh(), cameraView, editMode,
-            () { import exTracker = tools.edge_extrude;
-                 import enTracker = tools.edge_extend;
-                 exTracker.setUndoTrackerEnabled(true);
-                 enTracker.setUndoTrackerEnabled(true); });
+            () { import mesh_edit_delta : setUndoTrackerEnabled;
+                 setUndoTrackerEnabled(true); });
     reg.commandFactories["undo.tracker.off"] = () => cast(Command)
         new HistoryClear(&mesh(), cameraView, editMode,
-            () { import exTracker = tools.edge_extrude;
-                 import enTracker = tools.edge_extend;
-                 exTracker.setUndoTrackerEnabled(false);
-                 enTracker.setUndoTrackerEnabled(false); });
+            () { import mesh_edit_delta : setUndoTrackerEnabled;
+                 setUndoTrackerEnabled(false); });
     // Test-automation only: engage / release the history-service lockout (the
     // hard gate that freezes record/undo/redo/fire — distinct from Suspend) so
     // a test can assert that locked-out recording is a no-op and /api/undo/status

@@ -33,6 +33,43 @@ import math : Vec3;
 // apply()/revert() take `ref Mesh`. Neither references the other at static-init.
 
 // ---------------------------------------------------------------------------
+// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 4 §D). When
+// truthy (the DEFAULT) an interactive topology-tool commit records a
+// MeshEditDelta (operation-log undo) instead of a before/after MeshSnapshot
+// pair. `VIBE3D_UNDO_TRACKER=off` (and the other falsey values) is the ESCAPE
+// HATCH that forces the snapshot path — byte-identical to pre-Phase-2 behavior.
+// Read ONCE and cached — it is the rollback safety net + the parity-test lever.
+// Single definition shared by every migrated command (edge-extrude, edge-extend,
+// delete, remove) plus the `undo.tracker.on/off` test-automation commands.
+// ---------------------------------------------------------------------------
+private bool g_undoTrackerChecked = false;
+private bool g_undoTrackerOn      = true;
+bool undoTrackerEnabled() {
+    if (!g_undoTrackerChecked) {
+        import std.process : environment;
+        import std.uni : toLower;
+        g_undoTrackerChecked = true;
+        auto v = environment.get("VIBE3D_UNDO_TRACKER", "");
+        auto lv = v.toLower;
+        // Default ON: unset ⇒ tracker. Only an explicit falsey value forces the
+        // snapshot escape hatch. (Anything unrecognised stays ON.)
+        g_undoTrackerOn = !(lv == "0" || lv == "off" || lv == "false" || lv == "no");
+    }
+    return g_undoTrackerOn;
+}
+
+// Test-automation override (the parity-gate lever): flip the cached toggle so a
+// single running instance can run the SAME topology op + undo under both the
+// snapshot path and the delta path. Marks the env as already-checked so the env
+// read doesn't clobber the override on the next commit. Wired to the
+// `undo.tracker.on/off` commands in app.d (test-automation only — not surfaced
+// in the UI).
+void setUndoTrackerEnabled(bool on) {
+    g_undoTrackerChecked = true;
+    g_undoTrackerOn      = on;
+}
+
+// ---------------------------------------------------------------------------
 // Change-scope bitfield — declared at beginEditBatch to describe the kinds of
 // mutation a batch covers. Advisory in Ph1 (the log is self-describing); kept
 // so commands can surface change scope later.
