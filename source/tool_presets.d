@@ -59,14 +59,38 @@ ToolPreset[] loadToolPresets(string path) {
         throw new Exception(format("tool_presets: '%s' missing top-level 'presets' key", path));
 
     ToolPreset[] presets;
+    // Alias entries (`id` + `alias:` only, no `base`) are stashed here during
+    // the first pass and resolved in a SEPARATE second pass below, against the
+    // full set of base presets collected in pass one. This is deliberately
+    // two-pass (rather than "look up the target so far") so a future YAML
+    // reorder — an alias entry placed BEFORE its canonical target — still
+    // resolves; nothing here depends on file order.
+    string[2][] pendingAliases; // [aliasId, targetId]
+
     foreach (Node node; root["presets"]) {
         if (!node.containsKey("id"))
             throw new Exception(format("tool_presets: entry in '%s' missing 'id'", path));
+        string id = node["id"].as!string;
+
+        if (node.containsKey("alias")) {
+            // An alias entry is a bare pointer to a canonical preset — it may
+            // carry ONLY `id` + `alias`. Mixing in `base`/`pipe`/`attrs`/`flags`
+            // would leave it ambiguous which side wins, so reject it outright.
+            if (node.containsKey("base") || node.containsKey("pipe")
+                    || node.containsKey("attrs") || node.containsKey("flags"))
+                throw new Exception(format(
+                    "tool_presets: preset '%s' in '%s' has 'alias' plus "
+                    ~ "'base'/'pipe'/'attrs'/'flags' — an alias entry may only "
+                    ~ "have 'id' and 'alias'", id, path));
+            pendingAliases ~= [id, node["alias"].as!string];
+            continue;
+        }
+
         if (!node.containsKey("base"))
             throw new Exception(format("tool_presets: preset '%s' in '%s' missing 'base'",
-                                       node["id"].as!string, path));
+                                       id, path));
         ToolPreset p;
-        p.id   = node["id"].as!string;
+        p.id   = id;
         p.base = node["base"].as!string;
 
         if (node.containsKey("pipe")) {
@@ -103,7 +127,48 @@ ToolPreset[] loadToolPresets(string path) {
         }
         presets ~= p;
     }
+
+    // Second pass: resolve every stashed alias against the base presets
+    // collected above. Order-independent by construction — `presets` is
+    // already fully populated regardless of where in the file the alias
+    // entry sat relative to its target. Only base presets are searched
+    // (`presets[0 .. baseCount]`); resolved aliases are appended past that
+    // bound, so an alias-to-alias target finds nothing and throws, exactly
+    // as the error message below promises.
+    immutable baseCount = presets.length;
+    foreach (aliasPair; pendingAliases) {
+        string aliasId  = aliasPair[0];
+        string targetId = aliasPair[1];
+        const(ToolPreset)* target = null;
+        foreach (ref p; presets[0 .. baseCount])
+            if (p.id == targetId) { target = &p; break; }
+        if (target is null)
+            throw new Exception(format(
+                "tool_presets: preset '%s' in '%s' has alias target '%s' — "
+                ~ "not a known base preset (unknown id, or the target is "
+                ~ "itself an alias; alias-to-alias chains are not supported)",
+                aliasId, path, targetId));
+        presets ~= resolveAliasPreset(*target, aliasId);
+    }
+
     return presets;
+}
+
+// Build the resolved ToolPreset for an alias entry: a full, independent copy
+// of the canonical target's `base` / `pipeAttrs` / `toolAttrs` / `flags`,
+// renamed to the alias's own id. Deep-copies the nested maps (rather than
+// sharing the target's AA instances) so the two presets can never be made to
+// alias each other's storage even if a later change starts mutating a
+// resolved ToolPreset in place.
+private ToolPreset resolveAliasPreset(const ref ToolPreset target, string aliasId) {
+    ToolPreset r;
+    r.id    = aliasId;
+    r.base  = target.base;
+    r.flags = target.flags;
+    r.toolAttrs = target.toolAttrs.dup;
+    foreach (stageId, attrs; target.pipeAttrs)
+        r.pipeAttrs[stageId] = attrs.dup;
+    return r;
 }
 
 // Inject preset-level tool attrs (top-level `attrs:` block in YAML)
@@ -234,4 +299,25 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
         reg.toolFactories[p.id] = makeFactory(p);
         reg.preActivate[p.id]   = makePreActivate(p);
     }
+}
+
+// Guards the alias mechanism's byte-stability claim: `ElementMove` is an
+// `alias:` entry pointing at `xfrm.elementMove`; the two must resolve to
+// field-identical presets (same base / pipeAttrs / toolAttrs / flags) so both
+// factory ids keep behaving exactly as if each still had its own hand-written
+// YAML block.
+unittest {
+    auto presets = loadToolPresets("config/tool_presets.yaml");
+    const(ToolPreset)* canonical = null;
+    const(ToolPreset)* aliased   = null;
+    foreach (ref p; presets) {
+        if (p.id == "xfrm.elementMove") canonical = &p;
+        if (p.id == "ElementMove")      aliased   = &p;
+    }
+    assert(canonical !is null, "xfrm.elementMove preset missing");
+    assert(aliased   !is null, "ElementMove alias preset missing");
+    assert(aliased.base == canonical.base);
+    assert(aliased.flags == canonical.flags);
+    assert(aliased.toolAttrs == canonical.toolAttrs);
+    assert(aliased.pipeAttrs == canonical.pipeAttrs);
 }
