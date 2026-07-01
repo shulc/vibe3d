@@ -3577,7 +3577,14 @@ void main(string[] args) {
                 if (i > 0) buf.put(",");
                 buf.put(format(`"%s"`, k));
             }
-            buf.put(`]}`);
+            buf.put(`],"commandNames":{`);
+            bool firstName = true;
+            foreach (k; cmds) {
+                if (!firstName) buf.put(",");
+                firstName = false;
+                buf.put(format(`"%s":"%s"`, k, reg.commandNames.get(k, "")));
+            }
+            buf.put(`}}`);
             return buf.data;
         });
 
