@@ -33,6 +33,105 @@ enum ProjKind { Perspective, Ortho }
 enum ViewPreset { Perspective, Top, Bottom, Front, Back, Left, Right, Camera }
 
 // ---------------------------------------------------------------------------
+// ViewportFbo — Phase 2
+// ---------------------------------------------------------------------------
+
+/// GL FBO for rendering one viewport cell's scene into (color RGBA8 + depth24).
+///
+/// Ids (fbo / colorTex / depthRbo) are generated ONCE on first use and remain
+/// stable for the object's lifetime.  On a size change, EXISTING storage is
+/// re-specified in-place via glTexImage2D / glRenderbufferStorage — never
+/// delete+regen — so an ImGui.Image handle recorded before a resize still
+/// names a live texture at RenderDrawData time.  Pattern mirrors
+/// gpu_select.d:607-635 exactly.
+struct ViewportFbo {
+    uint fbo      = 0;
+    uint colorTex = 0;
+    uint depthRbo = 0;
+    int  w        = 0;
+    int  h        = 0;
+    int  _allocGen = 0;  // bumped on first use and each resize; used by unittest
+
+    /// Ensure the FBO is at least (newW × newH).  Guards w>0 && h>0.
+    /// On a size change, re-specifies existing storage in place — ids are stable.
+    void ensure(int newW, int newH) {
+        if (newW <= 0 || newH <= 0) return;
+        if (newW == w && newH == h && w > 0) return;
+        w = newW;
+        h = newH;
+        _allocGen++;
+        version(unittest) {} else {
+            import bindbc.opengl;
+            // Generate ids on first use only.
+            if (fbo == 0) {
+                glGenFramebuffers(1, &fbo);
+                glGenTextures(1, &colorTex);
+                glGenRenderbuffers(1, &depthRbo);
+            }
+            // Re-specify existing storage in place (ids stay stable).
+            glBindTexture(GL_TEXTURE_2D, colorTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, null);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            glBindRenderbuffer(GL_RENDERBUFFER, depthRbo);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, colorTex, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                      GL_RENDERBUFFER, depthRbo);
+            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE) {
+                import std.conv : to;
+                throw new Exception(
+                    "ViewportFbo: FBO incomplete (status=0x"
+                    ~ to!string(status, 16) ~ ")");
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+    }
+
+    /// Release GL resources.  Null-safe and idempotent.
+    void destroy() {
+        version(unittest) {
+            w = 0; h = 0; _allocGen = 0;
+            fbo = 0; colorTex = 0; depthRbo = 0;
+            return;
+        } else {
+            import bindbc.opengl;
+            if (fbo != 0)      { glDeleteFramebuffers(1, &fbo);       fbo      = 0; }
+            if (colorTex != 0) { glDeleteTextures(1, &colorTex);      colorTex = 0; }
+            if (depthRbo != 0) { glDeleteRenderbuffers(1, &depthRbo); depthRbo = 0; }
+            w = 0; h = 0; _allocGen = 0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DirtyKey — Phase 2 dirty-cache
+// ---------------------------------------------------------------------------
+
+/// Captures the enumerable render inputs for one viewport cell.
+/// Two identical DirtyKeys mean the scene image has not changed and the
+/// retained colorTex can be re-blitted without a GL re-render.
+struct DirtyKey {
+    float[16] view  = 0;
+    float[16] proj  = 0;
+    ulong     meshMutVer;
+    ulong     selEpoch;   // bumped on every selection-mark change (Marks class)
+    int       editMode_k;
+    int       hovV, hovE, hovF;
+    int       fboW,  fboH;
+}
+
+// ---------------------------------------------------------------------------
 // Viewport3D
 // ---------------------------------------------------------------------------
 
@@ -49,6 +148,11 @@ final class Viewport3D {
     FaceBoundsCache  fcache;
     EdgeCache        ecache;
     GpuSelectBuffer  gpuSel;
+
+    // Phase-2 FBO + dirty-cache fields.
+    ViewportFbo fbo;
+    bool        dirty    = true;   // starts dirty → first frame always renders
+    DirtyKey    lastKey;
 
     // Phase-2..5 inert fields — declared now, unused in Phase 1.
     ProjKind   proj      = ProjKind.Perspective;
@@ -113,6 +217,7 @@ final class ViewportManager {
                 v.gpuSel.destroy();
                 v.gpuSel = null;
             }
+            v.fbo.destroy();
         }
     }
 
@@ -199,4 +304,53 @@ unittest {
         assert(m2.snapshotOf(0) == standalone.viewport(),
                "snapshotOf must match an equivalent standalone View.viewport()");
     }
+}
+
+// ---------------------------------------------------------------------------
+// ViewportFbo unittests — pure size-decision logic (no GL context needed).
+// ---------------------------------------------------------------------------
+unittest {
+    ViewportFbo f;
+
+    // Initial state.
+    assert(f.w == 0 && f.h == 0 && f._allocGen == 0, "initial state must be zeroed");
+
+    // ensure with invalid sizes must be a no-op.
+    f.ensure(0, 100);
+    assert(f._allocGen == 0, "ensure(0,100) must be a no-op");
+    f.ensure(100, 0);
+    assert(f._allocGen == 0, "ensure(100,0) must be a no-op");
+    f.ensure(-1, -1);
+    assert(f._allocGen == 0, "ensure(-1,-1) must be a no-op");
+
+    // First valid call allocates storage.
+    f.ensure(100, 100);
+    assert(f.w == 100 && f.h == 100, "ensure(100,100) must set w=100, h=100");
+    assert(f._allocGen == 1, "first ensure must bump _allocGen to 1");
+
+    // Same size → idempotent (no realloc).
+    f.ensure(100, 100);
+    assert(f._allocGen == 1, "same-size ensure must NOT bump _allocGen");
+
+    // Size change → realloc.
+    f.ensure(200, 100);
+    assert(f.w == 200 && f.h == 100, "size-change ensure must update w/h");
+    assert(f._allocGen == 2, "size-change ensure must bump _allocGen");
+
+    f.ensure(200, 300);
+    assert(f._allocGen == 3, "second size-change must bump _allocGen again");
+
+    // Idempotent after second change.
+    f.ensure(200, 300);
+    assert(f._allocGen == 3, "same size after resize must be idempotent");
+
+    // destroy resets tracking fields.
+    f.destroy();
+    assert(f.w == 0 && f.h == 0 && f._allocGen == 0,
+           "destroy must reset w, h, _allocGen to 0");
+
+    // ensure works again after destroy.
+    f.ensure(64, 64);
+    assert(f.w == 64 && f.h == 64 && f._allocGen == 1,
+           "ensure after destroy must work as a fresh first call");
 }
