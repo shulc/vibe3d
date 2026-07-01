@@ -130,8 +130,6 @@ panels:
               action: { kind: tool, id: xfrm.softTransform } }
           - { label: "Shear",
               action: { kind: tool, id: xfrm.shear } }
-          - { label: "Smooth",
-              action: { kind: tool, id: xfrm.smooth } }
           - { label: "Mesh Smooth",
               action: { kind: command, id: mesh.smooth } }
           - { label: "Jitter",
