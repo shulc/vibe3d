@@ -3,7 +3,7 @@ module viewport;
 import view       : View, ProjKind, ViewPreset;
 import viewcache  : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select : GpuSelectBuffer;
-import math       : Viewport;
+import math       : Viewport, Vec3;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -326,6 +326,17 @@ final class ViewportManager {
         layout    = p;
         cellCount = cellsFor(p);
 
+        // Phase-5: reset ALL cells to fully-independent before applying the new
+        // preset.  This prevents independence flags from leaking across layout
+        // switches (e.g. Quad → Single would keep indCenter=false on cells 0-2).
+        foreach (k; 0..4) {
+            views[k].indCenter = true;
+            views[k].indScale  = true;
+            views[k].indRotate = true;
+            views[k].masterId  = -1;
+        }
+        masterId = 0;
+
         // GPU-init newly-live cells (requires GL context; no-op in unittest).
         version(unittest) {} else {
             foreach (k; oldCount .. cellCount) {
@@ -347,6 +358,17 @@ final class ViewportManager {
             views[2].camera.projKind   = ProjKind.Ortho;
             views[3].camera.viewPreset = ViewPreset.Perspective;
             views[3].camera.projKind   = ProjKind.Perspective;
+
+            // Phase-5: linked quad defaults — ortho cells follow the persp master
+            // (cell 3) on Center + Scale but keep their own Rotate (az/el is
+            // irrelevant for axis-locked ortho).
+            foreach (k; 0..3) {
+                views[k].indCenter = false;
+                views[k].indScale  = false;
+                views[k].indRotate = true;
+                // masterId=-1 → use group master (masterId=3 set below)
+            }
+            masterId = 3;  // perspective cell is the group master
         }
 
         // Compute initial analytic cell rects (the interactive window loop
@@ -416,6 +438,56 @@ final class ViewportManager {
     /// Outside a gesture, falls back to the active cell's camera.
     ref View originCamera() {
         return views[dragOriginId >= 0 ? dragOriginId : activeId].camera;
+    }
+
+    // ------------------------------------------------------------------
+    // Phase-5 independence resolution helpers
+    // ------------------------------------------------------------------
+
+    /// Resolve the effective transform inputs for cell `id` according to its
+    /// independence flags and master pointer.  Reads RAW own+master camera
+    /// members — never calls resolvedSnapshot recursively (single-hop, cycle-safe).
+    /// `const` so it is safe to call from any thread.
+    void resolveFollow(int id,
+                       out Vec3 focus, out float distance,
+                       out float az,   out float el) const {
+        auto f   = views[id];
+        int  mid = f.masterId >= 0 ? f.masterId : masterId;
+        if (mid < 0 || mid >= cellCount) mid = id;   // safety: self
+        auto m   = views[mid];
+        focus    = f.indCenter ? f.camera.focus    : m.camera.focus;
+        distance = f.indScale  ? f.camera.distance : m.camera.distance;
+        az       = f.indRotate ? f.camera.azimuth  : m.camera.azimuth;
+        el       = f.indRotate ? f.camera.elevation: m.camera.elevation;
+    }
+
+    /// Compute a resolved camera snapshot for cell `id`, writing the derived
+    /// eye/view/proj back into the cell's camera so downstream readers of
+    /// camera.eye/view/proj see the correct values.  Main-thread only (mutates).
+    Viewport resolvedSnapshot(int id) {
+        Vec3 fo; float di, a, e;
+        resolveFollow(id, fo, di, a, e);
+        Viewport vp = views[id].camera.viewportWith(fo, di, a, e);
+        views[id].camera.eye  = vp.eye;
+        views[id].camera.view = vp.view;
+        views[id].camera.proj = vp.proj;
+        return vp;
+    }
+
+    /// Resolved snapshot for the currently active cell.
+    Viewport activeSnapshot() { return resolvedSnapshot(activeId); }
+
+    /// Resolved snapshot for the drag-origin cell (or active if no gesture).
+    Viewport originSnapshot() {
+        return resolvedSnapshot(dragOriginId >= 0 ? dragOriginId : activeId);
+    }
+
+    /// Return resolved camera JSON for cell `id`.  `const`, non-mutating — safe
+    /// on any thread.  Eye is recomputed from the resolved inputs.
+    string resolvedCameraJson(int id) const {
+        Vec3 fo; float di, a, e;
+        resolveFollow(id, fo, di, a, e);
+        return views[id].camera.toJsonWith(fo, di, a, e);
     }
 }
 
@@ -639,4 +711,109 @@ unittest {
     f.ensure(64, 64);
     assert(f.w == 64 && f.h == 64 && f._allocGen == 1,
            "ensure after destroy must work as a fresh first call");
+}
+
+// ---------------------------------------------------------------------------
+// Phase-5 resolveFollow + Quad-default unittests
+// ---------------------------------------------------------------------------
+unittest {
+    // 2-cell manager: cell 0 = follower, cell 1 = master.
+    auto m = new ViewportManager(0, 0, 800, 600);
+    m.lx = 0; m.ly = 0; m.lw = 800; m.lh = 600;
+
+    // Give each cell a distinct camera state.
+    m.views[0].camera.focus    = Vec3(1, 0, 0);
+    m.views[0].camera.distance = 2.0f;
+    m.views[0].camera.azimuth  = 0.1f;
+    m.views[0].camera.elevation = 0.2f;
+
+    m.views[1].camera.focus    = Vec3(9, 0, 0);
+    m.views[1].camera.distance = 7.0f;
+    m.views[1].camera.azimuth  = 1.5f;
+    m.views[1].camera.elevation = 0.8f;
+
+    // Point cell 0 at cell 1 as per-cell master.
+    m.views[0].masterId = 1;
+    m.cellCount = 2;   // make both cells live
+
+    Vec3 fo; float di, a, e;
+
+    // indCenter=true, indScale=true, indRotate=true → all own
+    m.views[0].indCenter = true; m.views[0].indScale = true; m.views[0].indRotate = true;
+    m.resolveFollow(0, fo, di, a, e);
+    assert(fo.x == 1.0f,  "own center: focus.x must be 1");
+    assert(di   == 2.0f,  "own scale: distance must be 2");
+    assert(a    == 0.1f,  "own rotate: azimuth must be 0.1");
+    assert(e    == 0.2f,  "own rotate: elevation must be 0.2");
+
+    // indCenter=false → follow master's focus
+    m.views[0].indCenter = false;
+    m.resolveFollow(0, fo, di, a, e);
+    assert(fo.x == 9.0f, "follow center: focus.x must be 9");
+    assert(di   == 2.0f, "scale still own");
+
+    // indScale=false → follow master's distance
+    m.views[0].indCenter = true;
+    m.views[0].indScale = false;
+    m.resolveFollow(0, fo, di, a, e);
+    assert(fo.x == 1.0f, "center own again");
+    assert(di   == 7.0f, "follow scale: distance must be 7");
+
+    // indRotate=false → follow master's az+el
+    m.views[0].indScale  = true;
+    m.views[0].indRotate = false;
+    m.resolveFollow(0, fo, di, a, e);
+    import std.math : isClose;
+    assert(isClose(a, 1.5f, 1e-5f), "follow rotate: az must be 1.5");
+    assert(isClose(e, 0.8f, 1e-5f), "follow rotate: el must be 0.8");
+
+    // Reset flags for next subtests
+    m.views[0].indCenter = true; m.views[0].indScale = true; m.views[0].indRotate = true;
+
+    // Self-master: masterId=-1, group masterId=0 → self
+    m.views[0].masterId = -1;
+    m.masterId = 0;
+    m.resolveFollow(0, fo, di, a, e);
+    assert(fo.x == 1.0f, "self-master: must return own focus");
+    assert(di   == 2.0f, "self-master: must return own distance");
+
+    // Out-of-range master → self
+    m.views[0].masterId = 99;
+    m.views[0].indCenter = false;  // would follow master if master were valid
+    m.resolveFollow(0, fo, di, a, e);
+    assert(fo.x == 1.0f, "out-of-range master → self, own focus");
+    m.views[0].indCenter = true;
+    m.views[0].masterId = -1;
+}
+
+unittest {
+    // Quad layout defaults: cells 0-2 indCenter=false, indScale=false, indRotate=true;
+    // cell 3 fully-independent; group masterId=3.
+    auto m = new ViewportManager(0, 0, 640, 480);
+    m.lx = 0; m.ly = 0; m.lw = 640; m.lh = 480;
+    m.applyLayout(LayoutPreset.Quad);
+
+    assert(m.masterId == 3, "Quad group masterId must be 3");
+    foreach (k; 0..3) {
+        assert(!m.views[k].indCenter, "Quad ortho cell indCenter must be false");
+        assert(!m.views[k].indScale,  "Quad ortho cell indScale must be false");
+        assert( m.views[k].indRotate, "Quad ortho cell indRotate must be true");
+        assert( m.views[k].masterId == -1, "Quad ortho cell masterId must be -1 (use group)");
+    }
+    // Persp cell (3) stays fully independent (reset block then no override)
+    assert( m.views[3].indCenter, "Quad persp cell indCenter must be true");
+    assert( m.views[3].indScale,  "Quad persp cell indScale must be true");
+    assert( m.views[3].indRotate, "Quad persp cell indRotate must be true");
+
+    // Layout switch hygiene: Quad → Single → Quad resets cleanly
+    m.applyLayout(LayoutPreset.Single);
+    assert(m.views[0].indCenter, "Single: cell 0 must reset to indCenter=true");
+    assert(m.views[0].indScale,  "Single: cell 0 must reset to indScale=true");
+    assert(m.views[0].indRotate, "Single: cell 0 must reset to indRotate=true");
+    assert(m.masterId == 0,      "Single: group masterId must be 0");
+
+    m.applyLayout(LayoutPreset.Quad);
+    assert(!m.views[0].indCenter, "Quad again: cell 0 indCenter must be false");
+    assert(!m.views[1].indScale,  "Quad again: cell 1 indScale must be false");
+    assert(m.masterId == 3,       "Quad again: group masterId must be 3");
 }
