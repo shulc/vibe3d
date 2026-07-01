@@ -33,7 +33,7 @@ class HttpServer {
     private alias DetailedModelDataProvider = string delegate();
     private DetailedModelDataProvider detailedModelDataProvider;
     private bool useDetailedProvider = false;
-    private alias CameraDataProvider = string delegate();
+    private alias CameraDataProvider = string delegate(int);
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
     private SelectionDataProvider selectionDataProvider;
@@ -1140,11 +1140,12 @@ class HttpServer {
                 }
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/camera") {
+        } else if (request.path.startsWith("/api/camera") && request.method == "GET") {
             if (cameraDataProvider !is null) {
                 try {
+                    int _vpIdx = parseQueryInt(request.path, "viewport", -1);
                     response.statusCode = 200;
-                    response.body = cameraDataProvider();
+                    response.body = cameraDataProvider(_vpIdx);
                     response.headers["Content-Type"] = "application/json";
                 } catch (Exception e) {
                     response.statusCode = 500;
