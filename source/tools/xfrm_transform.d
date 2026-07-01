@@ -1182,7 +1182,7 @@ public:
             import toolpipe.packets      : AxisPacket;
             import toolpipe.stages.axis  : AxisStage;
             if (auto ap = vts.get!AxisPacket())
-                tracksSelection = AxisStage.modeTracksSelection(ap.type);
+                tracksSelection = AxisStage.modeTracksSelection(cast(AxisStage.Mode) ap.type);
         }
         if (!tracksSelection) {
             rX = b0X; rY = b0Y; rZ = b0Z;     // plain / fixed axis modes hold B0
