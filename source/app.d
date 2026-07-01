@@ -1132,7 +1132,10 @@ void main(string[] args) {
     // `gpuSelect` returns the class handle (no ref needed for class types).
     // `activeCamera()`/`hoveredCamera()` are Phase-4 per-viewport seams.
     ref View cameraView() { return vpm.views[vpm.activeId].camera; }
-    bool activeIsOrtho() { return vpm.views[vpm.activeId].isOrtho(); }
+    bool activeIsOrtho() {
+        immutable int _oid = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
+        return vpm.views[_oid].isOrtho();
+    }
     ref VertexCache vertexCache() { return vpm.views[vpm.activeId].vcache; }
     ref FaceBoundsCache faceCache() { return vpm.views[vpm.activeId].fcache; }
     ref EdgeCache edgeCache() { return vpm.views[vpm.activeId].ecache; }
@@ -3285,7 +3288,10 @@ void main(string[] args) {
             a.put("]}");
             return a.data;
         });
-        httpServer.setCameraDataProvider(() => cameraView.toJson());
+        httpServer.setCameraDataProvider((int vpIdx) {
+            int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
+            return vpm.views[_idx].camera.toJson();
+        });
 
         // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main
         // (GL) thread and return the position triples as JSON. Used by
@@ -4308,6 +4314,37 @@ void main(string[] args) {
                 return;
             }
 
+            // viewport.layout <preset> — switch layout (Single/SplitH/SplitV/Quad).
+            if (id == "viewport.layout") {
+                import viewport : LayoutPreset;
+                string presetStr = "";
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    if (pjv.type == JSONType.string) {
+                        presetStr = pjv.str;
+                    } else if (pjv.type == JSONType.object) {
+                        if (auto pp = "_positional" in pjv) {
+                            if (pp.type == JSONType.array && pp.array.length >= 1
+                                && pp.array[0].type == JSONType.string)
+                                presetStr = pp.array[0].str;
+                        }
+                        if (presetStr.length == 0) {
+                            if (auto pp = "preset" in pjv)
+                                if (pp.type == JSONType.string) presetStr = pp.str;
+                        }
+                    }
+                }
+                LayoutPreset lp = LayoutPreset.Single;
+                switch (presetStr) {
+                    case "SplitH": lp = LayoutPreset.SplitH; break;
+                    case "SplitV": lp = LayoutPreset.SplitV; break;
+                    case "Quad":   lp = LayoutPreset.Quad;   break;
+                    default:       lp = LayoutPreset.Single;  break;
+                }
+                vpm.applyLayout(lp);
+                return;
+            }
+
             auto factory = id in reg.commandFactories;
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
@@ -4879,7 +4916,7 @@ void main(string[] args) {
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
-        subj.viewport         = cameraView.viewport();
+        subj.viewport         = vpm.originCamera().viewport();
         vts.put(&subj);
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);
@@ -5103,14 +5140,14 @@ void main(string[] args) {
             if (radialFalloffActive()) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool ctrl = (mods & KMOD_CTRL) != 0;
-                Viewport vp2 = cameraView.viewport();
+                Viewport vp2 = vpm.originCamera().viewport();
                 if (radialFalloffRMBDown(btn.x, btn.y, ctrl, vp2))
                     return;
                 // Plane projection failed (camera aligned to plane);
                 // fall through to lasso so the click isn't lost.
             }
             if (elementFalloffActive()) {
-                Viewport vp2 = cameraView.viewport();
+                Viewport vp2 = vpm.originCamera().viewport();
                 if (elementFalloffRMBDown(btn.x, btn.y, vp2))
                     return;
                 // Ray-parallel-to-camera-back is the only failure
@@ -5153,7 +5190,7 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
-            Viewport vpg = cameraView.viewport();
+            Viewport vpg = vpm.originCamera().viewport();
             if (pipeGizmoHost.tryClaimDown(btn, vpg, fp, pipeGizmoHost.ownPool()))
                 return;
         }
@@ -5264,7 +5301,7 @@ void main(string[] args) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
                 bool ctrl  = (mods & KMOD_CTRL)  != 0;
-                Viewport vp2 = cameraView.viewport();
+                Viewport vp2 = vpm.originCamera().viewport();
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
@@ -5518,7 +5555,7 @@ void main(string[] args) {
 
     void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
         if (wheel.y == 0) return;
-        cameraView.zoom(wheel.y * 10);
+        vpm.hoveredCamera().zoom(wheel.y * 10);
     }
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
@@ -5539,12 +5576,12 @@ void main(string[] args) {
                 return;
             }
             if (radialFalloffRMBDragging()) {
-                Viewport vp2 = cameraView.viewport();
+                Viewport vp2 = vpm.originCamera().viewport();
                 radialFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
             if (elementFalloffRMBDragging()) {
-                Viewport vp2 = cameraView.viewport();
+                Viewport vp2 = vpm.originCamera().viewport();
                 elementFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
@@ -5558,7 +5595,7 @@ void main(string[] args) {
         // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes
         // the new endpoint to the FalloffStage via tool.pipe.attr.
         if (activeTool is null && pipeGizmoHost.isDragging()) {
-            Viewport vpg = cameraView.viewport();
+            Viewport vpg = vpm.originCamera().viewport();
             if (pipeGizmoHost.routeMotion(mot, vpg)) return;
         }
         if (dragMode == DragMode.None) return;
@@ -5580,9 +5617,9 @@ void main(string[] args) {
         int dx = mot.x - lastMouseX;
         int dy = mot.y - lastMouseY;
 
-        if      (dragMode == DragMode.Orbit && !activeIsOrtho()) cameraView.orbit(dx, dy);
-        else if (dragMode == DragMode.Zoom)  cameraView.zoom(dx);
-        else if (dragMode == DragMode.Pan)   cameraView.pan(dx, dy);
+        if      (dragMode == DragMode.Orbit && !activeIsOrtho()) vpm.originCamera().orbit(dx, dy);
+        else if (dragMode == DragMode.Zoom)  vpm.originCamera().zoom(dx);
+        else if (dragMode == DragMode.Pan)   vpm.originCamera().pan(dx, dy);
 
         // Select-drag: run the appropriate picker on EVERY motion event.
         // Without this, picks only happen once per render frame; in fast
@@ -6876,6 +6913,7 @@ void main(string[] args) {
     // hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode, bgGpuByLayer,
     // gridVao, gridOnlyVertCount, g_pipeCtx, etc.
     void renderViewportSceneToFbo(Viewport3D v, ref Viewport vp,
+                                   bool drawOverlays,
                                    bool showVertHover, bool showEdgeHover,
                                    bool showFaceHover) {
         import bindbc.opengl;
@@ -6898,7 +6936,7 @@ void main(string[] args) {
                 meshModel = matMul4(itemMatrix, tt.gpuMatrix);
         }
 
-        shader.useProgram(meshModel, cameraView);
+        shader.useProgram(meshModel, v.camera);
 
         // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
         glEnable(GL_BLEND);
@@ -6919,8 +6957,8 @@ void main(string[] args) {
             }
         }
         // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
-        gridShader.useProgram(gridModel, cameraView,
-            cameraView.distance * 2.0f,
+        gridShader.useProgram(gridModel, v.camera,
+            v.camera.distance * 2.0f,
             cast(float)v.fbo.w, cast(float)v.fbo.h,
             0.0f, 0.0f);
         glBindVertexArray(gridVao);
@@ -6970,8 +7008,8 @@ void main(string[] args) {
                     a2.x, a2.y, a2.z, 0,
                     c.x,  c.y,  c.z,  1,
                 ];
-                gridShader.useProgram(symModel, cameraView,
-                    cameraView.distance * 2.0f,
+                gridShader.useProgram(symModel, v.camera,
+                    v.camera.distance * 2.0f,
                     cast(float)v.fbo.w, cast(float)v.fbo.h,
                     0.0f, 0.0f);
                 glBindVertexArray(gridVao);
@@ -7020,13 +7058,13 @@ void main(string[] args) {
                     bg.uploadedVersion = lyr.mesh.mutationVersion;
                 }
 
-                litShader.useProgram(bgModel, cameraView);
+                litShader.useProgram(bgModel, v.camera);
                 litShader.setSurfaces(lyr.mesh.surfaces);
                 litShader.setDim(kBgDim);
                 bg.gpu.drawFaces(litShader);
                 litShader.setDim(1.0f);
 
-                shader.useProgram(bgModel, cameraView);
+                shader.useProgram(bgModel, v.camera);
                 shader.setDim(kBgDim);
                 bg.gpu.drawEdges(shader.locColor, -1, []);
                 shader.setDim(1.0f);
@@ -7059,7 +7097,7 @@ void main(string[] args) {
 
         // ---- Faces (Blinn-Phong) ----
         {
-            litShader.useProgram(meshModel, cameraView);
+            litShader.useProgram(meshModel, v.camera);
             litShader.setSurfaces(mesh.surfaces);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
@@ -7076,14 +7114,14 @@ void main(string[] args) {
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
             if (mesh.hasAnySelectedFaces()) {
-                checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);
+                checkerShader.useProgram(meshModel, v.camera, 1.0f, 0.5f, 0.1f);
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
                 glEnable(GL_DEPTH_TEST);
             }
         }
 
-        shader.useProgram(meshModel, cameraView);
+        shader.useProgram(meshModel, v.camera);
 
         // ---- Edges ----
         if (editMode == EditMode.Edges) {
@@ -7132,18 +7170,24 @@ void main(string[] args) {
         }
 
         // ---- Active tool / falloff gizmo draws ----
+        // Gated by drawOverlays: the tool/falloff draw runs in EXACTLY ONE
+        // cell per frame — the origin cell during a drag, the active cell
+        // when idle.  This pins every tool's cachedVp (written in draw())
+        // to the origin cell, which is the primary Step-B freeze mechanism.
         // NOTE: activeTool.update() already ran in the main loop before this
         // function is called, so handle-hover state is current.
-        if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-            activeTool.draw(shader, vp, vts);
-        } else if (anyFalloffActive()) {
-            import toolpipe.packets : FalloffPacket;
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-            FalloffPacket fp;
-            if (auto p = vts.get!FalloffPacket()) fp = *p;
-            if (fp.enabled)
-                pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+        if (drawOverlays) {
+            if (activeTool) {
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                activeTool.draw(shader, vp, vts);
+            } else if (anyFalloffActive()) {
+                import toolpipe.packets : FalloffPacket;
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                FalloffPacket fp;
+                if (auto p = vts.get!FalloffPacket()) fp = *p;
+                if (fp.enabled)
+                    pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+            }
         }
 
         // Restore default framebuffer.
@@ -7201,8 +7245,12 @@ void main(string[] args) {
             }
             if (_rtx >= 0) {
                 vpm.hoveredId = vpm.viewportUnderCursor(_rtx, _rty);
-                if (ev.type == SDL_MOUSEBUTTONDOWN && vpm.hoveredId >= 0)
-                    vpm.activeId = vpm.hoveredId;
+                if (ev.type == SDL_MOUSEBUTTONDOWN && vpm.hoveredId >= 0) {
+                    vpm.activeId     = vpm.hoveredId;
+                    vpm.dragOriginId = vpm.hoveredId;
+                }
+                if (ev.type == SDL_MOUSEBUTTONUP)
+                    vpm.dragOriginId = -1;
             }
         }
 
@@ -7345,7 +7393,8 @@ void main(string[] args) {
             ImGui.DockSpace(dockspaceId, ImVec2(0, 0),
                             ImGuiDockNodeFlags.PassthruCentralNode);
 
-            // Default layout: dock Layers to the right edge (~22% of width).
+            // Default layout seed: dock Layers to the right edge (~22% of
+            // width) and Viewport##0 to the central node.
             // Seed ONCE per process AND only when nothing was restored from
             // imgui.ini — DockBuilderGetNode(id) is null means no persisted
             // dockspace, so we lay out the default; otherwise we honor the
@@ -7367,10 +7416,68 @@ void main(string[] args) {
                 ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
                                            &rightId, &centerId);
                 ImGui.DockBuilderDockWindow("Layers", rightId);
-                // Phase 2: dock the viewport scene window into the central node.
-                // In --test this window is never created (central node stays
-                // empty → PassthruCentralNode hole) so the seed is harmless.
-                ImGui.DockBuilderDockWindow("Viewport", centerId);
+                // Phase 4: dock Viewport##0 into the central node (Single layout
+                // default). In --test this window is never created (central node
+                // stays empty → PassthruCentralNode hole) so the seed is harmless.
+                ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+                ImGui.DockBuilderFinish(dockspaceId);
+            }
+
+            // Phase 4: separate layout-rebuild path (outside the one-shot seed
+            // guard) triggered by viewport.layout commands.  Rebuilds the
+            // DockBuilder tree to reflect the new cellCount / layout.
+            // MINOR-7: must be a distinct path so layout switches after startup
+            // (when dockLayoutDone==true) still take effect.
+            if (vpm.layoutDirty) {
+                import viewport : LayoutPreset;
+                vpm.layoutDirty = false;
+                // Get the central node id by splitting off the Layers panel.
+                // Re-split from the dockspace root each time; Layers stays right.
+                ImGui.DockBuilderRemoveNode(dockspaceId);
+                ImGui.DockBuilderAddNode(dockspaceId, 0);
+                ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
+                ImGuiID rightId, centerId;
+                ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
+                                           &rightId, &centerId);
+                ImGui.DockBuilderDockWindow("Layers", rightId);
+
+                final switch (vpm.layout) {
+                    case LayoutPreset.Single:
+                        ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+                        break;
+                    case LayoutPreset.SplitH: {
+                        ImGuiID leftId2, rightId2;
+                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Left, 0.5f,
+                                                   &leftId2, &rightId2);
+                        ImGui.DockBuilderDockWindow("Viewport##0", leftId2);
+                        ImGui.DockBuilderDockWindow("Viewport##1", rightId2);
+                        break;
+                    }
+                    case LayoutPreset.SplitV: {
+                        ImGuiID topId, botId;
+                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Up, 0.5f,
+                                                   &topId, &botId);
+                        ImGui.DockBuilderDockWindow("Viewport##0", topId);
+                        ImGui.DockBuilderDockWindow("Viewport##1", botId);
+                        break;
+                    }
+                    case LayoutPreset.Quad: {
+                        // Split top/bottom, then each in left/right.
+                        ImGuiID topId, botId;
+                        ImGui.DockBuilderSplitNode(centerId, ImGuiDir.Up, 0.5f,
+                                                   &topId, &botId);
+                        ImGuiID tlId, trId, blId, brId;
+                        ImGui.DockBuilderSplitNode(topId, ImGuiDir.Left, 0.5f,
+                                                   &tlId, &trId);
+                        ImGui.DockBuilderSplitNode(botId, ImGuiDir.Left, 0.5f,
+                                                   &blId, &brId);
+                        ImGui.DockBuilderDockWindow("Viewport##0", tlId);
+                        ImGui.DockBuilderDockWindow("Viewport##1", trId);
+                        ImGui.DockBuilderDockWindow("Viewport##2", blId);
+                        ImGui.DockBuilderDockWindow("Viewport##3", brId);
+                        break;
+                    }
+                }
                 ImGui.DockBuilderFinish(dockspaceId);
             }
 
@@ -8347,155 +8454,208 @@ void main(string[] args) {
         // WantCaptureMouse false over the 3D area → 320/320 byte-identical.
         g_viewportWindowHovered = false;
         if (!testMode) {
+            import std.conv : to;
             immutable int vpWinFlags =
                 ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
-            if (ImGui.Begin("Viewport", null, vpWinFlags)) {
-                ImVec2 avail = ImGui.GetContentRegionAvail();
-                ImVec2 pos   = ImGui.GetCursorScreenPos();
+            foreach (k; 0 .. vpm.cellCount) {
+                Viewport3D _vcell = vpm.views[k];
+                if (ImGui.Begin("Viewport##" ~ to!string(k), null, vpWinFlags)) {
+                    ImVec2 avail = ImGui.GetContentRegionAvail();
+                    ImVec2 pos   = ImGui.GetCursorScreenPos();
 
-                // Record the draw command — texture handle only; the texture
-                // is filled by renderViewportSceneToFbo() BEFORE Render() below.
-                if (vpm.views[0].fbo.colorTex != 0)
-                    ImGui.Image(cast(int)vpm.views[0].fbo.colorTex,
-                                avail,
-                                ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                else
-                    ImGui.Dummy(avail);
-                // IsItemHovered on the image/dummy covers the full content rect.
-                g_viewportWindowHovered = ImGui.IsItemHovered(
-                    ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
-                    ImGuiHoveredFlags.AllowWhenBlockedByPopup);
+                    // Stamp this cell's window rect for FBO loop and viewportUnderCursor.
+                    // setPos (not just winX/winY fields) is REQUIRED: the pick
+                    // delegates read cameraView.viewport() (== active cell's
+                    // camera) during SDL event processing, so each cell's docked
+                    // window origin must live on the persistent View — otherwise
+                    // picking subtracts the stale construction-time layout origin
+                    // and every hover/click is offset by (window-pos − origin).
+                    // In --test this loop never runs (no Viewport##k windows), so
+                    // the cameras keep layout.vp* → byte-identical.
+                    _vcell.camera.setSize(cast(int)avail.x, cast(int)avail.y);
+                    _vcell.camera.setPos(cast(int)pos.x, cast(int)pos.y);
+                    _vcell.winX = cast(int)pos.x;
+                    _vcell.winY = cast(int)pos.y;
+                    _vcell.winW = cast(int)avail.x;
+                    _vcell.winH = cast(int)avail.y;
 
-                // Re-stamp the camera from this frame's content-rect (objection
-                // 2 fix): the 6922 stamp runs pre-NewFrame and cannot see the
-                // window rect; overriding here makes picking, FBO size, and the
-                // Image all read the SAME this-frame rect → genuinely same-frame
-                // on resize / dock-change.
-                //
-                // setPos (not just a local vp patch) is REQUIRED: the pick
-                // delegates read cameraView.viewport() during SDL event
-                // processing, so the docked Viewport window's screen origin must
-                // live on the persistent View — otherwise picking subtracts the
-                // stale construction-time layout origin and every hover/click is
-                // offset by (window-pos − layout-origin).  In --test this whole
-                // block is skipped, so the camera keeps layout.vp* → byte-ident.
-                cameraView.setSize(cast(int)avail.x, cast(int)avail.y);
-                cameraView.setPos(cast(int)pos.x, cast(int)pos.y);
-                vp = cameraView.viewport();
-                // Keep vpm layout rect in sync for viewportUnderCursor().
-                vpm.lx = vp.x;  vpm.ly = vp.y;
-                vpm.lw = vp.width; vpm.lh = vp.height;
+                    // Show this cell's FBO texture.
+                    if (_vcell.fbo.colorTex != 0)
+                        ImGui.Image(cast(int)_vcell.fbo.colorTex, avail,
+                                    ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                    else
+                        ImGui.Dummy(avail);
 
-                // View-selector dropdown (ph3): set camera preset.
-                // Positioned at top-left of content area via window-local SetCursorPos.
-                {
-                    import view : ProjKind, ViewPreset;
-                    immutable string[8] presetNames = [
-                        "Perspective", "Top", "Bottom", "Front",
-                        "Back", "Right", "Left", "Camera"
-                    ];
-                    immutable ViewPreset[8] presetVals = [
-                        ViewPreset.Perspective, ViewPreset.Top, ViewPreset.Bottom,
-                        ViewPreset.Front, ViewPreset.Back, ViewPreset.Right,
-                        ViewPreset.Left, ViewPreset.Camera
-                    ];
-                    // Find current index.
-                    int curIdx = 0;
-                    foreach (i, pv; presetVals) {
-                        if (pv == cameraView.viewPreset) { curIdx = cast(int)i; break; }
+                    // Any cell being hovered gates input through viewportInputAllowed().
+                    // The router (viewportUnderCursor) then pins the specific cell.
+                    if (ImGui.IsItemHovered(
+                            ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                            ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                        g_viewportWindowHovered = true;
+
+                    // Active cell only: update outer vp + layout rect used by picks.
+                    if (k == vpm.activeId) {
+                        vp = _vcell.camera.viewport();
+                        vp.x = _vcell.winX;
+                        vp.y = _vcell.winY;
+                        vpm.lx = vp.x;  vpm.ly = vp.y;
+                        vpm.lw = vp.width; vpm.lh = vp.height;
                     }
-                    // Overlay the combo at the top-left of the viewport window.
-                    // SetCursorPos uses window-local coordinates (0,0 = content origin).
-                    ImGui.SetCursorPos(ImVec2(4, 4));
-                    ImGui.SetNextItemWidth(120.0f);
-                    if (ImGui.BeginCombo("##vpPreset", presetNames[curIdx])) {
-                        foreach (i, pn; presetNames) {
-                            bool sel = (i == curIdx);
-                            if (ImGui.Selectable(pn, sel)) {
-                                ProjKind   newKind;
-                                ViewPreset newPreset = presetVals[i];
-                                if (i == 0 || i == 7) newKind = ProjKind.Perspective;
-                                else                   newKind = ProjKind.Ortho;
-                                cameraView.viewPreset = newPreset;
-                                cameraView.projKind   = newKind;
-                                vpm.views[vpm.activeId].dirty = true;
-                            }
-                            if (sel) ImGui.SetItemDefaultFocus();
+
+                    // Per-cell view-selector dropdown.
+                    {
+                        import view : ProjKind, ViewPreset;
+                        immutable string[8] presetNames = [
+                            "Perspective", "Top", "Bottom", "Front",
+                            "Back", "Right", "Left", "Camera"
+                        ];
+                        immutable ViewPreset[8] presetVals = [
+                            ViewPreset.Perspective, ViewPreset.Top, ViewPreset.Bottom,
+                            ViewPreset.Front, ViewPreset.Back, ViewPreset.Right,
+                            ViewPreset.Left, ViewPreset.Camera
+                        ];
+                        int curIdx = 0;
+                        foreach (i, pv; presetVals) {
+                            if (pv == _vcell.camera.viewPreset) { curIdx = cast(int)i; break; }
                         }
-                        ImGui.EndCombo();
+                        ImGui.SetCursorPos(ImVec2(4, 4));
+                        ImGui.SetNextItemWidth(120.0f);
+                        if (ImGui.BeginCombo("##vpPreset" ~ to!string(k), presetNames[curIdx])) {
+                            foreach (i, pn; presetNames) {
+                                bool sel = (i == curIdx);
+                                if (ImGui.Selectable(pn, sel)) {
+                                    ProjKind   newKind;
+                                    ViewPreset newPreset = presetVals[i];
+                                    if (i == 0 || i == 7) newKind = ProjKind.Perspective;
+                                    else                   newKind = ProjKind.Ortho;
+                                    _vcell.camera.viewPreset = newPreset;
+                                    _vcell.camera.projKind   = newKind;
+                                    _vcell.dirty = true;
+                                }
+                                if (sel) ImGui.SetItemDefaultFocus();
+                            }
+                            ImGui.EndCombo();
+                        }
                     }
                 }
+                ImGui.End();
             }
-            ImGui.End();
         }
 
-        // Ensure FBO storage at the correct pixel size.  Hi-DPI scale is
-        // derived from the physical/logical size ratio (fbW:DisplaySize.x).
+        // ── Phase 4 N-cell FBO render loop ───────────────────────────────────
+        //
+        // For each live cell: ensure FBO storage, compute a per-cell dirty key,
+        // and call renderViewportSceneToFbo with that cell's camera snapshot.
+        //
+        // Overlay (tool/falloff gizmo) draws in EXACTLY ONE cell per frame:
+        //   - origin cell while a gesture is live (dragOriginId >= 0)
+        //   - active cell at idle
+        // This pins every tool's cachedVp (written in draw()) to that one cell,
+        // which is the primary Step-B freeze for multi-viewport drag correctness.
+        //
+        // --test: renders ONLY the active cell (Single layout ⇒ cell 0 = ph2).
         {
+            import viewport : DirtyKey;
+
             auto _dsz = io.DisplaySize;
             float dpiX = (_dsz.x > 0.0f) ? cast(float)fbW / _dsz.x : 1.0f;
             float dpiY = (_dsz.y > 0.0f) ? cast(float)fbH / _dsz.y : 1.0f;
-            vpm.views[0].fbo.ensure(cast(int)(vp.width  * dpiX),
-                                    cast(int)(vp.height * dpiY));
-        }
 
-        // Dirty-cache check.  In --test always re-render (force-render keeps
-        // the test path trivial and avoids cache/replay interaction).
-        // Interactive: skip when all render inputs are unchanged; force when
-        // anything is active (tool drag, camera drag, mesh/sel change).
-        bool fboNeedsRender = testMode;
-        if (!fboNeedsRender) {
             bool forceActive = (activeTool !is null)
                             || (dragMode != DragMode.None)
-                            // A user-locked falloff can persist with NO active
-                            // tool; its interactive gizmo/handle drag mutates
-                            // pipe attrs (not mesh.mutationVersion), so force a
-                            // re-render whenever a falloff is live.
                             || anyFalloffActive();
-            if (forceActive) {
-                fboNeedsRender = true;
-            } else {
-                Viewport3D _fv = vpm.views[0];
-                DirtyKey _newKey;
-                _newKey.view       = vp.view;
-                _newKey.proj       = vp.proj;
-                _newKey.meshMutVer = mesh.mutationVersion;
-                _newKey.selEpoch   = fboSelEpoch;
-                _newKey.editMode_k = cast(int)editMode;
-                _newKey.hovV       = hoveredVertex;
-                _newKey.hovE       = hoveredEdge;
-                _newKey.hovF       = hoveredFace;
-                _newKey.fboW       = _fv.fbo.w;
-                _newKey.fboH       = _fv.fbo.h;
-                if (_newKey != _fv.lastKey) {
-                    fboNeedsRender = true;
-                    _fv.lastKey    = _newKey;
+
+            foreach (k; 0 .. vpm.cellCount) {
+                Viewport3D _cv = vpm.views[k];
+
+                // Overlay draws in exactly one cell (BLOCKER-1 Step-B freeze).
+                bool _drawOverlays = (vpm.dragOriginId >= 0)
+                                     ? (k == vpm.dragOriginId)
+                                     : (k == vpm.activeId);
+
+                // Per-cell camera snapshot.  x/y must be the actual screen
+                // position so tool overlay math (cachedVp screen→world) uses
+                // the correct viewport origin.  In --test: winX/Y = layout.vpX/Y
+                // = camera construction args.  Interactive: winX/Y is stamped by
+                // the Viewport##k window loop from GetCursorScreenPos().
+                Viewport vpk = _cv.camera.viewport();
+                vpk.x = _cv.winX;
+                vpk.y = _cv.winY;
+
+                // Per-cell FBO size (hi-DPI scaled from logical window size).
+                _cv.fbo.ensure(cast(int)(_cv.camera.width  * dpiX),
+                               cast(int)(_cv.camera.height * dpiY));
+
+                // --test: only render the active cell.
+                bool needRender;
+                if (testMode) {
+                    needRender = (k == vpm.activeId);
+                } else {
+                    // Interactive: dirty-key compare (skip if nothing changed).
+                    bool _hovK = (k == vpm.hoveredId);
+                    if (forceActive && _drawOverlays) {
+                        needRender = true;
+                    } else {
+                        DirtyKey _newKey;
+                        _newKey.view       = vpk.view;
+                        _newKey.proj       = vpk.proj;
+                        _newKey.meshMutVer = mesh.mutationVersion;
+                        _newKey.selEpoch   = fboSelEpoch;
+                        _newKey.editMode_k = cast(int)editMode;
+                        // Hover state only matters in the hovered cell.
+                        _newKey.hovV       = _hovK ? hoveredVertex : -1;
+                        _newKey.hovE       = _hovK ? hoveredEdge   : -1;
+                        _newKey.hovF       = _hovK ? hoveredFace   : -1;
+                        _newKey.fboW       = _cv.fbo.w;
+                        _newKey.fboH       = _cv.fbo.h;
+                        if (_newKey != _cv.lastKey) {
+                            needRender      = true;
+                            _cv.lastKey     = _newKey;
+                        }
+                    }
+                }
+
+                if (needRender) {
+                    bool _hovK = (k == vpm.hoveredId);
+                    renderViewportSceneToFbo(_cv, vpk, _drawOverlays,
+                        showVertHover && _hovK,
+                        showEdgeHover && _hovK,
+                        showFaceHover && _hovK);
                 }
             }
-        }
 
-        if (fboNeedsRender)
-            renderViewportSceneToFbo(vpm.views[0], vp,
-                                     showVertHover, showEdgeHover, showFaceHover);
+            // Keep the outer `vp` in sync with the active cell's snapshot
+            // (so the --visible blit and any post-render code that reads vp
+            // see the correct dimensions for the active cell).
+            vp = vpm.views[vpm.activeId].camera.viewport();
+            vp.x = vpm.views[vpm.activeId].winX;
+            vp.y = vpm.views[vpm.activeId].winY;
+        }
+        // ── end N-cell FBO render loop ────────────────────────────────────
 
         // --visible: blit the viewport FBO into the default FB at the layout
         // viewport rect so the scene is visible during event-log replay.
         // Uses glBlitFramebuffer (pure GL) — the D-ImGui binding does not
         // expose DrawList::AddImage.
-        if (testMode && visibleTest && vpm.views[0].fbo.fbo != 0) {
-            int _fw = vpm.views[0].fbo.w, _fh = vpm.views[0].fbo.h;
-            // Destination in GL bottom-up coords (flip screen-space Y).
-            int _dX0 = layout.vpX;
-            int _dX1 = layout.vpX + layout.vpW;
-            int _dY0 = fbH - (layout.vpY + layout.vpH);
-            int _dY1 = fbH - layout.vpY;
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, vpm.views[0].fbo.fbo);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            glBlitFramebuffer(0, 0, _fw, _fh,
-                              _dX0, _dY0, _dX1, _dY1,
-                              GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        {
+            // --visible: blit the ACTIVE cell's FBO into the default FB at the
+            // layout viewport rect so the scene is visible during event-log replay.
+            Viewport3D _av = vpm.views[vpm.activeId];
+            if (testMode && visibleTest && _av.fbo.fbo != 0) {
+                int _fw = _av.fbo.w, _fh = _av.fbo.h;
+                // Destination in GL bottom-up coords (flip screen-space Y).
+                int _dX0 = layout.vpX;
+                int _dX1 = layout.vpX + layout.vpW;
+                int _dY0 = fbH - (layout.vpY + layout.vpH);
+                int _dY1 = fbH - layout.vpY;
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, _av.fbo.fbo);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                glBlitFramebuffer(0, 0, _fw, _fh,
+                                  _dX0, _dY0, _dX1, _dY1,
+                                  GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
         }
 
         // ---- ImGui draw ----
