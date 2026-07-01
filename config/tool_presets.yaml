@@ -177,22 +177,12 @@ presets:
         # is whatever the previous activation left behind).
         mode:  auto
 
-  # MODO-name alias for the same preset (stock `ElementMove`).
-  # Useful for cross-engine diff cases that share a
-  # case JSON between MODO and vibe3d.
+  # MODO-name alias for the same preset (stock `ElementMove`). Resolves to
+  # the canonical `xfrm.elementMove` block above — see the loader's `alias:`
+  # handling in source/tool_presets.d. Useful for cross-engine diff cases
+  # that share a case JSON between MODO and vibe3d.
   - id: ElementMove
-    base: xfrm.transform
-    attrs:
-      T: "true"
-      R: "false"
-      S: "false"
-    pipe:
-      actionCenter:
-        mode: element
-      falloff:
-        type:  element
-        shape: linear
-        mode:  auto
+    alias: xfrm.elementMove
 
   - id: move.element
     base: move
