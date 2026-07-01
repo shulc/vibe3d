@@ -1119,7 +1119,7 @@ void main(string[] args) {
     // mandatory edits are the ~318 address-of sites (&x → &x()); see
     // doc/viewport_phase1_plan.md §A.  gpuSelect has 0 address-of sites (class
     // ref) and needs only the init/shutdown ownership edits below.
-    import viewport : ViewportManager;
+    import viewport : ViewportManager, Viewport3D, DirtyKey;
     auto vpm = new ViewportManager(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
     vpm.views[0].vcache.resize(mesh.vertices.length);
     vpm.views[0].fcache.resize(mesh.vertices.length, mesh.faces.length);
@@ -1144,6 +1144,17 @@ void main(string[] args) {
     ref View hoveredCamera() {
         immutable int _hid = vpm.hoveredId >= 0 ? vpm.hoveredId : vpm.activeId;
         return vpm.views[_hid].camera;
+    }
+
+    // Phase 2 — input seam.  `g_viewportWindowHovered` is set each frame
+    // by the "Viewport" ImGui window's IsWindowHovered() result.  The seam
+    // function replaces the scattered `!io.WantCaptureMouse` reads so a
+    // single flag controls whether 3D input reaches the picking / camera
+    // orbit code.  In --test: byte-identical to the prior per-site checks.
+    bool g_viewportWindowHovered = false;
+    bool viewportInputAllowed() {
+        if (testMode) return !io.WantCaptureMouse;
+        return g_viewportWindowHovered;
     }
 
     // Change-notification bus, Stage 2 — pick-cache subscriber state.
@@ -1179,10 +1190,21 @@ void main(string[] args) {
     // inventing UI work now. The bus contract still holds (invalidate-only: the
     // delegate touches nothing but the flag).
     uint selChangedDomains = 0;
+    // Phase 2 — persistent selection epoch for the FBO dirty-cache. Selection
+    // is a Marks-class change that deliberately does NOT bump mesh.mutationVersion
+    // (see mesh.d), and plain click-select / select-all / clear happen with NO
+    // active tool and NO drag, so they escape the DirtyKey's meshMutVer + the
+    // forceActive gate. Bumping a persistent counter here (never zeroed, unlike
+    // selChangedDomains at the consume site) lets the dirty check detect any
+    // selection change and re-render. Fires only on real selection flushes.
+    ulong fboSelEpoch = 0;
     {
         import change_bus : changeBus;
         changeBus.onMeshChanged((uint flags) { meshChangedFlags |= flags; });
-        changeBus.onSelectionChanged((uint domains) { selChangedDomains |= domains; });
+        changeBus.onSelectionChanged((uint domains) {
+            selChangedDomains |= domains;
+            ++fboSelEpoch;
+        });
     }
 
     // VisibilityCache (`mesh.visibleVertices`) is no longer used — the
@@ -5017,7 +5039,7 @@ void main(string[] args) {
         // "Delete doesn't work on selected polygons" — turned out the
         // History panel's Filter input was still focused after they
         // typed a search.
-        if (!io.WantCaptureMouse)
+        if (viewportInputAllowed())
             ImGui.SetWindowFocus(null);
         if (btn.button == SDL_BUTTON_RIGHT) {
             import falloff_handles : screenFalloffActive, screenFalloffRMBDown,
@@ -5061,7 +5083,7 @@ void main(string[] args) {
             // first Ctrl element-move gesture failed to pick → no relocate, no
             // axis-lock (must mirror XfrmTransformTool's `pickAllowed` gate).
             // Alt stays excluded (Ctrl+Alt+LMB = camera zoom); Shift = sel-add.
-            if (btn.button == SDL_BUTTON_LEFT && !io.WantCaptureMouse
+            if (btn.button == SDL_BUTTON_LEFT && viewportInputAllowed()
                 && refreshHoverPickAt !is null
                 && !(SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT))
                 && (activeTool.wantsHoverForType(EditMode.Vertices)
@@ -5533,7 +5555,7 @@ void main(string[] args) {
         // highlighted instead of every vertex the moving cursor passes over.
         if (activeTool !is null && activeTool.isDragging()) return;
         hoveredVertex = -1;
-        if (io.WantCaptureMouse || doingCameraDrag) return;
+        if (!viewportInputAllowed() || doingCameraDrag) return;
         // No active tool → only the current editMode picks. With an
         // active tool, defer to `wantsHoverForType` so tools like
         // XfrmTransformTool (with falloff.element wired) can opt in to multi-type hover regardless
@@ -5569,7 +5591,7 @@ void main(string[] args) {
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredEdge = -1;
-        if (io.WantCaptureMouse || doingCameraDrag) return;
+        if (!viewportInputAllowed() || doingCameraDrag) return;
         if (activeTool is null) {
             if (editMode != EditMode.Edges) return;
         } else {
@@ -5600,7 +5622,7 @@ void main(string[] args) {
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredFace = -1;
-        if (io.WantCaptureMouse || doingCameraDrag) return;
+        if (!viewportInputAllowed() || doingCameraDrag) return;
         if (activeTool is null) {
             if (editMode != EditMode.Polygons) return;
         } else {
@@ -6790,6 +6812,294 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 2 — FBO scene render
+    // -------------------------------------------------------------------------
+    // Renders the active viewport's scene (mesh + grid + gizmos) into v.fbo.
+    // Called AFTER picking / hover-resolution (so hover state is current for
+    // this frame) and BEFORE ImGui.Render() (so the ImGui.Image draw command
+    // recorded inside the "Viewport" window samples the freshly-filled texture
+    // at RenderDrawData → same-frame content, zero latency).
+    //
+    // Captured from the outer scope: gpu, shader, litShader, checkerShader,
+    // gridShader, cameraView, mesh, document, activeTool, pipeGizmoHost,
+    // hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode, bgGpuByLayer,
+    // gridVao, gridOnlyVertCount, g_pipeCtx, etc.
+    void renderViewportSceneToFbo(Viewport3D v, ref Viewport vp,
+                                   bool showVertHover, bool showEdgeHover,
+                                   bool showFaceHover) {
+        import bindbc.opengl;
+
+        // Bind FBO — scene draws go here instead of the default framebuffer.
+        // Viewport covers the entire FBO (offsets zeroed: FBO origin IS the
+        // viewport corner).
+        glBindFramebuffer(GL_FRAMEBUFFER, v.fbo.fbo);
+        glViewport(0, 0, v.fbo.w, v.fbo.h);
+
+        glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Per-item (per-layer) transform — RENDER-ONLY (channels P4). Feed-site #1.
+        float[16] itemMatrix = document.primary.xform.composedMatrix();
+        float[16] meshModel  = itemMatrix;
+        {
+            TransformTool tt = cast(TransformTool)activeTool;
+            if (tt !is null)
+                meshModel = matMul4(itemMatrix, tt.gpuMatrix);
+        }
+
+        shader.useProgram(meshModel, cameraView);
+
+        // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        float[16] gridModel = identityMatrix;
+        if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+            if (!wp.isAuto) {
+                Vec3 n, a1, a2;
+                wp.currentBasis(n, a1, a2);
+                Vec3 c = wp.center;
+                gridModel = [
+                    a1.x, a1.y, a1.z, 0,
+                    n.x,  n.y,  n.z,  0,
+                    a2.x, a2.y, a2.z, 0,
+                    c.x,  c.y,  c.z,  1,
+                ];
+            }
+        }
+        // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
+        gridShader.useProgram(gridModel, cameraView,
+            cameraView.distance * 2.0f,
+            cast(float)v.fbo.w, cast(float)v.fbo.h,
+            0.0f, 0.0f);
+        glBindVertexArray(gridVao);
+        glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
+        glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
+        glBindVertexArray(0);
+
+        // ---- Symmetry plane ----
+        {
+            import toolpipe.stages.symmetry : SymmetryStage;
+            auto sym = cast(SymmetryStage)
+                       g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+            if (sym !is null && sym.enabled) {
+                Vec3 n, a1, a2;
+                Vec3 c;
+                if (sym.useWorkplane) {
+                    if (auto wpst = cast(WorkplaneStage)
+                                    g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+                        wpst.currentBasis(n, a1, a2);
+                        c = wpst.center;
+                    } else {
+                        n = Vec3(0, 1, 0); a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
+                    }
+                } else {
+                    final switch (sym.axisIndex) {
+                        case 0:
+                            n  = Vec3(1, 0, 0);
+                            a1 = Vec3(0, 1, 0); a2 = Vec3(0, 0, 1);
+                            c  = Vec3(sym.offset, 0, 0); break;
+                        case 1:
+                            n  = Vec3(0, 1, 0);
+                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
+                            c  = Vec3(0, sym.offset, 0); break;
+                        case 2:
+                            n  = Vec3(0, 0, 1);
+                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 1, 0);
+                            c  = Vec3(0, 0, sym.offset); break;
+                    }
+                }
+                float[16] symModel = [
+                    a1.x, a1.y, a1.z, 0,
+                    n.x,  n.y,  n.z,  0,
+                    a2.x, a2.y, a2.z, 0,
+                    c.x,  c.y,  c.z,  1,
+                ];
+                gridShader.useProgram(symModel, cameraView,
+                    cameraView.distance * 2.0f,
+                    cast(float)v.fbo.w, cast(float)v.fbo.h,
+                    0.0f, 0.0f);
+                glBindVertexArray(gridVao);
+                glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
+                glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+                glBindVertexArray(0);
+            }
+        }
+
+        glDisable(GL_BLEND);
+
+        // ---- Background layers ----
+        if (document.layers.length > 1) {
+            import std.math : isNaN;
+            Layer[] toDrop;
+            foreach (lyr, bg; bgGpuByLayer) {
+                bool stillBg = false;
+                foreach (ll; document.layers)
+                    if (ll is lyr && ll.visible && !document.isPrimary(ll)) {
+                        stillBg = true;
+                        break;
+                    }
+                if (!stillBg) toDrop ~= lyr;
+            }
+            foreach (lyr; toDrop) {
+                bgGpuByLayer[lyr].gpu.destroy();
+                bgGpuByLayer.remove(lyr);
+            }
+
+            enum float kBgDim = 0.45f;
+            foreach (i, lyr; document.layers) {
+                if (document.isPrimary(lyr) || !lyr.visible) continue;
+                float[16] bgModel = lyr.xform.composedMatrix();
+
+                auto pp = lyr in bgGpuByLayer;
+                BgGpu* bg;
+                if (pp is null) {
+                    bg = new BgGpu;
+                    bg.gpu.init();
+                    bgGpuByLayer[lyr] = bg;
+                } else {
+                    bg = *pp;
+                }
+                if (bg.uploadedVersion != lyr.mesh.mutationVersion) {
+                    bg.gpu.upload(lyr.mesh);
+                    bg.uploadedVersion = lyr.mesh.mutationVersion;
+                }
+
+                litShader.useProgram(bgModel, cameraView);
+                litShader.setSurfaces(lyr.mesh.surfaces);
+                litShader.setDim(kBgDim);
+                bg.gpu.drawFaces(litShader);
+                litShader.setDim(1.0f);
+
+                shader.useProgram(bgModel, cameraView);
+                shader.setDim(kBgDim);
+                bg.gpu.drawEdges(shader.locColor, -1, []);
+                shader.setDim(1.0f);
+            }
+        }
+
+        // Install background snap sources (layers Stage 5).
+        {
+            import snap : setBackgroundSnapSources;
+            import document : Document;
+            const(Mesh)*[] snapSrc;
+            if (document.layers.length > 1) {
+                foreach (lyr; document.layers) {
+                    if (Document.background(lyr))
+                        snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
+                }
+            }
+            setBackgroundSnapSources(snapSrc);
+        }
+        // Install item snap frames (Stage 3).
+        {
+            import snap : setItemSnapFrames, ItemSnapFrame;
+            ItemSnapFrame[] itemFrames;
+            foreach (lyr; document.layers) {
+                if (!lyr.visible) continue;
+                itemFrames ~= buildItemFrame(lyr);
+            }
+            setItemSnapFrames(itemFrames);
+        }
+
+        // ---- Faces (Blinn-Phong) ----
+        {
+            litShader.useProgram(meshModel, cameraView);
+            litShader.setSurfaces(mesh.surfaces);
+            bool toolFaceHover = activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Polygons)
+                              && hoveredFace >= 0;
+            if (editMode == EditMode.Polygons) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
+            } else if (toolFaceHover) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
+            } else {
+                gpu.drawFaces(litShader);
+            }
+        }
+
+        // Checkerboard overlay for selected faces (Polygons mode).
+        if (editMode == EditMode.Polygons) {
+            if (mesh.hasAnySelectedFaces()) {
+                checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);
+                glDisable(GL_DEPTH_TEST);
+                gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
+                glEnable(GL_DEPTH_TEST);
+            }
+        }
+
+        shader.useProgram(meshModel, cameraView);
+
+        // ---- Edges ----
+        if (editMode == EditMode.Edges) {
+            gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
+        } else if (editMode == EditMode.Polygons) {
+            if (faceSelEdgesPrevSel != mesh.selectedFaces) {
+                faceSelEdgesPrevSel = mesh.selectedFaces.dup;
+                if (faceSelEdgesCache.length != mesh.edges.length)
+                    faceSelEdgesCache = new bool[](mesh.edges.length);
+                faceSelEdgesCache[] = false;
+
+                bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
+                if (allSel) {
+                    faceSelEdgesCache[] = true;
+                } else {
+                    if (mesh.hasAnySelectedFaces()) {
+                        bool[ulong] edgeSet;
+                        foreach (fi, face; mesh.faces) {
+                            if (!mesh.isFaceSelected(fi)) continue;
+                            foreach (e; mesh.faceEdges(cast(uint)fi))
+                                edgeSet[edgeKey(e.a, e.b)] = true;
+                        }
+                        foreach (ei, edge; mesh.edges) {
+                            if (edgeKey(edge[0], edge[1]) in edgeSet)
+                                faceSelEdgesCache[ei] = true;
+                        }
+                    }
+                }
+            }
+            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
+        } else if (showEdgeHover && hoveredEdge >= 0) {
+            const bool[] loopMask =
+                (activeTool !is null && activeTool.wantsEdgeLoopHover())
+                    ? rebuildLoopHoverMask(hoveredEdge)
+                    : (bool[]).init;
+            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
+        } else {
+            gpu.drawEdges(shader.locColor, -1, []);
+        }
+
+        // ---- Vertex dots ----
+        if (editMode == EditMode.Vertices) {
+            gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
+        } else if (showVertHover && hoveredVertex >= 0) {
+            gpu.drawVertices(shader.locColor, hoveredVertex, (bool[]).init);
+        }
+
+        // ---- Active tool / falloff gizmo draws ----
+        // NOTE: activeTool.update() already ran in the main loop before this
+        // function is called, so handle-hover state is current.
+        if (activeTool) {
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            activeTool.draw(shader, vp, vts);
+        } else if (anyFalloffActive()) {
+            import toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            if (fp.enabled)
+                pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+        }
+
+        // Restore default framebuffer.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    // -------------------------------------------------------------------------
     // Main loop
     // -------------------------------------------------------------------------
 
@@ -6807,7 +7117,10 @@ void main(string[] args) {
         if (!isF1orF2) recLog.log(*ev);
         ImGui_ImplSDL2_ProcessEvent(ev);
 
-        if (!testMode && io.WantCaptureMouse &&
+        // Route through viewportInputAllowed() so mouse events over the docked
+        // "Viewport" window still reach 3D picking/orbit (objection 1 fix).
+        // In --test viewportInputAllowed()==!io.WantCaptureMouse → byte-identical.
+        if (!testMode && !viewportInputAllowed() &&
             (ev.type == SDL_MOUSEBUTTONDOWN ||
              ev.type == SDL_MOUSEBUTTONUP   ||
              ev.type == SDL_MOUSEMOTION      ||
@@ -7003,6 +7316,10 @@ void main(string[] args) {
                 ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
                                            &rightId, &centerId);
                 ImGui.DockBuilderDockWindow("Layers", rightId);
+                // Phase 2: dock the viewport scene window into the central node.
+                // In --test this window is never created (central node stays
+                // empty → PassthruCentralNode hole) so the seed is harmless.
+                ImGui.DockBuilderDockWindow("Viewport", centerId);
                 ImGui.DockBuilderFinish(dockspaceId);
             }
 
@@ -7545,8 +7862,11 @@ void main(string[] args) {
         // vpY offset, leaving the gizmo `2·statusH` above the real
         // corner where it could collide with a Tool Properties window
         // parked low in the viewport.
-        DrawGizmo(cast(float)(layout.vpX + 32),
-                  cast(float)(layout.vpY + layout.vpH - 32),
+        // Phase 2: anchor gizmo to the docked Viewport window's content rect
+        // (vp.x/vp.y) so it follows the window when docked/undocked rather than
+        // always pinning to the static layout.vpX/vpY from the pre-NewFrame stamp.
+        DrawGizmo(cast(float)(vp.x + 32),
+                  cast(float)(vp.y + vp.height - 32),
                   cameraView.view, gz_a1, gz_n, gz_a2);
 
         // ---- Playback cursor overlay ----
@@ -7802,292 +8122,10 @@ void main(string[] args) {
             }
         }
 
-        // ---- 3D render ----
-        glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // Restrict rendering to the 3D viewport area (exclude panels).
-        float scaleX = cast(float)fbW / winW;
-        float scaleY = cast(float)fbH / winH;
-        glViewport(cast(int)(layout.vpX   * scaleX),
-                   cast(int)(layout.vpGlY * scaleY),
-                   cast(int)(cameraView.width  * scaleX),
-                   cast(int)(cameraView.height * scaleY));
-
-        // Per-item (per-layer) transform — RENDER-ONLY (channels P4). The primary
-        // layer's mesh is drawn through its composed item matrix; the mesh
-        // vertices NEVER move (pick/snap/action-center/applyTRS all keep reading
-        // `mesh.vertices[i]` as LOCAL points, so they stay self-consistent for
-        // free — `layer.xform` is read at EXACTLY two draw feed-sites and NOWHERE
-        // else). This is feed-site #1 of 2 (the active/primary layer).
-        float[16] itemMatrix = document.primary.xform.composedMatrix();
-
-        // When a tool defers GPU uploads (whole-mesh drag), it applies an
-        // accumulated `gpuMatrix` as u_model so the mesh appears correctly without
-        // re-uploading vertex data every frame. COMPOSE the item matrix with it
-        // (item matrix LEFTMOST), do NOT clobber: the shader applies
-        // `u_proj·u_view·u_model·aPos`, so `u_model = itemMatrix · gpuMatrix`
-        // places the deferred-drag pose inside the layer's item frame. When no
-        // tool override is present `gpuMatrix` is identity, so `meshModel` is just
-        // the item matrix. `float[16]` has no `*` operator — use `matMul4`.
-        float[16] meshModel = itemMatrix;
-        {
-            TransformTool tt = cast(TransformTool)activeTool;
-            if (tt !is null)
-                meshModel = matMul4(itemMatrix, tt.gpuMatrix);
-        }
-
-        shader.useProgram(meshModel, cameraView);
-
-        // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        // glDepthMask(GL_FALSE);
-
-        // When the workplane is non-auto, draw the grid in its plane
-        // (centre + axis1/normal/axis2 basis) instead of world XZ. The
-        // grid mesh is built in the local XZ plane (Y=0); the model
-        // matrix maps local (X,Y,Z) → workplane (axis1,normal,axis2)
-        // so the grid lines lie ON the workplane.
-        float[16] gridModel = identityMatrix;
-        if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
-            if (!wp.isAuto) {
-                Vec3 n, a1, a2;
-                wp.currentBasis(n, a1, a2);
-                Vec3 c = wp.center;
-                // Column-major: each column is the image of a local axis.
-                gridModel = [
-                    a1.x, a1.y, a1.z, 0,
-                    n.x,  n.y,  n.z,  0,
-                    a2.x, a2.y, a2.z, 0,
-                    c.x,  c.y,  c.z,  1,
-                ];
-            }
-        }
-
-        gridShader.useProgram(gridModel, cameraView,
-            cameraView.distance * 2.0f,
-            cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
-            cast(float)layout.vpX * scaleX, cast(float)layout.vpGlY * scaleY);
-
-        glBindVertexArray(gridVao);
-        // Grid lines — gray
-        glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
-        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-        // X axis — pale red
-        glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
-        glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
-        // Z axis — pale blue
-        glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
-        glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
-        glBindVertexArray(0);
-
-        // Phase 7.6e: translucent gridded plane drawn at the symmetry
-        // plane when SYMM is on. Same gridShader / VAO as the
-        // workplane grid; only the model matrix changes, mapping the
-        // local XZ plane onto whichever axis the SYMM stage published.
-        // Pale orange as a "symmetry is on" cue, distinct from the
-        // workplane grid's gray.
-        {
-            import toolpipe.stages.symmetry : SymmetryStage;
-            auto sym = cast(SymmetryStage)
-                       g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
-            if (sym !is null && sym.enabled) {
-                Vec3 n, a1, a2;
-                Vec3 c;
-                if (sym.useWorkplane) {
-                    if (auto wpst = cast(WorkplaneStage)
-                                    g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
-                        wpst.currentBasis(n, a1, a2);
-                        c = wpst.center;
-                    } else {
-                        n = Vec3(0, 1, 0); a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
-                    }
-                } else {
-                    final switch (sym.axisIndex) {
-                        case 0:
-                            n  = Vec3(1, 0, 0);
-                            a1 = Vec3(0, 1, 0); a2 = Vec3(0, 0, 1);
-                            c  = Vec3(sym.offset, 0, 0); break;
-                        case 1:
-                            n  = Vec3(0, 1, 0);
-                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
-                            c  = Vec3(0, sym.offset, 0); break;
-                        case 2:
-                            n  = Vec3(0, 0, 1);
-                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 1, 0);
-                            c  = Vec3(0, 0, sym.offset); break;
-                    }
-                }
-                float[16] symModel = [
-                    a1.x, a1.y, a1.z, 0,
-                    n.x,  n.y,  n.z,  0,
-                    a2.x, a2.y, a2.z, 0,
-                    c.x,  c.y,  c.z,  1,
-                ];
-                gridShader.useProgram(symModel, cameraView,
-                    cameraView.distance * 2.0f,
-                    cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
-                    cast(float)layout.vpX * scaleX, cast(float)layout.vpGlY * scaleY);
-                glBindVertexArray(gridVao);
-                // Pale orange accent.
-                glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
-                glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-                glBindVertexArray(0);
-            }
-        }
-
-        // glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-
-        // ---- Background layers (layers Stage 5) ----
-        // Draw every VISIBLE, non-active layer dimmed (faces + edges only — no
-        // vertex dots, no selection/hover overlays, per the behaviour table),
-        // BEFORE the active pass so the active layer's depth/picking is never
-        // disturbed (background depth is written first; the active mesh draws
-        // over it with the normal full-bright pass). Lazy GPU upload keyed on
-        // the layer's mutationVersion; map entries for layers that stopped being
-        // visible-non-active are destroyed + dropped here so GL handles never
-        // leak. With one layer the loop body never runs and `bgGpuByLayer` stays
-        // empty ⇒ no per-frame cost.
-        if (document.layers.length > 1) {
-            import std.math : isNaN;
-            // 1) Reap stale map entries (hidden / now-active / deleted layers).
-            Layer[] toDrop;
-            foreach (lyr, bg; bgGpuByLayer) {
-                bool stillBg = false;
-                // Stage 2b: a layer is a background-GPU candidate iff it is
-                // visible and NOT the primary (the derived predicate). This MUST
-                // match the dim-draw guard below exactly — if only one flips, a
-                // primary != layers[activeIndex] situation would leak or
-                // double-destroy BgGpu GL handles.
-                foreach (ll; document.layers)
-                    if (ll is lyr && ll.visible && !document.isPrimary(ll)) {
-                        stillBg = true;
-                        break;
-                    }
-                if (!stillBg) toDrop ~= lyr;
-            }
-            foreach (lyr; toDrop) {
-                bgGpuByLayer[lyr].gpu.destroy();
-                bgGpuByLayer.remove(lyr);
-            }
-
-            // 2) Draw each visible non-active layer dimmed. The model matrix is
-            //    the layer's composed ITEM transform (channels P4, RENDER-ONLY) —
-            //    this is feed-site #2 of 2 for `layer.xform`. Background geometry
-            //    is never the active tool's deferred-drag transform, so there is
-            //    no gpuMatrix to compose here (clean site). Set per-layer below.
-            enum float kBgDim = 0.45f;   // dim brightness for background layers
-            foreach (i, lyr; document.layers) {
-                // Stage 2b: dim every VISIBLE non-primary layer. Same derived
-                // `!isPrimary` predicate as the reap loop above (they flip
-                // TOGETHER — see the BgGpu handle-leak note).
-                if (document.isPrimary(lyr) || !lyr.visible) continue;
-                float[16] bgModel = lyr.xform.composedMatrix();
-
-                auto pp = lyr in bgGpuByLayer;
-                BgGpu* bg;
-                if (pp is null) {
-                    bg = new BgGpu;
-                    bg.gpu.init();
-                    bgGpuByLayer[lyr] = bg;
-                } else {
-                    bg = *pp;
-                }
-                if (bg.uploadedVersion != lyr.mesh.mutationVersion) {
-                    bg.gpu.upload(lyr.mesh);
-                    bg.uploadedVersion = lyr.mesh.mutationVersion;
-                }
-
-                // Dimmed faces.
-                litShader.useProgram(bgModel, cameraView);
-                litShader.setSurfaces(lyr.mesh.surfaces);
-                litShader.setDim(kBgDim);
-                bg.gpu.drawFaces(litShader);
-                litShader.setDim(1.0f);   // restore neutral for the active pass
-
-                // Dimmed edges — no hover/selection (empty masks).
-                shader.useProgram(bgModel, cameraView);
-                shader.setDim(kBgDim);
-                bg.gpu.drawEdges(shader.locColor, -1, []);
-                shader.setDim(1.0f);
-            }
-        }
-
-        // Install the background SNAP sources (layers Stage 5). Stage 2b: the
-        // snap set is now the DERIVED `Document.background(l)` (== visible &&
-        // !selected). DELIBERATE SEMANTICS FLIP: a *selected-but-non-primary*
-        // (foreground) layer is NO LONGER a snap source, and a *deselected
-        // visible* layer now IS one — the third "background" state collapsed into
-        // selection. (A primary is selected ⇒ background()==false ⇒ excluded, so
-        // the prior `i == activeIndex` skip is subsumed.) snapCursor walks these
-        // after the active mesh; empty in the single-layer common case ⇒ no extra
-        // snap work. Addresses are the Layer objects' stable interior pointers.
-        {
-            import snap : setBackgroundSnapSources;
-            import document : Document;
-            const(Mesh)*[] snapSrc;
-            if (document.layers.length > 1) {
-                foreach (lyr; document.layers) {
-                    if (Document.background(lyr))
-                        snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
-                }
-            }
-            setBackgroundSnapSources(snapSrc);
-        }
-
-        // Install item snap frames (Stage 3, all visible layers INCLUDING
-        // the active/primary — item snapping snaps to the active item's own
-        // pivot/box). The setItemSnapFrames CALL is unconditional so a reset
-        // to a one-layer document self-clears prior multi-layer frames.
-        {
-            import snap : setItemSnapFrames, ItemSnapFrame;
-            ItemSnapFrame[] itemFrames;
-            foreach (lyr; document.layers) {
-                if (!lyr.visible) continue;
-                itemFrames ~= buildItemFrame(lyr);
-            }
-            setItemSnapFrames(itemFrames);
-        }
-
-        // Draw faces with Blinn-Phong lighting.
-        // Highlight branch in Polygons mode draws face selection +
-        // face hover. Tool-driven branch (XfrmTransformTool with
-        // falloff.element in Auto/Polygon modes) only kicks in when a face is
-        // actually hovered, otherwise we fall through to plain
-        // drawFaces — no point routing through drawFacesHighlighted
-        // with an empty selection mask and no hover.
-        {
-            litShader.useProgram(meshModel, cameraView);
-            // Material Groups (MG3): push the mesh's surface table into
-            // the Materials UBO. Cheap (≤4 KB) and idempotent on
-            // surfaces-unchanged frames; the alternative is a per-mesh
-            // version counter, not worth the bookkeeping at this size.
-            litShader.setSurfaces(mesh.surfaces);
-            bool toolFaceHover = activeTool !is null
-                              && activeTool.wantsHoverForType(EditMode.Polygons)
-                              && hoveredFace >= 0;
-            if (editMode == EditMode.Polygons) {
-                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
-            } else if (toolFaceHover) {
-                gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
-            } else {
-                gpu.drawFaces(litShader);
-            }
-        }
-
-        // Checkerboard overlay for selected faces (Polygons mode).
-        if (editMode == EditMode.Polygons) {
-            if (mesh.hasAnySelectedFaces()) {
-                checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);  // orange
-                glDisable(GL_DEPTH_TEST);
-                gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
-                glEnable(GL_DEPTH_TEST);
-            }
-        }
-
-        shader.useProgram(meshModel, cameraView);
+        // ---- 3D render (moved to renderViewportSceneToFbo) ----
+        // Scene draw now happens AFTER picking/hover-resolution and
+        // BEFORE ImGui.Render() via renderViewportSceneToFbo().  See
+        // the Phase-2 FBO section below (after hover resolution).
 
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
@@ -8226,9 +8264,7 @@ void main(string[] args) {
         g_hoveredVertex = hoveredVertex;
         g_hoveredEdge   = hoveredEdge;
         g_hoveredFace   = hoveredFace;
-        // Per-type highlight gates: render the highlight when EITHER
-        // the editMode covers that type natively OR an active tool
-        // opted into hover for it (Stage 14.9).
+        // Per-type highlight gates (for the FBO draw pass).
         bool showVertHover = (editMode == EditMode.Vertices)
                           || (activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Vertices));
@@ -8239,105 +8275,129 @@ void main(string[] args) {
                           || (activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons));
 
-        // ---- Draw edges (with highlights in Edges / Polygons mode) ----
-        // Stage 14.9: edge-hover branch also fires when an active
-        // tool opted in (showEdgeHover from the gates above) — edges
-        // render with `hoveredEdge` highlight and an empty
-        // selectedEdges mask so only the hover lights up.
-        if (editMode == EditMode.Edges) {
-            gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
-        } else if (editMode == EditMode.Polygons) {
-            // Build selected-edge mask — rebuild only when selectedFaces changes.
-            if (faceSelEdgesPrevSel != mesh.selectedFaces) {
-                faceSelEdgesPrevSel = mesh.selectedFaces.dup;
-                if (faceSelEdgesCache.length != mesh.edges.length)
-                    faceSelEdgesCache = new bool[](mesh.edges.length);
-                faceSelEdgesCache[] = false;
+        // Tool logic update (handle-hover state) — runs in main loop so it
+        // is current before renderViewportSceneToFbo() draws the handles.
+        if (activeTool) {
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            activeTool.update(vts);
+        }
 
-                // Fast path: all faces selected → all edges selected.
-                bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
-                if (allSel) {
-                    faceSelEdgesCache[] = true;
-                } else {
-                    if (mesh.hasAnySelectedFaces()) {
-                        bool[ulong] edgeSet;
-                        foreach (fi, face; mesh.faces) {
-                            if (!mesh.isFaceSelected(fi)) continue;
-                            foreach (e; mesh.faceEdges(cast(uint)fi))
-                                edgeSet[edgeKey(e.a, e.b)] = true;
-                        }
-                        foreach (ei, edge; mesh.edges) {
-                            if (edgeKey(edge[0], edge[1]) in edgeSet)
-                                faceSelEdgesCache[ei] = true;
-                        }
-                    }
+        // ── Phase 2 FBO render ──────────────────────────────────────────────
+        //
+        // Ordering invariant (same-frame content, zero latency):
+        //   1. ImGui.Image(colorTex) records the texture HANDLE inside the
+        //      "Viewport" window below (sampled later at RenderDrawData).
+        //   2. renderViewportSceneToFbo() fills that texture THIS frame.
+        //   3. ImGui.Render() → RenderDrawData samples the freshly-filled tex.
+        // All three happen in this frame, in that order.
+        //
+        // "Viewport" window — interactive only.  NOT created in --test so the
+        // central node stays the PassthruCentralNode hole, keeping
+        // WantCaptureMouse false over the 3D area → 320/320 byte-identical.
+        g_viewportWindowHovered = false;
+        if (!testMode) {
+            immutable int vpWinFlags =
+                ImGuiWindowFlags.NoScrollbar |
+                ImGuiWindowFlags.NoScrollWithMouse;
+            if (ImGui.Begin("Viewport", null, vpWinFlags)) {
+                ImVec2 avail = ImGui.GetContentRegionAvail();
+                ImVec2 pos   = ImGui.GetCursorScreenPos();
+
+                // Record the draw command — texture handle only; the texture
+                // is filled by renderViewportSceneToFbo() BEFORE Render() below.
+                if (vpm.views[0].fbo.colorTex != 0)
+                    ImGui.Image(cast(int)vpm.views[0].fbo.colorTex,
+                                avail,
+                                ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                else
+                    ImGui.Dummy(avail);
+                // IsItemHovered on the image/dummy covers the full content rect.
+                g_viewportWindowHovered = ImGui.IsItemHovered(
+                    ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                    ImGuiHoveredFlags.AllowWhenBlockedByPopup);
+
+                // Re-stamp vp from this frame's content-rect (objection 2 fix):
+                // the 6922 stamp runs pre-NewFrame and cannot see the window
+                // rect; overriding here makes picking, FBO size, and the Image
+                // all read the SAME this-frame rect → genuinely same-frame on
+                // resize / dock-change.
+                cameraView.setSize(cast(int)avail.x, cast(int)avail.y);
+                vp = cameraView.viewport();
+                vp.x = cast(int)pos.x;
+                vp.y = cast(int)pos.y;
+                // Keep vpm layout rect in sync for viewportUnderCursor().
+                vpm.lx = vp.x;  vpm.ly = vp.y;
+                vpm.lw = vp.width; vpm.lh = vp.height;
+            }
+            ImGui.End();
+        }
+
+        // Ensure FBO storage at the correct pixel size.  Hi-DPI scale is
+        // derived from the physical/logical size ratio (fbW:DisplaySize.x).
+        {
+            auto _dsz = io.DisplaySize;
+            float dpiX = (_dsz.x > 0.0f) ? cast(float)fbW / _dsz.x : 1.0f;
+            float dpiY = (_dsz.y > 0.0f) ? cast(float)fbH / _dsz.y : 1.0f;
+            vpm.views[0].fbo.ensure(cast(int)(vp.width  * dpiX),
+                                    cast(int)(vp.height * dpiY));
+        }
+
+        // Dirty-cache check.  In --test always re-render (force-render keeps
+        // the test path trivial and avoids cache/replay interaction).
+        // Interactive: skip when all render inputs are unchanged; force when
+        // anything is active (tool drag, camera drag, mesh/sel change).
+        bool fboNeedsRender = testMode;
+        if (!fboNeedsRender) {
+            bool forceActive = (activeTool !is null)
+                            || (dragMode != DragMode.None)
+                            // A user-locked falloff can persist with NO active
+                            // tool; its interactive gizmo/handle drag mutates
+                            // pipe attrs (not mesh.mutationVersion), so force a
+                            // re-render whenever a falloff is live.
+                            || anyFalloffActive();
+            if (forceActive) {
+                fboNeedsRender = true;
+            } else {
+                Viewport3D _fv = vpm.views[0];
+                DirtyKey _newKey;
+                _newKey.view       = vp.view;
+                _newKey.proj       = vp.proj;
+                _newKey.meshMutVer = mesh.mutationVersion;
+                _newKey.selEpoch   = fboSelEpoch;
+                _newKey.editMode_k = cast(int)editMode;
+                _newKey.hovV       = hoveredVertex;
+                _newKey.hovE       = hoveredEdge;
+                _newKey.hovF       = hoveredFace;
+                _newKey.fboW       = _fv.fbo.w;
+                _newKey.fboH       = _fv.fbo.h;
+                if (_newKey != _fv.lastKey) {
+                    fboNeedsRender = true;
+                    _fv.lastKey    = _newKey;
                 }
             }
-            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
-        } else if (showEdgeHover && hoveredEdge >= 0) {
-            // Tool wants edge hover but editMode isn't Edges/Polygons.
-            // Empty selectedEdges mask → only `hoveredEdge` lights up.
-            // Skip drawing entirely when NO edge is currently hovered:
-            // falloff.element + Auto otherwise sprays every cage edge in
-            // baseline colour over the viewport even when the cursor
-            // is on a face (`gpu.drawEdges` renders all edges and
-            // colours them per the highlight / selection masks).
-            //
-            // ElementMove + falloff EdgeLoops: pre-highlight the WHOLE loop
-            // ring under the cursor (matches the apply, which expands a picked
-            // edge to its loop). Compute the ring→edge-index mask and CACHE it,
-            // recomputing only when the hovered edge or topology changes — the
-            // loop walk must NOT run every frame.
-            const bool[] loopMask =
-                (activeTool !is null && activeTool.wantsEdgeLoopHover())
-                    ? rebuildLoopHoverMask(hoveredEdge)
-                    : (bool[]).init;
-            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
-        } else {
-            gpu.drawEdges(shader.locColor, -1, []);
         }
 
-        // ---- Vertex dots ----
-        // Native Vertices mode always shows the dots (selection state
-        // matters even when no hover lands). Tool-driven hover only
-        // draws when a vert is actually hovered — without this guard
-        // falloff.element + Auto would scatter unrelated dots over the
-        // whole mesh.
-        if (editMode == EditMode.Vertices) {
-            gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
-        } else if (showVertHover && hoveredVertex >= 0) {
-            gpu.drawVertices(shader.locColor, hoveredVertex, (bool[]).init);
-        }
+        if (fboNeedsRender)
+            renderViewportSceneToFbo(vpm.views[0], vp,
+                                     showVertHover, showEdgeHover, showFaceHover);
 
-        // ---- Active tool ----
-        if (activeTool) {
-            // Step 4 of the stage-gizmo refactor: NO cancel-on-tool-activate
-            // here. With one shared host emitter, a no-tool→tool transition
-            // just CONTINUES the in-flight falloff drag — the now-active
-            // XfrmTransformTool routes the same host through its own shared
-            // arbiter cycle. Cancelling every frame would kill a legitimate
-            // with-tool falloff drag.
-            {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-                activeTool.update(vts);
-            }
-            {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-                activeTool.draw(shader, vp, vts);
-            }
-        } else if (anyFalloffActive()) {
-            // No transform tool, but a user-locked falloff is active — route the
-            // overlay + interactive handles through the persistent host, using
-            // its own no-tool arbiter pool. The host folds in drawFalloffOverlay
-            // and gates the gizmo on fp.enabled; the gizmo writes start/end /
-            // center/size back to the FalloffStage via tool.pipe.attr, so the
-            // next buildToolVts reflects the drag.
-            import toolpipe.packets : FalloffPacket;
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-            FalloffPacket fp;
-            if (auto p = vts.get!FalloffPacket()) fp = *p;
-            if (fp.enabled)
-                pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+        // --visible: blit the viewport FBO into the default FB at the layout
+        // viewport rect so the scene is visible during event-log replay.
+        // Uses glBlitFramebuffer (pure GL) — the D-ImGui binding does not
+        // expose DrawList::AddImage.
+        if (testMode && visibleTest && vpm.views[0].fbo.fbo != 0) {
+            int _fw = vpm.views[0].fbo.w, _fh = vpm.views[0].fbo.h;
+            // Destination in GL bottom-up coords (flip screen-space Y).
+            int _dX0 = layout.vpX;
+            int _dX1 = layout.vpX + layout.vpW;
+            int _dY0 = fbH - (layout.vpY + layout.vpH);
+            int _dY1 = fbH - layout.vpY;
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, vpm.views[0].fbo.fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glBlitFramebuffer(0, 0, _fw, _fh,
+                              _dX0, _dY0, _dX1, _dY1,
+                              GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         // ---- ImGui draw ----
@@ -8346,6 +8406,13 @@ void main(string[] args) {
         // overlay, etc.) are picked up by AddDrawListToDrawData — that
         // helper early-returns on an empty CmdBuffer, so adding commands
         // post-Render leaves them out of the ImDrawData snapshot.
+        //
+        // Phase 2: clear the default framebuffer here.  The scene glClear
+        // moved into renderViewportSceneToFbo() (FBO path), so the default
+        // FB is otherwise untouched this frame and would show stale pixels
+        // behind the transparent DockSpace host window.
+        glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         ImGui.Render();
         // Restore full viewport for ImGui rendering.
         glViewport(0, 0, fbW, fbH);
