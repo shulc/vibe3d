@@ -397,6 +397,29 @@ final class ViewportManager {
         foreach (v; views[0..cellCount]) v.dirty = true;
     }
 
+    /// Restore the launch default so viewport state never bleeds across the
+    /// shared `--test` instance (invoked by `/api/reset`): Single layout, one
+    /// live cell, active/hovered = 0, no in-flight drag, every cell back to
+    /// free perspective.  `applyLayout(Single)` already resets
+    /// cellCount/activeId/hoveredId/dragOriginId/ind*/masterId/rects+size (the
+    /// clamp forces activeId→0); this additionally clears any per-cell ortho
+    /// preset a prior Quad left on cells 0-2 (applyLayout's Single path does
+    /// not touch projKind/viewPreset, so without this a Quad→reset test would
+    /// leave the active cell stuck in Ortho Top and poison every later test).
+    void resetToDefault() {
+        foreach (k; 0..4) {
+            // Reset every cell's camera to the default framing (focus=origin,
+            // standard az/el/distance).  SceneReset only resets the ONE cell its
+            // captured View* points at (the active cell at factory time), so a
+            // non-active cell could keep a stale focus and poison a later test
+            // that assumes a fresh camera (e.g. the Quad Top-cell centre-grab).
+            views[k].camera.reset();
+            views[k].camera.projKind   = ProjKind.Perspective;
+            views[k].camera.viewPreset = ViewPreset.Perspective;
+        }
+        applyLayout(LayoutPreset.Single);
+    }
+
     // ------------------------------------------------------------------
     // Input router
     // ------------------------------------------------------------------
