@@ -272,6 +272,13 @@ class FalloffAddCommand : Command {
         // (guarded primary-only) side-effects run identically to the primary
         // path. Cannot fail now (pre-validated above).
         fo.setAttr("type", typeName_);
+
+        // Explicit user selection → lock the slot so it survives a tool
+        // switch (reference parity, same rule FalloffPresetCommand applies
+        // to the primary). Type is pre-validated non-"none" above, so this
+        // is unconditional — every falloff.add slot is a real user choice.
+        fo.userLocked = true;
+
         kickLiveEval(toolHost);
         return true;
     }

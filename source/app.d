@@ -1477,11 +1477,25 @@ void main(string[] args) {
 
     void resetTransientPipeStages() {
         import toolpipe.pipeline             : g_pipeCtx;
+        import toolpipe.stage                : TaskCode;
         import toolpipe.stages.actcenter     : ActionCenterStage;
         import toolpipe.stages.axis          : AxisStage;
         import toolpipe.stages.falloff       : FalloffStage;
         if (g_pipeCtx is null) return;
         foreach (s; g_pipeCtx.pipeline.allMut()) {
+            // Every WGHT-task stage (the primary "falloff" AND any stacked
+            // "falloff#N" extras) resets the same way: a user-selected
+            // falloff (userLocked) survives a tool switch — reference parity
+            // (captured 2026-06-16). Keyed by task, not by the literal id,
+            // so stacked extras get the same treatment as the primary
+            // instead of surviving by omission.
+            if (s.taskCode() == TaskCode.Wght) {
+                if (auto fo = cast(FalloffStage)s)
+                    fo.resetTransient();
+                else
+                    s.reset();
+                continue;
+            }
             switch (s.id()) {
                 case "actionCenter":
                     // Skip reset when the user explicitly set a mode via
@@ -1494,15 +1508,6 @@ void main(string[] args) {
                 case "axis":
                     if (auto ax = cast(AxisStage)s)
                         ax.resetTransient();
-                    else
-                        s.reset();
-                    break;
-                case "falloff":
-                    // A user-selected falloff (userLocked) survives a tool
-                    // switch — reference parity (captured 2026-06-16). A
-                    // preset-bundled / unlocked falloff still resets.
-                    if (auto fo = cast(FalloffStage)s)
-                        fo.resetTransient();
                     else
                         s.reset();
                     break;
