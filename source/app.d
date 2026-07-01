@@ -1917,7 +1917,7 @@ void main(string[] args) {
                         lastExploreGrab.partInt   = partInt;
                     } else {
                         // No pending: stage this grab as the new pending record.
-                        auto vpNow = cameraView.viewport();
+                        auto vpNow = vpm.activeSnapshot();
                         aiExplore.stagePending(record, key, appliedIndex,
                                                history.undoEpoch(),
                                                vpNow.view);
@@ -3290,7 +3290,7 @@ void main(string[] args) {
         });
         httpServer.setCameraDataProvider((int vpIdx) {
             int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
-            return vpm.views[_idx].camera.toJson();
+            return vpm.resolvedCameraJson(_idx);
         });
 
         // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main
@@ -3353,7 +3353,7 @@ void main(string[] args) {
         // so the oracle is always reachable even when BVH is the default.
         httpServer.setPickProvider((int x, int y, string engine) {
             import std.format : format;
-            Viewport vp = cameraView.viewport();
+            Viewport vp = vpm.activeSnapshot();
             int faceIdx;
             if (engine == "gpu") {
                 faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
@@ -3372,6 +3372,17 @@ void main(string[] args) {
         // vibe3d's camera with a reference engine's before replaying.
         httpServer.setCameraSetHandler((JSONValue p) {
             import math : Vec3;
+            // Resolve target cell: _viewport injected by http_server.d from ?viewport=N
+            int _vidx = vpm.activeId;
+            if ("_viewport" in p) {
+                auto _vn = p["_viewport"];
+                int _v = -1;
+                if (_vn.type == JSONType.integer)        _v = cast(int)_vn.integer;
+                else if (_vn.type == JSONType.uinteger)  _v = cast(int)_vn.uinteger;
+                else if (_vn.type == JSONType.float_)    _v = cast(int)_vn.floating;
+                if (_v >= 0 && _v < vpm.cellCount) _vidx = _v;
+            }
+            ref View targetCam = vpm.views[_vidx].camera;
             float floatFrom(string field, float def) {
                 if (field !in p) return def;
                 auto n = p[field];
@@ -3383,9 +3394,9 @@ void main(string[] args) {
                         "'" ~ field ~ "' must be a number");
                 }
             }
-            if ("azimuth" in p)   cameraView.azimuth   = floatFrom("azimuth",   cameraView.azimuth);
-            if ("elevation" in p) cameraView.elevation = floatFrom("elevation", cameraView.elevation);
-            if ("distance" in p)  cameraView.distance  = floatFrom("distance",  cameraView.distance);
+            if ("azimuth" in p)   targetCam.azimuth   = floatFrom("azimuth",   targetCam.azimuth);
+            if ("elevation" in p) targetCam.elevation = floatFrom("elevation", targetCam.elevation);
+            if ("distance" in p)  targetCam.distance  = floatFrom("distance",  targetCam.distance);
             if ("focus" in p) {
                 auto f = p["focus"];
                 float comp(string k, float def) {
@@ -3399,15 +3410,15 @@ void main(string[] args) {
                             "focus." ~ k ~ " must be a number");
                     }
                 }
-                cameraView.focus = Vec3(comp("x", cameraView.focus.x),
-                                        comp("y", cameraView.focus.y),
-                                        comp("z", cameraView.focus.z));
+                targetCam.focus = Vec3(comp("x", targetCam.focus.x),
+                                       comp("y", targetCam.focus.y),
+                                       comp("z", targetCam.focus.z));
             }
             // Optional viewport resize.
             if ("width" in p && "height" in p) {
-                cameraView.setSize(
-                    cast(int)floatFrom("width",  cameraView.width),
-                    cast(int)floatFrom("height", cameraView.height));
+                targetCam.setSize(
+                    cast(int)floatFrom("width",  targetCam.width),
+                    cast(int)floatFrom("height", targetCam.height));
             }
         });
         httpServer.setSelectionDataProvider(() {
@@ -3553,7 +3564,7 @@ void main(string[] args) {
             SubjectPacket subj;
             subj.mesh             = &mesh();
             subj.editMode         = editMode;
-            subj.viewport         = cameraView.viewport();
+            subj.viewport         = vpm.activeSnapshot();
 
             import operator             : VectorStack;
             import toolpipe.packets     : ActionCenterPacket, AxisPacket,
@@ -3778,7 +3789,7 @@ void main(string[] args) {
             // Pull a fully-evaluated SnapPacket from the pipeline so
             // SNAP's workplane snapshot + grid step are populated
             // (they depend on the upstream WORK stage having run).
-            auto vp = cameraView.viewport();
+            auto vp = vpm.activeSnapshot();
             SnapPacket cfg;
             if (g_pipeCtx !is null) {
                 import operator        : VectorStack;
@@ -3892,7 +3903,7 @@ void main(string[] args) {
                     delta = Vec3(toF(da[0]), toF(da[1]), toF(da[2]));
             }
 
-            auto vp = cameraView.viewport();
+            auto vp = vpm.activeSnapshot();
             ConstrainPacket cfg;
             if (g_pipeCtx !is null) {
                 import operator : VectorStack;
@@ -3941,7 +3952,7 @@ void main(string[] args) {
             SubjectPacket subj;
             subj.mesh     = &mesh();
             subj.editMode = editMode;
-            subj.viewport = cameraView.viewport();
+            subj.viewport = vpm.activeSnapshot();
 
             VectorStack vts;
             vts.put(&subj);
@@ -4342,6 +4353,69 @@ void main(string[] args) {
                     default:       lp = LayoutPreset.Single;  break;
                 }
                 vpm.applyLayout(lp);
+                return;
+            }
+
+            // viewport.indCenter/indScale/indRotate <yes|no> — per-cell independence
+            // flags, camera-only, no undo entry.
+            if (id == "viewport.indCenter" || id == "viewport.indScale" || id == "viewport.indRotate") {
+                bool val = true;
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    string s = "";
+                    if (pjv.type == JSONType.string) {
+                        s = pjv.str;
+                    } else if (pjv.type == JSONType.object) {
+                        if (auto pp = "_positional" in pjv) {
+                            if (pp.type == JSONType.array && pp.array.length >= 1
+                                && pp.array[0].type == JSONType.string)
+                                s = pp.array[0].str;
+                        }
+                        if (s.length == 0) {
+                            if (auto pp = "value" in pjv)
+                                if (pp.type == JSONType.string) s = pp.str;
+                        }
+                    }
+                    // Tolerant parse: "no"/"false"/"0" → false; anything else → true
+                    if (s == "no" || s == "false" || s == "0") val = false;
+                }
+                if (id == "viewport.indCenter")       vpm.views[vpm.activeId].indCenter = val;
+                else if (id == "viewport.indScale")   vpm.views[vpm.activeId].indScale  = val;
+                else                                  vpm.views[vpm.activeId].indRotate = val;
+                vpm.views[vpm.activeId].dirty = true;
+                return;
+            }
+
+            // viewport.master <id> — set per-cell master override, camera-only, no undo.
+            if (id == "viewport.master") {
+                int mid = -1;
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    string s = "";
+                    if (pjv.type == JSONType.integer)      { mid = cast(int)pjv.integer; }
+                    else if (pjv.type == JSONType.uinteger){ mid = cast(int)pjv.uinteger; }
+                    else if (pjv.type == JSONType.float_)  { mid = cast(int)pjv.floating; }
+                    else if (pjv.type == JSONType.string)  { s = pjv.str; }
+                    else if (pjv.type == JSONType.object) {
+                        if (auto pp = "_positional" in pjv) {
+                            if (pp.type == JSONType.array && pp.array.length >= 1) {
+                                auto v0 = pp.array[0];
+                                if (v0.type == JSONType.integer)      mid = cast(int)v0.integer;
+                                else if (v0.type == JSONType.uinteger) mid = cast(int)v0.uinteger;
+                                else if (v0.type == JSONType.float_)   mid = cast(int)v0.floating;
+                                else if (v0.type == JSONType.string)   s = v0.str;
+                            }
+                        }
+                    }
+                    if (s.length > 0) {
+                        import std.conv : to, ConvException;
+                        try { mid = to!int(s); } catch (ConvException) { /* keep -1 */ }
+                    }
+                }
+                // Out-of-range clamps to -1 (self via group master at resolve time).
+                if (mid < -1 || mid >= vpm.cellCount) mid = -1;
+                vpm.views[vpm.activeId].masterId = mid;
+                vpm.views[vpm.activeId].dirty = true;
                 return;
             }
 
@@ -4916,7 +4990,7 @@ void main(string[] args) {
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
-        subj.viewport         = vpm.originCamera().viewport();
+        subj.viewport         = vpm.originSnapshot();
         vts.put(&subj);
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);
@@ -5140,14 +5214,14 @@ void main(string[] args) {
             if (radialFalloffActive()) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool ctrl = (mods & KMOD_CTRL) != 0;
-                Viewport vp2 = vpm.originCamera().viewport();
+                Viewport vp2 = vpm.originSnapshot();
                 if (radialFalloffRMBDown(btn.x, btn.y, ctrl, vp2))
                     return;
                 // Plane projection failed (camera aligned to plane);
                 // fall through to lasso so the click isn't lost.
             }
             if (elementFalloffActive()) {
-                Viewport vp2 = vpm.originCamera().viewport();
+                Viewport vp2 = vpm.originSnapshot();
                 if (elementFalloffRMBDown(btn.x, btn.y, vp2))
                     return;
                 // Ray-parallel-to-camera-back is the only failure
@@ -5190,7 +5264,7 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
-            Viewport vpg = vpm.originCamera().viewport();
+            Viewport vpg = vpm.originSnapshot();
             if (pipeGizmoHost.tryClaimDown(btn, vpg, fp, pipeGizmoHost.ownPool()))
                 return;
         }
@@ -5301,7 +5375,7 @@ void main(string[] args) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
                 bool ctrl  = (mods & KMOD_CTRL)  != 0;
-                Viewport vp2 = vpm.originCamera().viewport();
+                Viewport vp2 = vpm.originSnapshot();
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
@@ -5576,12 +5650,12 @@ void main(string[] args) {
                 return;
             }
             if (radialFalloffRMBDragging()) {
-                Viewport vp2 = vpm.originCamera().viewport();
+                Viewport vp2 = vpm.originSnapshot();
                 radialFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
             if (elementFalloffRMBDragging()) {
-                Viewport vp2 = vpm.originCamera().viewport();
+                Viewport vp2 = vpm.originSnapshot();
                 elementFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
@@ -5595,7 +5669,7 @@ void main(string[] args) {
         // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes
         // the new endpoint to the FalloffStage via tool.pipe.attr.
         if (activeTool is null && pipeGizmoHost.isDragging()) {
-            Viewport vpg = vpm.originCamera().viewport();
+            Viewport vpg = vpm.originSnapshot();
             if (pipeGizmoHost.routeMotion(mot, vpg)) return;
         }
         if (dragMode == DragMode.None) return;
@@ -5752,7 +5826,7 @@ void main(string[] args) {
     // before each pick so the picker sees the right cursor.
     doSelectPickAt = (int mx, int my) {
         setOverrideMouse(mx, my);
-        Viewport vp = cameraView.viewport();
+        Viewport vp = vpm.activeSnapshot();
         int pickedVertex = -1;
         int pickedEdge = -1;
         int pickedFace = -1;
@@ -5791,7 +5865,7 @@ void main(string[] args) {
     // the previous click and the points snap to the new spot on release" bug.
     refreshHoverPickAt = (int mx, int my) {
         setOverrideMouse(mx, my);
-        Viewport vp = cameraView.viewport();
+        Viewport vp = vpm.activeSnapshot();
         pickVertices(vp, false);
         if (edgeCache.needsUpdate(vp)) { edgeCache.invalidate(); edgeCache.update(vp); }
         pickEdges(vp, false);
@@ -7331,7 +7405,7 @@ void main(string[] args) {
         vpm.lx = layout.vpX; vpm.ly = layout.vpY;
         vpm.lw = layout.vpW; vpm.lh = layout.vpH;
 
-        Viewport vp = cameraView.viewport();
+        Viewport vp = vpm.activeSnapshot();
 
         // ---- ε-exploration per-frame state machine (task 0033) ----
         // Tick the pending buffer with the current undo epoch + view matrix.
@@ -8496,7 +8570,7 @@ void main(string[] args) {
 
                     // Active cell only: update outer vp + layout rect used by picks.
                     if (k == vpm.activeId) {
-                        vp = _vcell.camera.viewport();
+                        vp = vpm.resolvedSnapshot(k);
                         vp.x = _vcell.winX;
                         vp.y = _vcell.winY;
                         vpm.lx = vp.x;  vpm.ly = vp.y;
@@ -8579,7 +8653,7 @@ void main(string[] args) {
                 // the correct viewport origin.  In --test: winX/Y = layout.vpX/Y
                 // = camera construction args.  Interactive: winX/Y is stamped by
                 // the Viewport##k window loop from GetCursorScreenPos().
-                Viewport vpk = _cv.camera.viewport();
+                Viewport vpk = vpm.resolvedSnapshot(k);
                 vpk.x = _cv.winX;
                 vpk.y = _cv.winY;
 
@@ -8628,7 +8702,7 @@ void main(string[] args) {
             // Keep the outer `vp` in sync with the active cell's snapshot
             // (so the --visible blit and any post-render code that reads vp
             // see the correct dimensions for the active cell).
-            vp = vpm.views[vpm.activeId].camera.viewport();
+            vp = vpm.activeSnapshot();
             vp.x = vpm.views[vpm.activeId].winX;
             vp.y = vpm.views[vpm.activeId].winY;
         }
