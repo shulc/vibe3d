@@ -9,8 +9,8 @@ import editmode;
 import viewcache;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds;
-import tools.edge_extrude : undoTrackerEnabled;
+                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
+                        undoTrackerEnabled;
 
 /// All-true selection mask of length `n`, used when nothing is selected
 /// (empty selection ⇒ whole mesh).

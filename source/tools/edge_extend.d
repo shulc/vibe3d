@@ -14,7 +14,8 @@ import command_history : CommandHistory;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
-import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
+import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
+    undoTrackerEnabled;
 import tools.xfrm_transform : XfrmTransformTool;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.move : MoveTool;
@@ -27,31 +28,9 @@ import tools.scale : ScaleTool;
 /// keeps the undo label reading "Edge Extend".
 alias EdgeExtendEditFactory = MeshEdgeExtendEdit delegate();
 
-// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 4 §D), the
-// same escape hatch the extrude tool exposes: truthy (the DEFAULT) records a
-// MeshEditDelta at commit; an explicit falsey value forces the before/after
-// MeshSnapshot pair. Read ONCE and cached. Independent of the extrude tool's
-// flag so the two tools can be toggled separately by a parity test.
-private bool g_undoTrackerChecked = false;
-private bool g_undoTrackerOn      = true;
-bool undoTrackerEnabled() {
-    if (!g_undoTrackerChecked) {
-        import std.process : environment;
-        import std.uni : toLower;
-        g_undoTrackerChecked = true;
-        auto v  = environment.get("VIBE3D_UNDO_TRACKER", "");
-        auto lv = v.toLower;
-        g_undoTrackerOn = !(lv == "0" || lv == "off" || lv == "false" || lv == "no");
-    }
-    return g_undoTrackerOn;
-}
-
-// Test-automation override (parity-gate lever), mirroring the extrude tool's
-// setUndoTrackerEnabled. Wired to the `undo.tracker` command in app.d.
-void setUndoTrackerEnabled(bool on) {
-    g_undoTrackerChecked = true;
-    g_undoTrackerOn      = on;
-}
+// The VIBE3D_UNDO_TRACKER toggle (`undoTrackerEnabled`/`setUndoTrackerEnabled`)
+// lives in `mesh_edit_delta` — one definition shared with edge_extrude.d,
+// delete.d and remove.d. See that module for the toggle's semantics.
 
 // ---------------------------------------------------------------------------
 // EdgeExtendTool — interactive Edge Extend (factory id `edge.extend`).
