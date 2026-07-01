@@ -35,6 +35,7 @@ string baseUrl = "http://localhost:8080";
 struct RegSets {
     bool[string] commands;
     bool[string] tools;
+    string[string] commandNames;  // command key -> factory().name()
 }
 
 RegSets fetchRegistry() {
@@ -43,6 +44,7 @@ RegSets fetchRegistry() {
     RegSets r;
     foreach (v; jv["commands"].array) r.commands[v.str] = true;
     foreach (v; jv["tools"].array)    r.tools[v.str]    = true;
+    foreach (k, v; jv["commandNames"].object) r.commandNames[k] = v.str;
     return r;
 }
 
@@ -132,5 +134,33 @@ unittest {
         foreach (f; failures)
             writeln("  ", f);
         assert(false, to!string(failures.length) ~ " button action(s) not in registry");
+    }
+
+    // Registry-name integrity: every registered command's factory().name()
+    // must itself resolve back to SOME registered command key (not
+    // necessarily the SAME key it was registered under — alias keys like
+    // file.open / file.import.* / file.export.* deliberately share one
+    // command class whose name() is a different, but still live, key).
+    // Enumerate ALL commands and report every offender, rather than
+    // asserting on the first mismatch. An "offender" is a distinct
+    // drifting name() VALUE (one per underlying command class) — many
+    // alias keys share the same class and therefore the same name(), so
+    // they collapse into a single offender rather than being counted once
+    // per alias key.
+    string[][string] offendersByName;  // drifting name() -> keys registered under it
+    foreach (key, nm; reg.commandNames) {
+        if (nm !in reg.commands)
+            offendersByName[nm] ~= key;
+    }
+
+    writefln("button_actions: %d command name() resolutions checked",
+             reg.commandNames.length);
+
+    if (offendersByName.length > 0) {
+        writeln("FAIL - command name() does not resolve:");
+        foreach (nm, keys; offendersByName)
+            writeln("  \"", nm, "\" (keys: ", keys, ")");
+        assert(false, to!string(offendersByName.length)
+               ~ " command name() value(s) that do not resolve to a registered key");
     }
 }
