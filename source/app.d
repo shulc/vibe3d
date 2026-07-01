@@ -940,6 +940,7 @@ void main(string[] args) {
     ImGui.CreateContext();
     ImGuiIO* io = &ImGui.GetIO();
     io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;  // Phase 0b
     // In --test mode, disable ImGui's on-disk layout persistence. The .ini
     // is written relative to the current working directory, and each parallel
     // test worker runs in its own scratch cwd — so without this every worker
@@ -6546,9 +6547,8 @@ void main(string[] args) {
         import std.string : fromStringz;
 
         pushPanelChromeStyle();
-        ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 540),
-                               ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(ImVec2(260, 240), ImGuiCond.FirstUseEver);
+        // SetNextWindowPos/Size dropped — the dock slot controls position;
+        // DockBuilderDockWindow("Layers", rightId) pre-assigns the window.
         if (ImGui.Begin("Layers")) {
             // ---- Add button ----
             if (ImGui.SmallButton("Add")) {
@@ -6944,6 +6944,71 @@ void main(string[] args) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui.NewFrame();
+
+        // ── Phase 0b: full-viewport DockSpace host ─────────────────────────
+        // A transparent, no-chrome, no-input window that covers the entire
+        // display and hosts the main dockspace with a PassthruCentralNode.
+        //
+        // PassthruCentralNode keeps the unoccupied centre mouse-transparent,
+        // so the existing io.WantCaptureMouse guards pass through 3D input
+        // exactly as before.  In --test mode IniFilename=null means the dock
+        // layout is rebuilt from the DockBuilder script every launch; since
+        // the Layers window is hidden in tests the whole dockspace becomes
+        // the passthru central hole → test geometry is unchanged.
+        //
+        // ConfigViewportsEnable stays OFF throughout Phase 0 (no OS windows).
+        {
+            auto dsz = io.DisplaySize;
+            ImGui.SetNextWindowPos(ImVec2(0, 0));
+            ImGui.SetNextWindowSize(ImVec2(dsz.x, dsz.y));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding,   0.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0, 0, 0, 0));
+            immutable int dockHostFlags =
+                ImGuiWindowFlags.NoDocking             |
+                ImGuiWindowFlags.NoTitleBar            |
+                ImGuiWindowFlags.NoCollapse            |
+                ImGuiWindowFlags.NoResize              |
+                ImGuiWindowFlags.NoMove                |
+                ImGuiWindowFlags.NoBringToFrontOnFocus |
+                ImGuiWindowFlags.NoNavFocus            |
+                ImGuiWindowFlags.NoBackground;
+            ImGui.Begin("##DockSpaceHost", null, dockHostFlags);
+            ImGui.PopStyleColor(1);
+            ImGui.PopStyleVar(2);
+
+            ImGuiID dockspaceId = ImGui.GetID("MainDockSpace");
+            ImGui.DockSpace(dockspaceId, ImVec2(0, 0),
+                            ImGuiDockNodeFlags.PassthruCentralNode);
+
+            // Default layout: dock Layers to the right edge (~22% of width).
+            // Seed ONCE per process AND only when nothing was restored from
+            // imgui.ini — DockBuilderGetNode(id) is null means no persisted
+            // dockspace, so we lay out the default; otherwise we honor the
+            // user's saved arrangement (persistence). In --test IniFilename is
+            // null → GetNode is always null → the default layout applies →
+            // test geometry unchanged.
+            static bool dockLayoutDone = false;
+            if (!dockLayoutDone && ImGui.DockBuilderGetNode(dockspaceId) is null) {
+                dockLayoutDone = true;
+                ImGui.DockBuilderRemoveNode(dockspaceId);
+                // AddNode(id, 0) creates the node; the per-frame DockSpace(id,…)
+                // call above re-applies the DockSpace flag each frame (heal), so
+                // the node resolves to a proper dockspace node. (The internal
+                // ImGuiDockNodeFlags_DockSpace bit is not in the shim's public
+                // subset; exposing it is a ph6 nicety.)
+                ImGui.DockBuilderAddNode(dockspaceId, 0);
+                ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
+                ImGuiID rightId, centerId;
+                ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
+                                           &rightId, &centerId);
+                ImGui.DockBuilderDockWindow("Layers", rightId);
+                ImGui.DockBuilderFinish(dockspaceId);
+            }
+
+            ImGui.End();
+        }
+        // ── end DockSpace host ─────────────────────────────────────────────
 
         drawSidePanel();
         drawTabPanel();
