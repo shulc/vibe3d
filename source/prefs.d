@@ -228,6 +228,34 @@ void loadPrefs() { g_prefs = loadPrefs(prefsDir()); }
 void savePrefs() { savePrefs(g_prefs, prefsDir()); }
 
 // ---------------------------------------------------------------------------
+// Layout ini versioning
+// ---------------------------------------------------------------------------
+
+/// Version of the ImGui dock layout ini file.  Bump this constant whenever
+/// the docking format or the default-seed layout changes; the versioned
+/// filename then points at a non-existent file → ImGui falls back to the
+/// programmatic default seed (auto-reset on bump, no old-format crash).
+enum int kLayoutIniVersion = 1;
+
+/// Return the full path to the versioned ImGui layout ini in `dir`.
+/// Pure string builder: no file I/O, no GL context.  A bump of `ver` yields
+/// a different filename so a stale restored ini is never opened.
+string layoutIniPath(string dir, int ver) pure {
+    return buildPath(dir, format("imgui_layout_v%d.ini", ver));
+}
+
+// Pure filename math only — no GL context, no filesystem access.
+unittest {
+    auto p1 = layoutIniPath("/cfg/vibe3d", 1);
+    auto p2 = layoutIniPath("/cfg/vibe3d", 2);
+    import std.path : baseName, dirName;
+    assert(dirName(p1)  == "/cfg/vibe3d",        "path must be under dir");
+    assert(baseName(p1) == "imgui_layout_v1.ini", "v1 filename");
+    assert(p1 != p2,                              "version bump → different file");
+    assert(baseName(p2) == "imgui_layout_v2.ini", "v2 filename");
+}
+
+// ---------------------------------------------------------------------------
 // Mutators (main-thread only)
 // ---------------------------------------------------------------------------
 
