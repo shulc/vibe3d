@@ -10,7 +10,7 @@ import math;
 class FitSelected : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
-    override string name() const { return "viewport.fitSelected"; }
+    override string name() const { return "viewport.fit_selected"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UI; }   // camera-only
 
     override bool apply() {
