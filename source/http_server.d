@@ -261,6 +261,19 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
+    // ----- GET /api/pick — A/B face-pick equivalence oracle (test-only) -----
+    // Marshaled onto the main thread: GPU pick needs a GL context; BVH pick
+    // reads mesh + GpuMesh state. engine=bvh|gpu is dispatched by the provider.
+    private alias PickProvider = string delegate(int x, int y, string engine);
+    private PickProvider pickProvider;
+    private shared long pickSubmittedEpoch;
+    private shared long pickCompletedEpoch;
+    private int    pendingPickX;
+    private int    pendingPickY;
+    private string pendingPickEngine;
+    private string pendingPickResult;
+    private string pendingPickError;
+
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
     // the history service — runs on the HTTP thread like historyProvider.
@@ -394,6 +407,13 @@ class HttpServer {
     /// state).
     public void setSnapLastProvider(SnapLastProvider provider) {
         this.snapLastProvider = provider;
+    }
+
+    /// GET /api/pick?x=&y=&engine=bvh|gpu — A/B face-pick equivalence oracle.
+    /// Provider runs on the main thread (GL context + consistent mesh state).
+    /// engine=gpu calls gpuSelect.pick directly; engine=bvh calls bvhPick.
+    public void setPickProvider(PickProvider provider) {
+        this.pickProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -1087,6 +1107,36 @@ class HttpServer {
                     response.statusCode = 500;
                     response.body = `{"error":"`
                                     ~ gpuSurfError.replace("\"", "\\\"") ~ `"}`;
+                }
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path.startsWith("/api/pick") && request.method == "GET") {
+            if (pickProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"pick provider not set"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else {
+                pendingPickX      = parseQueryInt(request.path, "x", 0);
+                pendingPickY      = parseQueryInt(request.path, "y", 0);
+                pendingPickEngine = parseQueryString(request.path, "engine", "bvh");
+                pendingPickResult = "";
+                pendingPickError  = "";
+                long my = atomicOp!"+="(pickSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(pickCompletedEpoch) < my) {
+                    if (++iters > maxIters) {
+                        pendingPickError = "timeout waiting for main thread";
+                        break;
+                    }
+                    Thread.sleep(2.msecs);
+                }
+                if (pendingPickError.length == 0) {
+                    response.statusCode = 200;
+                    response.body = pendingPickResult;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"` ~ pendingPickError.replace("\"", "\\\"") ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -2053,6 +2103,25 @@ class HttpServer {
             }
         }
         atomicStore(jumpCompletedEpoch, sub);
+    }
+
+    /// Tick /api/pick — drain a pending A/B face-pick on the main thread.
+    public void tickPick() {
+        long sub = atomicLoad(pickSubmittedEpoch);
+        long cmp = atomicLoad(pickCompletedEpoch);
+        if (sub <= cmp) return;
+        if (pickProvider is null) {
+            pendingPickError = "pick provider not set";
+        } else {
+            try {
+                pendingPickResult = pickProvider(
+                    pendingPickX, pendingPickY, pendingPickEngine);
+                pendingPickError = "";
+            } catch (Exception e) {
+                pendingPickError = e.msg;
+            }
+        }
+        atomicStore(pickCompletedEpoch, sub);
     }
 
     /**

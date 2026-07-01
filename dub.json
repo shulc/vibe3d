@@ -44,6 +44,10 @@
 			"version": "2965bbaf9b9661f48c2cb779cee5d71688c4f219",
 			"repository": "git+https://github.com/shulc/imgui.git"
 		},
+		"d-bvh": {
+			"version": "e1a8f41501f94a28dbac99efbea850ed098fa728",
+			"repository": "git+https://github.com/shulc/D-BVH.git"
+		},
 		"bindbc-sdl": "~>1.5.2",
 		"nfde": "~>0.1.3",
 		"bindbc-loader": "~>1.1.5",
