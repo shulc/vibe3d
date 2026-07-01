@@ -8367,15 +8367,22 @@ void main(string[] args) {
                     ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
                     ImGuiHoveredFlags.AllowWhenBlockedByPopup);
 
-                // Re-stamp vp from this frame's content-rect (objection 2 fix):
-                // the 6922 stamp runs pre-NewFrame and cannot see the window
-                // rect; overriding here makes picking, FBO size, and the Image
-                // all read the SAME this-frame rect → genuinely same-frame on
-                // resize / dock-change.
+                // Re-stamp the camera from this frame's content-rect (objection
+                // 2 fix): the 6922 stamp runs pre-NewFrame and cannot see the
+                // window rect; overriding here makes picking, FBO size, and the
+                // Image all read the SAME this-frame rect → genuinely same-frame
+                // on resize / dock-change.
+                //
+                // setPos (not just a local vp patch) is REQUIRED: the pick
+                // delegates read cameraView.viewport() during SDL event
+                // processing, so the docked Viewport window's screen origin must
+                // live on the persistent View — otherwise picking subtracts the
+                // stale construction-time layout origin and every hover/click is
+                // offset by (window-pos − layout-origin).  In --test this whole
+                // block is skipped, so the camera keeps layout.vp* → byte-ident.
                 cameraView.setSize(cast(int)avail.x, cast(int)avail.y);
+                cameraView.setPos(cast(int)pos.x, cast(int)pos.y);
                 vp = cameraView.viewport();
-                vp.x = cast(int)pos.x;
-                vp.y = cast(int)pos.y;
                 // Keep vpm layout rect in sync for viewportUnderCursor().
                 vpm.lx = vp.x;  vpm.ly = vp.y;
                 vpm.lw = vp.width; vpm.lh = vp.height;
