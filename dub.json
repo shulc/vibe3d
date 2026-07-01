@@ -41,8 +41,8 @@
 		"bindbc-opengl": "~>1.1.1",
 		"bindbc-common": "~>1.0.5",
 		"d_imgui": {
-			"version": "2965bbaf9b9661f48c2cb779cee5d71688c4f219",
-			"repository": "git+https://github.com/shulc/imgui.git"
+			"version": "9ec16b5fb123bf75a2d608fd3c4066be53d646ca",
+			"repository": "git+https://github.com/shulc/D-ImGui.git"
 		},
 		"d-bvh": {
 			"version": "e1a8f41501f94a28dbac99efbea850ed098fa728",
