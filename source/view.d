@@ -87,12 +87,12 @@ class View {
         focus += up    * (dy * speed);
     }
 
-    Viewport viewport() {
+    /// Compute Viewport matrices from explicit transform inputs instead of member
+    /// fields.  All projection math is identical to viewport() — just reads
+    /// parameters.  `const` so it is callable without races from any thread.
+    /// Writes NO members.
+    Viewport viewportWith(Vec3 f, float d, float a, float e) const {
         if (projKind == ProjKind.Ortho) {
-            // Axis-locked ortho: eye placed along the preset axis at `distance`
-            // from focus. halfH = distance * tan(22.5°) preserves apparent size
-            // relative to a 45° perspective FOV at the focus plane.
-            float d = distance;
             Vec3 axisEye, upVec;
             final switch (viewPreset) {
                 case ViewPreset.Top:
@@ -109,28 +109,34 @@ class View {
                     axisEye = Vec3(-d, 0, 0); upVec = Vec3(0, 1, 0); break;
                 case ViewPreset.Perspective:
                 case ViewPreset.Camera:
-                    // Fallback: use spherical (should not normally reach here).
-                    axisEye = sphericalToCartesian(azimuth, elevation, d);
+                    axisEye = sphericalToCartesian(a, e, d);
                     upVec   = Vec3(0, 1, 0);
                     break;
             }
-            eye  = focus + axisEye;
-            view = lookAt(eye, focus, upVec);
-            float halfH  = d * tan(cast(float)(PI / 8.0));  // tan(22.5°)
+            Vec3 localEye = f + axisEye;
+            float[16] localView = lookAt(localEye, f, upVec);
+            float halfH  = d * tan(cast(float)(PI / 8.0));
             float aspect = cast(float)width / height;
-            proj = orthographicMatrix(halfH, aspect, 0.001f, 100.0f);
-            Viewport vp = Viewport(view, proj, width, height, x, y, eye);
-            vp.focus = focus;
+            float[16] localProj = orthographicMatrix(halfH, aspect, 0.001f, 100.0f);
+            Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
+            vp.focus = f;
             return vp;
         }
-        // Perspective: byte-identical to the original body.
-        Vec3 offset = sphericalToCartesian(azimuth, elevation, distance);
-        eye    = focus + offset;
-        view   = lookAt(eye, focus, Vec3(0, 1, 0));
-        proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                        cast(float)width / height, 0.001f, 100.0f);
-        Viewport vp = Viewport(view, proj, width, height, x, y, eye);
-        vp.focus = focus;  // carry camera look-at target for auto work-plane callers
+        Vec3 offset   = sphericalToCartesian(a, e, d);
+        Vec3 localEye = f + offset;
+        float[16] localView = lookAt(localEye, f, Vec3(0, 1, 0));
+        float[16] localProj = perspectiveMatrix(45.0f * PI / 180.0f,
+                                                 cast(float)width / height, 0.001f, 100.0f);
+        Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
+        vp.focus = f;
+        return vp;
+    }
+
+    Viewport viewport() {
+        Viewport vp = viewportWith(focus, distance, azimuth, elevation);
+        eye  = vp.eye;
+        view = vp.view;
+        proj = vp.proj;
         return vp;
     }
 
@@ -150,6 +156,22 @@ class View {
             azimuth, elevation, distance,
             focus.x, focus.y, focus.z,
             eye.x, eye.y, eye.z,
+            width, height, x, y);
+    }
+
+    /// Like toJson() but uses explicit transform inputs.  `const`, non-mutating —
+    /// safe to call from any thread.  Eye is recomputed from the provided inputs.
+    string toJsonWith(Vec3 f, float d, float a, float e) const {
+        import std.format : format;
+        Viewport vp = viewportWith(f, d, a, e);
+        return format(
+            `{"azimuth":%f,"elevation":%f,"distance":%f,` ~
+            `"focus":{"x":%f,"y":%f,"z":%f},` ~
+            `"eye":{"x":%f,"y":%f,"z":%f},` ~
+            `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
+            a, e, d,
+            f.x, f.y, f.z,
+            vp.eye.x, vp.eye.y, vp.eye.z,
             width, height, x, y);
     }
 
@@ -261,4 +283,58 @@ unittest { // pan() perspective: regression guard — basis unchanged
     // focus.y must change (up in the spherical basis)
     assert(abs((v.focus - before).y) > 1e-4f,
            "perspective pan vertical must change focus.y");
+}
+
+unittest { // viewportWith(own4) == viewport() for ortho Top
+    auto v = new View(0, 0, 800, 600);
+    v.projKind   = ProjKind.Ortho;
+    v.viewPreset = ViewPreset.Top;
+    v.focus      = Vec3(1, 2, 3);
+    v.distance   = 4.0f;
+    v.azimuth    = 0.3f;
+    v.elevation  = 0.2f;
+    auto vp1 = v.viewport();
+    auto vp2 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation);
+    assert(isClose(vp1.eye.x, vp2.eye.x, 1e-5f) &&
+           isClose(vp1.eye.y, vp2.eye.y, 1e-5f) &&
+           isClose(vp1.eye.z, vp2.eye.z, 1e-5f),
+           "viewportWith(own4) eye must equal viewport() eye (ortho Top)");
+    assert(vp1.view == vp2.view, "viewportWith(own4) view must match viewport() (ortho Top)");
+    assert(vp1.proj == vp2.proj, "viewportWith(own4) proj must match viewport() (ortho Top)");
+}
+
+unittest { // viewportWith(own4) == viewport() for perspective
+    auto v = new View(0, 0, 800, 600);
+    v.focus    = Vec3(0.5f, 0, -1.0f);
+    v.distance = 6.0f;
+    v.azimuth  = 1.2f;
+    v.elevation = -0.3f;
+    auto vp1 = v.viewport();
+    auto vp2 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation);
+    assert(isClose(vp1.eye.x, vp2.eye.x, 1e-5f) &&
+           isClose(vp1.eye.y, vp2.eye.y, 1e-5f) &&
+           isClose(vp1.eye.z, vp2.eye.z, 1e-5f),
+           "viewportWith(own4) eye must equal viewport() eye (perspective)");
+    assert(vp1.view == vp2.view, "viewportWith(own4) view must match viewport() (persp)");
+    assert(vp1.proj == vp2.proj, "viewportWith(own4) proj must match viewport() (persp)");
+}
+
+unittest { // toJsonWith(own4) == toJson() after one viewport() call
+    import std.json : parseJSON;
+    auto v = new View(0, 0, 800, 600);
+    v.focus    = Vec3(1, 0, 0);
+    v.distance = 5.0f;
+    v.azimuth  = 0.7f;
+    v.elevation = 0.1f;
+    v.viewport();  // prime the member eye
+    string j1 = v.toJson();
+    string j2 = v.toJsonWith(v.focus, v.distance, v.azimuth, v.elevation);
+    auto o1 = parseJSON(j1);
+    auto o2 = parseJSON(j2);
+    assert(isClose(o1["azimuth"].floating,   o2["azimuth"].floating,   1e-5f), "toJsonWith az");
+    assert(isClose(o1["elevation"].floating, o2["elevation"].floating, 1e-5f), "toJsonWith el");
+    assert(isClose(o1["distance"].floating,  o2["distance"].floating,  1e-5f), "toJsonWith dist");
+    assert(isClose(o1["eye"]["x"].floating,  o2["eye"]["x"].floating,  1e-5f), "toJsonWith eye.x");
+    assert(isClose(o1["eye"]["y"].floating,  o2["eye"]["y"].floating,  1e-5f), "toJsonWith eye.y");
+    assert(isClose(o1["eye"]["z"].floating,  o2["eye"]["z"].floating,  1e-5f), "toJsonWith eye.z");
 }
