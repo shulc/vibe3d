@@ -37,6 +37,7 @@ import viewcache;
 import perf_probe : g_perf, Cat;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
+import bvh_pick : BvhPick;
 
 import tools.transform;
 import tools.move;
@@ -1068,6 +1069,18 @@ void main(string[] args) {
     // subsequent steps.
     SubpatchPreview subpatchPreview;
     int             subpatchDepth = 3;
+
+    // BVH face picker (Phase 7). One BVH per active mesh, keyed on
+    // (gpu.uploadVersion, source-mesh-address) — the same tuple
+    // gpu_select.d:31 uses. Default ON; VIBE3D_FACE_PICK=gpu falls back to
+    // the GPU face re-render (oracle for A/B equivalence testing).
+    BvhPick bvhPick = new BvhPick();
+    bool useBvhFacePick;
+    {
+        import std.process : environment;
+        // Read once at startup; runtime changes need a relaunch.
+        useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
+    }
 
     // Tracks what is currently uploaded to the GPU so the main loop can
     // re-upload when the preview toggles on/off or when the cage changes
@@ -3303,6 +3316,24 @@ void main(string[] args) {
             buf.put(modelStr);
             buf.put("}");
             return buf.data;
+        });
+
+        // GET /api/pick?x=&y=&engine=bvh|gpu — A/B face-pick oracle.
+        // engine=gpu calls gpuSelect.pick DIRECTLY regardless of VIBE3D_FACE_PICK
+        // so the oracle is always reachable even when BVH is the default.
+        httpServer.setPickProvider((int x, int y, string engine) {
+            import std.format : format;
+            Viewport vp = cameraView.viewport();
+            int faceIdx;
+            if (engine == "gpu") {
+                faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
+                                          mesh, gpu, vp);
+            } else {
+                const(Mesh)* srcMesh = subpatchPreview.active
+                    ? &subpatchPreview.mesh : &mesh();
+                faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu);
+            }
+            return format(`{"faceIndex":%d}`, faceIdx);
         });
 
         // POST /api/camera — set live View. Accepts azimuth, elevation,
@@ -5578,14 +5609,19 @@ void main(string[] args) {
         int mx, my;
         queryMouse(mx, my);
 
-        // Offscreen ID buffer: every triangle gets its source face index
-        // as the rasterised colour, GPU picks the closest face per pixel
-        // automatically. Single-pixel readback (r=0) — faces tile the
-        // screen so any pixel inside a face's silhouette resolves to
-        // that face. Subpatch translation via gpu.faceOriginGpu inside
-        // GpuSelectBuffer.pick.
-        int hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
+        // BVH ray-cast (default) or GPU face re-render (VIBE3D_FACE_PICK=gpu).
+        // BVH: O(log n) per pick, view-independent, no GL readback. Keyed on
+        // (gpu.uploadVersion, source-mesh-address) — identical to gpu_select.d:31.
+        // GPU path retained as oracle for A/B equivalence testing.
+        int hit;
+        if (useBvhFacePick) {
+            const(Mesh)* srcMesh = subpatchPreview.active
+                ? &subpatchPreview.mesh : &mesh();
+            hit = bvhPick.pickFace(mx, my, vp, *srcMesh, gpu);
+        } else {
+            hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
                                   mesh, gpu, vp);
+        }
         if (hit < 0) return;
 
         hoveredFace = hit;
@@ -6844,6 +6880,7 @@ void main(string[] args) {
             httpServer.tickLoadMesh();
             httpServer.tickCameraSet();
             httpServer.tickGpuSurface();
+            httpServer.tickPick();
             httpServer.tickRefire();
             httpServer.tickBlock();
             httpServer.tickUndo();
