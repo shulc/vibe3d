@@ -287,3 +287,46 @@ unittest {
 
     cmd("falloff.clear");
 }
+
+// -------------------------------------------------------------------------
+// F6: the stacked stack survives a `tool.set` (resetTransientPipeStages),
+// not just a scene reset. Both stacked extras keep their exact type — they
+// must not be silently reset to "none" by the tool switch.
+//
+// This test passes both on the pre-fix baseline (extras survive a tool
+// switch by OMISSION — resetTransientPipeStages never touched
+// `id!="falloff"` stages) and after the fix (extras survive by LOCK —
+// `userLocked` is now set on every `falloff.add` slot and every WGHT-task
+// stage is reset-transient'd by task, not literal id). It fails ONLY in the
+// half-refactored state (task-keyed reset dispatch WITHOUT the
+// `userLocked = true` write) — exactly the wipe trap this pair of changes
+// guards against.
+// -------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.set move");
+    cmd("falloff.add radial");
+    cmd("falloff.add linear");
+
+    auto ids = wghtStageIds();
+    assert(ids.length == 3,
+        "primary + 2 extras before the tool switch; got " ~ ids.to!string);
+    assert(wghtAttrsById("falloff#1")["type"] == "radial",
+        "falloff#1 type should be radial before the switch");
+    assert(wghtAttrsById("falloff#2")["type"] == "linear",
+        "falloff#2 type should be linear before the switch");
+
+    cmd("tool.set rotate"); // fires resetTransientPipeStages via toolHost.activate
+
+    auto idsAfter = wghtStageIds();
+    assert(idsAfter.length == 3,
+        "tool.set must not drop the stacked extras; got " ~ idsAfter.to!string);
+    assert(wghtAttrsById("falloff#1")["type"] == "radial",
+        "falloff#1 type must survive the tool switch unchanged; got " ~
+        wghtAttrsById("falloff#1")["type"]);
+    assert(wghtAttrsById("falloff#2")["type"] == "linear",
+        "falloff#2 type must survive the tool switch unchanged; got " ~
+        wghtAttrsById("falloff#2")["type"]);
+
+    cmd("falloff.clear");
+}
