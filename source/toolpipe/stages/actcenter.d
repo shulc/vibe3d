@@ -341,10 +341,13 @@ public:
     // `applySetAttr("mode", ...)` exactly; user labels mirror the status-bar
     // Action Center pulldown (config/statusline.yaml) for consistency.
     //
-    // Unlike FalloffStage (which returns [] when type==None to hide its
-    // section), this list is ALWAYS non-empty so the section — and the
-    // dropdown — stay visible even at the default None mode; the dropdown is
-    // how the user PICKS a mode, so hiding it at None would be a dead end.
+    // When mode==None, params() returns [] so the Tool Properties section is
+    // hidden entirely — mirroring FalloffStage.params() returning [] at
+    // type==None. The user re-enables ACEN via the status-bar Action Center
+    // pulldown (actr.auto / actr.select / actr.local / etc.), which calls
+    // setUserMode() — the same re-enable path as falloff uses its own
+    // status-bar pulldown. setAttr / listAttrs / knownAttrs are already
+    // independent of params() so the HTTP surface is unaffected.
     //
     // The FORM write path fires `tool.pipe.attr actionCenter mode <tag>`,
     // routed through setAttr → applySetAttr (NOT this Param's typed pointer);
@@ -352,6 +355,7 @@ public:
     // the form is the only consumer. Either way the int* below mirrors the
     // live mode so the dropdown previews the active mode.
     override Param[] params() {
+        if (mode == Mode.None) return [];
         IntEnumEntry[] modeEntries = [
             IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
             IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
@@ -1582,4 +1586,29 @@ private:
         setStatePath("actionCenter/userPlaced", userPlaced ? "true" : "false");
         setStatePath("actionCenter/selectSubMode", selectSubModeLabel());
     }
+}
+
+// ---------------------------------------------------------------------------
+// params() snapshot — module-level so `dub test --config=modeling` runs it.
+// A unittest in tests/ would be silently skipped (sourcePaths is "source/").
+// ActionCenterStage ctor is not parameterless; params() only reads `mode`,
+// never derefs the mesh, so a throwaway delegate + EditMode suffice.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    Mesh cube = makeCube();
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Vertices;
+    auto acs = new ActionCenterStage(() => meshPtr, &em);
+    // Default mode == None → whole section hidden.
+    assert(acs.params().length == 0, "None: expected 0 params");
+    // Any non-None mode → mode dropdown visible.
+    acs.mode = ActionCenterStage.Mode.Auto;
+    assert(acs.params().length == 1, "Auto: expected 1 param");
+    assert(acs.params()[0].name == "mode");
+    acs.mode = ActionCenterStage.Mode.Select;
+    assert(acs.params().length == 1, "Select: expected 1 param");
+    // Back to None → hidden again.
+    acs.mode = ActionCenterStage.Mode.None;
+    assert(acs.params().length == 0, "None (reset): expected 0 params");
 }
