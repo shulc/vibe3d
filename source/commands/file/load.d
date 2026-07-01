@@ -58,7 +58,7 @@ class FileLoad : Command {
         this.fc  = fc;
     }
 
-    override string name() const { return "File Load"; }
+    override string name() const { return "file.load"; }
 
     /// Skip the native file dialog and load from the given path.
     /// Used by /api/command params; leave unset for normal user flow.

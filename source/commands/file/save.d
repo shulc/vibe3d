@@ -40,7 +40,7 @@ class FileSave : Command {
         this.document = document;
     }
 
-    override string name() const { return "File Save"; }
+    override string name() const { return "file.save"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }   // file output, no mesh state change
 
     /// Skip the native file dialog and save to the given path.
