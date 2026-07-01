@@ -596,6 +596,30 @@ float[16] perspectiveMatrix(float fovY, float aspect, float near, float far) {
     ];
 }
 
+/// Orthographic projection matrix (column-major, symmetric frustum).
+/// halfH   = half-height of the projection slab in world units.
+/// aspect  = viewport width / height.
+/// near, far = clip distances.
+/// m[15] == 1 distinguishes this from perspectiveMatrix (m[15] == 0).
+float[16] orthographicMatrix(float halfH, float aspect, float near, float far) {
+    float rw = 1.0f / (halfH * aspect);
+    float rh = 1.0f / halfH;
+    float rd = -2.0f / (far - near);
+    float tz = -(far + near) / (far - near);
+    return [
+        rw, 0,  0,  0,
+        0,  rh, 0,  0,
+        0,  0,  rd, 0,
+        0,  0,  tz, 1,
+    ];
+}
+
+/// True when `vp` uses an orthographic projection.
+/// Perspective has proj[15] == 0; ortho has proj[15] == 1.
+bool isOrtho(const ref Viewport vp) @safe pure nothrow @nogc {
+    return vp.proj[15] != 0.0f;
+}
+
 Vec3 sphericalToCartesian(float az, float el, float dist) {
     return Vec3(dist * cos(el) * sin(az),
                 dist * sin(el),
@@ -711,6 +735,35 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp)
     return len > 1e-9f ? d / len : Vec3(0,0,-1);
 }
 
+/// Build a world-space ray through screen pixel (sx, sy).
+/// Perspective: origin = vp.eye, dir = screenRay(sx, sy, vp) — byte-identical to the prior code.
+/// Ortho: all rays share the view forward as direction; origin shifts per pixel on the near plane.
+void screenPointToRay(float sx, float sy, const ref Viewport vp,
+                      out Vec3 origin, out Vec3 dir)
+{
+    if (!isOrtho(vp)) {
+        // Perspective path — byte-identical pass-through.
+        origin = vp.eye;
+        dir    = screenRay(sx, sy, vp);
+        return;
+    }
+    // Ortho: proj[0] = 1/(halfH*aspect), proj[5] = 1/halfH.
+    float nx = ((sx - vp.x) / vp.width)  * 2.0f - 1.0f;
+    float ny = 1.0f - ((sy - vp.y) / vp.height) * 2.0f;
+    float worldX = nx / vp.proj[0];
+    float worldY = ny / vp.proj[5];
+    // View-matrix rows (column-major M[row][col] = m[row + col*4]):
+    //   right   = (m[0], m[4], m[8])
+    //   up      = (m[1], m[5], m[9])
+    //   forward = (-m[2], -m[6], -m[10])
+    const ref float[16] v = vp.view;
+    Vec3 right   = Vec3(v[0], v[4], v[8]);
+    Vec3 up      = Vec3(v[1], v[5], v[9]);
+    Vec3 forward = Vec3(-v[2], -v[6], -v[10]);
+    origin = vp.eye + right * worldX + up * worldY;
+    dir    = normalize(forward);
+}
+
 // Intersect ray (origin + t*dir) with plane (point on plane + normal).
 // Returns false when ray is parallel to the plane.
 bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
@@ -727,14 +780,9 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
 
 // Build the camera plane through the eye and the screen-space line (ax,ay)→(bx,by).
 //
-// Under a PERSPECTIVE camera every ray originates at vp.eye, so the two endpoint
-// rays dA and dB span a unique plane through the eye:
-//   nRaw = cross(dA, dB),  n = normalize(nRaw),  p = vp.eye
-//
-// NOTE (ortho): for an orthographic camera rays are parallel with distinct origins;
-// that branch is not implemented — current View is always perspective (view.d:58).
-// If an ortho mode is ever added, replace this with p=originA,
-// n=normalize(cross(dA, originB - originA)).
+// For perspective: two rays from vp.eye span a unique plane through the eye.
+// For ortho: rays are parallel with distinct origins; plane passes through originA,
+// normal = cross(forward, originB - originA). Both branches are implemented below.
 //
 // Returns true when the plane is well-defined.
 // Returns false (no-op; p and n are undefined) when:
@@ -749,13 +797,24 @@ bool cameraPlaneFromScreenLine(const ref Viewport vp,
     float dx = bx - ax, dy = by - ay;
     if (dx*dx + dy*dy < pixelEps*pixelEps) return false;
 
-    Vec3 dA = screenRay(ax, ay, vp);
-    Vec3 dB = screenRay(bx, by, vp);
-
-    Vec3 nRaw = cross(dA, dB);
-    if (nRaw.length < crossEps) return false;  // numerical backstop (parallel rays)
-
-    p = vp.eye;
+    if (!isOrtho(vp)) {
+        // Perspective: two rays through vp.eye span a unique plane.
+        Vec3 dA = screenRay(ax, ay, vp);
+        Vec3 dB = screenRay(bx, by, vp);
+        Vec3 nRaw = cross(dA, dB);
+        if (nRaw.length < crossEps) return false;
+        p = vp.eye;
+        n = normalize(nRaw);
+        return true;
+    }
+    // Ortho: parallel rays with distinct origins.
+    // Plane passes through originA; normal = cross(forward, originB - originA).
+    Vec3 origA, dirA, origB, dirB;
+    screenPointToRay(ax, ay, vp, origA, dirA);
+    screenPointToRay(bx, by, vp, origB, dirB);
+    Vec3 nRaw = cross(dirA, origB - origA);
+    if (nRaw.length < crossEps) return false;
+    p = origA;
     n = normalize(nRaw);
     return true;
 }
@@ -927,8 +986,9 @@ bool screenToWorkPlane(float sx, float sy, const ref Viewport vp,
                        float planeY = 0.0f,
                        Vec3  planeNormal = Vec3(0, 1, 0))
 {
-    Vec3 dir = screenRay(sx, sy, vp);
-    return rayPlaneIntersect(vp.eye, dir,
+    Vec3 swpOrig, dir;
+    screenPointToRay(sx, sy, vp, swpOrig, dir);
+    return rayPlaneIntersect(swpOrig, dir,
                              Vec3(0, planeY, 0), planeNormal, worldHit);
 }
 
@@ -1327,7 +1387,8 @@ unittest { // closestOnSegment2D — degenerate segment
 // Helper: viewport with lookAt camera at Z=5 and 90° symmetric perspective
 version(unittest) private Viewport makeTestViewport() {
     Viewport vp;
-    vp.view   = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0,0,0), Vec3(0,1,0));
     vp.proj   = perspectiveMatrix(PI/2, 1.0f, 0.1f, 100.0f);
     vp.width  = 800;
     vp.height = 800;
@@ -1372,6 +1433,71 @@ unittest { // screenRay: viewport offset shifts pixel-to-NDC mapping
     assert(isClose(r.x, 0, 1e-5f, 1e-5f));
     assert(isClose(r.y, 0, 1e-5f, 1e-5f));
     assert(isClose(r.z, -1.0f));
+}
+
+unittest { // orthographicMatrix: check diagonal entries and m[15] discriminator
+    import std.math : isClose;
+    float halfH = 2.0f, aspect = 16.0f / 9.0f, near = 0.001f, far = 100.0f;
+    auto m = orthographicMatrix(halfH, aspect, near, far);
+    // Diagonal entries.
+    assert(isClose(m[0],  1.0f / (halfH * aspect), 1e-5f), "m[0] wrong");
+    assert(isClose(m[5],  1.0f / halfH,             1e-5f), "m[5] wrong");
+    assert(isClose(m[10], -2.0f / (far - near),     1e-5f), "m[10] wrong");
+    assert(isClose(m[14], -(far + near) / (far - near), 1e-5f), "m[14] wrong");
+    assert(m[15] == 1.0f, "m[15] must be 1 (ortho discriminator)");
+    // Off-diagonal entries must be zero.
+    foreach (i; 0 .. 16) {
+        if (i != 0 && i != 5 && i != 10 && i != 14 && i != 15)
+            assert(m[i] == 0.0f, "off-diagonal must be 0");
+    }
+}
+
+unittest { // isOrtho: perspective → false, ortho → true
+    import std.math : isClose, PI;
+    Viewport vp;
+    vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    assert(!isOrtho(vp), "perspective matrix must not be ortho");
+    assert(vp.proj[15] == 0.0f, "perspective m[15] must be 0");
+    vp.proj = orthographicMatrix(2.0f, 1.0f, 0.001f, 100.0f);
+    assert(isOrtho(vp), "ortho matrix must be ortho");
+    assert(vp.proj[15] == 1.0f, "ortho m[15] must be 1");
+}
+
+unittest { // screenPointToRay: perspective pass-through byte-identical
+    import std.math : isClose;
+    auto vp = makeTestViewport();
+    Vec3 orig, dir;
+    float sx = 300.0f, sy = 250.0f;
+    screenPointToRay(sx, sy, vp, orig, dir);
+    assert(orig.x == vp.eye.x && orig.y == vp.eye.y && orig.z == vp.eye.z,
+           "perspective origin must equal vp.eye");
+    Vec3 ref_ = screenRay(sx, sy, vp);
+    assert(isClose(dir.x, ref_.x, 1e-5f) && isClose(dir.y, ref_.y, 1e-5f)
+           && isClose(dir.z, ref_.z, 1e-5f),
+           "perspective dir must match screenRay");
+}
+
+unittest { // screenPointToRay: ortho — parallel dirs, per-pixel origins
+    import std.math : isClose, PI;
+    // Build an ortho Front viewport: eye at Z=3, looking -Z.
+    Viewport vp;
+    vp.view   = lookAt(Vec3(0,0,3), Vec3(0,0,0), Vec3(0,1,0));
+    float halfH = 2.0f;
+    vp.proj   = orthographicMatrix(halfH, 1.0f, 0.001f, 100.0f);
+    vp.width  = 800; vp.height = 800;
+    vp.x = 0; vp.y = 0;
+    vp.eye    = Vec3(0, 0, 3);
+    // Two pixels at different positions.
+    Vec3 o1, d1, o2, d2;
+    screenPointToRay(200.0f, 400.0f, vp, o1, d1);
+    screenPointToRay(600.0f, 400.0f, vp, o2, d2);
+    // Directions must be parallel (same vector, forward = -Z).
+    assert(isClose(d1.x, d2.x, 1e-5f) && isClose(d1.y, d2.y, 1e-5f)
+           && isClose(d1.z, d2.z, 1e-5f), "ortho rays must be parallel");
+    assert(isClose(d1.z, -1.0f, 1e-4f), "ortho forward must be -Z for front view");
+    // Origins must differ (the two X pixels land at different world X).
+    assert(!isClose(o1.x, o2.x, 1e-3f), "ortho origins must differ in X");
+    assert(isClose(o1.y, o2.y, 1e-5f), "ortho origins Y must match (same row)");
 }
 
 unittest { // rayPlaneIntersect: ray from above hits XZ plane at origin
