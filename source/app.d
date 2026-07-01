@@ -1132,6 +1132,7 @@ void main(string[] args) {
     // `gpuSelect` returns the class handle (no ref needed for class types).
     // `activeCamera()`/`hoveredCamera()` are Phase-4 per-viewport seams.
     ref View cameraView() { return vpm.views[vpm.activeId].camera; }
+    bool activeIsOrtho() { return vpm.views[vpm.activeId].isOrtho(); }
     ref VertexCache vertexCache() { return vpm.views[vpm.activeId].vcache; }
     ref FaceBoundsCache faceCache() { return vpm.views[vpm.activeId].fcache; }
     ref EdgeCache edgeCache() { return vpm.views[vpm.activeId].ecache; }
@@ -4264,6 +4265,49 @@ void main(string[] args) {
             import commands.file.save : FileSave;
             import params : injectParamsInto;
 
+            // viewport.view <preset> — camera-only preset switch, no undo entry.
+            // Sets the active viewport's projection kind and axis preset.
+            // Axis presets (Top/Bottom/Front/Back/Right/Left) → ProjKind.Ortho;
+            // Perspective/Camera → ProjKind.Perspective.
+            if (id == "viewport.view") {
+                import view : ProjKind, ViewPreset;
+                string presetStr = "";
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    if (pjv.type == JSONType.string) {
+                        // Raw string param (e.g. from JSON {"command":"viewport.view","params":"Top"}).
+                        presetStr = pjv.str;
+                    } else if (pjv.type == JSONType.object) {
+                        if (auto pp = "_positional" in pjv) {
+                            if (pp.type == JSONType.array && pp.array.length >= 1
+                                && pp.array[0].type == JSONType.string)
+                                presetStr = pp.array[0].str;
+                        }
+                        if (presetStr.length == 0) {
+                            if (auto pp = "preset" in pjv)
+                                if (pp.type == JSONType.string) presetStr = pp.str;
+                        }
+                    }
+                }
+                // Map string → preset + projKind.
+                ViewPreset vp3preset = ViewPreset.Perspective;
+                ProjKind   vp3kind   = ProjKind.Perspective;
+                switch (presetStr) {
+                    case "Top":         vp3preset = ViewPreset.Top;         vp3kind = ProjKind.Ortho; break;
+                    case "Bottom":      vp3preset = ViewPreset.Bottom;      vp3kind = ProjKind.Ortho; break;
+                    case "Front":       vp3preset = ViewPreset.Front;       vp3kind = ProjKind.Ortho; break;
+                    case "Back":        vp3preset = ViewPreset.Back;        vp3kind = ProjKind.Ortho; break;
+                    case "Right":       vp3preset = ViewPreset.Right;       vp3kind = ProjKind.Ortho; break;
+                    case "Left":        vp3preset = ViewPreset.Left;        vp3kind = ProjKind.Ortho; break;
+                    case "Camera":      vp3preset = ViewPreset.Camera;      vp3kind = ProjKind.Perspective; break;
+                    default:            vp3preset = ViewPreset.Perspective; vp3kind = ProjKind.Perspective; break;
+                }
+                cameraView.viewPreset = vp3preset;
+                cameraView.projKind   = vp3kind;
+                vpm.views[vpm.activeId].dirty = true;
+                return;
+            }
+
             auto factory = id in reg.commandFactories;
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
@@ -4688,6 +4732,13 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
+            // Restore free-perspective camera mode so subsequent tests/operations
+            // don't inherit a leftover ortho preset from a prior test.
+            {
+                import view : ProjKind, ViewPreset;
+                cameraView.projKind   = ProjKind.Perspective;
+                cameraView.viewPreset = ViewPreset.Perspective;
+            }
             // The host now owns the no-tool falloff drag (step 3 of the
             // stage-gizmo refactor); a reset must drop any in-flight drag.
             pipeGizmoHost.cancelDrag();
@@ -5529,7 +5580,7 @@ void main(string[] args) {
         int dx = mot.x - lastMouseX;
         int dy = mot.y - lastMouseY;
 
-        if      (dragMode == DragMode.Orbit) cameraView.orbit(dx, dy);
+        if      (dragMode == DragMode.Orbit && !activeIsOrtho()) cameraView.orbit(dx, dy);
         else if (dragMode == DragMode.Zoom)  cameraView.zoom(dx);
         else if (dragMode == DragMode.Pan)   cameraView.pan(dx, dy);
 
@@ -8328,6 +8379,46 @@ void main(string[] args) {
                 // Keep vpm layout rect in sync for viewportUnderCursor().
                 vpm.lx = vp.x;  vpm.ly = vp.y;
                 vpm.lw = vp.width; vpm.lh = vp.height;
+
+                // View-selector dropdown (ph3): set camera preset.
+                // Positioned at top-left of content area via window-local SetCursorPos.
+                {
+                    import view : ProjKind, ViewPreset;
+                    immutable string[8] presetNames = [
+                        "Perspective", "Top", "Bottom", "Front",
+                        "Back", "Right", "Left", "Camera"
+                    ];
+                    immutable ViewPreset[8] presetVals = [
+                        ViewPreset.Perspective, ViewPreset.Top, ViewPreset.Bottom,
+                        ViewPreset.Front, ViewPreset.Back, ViewPreset.Right,
+                        ViewPreset.Left, ViewPreset.Camera
+                    ];
+                    // Find current index.
+                    int curIdx = 0;
+                    foreach (i, pv; presetVals) {
+                        if (pv == cameraView.viewPreset) { curIdx = cast(int)i; break; }
+                    }
+                    // Overlay the combo at the top-left of the viewport window.
+                    // SetCursorPos uses window-local coordinates (0,0 = content origin).
+                    ImGui.SetCursorPos(ImVec2(4, 4));
+                    ImGui.SetNextItemWidth(120.0f);
+                    if (ImGui.BeginCombo("##vpPreset", presetNames[curIdx])) {
+                        foreach (i, pn; presetNames) {
+                            bool sel = (i == curIdx);
+                            if (ImGui.Selectable(pn, sel)) {
+                                ProjKind   newKind;
+                                ViewPreset newPreset = presetVals[i];
+                                if (i == 0 || i == 7) newKind = ProjKind.Perspective;
+                                else                   newKind = ProjKind.Ortho;
+                                cameraView.viewPreset = newPreset;
+                                cameraView.projKind   = newKind;
+                                vpm.views[vpm.activeId].dirty = true;
+                            }
+                            if (sel) ImGui.SetItemDefaultFocus();
+                        }
+                        ImGui.EndCombo();
+                    }
+                }
             }
             ImGui.End();
         }
