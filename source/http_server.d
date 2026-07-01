@@ -1050,13 +1050,17 @@ class HttpServer {
                 response.body = "{\"error\":\"constrain query provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/camera" && request.method == "POST") {
+        } else if (request.path.startsWith("/api/camera") && request.method == "POST") {
             if (cameraSetHandler is null) {
                 response.statusCode = 200;
                 response.body = `{"status":"error","message":"camera-set handler not set"}`;
             } else {
                 try {
                     pendingCamSet = parseJSON(request.body);
+                    // Inject ?viewport=N from query string into the JSON body
+                    // so the main-thread handler can target the correct cell.
+                    if (pendingCamSet.type == JSONType.object)
+                        pendingCamSet["_viewport"] = parseQueryInt(request.path, "viewport", -1);
                     pendingCamSetError = "";
                     long my = atomicOp!"+="(camSetSubmittedEpoch, 1);
                     enum int maxIters = 2500;
