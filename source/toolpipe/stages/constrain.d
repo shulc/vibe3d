@@ -1,6 +1,8 @@
 module toolpipe.stages.constrain;
 
-import toolpipe.stage   : Stage, TaskCode, ordCons;
+import std.format : format;
+
+import toolpipe.stage   : Stage, TaskCode, ordCons, parseInto;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom;
 import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
@@ -88,8 +90,13 @@ public:
         publishState();
     }
 
-    // --- Typed params schema (drives default setAttr / listAttrs) ----------
-    override Param[] params() {
+    // --- Typed params schema (drives Tool Properties panel visibility) ------
+    // When disabled, expose ONLY the `enabled` toggle so the panel hides the
+    // four dependent rows (Mode / Offset / Handle / Dbl Sided) until the user
+    // enables the stage. The full 5-param set remains reachable via the HTTP
+    // surface: setAttr / listAttrs / knownAttrs all use fullParams() —
+    // mirroring FalloffStage's filter + override pattern (stage.d:133-138).
+    private Param[] fullParams() {
         return [
             Param.bool_("enabled", "Enabled", &enabled, false),
             Param.intEnum_("geometry", "Mode", cast(int*)&geom,
@@ -101,6 +108,45 @@ public:
             Param.float_("offset",   "Offset",    &offset,   0.0f),
             Param.bool_("handle",    "Handle",    &handle,    true),
             Param.bool_("dblSided",  "Dbl Sided", &dblSided, false),
+        ];
+    }
+
+    override Param[] params() {
+        // Disabled: expose only the enabler so the panel can re-enable CONS.
+        // Enabled: expose all 5 config rows.
+        return enabled ? fullParams() : fullParams()[0 .. 1];
+    }
+
+    // Keep the HTTP surface FULL regardless of the params() filter.
+    // stage.d default setAttr / listAttrs walk params() — after the filter they
+    // would drop the 4 hidden attrs. Override all three to use fullParams().
+    override string[] knownAttrs() {
+        return ["enabled", "geometry", "offset", "handle", "dblSided"];
+    }
+    override bool setAttr(string name, string value) {
+        foreach (ref p; fullParams()) {
+            if (p.name != name) continue;
+            bool ok = parseInto(p, value);
+            if (ok) onParamChanged(name);
+            return ok;
+        }
+        return false;
+    }
+    // const: must not call non-const fullParams(); stringify fields directly.
+    override string[2][] listAttrs() const {
+        string geomStr;
+        final switch (geom) {
+            case ConstrainGeom.Off:    geomStr = "off";    break;
+            case ConstrainGeom.Screen: geomStr = "screen"; break;
+            case ConstrainGeom.Vector: geomStr = "vector"; break;
+            case ConstrainGeom.Point:  geomStr = "point";  break;
+        }
+        return [
+            ["enabled",  enabled  ? "true" : "false"],
+            ["geometry", geomStr],
+            ["offset",   format("%g", offset)],
+            ["handle",   handle   ? "true" : "false"],
+            ["dblSided", dblSided ? "true" : "false"],
         ];
     }
 
@@ -118,4 +164,25 @@ private:
         }
         setStatePath("constrain/geometry", gstr);
     }
+}
+
+// ---------------------------------------------------------------------------
+// params() snapshot — module-level so `dub test --config=modeling` runs it.
+// A unittest in tests/ would be silently skipped (sourcePaths is "source/").
+// ---------------------------------------------------------------------------
+unittest {
+    auto cs = new ConstrainStage();
+    // Default: disabled → only the 'enabled' toggle is exposed.
+    auto ps = cs.params();
+    assert(ps.length == 1, "disabled: expected 1 param");
+    assert(ps[0].name == "enabled", "disabled: first param must be 'enabled'");
+    // Enabled → full 5 params visible.
+    cs.enabled = true;
+    ps = cs.params();
+    assert(ps.length == 5, "enabled: expected 5 params");
+    assert(ps[0].name == "enabled");
+    assert(ps[1].name == "geometry");
+    assert(ps[2].name == "offset");
+    assert(ps[3].name == "handle");
+    assert(ps[4].name == "dblSided");
 }
