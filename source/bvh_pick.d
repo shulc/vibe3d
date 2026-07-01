@@ -1,7 +1,7 @@
 module bvh_pick;
 
 import bvh.c;
-import math : Vec3, Viewport, screenRay;
+import math : Vec3, Viewport, screenRay, screenPointToRay;
 import mesh : Mesh, GpuMesh;
 
 // ---------------------------------------------------------------------------
@@ -60,8 +60,9 @@ public:
         }
         if (_handle is null) return -1;
 
-        float[3] org = [vp.eye.x, vp.eye.y, vp.eye.z];
-        Vec3 d = screenRay(mx + 0.5f, my + 0.5f, vp);
+        Vec3 bvhOrig, d;
+        screenPointToRay(mx + 0.5f, my + 0.5f, vp, bvhOrig, d);
+        float[3] org = [bvhOrig.x, bvhOrig.y, bvhOrig.z];
         float[3] dir = [d.x, d.y, d.z];
 
         dbvh_hit_t hit = dbvh_raycast(_handle, org.ptr, dir.ptr, 1e-4f, float.max);

@@ -197,9 +197,10 @@ public:
         // Project cursor onto the camera-facing plane through `center_`.
         // View forward: col-major lookAt stores (-f.x,-f.y,-f.z) at indices 2,6,10.
         Vec3 fwd = Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10]);
-        Vec3 ray = screenRay(cast(float)e.x, cast(float)e.y, cachedVp);
+        Vec3 magOrig, ray;
+        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, magOrig, ray);
         Vec3 hit;
-        if (rayPlaneIntersect(cachedVp.eye, ray, center_, fwd, hit))
+        if (rayPlaneIntersect(magOrig, ray, center_, fwd, hit))
             target_ = hit;
 
         // Strength ramps 0→1 over STRENGTH_PX pixels from the grab point.

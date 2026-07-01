@@ -2,7 +2,7 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3, Viewport, screenRay, rayPlaneIntersect, applyAffine;
+import math    : Vec3, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
@@ -1318,11 +1318,12 @@ private:
         // workplane center as a sane default.
         if (lastView_.width == 0 || lastView_.height == 0)
             return lastWpCenter_;
-        Vec3 ray = screenRay(cast(int)(lastView_.width / 2),
-                             cast(int)(lastView_.height / 2),
-                             lastView_);
+        Vec3 acOrig, ray;
+        screenPointToRay(cast(float)(lastView_.width  / 2),
+                         cast(float)(lastView_.height / 2),
+                         lastView_, acOrig, ray);
         Vec3 hit;
-        if (rayPlaneIntersect(lastView_.eye, ray,
+        if (rayPlaneIntersect(acOrig, ray,
                               lastWpCenter_, lastWpNormal_, hit))
             return hit;
         // Degenerate (ray ⟂ plane normal). Fall back to camera focus.

@@ -163,16 +163,13 @@ Vec3 planeDragDelta(int mx,     int my,
                                  : axisZ;
     }
 
-    const ref float[16] v = vp.view;
-    Vec3 camOrigin = Vec3(
-        -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-        -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-        -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-    );
+    Vec3 origCurr, dirCurr, origPrev, dirPrev;
+    screenPointToRay(cast(float)mx,     cast(float)my,     vp, origCurr, dirCurr);
+    screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, origPrev, dirPrev);
 
     Vec3 hitCurr, hitPrev;
-    if (!rayPlaneIntersect(camOrigin, screenRay(mx,     my,     vp), center, n, hitCurr) ||
-        !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, vp), center, n, hitPrev))
+    if (!rayPlaneIntersect(origCurr, dirCurr, center, n, hitCurr) ||
+        !rayPlaneIntersect(origPrev, dirPrev, center, n, hitPrev))
     { skip = true; return Vec3(0,0,0); }
 
     return hitCurr - hitPrev;

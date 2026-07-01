@@ -4,7 +4,7 @@ import bindbc.sdl;
 
 import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
 import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot,
-                screenRay, rayPlaneIntersect;
+                screenRay, screenPointToRay, rayPlaneIntersect;
 import shader : Shader;
 import drag   : screenAxisDelta, planeDragDelta;
 import toolpipe.packets  : FalloffPacket, FalloffType;
@@ -95,6 +95,7 @@ class FalloffEndpointHandle {
         // Hide arrows pointing too directly toward / away from camera —
         // same convention as MoveHandler: a near-coaxial arrow has zero
         // on-screen length and isn't pickable anyway.
+        // vp.eye used as camera position for gizmo-facing direction, NOT as a ray origin.
         Vec3 d = Vec3(vp.eye.x - pos.x, vp.eye.y - pos.y, vp.eye.z - pos.z);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         Vec3 viewDir = dist > 1e-6f
@@ -620,6 +621,7 @@ private void pushRadialFalloff(Vec3 center, Vec3 size) {
 /// vertical mouse motion then projects cleanly onto the construction
 /// plane's normal axis.
 private Vec3 computeHpn(Vec3 center, Vec3 planeN, const ref Viewport vp) {
+    // vp.eye used as camera position to compute direction-to-camera, NOT a ray origin.
     Vec3 toCamera = Vec3(vp.eye.x - center.x,
                          vp.eye.y - center.y,
                          vp.eye.z - center.z);
@@ -653,12 +655,13 @@ bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
         // Second-stage RMB. Ctrl here repurposes the existing center
         // for a uniform-radius drag (cursor → all three axes); plain
         // RMB enters height-extrude mode.
-        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 fhOrig, dir;
+        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig, dir);
         Vec3 hit;
         if (ctrl) {
             // Uniform: project onto construction plane through center,
             // use distance as r for all three world axes.
-            if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+            if (!rayPlaneIntersect(fhOrig, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
                 return false;
             rmbRadialUniform_     = true;
             rmbRadialHeightStart_ = rmbRadialCenter_;     // unused in uniform path
@@ -667,7 +670,7 @@ bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
         }
         // Height extrude: project onto the height plane.
         Vec3 hpn = computeHpn(rmbRadialCenter_, rmbRadialPlaneN_, vp);
-        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, hpn, hit))
+        if (!rayPlaneIntersect(fhOrig, dir, rmbRadialCenter_, hpn, hit))
             hit = rmbRadialCenter_;
         rmbRadialUniform_     = false;
         rmbRadialHpn_         = hpn;
@@ -698,9 +701,10 @@ bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
     else if (aN >= aA && aN >= a2) pn = frame.normal;
     else                           pn = frame.axis2;
 
-    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 fhOrig2, dir;
+    screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig2, dir);
     Vec3 hit;
-    if (!rayPlaneIntersect(vp.eye, dir, frame.origin, pn, hit))
+    if (!rayPlaneIntersect(fhOrig2, dir, frame.origin, pn, hit))
         return false;
     rmbRadialUniform_  = ctrl;
     rmbRadialCenter_   = hit;
@@ -717,9 +721,10 @@ bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
 /// the plane-normal axis from the frozen flat-disc base.
 void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
     if (radialStage_ == RadialStage.FirstActive) {
-        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 fhOrig3, dir;
+        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig3, dir);
         Vec3 hit;
-        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+        if (!rayPlaneIntersect(fhOrig3, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
             return;
         Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
                       hit.y - rmbRadialCenter_.y,
@@ -737,12 +742,13 @@ void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
         return;
     }
     if (radialStage_ == RadialStage.SecondActive) {
-        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 fhOrig4, dir;
+        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig4, dir);
         Vec3 hit;
         if (rmbRadialUniform_) {
             // Re-derive all three radii from cursor distance to center
             // (in the construction plane). Replaces the flat disc.
-            if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+            if (!rayPlaneIntersect(fhOrig4, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
                 return;
             Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
                           hit.y - rmbRadialCenter_.y,
@@ -755,7 +761,7 @@ void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
         // drag-distance along plane normal as the extrude radius;
         // add it to the frozen flat-disc size weighted by |pn[i]|
         // so cardinal pn cleanly grows just the plane-normal axis.
-        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialHpn_, hit))
+        if (!rayPlaneIntersect(fhOrig4, dir, rmbRadialCenter_, rmbRadialHpn_, hit))
             return;
         Vec3 dh = Vec3(hit.x - rmbRadialHeightStart_.x,
                        hit.y - rmbRadialHeightStart_.y,
@@ -895,9 +901,10 @@ bool elementFalloffRMBDown(int x, int y, const ref Viewport vp) {
     auto state = readElementState();
     // Construction plane: through pickedCenter, normal = camera-back.
     Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 elemOrig, dir;
+    screenPointToRay(cast(float)x, cast(float)y, vp, elemOrig, dir);
     Vec3 hit;
-    if (!rayPlaneIntersect(vp.eye, dir, state.pickedCenter, camBack, hit))
+    if (!rayPlaneIntersect(elemOrig, dir, state.pickedCenter, camBack, hit))
         return false;
     rmbElementDragActive_ = true;
     rmbElementDragX0_     = x;
@@ -916,9 +923,10 @@ bool elementFalloffRMBDown(int x, int y, const ref Viewport vp) {
 void elementFalloffRMBMotion(int x, int y, const ref Viewport vp) {
     if (!rmbElementDragActive_) return;
     auto state = readElementState();
-    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 elemOrig2, dir;
+    screenPointToRay(cast(float)x, cast(float)y, vp, elemOrig2, dir);
     Vec3 hit;
-    if (!rayPlaneIntersect(vp.eye, dir, state.pickedCenter,
+    if (!rayPlaneIntersect(elemOrig2, dir, state.pickedCenter,
                            rmbElementPlaneN_, hit))
         return;
     // Signed: +X drag from anchor → grow; −X → shrink (same direction

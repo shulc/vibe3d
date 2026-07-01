@@ -3,7 +3,7 @@ module snap;
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
-import math : Vec3, Viewport, projectToWindowFull, screenRay,
+import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
               closestOnSegment2DSquared, cross, dot,
               closestPointOnLineToRay;
@@ -499,9 +499,10 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 
     // Grid candidate (7.3c). Scope-independent.
     if (cfg.enabledTypes & SnapType.Grid) {
-        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 snapOrig1, ray;
+        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig1, ray);
         Vec3 hit;
-        if (rayPlaneIntersect(vp.eye, ray,
+        if (rayPlaneIntersect(snapOrig1, ray,
                               cfg.workplaneCenter, cfg.workplaneNormal, hit))
         {
             Vec3 d = hit - cfg.workplaneCenter;
@@ -520,9 +521,10 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // Workplane candidate (7.3c). Stays in discrete tier (always-wins;
     // intentionally EXEMPT from the discrete-beats-constraint rule — D2).
     if (cfg.enabledTypes & SnapType.Workplane) {
-        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 snapOrig2, ray;
+        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig2, ray);
         Vec3 hit;
-        if (rayPlaneIntersect(vp.eye, ray,
+        if (rayPlaneIntersect(snapOrig2, ray,
                               cfg.workplaneCenter, cfg.workplaneNormal, hit))
             consider(hit, -1, SnapType.Workplane, 0);
     }
@@ -555,7 +557,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             if (g_itemSnapFrames.length > 0)
                 frames = g_itemSnapFrames.dup;
         }
-        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 snapOrig3, ray;
+        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig3, ray);
 
         foreach (ref frame; frames) {
             if (!frame.hasBBox) continue;
@@ -588,7 +591,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             ];
             foreach (fpi; 0 .. 6) {
                 Vec3 hit;
-                if (rayPlaneIntersect(vp.eye, ray, fpC[fpi], fpN[fpi], hit))
+                if (rayPlaneIntersect(snapOrig3, ray, fpC[fpi], fpN[fpi], hit))
                     considerConstraint(hit, SnapType.Box);
             }
         }
@@ -609,11 +612,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // -----------------------------------------------------------------------
     if ((cfg.enabledTypes & SnapType.WorldAxis)
             && typeEligible(SnapType.WorldAxis, cfg.snapScope)) {
-        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 snapOrig4, ray;
+        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig4, ray);
         immutable Vec3[3] axes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
         immutable Vec3 origin  = Vec3(0, 0, 0);
         foreach (ax; axes) {
-            Vec3 hit = closestPointOnLineToRay(origin, ax, vp.eye, ray);
+            Vec3 hit = closestPointOnLineToRay(origin, ax, snapOrig4, ray);
             considerConstraint(hit, SnapType.WorldAxis);
         }
     }
@@ -699,8 +703,9 @@ private bool closestOnPolygonSurface(const(uint)[] face,
     n = n / nlen;
 
     if (pointInPolygon2D(cast(float)sx, cast(float)sy, xs, ys)) {
-        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
-        return rayPlaneIntersect(vp.eye, ray, v0, n, worldHit);
+        Vec3 snapOrig5, ray;
+        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig5, ray);
+        return rayPlaneIntersect(snapOrig5, ray, v0, n, worldHit);
     }
 
     // Outside polygon — walk the boundary edge ring.

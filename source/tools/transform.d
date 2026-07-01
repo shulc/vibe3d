@@ -1072,8 +1072,9 @@ protected:
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
         import tools.create_common         : currentWorkplaneFrame;
-        import math : screenRay, rayPlaneIntersect;
-        Vec3 dir = screenRay(sx, sy, cachedVp);
+        import math : screenRay, rayPlaneIntersect, screenPointToRay;
+        Vec3 crHitOrig, dir;
+        screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
         auto mode = ActionCenterStage.Mode.Auto;
         if (g_pipeCtx !is null) {
             auto ac = cast(ActionCenterStage)
@@ -1091,7 +1092,7 @@ protected:
                 // lands on the plane the user is actually looking at.
                 auto wf = currentWorkplaneFrame();
                 if (wf.isAuto) wf.origin = cachedVp.focus;
-                return rayPlaneIntersect(cachedVp.eye, dir,
+                return rayPlaneIntersect(crHitOrig, dir,
                                          wf.origin, wf.normal, worldHit);
             }
             case ActionCenterStage.Mode.Screen: {
@@ -1099,7 +1100,7 @@ protected:
                 Vec3 camBack = Vec3(cachedVp.view[2],
                                     cachedVp.view[6],
                                     cachedVp.view[10]);
-                return rayPlaneIntersect(cachedVp.eye, dir,
+                return rayPlaneIntersect(crHitOrig, dir,
                                          selCen, camBack, worldHit);
             }
             case ActionCenterStage.Mode.Select:

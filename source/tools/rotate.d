@@ -768,7 +768,9 @@ public:
         // Compute drag start direction in the arc plane.
         Vec3 hit;
         prevWrapped = 0;
-        if (rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
+        Vec3 rotOrig771, rotDir771;
+        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, rotOrig771, rotDir771);
+        if (rayPlaneIntersect(rotOrig771, rotDir771,
                               handler.center, dragAxisVec, hit)) {
             Vec3 d = hit - handler.center;
             float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
@@ -821,7 +823,9 @@ public:
         // rotated ring's plane, matching dragAxisVec.
         prevWrapped = 0;
         Vec3 hit;
-        if (rayPlaneIntersect(viewCamOrigin(), screenRay(lastMX, lastMY, cachedVp),
+        Vec3 rotOrig824, rotDir824;
+        screenPointToRay(cast(float)lastMX, cast(float)lastMY, cachedVp, rotOrig824, rotDir824);
+        if (rayPlaneIntersect(rotOrig824, rotDir824,
                               handler.center, dragAxisVec, hit)) {
             Vec3 d = hit - handler.center;
             float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
@@ -949,10 +953,11 @@ public:
         // (off-plane / horizon-racing) frame is REJECTED and the last good angle
         // is held instead. `angle` below stays the per-frame increment so the
         // downstream snap / standalone-apply code is untouched.
-        Vec3 camOrigin = viewCamOrigin();
+        Vec3 rotOrigCurr, rotDirCurr;
+        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, rotOrigCurr, rotDirCurr);
         Vec3 hitCurr;
         if (dragRefRadius < 1e-6f ||
-            !rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp), center, dragAxisVec, hitCurr))
+            !rayPlaneIntersect(rotOrigCurr, rotDirCurr, center, dragAxisVec, hitCurr))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         Vec3 d2 = hitCurr - center;
