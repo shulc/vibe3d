@@ -786,44 +786,33 @@ protected:
         // the stage so the drag deforms around THIS click.
         if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element) {
             if (auto fs = falloffStageForHooks()) {
-                import toolpipe.packets : ElementConnect;
-                // Edge-Loops: walk the quad edge-loop from the picked edge
-                // so the live drag uses the SAME ordered ring as the
-                // headless path (FalloffStage.resolveEdgeLoopRing). When the
-                // picked element is a 2-vert edge → walk it; when fs already
-                // carries a ≥3-vert ring treat it as pre-resolved; other
-                // connect modes pass the ring through unchanged.
-                const(uint)[] ring = fs.anchorRing;
-                if (fs.connect == ElementConnect.EdgeLoops
-                 && fs.anchorRing.length == 2) {
-                    if (auto m = mesh)
-                        ring = edgeLoopRing(*m, fs.anchorRing[0], fs.anchorRing[1]);
-                }
-                dragFalloff.anchorRing  = ring.dup;
-                // Connected-component mask. The interactive click-pick fills
-                // `fs.connectMask`; when it is empty (headless tool.doApply,
-                // replay-without-input) resolve it here from `fs.anchorRing`
-                // by BFS over mesh edge-adjacency so the connectivity gate
-                // works without a click — mirroring the anchorPos resolution
-                // just below (and FalloffStage.evaluate's resolveConnectMask).
-                if (fs.connectMask.length > 0) {
-                    dragFalloff.connectMask = fs.connectMask.dup;
-                } else {
-                    dragFalloff.connectMask =
-                        resolveConnectMaskForDrag(ring);
-                }
-                // Resolve the picked element's vert indices → world positions
-                // so the drag attenuates by distance to the element GEOMETRY
-                // (segment / face), parallel to anchorRing. Out-of-range
-                // indices skipped; empty → elementWeight falls back to the
-                // pickedCenter point distance.
-                Vec3[] aPos;
-                if (auto m = mesh) {
-                    const size_t nV = m.vertices.length;
-                    foreach (vi; ring)
-                        if (cast(size_t)vi < nV) aPos ~= m.vertices[vi];
-                }
-                dragFalloff.anchorPos = aPos;
+                // Re-run the SAME resolver evaluate() uses (ring walk /
+                // connect-mask BFS / anchor world-positions) against the
+                // stage's freshly click-picked raw fields (fs.anchorRing was
+                // just written by tryPickElement, AFTER the host's vts
+                // snapshot above — see the staleness note this branch
+                // opens with). `fs.mesh_` and this tool's `mesh` accessor
+                // both resolve to the document's primary under
+                // single-primary editing, so the resolver reads the same
+                // geometry the pick indexed (note a).
+                //
+                // .dup is required, not optional: resolveElementBuffers()
+                // returns slices ALIASING the stage's owned buffers
+                // (loopRing_/connectMask_/anchorPos_), which the very next
+                // per-frame evaluate() rewrites in place. `dragFalloff` must
+                // outlive that rewrite for the whole drag, so every slice is
+                // copied here.
+                //
+                // Side effect (note b): calling this here mutates the
+                // stage's owned buffers a frame early (normally only
+                // evaluate() touches them). Benign — the next evaluate() in
+                // the per-frame pipe walk re-runs all three resolvers and
+                // overwrites them from scratch; nothing reads the owned
+                // buffers between this capture and that re-eval.
+                auto er = fs.resolveElementBuffers();
+                dragFalloff.anchorRing  = er.ring.dup;
+                dragFalloff.connectMask = er.connectMask.dup;
+                dragFalloff.anchorPos   = er.anchorPos.dup;
             }
             import toolpipe.pipeline         : g_pipeCtx;
             import toolpipe.stages.actcenter : ActionCenterStage;
@@ -834,53 +823,6 @@ protected:
                     dragFalloff.pickedCenter = ac.currentCenter();
         }
         return dragFalloff.enabled;
-    }
-
-    /// BFS the connected component(s) of `ring` over the live mesh's
-    /// edge-adjacency, returning a per-vertex bool mask. Used by
-    /// captureFalloffForDrag when the interactive click-pick left
-    /// `connectMask` empty (headless tool.doApply / replay) so the
-    /// Element-falloff connectivity gate works without an actual click.
-    /// Empty result when the ring is empty or the mesh is unavailable —
-    /// elementWeight then treats the gate as a no-op.
-    protected bool[] resolveConnectMaskForDrag(const(uint)[] ring) {
-        if (ring.length == 0) return null;
-        auto m = mesh;
-        if (m is null) return null;
-        const size_t nV = m.vertices.length;
-        if (nV == 0) return null;
-        // Build undirected adjacency from mesh.edges.
-        auto offset = new size_t[](nV + 1);
-        foreach (e; m.edges) {
-            if (e[0] >= nV || e[1] >= nV) continue;
-            offset[e[0] + 1]++;
-            offset[e[1] + 1]++;
-        }
-        foreach (i; 1 .. nV + 1) offset[i] += offset[i - 1];
-        auto neighbors = new size_t[](offset[nV]);
-        auto cursor = new size_t[](nV);
-        foreach (i; 0 .. nV) cursor[i] = offset[i];
-        foreach (e; m.edges) {
-            if (e[0] >= nV || e[1] >= nV) continue;
-            neighbors[cursor[e[0]]++] = e[1];
-            neighbors[cursor[e[1]]++] = e[0];
-        }
-        auto visited = new bool[](nV);
-        size_t[] stack;
-        foreach (vi; ring) {
-            if (cast(size_t)vi >= nV || visited[vi]) continue;
-            visited[vi] = true;
-            stack ~= cast(size_t)vi;
-        }
-        while (stack.length > 0) {
-            size_t v = stack[$ - 1];
-            stack.length -= 1;
-            foreach (j; offset[v] .. offset[v + 1]) {
-                size_t nb = neighbors[j];
-                if (!visited[nb]) { visited[nb] = true; stack ~= nb; }
-            }
-        }
-        return visited;
     }
 
     /// Phase 7.6b: snapshot the SymmetryPacket at drag start. Same
