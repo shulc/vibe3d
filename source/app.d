@@ -1541,18 +1541,25 @@ void main(string[] args) {
     vpm.views[0].ecache.resize(mesh.edges.length);
 
     // Re-apply the persisted viewport-cell preset UNCONDITIONALLY (even when
-    // it is the default Single) so the frame-1 dock rebuild path
-    // (vpm.layoutDirty check, below in the DockSpace host) always runs. ImGui
-    // auto-saves whatever Viewport##k cell subtree was live into the layout
-    // ini regardless of the preset, so a stale multi-cell tree from a prior
-    // session can be sitting in the restored ini even though the persisted
-    // preset is Single. applyLayout() sets layoutDirty=true for every preset
-    // (viewport.d), which drives DockBuilderRemoveNodeChildNodes on the
-    // central node and rebuilds it from vpm.layout — deterministically
-    // overriding whatever ImGui restored. Interactive-only: --test keeps
-    // io.IniFilename == null (no ini to ever go stale) and skips this so
-    // test-mode dock geometry is untouched.
-    if (!testMode) vpm.applyLayout(g_prefs.viewportLayout);
+    // it is the default Single) so per-cell state (cellCount, cameras, GPU
+    // select buffers, independence) matches g_prefs.viewportLayout.
+    // applyLayout() also raises layoutDirty=true (viewport.d) — that flag
+    // drives the frame-1 DockSpace host (app.d, below) to do a FULL ROOT
+    // DockBuilderRemoveNode rebuild, which would discard the dock tree ImGui
+    // just restored from the layout ini, including every saved dock-node
+    // flag (HiddenTabBar) and the user's panel arrangement. At startup there
+    // is nothing to reconcile the dock tree against — the ini (or, if there
+    // is none yet, the frame-1 seed guard) is the sole source of it — so
+    // immediately clear the trigger and trust what was loaded. Runtime
+    // callers of applyLayout (the viewport.layout command) still want the
+    // rebuild and are unaffected: they raise layoutDirty AFTER this point in
+    // the frame. Interactive-only: --test keeps io.IniFilename == null (no
+    // ini to load) and skips this call entirely, so test-mode dock geometry
+    // is untouched.
+    if (!testMode) {
+        vpm.applyLayout(g_prefs.viewportLayout);
+        vpm.layoutDirty = false;
+    }
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
     // address-of (&x()) all bind against the ACTIVE viewport's live fields.
