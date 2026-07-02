@@ -37,6 +37,18 @@ struct Vec3 {
 }
 struct Vec4 { float x, y, z, w; }
 
+// A frozen (placed, center) override — the value-type shape shared by every
+// action-center pin lifetime (explicit-relocate, display-settle, in-session-
+// cancel baseline) and, downstream, the transform tool's per-gesture pin
+// snapshots. A single struct assignment (`a = b;`) copies both fields
+// atomically, which is the point: field-by-field copies of a placed flag +
+// a center vector are exactly how two "same" pins have historically drifted
+// apart one field at a time.
+struct Pin {
+    bool placed = false;
+    Vec3 center = Vec3(0, 0, 0);
+}
+
 struct Viewport {
     float[16] view;
     float[16] proj;

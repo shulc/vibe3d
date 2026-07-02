@@ -2,7 +2,7 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
+import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
@@ -101,7 +101,7 @@ class ActionCenterStage : Stage, Operator {
             if (sym.enabled
              && sym.vertSign.length == sym.pairOf.length
              && sym.vertSign.length > 0
-             && !userPlaced
+             && !userPin.placed
              && mode != Mode.Origin && mode != Mode.Manual
              && mode != Mode.Element && mode != Mode.Local
              && mode != Mode.Pivot  && mode != Mode.Parent)
@@ -112,7 +112,7 @@ class ActionCenterStage : Stage, Operator {
             }
         }
 
-        pkt.isAuto = (mode == Mode.Auto && !userPlaced);
+        pkt.isAuto = (mode == Mode.Auto && !userPin.placed);
         pkt.type   = cast(int)mode;
 
         // Phase 3 of the action-center parity plan: Local mode publishes
@@ -216,8 +216,11 @@ class ActionCenterStage : Stage, Operator {
     // center.* / axis.* tools registered until the user picks a
     // preset). Tests that rely on a specific mode set it explicitly.
     Mode mode = Mode.None;
-    Vec3 userPlacedCenter = Vec3(0, 0, 0);  // valid when userPlaced is true
-    bool userPlaced = false;                // click-outside marker for Auto / None / Screen
+    // R5 (typed Pin) — the explicit-relocate override (click-outside marker
+    // for Auto / None / Screen / Pivot / Parent). `userPin.placed` /
+    // `userPin.center` are the direct replacements for the former
+    // `userPlaced` / `userPlacedCenter` fields.
+    Pin  userPin;
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
     // Mode.Element: the picked element's vertex indices (single vert / edge
     // endpoints / face vert ring), set by the transform wrapper's click-pick
@@ -316,18 +319,15 @@ public:
     /// Also clears userLocked — SceneReset is an unconditional full reset.
     override void reset() {
         mode             = Mode.None;
-        userPlacedCenter = Vec3(0, 0, 0);
-        userPlaced       = false;
+        userPin          = Pin.init;
         elementVerts_    = null;
         manualCenter     = Vec3(0, 0, 0);
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
         userLocked       = false;
-        snapFrozen       = false;
-        snapPlaced       = false;
-        snapPlacedCenter = Vec3(0, 0, 0);
-        softPlaced       = false;
-        softPlacedCenter = Vec3(0, 0, 0);
+        cancelFrozen     = false;
+        cancelSnap       = Pin.init;
+        softPin          = Pin.init;
         invalidateClusterCache();
         publishState();
     }
@@ -385,10 +385,10 @@ public:
             ["cenX",          format("%g", c.x)],
             ["cenY",          format("%g", c.y)],
             ["cenZ",          format("%g", c.z)],
-            ["userPlaced",    userPlaced ? "true" : "false"],
-            ["userPlacedX",   format("%g", userPlacedCenter.x)],
-            ["userPlacedY",   format("%g", userPlacedCenter.y)],
-            ["userPlacedZ",   format("%g", userPlacedCenter.z)],
+            ["userPlaced",    userPin.placed ? "true" : "false"],
+            ["userPlacedX",   format("%g", userPin.center.x)],
+            ["userPlacedY",   format("%g", userPin.center.y)],
+            ["userPlacedZ",   format("%g", userPin.center.z)],
             ["selectSubMode", selectSubModeLabel()],
             ["clusterCount",  format("%d", clusters)],
         ];
@@ -453,11 +453,12 @@ public:
     /// here so the popup re-click clears any previous click-outside.
     void resetAuto() {
         mode = Mode.Auto;
-        userPlaced = false;
+        userPin.placed = false;   // preserves the pre-R5 shape: only the flag
+                                   // clears, the stale center is left in place
+                                   // (never read while placed==false)
         elementVerts_ = null;
         // Re-picking Auto re-follows the selection — drop any display settle.
-        softPlaced       = false;
-        softPlacedCenter = Vec3(0, 0, 0);
+        softPin = Pin.init;
         publishState();
     }
 
@@ -476,23 +477,20 @@ public:
         // pre-relocate state on the mouse-down relocate that precedes the
         // session's beginEdit (which then freezes whatever was last staged).
         // Relocates during an open session leave the frozen baseline alone.
-        if (!snapFrozen) {
-            snapPlaced       = userPlaced;
-            snapPlacedCenter = userPlacedCenter;
+        if (!cancelFrozen) {
+            cancelSnap = userPin;
         }
-        userPlacedCenter = worldHit;
-        userPlaced       = true;
+        userPin = Pin(true, worldHit);
         // An explicit click-relocate supersedes any display settle (userPlaced
         // wins in computeCenter anyway; clear so the soft pin can't resurface if
         // userPlaced is later cleared without a fresh settle).
-        softPlaced       = false;
-        softPlacedCenter = Vec3(0, 0, 0);
+        softPin = Pin.init;
         publishState();
     }
 
     /// True iff a sticky click-outside pin is active (set via
     /// `setUserPlaced`, cleared by `resetAuto` or a mode switch).
-    bool isUserPlaced() const { return userPlaced; }
+    bool isUserPlaced() const { return userPin.placed; }
 
     /// Mode.Element: record the picked element's vertex ring so computeCenter
     /// tracks the element LIVE (see the `elementVerts_` field doc). The gizmo
@@ -536,7 +534,7 @@ public:
     //
     // Lifecycle (driven by the transform wrapper):
     //   - Every relocate that happens while NO snapshot is frozen stashes the
-    //     PRIOR pin state into `snapPlaced`/`snapPlacedCenter`. This catches the
+    //     PRIOR pin state into `cancelSnap`. This catches the
     //     relocate-before-beginEdit ordering: the latest pre-relocate state is
     //     always staged, even though setUserPlaced runs first.
     //   - `freezeUserPlacedSnapshot()` (called on the closed->open session
@@ -546,9 +544,8 @@ public:
     //     restores the frozen baseline and clears the freeze.
     //   - `discardUserPlacedSnapshot()` (called from a COMMIT path) clears the
     //     freeze WITHOUT restoring — committed relocates persist, as today.
-    private bool snapFrozen        = false;
-    private bool snapPlaced        = false;
-    private Vec3 snapPlacedCenter  = Vec3(0, 0, 0);
+    private bool cancelFrozen = false;   // was `snapFrozen`
+    private Pin  cancelSnap;             // was `snapPlaced`/`snapPlacedCenter`
 
     // ----- Display soft-pin (BUG-1: Move gizmo settle) ------------------------
     //
@@ -585,16 +582,14 @@ public:
     // mutation boundary and an ACEN-mode boundary. It is NOT read by the relocate-
     // boundary detection, beginRunGesture / per-run baseline, or the falloff-
     // element pick (all of which use userPlaced).
-    private bool softPlaced        = false;
-    private Vec3 softPlacedCenter  = Vec3(0, 0, 0);
+    private Pin softPin;   // was `softPlaced`/`softPlacedCenter`
 
     /// Record the settled display pivot after a Move gizmo mouse-up so the
     /// recompute modes (Auto / None / Screen) return it instead of the weighted
     /// moving-set centroid (BUG-1). Display-only: does NOT touch userPlaced or any
     /// relocate snapshot. publishState so the live gizmo follows immediately.
     void setSoftPlaced(Vec3 settled) {
-        softPlaced       = true;
-        softPlacedCenter = settled;
+        softPin = Pin(true, settled);
         publishState();
     }
 
@@ -603,21 +598,20 @@ public:
     /// reset / mode-switch / explicit relocate / selection or ACEN-mode boundary.
     /// No-op (besides a publish-free early return) when no soft pin is active.
     void clearSoftPlaced() {
-        if (!softPlaced) return;
-        softPlaced       = false;
-        softPlacedCenter = Vec3(0, 0, 0);
+        if (!softPin.placed) return;
+        softPin = Pin.init;
         publishState();
     }
 
     /// True iff a display soft-pin is active. (Used by tests / introspection;
     /// computeCenter reads the field directly.)
-    bool isSoftPlaced() const { return softPlaced; }
+    bool isSoftPlaced() const { return softPin.placed; }
 
     /// The current soft-pin center (meaningful only when isSoftPlaced()). Exposed
     /// so the transform wrapper can capture the gesture-START / gesture-END soft
     /// state for the Move undo/redo hooks, mirroring currentPinCenter() for the
     /// userPlaced pin.
-    Vec3 currentSoftCenter() const { return softPlacedCenter; }
+    Vec3 currentSoftCenter() const { return softPin.center; }
 
     /// Restore the display soft-pin to an explicit (placed, center) endpoint and
     /// publish. Used by the wrapper's Move undo/redo hooks to carry the soft pin
@@ -627,8 +621,7 @@ public:
     /// of restorePinState (userPlaced) — the two own disjoint state and compose in
     /// one hook closure without clobber.
     void restoreSoftPlaced(bool placed, Vec3 center) {
-        softPlaced       = placed;
-        softPlacedCenter = placed ? center : Vec3(0, 0, 0);
+        softPin = Pin(placed, placed ? center : Vec3(0, 0, 0));
         publishState();
     }
 
@@ -636,22 +629,21 @@ public:
     /// baseline for an opening edit session. Called once per session on the
     /// closed->open transition; subsequent relocates within the session do not
     /// disturb the frozen baseline.
-    void freezeUserPlacedSnapshot() { snapFrozen = true; }
+    void freezeUserPlacedSnapshot() { cancelFrozen = true; }
 
     /// Restore the action-center pin to its frozen session-start state and
     /// clear the freeze. Called from the transform wrapper's
     /// cancelUncommittedEdit() alongside the vertex / attr restore.
     void restoreUserPlacedSnapshot() {
-        if (!snapFrozen) return;
-        userPlaced       = snapPlaced;
-        userPlacedCenter = snapPlacedCenter;
-        snapFrozen       = false;
+        if (!cancelFrozen) return;
+        userPin      = cancelSnap;
+        cancelFrozen = false;
         publishState();
     }
 
     /// Drop the frozen snapshot WITHOUT restoring. Called from the commit
     /// (tool-drop / guard-trip) path so a committed relocate stays put.
-    void discardUserPlacedSnapshot() { snapFrozen = false; }
+    void discardUserPlacedSnapshot() { cancelFrozen = false; }
 
     // ----- Per-gesture undo-hook pin accessors (record+consolidate, addendum-2)
     //
@@ -663,7 +655,7 @@ public:
     // pin, apply restores the gesture-END pin (the current pin at mouse-up).
     //
     // W1 fix: the gesture-START is NOT read from the frozen snapshot
-    // (snapPlaced/snapPlacedCenter). That snapshot holds the PRE-relocate pin
+    // (cancelSnap). That snapshot holds the PRE-relocate pin
     // staged at the last relocate — the right in-flight cancel baseline, but the
     // WRONG gesture-START for the 2nd+ plain gesture in a userPlaced run (no
     // boundary re-stages it, so the frozen value is stale, from a relocate
@@ -677,7 +669,7 @@ public:
     /// beginEdit, and the gesture-END pin captured at mouse-up after any
     /// sticky-follow has settled. (isUserPlaced(), above, supplies the placed
     /// flag for the same endpoint.)
-    Vec3 currentPinCenter() const { return userPlacedCenter; }
+    Vec3 currentPinCenter() const { return userPin.center; }
 
     /// Restore the pin to an explicit (placed, center) endpoint and publish so
     /// the visible gizmo follows. Used by the wrapper's Move undo/redo hooks to
@@ -685,8 +677,7 @@ public:
     /// (apply) pin in lockstep with the geometry. Does NOT touch the frozen
     /// snapshot — hooks run outside any open session.
     void restorePinState(bool placed, Vec3 center) {
-        userPlaced       = placed;
-        userPlacedCenter = center;
+        userPin = Pin(placed, center);
         publishState();
     }
 
@@ -703,26 +694,24 @@ public:
     /// rule). It still hits the SAME `setUserPlaced`/`commitEdit` staging trap
     /// as Phases 1a/1b, though:
     ///
-    ///   [prior run open: snapFrozen == true]
-    ///   commitEdit (boundary) → discardUserPlacedSnapshot() → snapFrozen = false
-    ///                           (clears the freeze WITHOUT restoring snapPlaced)
-    ///   stageCurrentPinState() → snapPlaced = userPlaced;
-    ///                            snapPlacedCenter = userPlacedCenter   (no publish)
+    ///   [prior run open: cancelFrozen == true]
+    ///   commitEdit (boundary) → discardUserPlacedSnapshot() → cancelFrozen = false
+    ///                           (clears the freeze WITHOUT restoring cancelSnap)
+    ///   stageCurrentPinState() → cancelSnap = userPin   (no publish)
     ///   beginEdit (next drag)  → freezeUserPlacedSnapshot() freezes THIS staged
     ///                            (current, un-mutated) pin as the new baseline
     ///
     /// Without this, the next `beginEdit` would freeze whatever STALE value
-    /// `snapPlaced` last held (from a relocate two sessions ago — matters in
+    /// `cancelSnap` last held (from a relocate two sessions ago — matters in
     /// Element mode, where `userPlaced` is genuinely set from a prior pick and
     /// an off-gizmo NON-element click there takes the Phase 5 path); a later
     /// in-session cancel would then restore the WRONG pin. Re-staging the
     /// current pin verbatim keeps the cancel baseline equal to the (unchanged)
-    /// pin. Only stages while `!snapFrozen` (the commit cleared it just above);
+    /// pin. Only stages while `!cancelFrozen` (the commit cleared it just above);
     /// a stray call mid-session is a no-op, mirroring `setUserPlaced`'s guard.
     void stageCurrentPinState() {
-        if (snapFrozen) return;
-        snapPlaced       = userPlaced;
-        snapPlacedCenter = userPlacedCenter;
+        if (cancelFrozen) return;
+        cancelSnap = userPin;
     }
 
     /// Switch into Manual mode and pin the center. Mirror of
@@ -806,8 +795,8 @@ public:
 private:
 
     Vec3 computeCenter() const {
-        if (relocateAllowed(mode) && userPlaced) return userPlacedCenter;
-        if (settlePinHonored()    && softPlaced) return softPlacedCenter;
+        if (relocateAllowed(mode) && userPin.placed) return userPin.center;
+        if (settlePinHonored()    && softPin.placed) return softPin.center;
         final switch (mode) {
             case Mode.Auto:
                 return centroidWithGeometryFallback();
@@ -841,7 +830,7 @@ private:
                 // center) — Element is excluded from `relocateAllowed`.
                 Vec3 elc;
                 if (liveElementCenter(elc)) return elc;
-                if (userPlaced) return userPlacedCenter;
+                if (userPin.placed) return userPin.center;
                 return elementCenter();
             case Mode.Local: {
                 // D5 dedup: reuse the SAME cached BFS body `evaluate()` uses
@@ -1366,10 +1355,10 @@ private:
                 // Auto-userPlaced sub-state, as a popup re-click does, and the
                 // display settle (a new mode recomputes the center afresh).
                 mode = cast(Mode)v;
-                userPlaced       = false;
-                elementVerts_    = null;
-                softPlaced       = false;
-                softPlacedCenter = Vec3(0, 0, 0);
+                userPin.placed = false;   // preserves the pre-R5 shape: stale
+                                           // center left in place, see resetAuto()
+                elementVerts_  = null;
+                softPin        = Pin.init;
                 return true;
             }
             case "cenX": case "cenY": case "cenZ": {
@@ -1418,10 +1407,10 @@ private:
                 float v;
                 try v = value.to!float;
                 catch (Exception) return false;
-                if      (name == "userPlacedX") userPlacedCenter.x = v;
-                else if (name == "userPlacedY") userPlacedCenter.y = v;
-                else                            userPlacedCenter.z = v;
-                userPlaced = true;
+                if      (name == "userPlacedX") userPin.center.x = v;
+                else if (name == "userPlacedY") userPin.center.y = v;
+                else                            userPin.center.z = v;
+                userPin.placed = true;
                 return true;
             }
             case "selectSubMode": {
@@ -1448,7 +1437,7 @@ private:
 
     void publishState() {
         setStatePath("actionCenter/mode", modeLabel());
-        setStatePath("actionCenter/userPlaced", userPlaced ? "true" : "false");
+        setStatePath("actionCenter/userPlaced", userPin.placed ? "true" : "false");
         setStatePath("actionCenter/selectSubMode", selectSubModeLabel());
     }
 }
@@ -1749,10 +1738,10 @@ unittest {
     // ground-truth table (incl. BOTH set, to prove precedence order) is
     // reachable.
     void setPins(bool up, bool sp) {
-        acs.userPlaced       = up;
-        acs.userPlacedCenter = up ? userPt : zero;
-        acs.softPlaced       = sp;
-        acs.softPlacedCenter = sp ? softPt : zero;
+        acs.userPin.placed = up;
+        acs.userPin.center = up ? userPt : zero;
+        acs.softPin.placed = sp;
+        acs.softPin.center = sp ? softPt : zero;
     }
 
     alias Mode = ActionCenterStage.Mode;
