@@ -50,6 +50,13 @@ enum Cat {
     // mesh.remove (interactive transform drags use kernelApply / pipeTotal
     // instead). Must stay a TIMER (ordinal < firstCounter).
     commandApply,
+    // --- draw / picking / preview timers (task 0196) ---
+    drawMesh,          // foreground faces (solid/lit) draw
+    drawEdges,         // foreground wireframe edge draw (+ occasional sel-edge cache)
+    drawOverlays,      // selection checker + vertex dots + tool/falloff gizmo & handles
+    viewcacheRebuild,  // screen-space pick-cache invalidate (camera/mesh change)
+    hoverPick,         // per-frame hover pick (GPU ID-FBO + BVH face raycast)
+    subpatchPreview,   // OSD subpatch preview rebuild
     // --- counters ---
     falloffEvalCount,
     vertsTouched,

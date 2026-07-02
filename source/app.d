@@ -7369,6 +7369,12 @@ void main(string[] args) {
 
         shader.useProgram(meshModel, vp);
 
+        // Deliberately UNINSTRUMENTED in v1 (task 0196): the grid +
+        // symmetry-plane draws below (tiny constant cost) and the
+        // background-layer faces/edges loop further down (skipped entirely
+        // when document.layers.length == 1) have no Cat timer — a choice,
+        // not an omission. If wanted later, background faces fold into
+        // Cat.drawMesh and background edges into Cat.drawEdges.
         // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -7528,6 +7534,7 @@ void main(string[] args) {
 
         // ---- Faces (Blinn-Phong) ----
         {
+            auto zMesh = g_perf.scope_(Cat.drawMesh);
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
             bool toolFaceHover = activeTool !is null
@@ -7545,6 +7552,7 @@ void main(string[] args) {
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
             if (mesh.hasAnySelectedFaces()) {
+                auto zOv = g_perf.scope_(Cat.drawOverlays);
                 checkerShader.useProgram(meshModel, vp, 1.0f, 0.5f, 0.1f);
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
@@ -7555,48 +7563,53 @@ void main(string[] args) {
         shader.useProgram(meshModel, vp);
 
         // ---- Edges ----
-        if (editMode == EditMode.Edges) {
-            gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
-        } else if (editMode == EditMode.Polygons) {
-            if (faceSelEdgesPrevSel != mesh.selectedFaces) {
-                faceSelEdgesPrevSel = mesh.selectedFaces.dup;
-                if (faceSelEdgesCache.length != mesh.edges.length)
-                    faceSelEdgesCache = new bool[](mesh.edges.length);
-                faceSelEdgesCache[] = false;
+        {
+            auto zEdges = g_perf.scope_(Cat.drawEdges);
+            if (editMode == EditMode.Edges) {
+                gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
+            } else if (editMode == EditMode.Polygons) {
+                if (faceSelEdgesPrevSel != mesh.selectedFaces) {
+                    faceSelEdgesPrevSel = mesh.selectedFaces.dup;
+                    if (faceSelEdgesCache.length != mesh.edges.length)
+                        faceSelEdgesCache = new bool[](mesh.edges.length);
+                    faceSelEdgesCache[] = false;
 
-                bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
-                if (allSel) {
-                    faceSelEdgesCache[] = true;
-                } else {
-                    if (mesh.hasAnySelectedFaces()) {
-                        bool[ulong] edgeSet;
-                        foreach (fi, face; mesh.faces) {
-                            if (!mesh.isFaceSelected(fi)) continue;
-                            foreach (e; mesh.faceEdges(cast(uint)fi))
-                                edgeSet[edgeKey(e.a, e.b)] = true;
-                        }
-                        foreach (ei, edge; mesh.edges) {
-                            if (edgeKey(edge[0], edge[1]) in edgeSet)
-                                faceSelEdgesCache[ei] = true;
+                    bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
+                    if (allSel) {
+                        faceSelEdgesCache[] = true;
+                    } else {
+                        if (mesh.hasAnySelectedFaces()) {
+                            bool[ulong] edgeSet;
+                            foreach (fi, face; mesh.faces) {
+                                if (!mesh.isFaceSelected(fi)) continue;
+                                foreach (e; mesh.faceEdges(cast(uint)fi))
+                                    edgeSet[edgeKey(e.a, e.b)] = true;
+                            }
+                            foreach (ei, edge; mesh.edges) {
+                                if (edgeKey(edge[0], edge[1]) in edgeSet)
+                                    faceSelEdgesCache[ei] = true;
+                            }
                         }
                     }
                 }
+                gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
+            } else if (showEdgeHover && hoveredEdge >= 0) {
+                const bool[] loopMask =
+                    (activeTool !is null && activeTool.wantsEdgeLoopHover())
+                        ? rebuildLoopHoverMask(hoveredEdge)
+                        : (bool[]).init;
+                gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
+            } else {
+                gpu.drawEdges(shader.locColor, -1, []);
             }
-            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
-        } else if (showEdgeHover && hoveredEdge >= 0) {
-            const bool[] loopMask =
-                (activeTool !is null && activeTool.wantsEdgeLoopHover())
-                    ? rebuildLoopHoverMask(hoveredEdge)
-                    : (bool[]).init;
-            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
-        } else {
-            gpu.drawEdges(shader.locColor, -1, []);
         }
 
         // ---- Vertex dots ----
         if (editMode == EditMode.Vertices) {
+            auto zOv = g_perf.scope_(Cat.drawOverlays);
             gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
         } else if (showVertHover && hoveredVertex >= 0) {
+            auto zOv = g_perf.scope_(Cat.drawOverlays);
             gpu.drawVertices(shader.locColor, hoveredVertex, (bool[]).init);
         }
 
@@ -7608,6 +7621,10 @@ void main(string[] args) {
         // NOTE: activeTool.update() already ran in the main loop before this
         // function is called, so handle-hover state is current.
         if (drawOverlays) {
+            // Cat.drawOverlays (enum) — distinct from the bool drawOverlays
+            // param gating this block; the `Cat.` qualifier disambiguates
+            // for the human reader (compiler never confuses them).
+            auto zOv = g_perf.scope_(Cat.drawOverlays);
             if (activeTool) {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 activeTool.draw(shader, vp, vts);
@@ -8794,6 +8811,12 @@ void main(string[] args) {
             auto zFramesCache = g_frames.phase(Phase.cache);
         {
             import change_bus : MeshEditScope;
+            // NB: Cat.viewcacheRebuild (inside each vertex/edge/faceCache
+            // .invalidate() body) nests inside this Cat.cacheInvalidate block
+            // ON PURPOSE — two granularities (whole per-frame block vs the
+            // per-call bool-clear). Distinct JSON keys, so no within-category
+            // double-count; only a naive cross-category SUM would count the
+            // bool-clear twice. Do not "flatten" one into the other.
             auto zCache = g_perf.scope_(Cat.cacheInvalidate);
             if (meshChangedFlags & MeshEditScope.Geometry) {
                 // Counts may have changed — match cache sizes to the mesh and
