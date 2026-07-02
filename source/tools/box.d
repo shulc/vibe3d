@@ -2435,7 +2435,7 @@ public:
         return false;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // Snap overlay renders even in Idle so the user sees the cyan
         // target before the first click anchors the box.

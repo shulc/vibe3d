@@ -400,7 +400,7 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // Selection may have changed since activate() (e.g. the user picked a
         // different edge in the viewport before grabbing a handle). Recompute

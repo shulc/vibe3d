@@ -88,7 +88,7 @@ public:
 
     // Cache the viewport each frame so pick helpers have current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
-                       ref VectorStack vts)
+                       ref VectorStack vts, bool visualOnly = false)
     {
         cachedVp_ = vp;
     }

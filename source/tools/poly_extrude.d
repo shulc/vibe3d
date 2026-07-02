@@ -242,7 +242,7 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // Recompute gizmo frame when selection changes while idle (not mid-drag,
         // not after built preview — that would double-count the distance offset).

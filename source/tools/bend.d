@@ -54,7 +54,7 @@ public:
         ];
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // No gizmo for now; falloff overlay if active.
         import toolpipe.packets : FalloffPacket;

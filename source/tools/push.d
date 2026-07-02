@@ -47,7 +47,7 @@ public:
     // through `tool.attr xfrm.push dist <v>; tool.doApply` (the
     // headless / scripted path). Interactive Y-drag-to-distance can
     // land later if a use case surfaces.
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // No gizmo for now; the falloff overlay still renders if the
         // user has set up a falloff stage.

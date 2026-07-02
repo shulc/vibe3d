@@ -102,7 +102,7 @@ public:
 
     // Cache the viewport each frame so onMouseButtonDown has current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
-                       ref VectorStack vts)
+                       ref VectorStack vts, bool visualOnly = false)
     {
         cachedVp_ = vp;
         drawSnapOverlay(lastSnap_, vp, *mesh);

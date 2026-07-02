@@ -490,7 +490,7 @@ public:
         }
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // Snap overlay (cyan element + yellow cursor marker) renders
         // even in Idle so the user sees where the FIRST vertex would
