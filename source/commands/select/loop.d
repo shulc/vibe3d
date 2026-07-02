@@ -18,6 +18,17 @@ class SelectLoop : Command {
     override string name() const { return "select.loop"; }
 
     override bool apply() {
+        // Settled-mesh precondition (debug-only, stripped from release
+        // builds): this command only READS the loops family / edgeIndexMap
+        // (walkEdgeLoop/walkFaceLoop/walkVertexLoop, mesh.edgeIndex) and
+        // never mutates topology itself. The command dispatcher runs one
+        // Command.apply() to completion — including any terminal
+        // buildLoops() a prior topology-mutating command performed — before
+        // starting the next, so by the time this apply() begins the mesh is
+        // always settled. Catches a hypothetical future topology mutator
+        // that forgets its buildLoops() before the next select.loop runs.
+        mesh.assertLoopsValid();
+        mesh.assertEdgeMapValid();
         snap = SelectionSnapshot.capture(*mesh);
         // ------------------------------------------------------------------ //
         //  Edge loop                                                           //

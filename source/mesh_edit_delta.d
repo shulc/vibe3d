@@ -745,6 +745,10 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // unconditionally for the (currently impossible) non-Geometry tracked delta,
     // keeping the counters byte-identical to the old two raw bumps.
     m.commitChange(scope_);
+    // This raw bump touches topologyVersion only. It is decoupled from the
+    // structVersion-keyed loops/edgeIndexMap validity stamp (mesh.d) — that
+    // stamp is set by the rebuildEdges()+buildLoops() pair above, which
+    // already landed Valid regardless of this line.
     if (!(scope_ & MeshEditScope.Geometry)) ++m.topologyVersion;
 }
 
