@@ -1096,6 +1096,12 @@ struct OsdAccel {
         outMesh.vertLoop    .length = 0;
         outMesh.loopEdge    .length = 0;
         outMesh.edgeIndexMap = null;
+        // This mesh's edges[] were written directly above (scratchEdgeVerts),
+        // bypassing addEdge/rebuildEdges, so structVersion never bumped —
+        // outMesh could otherwise carry a stale (loopsStamp == structVersion)
+        // coincidence from a prior reuse of this same buffer and read as
+        // falsely valid. Mark both DeliberatelyEmpty explicitly instead.
+        outMesh.markDerivedEmpty();
 
         // ---- SubpatchTrace ------------------------------------------
         // OSD's `*_origins[i]` index INTO OSD's own cage enumeration,
