@@ -2712,9 +2712,16 @@ void main(string[] args) {
     reg.commandFactories["mesh.julienne"] = () => cast(Command)
         new MeshJulienne(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache(), &edgeCache(), &faceCache());
-    reg.commandFactories["mesh.screenSlice"] = () => cast(Command)
-        new MeshScreenSlice(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+    reg.commandFactories["mesh.screenSlice"] = () {
+        auto c = new MeshScreenSlice(&mesh(), cameraView, editMode, &gpu,
+                                     &vertexCache(), &edgeCache(), &faceCache());
+        // Viewport camera single-source (0181): resolve the camera-plane cut
+        // through the follow-aware snapshot instead of the cell's raw own
+        // transform — see command.d's effectiveViewport() for the fallback
+        // hazard note.
+        c.setResolvedVpProvider(() => vpm.originSnapshot());
+        return cast(Command) c;
+    };
     reg.commandFactories["mesh.edgeSlice"] = () => cast(Command)
         new MeshEdgeSlice(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache(), &edgeCache(), &faceCache());
@@ -2809,12 +2816,20 @@ void main(string[] args) {
     reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
         new MeshMakePolygon(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache(), &edgeCache(), &faceCache());
-    reg.commandFactories["mesh.select"] = () => cast(Command)
-        (new MeshSelect(&mesh(), cameraView, editMode, &editMode))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["mesh.transform"] = () => cast(Command)
-        new MeshTransform(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+    reg.commandFactories["mesh.select"] = () {
+        auto c = new MeshSelect(&mesh(), cameraView, editMode, &editMode);
+        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
+        // Viewport camera single-source (0181): see mesh.screenSlice above.
+        c.setResolvedVpProvider(() => vpm.originSnapshot());
+        return cast(Command) c;
+    };
+    reg.commandFactories["mesh.transform"] = () {
+        auto c = new MeshTransform(&mesh(), cameraView, editMode, &gpu,
+                                   &vertexCache(), &edgeCache(), &faceCache());
+        // Viewport camera single-source (0181): see mesh.screenSlice above.
+        c.setResolvedVpProvider(() => vpm.originSnapshot());
+        return cast(Command) c;
+    };
     reg.commandFactories["mesh.quantize"] = () => cast(Command)
         new MeshQuantize(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache(), &edgeCache(), &faceCache());
@@ -5508,7 +5523,7 @@ void main(string[] args) {
                         }
                         foreach (fi; 0 .. mesh.faces.length) {
                             if (!cageVisited[fi] || !cageAllInside[fi]) continue;
-                            symmetricSelectFace(&mesh(), cameraView, editMode,
+                            symmetricSelectFace(&mesh(), vp2, editMode,
                                                 cast(int)fi, /*deselect=*/ctrl);
                         }
                     } else {
@@ -5533,7 +5548,7 @@ void main(string[] args) {
                                 }
                             }
                             if (allInside) {
-                                symmetricSelectFace(&mesh(), cameraView, editMode,
+                                symmetricSelectFace(&mesh(), vp2, editMode,
                                                     cast(int)fi, /*deselect=*/ctrl);
                             }
                         }
@@ -5558,7 +5573,7 @@ void main(string[] args) {
                             float sx, sy, ndcZ;
                             if (!projectToWindow(pv.vertices[pi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                symmetricSelectVertex(&mesh(), cameraView, editMode,
+                                symmetricSelectVertex(&mesh(), vp2, editMode,
                                                       cast(int)cage, /*deselect=*/ctrl);
                             }
                         }
@@ -5570,7 +5585,7 @@ void main(string[] args) {
                             float sx, sy, ndcZ;
                             if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                symmetricSelectVertex(&mesh(), cameraView, editMode,
+                                symmetricSelectVertex(&mesh(), vp2, editMode,
                                                       cast(int)vi, /*deselect=*/ctrl);
                             }
                         }
@@ -5622,7 +5637,7 @@ void main(string[] args) {
                         }
                         foreach (ei; 0 .. mesh.edges.length) {
                             if (!cageVisited[ei] || !cageAllInside[ei]) continue;
-                            symmetricSelectEdge(&mesh(), cameraView, editMode,
+                            symmetricSelectEdge(&mesh(), vp2, editMode,
                                                 cast(int)ei, /*deselect=*/ctrl);
                         }
                     } else {
@@ -5649,7 +5664,7 @@ void main(string[] args) {
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
                                         gpu, vp2)) continue;
-                                symmetricSelectEdge(&mesh(), cameraView, editMode,
+                                symmetricSelectEdge(&mesh(), vp2, editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }
                         }
@@ -5801,10 +5816,10 @@ void main(string[] args) {
 
         hoveredVertex = hit;
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectVertex(&mesh(), cameraView, editMode,
+            symmetricSelectVertex(&mesh(), vp, editMode,
                                   hoveredVertex, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectVertex(&mesh(), cameraView, editMode,
+            symmetricSelectVertex(&mesh(), vp, editMode,
                                   hoveredVertex, /*deselect=*/true);
     }
 
@@ -5832,10 +5847,10 @@ void main(string[] args) {
         if (hit < 0) return;
         hoveredEdge = hit;
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectEdge(&mesh(), cameraView, editMode,
+            symmetricSelectEdge(&mesh(), vp, editMode,
                                 hoveredEdge, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectEdge(&mesh(), cameraView, editMode,
+            symmetricSelectEdge(&mesh(), vp, editMode,
                                 hoveredEdge, /*deselect=*/true);
     }
 
@@ -5869,10 +5884,10 @@ void main(string[] args) {
 
         hoveredFace = hit;
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectFace(&mesh(), cameraView, editMode,
+            symmetricSelectFace(&mesh(), vp, editMode,
                                 hoveredFace, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectFace(&mesh(), cameraView, editMode,
+            symmetricSelectFace(&mesh(), vp, editMode,
                                 hoveredFace, /*deselect=*/true);
     }
 
@@ -7181,7 +7196,7 @@ void main(string[] args) {
                 meshModel = matMul4(itemMatrix, tt.gpuMatrix);
         }
 
-        shader.useProgram(meshModel, v.camera);
+        shader.useProgram(meshModel, vp);
 
         // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
         glEnable(GL_BLEND);
@@ -7202,7 +7217,7 @@ void main(string[] args) {
             }
         }
         // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
-        gridShader.useProgram(gridModel, v.camera,
+        gridShader.useProgram(gridModel, vp,
             v.camera.distance * 2.0f,
             cast(float)v.fbo.w, cast(float)v.fbo.h,
             0.0f, 0.0f);
@@ -7253,7 +7268,7 @@ void main(string[] args) {
                     a2.x, a2.y, a2.z, 0,
                     c.x,  c.y,  c.z,  1,
                 ];
-                gridShader.useProgram(symModel, v.camera,
+                gridShader.useProgram(symModel, vp,
                     v.camera.distance * 2.0f,
                     cast(float)v.fbo.w, cast(float)v.fbo.h,
                     0.0f, 0.0f);
@@ -7303,13 +7318,13 @@ void main(string[] args) {
                     bg.uploadedVersion = lyr.mesh.mutationVersion;
                 }
 
-                litShader.useProgram(bgModel, v.camera);
+                litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.mesh.surfaces);
                 litShader.setDim(kBgDim);
                 bg.gpu.drawFaces(litShader);
                 litShader.setDim(1.0f);
 
-                shader.useProgram(bgModel, v.camera);
+                shader.useProgram(bgModel, vp);
                 shader.setDim(kBgDim);
                 bg.gpu.drawEdges(shader.locColor, -1, []);
                 shader.setDim(1.0f);
@@ -7342,7 +7357,7 @@ void main(string[] args) {
 
         // ---- Faces (Blinn-Phong) ----
         {
-            litShader.useProgram(meshModel, v.camera);
+            litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
@@ -7359,14 +7374,14 @@ void main(string[] args) {
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
             if (mesh.hasAnySelectedFaces()) {
-                checkerShader.useProgram(meshModel, v.camera, 1.0f, 0.5f, 0.1f);
+                checkerShader.useProgram(meshModel, vp, 1.0f, 0.5f, 0.1f);
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
                 glEnable(GL_DEPTH_TEST);
             }
         }
 
-        shader.useProgram(meshModel, v.camera);
+        shader.useProgram(meshModel, vp);
 
         // ---- Edges ----
         if (editMode == EditMode.Edges) {
@@ -8345,7 +8360,7 @@ void main(string[] args) {
         // always pinning to the static layout.vpX/vpY from the pre-NewFrame stamp.
         DrawGizmo(cast(float)(vp.x + 32),
                   cast(float)(vp.y + vp.height - 32),
-                  cameraView.view, gz_a1, gz_n, gz_a2);
+                  vp.view, gz_a1, gz_n, gz_a2);
 
         // ---- Playback cursor overlay ----
         {
