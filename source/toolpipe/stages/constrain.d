@@ -1,12 +1,21 @@
 module toolpipe.stages.constrain;
 
-import std.format : format;
-
-import toolpipe.stage   : Stage, TaskCode, ordCons, parseInto;
+import toolpipe.stage   : Stage, TaskCode, ordCons;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom;
 import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
-import params           : Param, IntEnumEntry;
+import params           : Param, IntEnumEntry, wireTagForValue;
+
+// Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
+// fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
+// parseInto), and publishState()'s stringify all read this ONE table instead
+// of three separate hand-written geom<->token switches.
+private static immutable IntEnumEntry[] constrainGeomEntries = [
+    IntEnumEntry(cast(int)ConstrainGeom.Off,    "off",    "Off"),
+    IntEnumEntry(cast(int)ConstrainGeom.Screen, "screen", "Screen"),
+    IntEnumEntry(cast(int)ConstrainGeom.Vector, "vector", "Vector"),
+    IntEnumEntry(cast(int)ConstrainGeom.Point,  "point",  "Point"),
+];
 
 // ---------------------------------------------------------------------------
 // ConstrainStage — tool-pipe CONS slot (ordinal 0x41, after SNAP 0x40).
@@ -90,21 +99,21 @@ public:
         publishState();
     }
 
-    // --- Typed params schema (drives Tool Properties panel visibility) ------
-    // When disabled, expose ONLY the `enabled` toggle so the panel hides the
-    // four dependent rows (Mode / Offset / Handle / Dbl Sided) until the user
-    // enables the stage. The full 5-param set remains reachable via the HTTP
-    // surface: setAttr / listAttrs / knownAttrs all use fullParams() —
-    // mirroring FalloffStage's filter + override pattern (stage.d:133-138).
-    private Param[] fullParams() {
+    // --- Typed params schema: fullParams() is the attr UNIVERSE, params()
+    // is the panel VISIBILITY filter over it (task 0184 / audit-2 C2). When
+    // disabled, params() exposes ONLY the `enabled` toggle so the panel hides
+    // the four dependent rows (Mode / Offset / Handle / Dbl Sided) until the
+    // user enables the stage. The full 5-param set stays reachable via the
+    // HTTP surface: the base Stage's setAttr / listAttrs / knownAttrs all
+    // derive from `fullParams()`, not `params()` — this MUST be a `public
+    // override` (not `private`) or the base dispatches to its own default
+    // `fullParams() => params()` and silently drops the 4 hidden attrs from
+    // the wire surface when disabled.
+    override Param[] fullParams() {
         return [
             Param.bool_("enabled", "Enabled", &enabled, false),
             Param.intEnum_("geometry", "Mode", cast(int*)&geom,
-                [IntEnumEntry(cast(int)ConstrainGeom.Off,    "off",    "Off"),
-                 IntEnumEntry(cast(int)ConstrainGeom.Screen, "screen", "Screen"),
-                 IntEnumEntry(cast(int)ConstrainGeom.Vector, "vector", "Vector"),
-                 IntEnumEntry(cast(int)ConstrainGeom.Point,  "point",  "Point")],
-                cast(int)ConstrainGeom.Point),
+                constrainGeomEntries, cast(int)ConstrainGeom.Point),
             Param.float_("offset",   "Offset",    &offset,   0.0f),
             Param.bool_("handle",    "Handle",    &handle,    true),
             Param.bool_("dblSided",  "Dbl Sided", &dblSided, false),
@@ -117,52 +126,21 @@ public:
         return enabled ? fullParams() : fullParams()[0 .. 1];
     }
 
-    // Keep the HTTP surface FULL regardless of the params() filter.
-    // stage.d default setAttr / listAttrs walk params() — after the filter they
-    // would drop the 4 hidden attrs. Override all three to use fullParams().
-    override string[] knownAttrs() {
-        return ["enabled", "geometry", "offset", "handle", "dblSided"];
-    }
-    override bool setAttr(string name, string value) {
-        foreach (ref p; fullParams()) {
-            if (p.name != name) continue;
-            bool ok = parseInto(p, value);
-            if (ok) onParamChanged(name);
-            return ok;
-        }
-        return false;
-    }
-    // const: must not call non-const fullParams(); stringify fields directly.
-    override string[2][] listAttrs() const {
-        string geomStr;
-        final switch (geom) {
-            case ConstrainGeom.Off:    geomStr = "off";    break;
-            case ConstrainGeom.Screen: geomStr = "screen"; break;
-            case ConstrainGeom.Vector: geomStr = "vector"; break;
-            case ConstrainGeom.Point:  geomStr = "point";  break;
-        }
-        return [
-            ["enabled",  enabled  ? "true" : "false"],
-            ["geometry", geomStr],
-            ["offset",   format("%g", offset)],
-            ["handle",   handle   ? "true" : "false"],
-            ["dblSided", dblSided ? "true" : "false"],
-        ];
-    }
+    // knownAttrs / setAttr / listAttrs are no longer overridden here — the
+    // base Stage derives all three from `fullParams()` (above), which is
+    // symmetric (every attr is a plain field-backed Param, no array /
+    // read-only / write-only asymmetry), so the three hand-written forks
+    // (and the geom->token switch each used to carry) are gone. See the
+    // `knownAttrs() == fullParams() names` unittest at the bottom of this
+    // file for the enforcement that replaces manual verification.
 
     override void onParamChanged(string name) { publishState(); }
 
 private:
     void publishState() {
         setStatePath("constrain/enabled", enabled ? "true" : "false");
-        string gstr;
-        final switch (geom) {
-            case ConstrainGeom.Off:    gstr = "off";    break;
-            case ConstrainGeom.Screen: gstr = "screen"; break;
-            case ConstrainGeom.Vector: gstr = "vector"; break;
-            case ConstrainGeom.Point:  gstr = "point";  break;
-        }
-        setStatePath("constrain/geometry", gstr);
+        setStatePath("constrain/geometry",
+                     wireTagForValue(constrainGeomEntries, cast(int)geom));
     }
 }
 
@@ -185,4 +163,56 @@ unittest {
     assert(ps[2].name == "offset");
     assert(ps[3].name == "handle");
     assert(ps[4].name == "dblSided");
+}
+
+// ---------------------------------------------------------------------------
+// OBJ-4 (MANDATORY): knownAttrs() == fullParams() names. Constrain's derived
+// knownAttrs() has ZERO coverage elsewhere — no `constrain` form exercises
+// the forms-engine startup validator that reads it — so a future edit that
+// silently un-derives it (reintroducing a hand literal, or forgetting to
+// promote `fullParams()` back to `public override` after some refactor)
+// would go undetected without this. It ALSO guards OBJ-5 directly: had
+// `fullParams()` been left `private` (non-virtual), the base's `knownAttrs()`
+// would dispatch to the BASE `fullParams()` (== `params()`, 1 attr while
+// disabled) and this assert would fail with length 1 instead of 5.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+    auto cs = new ConstrainStage();
+    // Even while disabled (params() under-reports 1), knownAttrs() must
+    // report the FULL 5-attr universe.
+    auto known = cs.knownAttrs();
+    auto full  = cs.fullParams();
+    assert(known.length == full.length,
+        "knownAttrs()/fullParams() length drift — OBJ-5 non-virtual trap?");
+    foreach (i, n; known)
+        assert(n == full[i].name, "knownAttrs()[" ~ i.to!string ~ "] != fullParams() name");
+    assert(known == ["enabled", "geometry", "offset", "handle", "dblSided"]);
+}
+
+// ---------------------------------------------------------------------------
+// OBJ-3: set->read round-trip + NEGATIVE + table-completeness for the
+// single-sourced `constrainGeomEntries` table (replaces the deleted
+// hand-written geom<->token switches).
+// ---------------------------------------------------------------------------
+unittest {
+    import params : tableCoversEnum;
+
+    auto cs = new ConstrainStage();
+    // Round-trip every wire tag through setAttr -> listAttrs.
+    foreach (tag; ["off", "screen", "vector", "point"]) {
+        assert(cs.setAttr("geometry", tag), "setAttr(geometry, " ~ tag ~ ") rejected");
+        bool found = false;
+        foreach (kv; cs.listAttrs())
+            if (kv[0] == "geometry") { assert(kv[1] == tag); found = true; }
+        assert(found, "listAttrs() missing 'geometry' after setAttr");
+    }
+    // NEGATIVE: a bogus token must be rejected (accept-set not widened).
+    assert(!cs.setAttr("geometry", "bogus"));
+
+    // TABLE-COMPLETENESS: every ConstrainGeom member has a table entry.
+    assert(tableCoversEnum(constrainGeomEntries, [
+        cast(int)ConstrainGeom.Off, cast(int)ConstrainGeom.Screen,
+        cast(int)ConstrainGeom.Vector, cast(int)ConstrainGeom.Point,
+    ]));
 }
