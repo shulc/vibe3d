@@ -3,6 +3,9 @@ module command_history;
 import command;
 import command : CmdFlags;
 import argstring : serializeParams;
+// Byte-neutral in the default build (perf_probe.g_perf.count is a no-op
+// inline stub without version(PerfProbe) — task 0200's undoApply counter).
+import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // CommandHistory — linear undo/redo stack of Command instances.
@@ -1088,6 +1091,7 @@ final class CommandHistory {
         }
 
         ++_undoEpoch;  // bump exactly once per successful undo
+        g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)
         return true;
     }
 

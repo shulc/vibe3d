@@ -60,6 +60,11 @@ enum Cat {
     // --- counters ---
     falloffEvalCount,
     vertsTouched,
+    // undoApply — bumped once per successful `undo()` (Case A/B success
+    // return, command_history.d:1090). A true counter (ordinal >
+    // firstCounter): used by the `undo-spam` frame scenario (task 0200) to
+    // assert an exact undo-apply count immune to main-loop frame batching.
+    undoApply,
 }
 
 /// First counter category. Categories with ordinal < this are timers.
