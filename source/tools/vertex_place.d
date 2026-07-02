@@ -13,14 +13,13 @@ import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tools.create_common : pickWorkplaneFrame, WorkplaneFrame,
+                              mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import operator : VectorStack;
-
-import std.math : abs;
 
 alias VertexEditFactory = MeshBevelEdit delegate();
 
@@ -192,12 +191,11 @@ public:
                             cachedVp_.view[10]);
         Vec3 pn;
         {
-            float aA = abs(dot(camBack, f.axis1));
-            float aN = abs(dot(camBack, f.normal));
-            float aZ = abs(dot(camBack, f.axis2));
-            if (aA >= aN && aA >= aZ)      pn = Vec3(1, 0, 0);
-            else if (aN >= aA && aN >= aZ) pn = Vec3(0, 1, 0);
-            else                            pn = Vec3(0, 0, 1);
+            final switch (mostFacingAxis(camBack, f.axis1, f.normal, f.axis2)) {
+                case 0: pn = Vec3(1, 0, 0); break;
+                case 1: pn = Vec3(0, 1, 0); break;
+                case 2: pn = Vec3(0, 0, 1); break;
+            }
         }
         Vec3 lEye = transformPoint(f.toLocal, cachedVp_.eye);
         Vec3 lRay = transformDir(f.toLocal, screenRay(e.x, e.y, cachedVp_));
@@ -220,15 +218,10 @@ private:
     void choosePlane_(const ref Viewport vp) {
         frame_ = pickWorkplaneFrame(vp);
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        float aA = abs(dot(camBack, frame_.axis1));
-        float aN = abs(dot(camBack, frame_.normal));
-        float aZ = abs(dot(camBack, frame_.axis2));
-        if (aA >= aN && aA >= aZ) {
-            planeNormal_ = Vec3(1, 0, 0);
-        } else if (aN >= aA && aN >= aZ) {
-            planeNormal_ = Vec3(0, 1, 0);
-        } else {
-            planeNormal_ = Vec3(0, 0, 1);
+        final switch (mostFacingAxis(camBack, frame_.axis1, frame_.normal, frame_.axis2)) {
+            case 0: planeNormal_ = Vec3(1, 0, 0); break;
+            case 1: planeNormal_ = Vec3(0, 1, 0); break;
+            case 2: planeNormal_ = Vec3(0, 0, 1); break;
         }
     }
 

@@ -17,7 +17,7 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
-                              currentWorkplaneFrame,
+                              currentWorkplaneFrame, mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -2271,7 +2271,8 @@ public:
                                  moverDragAxis, mover, cachedVp, skip)
                 : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
                                  moverDragAxis, mover.center, cachedVp, skip,
-                                 frame.axis1, frame.normal, frame.axis2);
+                                 frame.axis1, frame.normal, frame.axis2,
+                                 frame.normal);
             if (!skip) applyMoverDelta(delta);
             lastSnap = snapMover(moverDragAxis, e.x, e.y);
             publishLastSnap(lastSnap);
@@ -2985,24 +2986,28 @@ private:
         // side, the construction plane swaps to the right local plane
         // so it agrees with what the corner gizmo highlights.
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        float aA = abs(dot(camBack, frame.axis1));
-        float aN = abs(dot(camBack, frame.normal));
-        float aZ = abs(dot(camBack, frame.axis2));
-        if (aA >= aN && aA >= aZ) {
+        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
+        case 0: {
             float s = dot(camBack, frame.axis1) >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(s, 0, 0);
             planeAxis1  = Vec3(0, 1, 0);
             planeAxis2  = Vec3(0, 0, 1);
-        } else if (aN >= aA && aN >= aZ) {
+            break;
+        }
+        case 1: {
             float s = dot(camBack, frame.normal) >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(0, s, 0);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 0, 1);
-        } else {
+            break;
+        }
+        case 2: {
             float s = dot(camBack, frame.axis2) >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(0, 0, s);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 1, 0);
+            break;
+        }
         }
         // Align the rounded-cap primary axis with the construction-plane
         // normal so the cap orientation tracks the most-facing plane

@@ -17,6 +17,7 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
+                              mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -506,7 +507,8 @@ public:
                                  moverDragAxis, mover, cachedVp, skip)
                 : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
                                  moverDragAxis, mover.center, cachedVp, skip,
-                                 mover.axisX, mover.axisY, mover.axisZ);
+                                 mover.axisX, mover.axisY, mover.axisZ,
+                                 frame.normal);
             if (!skip) {
                 Vec3 dl = toLocalD(delta);
                 params_.cenX += dl.x;
@@ -681,21 +683,22 @@ private:
     void choosePlane(const ref Viewport vp) {
         frame = pickWorkplaneFrame(vp);
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        float aA = abs(dot(camBack, frame.axis1));
-        float aN = abs(dot(camBack, frame.normal));
-        float aZ = abs(dot(camBack, frame.axis2));
-        if (aA >= aN && aA >= aZ) {
-            planeNormal = Vec3(1, 0, 0);
-            planeAxis1  = Vec3(0, 1, 0);
-            planeAxis2  = Vec3(0, 0, 1);
-        } else if (aN >= aA && aN >= aZ) {
-            planeNormal = Vec3(0, 1, 0);
-            planeAxis1  = Vec3(1, 0, 0);
-            planeAxis2  = Vec3(0, 0, 1);
-        } else {
-            planeNormal = Vec3(0, 0, 1);
-            planeAxis1  = Vec3(1, 0, 0);
-            planeAxis2  = Vec3(0, 1, 0);
+        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
+            case 0:
+                planeNormal = Vec3(1, 0, 0);
+                planeAxis1  = Vec3(0, 1, 0);
+                planeAxis2  = Vec3(0, 0, 1);
+                break;
+            case 1:
+                planeNormal = Vec3(0, 1, 0);
+                planeAxis1  = Vec3(1, 0, 0);
+                planeAxis2  = Vec3(0, 0, 1);
+                break;
+            case 2:
+                planeNormal = Vec3(0, 0, 1);
+                planeAxis1  = Vec3(1, 0, 0);
+                planeAxis2  = Vec3(0, 1, 0);
+                break;
         }
     }
 
