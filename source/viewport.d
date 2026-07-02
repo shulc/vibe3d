@@ -158,6 +158,18 @@ struct DirtyKey {
     float[3]  overlayCenter  = 0; // gizmo pivot (ActionCenterPacket.center)
     float[3]  falloffCenter  = 0;
     float     falloffRadius  = 0;
+
+    // Task 0210 (Quad/Split live soft-drag preview) — shared GPU
+    // vertex-buffer epoch (GpuMesh.uploadVersion). meshMutVer stays stable
+    // during a soft/CPU-fold drag (deformers write mesh.vertices in place
+    // and re-upload the VBO WITHOUT a mutationVersion bump — see
+    // transform.d's uploadToGpu), and toolMat only moves on the RIGID
+    // fast-path (no re-upload happens there). This term moves whenever the
+    // VBO is rewritten, so inactive Quad/Split cells re-render on every
+    // frame a falloff drag deforms the mesh. `= 0` CTFE-constant default,
+    // inert in --test (Single layout never reaches the compare) — same
+    // neutrality argument as toolMat/overlay terms above.
+    ulong     gpuUploadVer   = 0;
 }
 
 unittest {
@@ -203,6 +215,22 @@ unittest {
     b.falloffCenter = [0.0f, 0.0f, 0.0f];
     b.falloffRadius = 3.0f;
     assert(a != b, "keys differing only in falloffRadius must compare unequal");
+}
+
+unittest {
+    // Task 0210: DirtyKey must also discriminate on gpuUploadVer alone —
+    // two keys identical in every other field (including toolMat/overlay*
+    // at rest) but differing only in gpuUploadVer must compare unequal.
+    // This is the exact freeze this term exists to fix: a soft/falloff
+    // drag re-uploads the shared VBO every frame without moving
+    // meshMutVer, toolMat, or any overlay term.
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.gpuUploadVer = 1;
+    assert(a != b, "keys differing only in gpuUploadVer must compare unequal");
 }
 
 // ---------------------------------------------------------------------------

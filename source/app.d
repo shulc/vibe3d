@@ -9635,6 +9635,11 @@ void main(string[] args) {
                         _newKey.overlayCenter = [_ovlCenter.x, _ovlCenter.y, _ovlCenter.z];
                         _newKey.falloffCenter = [_flCenter.x, _flCenter.y, _flCenter.z];
                         _newKey.falloffRadius = _flRadius;
+                        // Task 0210: shared GPU vertex-buffer epoch —
+                        // refreshes inactive Quad/Split cells during a soft
+                        // (falloff) drag, where the VBO is re-uploaded each
+                        // frame but meshMutVer/toolMat/overlay* do not move.
+                        _newKey.gpuUploadVer = gpu.uploadVersion;
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;
