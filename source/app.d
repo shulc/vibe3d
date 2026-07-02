@@ -3776,7 +3776,15 @@ void main(string[] args) {
         });
         httpServer.setCameraDataProvider((int vpIdx) {
             int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
-            return vpm.resolvedCameraJson(_idx);
+            string base = vpm.resolvedCameraJson(_idx);
+            // Additive, read-only fields for numpad-view-shortcut assertions
+            // (task 0215): splice viewPreset/projKind into the existing JSON
+            // body without touching View.toJsonWith, which other call sites
+            // and its own unittests already pin to the base shape.
+            string presetName = to!string(vpm.views[_idx].camera.viewPreset);
+            string projName   = to!string(vpm.views[_idx].camera.projKind);
+            return base[0 .. $ - 1] ~ `,"viewPreset":"` ~ presetName ~
+                `","projKind":"` ~ projName ~ `"}`;
         });
 
         // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main
@@ -4790,6 +4798,7 @@ void main(string[] args) {
             // Perspective/Camera → ProjKind.Perspective.
             if (id == "viewport.view") {
                 import view : ProjKind, ViewPreset;
+                import viewport : applyCellViewPreset;
                 string presetStr = "";
                 if (paramsJson.length > 0) {
                     auto pjv = parseJSON(paramsJson);
@@ -4808,22 +4817,26 @@ void main(string[] args) {
                         }
                     }
                 }
-                // Map string → preset + projKind.
+                // Map string → preset. projKind is derived from the preset
+                // by the shared helper (Perspective/Camera → Perspective,
+                // every axis preset → Ortho) — same mapping this switch used
+                // to hardcode per-case.
                 ViewPreset vp3preset = ViewPreset.Perspective;
-                ProjKind   vp3kind   = ProjKind.Perspective;
                 switch (presetStr) {
-                    case "Top":         vp3preset = ViewPreset.Top;         vp3kind = ProjKind.Ortho; break;
-                    case "Bottom":      vp3preset = ViewPreset.Bottom;      vp3kind = ProjKind.Ortho; break;
-                    case "Front":       vp3preset = ViewPreset.Front;       vp3kind = ProjKind.Ortho; break;
-                    case "Back":        vp3preset = ViewPreset.Back;        vp3kind = ProjKind.Ortho; break;
-                    case "Right":       vp3preset = ViewPreset.Right;       vp3kind = ProjKind.Ortho; break;
-                    case "Left":        vp3preset = ViewPreset.Left;        vp3kind = ProjKind.Ortho; break;
-                    case "Camera":      vp3preset = ViewPreset.Camera;      vp3kind = ProjKind.Perspective; break;
-                    default:            vp3preset = ViewPreset.Perspective; vp3kind = ProjKind.Perspective; break;
+                    case "Top":         vp3preset = ViewPreset.Top;         break;
+                    case "Bottom":      vp3preset = ViewPreset.Bottom;      break;
+                    case "Front":       vp3preset = ViewPreset.Front;       break;
+                    case "Back":        vp3preset = ViewPreset.Back;        break;
+                    case "Right":       vp3preset = ViewPreset.Right;       break;
+                    case "Left":        vp3preset = ViewPreset.Left;        break;
+                    case "Camera":      vp3preset = ViewPreset.Camera;      break;
+                    default:            vp3preset = ViewPreset.Perspective; break;
                 }
-                cameraView.viewPreset = vp3preset;
-                cameraView.projKind   = vp3kind;
-                vpm.views[vpm.activeId].dirty = true;
+                // Hardwired to the ACTIVE cell (viewport.view does not do
+                // ?viewport=N resolution — that's the separate camera-set
+                // handler registered via setCameraSetHandler; adding it here
+                // would be scope creep for task 0215).
+                applyCellViewPreset(vpm.views[vpm.activeId], vp3preset);
                 return;
             }
 
@@ -5568,6 +5581,57 @@ void main(string[] args) {
                     case "edges":    switchGeometryType(EditMode.Edges);    break;
                     case "polygons": switchGeometryType(EditMode.Polygons); break;
                 }
+                return;
+            }
+        }
+
+        // Numpad view shortcuts (task 0215): 1/2/3 switch the hovered (else
+        // active) viewport cell's view, toggling to the opposite face on a
+        // repeat press of the same key; numpad `.` sets Perspective
+        // (idempotent — repeat is a no-op). Read the SCANCODE (not keysym)
+        // so this survives NumLock OFF — with NumLock off the keysym arrives
+        // as SDLK_KP_END/KP_DOWN/…, but the scancode is always
+        // SDL_SCANCODE_KP_1.. (bindbc-sdl scancode.d). Distinct from the
+        // top-row Digit1..3 scancodes (30-32) driving edit-mode above — no
+        // collision.
+        //
+        // Gate: this function has exactly ONE call site (the SDL_KEYDOWN
+        // case below in processEvent), reached only AFTER that dispatcher's
+        // own `if (io.WantTextInput && (KEYDOWN||KEYUP)) return true;` gate —
+        // so io.WantTextInput is already guaranteed false by the time we get
+        // here. io.WantCaptureKeyboard is NOT usable as an extra local guard
+        // in this app: NavEnableKeyboard is enabled at boot (app.d ImGui
+        // init), and per Dear ImGui's own doc comment WantCaptureKeyboard is
+        // "also true ... when an imgui window is focused and navigation is
+        // enabled" — i.e. true whenever ANY docked panel (incl. the Viewport
+        // window itself) merely has nav focus, not just while a widget is
+        // actively being edited. Verified empirically: it reads true for
+        // EVERY keydown in --test (even a plain 'A' viewport.fit press,
+        // which still fires normally because that path never checks it) —
+        // gating on it here would make the numpad branch permanently dead
+        // rather than test-mode-only, so it is intentionally NOT checked a
+        // second time; the upstream WantTextInput gate is the real and
+        // sufficient protection here, exactly as it already is for every
+        // other shortcut this same function dispatches (tool activation,
+        // commandIdByCanon, editModeByCanon — none of them re-check it
+        // either).
+        {
+            import view : NumpadViewKey, nextViewForKey;
+            import viewport : applyCellViewPreset;
+            bool handled = true;
+            NumpadViewKey nvKey;
+            switch (kev.keysym.scancode) {
+                case SDL_SCANCODE_KP_1:      nvKey = NumpadViewKey.One;    break;
+                case SDL_SCANCODE_KP_2:      nvKey = NumpadViewKey.Two;    break;
+                case SDL_SCANCODE_KP_3:      nvKey = NumpadViewKey.Three;  break;
+                case SDL_SCANCODE_KP_PERIOD: nvKey = NumpadViewKey.Period; break;
+                default: handled = false; break;
+            }
+            if (handled) {
+                int cell = (vpm.hoveredId >= 0 && vpm.hoveredId < vpm.cellCount)
+                    ? vpm.hoveredId : vpm.activeId;
+                Viewport3D vcell = vpm.views[cell];
+                applyCellViewPreset(vcell, nextViewForKey(vcell.camera.viewPreset, nvKey));
                 return;
             }
         }
@@ -9459,6 +9523,7 @@ void main(string[] args) {
                     // Per-cell view-selector dropdown.
                     {
                         import view : ProjKind, ViewPreset;
+                        import viewport : applyCellViewPreset;
                         immutable string[8] presetNames = [
                             "Perspective", "Top", "Bottom", "Front",
                             "Back", "Right", "Left", "Camera"
@@ -9477,15 +9542,8 @@ void main(string[] args) {
                         if (ImGui.BeginCombo("##vpPreset" ~ to!string(k), presetNames[curIdx])) {
                             foreach (i, pn; presetNames) {
                                 bool sel = (i == curIdx);
-                                if (ImGui.Selectable(pn, sel)) {
-                                    ProjKind   newKind;
-                                    ViewPreset newPreset = presetVals[i];
-                                    if (i == 0 || i == 7) newKind = ProjKind.Perspective;
-                                    else                   newKind = ProjKind.Ortho;
-                                    _vcell.camera.viewPreset = newPreset;
-                                    _vcell.camera.projKind   = newKind;
-                                    _vcell.dirty = true;
-                                }
+                                if (ImGui.Selectable(pn, sel))
+                                    applyCellViewPreset(_vcell, presetVals[i]);
                                 if (sel) ImGui.SetItemDefaultFocus();
                             }
                             ImGui.EndCombo();

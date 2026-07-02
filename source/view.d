@@ -345,3 +345,60 @@ unittest { // toJsonWith(own4) == toJson() after one viewport() call
     assert(isClose(o1["eye"]["y"].floating,  o2["eye"]["y"].floating,  1e-5f), "toJsonWith eye.y");
     assert(isClose(o1["eye"]["z"].floating,  o2["eye"]["z"].floating,  1e-5f), "toJsonWith eye.z");
 }
+
+// ---------------------------------------------------------------------------
+// Numpad view-shortcut toggle (task 0215) — pure, GL-free.
+//
+// Numpad 1/2/3 switch a viewport cell to its primary axis view; a repeat
+// press of the SAME key toggles to the opposite face. Numpad `.` always sets
+// Perspective (no opposite — idempotent). This function only computes WHICH
+// preset to switch to; the caller (app.d) resolves the target cell and
+// performs the actual write via the shared `applyCellViewPreset` helper
+// (viewport.d) so the toggle logic stays independent of any cell/GL state.
+enum NumpadViewKey { One, Two, Three, Period }
+
+ViewPreset nextViewForKey(ViewPreset cur, NumpadViewKey key) {
+    final switch (key) {
+        case NumpadViewKey.One:
+            return cur == ViewPreset.Top   ? ViewPreset.Bottom : ViewPreset.Top;
+        case NumpadViewKey.Two:
+            return cur == ViewPreset.Front ? ViewPreset.Back   : ViewPreset.Front;
+        case NumpadViewKey.Three:
+            return cur == ViewPreset.Right ? ViewPreset.Left   : ViewPreset.Right;
+        case NumpadViewKey.Period:
+            return ViewPreset.Perspective;
+    }
+}
+
+unittest { // first press from an unrelated view lands on the primary face
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.One)   == ViewPreset.Top);
+    assert(nextViewForKey(ViewPreset.Left,        NumpadViewKey.Two)   == ViewPreset.Front);
+    assert(nextViewForKey(ViewPreset.Back,        NumpadViewKey.Three) == ViewPreset.Right);
+}
+
+unittest { // repeat press on the SAME key toggles to the opposite face
+    assert(nextViewForKey(ViewPreset.Top,   NumpadViewKey.One)   == ViewPreset.Bottom);
+    assert(nextViewForKey(ViewPreset.Front, NumpadViewKey.Two)   == ViewPreset.Back);
+    assert(nextViewForKey(ViewPreset.Right, NumpadViewKey.Three) == ViewPreset.Left);
+}
+
+unittest { // third press (repeat again) returns to the primary face
+    ViewPreset p = ViewPreset.Perspective;
+    p = nextViewForKey(p, NumpadViewKey.One); // -> Top
+    p = nextViewForKey(p, NumpadViewKey.One); // -> Bottom
+    p = nextViewForKey(p, NumpadViewKey.One); // -> Top again
+    assert(p == ViewPreset.Top, "third press must return to the primary face");
+}
+
+unittest { // numpad `.` is idempotent regardless of current preset
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.Period) == ViewPreset.Perspective);
+    assert(nextViewForKey(ViewPreset.Top,         NumpadViewKey.Period) == ViewPreset.Perspective);
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.Period) == ViewPreset.Perspective);
+}
+
+unittest { // fresh-from-Perspective: each key's first press is independent of the others
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.One)    == ViewPreset.Top);
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.Two)    == ViewPreset.Front);
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.Three)  == ViewPreset.Right);
+    assert(nextViewForKey(ViewPreset.Perspective, NumpadViewKey.Period) == ViewPreset.Perspective);
+}

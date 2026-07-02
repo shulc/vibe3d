@@ -377,6 +377,19 @@ final class Viewport3D {
     }
 }
 
+/// Single source of truth for a per-cell view-preset write (task 0215):
+/// the three fields the view-selector dropdown, the `viewport.view` command,
+/// and the numpad view shortcuts must all set identically. Axis presets
+/// (Top/Bottom/Front/Back/Right/Left) imply Ortho projection; Perspective/
+/// Camera imply Perspective. Marks the cell dirty so the FBO re-renders next
+/// frame; does not touch selection, editMode, or the active tool.
+void applyCellViewPreset(Viewport3D cell, ViewPreset preset) {
+    cell.camera.viewPreset = preset;
+    cell.camera.projKind   = (preset == ViewPreset.Perspective || preset == ViewPreset.Camera)
+        ? ProjKind.Perspective : ProjKind.Ortho;
+    cell.dirty = true;
+}
+
 // ---------------------------------------------------------------------------
 // ViewportManager
 // ---------------------------------------------------------------------------
