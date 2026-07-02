@@ -76,14 +76,17 @@
 	"_comment-assimp-static": "assimp is static-linked via subConfigurations.bindbc-assimp6=static. ALL build+link config (per-platform preBuildCommands that build the minimal OBJ/glTF/FBX libassimp, lflags by explicit archive path, and stdc++/m) now lives in the bindbc-assimp6 `static` configuration — a clean clone auto-builds it, no manual prerequisite. The base BindAssimp_Static version below is for vibe3d's own source/io/* guards.",
 	"buildTypes": {
 		"profile-fp": {
-			"_comment": "Profiling build: -gs forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`.",
+			"_comment": "Profiling build: forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`. DMD uses `-gs`; LDC uses `--frame-pointer=all` (its `-gs` equivalent) — kept separate so the buildType works under either compiler.",
 			"buildOptions": [
 				"debugMode",
 				"debugInfo",
 				"optimize"
 			],
-			"dflags": [
+			"dflags-dmd": [
 				"-gs"
+			],
+			"dflags-ldc": [
+				"--frame-pointer=all"
 			]
 		},
 		"perf": {
