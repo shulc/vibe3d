@@ -13,6 +13,7 @@ import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
 import hover_state : g_hoveredVertex;
@@ -231,16 +232,7 @@ private:
         }
 
         // Moving set: selected verts (empty → whole mesh), vertex mode.
-        bool[] vmask = new bool[](mesh.vertices.length);
-        bool any = false;
-        foreach (i; 0 .. mesh.selectedVertices.length)
-            if (mesh.selectedVertices[i]) { vmask[i] = true; any = true; }
-        if (!any)
-            foreach (i; 0 .. mesh.vertices.length) vmask[i] = true;
-
-        int[] indices;
-        foreach (i; 0 .. cast(int)mesh.vertices.length)
-            if (vmask[i]) indices ~= i;
+        int[] indices = mesh.selectedVertexIndicesVertices();
 
         FalloffPacket fp;
         fp.type         = FalloffType.Element;
@@ -276,12 +268,6 @@ private:
     }
 
     void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length);
-        vc.invalidate();
-        ec.resize(mesh.edges.length);
-        ec.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 }
