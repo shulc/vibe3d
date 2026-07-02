@@ -59,7 +59,7 @@ private:
     Vec3 anchor;
     Vec3 baseAnchor;
     Vec3 widthAxis;
-    uint gizmoSelHash;
+    ulong gizmoSelHash;
 
     enum int PART_WIDTH = 0;
     int   dragPart = -1;
@@ -208,7 +208,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
         cachedVp = vp;
-        if (dragPart < 0 && !built && mesh.selectionHashEdges() != gizmoSelHash)
+        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Edges) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
@@ -268,7 +268,7 @@ private:
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
         widthAxis    = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
         baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionHashEdges();
+        gizmoSelHash = mesh.selectionSignature(EditMode.Edges);
         gizmoValid   = true;
     }
 

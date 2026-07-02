@@ -115,7 +115,7 @@ private:
     Vec3 baseAnchor;    // ORIGINAL pre-extrude selected-edge centroid (fixed per frame from selection)
     Vec3 extrudeAxis;   // unit: averaged neighbour-polygon normal (ridge lift dir)
     Vec3 widthAxis;     // unit: in-plane inset direction (perpendicular to edge tangent)
-    uint gizmoSelHash;  // selection signature the gizmo frame was built for
+    ulong gizmoSelHash;  // selection signature the gizmo frame was built for
 
     // Drag state — which handle (part id) is being hauled, and the per-handle
     // base param + last mouse position for the axis-projected delta.
@@ -412,7 +412,7 @@ public:
         // anchor = baseAnchor + extrude_*axis would double-count and the gizmo
         // would jump (e.g. when switching from the extrude to the width
         // handle). The frame is frozen for the rest of the session once built.
-        if (dragPart < 0 && !built && mesh.selectionHashEdges() != gizmoSelHash)
+        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Edges) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
@@ -573,7 +573,7 @@ private:
     // -----------------------------------------------------------------------
     void computeGizmoFrame() {
         gizmoValid   = false;
-        gizmoSelHash = mesh.selectionHashEdges();
+        gizmoSelHash = mesh.selectionSignature(EditMode.Edges);
         if (mesh.edges.length == 0) return;
 
         bool wholeMesh = mesh.nothingSelected(EditMode.Edges);

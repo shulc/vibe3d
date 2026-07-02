@@ -119,7 +119,7 @@ protected:
     bool[] toProcess;
     int    vertexProcessCount;
     bool   vertexCacheDirty = true;
-    int    lastSelectionHash;
+    ulong  lastSelectionHash;
 
     // Phase C: track the mesh's mutationVersion so update() can refresh the
     // gizmo when geometry changes without selection — e.g. after Ctrl+Z
@@ -367,7 +367,7 @@ protected:
     // activate() also clears, to the same values.
     protected void resetTransientState() {
         vertexCacheDirty = true;
-        lastSelectionHash = uint.max;
+        lastSelectionHash = ulong.max;
         lastMutationVersion = ulong.max;
         needsGpuUpdate = false;
         centerManual = false;
@@ -399,11 +399,12 @@ protected:
         active = false;
     }
     
-    uint computeSelectionHash() {
-        if (*editMode == EditMode.Vertices) return mesh.selectionHashVertices();
-        if (*editMode == EditMode.Edges)    return mesh.selectionHashEdges();
-        if (*editMode == EditMode.Polygons) return mesh.selectionHashFaces();
-        return 0;
+    // Single canonical selection-signature call (Mesh.selectionSignature) —
+    // replaces the former per-mode selectionHash{V,E,F} dispatch. ulong (was
+    // uint): a wider same-run change-detector token, harmless — nothing here
+    // is persisted or compared across runs.
+    ulong computeSelectionHash() {
+        return mesh.selectionSignature(*editMode);
     }
 
     void buildVertexCacheIfNeeded() {

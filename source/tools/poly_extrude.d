@@ -73,7 +73,7 @@ private:
     Vec3 anchor;
     Vec3 baseAnchor;
     Vec3 extrudeAxis;
-    uint gizmoSelHash;
+    ulong gizmoSelHash;
 
     // Drag state.
     enum int PART_EXTRUDE = 0;
@@ -245,7 +245,7 @@ public:
         cachedVp = vp;
         // Recompute gizmo frame when selection changes while idle (not mid-drag,
         // not after built preview — that would double-count the distance offset).
-        if (dragPart < 0 && !built && mesh.selectionHashFaces() != gizmoSelHash)
+        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Polygons) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
@@ -325,7 +325,7 @@ private:
     // extrudeAxis = normalized average of selected face normals.
     void computeGizmoFrame() {
         gizmoValid   = false;
-        gizmoSelHash = mesh.selectionHashFaces();
+        gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
         if (mesh.faces.length == 0) return;
 
         bool wholeMesh = mesh.nothingSelected(EditMode.Polygons);

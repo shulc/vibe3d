@@ -622,7 +622,7 @@ public:
         // and any selection/mutation we'd observe is the drag's own
         // input, not a user action.
         if (activeDrag is null) {
-            uint  curHash   = computeSelectionHash();
+            ulong curHash   = computeSelectionHash();
             ulong curMutVer = mesh.mutationVersion;
             if (curHash != lastSelectionHash
              || curMutVer != lastMutationVersion) {
@@ -668,18 +668,18 @@ public:
                 // mid-run after a rotate/scale, which is not a moving-set change.
                 // BUG-2 (reviewer BLOCKER) — clear the soft pin ONLY on a GENUINE
                 // selection change, NOT on the first-poll latch. lastSelectionHash
-                // is seeded to uint.max by activate() / a session re-open as the
+                // is seeded to ulong.max by activate() / a session re-open as the
                 // "not yet synced" sentinel (NOT a real selection); the very next
-                // update() then sees curHash != uint.max and would spuriously wipe
+                // update() then sees curHash != ulong.max and would spuriously wipe
                 // the soft pin. After an in-session redo this is the bug: the Move
                 // apply hook restores the settled soft pin, then this guard frame
-                // (running with lastSelectionHash == uint.max because the session
+                // (running with lastSelectionHash == ulong.max because the session
                 // re-opened) re-cleared it, snapping the gizmo back to the weighted
                 // centroid. Mirror the ACEN-mode poll's first-poll latch (below):
                 // when the prior hash is the sentinel, adopt curHash WITHOUT firing
                 // the soft-pin clear. A real selection change (sentinel already
                 // replaced by a concrete hash) still clears, as before.
-                if (lastSelectionHash != uint.max
+                if (lastSelectionHash != ulong.max
                  && curHash != lastSelectionHash) {
                     clearAcenSoftPlaced();
                     clearFrame();       // COMMIT B — one lifecycle with the center pin

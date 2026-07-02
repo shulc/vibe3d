@@ -62,7 +62,7 @@ private:
     Vec3 baseAnchor;
     Vec3 shiftAxis;
     Vec3 insetAxis;
-    uint gizmoSelHash;
+    ulong gizmoSelHash;
 
     enum int PART_SHIFT = 0;
     enum int PART_INSET = 1;
@@ -223,7 +223,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
         cachedVp = vp;
-        if (dragPart < 0 && !built && mesh.selectionHashFaces() != gizmoSelHash)
+        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Polygons) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
@@ -284,7 +284,7 @@ private:
         float slen = sqrt(side.x*side.x + side.y*side.y + side.z*side.z);
         insetAxis    = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);
         baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionHashFaces();
+        gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
         gizmoValid   = true;
     }
 

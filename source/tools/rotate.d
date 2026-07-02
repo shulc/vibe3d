@@ -240,7 +240,7 @@ public:
         // Selection / mesh cannot change during a drag — skip checks entirely.
         if (dragAxis >= 0) return;
 
-        uint  currentHash   = computeSelectionHash();
+        ulong currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
         bool selChanged = (currentHash   != lastSelectionHash);
         bool mutChanged = (currentMutVer != lastMutationVersion);
