@@ -520,18 +520,6 @@ struct Mesh {
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
     }
 
-    // Bring each *SelectionOrderCounter up to the maximum value in its order array.
-    // Needed after commands that write *SelectionOrder via a slice on a struct copy
-    // (the scalar counters do not propagate back through ref-less copies).
-    void syncSelectionCounter() {
-        foreach (ord; vertexSelectionOrder)
-            if (ord > vertexSelectionOrderCounter) vertexSelectionOrderCounter = ord;
-        foreach (ord; edgeSelectionOrder)
-            if (ord > edgeSelectionOrderCounter) edgeSelectionOrderCounter = ord;
-        foreach (ord; faceSelectionOrder)
-            if (ord > faceSelectionOrderCounter) faceSelectionOrderCounter = ord;
-    }
-
     // Grow selection arrays to match geometry without clearing.
     // Call after BoxTool or any in-place geometry growth.
     void syncSelection() {
@@ -5338,22 +5326,36 @@ struct Mesh {
     void setVerticesSelectedFrom(const bool[] src) {
         bool changed = (vertexMarks.length != src.length);
         vertexMarks.length = src.length;
+        // Grow-before-index: the order array must reach src.length before the
+        // loop below can write to it, or a shorter order array (e.g. right
+        // after a geometry-growing op that hasn't synced order yet) would
+        // RangeError. Growing never shrinks, so trailing order[i >= old
+        // length] entries default to 0 (int.init) — consistent with "not
+        // manually selected". If a future caller ever passes a SHORTER src
+        // than the current order array, the extra trailing order[i >=
+        // src.length] slots are simply left untouched (harmless stale data,
+        // matching the array's pre-existing grow-only behavior elsewhere).
+        if (vertexSelectionOrder.length < src.length)
+            vertexSelectionOrder.length = src.length;
         foreach (i, s; src) {
             const cur = (vertexMarks[i] & Marks.Select) != 0;
             if (cur != s) changed = true;
             if (s) vertexMarks[i] |=  Marks.Select;
-            else   vertexMarks[i] &= ~Marks.Select;
+            else { vertexMarks[i] &= ~Marks.Select; vertexSelectionOrder[i] = 0; }
         }
         if (changed) noteSelectionChange(SelDomain.Vertex);
     }
     void setEdgesSelectedFrom(const bool[] src) {
         bool changed = (edgeMarks.length != src.length);
         edgeMarks.length = src.length;
+        // See setVerticesSelectedFrom for the grow-before-index rationale.
+        if (edgeSelectionOrder.length < src.length)
+            edgeSelectionOrder.length = src.length;
         foreach (i, s; src) {
             const cur = (edgeMarks[i] & Marks.Select) != 0;
             if (cur != s) changed = true;
             if (s) edgeMarks[i] |=  Marks.Select;
-            else   edgeMarks[i] &= ~Marks.Select;
+            else { edgeMarks[i] &= ~Marks.Select; edgeSelectionOrder[i] = 0; }
         }
         if (changed) noteSelectionChange(SelDomain.Edge);
     }
@@ -5364,11 +5366,14 @@ struct Mesh {
         // preserves the Subpatch bit of any pre-existing entries.
         bool changed = (faceMarks.length != src.length);
         faceMarks.length = src.length;
+        // See setVerticesSelectedFrom for the grow-before-index rationale.
+        if (faceSelectionOrder.length < src.length)
+            faceSelectionOrder.length = src.length;
         foreach (i, s; src) {
             const cur = (faceMarks[i] & Marks.Select) != 0;
             if (cur != s) changed = true;
             if (s) faceMarks[i] |=  Marks.Select;
-            else   faceMarks[i] &= ~Marks.Select;
+            else { faceMarks[i] &= ~Marks.Select; faceSelectionOrder[i] = 0; }
         }
         if (changed) noteSelectionChange(SelDomain.Face);
     }
@@ -9704,6 +9709,69 @@ unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 
         m.setVerticesSelectedFrom(sel);
         assert(m.pendingSelDomains_ & SelDomain.Vertex,
             "a real selection change publishes again");
+    }
+
+    // Bulk setXSelectedFrom restores the "deselected => order==0" invariant
+    // for elements it deselects, matching the per-element select*/deselect*
+    // setters. Establishes rank via the per-element path FIRST (so the
+    // deselected element carries a real nonzero order, unlike the no-op
+    // test above where index 2's order was already 0 from init) then
+    // bulk-deselects it and checks: (a) its order is zeroed, (b) the
+    // surviving element's rank is untouched, and (c) the order-counter
+    // itself is untouched by the bulk call (proving rank monotonicity
+    // isn't reset — a later per-element select continues from the prior
+    // high-water mark rather than restarting).
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+
+        m.selectFace(0);
+        m.selectFace(1);
+        assert(m.faceSelectionOrder[0] == 1, "face 0 gets rank 1");
+        assert(m.faceSelectionOrder[1] == 2, "face 1 gets rank 2");
+        assert(m.faceSelectionOrderCounter == 2, "counter at 2 after two selects");
+
+        bool[] fsel; fsel.length = m.faces.length;
+        fsel[0] = true;                            // keep face 0, drop face 1
+        m.setFacesSelectedFrom(fsel);
+
+        assert(m.faceSelectionOrder[1] == 0,
+            "bulk-deselected face's order is zeroed (the invariant)");
+        assert(m.faceSelectionOrder[0] == 1,
+            "surviving face keeps its rank");
+        assert(m.selectedFaces[0] == true && m.selectedFaces[1] == false,
+            "marks reflect the bulk apply");
+        assert(m.faceSelectionOrderCounter == 2,
+            "bulk deselect must NOT touch the order counter");
+
+        m.selectFace(2);
+        assert(m.faceSelectionOrder[2] == 3,
+            "next per-element select continues the rank sequence (counter wasn't reset)");
+        assert(m.faceSelectionOrderCounter == 3);
+
+        // Mirror for the other two domains (vertex + edge) so all three
+        // bulk setters are covered directly.
+        m.selectVertex(0);
+        m.selectVertex(1);
+        assert(m.vertexSelectionOrder[0] == 1 && m.vertexSelectionOrder[1] == 2);
+        assert(m.vertexSelectionOrderCounter == 2);
+        bool[] vsel; vsel.length = m.vertices.length;
+        vsel[0] = true;
+        m.setVerticesSelectedFrom(vsel);
+        assert(m.vertexSelectionOrder[1] == 0, "bulk-deselected vertex order zeroed");
+        assert(m.vertexSelectionOrder[0] == 1, "surviving vertex keeps rank");
+        assert(m.vertexSelectionOrderCounter == 2, "vertex counter untouched by bulk deselect");
+
+        m.selectEdge(0);
+        m.selectEdge(1);
+        assert(m.edgeSelectionOrder[0] == 1 && m.edgeSelectionOrder[1] == 2);
+        assert(m.edgeSelectionOrderCounter == 2);
+        bool[] esel; esel.length = m.edges.length;
+        esel[0] = true;
+        m.setEdgesSelectedFrom(esel);
+        assert(m.edgeSelectionOrder[1] == 0, "bulk-deselected edge order zeroed");
+        assert(m.edgeSelectionOrder[0] == 1, "surviving edge keeps rank");
+        assert(m.edgeSelectionOrderCounter == 2, "edge counter untouched by bulk deselect");
     }
 
     // clear* compares-before-set: clearing an already-empty selection is inert.
