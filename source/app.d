@@ -520,6 +520,17 @@ private __gshared const(char)* g_layoutIniPathZ = null;
 /// last resort rather than the default reset path.
 private __gshared bool g_forceLayoutReseed = false;
 
+/// Task 0211 seed-guard primary discriminator. Computed ONCE at startup
+/// (before `io.IniFilename` is assigned — see the `!command.g_testMode`
+/// branch below), true iff no layout ini exists yet at the current
+/// `kLayoutIniVersion` path. `io.IniFilename` is set to that exact path, and
+/// ImGui auto-restores a dock tree from it on the first `NewFrame` iff the
+/// file exists — so `exists(userIniPath)` and "ImGui will restore a dock
+/// tree this session" are the SAME condition by construction, independent of
+/// in-frame DockBuilder node lifecycle. Stays false in `--test` (that branch
+/// never touches this global; io.IniFilename is forced null there).
+private __gshared bool g_seedFreshLayout = false;
+
 /// Set by the Reset Layout button after a successful re-copy of the shipped
 /// default ini. Consumed once, right before the next `ImGui.NewFrame()`,
 /// via `ImGui.LoadIniSettingsFromDisk` — NOT called inline from the button
@@ -558,12 +569,41 @@ private bool seedDefaultLayoutIfMissing(string userIniPath) {
 
 import viewport : LayoutPreset;
 
+// ---------------------------------------------------------------------------
+// Task 0211: scoped viewport-only layout switch — dock-node internals
+// ---------------------------------------------------------------------------
+// `ImGuiDockNode_SetLocalFlags` / `_IsCentralNode` / `_IsEmpty` are exported
+// by cimgui (cimgui.h:5010/5015/5017, compiled into the already-linked
+// static cimgui lib — the igDockBuilder* set proves it's present) but not
+// bound in the D layer (source/d_imgui only forward-declares
+// `struct ImGuiDockNode;` and binds the igDockBuilder* set). All are plain
+// `extern(C)` functions, so we declare the prototypes ourselves rather than
+// editing the D-ImGui binding.
+private extern(C) @nogc nothrow {
+    void ImGuiDockNode_SetLocalFlags(ImGuiDockNode* self, int flags);
+    bool ImGuiDockNode_IsCentralNode(ImGuiDockNode* self);
+    bool ImGuiDockNode_IsEmpty(ImGuiDockNode* self);
+}
+
+// Private imgui dock-node flags (imgui_internal.h:1992/1993) — internal-only
+// bits, not part of the public `ImGuiDockNodeFlags` enum bound in
+// d_imgui/imgui_h.d, so declared locally. Values confirmed against the
+// vendored cimgui.h copy in ~/Code/D-ImGui. (The former `kDockFlagHiddenTabBar`
+// shim bit is gone — superseded by the public `AutoHideTabBar` SharedFlag,
+// task 0211 Phase 4.)
+private enum int kDockFlagDockSpace    = 1 << 10; // "a DockSpace() node" (nested dockspace)
+private enum int kDockFlagCentralNode  = 1 << 11;
+
 /// Dock Viewport##0..3 into `parentNodeId`, split according to the layout
 /// preset `p` (V5: the per-preset viewport-cell split existed twice —
 /// identically — as the central-node rebuild and the no-central-node
 /// fallback clone; this is the one body both call).  Only docks the
 /// viewport-cell windows; chrome panels (Layers / Tool Properties / etc.)
 /// are docked by the caller before/around this call.
+///
+/// Single-tab cells auto-hide their tab bar via the `AutoHideTabBar`
+/// SharedFlag set on the owning DockSpace() call (task 0211 Phase 4) — no
+/// per-cell flag-poking needed here anymore.
 void dockSplitViewportCells(ImGuiID parentNodeId, LayoutPreset p) {
     final switch (p) {
         case LayoutPreset.Single:
@@ -1326,6 +1366,14 @@ void main(string[] args) {
         catch (Exception) {}
         if (iniDirOk) {
             string userIniPath = layoutIniPath(iniDir, kLayoutIniVersion);
+            // Task 0211 seed-guard primary discriminator (see g_seedFreshLayout
+            // doc comment): evaluated BEFORE io.IniFilename is assigned below,
+            // so this reads whether ImGui is *about to* restore a tree this
+            // session, not whether it already has.
+            {
+                import std.file : exists;
+                g_seedFreshLayout = !exists(userIniPath);
+            }
             // First-run seed: the user confirmed this arrangement
             // (config/default_layout.ini) as the shipped default, so a
             // fresh profile opens with it instead of ImGui's bare
@@ -1344,6 +1392,9 @@ void main(string[] args) {
                         try { remove(e.name); } catch (Exception) {}
             } catch (Exception) {}
         } else {
+            // No writable config dir → nothing will ever be restored this
+            // session, same as a genuinely fresh start.
+            g_seedFreshLayout = true;
             io.IniFilename = null;
         }
     }
@@ -8233,22 +8284,52 @@ void main(string[] args) {
             ImGui.PopStyleVar(2);
 
             ImGuiID dockspaceId = ImGui.GetID("MainDockSpace");
+            // AutoHideTabBar (task 0211 Phase 4): a SharedFlag, inherited by
+            // every descendant node — any single-window node in this tree
+            // (chrome or, via the separate ViewportHost dockspace root, a
+            // viewport cell) auto-hides its tab bar; nodes with 2+ tabs (the
+            // Layers/Tool Properties/Viewport Properties trio) keep theirs.
             ImGui.DockSpace(dockspaceId, ImVec2(0, 0),
-                            ImGuiDockNodeFlags.PassthruCentralNode);
+                            ImGuiDockNodeFlags.PassthruCentralNode
+                          | ImGuiDockNodeFlags.AutoHideTabBar);
 
-            // Default layout seed: dock Layers to the right edge (~22% of
-            // width) and Viewport##0 to the central node.
-            // Seed ONCE per process AND only when nothing was restored from
-            // imgui.ini — DockBuilderGetNode(id) is null means no persisted
-            // dockspace, so we lay out the default; otherwise we honor the
-            // user's saved arrangement (persistence). In --test IniFilename is
-            // null → GetNode is always null → the default layout applies →
-            // test geometry unchanged.
-            // g_forceLayoutReseed allows an explicit Reset Layout action to
-            // reseed independently of the process-lifetime dockLayoutDone flag.
+            // Seed guard (task 0211 Phase 1). `doSeed` is true iff ImGui
+            // restored no usable dock tree this session:
+            //  - `g_seedFreshLayout` (primary): computed ONCE at startup,
+            //    before io.IniFilename was assigned (see the !g_testMode
+            //    branch near the top of main()) — true iff no layout ini
+            //    existed yet at the current kLayoutIniVersion path. Since
+            //    io.IniFilename IS that path, this is the same condition as
+            //    "ImGui will restore a dock tree from disk this session", by
+            //    construction — no dependence on in-frame DockBuilder/ini
+            //    load ordering. False in --test (that branch never touches
+            //    the global; io.IniFilename is forced null there).
+            //  - `restoredDockspaceIsEmpty` (secondary, belt-and-suspenders):
+            //    even when a layout ini file EXISTS, it may be empty,
+            //    truncated, or simply carry no data for this dockspace id
+            //    (corrupt/foreign ini) — ImGui then restores nothing and the
+            //    DockSpace() call just above leaves `dockspaceId` a bare
+            //    childless node with zero docked windows. Left unguarded,
+            //    that degenerates into the exact symptom this task kills:
+            //    every panel floats. `IsEmpty()` (childless AND windowless)
+            //    catches this without assuming anything about WHY the ini
+            //    didn't restore. A real restored tree always has child
+            //    splits (this seed always splits), so `IsEmpty()` is false
+            //    for any genuinely-restored session — this term only ever
+            //    ADDS a seed, it can never fire against a valid saved
+            //    layout, so it does not reintroduce the in-frame-ordering
+            //    fragility rejected for the "GetNode is null" discriminator.
+            //  - `g_forceLayoutReseed`: explicit Reset Layout action,
+            //    independent of the process-lifetime `dockLayoutDone` latch.
             static bool dockLayoutDone = false;
-            bool doSeed = (!dockLayoutDone && ImGui.DockBuilderGetNode(dockspaceId) is null)
-                       || g_forceLayoutReseed;
+            bool restoredDockspaceIsEmpty = false;
+            {
+                auto rootNode = ImGui.DockBuilderGetNode(dockspaceId);
+                restoredDockspaceIsEmpty = rootNode !is null && ImGuiDockNode_IsEmpty(rootNode);
+            }
+            bool doSeed = (!dockLayoutDone && g_seedFreshLayout)
+                       || g_forceLayoutReseed
+                       || restoredDockspaceIsEmpty;
             if (doSeed) {
                 if (g_forceLayoutReseed) g_forceLayoutReseed = false;
                 dockLayoutDone = true;
@@ -8259,37 +8340,67 @@ void main(string[] args) {
                 ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
 
                 if (!testMode) {
-                    // Interactive: full chrome + viewport seed.
-                    // Split order: top (Tab bar) → bottom (Status line) →
-                    // left (Mesh Info) → right (Layers/ToolProps/VPProps tabs)
-                    // → central node (Viewport##0).
+                    // Interactive: full chrome + viewport-host seed.
+                    // Split order (task 0211 Phase 2 — sides off the root
+                    // FIRST so the side panels span full window height, THEN
+                    // tab bar/status line off the remaining center column):
+                    // left (Mesh Info) → right (Layers/ToolProps/VPProps
+                    // tabs) → top (Tab bar) → bottom (Status line) → central
+                    // node ("ViewportHost", task 0211 — nests its own
+                    // viewport-cell DockSpace, seeded separately below).
                     // Chrome DockBuilderDockWindow calls are !testMode only:
                     // in --test these windows keep fixed rects (no conflict).
-                    ImGuiID topId, afterTop;
-                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Up, 0.04f,
-                                               &topId, &afterTop);
-                    ImGuiID botId, afterBot;
-                    ImGui.DockBuilderSplitNode(afterTop, ImGuiDir.Down, 0.05f,
-                                               &botId, &afterBot);
-                    ImGuiID leftId, afterLeft;
-                    ImGui.DockBuilderSplitNode(afterBot, ImGuiDir.Left, 0.12f,
-                                               &leftId, &afterLeft);
-                    ImGuiID rightId, centerId;
-                    ImGui.DockBuilderSplitNode(afterLeft, ImGuiDir.Right, 0.22f,
-                                               &rightId, &centerId);
+                    ImGuiID leftId, rest;
+                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Left, 0.12f,
+                                               &leftId, &rest);
+                    ImGuiID rightId, centerCol;
+                    ImGui.DockBuilderSplitNode(rest, ImGuiDir.Right, 0.22f,
+                                               &rightId, &centerCol);
+                    ImGuiID topId, midCol;
+                    ImGui.DockBuilderSplitNode(centerCol, ImGuiDir.Up, 0.04f,
+                                               &topId, &midCol);
+                    ImGuiID botId, vpRegion;
+                    ImGui.DockBuilderSplitNode(midCol, ImGuiDir.Down, 0.05f,
+                                               &botId, &vpRegion);
+                    // vpRegion = last unsplit remainder = the dockspace's
+                    // central node.
 
-                    ImGui.DockBuilderDockWindow("Tab bar",            topId);
-                    ImGui.DockBuilderDockWindow("Status line",        botId);
                     ImGui.DockBuilderDockWindow("Mesh Info",          leftId);
                     // Right panel: Layers + Tool Properties + Viewport Properties
                     // as tabs (multiple DockWindow on same nodeId → auto-tab-bar).
                     ImGui.DockBuilderDockWindow("Layers",             rightId);
                     ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
-                    // Central node: Viewport##0 (Single layout default).
+                    ImGui.DockBuilderDockWindow("Tab bar",            topId);
+                    ImGui.DockBuilderDockWindow("Status line",        botId);
+                    // Central node: "ViewportHost" (task 0211) — a plain
+                    // window that nests its OWN DockSpace (viewportDockId,
+                    // see the ViewportHost block just before the per-cell
+                    // Viewport##k loop below). The actual Viewport##0..3
+                    // cells are seeded/rebuilt there, scoped to that inner
+                    // root, so a runtime `viewport.layout` switch never
+                    // touches this outer chrome tree again.
                     // In --test this window is never created → PassthruCentralNode
                     // hole → picking rect unchanged (but we're in !testMode here).
-                    ImGui.DockBuilderDockWindow("Viewport##0", centerId);
+                    ImGui.DockBuilderDockWindow("ViewportHost", vpRegion);
+                    // Hardening: lock the node so chrome can't be dragged
+                    // into the viewport region and "ViewportHost" itself
+                    // can't be undocked/floated out from under its nested
+                    // dockspace (which would reintroduce a mixed-tree
+                    // hazard). CentralNode is re-ORed back since vpRegion
+                    // (the last unsplit remainder above) is the dockspace's
+                    // designated central node — re-query it here (not the
+                    // stale `centerId` id from before the reorder) so the
+                    // PassthruCentralNode hole lands on the actual viewport
+                    // region.
+                    {
+                        auto vpRegionNode = ImGui.DockBuilderGetNode(vpRegion);
+                        if (vpRegionNode !is null) {
+                            int f = cast(int) ImGuiDockNodeFlags.NoUndocking
+                                  | (ImGuiDockNode_IsCentralNode(vpRegionNode) ? kDockFlagCentralNode : 0);
+                            ImGuiDockNode_SetLocalFlags(vpRegionNode, f);
+                        }
+                    }
                 } else {
                     // --test: minimal seed (Layers + Viewport##0 only, both
                     // uncreated in test → harmless). Chrome panels keep their
@@ -8307,83 +8418,61 @@ void main(string[] args) {
             // Layout-rebuild path (outside the one-shot seed guard) triggered
             // by viewport.layout commands.
             //
-            // FULL root rebuild (task 0204 hotfix — supersedes the Ph6
-            // central-node-scoped rebuild, which crashed). The scoped
-            // approach — clear only the viewport-cell subtree via
+            // History (task 0204 hotfix): a scoped rebuild — clear only the
+            // viewport-cell subtree via
             // DockBuilderRemoveNodeChildNodes(centralNodeId(...)), re-split,
             // re-dock — hit a genuine ImGui docking-internals hazard on any
-            // shrink transition (SplitH/Quad -> Single):
-            // DockBuilderDockWindow'ing a still-live window (e.g.
-            // "Viewport##0") away from a node whose *sibling* consequently
-            // empties out makes ImGui synchronously self-delete that
-            // now-empty non-central sibling and merge the split pair back
-            // into their parent (DockNodeRemoveWindow ->
-            // DockContextRemoveNode -> DockNodeTreeMerge in imgui.cpp).
-            // Two failure modes chained from that single root cause:
-            //  1) When the node being docked INTO is that same sibling, the
-            //     merge deletes it out from under the call —
-            //     DockBuilderDockWindow (SetWindowDock) captures the target
-            //     node id *before* the removal-triggered merge and blindly
-            //     writes `window->DockId = <now-deleted node>` afterward,
-            //     leaving a dangling DockId.
-            //  2) Floating every viewport cell to node 0 *before* re-reading
-            //     the central node (so no window's target is ever the node
-            //     being vacated) avoids (1), but DockNodeTreeMerge does NOT
-            //     refresh the root node's cached CentralNode pointer (that
-            //     only happens in the once-per-frame DockNodeUpdateForRootNode
-            //     pass, which already ran before this code executes this
-            //     frame) — so a `centralNodeId()` re-query right after such a
-            //     merge can dereference a dangling pointer into a just-freed
-            //     node and return garbage, corrupting the very id the rebuild
-            //     was trying to re-derive safely.
-            // Both failure modes stem from reusing a node id read back
-            // *during* the same DockBuilder script that also mutates the
-            // tree. A full rebuild sidesteps the whole class: every id used
-            // below comes straight from THIS call's own
-            // DockBuilderSplitNode/AddNode out-params, never from a
-            // side-cached/re-queried lookup, so there is nothing stale to
-            // dereference and no leftover empty sibling to trigger a merge
-            // against. Trade-off: a layout switch also resets the user's
-            // panel arrangement (Layers / Tool Properties / Mesh Info
-            // docking), same as the process-startup seed path below —
-            // acceptable next to a crash.
-            if (vpm.layoutDirty) {
+            // shrink transition (SplitH/Quad -> Single): the central node
+            // (`centerId`) was NESTED inside this same `dockspaceId` tree, so
+            // DockBuilderDockWindow'ing a still-live window away from a node
+            // whose *sibling* consequently empties out made ImGui
+            // synchronously self-delete that now-empty non-central sibling
+            // and merge the split pair back into their parent
+            // (DockNodeRemoveWindow -> DockContextRemoveNode ->
+            // DockNodeTreeMerge in imgui.cpp) — dangling DockId / a
+            // re-queried CentralNode pointer into a just-freed node. 0204's
+            // fix was to fall back to a FULL rebuild of `dockspaceId`
+            // (resetting chrome too) to sidestep the hazard entirely.
+            //
+            // Task 0211 supersedes that FOR INTERACTIVE SESSIONS: the
+            // viewport cells now live in their OWN nested dockspace
+            // (`viewportDockId`, see the "ViewportHost" block below, just
+            // before the per-cell Viewport##k window loop). That inner
+            // dockspace is a genuine dock-tree ROOT, not nested inside
+            // `dockspaceId` — so `DockBuilderRemoveNodeChildNodes` scopes
+            // correctly to it (re-homes every descendant window's DockId to
+            // the root itself before removing anything, and removes with
+            // merge_sibling_into_parent=false, which disables the exact
+            // merge path 0204 hit) — see
+            // doc/scoped_viewport_layout_switch_plan.md for the full
+            // source-level argument. So for `!testMode`, `vpm.layoutDirty` is
+            // deliberately left SET here — untouched — and consumed later,
+            // in the ViewportHost block, where it drives a rebuild scoped to
+            // `viewportDockId` alone. This outer `dockspaceId` tree (all of
+            // chrome: Tab bar / Status line / Mesh Info / Layers / Tool
+            // Properties / Viewport Properties, plus the "ViewportHost"
+            // window itself) is never touched by a layout switch anymore.
+            //
+            // `--test` keeps the ORIGINAL 0204 full-rebuild behavior
+            // unconditionally (byte-neutrality — task 0211 Phase 4): no real
+            // Viewport##k windows exist in test mode (the per-cell loop below
+            // is `!testMode`-gated), so this path never risks the 0204 hazard
+            // there in the first place, and rewriting it risks the HTTP
+            // suite's `layout.vp*` picking-rect contract for no benefit.
+            if (vpm.layoutDirty && testMode) {
                 vpm.layoutDirty = false;
 
                 ImGui.DockBuilderRemoveNode(dockspaceId);
                 ImGui.DockBuilderAddNode(dockspaceId, 0);
                 ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
 
-                if (!testMode) {
-                    ImGuiID topId, afterTop;
-                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Up, 0.04f,
-                                               &topId, &afterTop);
-                    ImGuiID botId, afterBot;
-                    ImGui.DockBuilderSplitNode(afterTop, ImGuiDir.Down, 0.05f,
-                                               &botId, &afterBot);
-                    ImGuiID leftId, afterLeft;
-                    ImGui.DockBuilderSplitNode(afterBot, ImGuiDir.Left, 0.12f,
-                                               &leftId, &afterLeft);
-                    ImGuiID rightId, centerId;
-                    ImGui.DockBuilderSplitNode(afterLeft, ImGuiDir.Right, 0.22f,
-                                               &rightId, &centerId);
-
-                    ImGui.DockBuilderDockWindow("Tab bar",            topId);
-                    ImGui.DockBuilderDockWindow("Status line",        botId);
-                    ImGui.DockBuilderDockWindow("Mesh Info",          leftId);
-                    ImGui.DockBuilderDockWindow("Layers",             rightId);
-                    ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
-                    ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
-                    dockSplitViewportCells(centerId, vpm.layout);
-                } else {
-                    // --test: minimal chrome (Layers + viewport cells only),
-                    // matching the seed path's --test branch above.
-                    ImGuiID rightId, centerId;
-                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
-                                               &rightId, &centerId);
-                    ImGui.DockBuilderDockWindow("Layers", rightId);
-                    dockSplitViewportCells(centerId, vpm.layout);
-                }
+                // --test: minimal chrome (Layers + viewport cells only),
+                // matching the seed path's --test branch above.
+                ImGuiID rightId, centerId;
+                ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
+                                           &rightId, &centerId);
+                ImGui.DockBuilderDockWindow("Layers", rightId);
+                dockSplitViewportCells(centerId, vpm.layout);
                 ImGui.DockBuilderFinish(dockspaceId);
             }
 
@@ -9395,6 +9484,94 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             activeTool.update(vts);
         }
+
+        // ── Task 0211: scoped viewport-only DockSpace host ("ViewportHost") ──
+        //
+        // "ViewportHost" is the plain window docked into the outer
+        // dockspace's central node (see the seed above); it nests its OWN
+        // DockSpace, rooted at the stable id `viewportDockId`. Because that
+        // inner dockspace is a genuine dock-tree ROOT — not a node nested
+        // inside the outer `MainDockSpace` tree — `DockBuilderRemoveNodeChildNodes`
+        // scopes correctly to it (see doc/scoped_viewport_layout_switch_plan.md
+        // for the source-level argument for why the outer tree can't be
+        // scoped this way). A runtime `viewport.layout` switch rebuilds ONLY
+        // this subtree; chrome panels (Tab bar / Status line / Mesh Info /
+        // Layers / Tool Properties / Viewport Properties), docked in the
+        // OUTER tree above, are never touched.
+        //
+        // Must run BEFORE the per-cell Viewport##k window loop just below,
+        // in the same frame, so the cells it seeds/rebuilds exist by the
+        // time those windows try to dock into them.
+        //
+        // `!testMode` only: in `--test` no "ViewportHost"/"Viewport##k"
+        // windows are ever created (see the per-cell loop's `!testMode`
+        // gate below) — this whole block is skipped, so zero `SetLocalFlags`
+        // / `DockSpace(viewportDockId)` calls execute in test and the outer
+        // central node stays the PassthruCentralNode hole exactly as before
+        // (byte-identical HTTP suite geometry).
+        if (!testMode) {
+            immutable int hostFlags =
+                ImGuiWindowFlags.NoScrollbar |
+                ImGuiWindowFlags.NoScrollWithMouse;
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(0, 0));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+            if (ImGui.Begin("ViewportHost", null, hostFlags)) {
+                ImVec2 hostAvail = ImGui.GetContentRegionAvail();
+                immutable ImGuiID viewportDockId = ImGui.GetID("ViewportDockSpace");
+                ImGui.DockSpace(viewportDockId, ImVec2(0, 0),
+                                ImGuiDockNodeFlags.AutoHideTabBar);
+
+                // Same dead-guard hazard as the outer seed (task 0211 Phase 1):
+                // the `DockSpace()` call just above ALWAYS creates the node if
+                // absent (imgui.cpp `DockSpace()` calls `DockContextAddNode`
+                // inline when `DockContextFindNodeByID` finds none), so
+                // `DockBuilderGetNode(viewportDockId) is null` is never true
+                // here — checking it would silently skip the first-ever seed
+                // forever, leaving "Viewport##0" undocked/floating (exactly
+                // the symptom this task kills, just one level deeper). Use the
+                // same `IsEmpty()` discriminator as the outer guard instead: a
+                // freshly auto-created node has no children AND no windows; a
+                // genuinely restored inner tree always has at least the
+                // seeded window(s) from a prior session, so this never fires
+                // against a valid restore.
+                auto viewportDockNode = ImGui.DockBuilderGetNode(viewportDockId);
+                bool viewportDockEmpty =
+                    viewportDockNode is null || ImGuiDockNode_IsEmpty(viewportDockNode);
+                if (viewportDockEmpty) {
+                    // First-ever build of the inner tree: a fresh profile, or
+                    // a just-bumped kLayoutIniVersion with nothing restored
+                    // from the ini yet (see prefs.d). Seed it from the
+                    // current preset — mirrors the outer seed's one-shot
+                    // guard, just scoped to this root instead of dockspaceId.
+                    ImGui.DockBuilderAddNode(viewportDockId, kDockFlagDockSpace);
+                    ImGui.DockBuilderSetNodeSize(viewportDockId, hostAvail);
+                    dockSplitViewportCells(viewportDockId, vpm.layout);
+                    ImGui.DockBuilderFinish(viewportDockId);
+                    vpm.layoutDirty = false;
+                } else if (vpm.layoutDirty) {
+                    // Scoped rebuild (task 0211 Phase 2) — the crash-sensitive
+                    // core. Safe because `viewportDockId` is a true dock-tree
+                    // root: `DockBuilderRemoveNodeChildNodes` re-homes every
+                    // descendant window's DockId to the root itself before
+                    // removing any node, and removes with
+                    // merge_sibling_into_parent=false — neither 0204 failure
+                    // mode (dangling DockId / stale re-queried CentralNode)
+                    // applies here. Chrome (the outer `dockspaceId` tree) is
+                    // untouched — this call only ever mutates descendants of
+                    // `viewportDockId`.
+                    vpm.layoutDirty = false;
+                    ImGui.DockBuilderRemoveNodeChildNodes(viewportDockId);
+                    dockSplitViewportCells(viewportDockId, vpm.layout);
+                    ImGui.DockBuilderFinish(viewportDockId);
+                }
+                // else: node exists and layoutDirty is false — nothing to do,
+                // trust whatever ImGui just restored/kept for this frame
+                // (0208-style: the persisted ini is the source of truth).
+            }
+            ImGui.End();
+            ImGui.PopStyleVar(2);
+        }
+        // ── end ViewportHost ────────────────────────────────────────────────
 
         // ── Phase 2 FBO render ──────────────────────────────────────────────
         //

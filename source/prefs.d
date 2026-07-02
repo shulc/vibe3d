@@ -258,7 +258,26 @@ void savePrefs() { savePrefs(g_prefs, prefsDir()); }
 /// the docking format or the default-seed layout changes; the versioned
 /// filename then points at a non-existent file → ImGui falls back to the
 /// programmatic default seed (auto-reset on bump, no old-format crash).
-enum int kLayoutIniVersion = 1;
+///
+/// v1 -> v2 (task 0211): the outer dock-tree node shape changed — the
+/// central node now hosts a "ViewportHost" window nesting its own
+/// `viewportDockId` DockSpace (instead of docking `Viewport##0` directly),
+/// so a `Viewport##k` cell subtree can be rebuilt on a layout switch without
+/// touching chrome. A restored v1 ini has no ViewportHost window / no
+/// ViewportDockSpace node, so the bump is required — restoring it as-is
+/// would leave `Viewport##0` double-claimed (docked in the outer central
+/// node per the old shape, but the new seed code looks for "ViewportHost"
+/// there instead).
+///
+/// v2 -> v3 (task 0211 rework): the outer seed's split ORDER changed (sides
+/// off the root first — full window height — THEN tab bar/status line off
+/// the remaining center column; previously top/bottom were split off the
+/// root first, leaving the side panels short). A restored v2 ini has the
+/// old node shape/ratios baked in, so it must be invalidated too. This bump
+/// also sweeps any ini written by the broken pre-rework v2 build (dead seed
+/// guard → floating panels) — keyed on file existence, that build's v2 file
+/// would otherwise be treated as "already seeded" and skip the fix.
+enum int kLayoutIniVersion = 3;
 
 /// Return the full path to the versioned ImGui layout ini in `dir`.
 /// Pure string builder: no file I/O, no GL context.  A bump of `ver` yields
@@ -271,11 +290,14 @@ string layoutIniPath(string dir, int ver) pure {
 unittest {
     auto p1 = layoutIniPath("/cfg/vibe3d", 1);
     auto p2 = layoutIniPath("/cfg/vibe3d", 2);
+    auto p3 = layoutIniPath("/cfg/vibe3d", 3);
     import std.path : baseName, dirName;
     assert(dirName(p1)  == "/cfg/vibe3d",        "path must be under dir");
     assert(baseName(p1) == "imgui_layout_v1.ini", "v1 filename");
     assert(p1 != p2,                              "version bump → different file");
     assert(baseName(p2) == "imgui_layout_v2.ini", "v2 filename");
+    assert(p2 != p3,                              "version bump → different file");
+    assert(baseName(p3) == "imgui_layout_v3.ini", "v3 filename");
 }
 
 /// Copy `defaultIniPath` (the shipped, user-confirmed default arrangement,
