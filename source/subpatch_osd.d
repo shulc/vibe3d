@@ -17,6 +17,7 @@ module subpatch_osd;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
+import perf_probe : g_perf, Cat;
 
 /// Global gate for the GPU stencil evaluator. App.d flips this to true
 /// after SDL+OpenGL are loaded and the smoke test passes; it stays
@@ -848,6 +849,7 @@ struct OsdAccel {
     bool buildPreview(ref const Mesh cage, int level,
                        out Mesh outMesh, out SubpatchTrace outTrace)
     {
+        auto z = g_perf.scope_(Cat.subpatchPreview);
         clear();
 
         immutable int nv = cast(int)cage.vertices.length;

@@ -6,6 +6,7 @@ import std.string : toStringz;
 import math   : Viewport;
 import mesh   : GpuMesh, Mesh;
 import shader : compileShader;
+import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // GpuSelectBuffer — offscreen ID-buffer picker for vertices, edges, faces.
@@ -209,6 +210,7 @@ public:
     int pick(SelectMode mode, int mx, int my, int r,
              ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp)
     {
+        auto z = g_perf.scope_(Cat.hoverPick);
         if (vp.width <= 0 || vp.height <= 0) return -1;
         ensureSize(vp.width, vp.height);
 
