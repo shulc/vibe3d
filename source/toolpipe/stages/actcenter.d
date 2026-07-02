@@ -758,28 +758,59 @@ public:
         return mode != Mode.Element && mode != Mode.Local;
     }
 
+    // Task 0187 (B3) — the pin-precedence hoist. `computeCenter` used to
+    // repeat an `if (userPlaced) …; if (softPlaced) …;` ladder across every
+    // mode arm; the two predicates below collapse that ladder into a single
+    // pre-switch check (see `computeCenter`). The action center is one
+    // published 3-vector; `userPlaced` / `softPlaced` are override
+    // *lifetimes* of that one value, not separate outputs, so precedence
+    // over them is a property of the ladder, not of any one mode's arm.
+    //
+    // Modes whose center is a plain relocatable point (no fixed origin, no
+    // live per-element/per-item source, no per-cluster partition) — an
+    // explicit relocate pin (userPlaced / notifyAcenUserPlaced click-away)
+    // overrides them wholesale. Element is EXCLUDED: its live ring center
+    // outranks userPlaced, so Element keeps its own in-arm userPlaced check
+    // (below the live center). Pivot/Parent ARE included by task 0187: an
+    // explicit relocation to a chosen point is defensible even for the live
+    // item pivot — the settle pin is a different story, see
+    // `settlePinHonored` below.
+    private static bool relocateAllowed(Mode m) pure nothrow @nogc @safe {
+        return m == Mode.Auto  || m == Mode.Screen || m == Mode.None
+            || m == Mode.Pivot || m == Mode.Parent;
+    }
+
+    // Modes that honor an AUTO gesture SETTLE (soft pin) = `acenSettleAllowed()`
+    // minus the four modes with either a FIXED center (Origin, Manual) or a
+    // LIVE item-tracking center (Pivot, Parent) that a drop-point freeze would
+    // defeat. Equivalently {Auto, Screen, None, Select, SelectAuto, Border}.
+    //
+    // Pivot/Parent join Origin/Manual in the "writes but never reads" class:
+    // `settleGestureCenter` (xfrm_transform.d) still calls `setSoftPlaced` for
+    // them whenever `acenSettleAllowed()` is true (unchanged — Pivot/Parent are
+    // not Element/Local), but `computeCenter` must never read that write for
+    // them, or a gesture settle would freeze the gizmo at the drop point
+    // instead of continuing to track the live item pivot (same class as
+    // Element's `liveElementCenter` / Local's per-cluster pivots, which
+    // `acenSettleAllowed()` already excludes from the settle write itself).
+    bool settlePinHonored() const {
+        return acenSettleAllowed()
+            && mode != Mode.Origin && mode != Mode.Manual
+            && mode != Mode.Pivot  && mode != Mode.Parent;
+    }
+
 private:
 
     Vec3 computeCenter() const {
+        if (relocateAllowed(mode) && userPlaced) return userPlacedCenter;
+        if (settlePinHonored()    && softPlaced) return softPlacedCenter;
         final switch (mode) {
             case Mode.Auto:
-                if (userPlaced) return userPlacedCenter;
-                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Select:
-                // BUG-1 (flex_border_handles_plan.md Phase 3): a completed gesture
-                // settles the gizmo via setSoftPlaced — consult it BEFORE the live
-                // recompute so the selection-derived pivot holds at the drop pose
-                // (no jump-back) until selection/mode change. The settle is pinned
-                // by the wrapper only for modes WITHOUT a higher-precedence live
-                // source (Element / Local excluded there — see acenSettleAllowed),
-                // so this is the general "gesture settled here" pin, not a mode
-                // branch.
-                if (softPlaced) return softPlacedCenter;
                 return selectionCentroid(/*sub*/ selectSubMode);
             case Mode.SelectAuto:
                 // Same center as Select; AxisStage realigns the basis.
-                if (softPlaced) return softPlacedCenter;
                 return selectionCentroid(SelectSubMode.Center);
             case Mode.Origin:
                 return Vec3(0, 0, 0);
@@ -790,8 +821,6 @@ private:
                 // feature is the AXIS orientation (camera-aligned),
                 // handled by AxisStage. The action-center POSITION
                 // tracks the selection like Auto does.
-                if (userPlaced) return userPlacedCenter;
-                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Element:
                 // Click-pick (XfrmTransformTool.tryPickElement when
@@ -804,11 +833,15 @@ private:
                 // at the element centroid.
                 // No pick yet → fall back to the selection-element centroid
                 // (whole mesh per the universal "empty selection = all" rule).
+                // userPlaced stays an IN-ARM check here (below the live
+                // center) — Element is excluded from `relocateAllowed`.
                 Vec3 elc;
                 if (liveElementCenter(elc)) return elc;
                 if (userPlaced) return userPlacedCenter;
                 return elementCenter();
             case Mode.Local: {
+                // Unchanged — D5 (single Local-mode BFS) is deferred; see
+                // doc/acen_pin_precedence_hoist_plan.md §D5 deferred.
                 Vec3 first;
                 int  count;
                 computeLocalClusters(first, count);
@@ -821,8 +854,6 @@ private:
                 // Click-outside-gizmo writes userPlaced (same hook as
                 // Auto / Screen), so the gizmo + transform pivot stay
                 // in sync after relocation.
-                if (userPlaced) return userPlacedCenter;
-                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Border:
                 // Bbox center of selection-border verts — those on edges
@@ -834,11 +865,6 @@ private:
                 // selections (sphere top hemisphere: only the equator
                 // ring is on a border edge) the result differs and
                 // matches `actr.border`.
-                //
-                // BUG-1 (Phase 3): consult the gesture settle BEFORE the live
-                // border recompute so the gizmo holds at the drop pose instead of
-                // snapping back to the fractional falloff-attenuated border center.
-                if (softPlaced) return softPlacedCenter;
                 if (mesh_ is null) return Vec3(0, 0, 0);
                 final switch (*editMode_) {
                     case EditMode.Vertices: return centroidWithGeometryFallback();
@@ -1747,4 +1773,217 @@ unittest {
         "b: two disjoint edges must form exactly 2 clusters. If this reads 1 "
         ~ "(a's value), the address term was dropped from the cache key and "
         ~ "b wrongly reused a's cached partition.");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0187 (B3) Stage-0 characterization — the pin-precedence hoist
+// byte-identity oracle. `computeCenter` used to repeat an
+// `if (userPlaced) …; if (softPlaced) …;` ladder across most mode arms; B3
+// collapses that into ONE pre-switch check gated by `relocateAllowed(mode)` /
+// `settlePinHonored()`. This unittest pins every mode's result across three
+// pin states (no pin / userPlaced set / softPlaced set, driven by DIRECT
+// field writes — same-module private access — so states the public setters
+// can't reach simultaneously, e.g. userPlaced+softPlaced both true, are still
+// reachable for the precedence check).
+//
+// Every mode's result here is byte-identical to the pre-hoist ladder, EXCEPT
+// Pivot/Parent's userPlaced case — task 0187's deliberate change (relocate
+// pin now honored; softPlaced stays ignored, see the settle discriminator
+// below). Each assert that differs from the naive "no pin ever read" table
+// carries its own comment; Origin/Manual/Local (pins never read) and
+// Select/SelectAuto/Border (userPlaced never read, softPlaced read) are the
+// discriminators the single-gesture drag suite is blind to (BUG-1's fixture
+// coverage only reaches Auto/None/Screen + a live drag settle).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh     : makeCube;
+    import std.math : fabs;
+    import std.conv : to;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return fabs(a.x - b.x) < 1e-4 && fabs(a.y - b.y) < 1e-4
+            && fabs(a.z - b.z) < 1e-4;
+    }
+
+    Mesh cube = makeCube();       // symmetric ±0.5 cube, no selection ⇒ every
+    Mesh* meshPtr = &cube;        // centroid/element/local fallback = (0,0,0)
+    EditMode em = EditMode.Vertices;
+
+    // Pivot/Parent need a primary item (+ one parent level) with distinct,
+    // non-zero pivots so the mode-specific fallback is never confusable with
+    // (0,0,0) or the pin points below.
+    auto parentLayer = new Layer();
+    parentLayer.xform.pivot = Vec3(3, 4, 5);      // parent world pivot pos
+    auto primaryLayer = new Layer();
+    primaryLayer.xform.pivot = Vec3(1, 2, 3);     // primary world pivot pos
+    primaryLayer.parent = parentLayer;
+    Layer primaryRef = primaryLayer;
+
+    auto acs = new ActionCenterStage(() => meshPtr, &em, () => primaryRef);
+    acs.manualCenter = Vec3(7, 8, 9);             // Mode.Manual fixed center
+
+    immutable Vec3 zero    = Vec3(0, 0, 0);
+    immutable Vec3 userPt  = Vec3(10, 20, 30);
+    immutable Vec3 softPt  = Vec3(-10, -20, -30);
+    immutable Vec3 pivotWorld  = Vec3(1, 2, 3);   // primaryLayer pos+pivot
+    immutable Vec3 parentWorld = Vec3(3, 4, 5);   // parentLayer pos+pivot
+
+    // (userPlaced, softPlaced) driven directly — bypasses setUserPlaced() /
+    // setSoftPlaced()'s mutual-clear side effects so every combination in the
+    // ground-truth table (incl. BOTH set, to prove precedence order) is
+    // reachable.
+    void setPins(bool up, bool sp) {
+        acs.userPlaced       = up;
+        acs.userPlacedCenter = up ? userPt : zero;
+        acs.softPlaced       = sp;
+        acs.softPlacedCenter = sp ? softPt : zero;
+    }
+
+    alias Mode = ActionCenterStage.Mode;
+
+    // --- Auto / Screen / None: relocateAllowed T, settlePinHonored T --------
+    // userPlaced 1st, softPlaced 2nd, else centroid fallback. Unchanged.
+    foreach (m; [Mode.Auto, Mode.Screen, Mode.None]) {
+        acs.mode = m;
+        setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
+            m.to!string ~ ": no-pin must fall back to the centroid");
+        setPins(false, true);  assert(vecEq(acs.currentCenter(), softPt),
+            m.to!string ~ ": softPlaced must be honored (2nd)");
+        setPins(true, false);  assert(vecEq(acs.currentCenter(), userPt),
+            m.to!string ~ ": userPlaced must be honored (1st)");
+        setPins(true, true);   assert(vecEq(acs.currentCenter(), userPt),
+            m.to!string ~ ": userPlaced must WIN over softPlaced when both set");
+    }
+
+    // --- Select / SelectAuto: relocateAllowed F, settlePinHonored T ---------
+    // userPlaced must stay IGNORED (discriminator); softPlaced honored.
+    foreach (m; [Mode.Select, Mode.SelectAuto]) {
+        acs.mode = m;
+        setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
+            m.to!string ~ ": no-pin fallback");
+        setPins(true, false);  assert(vecEq(acs.currentCenter(), zero),
+            m.to!string ~ " + userPlaced set: must stay on the selection center "
+            ~ "(userPlaced ignored) — discriminator for the hoist's narrow "
+            ~ "relocateAllowed set");
+        setPins(false, true);  assert(vecEq(acs.currentCenter(), softPt),
+            m.to!string ~ ": softPlaced must be honored");
+        setPins(true, true);   assert(vecEq(acs.currentCenter(), softPt),
+            m.to!string ~ ": with userPlaced ignored, softPlaced still wins "
+            ~ "over the fallback when both are set");
+    }
+
+    // --- Border: relocateAllowed F, settlePinHonored T ----------------------
+    acs.mode = Mode.Border;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
+        "Border: no-pin fallback");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), zero),
+        "Border + userPlaced set: must stay on the border center (ignored) — "
+        ~ "discriminator for the hoist's narrow relocateAllowed set");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), softPt),
+        "Border: softPlaced must be honored");
+
+    // --- Origin / Manual: relocateAllowed F, settlePinHonored F -------------
+    // BOTH pins must stay ignored even when set — this is the case the naive
+    // hoist (bare acenSettleAllowed() for softPlaced) would have REGRESSED,
+    // since acenSettleAllowed() is true for Origin/Manual (only Element/Local
+    // are excluded there).
+    acs.mode = Mode.Origin;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), zero), "Origin: no-pin");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), zero),
+        "Origin + userPlaced set: must stay (0,0,0) (ignored)");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), zero),
+        "Origin + softPlaced set: must stay (0,0,0) (ignored) — the case the "
+        ~ "naive acenSettleAllowed()-only hoist would have regressed");
+    setPins(true, true);   assert(vecEq(acs.currentCenter(), zero),
+        "Origin + both pins set: must still stay (0,0,0)");
+
+    acs.mode = Mode.Manual;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), acs.manualCenter),
+        "Manual: no-pin fallback = manualCenter");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), acs.manualCenter),
+        "Manual + userPlaced set: must stay on manualCenter (ignored)");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), acs.manualCenter),
+        "Manual + softPlaced set: must stay on manualCenter (ignored) — the "
+        ~ "case the naive acenSettleAllowed()-only hoist would have regressed");
+
+    // --- Element: NOT gated by the hoist at all (relocateAllowed F,          -
+    // settlePinHonored F since acenSettleAllowed() excludes Element). Keeps   -
+    // its own in-arm `liveElementCenter → userPlaced → elementCenter` ladder. -
+    acs.mode = Mode.Element;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
+        "Element: no pick, no pin → elementCenter() fallback (empty sel ⇒ "
+        ~ "whole-mesh average = 0)");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), userPt),
+        "Element: no live pick → in-arm userPlaced still honored (below the "
+        ~ "live center, unaffected by the hoist)");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), zero),
+        "Element: softPlaced is NEVER consulted (no in-arm check, and the "
+        ~ "hoisted check is gated off since acenSettleAllowed() excludes "
+        ~ "Element) — must fall back to elementCenter()");
+
+    // --- Local: NOT gated by the hoist at all (relocateAllowed F,           -
+    // settlePinHonored F since acenSettleAllowed() excludes Local). D5       -
+    // deferred — arm unchanged, both pins stay irrelevant.                  -
+    acs.mode = Mode.Local;
+    setPins(true, true);
+    assert(vecEq(acs.currentCenter(), zero),
+        "Local: both pins set but empty selection ⇒ 0 clusters ⇒ centroid "
+        ~ "fallback (0) — pins never consulted");
+
+    // --- Pivot / Parent: task 0187's DELIBERATE change -----------------------
+    // relocateAllowed NOW TRUE (was false pre-0187) → userPlaced honored.
+    // settlePinHonored stays FALSE → softPlaced stays ignored (unchanged;
+    // Pivot/Parent join Origin/Manual's "settle write, never read" class).
+    acs.mode = Mode.Pivot;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), pivotWorld),
+        "Pivot: no-pin fallback = primary item's pivot world pos (unchanged)");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), userPt),
+        "Pivot + userPlaced set: task 0187 flips this — userPlaced now WINS "
+        ~ "over the live item pivot (pre-0187 this returned pivotWorld)");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), pivotWorld),
+        "Pivot + softPlaced set: must stay on the live item pivot (ignored) "
+        ~ "— the settle exclusion is unchanged by 0187");
+    setPins(true, true);   assert(vecEq(acs.currentCenter(), userPt),
+        "Pivot + both pins set: userPlaced (now relocate-allowed) wins over "
+        ~ "the ignored softPlaced");
+
+    acs.mode = Mode.Parent;
+    setPins(false, false); assert(vecEq(acs.currentCenter(), parentWorld),
+        "Parent: no-pin fallback = parent item's pivot world pos (unchanged)");
+    setPins(true, false);  assert(vecEq(acs.currentCenter(), userPt),
+        "Parent + userPlaced set: task 0187 flips this — userPlaced now WINS "
+        ~ "over the live parent pivot (pre-0187 this returned parentWorld)");
+    setPins(false, true);  assert(vecEq(acs.currentCenter(), parentWorld),
+        "Parent + softPlaced set: must stay on the live parent pivot "
+        ~ "(ignored) — the settle exclusion is unchanged by 0187");
+    setPins(true, true);   assert(vecEq(acs.currentCenter(), userPt),
+        "Parent + both pins set: userPlaced (now relocate-allowed) wins over "
+        ~ "the still-ignored softPlaced");
+
+    // -------------------------------------------------------------------
+    // Pivot settle before/after — a gesture settle must NOT freeze the
+    // Pivot gizmo. `settleGestureCenter` (xfrm_transform.d) still calls
+    // `setSoftPlaced` for Pivot on every drag settle (acenSettleAllowed()
+    // is true for Pivot — only Element/Local are excluded there); this
+    // proves `computeCenter` never reads that write, so the gizmo keeps
+    // tracking the LIVE item pivot across the settle and any subsequent
+    // item move (the "next gesture" contract in the task plan).
+    // -------------------------------------------------------------------
+    acs.mode = Mode.Pivot;
+    setPins(false, false);
+    assert(vecEq(acs.currentCenter(), pivotWorld),
+        "Pivot settle test: pristine center = live item pivot");
+    acs.setSoftPlaced(Vec3(99, 99, 99));   // simulates the wrapper's settle write
+    assert(acs.isSoftPlaced(), "setSoftPlaced must record the soft pin");
+    assert(vecEq(acs.currentCenter(), pivotWorld),
+        "Pivot settle test: immediately after the settle write, the center "
+        ~ "must STILL read the live item pivot, not the dropped settle point");
+    // Move the item between gestures — the gizmo must keep tracking it,
+    // proving the stale settle value is genuinely never consulted (not
+    // coincidentally equal to the pre-move pivot).
+    primaryLayer.xform.pivot = Vec3(6, 6, 6);
+    assert(vecEq(acs.currentCenter(), Vec3(6, 6, 6)),
+        "Pivot settle test: after an item move following the settle, the "
+        ~ "center must follow the NEW live pivot — a settle must never "
+        ~ "freeze the Pivot gizmo");
 }
