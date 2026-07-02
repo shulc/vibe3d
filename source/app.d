@@ -1204,6 +1204,20 @@ void main(string[] args) {
     vpm.views[0].fcache.resize(mesh.vertices.length, mesh.faces.length);
     vpm.views[0].ecache.resize(mesh.edges.length);
 
+    // Re-apply the persisted viewport-cell preset UNCONDITIONALLY (even when
+    // it is the default Single) so the frame-1 dock rebuild path
+    // (vpm.layoutDirty check, below in the DockSpace host) always runs. ImGui
+    // auto-saves whatever Viewport##k cell subtree was live into the layout
+    // ini regardless of the preset, so a stale multi-cell tree from a prior
+    // session can be sitting in the restored ini even though the persisted
+    // preset is Single. applyLayout() sets layoutDirty=true for every preset
+    // (viewport.d), which drives DockBuilderRemoveNodeChildNodes on the
+    // central node and rebuilds it from vpm.layout — deterministically
+    // overriding whatever ImGui restored. Interactive-only: --test keeps
+    // io.IniFilename == null (no ini to ever go stale) and skips this so
+    // test-mode dock geometry is untouched.
+    if (!testMode) vpm.applyLayout(g_prefs.viewportLayout);
+
     // Nested accessors — ref-returning so member-mutation, ref-param, and
     // address-of (&x()) all bind against the ACTIVE viewport's live fields.
     // `cameraView`/`vertexCache`/`faceCache`/`edgeCache` stay textually
@@ -4484,6 +4498,11 @@ void main(string[] args) {
                     default:       lp = LayoutPreset.Single;  break;
                 }
                 vpm.applyLayout(lp);
+                // Mirrors the recentFiles/lastDir/toolDefaults precedent: just
+                // update g_prefs in-memory here, no per-command file write —
+                // it flushes to disk once at clean shutdown (persistPrefsOnExit,
+                // gated on prefsActive). Harmless no-op in --test (never saved).
+                g_prefs.viewportLayout = lp;
                 return;
             }
 
@@ -6431,8 +6450,8 @@ void main(string[] args) {
             ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
         }
-        int sidePanelFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
-        if (testMode) sidePanelFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        int sidePanelFlags = ImGuiWindowFlags.NoCollapse;
+        if (testMode) sidePanelFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
         if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
         {
             pushButtonBarStyle();
@@ -6593,8 +6612,8 @@ void main(string[] args) {
             ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
         }
-        int statusFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
-        if (testMode) statusFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        int statusFlags = ImGuiWindowFlags.NoCollapse;
+        if (testMode) statusFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
         if (ImGui.Begin("Status line", null, statusFlags))
         {
             pushButtonBarStyle();
@@ -6812,8 +6831,8 @@ void main(string[] args) {
             ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
         }
-        int tabFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
-        if (testMode) tabFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+        int tabFlags = ImGuiWindowFlags.NoCollapse;
+        if (testMode) tabFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
         if (ImGui.Begin("Tab bar", null, tabFlags))
         {
             pushButtonBarStyle();

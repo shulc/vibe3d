@@ -30,7 +30,8 @@ import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
 
-import log : logWarn;
+import log      : logWarn;
+import viewport : LayoutPreset;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -45,7 +46,8 @@ enum int kPrefsVersion = 1;
 enum size_t kRecentFilesMax = 10;
 
 /// Persisted user preferences (schema v1). Field order mirrors the JSON
-/// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolDefaults`.
+/// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolDefaults`,
+/// `viewportLayout`.
 struct Prefs {
     /// Schema version of the loaded document (kPrefsVersion for a fresh struct).
     int version_ = kPrefsVersion;
@@ -67,6 +69,14 @@ struct Prefs {
     /// Captured on clean tool drop, re-applied at activation so they override
     /// config/tool_presets.yaml. TOOL-LEVEL attrs only — never pipe-stage.
     string[string][string] toolDefaults;
+
+    /// Persisted viewport-cell split preset (Single/SplitH/SplitV/Quad). The
+    /// ImGui layout ini also carries a `Viewport##k` cell-node subtree, but
+    /// that subtree is NOT trusted as the source of truth (a stale multi-cell
+    /// tree can survive from a prior session even when the preset reverted
+    /// to Single) — the startup `applyLayout(g_prefs.viewportLayout)` call
+    /// deterministically rebuilds the cell tree from THIS field instead.
+    LayoutPreset viewportLayout = LayoutPreset.Single;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -172,6 +182,16 @@ Prefs loadPrefs(string dir) {
                                 attrs[attrName] = valJson.str;
                         if (attrs.length > 0) p.toolDefaults[presetId] = attrs;
                     }
+
+        if (auto vlp = "viewportLayout" in doc)
+            if (vlp.type == JSONType.string)
+                switch (vlp.str) {
+                    case "Single": p.viewportLayout = LayoutPreset.Single; break;
+                    case "SplitH": p.viewportLayout = LayoutPreset.SplitH; break;
+                    case "SplitV": p.viewportLayout = LayoutPreset.SplitV; break;
+                    case "Quad":   p.viewportLayout = LayoutPreset.Quad;   break;
+                    default: break; // unrecognized -> keep default (Single)
+                }
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -210,6 +230,9 @@ void savePrefs(ref const Prefs p, string dir) {
         td[presetId] = av;
     }
     doc["toolDefaults"] = td;
+
+    import std.conv : to;
+    doc["viewportLayout"] = JSONValue(to!string(p.viewportLayout));
 
     mkdirRecurse(dir);
     write(prefsFilePath(dir), doc.toPrettyString());
@@ -316,6 +339,7 @@ unittest {
     p.recentFiles = ["/abs/a.v3d", "/abs/b.obj"];
     p.lastDir = "/abs/dir";
     p.toolDefaults["bevel"] = ["width": "0.25", "segments": "4"];
+    p.viewportLayout = LayoutPreset.SplitH;
 
     savePrefs(p, dir);
     auto q = loadPrefs(dir);
@@ -326,6 +350,27 @@ unittest {
     assert(q.lastDir == "/abs/dir");
     assert(q.toolDefaults["bevel"]["width"] == "0.25");
     assert(q.toolDefaults["bevel"]["segments"] == "4");
+    assert(q.viewportLayout == LayoutPreset.SplitH);
+}
+
+// viewportLayout: default is Single; unrecognized string tolerantly falls
+// back to the default instead of throwing.
+unittest {
+    auto dir = makeScratch("viewportlayout");
+    scope(exit) cleanScratch(dir);
+
+    auto def = loadPrefs(dir);
+    assert(def.viewportLayout == LayoutPreset.Single, "unset -> default Single");
+
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportLayout": "Quad" }`);
+    auto q = loadPrefs(dir);
+    assert(q.viewportLayout == LayoutPreset.Quad);
+
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportLayout": "NotARealPreset" }`);
+    auto r = loadPrefs(dir);
+    assert(r.viewportLayout == LayoutPreset.Single, "unrecognized -> default Single");
 }
 
 // missing file → defaults, no throw.
