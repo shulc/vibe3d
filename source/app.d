@@ -34,7 +34,7 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
-import perf_probe : g_perf, Cat, g_frames, Phase;
+import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
@@ -585,6 +585,244 @@ void dockSplitViewportCells(ImGuiID parentNodeId, LayoutPreset p) {
 }
 
 // ---------------------------------------------------------------------------
+// Perf HUD (task 0198) — perf-build-only ImGui overlay reading the
+// FrameProbe ring (task 0195, source/perf_probe.d) directly. All state +
+// the draw function live at module scope (not nested in main()) since
+// nothing here needs main()'s locals — ImGui's own GetIO()/GetWindowDrawList
+// are enough. See doc/perf_hud_plan.md for the design.
+// ---------------------------------------------------------------------------
+
+version (PerfProbe) {
+
+    import core.time : MonoTime;
+
+    /// One HUD-owned wall-clock sample, keyed on FrameProbe's monotonic
+    /// `frameCount`. Lets the HUD bracket "the last second" for the
+    /// worst-frame readout WITHOUT adding a timestamp field to `FrameRec`
+    /// (a new-instrumentation change the plan forbids) — see §5.5.
+    private struct HudTsEntry {
+        long frameCount;
+        MonoTime t;
+    }
+
+    /// Preallocated HUD state — every buffer is a fixed-size inline array,
+    /// allocated once (the `__gshared` instance lives for the process
+    /// lifetime), so the per-frame draw path never touches the GC. Mirrors
+    /// `g_frames`'s `__gshared`, single-writer (main-loop-only) style.
+    private struct PerfHudState {
+        enum size_t RecCap = 256;  // tail window for the graph + stacked
+                                    // columns; FrameProbe's own ring is 8192
+                                    // deep, the HUD only ever looks at the
+                                    // most recent slice of it.
+        enum size_t TsCap  = 512;  // HUD-side wall-clock ring for the
+                                    // last-second bracket (§5.5).
+
+        FrameRec[RecCap]   recBuf;
+        float[RecCap]      plotMs;
+        HudTsEntry[TsCap]  tsRing;
+        size_t             tsLen;
+        size_t             tsPos;
+    }
+
+    private __gshared PerfHudState g_perfHud;
+
+}
+
+/// Draw the perf HUD overlay. Full body gated `version (PerfProbe)`; the
+/// default build compiles this as an empty function (no-op), so the call
+/// site below needs no additional `version` guard beyond the outer
+/// `if (perfHud)` (which itself can only ever be true in a perf build —
+/// see the flag-parse comment).
+///
+/// MUST be called from the panel-build region wrapped in
+/// `g_frames.phase(Phase.ui)` (see the call site) — ImGui is immediate-mode,
+/// so this window's commands must be issued before `ImGui.Render()`; there
+/// is no "draw after endFrame" for the same frame. Charging the HUD's own
+/// build cost to `uiNs` is the honest choice (the HUD *is* UI) and keeps it
+/// out of every other measured phase and out of the `other` remainder. Note
+/// this means `uiNs` is no longer purely "ImGui chrome render" once the HUD
+/// is on — it also carries the HUD's own draw-list build cost. That is
+/// intended, not a leak.
+void drawPerfHud() {
+    version (PerfProbe) {
+        import core.stdc.stdio : snprintf;
+        import core.time : seconds;
+
+        size_t n = g_frames.copyRecent(g_perfHud.recBuf[]);
+        if (n == 0) return;   // nothing recorded yet (first frame or two)
+
+        foreach (i; 0 .. n)
+            g_perfHud.plotMs[i] = cast(float)(g_perfHud.recBuf[i].totalNs * 1e-6);
+
+        FrameStatsSnapshot st = g_frames.stats();
+
+        // HUD-side wall-clock ring (§5.5) — push every draw so the
+        // worst-of-last-second readout below can bracket a true ~1s window.
+        g_perfHud.tsRing[g_perfHud.tsPos] = HudTsEntry(st.frameCount, MonoTime.currTime);
+        g_perfHud.tsPos = (g_perfHud.tsPos + 1) % PerfHudState.TsCap;
+        if (g_perfHud.tsLen < PerfHudState.TsCap) g_perfHud.tsLen++;
+
+        // ---- overlay window: semi-transparent, top-right, click-through ----
+        ImVec2 dsz = ImGui.GetIO().DisplaySize;
+        enum float pad = 8.0f;
+        ImGui.SetNextWindowPos(ImVec2(dsz.x - pad, pad), 0, ImVec2(1, 0));
+        ImGui.SetNextWindowBgAlpha(0.35f);
+        immutable int hudFlags =
+            ImGuiWindowFlags.NoDecoration       |
+            ImGuiWindowFlags.NoInputs           |   // click-through: never
+                                                     // steals viewport orbit/drag
+            ImGuiWindowFlags.NoNav              |
+            ImGuiWindowFlags.NoFocusOnAppearing |
+            ImGuiWindowFlags.AlwaysAutoResize;
+        ImGui.Begin("##perfhud", null, hudFlags);
+
+        char[128] buf;
+        int blen;
+        // snprintf returns the INTENDED length (may exceed buf.length-1 on
+        // truncation, or be <0 on error); clamp before slicing buf so a large
+        // formatted value can never over-read the stack buffer (drawPerfHud is
+        // @system and the perf build runs without bounds checks). Called
+        // directly (never stored) so no closure allocation.
+        int clampBlen(int r) {
+            if (r < 0) return 0;
+            return r > cast(int) buf.length - 1 ? cast(int) buf.length - 1 : r;
+        }
+        const(FrameRec)* newest = &g_perfHud.recBuf[n - 1];
+
+        // ---- scrolling totalNs graph + 16.6/33ms target lines ----
+        // Fixed y-axis (scaleMin=0, scaleMax=50ms) so the target lines sit
+        // at a meaningful, stable height frame to frame.
+        enum float scaleMax = 50.0f;
+        ImVec2 graphSize = ImVec2(240.0f, 60.0f);
+        blen = snprintf(buf.ptr, buf.length, "%.2f ms".ptr, newest.totalNs * 1e-6);
+        ImGui.PlotLines("##ft", g_perfHud.plotMs.ptr, cast(int) n, 0,
+                        cast(string) buf[0 .. clampBlen(blen)], 0.0f, scaleMax, graphSize);
+
+        // Target lines: map ms -> y using the plot's OWN item rect, queried
+        // AFTER PlotLines (ImGui's "ask the item you just drew" idiom) — this
+        // stays correct even if PlotLines' internal frame padding changes,
+        // rather than us recomputing the rect from graphSize independently.
+        {
+            ImVec2 rMin = ImGui.GetItemRectMin();
+            ImVec2 rMax = ImGui.GetItemRectMax();
+            float h = rMax.y - rMin.y;
+            auto dl = ImGui.GetWindowDrawList();
+            float y166 = rMax.y - (16.6f / scaleMax) * h;
+            float y33  = rMax.y - (33.0f  / scaleMax) * h;
+            if (y166 >= rMin.y && y166 <= rMax.y)
+                dl.AddLine(ImVec2(rMin.x, y166), ImVec2(rMax.x, y166), IM_COL32(80, 220, 80, 200));
+            if (y33 >= rMin.y && y33 <= rMax.y)
+                dl.AddLine(ImVec2(rMin.x, y33), ImVec2(rMax.x, y33), IM_COL32(230, 190, 60, 200));
+        }
+        ImGui.TextUnformatted("green=16.6ms  yellow=33ms");
+
+        // ---- per-phase disjoint stacked columns ----
+        // Disjoint set {eventNs, cacheNs, uploadNs, drawNs, uiNs, other};
+        // other = totalNs - sum(those) (clamped >= 0), mirroring 0195's
+        // caller-side remainder formula exactly. toolNs is a NESTED subset
+        // of eventNs (0195's contract) and is shown as a standalone figure
+        // below, never folded into this stack (would double-count).
+        ImGui.Dummy(ImVec2(0, 4));
+        ImGui.TextUnformatted("phase: blue=events cyan=cache purple=upload orange=draw green=ui grey=other");
+        {
+            enum float colW = 3.0f;
+            enum float colH = 40.0f;
+            static immutable ImU32[6] palette = [
+                IM_COL32(70, 130, 220, 255),   // events
+                IM_COL32(70, 210, 210, 255),   // cache
+                IM_COL32(170, 100, 220, 255),  // upload
+                IM_COL32(230, 150, 60, 255),   // draw
+                IM_COL32(90, 200, 90, 255),    // ui
+                IM_COL32(140, 140, 140, 255),  // other
+            ];
+            ImVec2 cursor = ImGui.GetCursorScreenPos();
+            auto dl = ImGui.GetWindowDrawList();
+            size_t take = n < 120 ? n : 120;
+            size_t start = n - take;
+            foreach (i; 0 .. take) {
+                const(FrameRec)* r = &g_perfHud.recBuf[start + i];
+                long other = r.totalNs - (r.eventNs + r.cacheNs + r.uploadNs + r.drawNs + r.uiNs);
+                if (other < 0) other = 0;
+                long[6] segs = [r.eventNs, r.cacheNs, r.uploadNs, r.drawNs, r.uiNs, other];
+                float x0 = cursor.x + i * colW;
+                float yBase = cursor.y + colH;
+                float accumMs = 0.0f;
+                foreach (s; 0 .. 6) {
+                    float segMs = segs[s] * 1e-6f;
+                    if (segMs <= 0.0f) continue;
+                    float y0 = yBase - (accumMs + segMs) / scaleMax * colH;
+                    float y1 = yBase - accumMs / scaleMax * colH;
+                    if (y0 < cursor.y) y0 = cursor.y;
+                    dl.AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + colW - 1.0f, y1), palette[s]);
+                    accumMs += segMs;
+                }
+            }
+            ImGui.Dummy(ImVec2(cast(float)(take * colW), colH + 2));
+        }
+
+        blen = snprintf(buf.ptr, buf.length, "tool (in events): %.2f ms".ptr,
+                        newest.toolNs * 1e-6);
+        ImGui.TextUnformatted(cast(string) buf[0 .. clampBlen(blen)]);
+
+        // ---- alloc/frame + GC ----
+        ImGui.Dummy(ImVec2(0, 4));
+        double avgAllocKb = st.frameCount > 0
+            ? (cast(double) st.sumAllocBytes / cast(double) st.frameCount) / 1024.0 : 0.0;
+        blen = snprintf(buf.ptr, buf.length,
+                        "alloc: %.2f KB/frame avg (latest %.2f KB), gc collections: %.0f".ptr,
+                        avgAllocKb, newest.gcAllocBytes / 1024.0, cast(double) st.sumCollections);
+        ImGui.TextUnformatted(cast(string) buf[0 .. clampBlen(blen)]);
+
+        // ---- worst-frame-of-last-second ----
+        ImGui.Dummy(ImVec2(0, 4));
+        {
+            // Scan the HUD's own timestamp ring backward for the oldest
+            // entry still within the last ~1s of wall time, then bracket
+            // that many of the most recent FrameRecs and pick the max
+            // totalNs among them.
+            //
+            // Bounded by RecCap (256): above ~256fps the true "last second"
+            // window is wider than our recent-frame buffer, so this
+            // self-correcting-ly falls back to "worst of the buffered tail"
+            // instead — never reads outside recBuf, never a bug, just a
+            // coarser window at very high frame rates.
+            MonoTime now = MonoTime.currTime;
+            long deltaCount = 0;
+            if (g_perfHud.tsLen > 0) {
+                size_t oldestIdx = 0;
+                size_t scanned = 0;
+                foreach (k; 0 .. g_perfHud.tsLen) {
+                    size_t idx = (g_perfHud.tsPos + PerfHudState.TsCap - 1 - k) % PerfHudState.TsCap;
+                    if (now - g_perfHud.tsRing[idx].t > 1.seconds) break;
+                    oldestIdx = idx;
+                    scanned++;
+                }
+                if (scanned > 0)
+                    deltaCount = st.frameCount - g_perfHud.tsRing[oldestIdx].frameCount;
+            }
+            size_t windowN = (deltaCount > 0 && cast(size_t) deltaCount < n)
+                ? cast(size_t) deltaCount : n;
+            size_t wStart = n - windowN;
+            size_t worstI = wStart;
+            foreach (i; wStart .. n)
+                if (g_perfHud.recBuf[i].totalNs > g_perfHud.recBuf[worstI].totalNs) worstI = i;
+            const(FrameRec)* w = &g_perfHud.recBuf[worstI];
+            const(char)* hitchTag = (w.totalNs > 33_000_000) ? " [HITCH>33ms]".ptr
+                                   : (w.totalNs > 16_600_000) ? " [>16.6ms]".ptr
+                                   : "".ptr;
+            blen = snprintf(buf.ptr, buf.length,
+                "worst/1s: %.2fms%s  ev=%.2f cache=%.2f up=%.2f draw=%.2f ui=%.2f".ptr,
+                w.totalNs * 1e-6, hitchTag,
+                w.eventNs * 1e-6, w.cacheNs * 1e-6, w.uploadNs * 1e-6,
+                w.drawNs * 1e-6, w.uiNs * 1e-6);
+            ImGui.TextUnformatted(cast(string) buf[0 .. clampBlen(blen)]);
+        }
+
+        ImGui.End();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -622,6 +860,14 @@ void main(string[] args) {
     // --perf`). PerfProbe timers inside the tool loop are independent of feed
     // rate, so fast-forward leaves the per-stage measurements correct.
     bool perfMode = false;
+    // --perf-hud: perf-build-only ImGui overlay (task 0198) reading the
+    // FrameProbe ring (task 0195) directly — scrolling totalNs graph,
+    // per-phase colour breakdown, alloc/frame, worst-frame-of-last-second.
+    // Always declared so a default build can parse the flag and print a
+    // polite message; only ever set true under version(PerfProbe), so a
+    // default build leaves it false and the (version-gated, stubbed)
+    // drawPerfHud() call site never fires.
+    bool perfHud = false;
     ushort httpPort = 8080;       // Default port
     int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
                                           // (also via --viewport WxH which
@@ -665,6 +911,13 @@ void main(string[] args) {
             command.g_testMode = true;  // gate testMode-only commands (re-eval D5)
         } else if (args[i] == "--perf") {
             perfMode = true;
+        } else if (args[i] == "--perf-hud") {
+            version (PerfProbe) {
+                perfHud = true;
+            } else {
+                writeln("--perf-hud requires a perf build " ~
+                        "(dub build --build=perf); ignoring.");
+            }
         } else if (args[i] == "--visible") {
             visibleTest = true;
         } else if (args[i] == "--no-http") {
@@ -7976,6 +8229,20 @@ void main(string[] args) {
         // Hidden in --test by default; opt-in via `ui.viewportProps show`.
         if (!command.g_testMode || g_viewportPropsShown)
             drawViewportPropsPanel();
+
+        // ---- Perf HUD (task 0198, perf build only) ----
+        // Built HERE (in the panel-build region, before ImGui.Render()) and
+        // NOT after endFrame() — ImGui is immediate-mode, so there is no
+        // "draw after endFrame" for the same frame (see drawPerfHud's doc
+        // comment). Wrapped in Phase.ui so the HUD's own build cost is
+        // charged to uiNs, never leaking into any other measured phase or
+        // into the `other` remainder. No-op in the default build (perfHud
+        // is unconditionally false there, and drawPerfHud()'s body is
+        // entirely version(PerfProbe)-gated).
+        version (PerfProbe) if (perfHud) {
+            auto zFramesHud = g_frames.phase(Phase.ui);
+            drawPerfHud();
+        }
 
         // ---- Tool Properties (floating) ----
         // In --test mode this window is hidden by default so synthetic mouse
