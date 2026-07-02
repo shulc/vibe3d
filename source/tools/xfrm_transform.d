@@ -5027,11 +5027,13 @@ private:
             stage.connectMask = null;
             return;
         }
-        size_t[][] adj = new size_t[][](n);
-        foreach (e; mesh.edges) {
-            adj[e[0]] ~= e[1];
-            adj[e[1]] ~= e[0];
-        }
+        // CSR vert→vert adjacency (relation D, edge-based), same provider as
+        // smooth.d / smoothSubdivide. `stage.connectMask` is an order-
+        // independent visited set, so (unlike the two smooth kernels) the
+        // CSR neighbor order carries no bit-stability requirement here.
+        const(size_t)[] adjOff;
+        const(uint)[]   adjNbrs;
+        mesh.vertexAdjacencyCSR(adjOff, adjNbrs);
         bool[] visited = new bool[](n);
         size_t[] queue;
         queue ~= cast(size_t)seedVi;
@@ -5039,7 +5041,7 @@ private:
         while (queue.length > 0) {
             size_t v = queue[$ - 1];
             queue.length -= 1;
-            foreach (nb; adj[v])
+            foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
                 if (!visited[nb]) { visited[nb] = true; queue ~= nb; }
         }
         stage.connectMask = visited;

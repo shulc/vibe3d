@@ -237,14 +237,15 @@ class MeshSmooth : Command, Operator, IFalloffAware {
             }
         }
 
-        // Neighbour lists, built once from mesh.edges. Each adjacency
-        // is recorded both ways (a→b AND b→a) so the per-iter loop
-        // doesn't need to re-walk the edge array.
-        uint[][] neighbors = new uint[][](mesh.vertices.length);
-        foreach (e; mesh.edges) {
-            neighbors[e[0]] ~= e[1];
-            neighbors[e[1]] ~= e[0];
-        }
+        // Neighbour lists — CSR vert→vert adjacency (relation D, edge-based,
+        // both directions), shared with smoothSubdivide / updateConnectMask.
+        // Per-vertex order is proven identical to the old inline
+        // `foreach (e; mesh.edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
+        // build (mesh.d Stage-0 parity unittest), which the float-sum
+        // averaging below depends on for bit-identical results.
+        const(size_t)[] adjOff;
+        const(uint)[]   adjNbrs;
+        mesh.vertexAdjacencyCSR(adjOff, adjNbrs);
 
         // Snapshot pre-apply positions of every vert we plan to touch.
         // We touch ALL masked verts (even those without neighbors —
@@ -266,7 +267,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         foreach (_; 0 .. iter_) {
             foreach (vi; 0 .. mesh.vertices.length) {
                 if (!vmask[vi]) continue;
-                auto nbrs = neighbors[vi];
+                auto nbrs = adjNbrs[adjOff[vi] .. adjOff[vi + 1]];
                 if (nbrs.length == 0) continue;
                 Vec3 sum = Vec3(0, 0, 0);
                 foreach (nb; nbrs) sum = sum + prev[nb];
