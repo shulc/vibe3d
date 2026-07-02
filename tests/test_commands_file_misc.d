@@ -39,6 +39,13 @@ long modelVertexCount() {
     return j["vertices"].array.length;
 }
 
+JSONValue cameraJson() { return getJson("/api/camera?viewport=0"); }
+
+void setCamera(string body_) {
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/camera", body_));
+    assert(r["status"].str == "ok", "POST /api/camera failed: " ~ r.toString);
+}
+
 unittest { // file.new on a cube → empty mesh
     post(baseUrl ~ "/api/reset", "");
     assert(modelVertexCount() == 8, "setup: default cube should have 8 verts");
@@ -74,4 +81,39 @@ unittest { // history.show: command dispatch succeeds (UI toggle isn't queryable
     assert(modelVertexCount() == 8,
         "history.show shouldn't mutate the mesh; got " ~
         modelVertexCount().to!string ~ " verts");
+}
+
+unittest { // file.new resets the camera pose (task 0182 / V3)
+    // file.new dispatches through the generic commandHandlerDelegate — not
+    // a dedicated app-layer site — so there is no per-fire-site hook to reset
+    // the viewport from. The fix wires an onViewportReset delegate into the
+    // SceneReset factory (mirroring onResetTool) so every dispatch path
+    // (menu, shortcut, HTTP) resets the viewport uniformly. Without it, a
+    // File -> New that leaves a stale camera would ship green (this test
+    // previously only asserted mesh-empty, never camera pose).
+    post(baseUrl ~ "/api/reset", "");
+    auto defaultCam = cameraJson();
+
+    // Orbit/zoom/pan the camera away from the default framing.
+    setCamera(`{"azimuth":1.2,"elevation":0.3,"distance":9.0,` ~
+              `"focus":{"x":2.0,"y":-1.0,"z":0.5}}`);
+    auto movedCam = cameraJson();
+    assert(movedCam["azimuth"].floating  != defaultCam["azimuth"].floating,
+        "setup: camera should have moved away from default azimuth");
+
+    runCmd("file.new");
+
+    auto afterCam = cameraJson();
+    assert(afterCam["azimuth"].floating   == defaultCam["azimuth"].floating,
+        "file.new should reset azimuth to default; got " ~ afterCam.toString);
+    assert(afterCam["elevation"].floating == defaultCam["elevation"].floating,
+        "file.new should reset elevation to default; got " ~ afterCam.toString);
+    assert(afterCam["distance"].floating  == defaultCam["distance"].floating,
+        "file.new should reset distance to default; got " ~ afterCam.toString);
+    assert(afterCam["focus"]["x"].floating == defaultCam["focus"]["x"].floating &&
+           afterCam["focus"]["y"].floating == defaultCam["focus"]["y"].floating &&
+           afterCam["focus"]["z"].floating == defaultCam["focus"]["z"].floating,
+        "file.new should reset focus to default; got " ~ afterCam.toString);
+
+    post(baseUrl ~ "/api/reset", "");
 }

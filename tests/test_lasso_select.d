@@ -11,9 +11,16 @@
 //
 // Occluded-endpoint tests (see lasso_edge_*_endpoint.log / lasso_edge_both_visible.log):
 //   These use a custom injected scene with a quad occluder at z=0 and a
-//   triangle behind it at z=-1. The camera is set via /api/camera so that
-//   the scene + lasso coordinates are deterministic in a fixed 800×600 viewport
-//   (VIEWPORT line in those logs matches: vpX=0,vpY=0,vpW=800,vpH=600).
+//   triangle behind it at z=-1. The camera is set via /api/camera to an
+//   explicit 800×600 size (independent of the live window's 650×544 3D
+//   area) so the scene's projected geometry is deterministic regardless
+//   of the shared --test instance's window size. The recorded VIEWPORT
+//   meta line matches the LIVE layout (vpX=150,vpY=28,vpW=650,vpH=544) —
+//   same convention as every other log in this file — so EventPlayer's
+//   replay remap is a no-op identity pass-through; the raw x/y values
+//   below are the ABSOLUTE screen pixels the 800×600-camera-at-(150,28)
+//   actually projects v4/v5/v6 to (not the local, 0-offset viewport-
+//   relative numbers a raw projection formula would give).
 //   The strict both-endpoints rule: lasso selects an edge only if BOTH
 //   projected endpoints are inside the lasso polygon AND BOTH endpoint windows
 //   contain a surviving pixel in the Edge ID-FBO (depth-pre-pass baked).
@@ -145,16 +152,17 @@ unittest { // lasso a wide rect over the whole front face in polygon mode
 //             v5=(0,0,-1) is occluded (dead-center behind quad).
 // Edge (4,6): v4=(1.8,0,-1) and v6=(1.8,-0.1,-1) — BOTH visible.
 //
-// Projected pixel positions (800×600 fovY=π/4):
-//   v4 → (~617, 300),  v5 → (~400, 300),  v6 → (~617, 312)
+// Projected pixel positions — the camera is at window offset (150,28) (the
+// live 3D area's origin) with an explicit 800×600 size, fovY=π/4:
+//   v4 → (~767, 328),  v5 → (~550, 328),  v6 → (~767, 340)
 // ---------------------------------------------------------------------------
 
 unittest { // Case A (RED before fix, GREEN after): edge with one occluded endpoint
            // must NOT be selected by lasso even though both endpoints project inside
     int edge45 = setupOccluderScene();
 
-    // Log: Edges mode (key '2'), lasso box (390,286)→(627,314) enclosing BOTH
-    // v4(617,300) and v5(400,300). Without the fix this edge IS selected.
+    // Log: Edges mode (key '2'), lasso box (540,314)→(777,342) enclosing BOTH
+    // v4(767,328) and v5(550,328). Without the fix this edge IS selected.
     // With the STRICT fix, v5's endpoint window has no surviving edge pixel →
     // the edge is rejected.
     playAndWait("tests/events/lasso_edge_occluded_endpoint.log");
@@ -186,8 +194,8 @@ unittest { // Positive control: edge with BOTH endpoints visible MUST be selecte
     }
     assert(edge46 >= 0, "edge (4,6) not found in /api/model");
 
-    // Log: Edges mode (key '2'), lasso box (598,286)→(632,325) enclosing
-    // v4(617,300) and v6(617,312). Both endpoints are visible → edge selected.
+    // Log: Edges mode (key '2'), lasso box (748,314)→(782,353) enclosing
+    // v4(767,328) and v6(767,340). Both endpoints are visible → edge selected.
     playAndWait("tests/events/lasso_edge_both_visible.log");
 
     auto sel = getJson("/api/selection");
