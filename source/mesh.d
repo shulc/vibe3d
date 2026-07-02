@@ -360,6 +360,71 @@ struct Mesh {
     /// positions.
     ulong     topologyVersion;
 
+    /// Connectivity (edge/face structure) sub-version. Bumped ONLY by the
+    /// edge/face structural primitives (addEdge/addFace/addFaceFast/
+    /// rebuildEdgesFromFaces, and transitively rebuildEdges). NOT bumped by
+    /// vertex-add/position/marks/isSubpatch changes. The loops family
+    /// (loops/faceLoop/vertLoop/loopEdge) and edgeIndexMap are functions of
+    /// this, so their validity stamps compare against it — NOT
+    /// topologyVersion, which conflates Points|Polygons and would falsely
+    /// invalidate on a Points-only change (e.g. a bare addVertex). Orthogonal
+    /// to commitChange — commitChange never touches it, so there is no
+    /// build-before-commit ordering hazard and no ride-along pending flag:
+    /// buildLoops stamps `loopsStamp = structVersion` directly, and nothing
+    /// re-bumps structVersion until the next real structural mutation.
+    ulong     structVersion;
+
+    /// Validity state for a structVersion-derived structure (the loops
+    /// family or edgeIndexMap). `Stale` = built for an older structVersion,
+    /// or never built at all (the fresh-`Mesh.init` case — the state starts
+    /// `Stale` so a never-built mesh does not read as valid by the `0==0`
+    /// coincidence). `Valid` = built for the current structVersion.
+    /// `DeliberatelyEmpty` = intentionally left empty by a caller that knows
+    /// it will not be read through the loops helpers (e.g. a subpatch
+    /// preview mesh whose consumers only read vertices/edges/faces) —
+    /// distinct from `Stale` so a future assert can tell "forgot to rebuild"
+    /// from "deliberately skipped".
+    enum DerivedState : ubyte { Stale, Valid, DeliberatelyEmpty }
+    private ulong loopsStamp;    // structVersion the loops family was built for
+    private ulong edgeMapStamp;  // structVersion edgeIndexMap was built for
+    private DerivedState loopsState_   = DerivedState.Stale;
+    private DerivedState edgeMapState_ = DerivedState.Stale;
+
+    /// O(1): true iff the loops family (loops/faceLoop/vertLoop/loopEdge)
+    /// was built for the CURRENT structVersion.
+    bool loopsValid() const {
+        return loopsState_ == DerivedState.Valid && loopsStamp == structVersion;
+    }
+    /// O(1): true iff edgeIndexMap is populated AND in sync with the current
+    /// structVersion (false while deliberately deferred — e.g. between
+    /// addFaceFast calls and the caller's terminal buildLoops()).
+    bool edgeMapUsable() const {
+        return edgeMapState_ == DerivedState.Valid && edgeMapStamp == structVersion;
+    }
+    /// Explicitly mark the loops family + edgeIndexMap DeliberatelyEmpty —
+    /// for meshes (e.g. subpatch preview output) whose consumers never read
+    /// through the loops helpers, so a stray reader sees an explicit
+    /// "not built, on purpose" state rather than stale data from a previous
+    /// rebuild. Keeps the state fields `private` while giving external
+    /// modules an intent-named way to record the contract.
+    void markDerivedEmpty() {
+        loopsState_   = DerivedState.DeliberatelyEmpty;
+        edgeMapState_ = DerivedState.DeliberatelyEmpty;
+    }
+    /// Debug-only (stripped from release builds — byte-stable): assert the
+    /// loops family is valid at a provably-settled read entry point. See
+    /// call sites for the settledness proof; never place in a mid-op reader.
+    pragma(inline, true) void assertLoopsValid() const {
+        debug assert(loopsValid(),
+            "loops family read while stale — a topology mutator skipped buildLoops()");
+    }
+    /// Debug-only (stripped from release builds — byte-stable): assert
+    /// edgeIndexMap is valid at a provably-settled read entry point.
+    pragma(inline, true) void assertEdgeMapValid() const {
+        debug assert(edgeMapUsable(),
+            "edgeIndexMap read while stale/empty — a topology mutator skipped rebuildEdges()/buildLoops()");
+    }
+
     // --- Change-notification accumulation (doc/change_notification_bus_plan) -
     // OR-accumulated change-class flags (MeshEditScope bits) and selection
     // domains (change_bus.SelDomain bits) since the last per-frame flush. The
@@ -552,6 +617,14 @@ struct Mesh {
                 }
             }
         }
+        // Structural change: `edges` reassigned directly (no addEdge), so
+        // bump once. Contract preserved: edgeIndexMap is intentionally left
+        // untouched by this function (see doc comment above) — mark it
+        // Stale rather than re-stamping it Valid. Loops are untouched too;
+        // loopsState_/loopsStamp are left as-is (stale relative to the new
+        // structVersion).
+        ++structVersion;
+        edgeMapState_ = DerivedState.Stale;
     }
 
     uint addVertex(Vec3 v) {
@@ -4773,12 +4846,31 @@ struct Mesh {
         return a < b ? (cast(ulong)a << 32) | b : (cast(ulong)b << 32) | a;
     }
 
-    void addEdge(uint a, uint b) {
+    // Deduplicated edge insert: append (a,b) + record its index in `lookup`
+    // unless an edge with the same undirected key is already present. The
+    // stored index is `edges.length` BEFORE the append — identical to
+    // `edges.length - 1` taken AFTER the append (the shape the former
+    // addFaceFast inner loop used), so callers written either way observe
+    // the same value. Returns whether an edge was actually inserted (false
+    // on a duplicate), so callers that only want to commit/bump on a real
+    // insert (addEdge) can gate on the result.
+    private bool insertEdgeDedup(ref uint[ulong] lookup, uint a, uint b) {
         ulong key = edgeKey(a, b);
-        if (key in edgeIndexMap) return;
-        edgeIndexMap[key] = cast(uint)edges.length;
+        if (key in lookup) return false;
+        lookup[key] = cast(uint)edges.length;
         edges ~= [a, b];
-        commitChange(MeshEditScope.Polygons);
+        return true;
+    }
+
+    void addEdge(uint a, uint b) {
+        if (insertEdgeDedup(edgeIndexMap, a, b)) {
+            // Structural change: one edge appended, and edgeIndexMap (the
+            // map we just inserted into) stays fully in sync.
+            ++structVersion;
+            edgeMapStamp  = structVersion;
+            edgeMapState_ = DerivedState.Valid;
+            commitChange(MeshEditScope.Polygons);
+        }
     }
     /// Re-derive the deduplicated edge list AND `edgeIndexMap` from the
     /// current `faces` via `addEdge` (which also bumps the version
@@ -4811,6 +4903,17 @@ struct Mesh {
         // `idx.length * dim` zeros at the END keeps element-major alignment and
         // the invariant `data.length == Σ face-arities * dim` holds immediately.
         growPolyVertexMapsForAppendedCorners(idx.length);
+        // The face itself is a structural change beyond whatever the addEdge
+        // loop above already bumped (covers a face whose edges ALL pre-exist,
+        // where that loop bumps nothing at all). edgeIndexMap stays fully in
+        // sync — every edge above went through addEdge, which maintains it —
+        // so re-stamp it Valid at the new structVersion. Loops are NOT
+        // rebuilt here, so loopsState_/loopsStamp are left as-is (correctly
+        // stale relative to the bumped structVersion, until the caller's
+        // terminal buildLoops()).
+        ++structVersion;
+        edgeMapStamp  = structVersion;
+        edgeMapState_ = DerivedState.Valid;
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
@@ -4819,17 +4922,18 @@ struct Mesh {
     // Fast version using hash lookup for duplicate checking
     void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
         faces ~= idx.dup;
-        for (uint i = 0; i < idx.length; i++) {
-            uint a = idx[i];
-            uint b = idx[(i+1) % idx.length];
-            ulong key = edgeKey(a, b);
-            if (key !in edgeLookup) {
-                edges ~= [a, b];
-                edgeLookup[key] = cast(uint)(edges.length - 1);
-            }
-        }
+        for (uint i = 0; i < idx.length; i++)
+            insertEdgeDedup(edgeLookup, idx[i], idx[(i+1) % idx.length]);
         // GAP-3 atomic append — see addFace.
         growPolyVertexMapsForAppendedCorners(idx.length);
+        // Structural change (face + external-lookup edges appended) — bump
+        // once. This primitive does NOT touch `this.edgeIndexMap` (the
+        // caller supplies its own scratch `edgeLookup` and defers the
+        // canonical map to a terminal buildLoops()), so mark edgeMapState_
+        // Stale — edgeMapUsable() must report false until that buildLoops()
+        // runs. Loops are deferred too; leave loopsState_/loopsStamp as-is.
+        ++structVersion;
+        edgeMapState_ = DerivedState.Stale;
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
@@ -5428,6 +5532,10 @@ struct Mesh {
         vertices = []; edges = []; faces = [];
         loops = []; faceLoop = []; vertLoop = [];
         edgeIndexMap.clear();   // stale keys would shadow new addEdge calls
+        // Reused-buffer guard: a prior Valid stamp over the now-empty loops/
+        // edgeMap would read valid without a rebuild. Same class markDerivedEmpty
+        // closes for the subpatch preview mesh; keep it consistent here.
+        markDerivedEmpty();
     }
 
     /// Compute the unit normal of face fi using the first triangle (v0, v1, v2).
@@ -7466,6 +7574,21 @@ struct Mesh {
         // subdivide, extrude, …) this is the conscious length-correct,
         // value-zeroed behaviour. No-op when no PolyVertex map is registered.
         resizePolyVertexMaps();
+
+        // Stamp validity at the current structVersion. The loops family is
+        // fully rebuilt above in either branch, so it is always Valid here.
+        // edgeIndexMap tracks which branch ran: the `rebuildEdgeIndexMap`
+        // default rebuilds it (Valid); the CSR-adjacency branch leaves it
+        // `null` by design (DeliberatelyEmpty, not Stale — this is an
+        // intentional caller contract, not a forgotten rebuild).
+        loopsStamp  = structVersion;
+        loopsState_ = DerivedState.Valid;
+        if (rebuildEdgeIndexMap) {
+            edgeMapStamp  = structVersion;
+            edgeMapState_ = DerivedState.Valid;
+        } else {
+            edgeMapState_ = DerivedState.DeliberatelyEmpty;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -8717,11 +8840,7 @@ struct Mesh {
         bool[] isCutVert; // local throwaway — not used outside this call
         uint vi = insertEdgePoint(ei, t, isCutVert);
         // Re-derive edges from faces (deduped via edgeIndexMap).
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref face; faces)
-            foreach (k; 0 .. face.length)
-                addEdge(face[k], face[(k + 1) % face.length]);
+        rebuildEdges();
         buildLoops();
         return vi;
     }
@@ -14494,6 +14613,111 @@ unittest {
     assert(m.addEdgePoint(ei, 1.0f) == uint.max, "addEdgePoint: t=1 must fail");
     assert(m.vertices.length == 8,               "addEdgePoint: guards must not mutate mesh");
     assert(m.edges.length    == 12,              "addEdgePoint: guards must not mutate edges");
+}
+
+// structVersion / loops-validity stamp: the Stage-2 trace table (M7 plan).
+// A connectivity sub-version bumped ONLY by the edge/face structural
+// primitives, so Points/Position/Marks/isSubpatch changes correctly leave
+// loopsValid()/edgeMapUsable() true, while a forgotten buildLoops() after a
+// structural change correctly reads invalid.
+unittest {
+    auto m = makeCube();
+    // 1. face op (addFace, inside makeCube) → buildLoops → valid.
+    assert(m.loopsValid(),    "trace: face op + buildLoops must be loopsValid");
+    assert(m.edgeMapUsable(), "trace: face op + buildLoops must be edgeMapUsable");
+    ulong afterBuild = m.structVersion;
+
+    // 2. face op → (forgot buildLoops) → commit(Geometry): structVersion
+    //    moves (addFace bumps it) but loopsStamp is left behind → INVALID.
+    //    This is the target bug the stamp exists to catch.
+    m.addFace([0u, 1u, 2u]); // degenerate w.r.t. real topology, fine for this probe
+    assert(m.structVersion > afterBuild,
+        "trace: addFace must bump structVersion");
+    assert(!m.loopsValid(),
+        "trace: addFace without a following buildLoops must read loops INVALID");
+    m.buildLoops();
+    assert(m.loopsValid(), "trace: buildLoops after the forgotten-rebuild case must re-validate");
+}
+
+unittest {
+    // 3. bare addVertex (Points-only, wires nothing) must NOT bump
+    //    structVersion and must leave loops/edgeMap valid.
+    auto m = makeCube();
+    assert(m.loopsValid() && m.edgeMapUsable());
+    ulong sv0 = m.structVersion;
+    m.addVertex(Vec3(9, 9, 9));
+    assert(m.structVersion == sv0,
+        "trace: Points-only addVertex must NOT bump structVersion");
+    assert(m.loopsValid(),    "trace: addVertex must leave loops valid");
+    assert(m.edgeMapUsable(), "trace: addVertex must leave edgeMap usable");
+}
+
+unittest {
+    // 4. position-only commit must NOT bump structVersion and must leave
+    //    loops/edgeMap valid.
+    auto m = makeCube();
+    ulong sv0 = m.structVersion;
+    m.vertices[0].x += 1.0f;
+    m.commitChange(MeshEditScope.Position);
+    assert(m.structVersion == sv0,
+        "trace: Position-only commit must NOT bump structVersion");
+    assert(m.loopsValid(),    "trace: position commit must leave loops valid");
+    assert(m.edgeMapUsable(), "trace: position commit must leave edgeMap usable");
+}
+
+unittest {
+    // 5. isSubpatch toggle (Marks-class + explicit topologyVersion bump)
+    //    must NOT bump structVersion and must leave loops/edgeMap valid.
+    auto m = makeCube();
+    ulong sv0 = m.structVersion;
+    m.setSubpatch(0, true);
+    assert(m.structVersion == sv0,
+        "trace: isSubpatch toggle must NOT bump structVersion");
+    assert(m.loopsValid(),    "trace: isSubpatch toggle must leave loops valid");
+    assert(m.edgeMapUsable(), "trace: isSubpatch toggle must leave edgeMap usable");
+}
+
+unittest {
+    // 6. addFaceFast (batch, external lookup) defers edgeIndexMap: bumps
+    //    structVersion (edge/face structural change) but edgeMapUsable()
+    //    reads false until the caller's terminal buildLoops(). Once that
+    //    runs, both read valid.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    ulong sv0 = m.structVersion;
+    uint[ulong] lookup;
+    m.addFaceFast(lookup, [0u, 1u, 2u, 3u]);
+    assert(m.structVersion > sv0,
+        "trace: addFaceFast must bump structVersion");
+    assert(!m.edgeMapUsable(),
+        "trace: addFaceFast must leave this.edgeIndexMap Stale (deferred contract)");
+    assert(!m.loopsValid(),
+        "trace: addFaceFast must leave loops stale until the caller's buildLoops()");
+    m.buildLoops();
+    assert(m.loopsValid(),    "trace: buildLoops after addFaceFast must validate loops");
+    assert(m.edgeMapUsable(), "trace: buildLoops after addFaceFast must validate edgeMap");
+}
+
+unittest {
+    // A preview-style wipe (subpatch_osd's contract): markDerivedEmpty()
+    // reads DeliberatelyEmpty, not Valid and not (bare) Stale.
+    auto m = makeCube();
+    m.markDerivedEmpty();
+    assert(!m.loopsValid(),    "trace: markDerivedEmpty must read loops NOT valid");
+    assert(!m.edgeMapUsable(), "trace: markDerivedEmpty must read edgeMap NOT usable");
+    assert(m.loopsState_   == Mesh.DerivedState.DeliberatelyEmpty);
+    assert(m.edgeMapState_ == Mesh.DerivedState.DeliberatelyEmpty);
+}
+
+unittest {
+    // A never-built mesh (fresh Mesh.init) must NOT read as valid by the
+    // `structVersion == loopsStamp == 0` coincidence — the enum state
+    // starts Stale precisely to guard this off-by-one.
+    Mesh m;
+    assert(m.structVersion == 0 && m.loopsStamp == 0,
+        "trace: fresh Mesh.init sanity — both stamps start at 0");
+    assert(!m.loopsValid(),    "trace: fresh Mesh.init must NOT read loopsValid");
+    assert(!m.edgeMapUsable(), "trace: fresh Mesh.init must NOT read edgeMapUsable");
 }
 
 unittest { // mergeFacesByMask: 2-quad strip → 1 six-corner n-gon; non-adjacent → no-op
