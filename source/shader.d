@@ -259,11 +259,11 @@ class Shader {
     }
     ~this() {  glDeleteProgram(program); }
 
-    void useProgram(const ref float[16] meshModel, const ref View cameraView) {
+    void useProgram(const ref float[16] meshModel, const ref Viewport vp) {
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
         // Default to neutral brightness. The active-layer / single-layer
         // pass never touches u_dim ⇒ byte-identical to pre-Stage-5. The
         // dimmed background pass sets it explicitly with setDim() before
@@ -297,11 +297,11 @@ class CheckerShader {
 
     ~this() { glDeleteProgram(program); }
 
-    void useProgram(const ref float[16] meshModel, const ref View cameraView, float r, float g, float b) {
+    void useProgram(const ref float[16] meshModel, const ref Viewport vp, float r, float g, float b) {
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
         glUniform3f(locColor, r, g, b);
     }
 }
@@ -406,14 +406,14 @@ class LitShader {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    void useProgram(const ref float[16] meshModel, const ref View cameraView) {
+    void useProgram(const ref float[16] meshModel, const ref Viewport vp) {
         Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
         glUniform3f(locLightDir, lightDir.x, lightDir.y, lightDir.z);
-        glUniform3f(locEyePos,   cameraView.eye.x, cameraView.eye.y, cameraView.eye.z);
+        glUniform3f(locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
         // Default to material-lookup mode. drawFacesHighlighted flips
         // this to 1.0 for hover draws that need to override the
         // surface colour with u_color.
@@ -462,13 +462,13 @@ class GridShader {
 
     ~this() { glDeleteProgram(program); }
 
-    void useProgram(const ref float[16] model, const ref View cameraView,
+    void useProgram(const ref float[16] model, const ref Viewport vp,
                     float maxDist, float screenW, float screenH,
                     float vpOriginX, float vpOriginY) {
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, model.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
         glUniform1f(locMaxDist,    maxDist);
         glUniform2f(locScreenSize, screenW, screenH);
         glUniform1f(locVpOriginX,  vpOriginX);

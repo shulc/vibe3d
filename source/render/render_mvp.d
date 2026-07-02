@@ -732,7 +732,6 @@ private void tick(const(Mesh)* m, View v)
     if (g.bridge is null) return;
 
     auto now = MonoTime.currTime;
-    v.viewport();   // refresh derived eye/view/proj on the View
 
     const moving = inputMoving(m, v);
     const apply  = needsApply(m, v);
@@ -1007,7 +1006,9 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     // debounce caught a real change anyway).
     CameraDesc cd;
     cd.kind   = CameraDesc.Kind.Perspective;
-    cd.eye    = v.eye;
+    // Viewport camera single-source (0181): no eye/view/proj mirror on View
+    // anymore — derive eye from the current transform inputs directly.
+    cd.eye    = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation).eye;
     cd.target = v.focus;
     cd.up     = Vec3(0, 1, 0);
     cd.aspect              = cast(float)g.fbW / cast(float)g.fbH;
