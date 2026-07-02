@@ -7,7 +7,7 @@ import std.math      : abs;
 
 import math : Vec3, Viewport, dot, projectToWindowFull;
 import std.math : sqrt;
-import mesh : Mesh, MapDomain;
+import mesh : Mesh, MapDomain, MeshCacheKey;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
@@ -167,22 +167,25 @@ class FalloffStage : Stage, Operator {
     // key (mirrors ActionCenterStage.selectionSignature). `_selCacheValid`
     // is force-cleared whenever the non-Selection branch in evaluate() runs,
     // so flipping the falloff type away from Selection and back recomputes.
+    // `_selKey` folds the (address, mutationVersion) pair a plain
+    // `_selCacheMutVer` used to carry — a stage cache lives OUTSIDE the Mesh
+    // it reads (mesh_ is a live delegate that can silently retarget to a
+    // different layer's primary), so the address term is required to stop
+    // two distinct Mesh instances at an equal mutationVersion from aliasing
+    // this cache. See mesh.d's MeshCacheKey doc comment.
     private bool   _selCacheValid    = false;
-    private ulong  _selCacheMutVer   = ulong.max;
+    private MeshCacheKey _selKey;
     private int    _selCacheEditMode = -1;
     private ulong  _selCacheSelSig   = 0;
     private int    _selCacheSteps    = int.min;
     private FalloffShape _selCacheShape = cast(FalloffShape)(-1);
     private float  _selCacheIn        = float.nan;
     private float  _selCacheOut       = float.nan;
-    // Cached vertex→neighbor CSR adjacency (flat neighbor list + per-vertex
-    // [offset, offset+1] bounds). Topology-invariant, rebuilt only when
-    // mutationVersion moves. Used by the Laplacian smoothing so neighbor
-    // lookup is O(degree) instead of allocating uint[][] every recompute.
-    private ulong    _adjMutVer   = ulong.max;
-    private uint[]   _adjNeighbors;   // flattened neighbor ids
-    private size_t[] _adjOffset;      // length nV+1; neighbors of v are
-                                      // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
+    // Vertex→neighbor CSR adjacency is now owned by Mesh itself
+    // (mesh_.vertexAdjacencyCSR) — a Mesh-owned cache cannot alias across
+    // layers the way a stage-owned copy could, so no address key is needed
+    // for it (the address IS the object). See mesh.d's vertexAdjacencyCSR
+    // doc comment.
 
     // Unique stage id. The PRIMARY falloff keeps the bare "falloff" id so
     // the status-bar pulldown, the `falloff.<type>` set-primary commands,
@@ -250,10 +253,7 @@ class FalloffStage : Stage, Operator {
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
         _selCacheValid     = false;
-        _selCacheMutVer    = ulong.max;
-        _adjMutVer         = ulong.max;
-        _adjOffset.length  = 0;
-        _adjNeighbors.length = 0;
+        _selKey.invalidate();
         publishState();
     }
 
@@ -822,12 +822,11 @@ class FalloffStage : Stage, Operator {
         // is identical to last frame — reuse it and skip the smoothing.
         int stepsI = steps;
         if (stepsI < 0) stepsI = 0;
-        const ulong  mutVer    = mesh_.mutationVersion;
         const int    editModeI = cast(int)(*editMode_);
         const ulong  selSig    = selectionSignature();
         if (_selCacheValid
          && selWeights_.length == nVerts
-         && _selCacheMutVer   == mutVer
+         && _selKey.matches(*mesh_)
          && _selCacheEditMode == editModeI
          && _selCacheSelSig   == selSig
          && _selCacheSteps    == stepsI
@@ -873,9 +872,11 @@ class FalloffStage : Stage, Operator {
         // Vertex→neighbor CSR adjacency. Edge lengths used to be required
         // for the Dijkstra-based weight pass; the iterative Laplacian
         // smoothing below ignores them (each in-selection neighbour
-        // contributes equally). Built once per topology version (cached
-        // across drag frames) — no per-call uint[][] GC churn.
-        ensureVertexAdjacency();
+        // contributes equally). Owned by Mesh itself and rebuilt only when
+        // mutationVersion moves — no per-call uint[][] GC churn.
+        const(size_t)[] adjOffset;
+        const(uint)[]    adjNeighbors;
+        mesh_.vertexAdjacencyCSR(adjOffset, adjNeighbors);
 
         // Boundary verts: selected with ≥1 unselected neighbour.
         // These are pinned to weight 0 across the smoothing — the
@@ -883,7 +884,7 @@ class FalloffStage : Stage, Operator {
         bool[] isB = new bool[](nVerts);
         foreach (vi; 0 .. nVerts) {
             if (!inSel[vi]) continue;
-            foreach (n; _adjNeighbors[_adjOffset[vi] .. _adjOffset[vi + 1]]) {
+            foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
                 if (!inSel[n]) { isB[vi] = true; break; }
             }
         }
@@ -927,7 +928,7 @@ class FalloffStage : Stage, Operator {
                 if (isB[vi])         { wB[vi] = 0.0f; continue; }
                 float sum = 0.0f;
                 int   cnt = 0;
-                foreach (n; _adjNeighbors[_adjOffset[vi] .. _adjOffset[vi + 1]]) {
+                foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
                     if (!inSel[n]) continue;
                     sum += wA[n];
                     cnt += 1;
@@ -954,29 +955,19 @@ class FalloffStage : Stage, Operator {
             selWeights_[vi] = applyShape(1.0f - wA[vi], shape, in_, out_);
         }
 
-        storeSelCacheKey(mutVer, editModeI, selSig, stepsI);
+        storeSelCacheKey(editModeI, selSig, stepsI);
     }
 
     // Cheap rolling hash of the Select bit across the marks array relevant
-    // to the active edit mode (mirrors ActionCenterStage.selectionSignature).
-    // Selection writes bump no version counter, so this folds WHICH elements
-    // are selected (and how many) into the cache key. A collision would only
-    // ever produce a stale weight map, and the selection is frozen during a
-    // drag, so this is safe for cache-key use.
+    // to the active edit mode. Selection writes bump no version counter, so
+    // this folds WHICH elements are selected (and how many) into the cache
+    // key. A collision would only ever produce a stale weight map, and the
+    // selection is frozen during a drag, so this is safe for cache-key use.
+    // Thin wrapper over the single canonical Mesh.selectionSignature (mirrors
+    // ActionCenterStage.selectionSignature, which wraps the same call).
     ulong selectionSignature() const {
         if (mesh_ is null || editMode_ is null) return 0;
-        ulong h = 1469598103934665603UL; // FNV-1a offset basis
-        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
-        const(uint)[] marks;
-        final switch (*editMode_) {
-            case EditMode.Vertices: marks = mesh_.vertexMarks; break;
-            case EditMode.Edges:    marks = mesh_.edgeMarks;   break;
-            case EditMode.Polygons: marks = mesh_.faceMarks;   break;
-        }
-        mix(marks.length);
-        foreach (i, m; marks)
-            if (m & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
-        return h;
+        return mesh_.selectionSignature(*editMode_);
     }
 
     // Resolve `anchorRing` vertex indices to their live world positions into
@@ -1046,7 +1037,9 @@ class FalloffStage : Stage, Operator {
         if (m is null) return;
         const size_t nV = m.vertices.length;
         if (nV == 0) return;
-        ensureVertexAdjacency();   // CSR over mesh_.edges, mutVer-cached
+        const(size_t)[] adjOffset;
+        const(uint)[]    adjNeighbors;
+        m.vertexAdjacencyCSR(adjOffset, adjNeighbors);   // Mesh-owned, mutVer-cached
         auto visited = new bool[](nV);
         size_t[] stack;
         foreach (vi; anchorRing) {
@@ -1057,47 +1050,19 @@ class FalloffStage : Stage, Operator {
         while (stack.length > 0) {
             size_t v = stack[$ - 1];
             stack.length -= 1;
-            foreach (j; _adjOffset[v] .. _adjOffset[v + 1]) {
-                size_t nb = _adjNeighbors[j];
+            foreach (j; adjOffset[v] .. adjOffset[v + 1]) {
+                size_t nb = adjNeighbors[j];
                 if (!visited[nb]) { visited[nb] = true; stack ~= nb; }
             }
         }
         connectMask_ = visited;
     }
 
-    // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.
-    // Topology-invariant, so it is rebuilt only when mutationVersion moves.
-    void ensureVertexAdjacency() {
-        const size_t nV = mesh_.vertices.length;
-        if (_adjMutVer == mesh_.mutationVersion
-         && _adjOffset.length == nV + 1)
-            return;
-        // Counting pass → per-vertex degree, then prefix-sum into offsets.
-        _adjOffset.length = nV + 1;
-        _adjOffset[] = 0;
-        foreach (e; mesh_.edges) {
-            if (e[0] >= nV || e[1] >= nV) continue;
-            _adjOffset[e[0] + 1]++;
-            _adjOffset[e[1] + 1]++;
-        }
-        foreach (i; 1 .. nV + 1) _adjOffset[i] += _adjOffset[i - 1];
-        _adjNeighbors.length = _adjOffset[nV];
-        // Fill pass with a temporary cursor per vertex.
-        auto cursor = new size_t[](nV);
-        foreach (i; 0 .. nV) cursor[i] = _adjOffset[i];
-        foreach (e; mesh_.edges) {
-            if (e[0] >= nV || e[1] >= nV) continue;
-            _adjNeighbors[cursor[e[0]]++] = e[1];
-            _adjNeighbors[cursor[e[1]]++] = e[0];
-        }
-        _adjMutVer = mesh_.mutationVersion;
-    }
-
     // Record the current cache key as valid. Shape params are captured here
     // (not passed) since they are stage fields read directly.
-    void storeSelCacheKey(ulong mutVer, int editModeI, ulong selSig, int stepsI) {
+    void storeSelCacheKey(int editModeI, ulong selSig, int stepsI) {
         _selCacheValid    = true;
-        _selCacheMutVer   = mutVer;
+        _selKey.stamp(*mesh_);
         _selCacheEditMode = editModeI;
         _selCacheSelSig   = selSig;
         _selCacheSteps    = stepsI;
@@ -1765,4 +1730,65 @@ unittest {
     assert(known.length == listed.length);
     foreach (i, k; known)
         assert(k == listed[i][0]);
+}
+
+// ---------------------------------------------------------------------------
+// M9 load-bearing aliasing proof: the sel-weight cache (_selKey) must NOT
+// alias two distinct Mesh instances that happen to share a mutationVersion.
+// mesh_ is a live delegate that can be repointed at a different primary
+// mid-session (a real layer switch), so the danger is real: without the
+// address term, `a` and `b` below have an EQUAL (mutVer, editMode, selSig,
+// steps, shape, in_, out_) key and the cache would wrongly serve `a`'s
+// stale weights back for `b`.
+//
+// `a` is a 4-cycle 0-1-2-3-0 with verts {0,1,2} selected: vertex 0's
+// neighbors are {1,3}, and 3 is unselected, so vertex 0 sits on the
+// selection BORDER (pinned weight 0). `b` is two disjoint edges 0-1 / 2-3
+// with the SAME selection {0,1,2}: vertex 0's only neighbor is 1 (selected),
+// so vertex 0 is INTERIOR (weight 1 at steps=0, no smoothing). Both meshes
+// are hand-forced to mutationVersion == 7 — the exact aliasing hazard M9
+// closes.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : Mesh;
+
+    Mesh a;
+    a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    a.resetSelection();
+    a.addEdge(0, 1); a.addEdge(1, 2); a.addEdge(2, 3); a.addEdge(3, 0);
+    a.selectVertex(0); a.selectVertex(1); a.selectVertex(2);
+    a.mutationVersion = 7;
+
+    Mesh b;
+    b.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    b.resetSelection();
+    b.addEdge(0, 1); b.addEdge(2, 3);
+    b.selectVertex(0); b.selectVertex(1); b.selectVertex(2);
+    b.mutationVersion = 7;   // hand-forced EQUAL to a — the aliasing hazard
+
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = &a;
+    auto fs = new FalloffStage(() => meshPtr, &em);
+    fs.steps = 0;   // no smoothing — border/interior read straight off isB
+
+    fs.recomputeSelectionWeights();
+    assert(fs.selWeights_.length == 4);
+    float aVertex0 = fs.selWeights_[0];
+    assert(abs(aVertex0 - 0.0f) < 1e-6f,
+        "a: vertex 0 is a selection-border vert (neighbor 3 unselected) — weight must be 0");
+
+    // Repoint mesh_ at b — SAME mutationVersion, editMode, and selection
+    // signature (identical selected indices {0,1,2} at identical marks
+    // length) as a. Only the connectivity differs.
+    meshPtr = &b;
+    fs.recomputeSelectionWeights();
+    float bVertex0 = fs.selWeights_[0];
+    assert(abs(bVertex0 - 1.0f) < 1e-6f,
+        "b: vertex 0 is INTERIOR (its only neighbor, 1, is selected) — weight must be 1. "
+        ~ "If this reads 0 (a's value), the address term was dropped from the cache "
+        ~ "key and b wrongly reused a's cached weights.");
+    assert(abs(aVertex0 - bVertex0) > 0.5f,
+        "a and b must diverge at vertex 0 — same mutationVersion + editMode + "
+        ~ "selection signature, different connectivity, and the MeshCacheKey "
+        ~ "address term is the only thing that can tell them apart");
 }

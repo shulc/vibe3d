@@ -3,7 +3,7 @@ module toolpipe.stages.actcenter;
 import std.format : format;
 
 import math    : Vec3, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
-import mesh    : Mesh;
+import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
 import params           : Param, IntEnumEntry;
@@ -214,29 +214,33 @@ private:
     // partition (`_cachedClusterOf` + count) and the vertex adjacency it was
     // built from are cached and reused while the key holds.
     //
-    // Cache key: (mutationVersion, editMode, selectionSignature). mutationVersion
-    // bumps on every topology/geometry-structure edit (always paired with
-    // topologyVersion) and is NOT bumped by selection writes NOR by drag-time
-    // vertex moves — so it alone cannot detect a selection change. Selection
-    // lives in the Marks.Select bit of vertexMarks/edgeMarks/faceMarks and has
-    // no version counter, so we fold a cheap rolling hash of the relevant
-    // marks array's Select bits into the key. Edit mode picks which cluster
-    // variant runs, so it is part of the key too.
+    // Cache key: (address, mutationVersion, editMode, selectionSignature).
+    // mutationVersion bumps on every topology/geometry-structure edit (always
+    // paired with topologyVersion) and is NOT bumped by selection writes NOR
+    // by drag-time vertex moves — so it alone cannot detect a selection
+    // change. Selection lives in the Marks.Select bit of
+    // vertexMarks/edgeMarks/faceMarks and has no version counter, so we fold
+    // a cheap rolling hash of the relevant marks array's Select bits into the
+    // key. Edit mode picks which cluster variant runs, so it is part of the
+    // key too. `_clusterKey` (a MeshCacheKey) additionally folds in the
+    // mesh's address: this cache lives on the STAGE, not on the Mesh, and
+    // `mesh_` is a live delegate that can silently retarget to a different
+    // primary layer — two distinct Mesh instances can share an equal
+    // mutationVersion, so the address term is required to stop this cache
+    // from serving one layer's stale partition back for another. See
+    // mesh.d's MeshCacheKey doc comment.
     bool   _cacheValid       = false;
-    ulong  _cachedMutVer     = ulong.max;
+    MeshCacheKey _clusterKey;
     int    _cachedEditMode   = -1;
     ulong  _cachedSelSig     = 0;
     int    _cachedClusterCnt = 0;
     int[]  _cachedClusterOf;          // per-vertex cluster id (-1 = not in sel)
     int[]  _cachedFaceClusterOf;      // per-face cluster id (Polygons mode only)
-    // Cached vertex→neighbor adjacency (CSR: flat neighbor list + per-vertex
-    // [offset, offset+1] bounds). Topology-invariant, rebuilt only on a
-    // mutationVersion change. Used by the vert/edge cluster BFS so neighbor
-    // lookup is O(degree) instead of O(E) per dequeued vertex.
-    ulong  _adjMutVer        = ulong.max;
-    uint[] _adjNeighbors;             // flattened neighbor ids
-    size_t[] _adjOffset;              // length nV+1; neighbors of v are
-                                      // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
+    // Vertex→neighbor adjacency is now owned by Mesh itself
+    // (mesh_.vertexAdjacencyCSR) — a Mesh-owned cache cannot alias across
+    // layers the way this stage-owned cluster cache could, so no address key
+    // is needed for it (the address IS the object). See mesh.d's
+    // vertexAdjacencyCSR doc comment.
 
 public:
     this(Mesh* delegate() meshSrc, EditMode* editMode,
@@ -279,10 +283,9 @@ public:
     /// mid-session, so this is a belt-and-braces hook for explicit resets.)
     private void invalidateClusterCache() {
         _cacheValid     = false;
-        _cachedMutVer   = ulong.max;
+        _clusterKey.invalidate();
         _cachedEditMode = -1;
         _cachedSelSig   = 0;
-        _adjMutVer      = ulong.max;
     }
 
     /// resetTransient: same as reset() but respects userLocked.
@@ -829,11 +832,10 @@ private:
         // --- Cache key check --------------------------------------------------
         // Membership is invariant while (mutationVersion, editMode, selSig) all
         // hold; only centers (read from live mesh_.vertices) change per frame.
-        const ulong mutVer  = mesh_.mutationVersion;
         const int   edMode  = cast(int)(*editMode_);
         const ulong selSig  = selectionSignature();
         const bool  hit = _cacheValid
-                       && _cachedMutVer   == mutVer
+                       && _clusterKey.matches(*mesh_)
                        && _cachedEditMode == edMode
                        && _cachedSelSig   == selSig
                        && _cachedClusterOf.length == mesh_.vertices.length;
@@ -856,7 +858,7 @@ private:
                     buildVertClusterMembership(_cachedClusterOf, _cachedClusterCnt);
                     break;
             }
-            _cachedMutVer   = mutVer;
+            _clusterKey.stamp(*mesh_);
             _cachedEditMode = edMode;
             _cachedSelSig   = selSig;
             _cacheValid     = true;
@@ -894,10 +896,7 @@ private:
                 foreach (fi, c; _cachedFaceClusterOf) {
                     if (c != 0) continue;
                     const(uint)[] face = mesh_.faces[fi];
-                    Vec3 fc = Vec3(0, 0, 0);
-                    foreach (vi; face) fc += mesh_.vertices[vi];
-                    if (face.length > 0) fc = fc / cast(float)face.length;
-                    sum += fc;
+                    sum += face.length > 0 ? mesh_.faceCentroid(cast(uint)fi) : Vec3(0, 0, 0);
                     n++;
                 }
                 break;
@@ -918,49 +917,12 @@ private:
     // the active edit mode. Two different selections collide with vanishingly
     // small probability; a collision would only ever cause a stale partition,
     // and selection changes during an interactive drag don't happen (the drag
-    // freezes the selection), so this is safe for the cache-key use.
+    // freezes the selection), so this is safe for the cache-key use. Thin
+    // wrapper over the single canonical Mesh.selectionSignature (mirrors
+    // FalloffStage.selectionSignature, which wraps the same call).
     ulong selectionSignature() const {
         if (mesh_ is null) return 0;
-        ulong h = 1469598103934665603UL; // FNV-1a offset basis
-        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
-        const(uint)[] marks;
-        final switch (*editMode_) {
-            case EditMode.Vertices: marks = mesh_.vertexMarks; break;
-            case EditMode.Edges:    marks = mesh_.edgeMarks;   break;
-            case EditMode.Polygons: marks = mesh_.faceMarks;   break;
-        }
-        mix(marks.length);
-        // Fold one bit per element (the Select bit) into the hash by index, so
-        // both WHICH elements are selected and HOW MANY are captured.
-        foreach (i, m; marks)
-            if (m & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
-        return h;
-    }
-
-    // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.
-    // Topology-invariant, so it is rebuilt only when mutationVersion moves.
-    void ensureVertexAdjacency() {
-        if (_adjMutVer == mesh_.mutationVersion
-         && _adjOffset.length == mesh_.vertices.length + 1)
-            return;
-        const size_t nV = mesh_.vertices.length;
-        // Counting pass → per-vertex degree, then prefix-sum into offsets.
-        _adjOffset.length = nV + 1;
-        _adjOffset[] = 0;
-        foreach (edge; mesh_.edges) {
-            _adjOffset[edge[0] + 1]++;
-            _adjOffset[edge[1] + 1]++;
-        }
-        foreach (i; 1 .. nV + 1) _adjOffset[i] += _adjOffset[i - 1];
-        _adjNeighbors.length = _adjOffset[nV];
-        // Fill pass with a temporary cursor per vertex.
-        auto cursor = new size_t[](nV);
-        foreach (i; 0 .. nV) cursor[i] = _adjOffset[i];
-        foreach (edge; mesh_.edges) {
-            _adjNeighbors[cursor[edge[0]]++] = edge[1];
-            _adjNeighbors[cursor[edge[1]]++] = edge[0];
-        }
-        _adjMutVer = mesh_.mutationVersion;
+        return mesh_.selectionSignature(*editMode_);
     }
 
     // Helper: bbox center of vertices in a cluster (verts identified by
@@ -1043,7 +1005,9 @@ private:
 
     void buildEdgeClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedEdges()) return;
-        ensureVertexAdjacency();
+        const(size_t)[] adjOffset;
+        const(uint)[]    adjNeighbors;
+        mesh_.vertexAdjacencyCSR(adjOffset, adjNeighbors);
         size_t nV = mesh_.vertices.length;
         // A vert participates iff it is an endpoint of some SELECTED edge; the
         // graph walked is the full vertex adjacency restricted to selected
@@ -1068,7 +1032,7 @@ private:
             clusterOf[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
-                foreach (other; _adjNeighbors[_adjOffset[cur] .. _adjOffset[cur + 1]]) {
+                foreach (other; adjNeighbors[adjOffset[cur] .. adjOffset[cur + 1]]) {
                     if (clusterOf[other] != -1) continue;
                     if (edgeKey(cur, other) !in selEdgeKey) continue;
                     clusterOf[other] = cid;
@@ -1081,7 +1045,9 @@ private:
 
     void buildVertClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedVertices()) return;
-        ensureVertexAdjacency();
+        const(size_t)[] adjOffset;
+        const(uint)[]    adjNeighbors;
+        mesh_.vertexAdjacencyCSR(adjOffset, adjNeighbors);
         size_t nV = mesh_.vertices.length;
         foreach (start; 0 .. nV) {
             if (!mesh_.isVertexSelected(start)) continue;
@@ -1090,7 +1056,7 @@ private:
             clusterOf[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
-                foreach (other; _adjNeighbors[_adjOffset[cur] .. _adjOffset[cur + 1]]) {
+                foreach (other; adjNeighbors[adjOffset[cur] .. adjOffset[cur + 1]]) {
                     if (clusterOf[other] != -1) continue;
                     if (!mesh_.isVertexSelected(other)) continue;
                     clusterOf[other] = cid;
@@ -1149,12 +1115,6 @@ private:
             }
             return false;
         }
-        Vec3 faceCentroid(uint fi) {
-            Vec3 c = Vec3(0, 0, 0);
-            const(uint)[] face = mesh_.faces[fi];
-            foreach (vi; face) c += mesh_.vertices[vi];
-            return face.length > 0 ? c / cast(float)face.length : c;
-        }
         foreach (start; 0 .. nF) {
             if (!mesh_.isFaceSelected(start) || visited[start]) continue;
             // BFS.
@@ -1166,7 +1126,8 @@ private:
             while (queue.length > 0) {
                 uint cur = queue[0];
                 queue = queue[1 .. $];
-                sum += faceCentroid(cur);
+                const(uint)[] face = mesh_.faces[cur];
+                sum += face.length > 0 ? mesh_.faceCentroid(cur) : Vec3(0, 0, 0);
                 n++;
                 foreach (other; 0 .. nF) {
                     if (!mesh_.isFaceSelected(other) || visited[other]) continue;
@@ -1612,4 +1573,57 @@ unittest {
     // Back to None → hidden again.
     acs.mode = ActionCenterStage.Mode.None;
     assert(acs.params().length == 0, "None (reset): expected 0 params");
+}
+
+// ---------------------------------------------------------------------------
+// M9 load-bearing aliasing proof: the Local-mode cluster cache (_clusterKey)
+// must NOT alias two distinct Mesh instances that happen to share a
+// mutationVersion. mesh_ is a live delegate that can be repointed at a
+// different primary mid-session (a real layer switch), so the danger is
+// real: without the address term, `a` and `b` below have an EQUAL (mutVer,
+// editMode, selSig) key and the cache would wrongly serve `a`'s stale
+// partition back for `b`.
+//
+// `a` is a 4-cycle 0-1-2-3-0 with ALL 4 verts selected: fully connected —
+// exactly 1 cluster. `b` is two disjoint edges 0-1 / 2-3 with the SAME
+// selection (all 4 verts): two separate components — exactly 2 clusters.
+// Both meshes are hand-forced to mutationVersion == 7 — the exact aliasing
+// hazard M9 closes.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : Mesh;
+
+    Mesh a;
+    a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    a.resetSelection();
+    a.addEdge(0, 1); a.addEdge(1, 2); a.addEdge(2, 3); a.addEdge(3, 0);
+    a.selectVertex(0); a.selectVertex(1); a.selectVertex(2); a.selectVertex(3);
+    a.mutationVersion = 7;
+
+    Mesh b;
+    b.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    b.resetSelection();
+    b.addEdge(0, 1); b.addEdge(2, 3);
+    b.selectVertex(0); b.selectVertex(1); b.selectVertex(2); b.selectVertex(3);
+    b.mutationVersion = 7;   // hand-forced EQUAL to a — the aliasing hazard
+
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = &a;
+    auto acs = new ActionCenterStage(() => meshPtr, &em);
+
+    Vec3[] centersA; int[] clusterOfA;
+    acs.computeLocalClustersFull(centersA, clusterOfA);
+    assert(acs._cachedClusterCnt == 1,
+        "a: a 4-cycle with all verts selected must form exactly 1 cluster");
+
+    // Repoint mesh_ at b — SAME mutationVersion and editMode, and the SAME
+    // selection signature (all 4 verts selected in both) as a. Only the
+    // connectivity differs.
+    meshPtr = &b;
+    Vec3[] centersB; int[] clusterOfB;
+    acs.computeLocalClustersFull(centersB, clusterOfB);
+    assert(acs._cachedClusterCnt == 2,
+        "b: two disjoint edges must form exactly 2 clusters. If this reads 1 "
+        ~ "(a's value), the address term was dropped from the cache key and "
+        ~ "b wrongly reused a's cached partition.");
 }
