@@ -72,6 +72,83 @@ struct IntEnumEntry {
 }
 
 // ---------------------------------------------------------------------------
+// IntEnumEntry table helpers — the single-sourced value<->wireTag lookups a
+// stage's parse (`applySetAttr`) and stringify (`*Label()`) legs both read,
+// so a table lives in exactly ONE place instead of being re-derived by a
+// hand-written parse switch AND a hand-written stringify switch (task 0184 /
+// audit-2 C2). Mirror the existing inline loops at IntEnum's stringifyParam
+// (stage.d) / paramToJson (below) / choicesOf (below).
+// ---------------------------------------------------------------------------
+
+/// Look up the wire tag for a live enum `value` in `t`. Falls back to
+/// `fallback` (default: the raw integer as a string) when no entry matches —
+/// mirrors paramToJson's IntEnum unmatched-fallback convention.
+string wireTagForValue(const(IntEnumEntry)[] t, int v, string fallback = null) pure
+{
+    foreach (ref e; t)
+        if (e.value == v) return e.wireTag;
+    import std.format : format;
+    return fallback !is null ? fallback : format("%d", v);
+}
+
+/// Look up the enum value for a wire tag `tag` in `t`. Returns false (and
+/// leaves `v` untouched) when no entry matches — the caller's `applySetAttr`
+/// then rejects the attr write, same as a hand-written parse switch's
+/// default `return false`.
+bool valueForWireTag(const(IntEnumEntry)[] t, string tag, out int v) pure
+{
+    foreach (ref e; t)
+        if (e.wireTag == tag) { v = e.value; return true; }
+    return false;
+}
+
+/// True iff every value in `members` has a matching entry in `t` — restores
+/// the compile-time exhaustiveness a `final switch` used to guarantee before
+/// the switch became a table lookup with a string/`%d` fallback. Intended for
+/// an enforcement unittest per hoisted table: pass the enum's members as
+/// ints, e.g. `tableCoversEnum(myTable, [cast(int)E.a, cast(int)E.b, ...])`
+/// (or `iota(cast(int)E.min, cast(int)E.max + 1).array` for a dense range).
+bool tableCoversEnum(const(IntEnumEntry)[] t, const(int)[] members) pure
+{
+    foreach (m; members) {
+        bool found = false;
+        foreach (ref e; t)
+            if (e.value == m) { found = true; break; }
+        if (!found) return false;
+    }
+    return true;
+}
+
+unittest {
+    static immutable IntEnumEntry[] tbl = [
+        IntEnumEntry(0, "off",   "Off"),
+        IntEnumEntry(1, "width", "Width"),
+        IntEnumEntry(2, "depth", "Depth"),
+    ];
+
+    // wireTagForValue — match, no-match fallback (default + explicit).
+    assert(wireTagForValue(tbl, 1) == "width");
+    assert(wireTagForValue(tbl, 99) == "99");                 // default fallback
+    assert(wireTagForValue(tbl, 99, "?") == "?");              // explicit fallback
+
+    // valueForWireTag — match, no-match.
+    int v;
+    assert(valueForWireTag(tbl, "depth", v) && v == 2);
+    assert(!valueForWireTag(tbl, "bogus", v));
+
+    // tableCoversEnum — complete vs missing member.
+    assert(tableCoversEnum(tbl, [0, 1, 2]));
+    assert(!tableCoversEnum(tbl, [0, 1, 2, 3]));
+    assert(tableCoversEnum(tbl, []));   // vacuously true
+
+    // A `static immutable` table passes straight into intEnum_ without .dup
+    // (the OBJ-1 widening this helper block depends on).
+    int backing = 1;
+    auto p = Param.intEnum_("k", "K", &backing, tbl, 0);
+    assert(p.intEnumValues.length == 3);
+}
+
+// ---------------------------------------------------------------------------
 // ParamFlags — bitfield of per-parameter arg attributes.
 //
 // Each bit toggles one behaviour in a real consumer:
@@ -126,7 +203,12 @@ struct Param {
     string[2][] enumValues;
 
     // For Kind.IntEnum: list of (value, wireTag, userLabel) entries.
-    IntEnumEntry[] intEnumValues;
+    // `const` so a `static immutable IntEnumEntry[]` table (single-sourced
+    // per enum, shared across every params()/fullParams() call — see
+    // wireTagForValue/valueForWireTag below) can be assigned here without a
+    // per-call `.dup`. Every consumer only reads entries (parseInto,
+    // stringifyParam, paramToJson, choicesOf, argstring, params_widgets).
+    const(IntEnumEntry)[] intEnumValues;
 
     // Default value metadata — for HTTP injector fallback (phase 2).
     // Not written to storage by the factory; the field initialiser on the
@@ -216,7 +298,7 @@ struct Param {
     // and UI use the wireTag / userLabel from each IntEnumEntry.
     // Cast: `cast(int*)&myEnumField` works for any int-backed D enum.
     static Param intEnum_(string name, string label, int* storage,
-                          IntEnumEntry[] values, int default_)
+                          const(IntEnumEntry)[] values, int default_)
     {
         Param p;
         p.name           = name;
