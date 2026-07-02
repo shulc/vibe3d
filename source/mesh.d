@@ -1742,18 +1742,7 @@ struct Mesh {
         // "first two distinct faces" semantics: first occurrence → slot 0,
         // second distinct face → slot 1; a 3rd+ face and a face that contains
         // the edge twice are ignored.
-        int[2][ulong] edgeFaces;   // -1 = empty slot
-        foreach (fi; 0 .. nFaces) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces();
 
         // For each selected edge, look up both adjacent faces and unite them.
         // Boundary edges (only 1 adjacent face) leave their face alone and are
@@ -2079,19 +2068,7 @@ struct Mesh {
             bool matching) {
         // Build edge → up-to-2 adjacent MASKED faces. An edge whose second
         // slot stays -1 is a boundary of the masked region and is skipped.
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. faces.length) {
-            if (fi >= faceMask.length || !faceMask[fi]) continue;
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces(faceMask);
 
         bool[] edgeMask = new bool[](edges.length);
         bool[] consumed = matching ? new bool[](faces.length) : null;
@@ -2261,18 +2238,7 @@ struct Mesh {
         // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
         //     as removeEdgesByMask: first occurrence → slot 0, second distinct
         //     face → slot 1; a 3rd+ face / self-doubled edge is ignored.
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. faces.length) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces();
 
         // --- Mesh-boundary vertices: a vertex incident to ANY edge with only one
         //     adjacent face sits on the open boundary of the surface. A free end
@@ -3432,18 +3398,7 @@ struct Mesh {
 
         // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
         //     as extrudeEdgesByMask/removeEdgesByMask.
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. faces.length) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces();
 
         // --- Gather the selected, extendable edges (≥1 adjacent face). Snapshot
         //     their endpoints + neighbour faces NOW (original index space). Wire
@@ -4545,18 +4500,7 @@ struct Mesh {
         }
 
         // Edge → (≤2 incident faces) adjacency, one pass.
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. faces.length) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces();
 
         // Boundary edges: exactly one incident face is selected.
         struct BEdge { uint va, vb; int selFi; }
@@ -5717,17 +5661,7 @@ struct Mesh {
         if (mask.length != edges.length) return 0;
 
         // Edge→(≤2 faces) adjacency, one pass (same idiom as extrudeEdgesByMask).
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. faces.length) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k+1)%f.length]);
-                auto p = key in edgeFaces;
-                if (p is null) edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFaces = buildEdgeFaces();
 
         // Per-endpoint: count of selected edges incident at that vertex.
         int[uint] selEndpt;
@@ -6022,17 +5956,7 @@ struct Mesh {
         }
 
         // edge→(≤2 faces) adjacency, one pass
-        int[2][ulong] edgeFacesMap;
-        foreach (fi; 0 .. faces.length) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k+1)%f.length]);
-                auto p = key in edgeFacesMap;
-                if (p is null) edgeFacesMap[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        auto edgeFacesMap = buildEdgeFaces();
 
         // greedy vertex-disjoint acceptance
         bool[] accepted           = new bool[](vertices.length);
@@ -6291,6 +6215,44 @@ struct Mesh {
             foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
         }
         return idx;
+    }
+
+    /// Edge (ordered key) → up to 2 incident faces; slot [1] == -1 means the
+    /// edge is on the boundary of the CONSIDERED face set. A 3rd+ incident
+    /// face and an edge a single face lists twice are ignored (matches the
+    /// inline idiom every *ByMask op used before this helper existed).
+    ///
+    /// Face-set selection (mutually usable):
+    ///   * faceLimit — consider only faces [0 .. min(faceLimit, faces.length));
+    ///                 default size_t.max = all faces. Reproduces
+    ///                 boundaryLoops's prefix limit so an edge shared with a
+    ///                 face BEYOND the limit stays correctly "open" within
+    ///                 the prefix.
+    ///   * faceMask  — when non-empty, additionally require faceMask[fi]; a
+    ///                 face with fi >= faceMask.length is skipped.
+    ///
+    /// PRECONDITION: a length-0 faceMask means "no mask" (all faces), NOT
+    /// "select nothing." This is safe for the only masked caller
+    /// (selectMergeEdges, reached only when mask.length == faces.length —
+    /// its callers guard `mask.length != faces.length` before calling in),
+    /// so a length-0 mask reaches here only when faces.length == 0. A future
+    /// caller wanting a genuine empty selection must NOT pass a length-0
+    /// mask expecting an empty result — it would consider all faces.
+    int[2][ulong] buildEdgeFaces(in bool[] faceMask = null,
+                                 size_t faceLimit = size_t.max) const {
+        int[2][ulong] m;
+        const size_t nf = faceLimit < faces.length ? faceLimit : faces.length;
+        foreach (fi; 0 .. nf) {
+            if (faceMask.length && (fi >= faceMask.length || !faceMask[fi])) continue;
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k+1) % f.length]);
+                auto p = key in m;
+                if (p is null) m[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi) (*p)[1] = cast(int)fi;
+            }
+        }
+        return m;
     }
 
     /// Return the vertex indices touched by the current edge selection.
@@ -7586,19 +7548,10 @@ struct Mesh {
     uint[][] boundaryLoops(size_t faceLimit = size_t.max) const {
         const size_t nf = faceLimit < faces.length ? faceLimit : faces.length;
 
-        // Build edgeFaces map: open edge has slot [1] == -1.
-        int[2][ulong] edgeFaces;
-        foreach (fi; 0 .. nf) {
-            auto f = faces[fi];
-            foreach (k; 0 .. f.length) {
-                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
-                auto p = key in edgeFaces;
-                if (p is null)
-                    edgeFaces[key] = [cast(int)fi, -1];
-                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
-                    (*p)[1] = cast(int)fi;
-            }
-        }
+        // Build edgeFaces map: open edge has slot [1] == -1. Pass the SAME
+        // prefix limit (never a null-mask all-faces build) so an edge shared
+        // with a face beyond `nf` stays correctly "open" within the prefix.
+        auto edgeFaces = buildEdgeFaces(null, faceLimit);
 
         // Collect directed boundary half-edges into a next[] map.
         uint[uint] next;
@@ -15029,4 +14982,66 @@ unittest { // adjacent same-face weld: edge collapse → succeeds, quad collapse
     }
     assert(foundKeep, "adjacent-weld: survivor position (0,0,0) missing");
     assert(!foundDrop, "adjacent-weld: drop position (1,0,0) must be absent after weld");
+}
+
+unittest { // buildEdgeFaces: all-faces, masked, and faceLimit prefix +
+           // open-edge-shared-with-a-face-beyond-the-limit correctness
+    import std.conv : to;
+
+    // Three quads: FaceA and FaceC share edge (1,2); FaceB (between them in
+    // face-index order) is a disjoint quad that touches neither vertex.
+    //   FaceA (idx0): [0,1,2,3]
+    //   FaceB (idx1): [4,5,6,7]   -- unrelated filler
+    //   FaceC (idx2): [2,1,8,9]   -- shares edge (1,2) with FaceA
+    Mesh m;
+    foreach (i; 0 .. 10) m.addVertex(Vec3(cast(float)i, 0, 0));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([4u, 5u, 6u, 7u]);
+    m.addFace([2u, 1u, 8u, 9u]);
+    m.buildLoops();
+
+    ulong keyAC = Mesh.edgeKeyOrdered(1, 2);
+
+    // (1) All-faces (default): edge(1,2) sees BOTH FaceA(0) and FaceC(2) → interior.
+    auto allEf = m.buildEdgeFaces();
+    auto pAll = keyAC in allEf;
+    assert(pAll !is null, "buildEdgeFaces all-faces: edge(1,2) missing");
+    assert((*pAll)[0] == 0 && (*pAll)[1] == 2,
+        "buildEdgeFaces all-faces: edge(1,2) expected faces [0,2], got ["
+        ~ (*pAll)[0].to!string ~ "," ~ (*pAll)[1].to!string ~ "]");
+    // Total distinct edges: FaceA(4) + FaceB(4) + FaceC(3 new, edge(1,2) shared) = 11.
+    assert(allEf.length == 11,
+        "buildEdgeFaces all-faces: expected 11 distinct edges, got "
+        ~ allEf.length.to!string);
+
+    // (2) Masked: exclude FaceC (idx2) → edge(1,2) only sees FaceA → open.
+    bool[] maskNoC = [true, true, false];
+    auto maskedEf = m.buildEdgeFaces(maskNoC);
+    auto pMasked = keyAC in maskedEf;
+    assert(pMasked !is null, "buildEdgeFaces masked: edge(1,2) missing");
+    assert((*pMasked)[0] == 0 && (*pMasked)[1] == -1,
+        "buildEdgeFaces masked (FaceC excluded): edge(1,2) expected open [0,-1], got ["
+        ~ (*pMasked)[0].to!string ~ "," ~ (*pMasked)[1].to!string ~ "]");
+
+    // (3) faceLimit prefix: consider only faces [0,2) (A, B) — FaceC (idx2) is
+    // BEYOND the limit, so edge(1,2) must stay open WITHIN THE PREFIX. This is
+    // exactly the boundaryLoops correctness case the plan called out: an edge
+    // open within [0,nf) that is also shared with a face >= nf must NOT be
+    // wrongly marked interior by an unbounded (or null-mask "all faces") build.
+    auto prefixEf = m.buildEdgeFaces(null, 2);
+    auto pPrefix = keyAC in prefixEf;
+    assert(pPrefix !is null, "buildEdgeFaces faceLimit=2: edge(1,2) missing");
+    assert((*pPrefix)[0] == 0 && (*pPrefix)[1] == -1,
+        "buildEdgeFaces faceLimit=2: edge(1,2) must stay open (face 2 excluded "
+        ~ "by the prefix), got [" ~ (*pPrefix)[0].to!string ~ ","
+        ~ (*pPrefix)[1].to!string ~ "]");
+    // The prefix build must not see FaceC's own edges at all (e.g. edge (8,9)).
+    ulong keyC89 = Mesh.edgeKeyOrdered(8, 9);
+    assert((keyC89 in prefixEf) is null,
+        "buildEdgeFaces faceLimit=2: FaceC-only edge (8,9) must be absent "
+        ~ "from the prefix build");
+    // Prefix distinct-edge count: FaceA(4) + FaceB(4) = 8 (FaceC excluded entirely).
+    assert(prefixEf.length == 8,
+        "buildEdgeFaces faceLimit=2: expected 8 distinct edges, got "
+        ~ prefixEf.length.to!string);
 }
