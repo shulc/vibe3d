@@ -20,6 +20,69 @@ import eventlog;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
 
+// ============================================================================
+// Generic HTTP-thread <-> main-thread request/response bridge (task 0183 C3).
+//
+// Every marshaled endpoint used to hand-roll the same atomic-epoch spin/tick
+// pair (submit epoch bumped by the HTTP thread, drained by a per-endpoint
+// tickX() on the main thread, completed epoch bumped last). That duplication
+// is collapsed into one generic primitive here: MainThreadBridge!(Req,Resp)
+// holds the epoch pair + a typed request/response payload + a per-bridge
+// "service" delegate; each bridge self-registers into HttpServer.bridges at
+// construction, so tickAll() can drain every bridge without a hand-maintained
+// call list (a bridge that is constructed can never be "forgotten").
+//
+// Memory ordering (load-bearing — mirrors the old per-endpoint code exactly):
+// the HTTP thread writes `req` BEFORE bumping the submitted epoch; the main
+// thread's tick() reads `req`/runs `service` and writes `resp` BEFORE storing
+// the completed epoch (the LAST statement in tick()); the HTTP thread reads
+// `resp` only AFTER submitAndWait() observes the completed epoch catch up.
+// Same seq-cst atomicOp/atomicLoad/atomicStore as before, same 2500-iter /
+// 2ms sleep timeout. Do not weaken any of this.
+//
+// Timeout is per-bridge, NOT uniform: submitAndWait() returns a plain bool
+// and never synthesizes a timeout body — each call site keeps its own
+// bespoke timeout response (silent-ok for reset, noop-false for undo/jump,
+// an explicit "timeout waiting for main thread" error string for the rest).
+interface IMainThreadBridge {
+    void tick();
+}
+
+final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
+    private shared long submitted;
+    private shared long completed;
+    Req  req;
+    Resp resp;
+    private void delegate(ref Req, ref Resp) service;
+
+    this(HttpServer owner, void delegate(ref Req, ref Resp) service) {
+        this.service = service;
+        owner.bridges ~= this;
+    }
+
+    /// HTTP thread: bump the submit epoch and spin until the main thread's
+    /// tick() drains it, or maxIters*2ms elapses. Returns false on timeout —
+    /// the CALLER decides what timeout body to emit (see file header).
+    bool submitAndWait(int maxIters = 2500) {
+        immutable long my = atomicOp!"+="(submitted, 1);
+        int iters = 0;
+        while (atomicLoad(completed) < my) {
+            if (++iters > maxIters) return false;
+            Thread.sleep(2.msecs);
+        }
+        return true;
+    }
+
+    /// Main thread (called once per frame via HttpServer.tickAll()): runs
+    /// the pending request's service body, if any, then publishes it.
+    void tick() {
+        immutable long sub = atomicLoad(submitted);
+        if (sub <= atomicLoad(completed)) return;
+        service(req, resp);
+        atomicStore(completed, sub);
+    }
+}
+
 /**
  * Simple HTTP server implementation for D applications
  */
@@ -44,7 +107,6 @@ class HttpServer {
     private LayersDataProvider layersDataProvider;
     private alias LayerModelProvider = string delegate(int layer);
     private LayerModelProvider layerModelProvider;
-    private int pendingModelLayer = -1;   // ?layer=N for the in-flight /api/model
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
     // GET /api/registry — returns {"commands":[...],"tools":[...]} listing
@@ -95,15 +157,6 @@ class HttpServer {
     // reference engine's before replaying a drag through /api/play-events.
     private alias CameraSetHandler = void delegate(JSONValue params);
     private CameraSetHandler cameraSetHandler;
-    private shared long camSetSubmittedEpoch;
-    private shared long camSetCompletedEpoch;
-    private JSONValue pendingCamSet;
-    private string    pendingCamSetError;
-    private shared long resetSubmittedEpoch;
-    private shared long resetCompletedEpoch;
-    private string resetPendingType;     // primitive type for the in-flight reset
-    private bool   resetPendingEmpty;    // true → empty scene, ignore primitiveType
-    private int    resetPendingParam;    // grid n / subdivcube levels; -1 → factory default
     private bool testMode = false;
 
     // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
@@ -114,10 +167,6 @@ class HttpServer {
     // when the GPU fan-out path is silently writing garbage to gpu.faceVbo.
     private alias GpuSurfaceProvider = string delegate();
     private GpuSurfaceProvider gpuSurfaceProvider;
-    private shared long gpuSurfSubmittedEpoch;
-    private shared long gpuSurfCompletedEpoch;
-    private string      gpuSurfResult;
-    private string      gpuSurfError;
 
     // ----- /api/model synchronous read bridge ------------------------------
     // The model provider walks mesh.vertices / edges / faces to serialise the
@@ -129,11 +178,6 @@ class HttpServer {
     // where CPU contention widens the race window). Marshal the read onto the
     // main thread via the same epoch handshake the mutating endpoints use, so
     // the provider runs at a frame-tick point where the mesh is consistent.
-    private shared long modelSubmittedEpoch;
-    private shared long modelCompletedEpoch;
-    private bool   pendingModelDetailed;  // which provider to invoke
-    private string pendingModelResult;
-    private string pendingModelError;
 
     // ----- /api/toolpipe/eval synchronous read bridge ----------------------
     // Same hazard as /api/model, one level deeper: the eval provider RUNS
@@ -143,81 +187,64 @@ class HttpServer {
     // thread's own per-frame evaluate() — surfacing as a flaky cluster count
     // (e.g. test_acen_local_rotate_parity "expected 2 clusters, got 3" under
     // heavy -j). Marshal it onto the main thread via the same epoch handshake.
-    private shared long pipeEvalSubmittedEpoch;
-    private shared long pipeEvalCompletedEpoch;
-    private string pendingPipeEvalResult;
-    private string pendingPipeEvalError;
-
-    // /api/path has its own epoch pair — MUST NOT share pipeEval's pair.
-    // A concurrent /api/path + /api/toolpipe/eval would cross-trip each
-    // other's spin if they shared epochs (each completed-bump would satisfy
-    // the other's spin, returning torn/empty results).
-    private shared long pathSubmittedEpoch;
-    private shared long pathCompletedEpoch;
-    private float  pendingPathT;
-    private string pendingPathResult;
-    private string pendingPathError;
+    // /api/path is marshaled via its own bridge instance — MUST NOT share
+    // pipeEval's epoch pair. A concurrent /api/path + /api/toolpipe/eval
+    // would cross-trip each other's spin if they shared epochs (each
+    // completed-bump would satisfy the other's spin, returning torn/empty
+    // results).
 
     // ----- /api/command synchronous bridge ---------------------------------
-    // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
-    // spins on completedEpoch. The main thread runs the command via
-    // commandHandler from tickCommand() and bumps completedEpoch.
+    // The HTTP thread fills req.id/req.params, bumps the bridge's submit
+    // epoch, and spins for the main thread's tick() to drain it via
+    // commandHandler.
     private alias CommandHandler = void delegate(string id, string paramsJson);
     private CommandHandler commandHandler;
-    private shared long submittedEpoch;
-    private shared long completedEpoch;
-    private string pendingCmdId;
-    private string pendingCmdParams;
-    private string pendingCmdError;
-    // Test-automation only: when true, tickCommand raises the app's
-    // formsInteractiveLatch (via interactiveLatchHook) around the dispatch, so
-    // a sequence of tool.pipe.attr writes SHARES one tweak generation — exactly
-    // a continuous falloff-handle / slider scrub, which the per-/api-command
-    // generation bump otherwise turns into discrete steps. Set per-line by the
-    // /api/script?interactive=true handler; consumed + the hook restores the
-    // latch in tickCommand. Read/written only on the bridge happens-before, like
-    // pendingCmdId. The interactive end-of-scrub generation bump is the caller's
-    // responsibility (a following non-interactive tool.pipe.attr or an explicit
-    // /api/script line bumps it), mirroring the forms panel's end-of-scrub hook.
-    private bool pendingCmdInteractive;
+    // Test-automation only: when true, the command bridge's service raises
+    // the app's formsInteractiveLatch (via interactiveLatchHook) around the
+    // dispatch, so a sequence of tool.pipe.attr writes SHARES one tweak
+    // generation — exactly a continuous falloff-handle / slider scrub, which
+    // the per-/api-command generation bump otherwise turns into discrete
+    // steps. Set per-line by the /api/script?interactive=true handler;
+    // consumed + the hook restores the latch in the service body. The
+    // interactive end-of-scrub generation bump is the caller's responsibility
+    // (a following non-interactive tool.pipe.attr or an explicit /api/script
+    // line bumps it), mirroring the forms panel's end-of-scrub hook.
+    //
+    // req.interactive is a PERSISTENT field on the shared command bridge
+    // (constructed once, reused across all 3 command endpoints — argstring,
+    // script batch, history-replay). argstring sets it false (discrete);
+    // script batch sets it to the request's ?interactive= flag;
+    // history-replay does NOT touch it at all — it inherits whatever the
+    // previous dispatch left, exactly as before this refactor.
+    //
     // Hook the app registers to raise/lower formsInteractiveLatch from the main
     // thread. Null in builds that never wire it (the latch then stays inert and
     // ?interactive=true is a no-op — faithful: a raw command path is discrete).
     private alias InteractiveLatchHook = void delegate(bool raised);
     private InteractiveLatchHook interactiveLatchHook;
     // Forms-engine query (read-back) result. The command handler runs on the
-    // main thread inside tickCommand() and, for a `?`-query command, stashes the
-    // boxed JSON value here via setCmdResult() BEFORE tickCommand bumps
-    // completedEpoch. The blocked HTTP thread reads it once completedEpoch
-    // catches up and emits it as the response body. tickCommand clears it at
-    // entry, so write commands leave it empty (fully backward-compatible).
+    // main thread inside the command bridge's service and, for a `?`-query
+    // command, stashes the boxed JSON value into commandBridge.resp.result
+    // via setCmdResult() BEFORE the bridge's tick() stores the completed
+    // epoch. The blocked HTTP thread reads it once that catches up and emits
+    // it as the response body. The service clears it at entry, so write
+    // commands leave it empty (fully backward-compatible).
     //
-    // Single-flight precondition: like pendingCmdError, this is a plain
-    // unguarded string protected only by the same happens-before the epoch
-    // handshake establishes (written before the completedEpoch store, read
-    // after the spin observes it) AND by /api/command requests being serialized
-    // — each request's spin-wait blocks its connection until completedEpoch
-    // catches up. Concurrent /api/command queries would race this single slot;
-    // any future parallel-request work must revisit (per-epoch slot or a lock).
-    private string pendingCmdResult;
+    // Single-flight precondition: like resp.error, this is a plain unguarded
+    // field protected only by the same happens-before the epoch handshake
+    // establishes (written before the completed-epoch store, read after the
+    // spin observes it) AND by /api/command requests being serialized — each
+    // request's spin-wait blocks its connection until the epoch catches up.
+    // Concurrent /api/command queries would race this single slot; any future
+    // parallel-request work must revisit (per-epoch slot or a lock).
 
     // ----- /api/select synchronous bridge ----------------------------------
     private alias SelectionHandler = void delegate(string mode, int[] indices);
     private SelectionHandler selectionHandler;
-    private shared long selSubmittedEpoch;
-    private shared long selCompletedEpoch;
-    private string pendingSelMode;
-    private int[]  pendingSelIndices;
-    private string pendingSelError;
 
     // ----- /api/transform synchronous bridge -------------------------------
     private alias TransformHandler = void delegate(string kind, JSONValue params);
     private TransformHandler transformHandler;
-    private shared long xfSubmittedEpoch;
-    private shared long xfCompletedEpoch;
-    private string    pendingXfKind;
-    private JSONValue pendingXfParams;
-    private string    pendingXfError;
 
     // ----- /api/load-mesh synchronous bridge -------------------------------
     // POST /api/load-mesh {"vertices":[[x,y,z],...],"faces":[[i,j,k,...],...]}
@@ -227,10 +254,6 @@ class HttpServer {
     // on the main thread, leaving the same consistent post-load state.
     private alias LoadMeshHandler = void delegate(JSONValue params);
     private LoadMeshHandler loadMeshHandler;
-    private shared long lmSubmittedEpoch;
-    private shared long lmCompletedEpoch;
-    private JSONValue pendingLmParams;
-    private string    pendingLmError;
 
     // ----- /api/undo + /api/redo synchronous bridge ------------------------
     // The handler returns true on success (an entry was undone/redone) or
@@ -241,10 +264,6 @@ class HttpServer {
     private alias UndoRedoHandler = bool delegate();
     private UndoRedoHandler undoHandler;
     private UndoRedoHandler redoHandler;
-    private shared long undoSubmittedEpoch;
-    private shared long undoCompletedEpoch;
-    private bool   pendingUndoIsRedo;
-    private bool   pendingUndoResult;
 
     // ----- /api/history/jump (multi-step) ----------------------------------
     // CommandHistory.jumpTo(target) called on the main thread via the same
@@ -253,10 +272,6 @@ class HttpServer {
     // walks into the redo stack.
     private alias JumpHandler = bool delegate(size_t target);
     private JumpHandler jumpHandler;
-    private shared long jumpSubmittedEpoch;
-    private shared long jumpCompletedEpoch;
-    private size_t pendingJumpTarget;
-    private bool   pendingJumpResult;
 
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
@@ -266,13 +281,6 @@ class HttpServer {
     // reads mesh + GpuMesh state. engine=bvh|gpu is dispatched by the provider.
     private alias PickProvider = string delegate(int x, int y, string engine);
     private PickProvider pickProvider;
-    private shared long pickSubmittedEpoch;
-    private shared long pickCompletedEpoch;
-    private int    pendingPickX;
-    private int    pendingPickY;
-    private string pendingPickEngine;
-    private string pendingPickResult;
-    private string pendingPickError;
 
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
@@ -292,10 +300,6 @@ class HttpServer {
     // the main thread; this endpoint exists for HTTP-driven tests.
     private alias RefireHandler = void delegate(string action);
     private RefireHandler refireHandler;
-    private shared long refireSubmittedEpoch;
-    private shared long refireCompletedEpoch;
-    private string pendingRefireAction;
-    private string pendingRefireError;
 
     // ----- /api/history/block synchronous bridge ---------------------------
     // POST /api/history/block {"action":"begin","label":"..."} opens a command
@@ -305,20 +309,301 @@ class HttpServer {
     // CommandHistory, which is only safe to touch from the main thread.
     private alias BlockHandler = void delegate(string action, string label);
     private BlockHandler blockHandler;
-    private shared long blockSubmittedEpoch;
-    private shared long blockCompletedEpoch;
-    private string pendingBlockAction;
-    private string pendingBlockLabel;
-    private string pendingBlockError;
 
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
+
+    // ========================================================================
+    // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
+    // constructed (and self-registered into `bridges`) in the HttpServer
+    // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
+    // (reset, model, pipeEval, path, command, selection, transform, loadMesh,
+    // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
+    // `service` delegate closes over `this` (reading the handler/provider
+    // fields above AT TICK TIME, so it works even though app.d wires those
+    // fields after HttpServer is constructed).
+    private IMainThreadBridge[] bridges;
+
+    struct ResetReq  { string type; bool empty; int param; }
+    struct ResetResp { }   // errors are thrown by the handler itself (no catch — matches pre-refactor tickReset)
+    private MainThreadBridge!(ResetReq, ResetResp) resetBridge;
+
+    struct ModelReq  { int layer = -1; bool detailed; }
+    struct ModelResp { string result; string error; }
+    private MainThreadBridge!(ModelReq, ModelResp) modelBridge;
+
+    struct PipeEvalReq  { }
+    struct PipeEvalResp { string result; string error; }
+    private MainThreadBridge!(PipeEvalReq, PipeEvalResp) pipeEvalBridge;
+
+    struct PathReq  { float t; }
+    struct PathResp { string result; string error; }
+    private MainThreadBridge!(PathReq, PathResp) pathBridge;
+
+    struct CmdReq  { string id; string params; bool interactive; }
+    struct CmdResp { string error; string result; }
+    private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
+
+    struct SelReq  { string mode; int[] indices; }
+    struct SelResp { string error; }
+    private MainThreadBridge!(SelReq, SelResp) selectionBridge;
+
+    struct XfReq  { string kind; JSONValue params; }
+    struct XfResp { string error; }
+    private MainThreadBridge!(XfReq, XfResp) transformBridge;
+
+    struct LoadMeshReq  { JSONValue params; }
+    struct LoadMeshResp { string error; }
+    private MainThreadBridge!(LoadMeshReq, LoadMeshResp) loadMeshBridge;
+
+    struct CamSetReq  { JSONValue params; }
+    struct CamSetResp { string error; }
+    private MainThreadBridge!(CamSetReq, CamSetResp) cameraSetBridge;
+
+    struct GpuSurfReq  { }
+    struct GpuSurfResp { string result; string error; }
+    private MainThreadBridge!(GpuSurfReq, GpuSurfResp) gpuSurfaceBridge;
+
+    struct PickReq  { int x; int y; string engine; }
+    struct PickResp { string result; string error; }
+    private MainThreadBridge!(PickReq, PickResp) pickBridge;
+
+    struct RefireReq  { string action; }
+    struct RefireResp { string error; }
+    private MainThreadBridge!(RefireReq, RefireResp) refireBridge;
+
+    struct BlockReq  { string action; string label; }
+    struct BlockResp { string error; }
+    private MainThreadBridge!(BlockReq, BlockResp) blockBridge;
+
+    struct UndoReq  { bool isRedo; }
+    struct UndoResp { bool result; }
+    private MainThreadBridge!(UndoReq, UndoResp) undoBridge;
+
+    struct JumpReq  { size_t target; }
+    struct JumpResp { bool result; }
+    private MainThreadBridge!(JumpReq, JumpResp) jumpBridge;
 
     public this(ushort port = 8080) {
         this.port = port;
         this.isRunning = false;
         this.modelDataProvider = null;
         this.eventPlayer = EventPlayer();
+
+        resetBridge = new MainThreadBridge!(ResetReq, ResetResp)(this,
+            (ref ResetReq req, ref ResetResp resp) {
+                if (resetHandler !is null)
+                    resetHandler(req.type, req.empty, req.param);
+            });
+
+        modelBridge = new MainThreadBridge!(ModelReq, ModelResp)(this,
+            (ref ModelReq req, ref ModelResp resp) {
+                try {
+                    // Layer-aware provider wins when set (layers Stage 2): it
+                    // serves ?layer=N, defaulting to the active layer for a
+                    // bare /api/model.
+                    if (layerModelProvider !is null)
+                        resp.result = layerModelProvider(req.layer);
+                    else if (req.detailed && detailedModelDataProvider !is null)
+                        resp.result = detailedModelDataProvider();
+                    else if (modelDataProvider !is null)
+                        resp.result = modelDataProvider();
+                    else
+                        resp.error = "model data provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        pipeEvalBridge = new MainThreadBridge!(PipeEvalReq, PipeEvalResp)(this,
+            (ref PipeEvalReq req, ref PipeEvalResp resp) {
+                try {
+                    if (toolpipeEvalProvider !is null)
+                        resp.result = toolpipeEvalProvider();
+                    else
+                        resp.error = "toolpipe eval provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        pathBridge = new MainThreadBridge!(PathReq, PathResp)(this,
+            (ref PathReq req, ref PathResp resp) {
+                try {
+                    if (pathQueryProvider !is null)
+                        resp.result = pathQueryProvider(req.t);
+                    else
+                        resp.error = "path query provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        commandBridge = new MainThreadBridge!(CmdReq, CmdResp)(this,
+            (ref CmdReq req, ref CmdResp resp) {
+                // Clear the query-result slot at entry: a write command
+                // leaves it empty so the HTTP thread emits the plain
+                // {"status":"ok"} body. A query command's handler calls
+                // setCmdResult() to repopulate it.
+                resp.result = "";
+                if (commandHandler is null) {
+                    resp.error = "command handler not set";
+                } else {
+                    // Continuous-scrub simulation (test only): raise the app
+                    // latch so this tool.pipe.attr shares the live tweak
+                    // generation (REPLACE-coalesce) instead of bumping a new
+                    // one. Restored after dispatch.
+                    immutable bool interactive =
+                        req.interactive && interactiveLatchHook !is null;
+                    if (interactive) interactiveLatchHook(true);
+                    scope(exit) if (interactive) interactiveLatchHook(false);
+                    try {
+                        commandHandler(req.id, req.params);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        selectionBridge = new MainThreadBridge!(SelReq, SelResp)(this,
+            (ref SelReq req, ref SelResp resp) {
+                if (selectionHandler is null) {
+                    resp.error = "selection handler not set";
+                } else {
+                    try {
+                        selectionHandler(req.mode, req.indices);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        transformBridge = new MainThreadBridge!(XfReq, XfResp)(this,
+            (ref XfReq req, ref XfResp resp) {
+                if (transformHandler is null) {
+                    resp.error = "transform handler not set";
+                } else {
+                    try {
+                        transformHandler(req.kind, req.params);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        loadMeshBridge = new MainThreadBridge!(LoadMeshReq, LoadMeshResp)(this,
+            (ref LoadMeshReq req, ref LoadMeshResp resp) {
+                if (loadMeshHandler is null) {
+                    resp.error = "load-mesh handler not set";
+                } else {
+                    try {
+                        loadMeshHandler(req.params);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        cameraSetBridge = new MainThreadBridge!(CamSetReq, CamSetResp)(this,
+            (ref CamSetReq req, ref CamSetResp resp) {
+                if (cameraSetHandler is null) {
+                    resp.error = "camera-set handler not set";
+                } else {
+                    try {
+                        cameraSetHandler(req.params);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        gpuSurfaceBridge = new MainThreadBridge!(GpuSurfReq, GpuSurfResp)(this,
+            (ref GpuSurfReq req, ref GpuSurfResp resp) {
+                if (gpuSurfaceProvider is null) {
+                    resp.error = "gpu-surface provider not set";
+                } else {
+                    try {
+                        resp.result = gpuSurfaceProvider();
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        pickBridge = new MainThreadBridge!(PickReq, PickResp)(this,
+            (ref PickReq req, ref PickResp resp) {
+                if (pickProvider is null) {
+                    resp.error = "pick provider not set";
+                } else {
+                    try {
+                        resp.result = pickProvider(req.x, req.y, req.engine);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        refireBridge = new MainThreadBridge!(RefireReq, RefireResp)(this,
+            (ref RefireReq req, ref RefireResp resp) {
+                if (refireHandler is null) {
+                    resp.error = "refire handler not set";
+                } else {
+                    try {
+                        refireHandler(req.action);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        blockBridge = new MainThreadBridge!(BlockReq, BlockResp)(this,
+            (ref BlockReq req, ref BlockResp resp) {
+                if (blockHandler is null) {
+                    resp.error = "block handler not set";
+                } else {
+                    try {
+                        blockHandler(req.action, req.label);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        undoBridge = new MainThreadBridge!(UndoReq, UndoResp)(this,
+            (ref UndoReq req, ref UndoResp resp) {
+                auto h = req.isRedo ? redoHandler : undoHandler;
+                if (h is null) {
+                    resp.result = false;
+                } else {
+                    try {
+                        resp.result = h();
+                    } catch (Exception) {
+                        resp.result = false;
+                    }
+                }
+            });
+
+        jumpBridge = new MainThreadBridge!(JumpReq, JumpResp)(this,
+            (ref JumpReq req, ref JumpResp resp) {
+                if (jumpHandler is null) {
+                    resp.result = false;
+                } else {
+                    try {
+                        resp.result = jumpHandler(req.target);
+                    } catch (Exception) {
+                        resp.result = false;
+                    }
+                }
+            });
     }
 
     /**
@@ -469,13 +754,14 @@ class HttpServer {
 
     /**
      * Stash a forms-engine query (`?` read-back) result. Called by the command
-     * handler — which runs on the main thread inside tickCommand() — when the
-     * dispatched command was a query. The blocked HTTP thread reads it back via
-     * the same epoch handshake once completedEpoch catches up. Has the same
-     * single-flight precondition documented on the pendingCmdResult field.
+     * handler — which runs on the main thread inside the command bridge's
+     * service — when the dispatched command was a query. The blocked HTTP
+     * thread reads it back via the same epoch handshake once the bridge's
+     * completed epoch catches up. Has the same single-flight precondition
+     * documented on the CmdResp.result field above.
      */
     public void setCmdResult(string json) {
-        this.pendingCmdResult = json;
+        commandBridge.resp.result = json;
     }
 
     /**
@@ -763,29 +1049,22 @@ class HttpServer {
             } else {
                 // ?layer=N selects a layer (default -1 → active). The
                 // layer-aware provider (when set) handles it on the main thread.
-                pendingModelLayer = parseQueryInt(request.path, "layer", -1);
-                // Marshal the serialisation onto the main thread (tickModel) so
-                // the provider never walks the mesh mid-mutation (torn read).
-                pendingModelDetailed = useDetailedProvider;
-                pendingModelResult   = "";
-                pendingModelError    = "";
-                long my = atomicOp!"+="(modelSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(modelCompletedEpoch) < my) {
-                    if (++iters > maxIters) {
-                        pendingModelError = "timeout waiting for main thread";
-                        break;
-                    }
-                    Thread.sleep(2.msecs);
-                }
-                if (pendingModelError.length == 0) {
+                modelBridge.req.layer    = parseQueryInt(request.path, "layer", -1);
+                // Marshal the serialisation onto the main thread (via the
+                // bridge's tick) so the provider never walks the mesh
+                // mid-mutation (torn read).
+                modelBridge.req.detailed = useDetailedProvider;
+                modelBridge.resp.result  = "";
+                modelBridge.resp.error   = "";
+                if (!modelBridge.submitAndWait())
+                    modelBridge.resp.error = "timeout waiting for main thread";
+                if (modelBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = pendingModelResult;
+                    response.body = modelBridge.resp.result;
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
-                                   ~ pendingModelError.replace("\"", "\\\"") ~ "\"}";
+                                   ~ modelBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
                 }
             }
         } else if (request.path == "/api/selection") {
@@ -895,27 +1174,20 @@ class HttpServer {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"toolpipe eval provider not set\"}";
             } else {
-                // Marshal the pipe evaluation onto the main thread (tickPipeEval)
-                // so it never races the main thread's own evaluate().
-                pendingPipeEvalResult = "";
-                pendingPipeEvalError  = "";
-                long my = atomicOp!"+="(pipeEvalSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(pipeEvalCompletedEpoch) < my) {
-                    if (++iters > maxIters) {
-                        pendingPipeEvalError = "timeout waiting for main thread";
-                        break;
-                    }
-                    Thread.sleep(2.msecs);
-                }
-                if (pendingPipeEvalError.length == 0) {
+                // Marshal the pipe evaluation onto the main thread (via the
+                // bridge's tick) so it never races the main thread's own
+                // evaluate().
+                pipeEvalBridge.resp.result = "";
+                pipeEvalBridge.resp.error  = "";
+                if (!pipeEvalBridge.submitAndWait())
+                    pipeEvalBridge.resp.error = "timeout waiting for main thread";
+                if (pipeEvalBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = pendingPipeEvalResult;
+                    response.body = pipeEvalBridge.resp.result;
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
-                                   ~ pendingPipeEvalError.replace("\"", "\\\"") ~ "\"}";
+                                   ~ pipeEvalBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
                 }
             }
         } else if (request.path.startsWith("/api/path")) {
@@ -942,27 +1214,20 @@ class HttpServer {
                         }
                     }
                 } catch (Exception) {}
-                // Marshal onto the main thread via the dedicated epoch pair.
-                pendingPathT      = t;
-                pendingPathResult = "";
-                pendingPathError  = "";
-                long my = atomicOp!"+="(pathSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(pathCompletedEpoch) < my) {
-                    if (++iters > maxIters) {
-                        pendingPathError = "timeout waiting for main thread";
-                        break;
-                    }
-                    Thread.sleep(2.msecs);
-                }
-                if (pendingPathError.length == 0) {
+                // Marshal onto the main thread via the dedicated bridge — MUST
+                // NOT share pipeEval's epoch pair (see the bridge decl above).
+                pathBridge.req.t      = t;
+                pathBridge.resp.result = "";
+                pathBridge.resp.error  = "";
+                if (!pathBridge.submitAndWait())
+                    pathBridge.resp.error = "timeout waiting for main thread";
+                if (pathBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = pendingPathResult;
+                    response.body = pathBridge.resp.result;
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"path query failed","message":"` ~
-                                   pendingPathError.replace("\"", "\\\"") ~ `"}`;
+                                   pathBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
             }
         } else if (request.path == "/api/toolpipe") {
@@ -1056,29 +1321,21 @@ class HttpServer {
                 response.body = `{"status":"error","message":"camera-set handler not set"}`;
             } else {
                 try {
-                    pendingCamSet = parseJSON(request.body);
+                    cameraSetBridge.req.params = parseJSON(request.body);
                     // Inject ?viewport=N from query string into the JSON body
                     // so the main-thread handler can target the correct cell.
-                    if (pendingCamSet.type == JSONType.object)
-                        pendingCamSet["_viewport"] = parseQueryInt(request.path, "viewport", -1);
-                    pendingCamSetError = "";
-                    long my = atomicOp!"+="(camSetSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(camSetCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingCamSetError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingCamSetError.length == 0) {
+                    if (cameraSetBridge.req.params.type == JSONType.object)
+                        cameraSetBridge.req.params["_viewport"] = parseQueryInt(request.path, "viewport", -1);
+                    cameraSetBridge.resp.error = "";
+                    if (!cameraSetBridge.submitAndWait())
+                        cameraSetBridge.resp.error = "timeout waiting for main thread";
+                    if (cameraSetBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingCamSetError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ cameraSetBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1093,24 +1350,16 @@ class HttpServer {
                 response.body = `{"error":"gpu-surface provider not set"}`;
                 response.headers["Content-Type"] = "application/json";
             } else {
-                gpuSurfError = "";
-                long my = atomicOp!"+="(gpuSurfSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(gpuSurfCompletedEpoch) < my) {
-                    if (++iters > maxIters) {
-                        gpuSurfError = "timeout waiting for main thread";
-                        break;
-                    }
-                    Thread.sleep(2.msecs);
-                }
-                if (gpuSurfError.length == 0) {
+                gpuSurfaceBridge.resp.error = "";
+                if (!gpuSurfaceBridge.submitAndWait())
+                    gpuSurfaceBridge.resp.error = "timeout waiting for main thread";
+                if (gpuSurfaceBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = gpuSurfResult;
+                    response.body = gpuSurfaceBridge.resp.result;
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ gpuSurfError.replace("\"", "\\\"") ~ `"}`;
+                                    ~ gpuSurfaceBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -1120,27 +1369,19 @@ class HttpServer {
                 response.body = `{"error":"pick provider not set"}`;
                 response.headers["Content-Type"] = "application/json";
             } else {
-                pendingPickX      = parseQueryInt(request.path, "x", 0);
-                pendingPickY      = parseQueryInt(request.path, "y", 0);
-                pendingPickEngine = parseQueryString(request.path, "engine", "bvh");
-                pendingPickResult = "";
-                pendingPickError  = "";
-                long my = atomicOp!"+="(pickSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(pickCompletedEpoch) < my) {
-                    if (++iters > maxIters) {
-                        pendingPickError = "timeout waiting for main thread";
-                        break;
-                    }
-                    Thread.sleep(2.msecs);
-                }
-                if (pendingPickError.length == 0) {
+                pickBridge.req.x      = parseQueryInt(request.path, "x", 0);
+                pickBridge.req.y      = parseQueryInt(request.path, "y", 0);
+                pickBridge.req.engine = parseQueryString(request.path, "engine", "bvh");
+                pickBridge.resp.result = "";
+                pickBridge.resp.error  = "";
+                if (!pickBridge.submitAndWait())
+                    pickBridge.resp.error = "timeout waiting for main thread";
+                if (pickBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = pendingPickResult;
+                    response.body = pickBridge.resp.result;
                 } else {
                     response.statusCode = 500;
-                    response.body = `{"error":"` ~ pendingPickError.replace("\"", "\\\"") ~ `"}`;
+                    response.body = `{"error":"` ~ pickBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -1180,23 +1421,17 @@ class HttpServer {
             }
         } else if (request.path.startsWith("/api/reset") && request.method == "POST") {
             if (resetHandler !is null) {
-                resetPendingType  = parseQueryString(request.path, "type", "");
+                resetBridge.req.type  = parseQueryString(request.path, "type", "");
                 string emptyParam = parseQueryString(request.path, "empty", "");
-                resetPendingEmpty = (emptyParam == "true" || emptyParam == "1");
+                resetBridge.req.empty = (emptyParam == "true" || emptyParam == "1");
                 // Dense perf meshes take an int: grid → ?n=<int>,
                 // subdivcube → ?levels=<int>. -1 means "use the factory
                 // default" (n=316 / levels=7). Accept either key; n wins if
                 // both are somehow present.
                 int nParam = parseQueryInt(request.path, "n", -1);
                 int lvlParam = parseQueryInt(request.path, "levels", -1);
-                resetPendingParam = (nParam >= 0) ? nParam : lvlParam;
-                long my = atomicOp!"+="(resetSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(resetCompletedEpoch) < my) {
-                    if (++iters > maxIters) break;  // give up; main thread stuck
-                    Thread.sleep(2.msecs);
-                }
+                resetBridge.req.param = (nParam >= 0) ? nParam : lvlParam;
+                resetBridge.submitAndWait();  // timeout is silent-ok — no error body
                 response.statusCode = 200;
                 response.body = `{"status":"ok"}`;
             } else {
@@ -1222,26 +1457,18 @@ class HttpServer {
                     auto j = parseJSON(request.body);
                     if ("kind" !in j || j["kind"].type != JSONType.string)
                         throw new Exception("missing 'kind' string field");
-                    pendingXfKind   = j["kind"].str;
-                    pendingXfParams = j;  // pass full request body for handler
-                    pendingXfError  = "";
-                    long my = atomicOp!"+="(xfSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(xfCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingXfError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingXfError.length == 0) {
+                    transformBridge.req.kind   = j["kind"].str;
+                    transformBridge.req.params = j;  // pass full request body for handler
+                    transformBridge.resp.error = "";
+                    if (!transformBridge.submitAndWait())
+                        transformBridge.resp.error = "timeout waiting for main thread";
+                    if (transformBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingXfError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ transformBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1271,19 +1498,11 @@ class HttpServer {
                     long vCount = cast(long)j["vertices"].array.length;
                     long fCount = cast(long)j["faces"].array.length;
 
-                    pendingLmParams = j;
-                    pendingLmError  = "";
-                    long my = atomicOp!"+="(lmSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(lmCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingLmError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingLmError.length == 0) {
+                    loadMeshBridge.req.params = j;
+                    loadMeshBridge.resp.error = "";
+                    if (!loadMeshBridge.submitAndWait())
+                        loadMeshBridge.resp.error = "timeout waiting for main thread";
+                    if (loadMeshBridge.resp.error.length == 0) {
                         import std.format : format;
                         response.statusCode = 200;
                         response.body = format(
@@ -1292,7 +1511,7 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingLmError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ loadMeshBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1312,32 +1531,24 @@ class HttpServer {
                         throw new Exception("missing 'mode' string field");
                     if ("indices" !in j || j["indices"].type != JSONType.array)
                         throw new Exception("missing 'indices' array field");
-                    pendingSelMode = j["mode"].str;
+                    selectionBridge.req.mode = j["mode"].str;
                     int[] idx;
                     foreach (n; j["indices"].array) {
                         if (n.type != JSONType.integer && n.type != JSONType.uinteger)
                             throw new Exception("indices must be integers");
                         idx ~= cast(int)n.integer;
                     }
-                    pendingSelIndices = idx;
-                    pendingSelError   = "";
-                    long my = atomicOp!"+="(selSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(selCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingSelError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingSelError.length == 0) {
+                    selectionBridge.req.indices = idx;
+                    selectionBridge.resp.error  = "";
+                    if (!selectionBridge.submitAndWait())
+                        selectionBridge.resp.error = "timeout waiting for main thread";
+                    if (selectionBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingSelError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ selectionBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1366,48 +1577,39 @@ class HttpServer {
                         auto j = parseJSON(body_);
                         if ("id" !in j || j["id"].type != JSONType.string)
                             throw new Exception("missing 'id' string field");
-                        pendingCmdId     = j["id"].str;
+                        commandBridge.req.id     = j["id"].str;
                         // When the body has a nested "params" object, use it.
                         // Otherwise treat the whole body as the param dict (flat
                         // params style, matching the argstring convention).  The
                         // "id" field is just ignored by injectParamsInto.
-                        pendingCmdParams = ("params" in j) ? j["params"].toString : body_;
+                        commandBridge.req.params = ("params" in j) ? j["params"].toString : body_;
                     } else {
                         auto parsed = parseArgstring(body_);
                         if (parsed.isEmpty)
                             throw new Exception("empty argstring");
-                        pendingCmdId     = parsed.commandId;
-                        pendingCmdParams = parsed.params.toString();
+                        commandBridge.req.id     = parsed.commandId;
+                        commandBridge.req.params = parsed.params.toString();
                     }
 
-                    pendingCmdError       = "";
-                    pendingCmdInteractive = false;   // plain command = discrete
-                    long my = atomicOp!"+="(submittedEpoch, 1);
-                    // Wait for main thread to drain — bounded at ~5s.
-                    enum int maxIters = 2500;  // 2500 * 2ms = 5s
-                    int iters = 0;
-                    while (atomicLoad(completedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingCmdError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingCmdError.length == 0) {
+                    commandBridge.resp.error   = "";
+                    commandBridge.req.interactive = false;   // plain command = discrete
+                    if (!commandBridge.submitAndWait())
+                        commandBridge.resp.error = "timeout waiting for main thread";
+                    if (commandBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         // Forms-engine `?` query: when the handler stashed a
                         // read-back value, surface it under "value"; otherwise
                         // the plain ok body (byte-compatible with every
                         // existing write test, which never sets the slot).
-                        if (pendingCmdResult.length > 0)
+                        if (commandBridge.resp.result.length > 0)
                             response.body = `{"status":"ok","value":`
-                                            ~ pendingCmdResult ~ `}`;
+                                            ~ commandBridge.resp.result ~ `}`;
                         else
                             response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingCmdError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ commandBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1455,28 +1657,20 @@ class HttpServer {
                         auto parsed = parseArgstring(rawLine);
                         if (parsed.isEmpty) continue; // blank / comment
 
-                        pendingCmdId          = parsed.commandId;
-                        pendingCmdParams      = parsed.params.toString();
-                        pendingCmdError       = "";
-                        pendingCmdInteractive = interactiveScript;
+                        commandBridge.req.id          = parsed.commandId;
+                        commandBridge.req.params      = parsed.params.toString();
+                        commandBridge.resp.error      = "";
+                        commandBridge.req.interactive = interactiveScript;
 
-                        long my = atomicOp!"+="(submittedEpoch, 1);
-                        enum int maxIters = 2500; // 2500 * 2ms = 5s per line
-                        int iters = 0;
-                        while (atomicLoad(completedEpoch) < my) {
-                            if (++iters > maxIters) {
-                                pendingCmdError = "timeout waiting for main thread";
-                                break;
-                            }
-                            Thread.sleep(2.msecs);
-                        }
+                        if (!commandBridge.submitAndWait())
+                            commandBridge.resp.error = "timeout waiting for main thread";
 
-                        if (pendingCmdError.length == 0) {
+                        if (commandBridge.resp.error.length == 0) {
                             results ~= LineResult(lineNo, parsed.commandId, true, "");
                         } else {
                             anyError = true;
                             results ~= LineResult(lineNo, parsed.commandId, false,
-                                                  pendingCmdError);
+                                                  commandBridge.resp.error);
                             if (!continueOnError) break outer;
                         }
                     } catch (Exception e) {
@@ -1512,10 +1706,9 @@ class HttpServer {
             response.headers["Content-Type"] = "application/json";
         } else if ((request.path == "/api/undo" || request.path == "/api/redo")
                    && request.method == "POST") {
-            // Same main-thread sync pattern as /api/command: HTTP thread
-            // sets pendingUndoIsRedo, bumps undoSubmittedEpoch, spins on
-            // undoCompletedEpoch. tickUndo() on main thread invokes the
-            // handler and writes pendingUndoResult.
+            // Same main-thread sync pattern as /api/command, via the undo
+            // bridge. tickAll() drains it on the main thread, invoking the
+            // handler and writing resp.result.
             bool isRedo = (request.path == "/api/redo");
             auto handler = isRedo ? redoHandler : undoHandler;
             if (handler is null) {
@@ -1524,17 +1717,11 @@ class HttpServer {
                                 ~ (isRedo ? "redo" : "undo")
                                 ~ ` handler not set"}`;
             } else {
-                pendingUndoIsRedo = isRedo;
-                pendingUndoResult = false;
-                long my = atomicOp!"+="(undoSubmittedEpoch, 1);
-                enum int maxIters = 2500;
-                int iters = 0;
-                while (atomicLoad(undoCompletedEpoch) < my) {
-                    if (++iters > maxIters) break;
-                    Thread.sleep(2.msecs);
-                }
+                undoBridge.req.isRedo = isRedo;
+                undoBridge.resp.result = false;
+                undoBridge.submitAndWait();  // timeout is noop-false — no error body
                 response.statusCode = 200;
-                response.body = pendingUndoResult
+                response.body = undoBridge.resp.result
                     ? `{"status":"ok"}`
                     : `{"status":"noop","message":"stack empty or revert failed"}`;
             }
@@ -1551,25 +1738,17 @@ class HttpServer {
                     string action = j["action"].str;
                     if (action != "begin" && action != "end")
                         throw new Exception("'action' must be 'begin' or 'end'");
-                    pendingRefireAction = action;
-                    pendingRefireError  = "";
-                    long my = atomicOp!"+="(refireSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(refireCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingRefireError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingRefireError.length == 0) {
+                    refireBridge.req.action = action;
+                    refireBridge.resp.error = "";
+                    if (!refireBridge.submitAndWait())
+                        refireBridge.resp.error = "timeout waiting for main thread";
+                    if (refireBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingRefireError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ refireBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1597,26 +1776,18 @@ class HttpServer {
                     string label = "";
                     if ("label" in j && j["label"].type == JSONType.string)
                         label = j["label"].str;
-                    pendingBlockAction = action;
-                    pendingBlockLabel  = label;
-                    pendingBlockError  = "";
-                    long my = atomicOp!"+="(blockSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(blockCompletedEpoch) < my) {
-                        if (++iters > maxIters) {
-                            pendingBlockError = "timeout waiting for main thread";
-                            break;
-                        }
-                        Thread.sleep(2.msecs);
-                    }
-                    if (pendingBlockError.length == 0) {
+                    blockBridge.req.action = action;
+                    blockBridge.req.label  = label;
+                    blockBridge.resp.error = "";
+                    if (!blockBridge.submitAndWait())
+                        blockBridge.resp.error = "timeout waiting for main thread";
+                    if (blockBridge.resp.error.length == 0) {
                         response.statusCode = 200;
                         response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ pendingBlockError.replace("\"", "\\\"") ~ `"}`;
+                                        ~ blockBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
@@ -1666,17 +1837,11 @@ class HttpServer {
                              ? j["target"].integer
                              : cast(long)j["target"].uinteger;
                     if (t < 0) throw new Exception("'target' must be non-negative");
-                    pendingJumpTarget = cast(size_t)t;
-                    pendingJumpResult = false;
-                    long my = atomicOp!"+="(jumpSubmittedEpoch, 1);
-                    enum int maxIters = 2500;
-                    int iters = 0;
-                    while (atomicLoad(jumpCompletedEpoch) < my) {
-                        if (++iters > maxIters) break;
-                        Thread.sleep(2.msecs);
-                    }
+                    jumpBridge.req.target = cast(size_t)t;
+                    jumpBridge.resp.result = false;
+                    jumpBridge.submitAndWait();  // timeout is noop-false — no error body
                     response.statusCode = 200;
-                    response.body = pendingJumpResult
+                    response.body = jumpBridge.resp.result
                         ? `{"status":"ok"}`
                         : `{"status":"noop","message":"jump aborted or out of range"}`;
                 } catch (Exception e) {
@@ -1726,20 +1891,17 @@ class HttpServer {
                         auto parsed = parseArgstring(line);
                         if (parsed.isEmpty)
                             throw new Exception("entry parsed as empty");
-                        pendingCmdId     = parsed.commandId;
-                        pendingCmdParams = parsed.params.toString();
-                        pendingCmdError  = "";
-                        long my = atomicOp!"+="(submittedEpoch, 1);
-                        enum int maxIters = 2500;  // 2500 * 2ms = ~5s
-                        int iters = 0;
-                        while (atomicLoad(completedEpoch) < my) {
-                            if (++iters > maxIters) {
-                                pendingCmdError = "timeout waiting for main thread";
-                                break;
-                            }
-                            Thread.sleep(2.msecs);
-                        }
-                        if (pendingCmdError.length == 0) {
+                        // NOTE: req.interactive is deliberately left untouched
+                        // here — the shared command bridge's req is a
+                        // PERSISTENT field, and history-replay inherits
+                        // whatever the previous dispatch left it at (exactly
+                        // as before this refactor).
+                        commandBridge.req.id     = parsed.commandId;
+                        commandBridge.req.params = parsed.params.toString();
+                        commandBridge.resp.error = "";
+                        if (!commandBridge.submitAndWait())
+                            commandBridge.resp.error = "timeout waiting for main thread";
+                        if (commandBridge.resp.error.length == 0) {
                             response.statusCode = 200;
                             response.body = `{"status":"ok","line":"`
                                           ~ line.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -1747,7 +1909,7 @@ class HttpServer {
                         } else {
                             response.statusCode = 200;
                             response.body = `{"status":"error","message":"`
-                                          ~ pendingCmdError.replace("\\", "\\\\").replace("\"", "\\\"")
+                                          ~ commandBridge.resp.error.replace("\\", "\\\\").replace("\"", "\\\"")
                                           ~ `"}`;
                         }
                     }
@@ -1813,320 +1975,16 @@ class HttpServer {
     }
 
     /**
-     * Tick reset — call once per frame from the main loop.
-     * Drains a pending /api/reset request synchronously so that the HTTP
-     * thread waiting on the reset can return only after state is rebuilt.
+     * Tick every registered main-thread bridge — call once per frame from the
+     * main loop. Replaces the old hand-maintained tickReset()..tickJump()
+     * call list: each bridge self-registered into `bridges` at construction
+     * (see the HttpServer ctor), so a new marshaled endpoint cannot forget
+     * to be ticked — forgetting to CONSTRUCT it is the only way to miss a
+     * tick, which surfaces loudly (null-deref on first use) rather than as
+     * a silent 5s production timeout.
      */
-    public void tickReset() {
-        long sub = atomicLoad(resetSubmittedEpoch);
-        long cmp = atomicLoad(resetCompletedEpoch);
-        if (sub <= cmp) return;
-        if (resetHandler !is null) resetHandler(resetPendingType, resetPendingEmpty, resetPendingParam);
-        atomicStore(resetCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick model — call once per frame from the main loop.
-     * Drains a pending /api/model read: invokes the model provider HERE (on the
-     * main thread, at a consistent frame-tick point) and stashes the JSON, so
-     * the HTTP thread never serialises the mesh while the main thread is
-     * mutating it. Bumps modelCompletedEpoch so the waiting HTTP thread returns.
-     */
-    public void tickModel() {
-        long sub = atomicLoad(modelSubmittedEpoch);
-        long cmp = atomicLoad(modelCompletedEpoch);
-        if (sub <= cmp) return;
-        try {
-            // Layer-aware provider wins when set (layers Stage 2): it serves
-            // ?layer=N, defaulting to the active layer for a bare /api/model.
-            if (layerModelProvider !is null)
-                pendingModelResult = layerModelProvider(pendingModelLayer);
-            else if (pendingModelDetailed && detailedModelDataProvider !is null)
-                pendingModelResult = detailedModelDataProvider();
-            else if (modelDataProvider !is null)
-                pendingModelResult = modelDataProvider();
-            else
-                pendingModelError = "model data provider not set";
-        } catch (Exception e) {
-            pendingModelError = e.msg;
-        }
-        atomicStore(modelCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick toolpipe eval — call once per frame from the main loop.
-     * Runs the pipe-evaluation provider on the main thread so it never races
-     * the main thread's own per-frame pipeline.evaluate() (shared cluster
-     * caches in g_pipeCtx) or reads mesh/selection mid-mutation.
-     */
-    public void tickPipeEval() {
-        long sub = atomicLoad(pipeEvalSubmittedEpoch);
-        long cmp = atomicLoad(pipeEvalCompletedEpoch);
-        if (sub <= cmp) return;
-        try {
-            if (toolpipeEvalProvider !is null)
-                pendingPipeEvalResult = toolpipeEvalProvider();
-            else
-                pendingPipeEvalError = "toolpipe eval provider not set";
-        } catch (Exception e) {
-            pendingPipeEvalError = e.msg;
-        }
-        atomicStore(pipeEvalCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick path query — call once per frame from the main loop, next to
-     * tickPipeEval(). Services a pending /api/path request on the main
-     * thread (where the mesh is consistent) via the pathQueryProvider.
-     *
-     * Owns the separate pathSubmittedEpoch/pathCompletedEpoch pair —
-     * MUST NOT share with pipeEvalSubmittedEpoch/pipeEvalCompletedEpoch.
-     */
-    public void tickPath() {
-        long sub = atomicLoad(pathSubmittedEpoch);
-        long cmp = atomicLoad(pathCompletedEpoch);
-        if (sub <= cmp) return;
-        try {
-            if (pathQueryProvider !is null)
-                pendingPathResult = pathQueryProvider(pendingPathT);
-            else
-                pendingPathError = "path query provider not set";
-        } catch (Exception e) {
-            pendingPathError = e.msg;
-        }
-        atomicStore(pathCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick command — call once per frame from the main loop.
-     * Drains a pending /api/command request: dispatches via commandHandler,
-     * captures any thrown error message, and bumps completedEpoch so the
-     * waiting HTTP thread can return a response.
-     */
-    public void tickCommand() {
-        long sub = atomicLoad(submittedEpoch);
-        long cmp = atomicLoad(completedEpoch);
-        if (sub <= cmp) return;
-        // Clear the query-result slot at entry: a write command leaves it empty
-        // so the HTTP thread emits the plain {"status":"ok"} body. A query
-        // command's handler calls setCmdResult() to repopulate it. Written
-        // before the completedEpoch store below, read after the HTTP thread's
-        // spin observes completion (the same happens-before as pendingCmdError).
-        pendingCmdResult = "";
-        if (commandHandler is null) {
-            pendingCmdError = "command handler not set";
-        } else {
-            // Continuous-scrub simulation (test only): raise the app latch so
-            // this tool.pipe.attr shares the live tweak generation (REPLACE-
-            // coalesce) instead of bumping a new one. Restored after dispatch.
-            immutable bool interactive =
-                pendingCmdInteractive && interactiveLatchHook !is null;
-            if (interactive) interactiveLatchHook(true);
-            scope(exit) if (interactive) interactiveLatchHook(false);
-            try {
-                commandHandler(pendingCmdId, pendingCmdParams);
-                pendingCmdError = "";
-            } catch (Exception e) {
-                pendingCmdError = e.msg;
-            }
-        }
-        atomicStore(completedEpoch, sub);
-    }
-
-    /**
-     * Tick transform — same pattern as tickCommand, for /api/transform.
-     */
-    public void tickTransform() {
-        long sub = atomicLoad(xfSubmittedEpoch);
-        long cmp = atomicLoad(xfCompletedEpoch);
-        if (sub <= cmp) return;
-        if (transformHandler is null) {
-            pendingXfError = "transform handler not set";
-        } else {
-            try {
-                transformHandler(pendingXfKind, pendingXfParams);
-                pendingXfError = "";
-            } catch (Exception e) {
-                pendingXfError = e.msg;
-            }
-        }
-        atomicStore(xfCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick load-mesh — same pattern as tickTransform, for /api/load-mesh.
-     * Runs the raw-mesh injection on the main thread so GPU upload + cache
-     * refresh happen on the GL/main thread.
-     */
-    public void tickLoadMesh() {
-        long sub = atomicLoad(lmSubmittedEpoch);
-        long cmp = atomicLoad(lmCompletedEpoch);
-        if (sub <= cmp) return;
-        if (loadMeshHandler is null) {
-            pendingLmError = "load-mesh handler not set";
-        } else {
-            try {
-                loadMeshHandler(pendingLmParams);
-                pendingLmError = "";
-            } catch (Exception e) {
-                pendingLmError = e.msg;
-            }
-        }
-        atomicStore(lmCompletedEpoch, sub);
-    }
-
-    /// Tick GPU-surface — same pattern as tickCameraSet, for GET
-    /// /api/gpu/face-vbo. Provider runs on the GL/main thread so it can
-    /// glGetBufferSubData the live face VBO.
-    public void tickGpuSurface() {
-        long sub = atomicLoad(gpuSurfSubmittedEpoch);
-        long cmp = atomicLoad(gpuSurfCompletedEpoch);
-        if (sub <= cmp) return;
-        if (gpuSurfaceProvider is null) {
-            gpuSurfError = "gpu-surface provider not set";
-        } else {
-            try {
-                gpuSurfResult = gpuSurfaceProvider();
-                gpuSurfError  = "";
-            } catch (Exception e) {
-                gpuSurfError = e.msg;
-            }
-        }
-        atomicStore(gpuSurfCompletedEpoch, sub);
-    }
-
-    /// Tick camera-set — same pattern as tickTransform, for POST /api/camera.
-    public void tickCameraSet() {
-        long sub = atomicLoad(camSetSubmittedEpoch);
-        long cmp = atomicLoad(camSetCompletedEpoch);
-        if (sub <= cmp) return;
-        if (cameraSetHandler is null) {
-            pendingCamSetError = "camera-set handler not set";
-        } else {
-            try {
-                cameraSetHandler(pendingCamSet);
-                pendingCamSetError = "";
-            } catch (Exception e) {
-                pendingCamSetError = e.msg;
-            }
-        }
-        atomicStore(camSetCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick selection — same pattern as tickCommand, for /api/select.
-     */
-    public void tickSelection() {
-        long sub = atomicLoad(selSubmittedEpoch);
-        long cmp = atomicLoad(selCompletedEpoch);
-        if (sub <= cmp) return;
-        if (selectionHandler is null) {
-            pendingSelError = "selection handler not set";
-        } else {
-            try {
-                selectionHandler(pendingSelMode, pendingSelIndices);
-                pendingSelError = "";
-            } catch (Exception e) {
-                pendingSelError = e.msg;
-            }
-        }
-        atomicStore(selCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick refire — same main-thread sync pattern as the others.
-     */
-    public void tickRefire() {
-        long sub = atomicLoad(refireSubmittedEpoch);
-        long cmp = atomicLoad(refireCompletedEpoch);
-        if (sub <= cmp) return;
-        if (refireHandler is null) {
-            pendingRefireError = "refire handler not set";
-        } else {
-            try {
-                refireHandler(pendingRefireAction);
-                pendingRefireError = "";
-            } catch (Exception e) {
-                pendingRefireError = e.msg;
-            }
-        }
-        atomicStore(refireCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick command-block begin/end — same main-thread sync pattern as refire.
-     */
-    public void tickBlock() {
-        long sub = atomicLoad(blockSubmittedEpoch);
-        long cmp = atomicLoad(blockCompletedEpoch);
-        if (sub <= cmp) return;
-        if (blockHandler is null) {
-            pendingBlockError = "block handler not set";
-        } else {
-            try {
-                blockHandler(pendingBlockAction, pendingBlockLabel);
-                pendingBlockError = "";
-            } catch (Exception e) {
-                pendingBlockError = e.msg;
-            }
-        }
-        atomicStore(blockCompletedEpoch, sub);
-    }
-
-    /**
-     * Tick undo/redo — same main-thread sync pattern as the others.
-     */
-    public void tickUndo() {
-        long sub = atomicLoad(undoSubmittedEpoch);
-        long cmp = atomicLoad(undoCompletedEpoch);
-        if (sub <= cmp) return;
-        auto h = pendingUndoIsRedo ? redoHandler : undoHandler;
-        if (h is null) {
-            pendingUndoResult = false;
-        } else {
-            try {
-                pendingUndoResult = h();
-            } catch (Exception) {
-                pendingUndoResult = false;
-            }
-        }
-        atomicStore(undoCompletedEpoch, sub);
-    }
-
-    /// Tick /api/history/jump — drain a pending multi-step jump on main thread.
-    public void tickJump() {
-        long sub = atomicLoad(jumpSubmittedEpoch);
-        long cmp = atomicLoad(jumpCompletedEpoch);
-        if (sub <= cmp) return;
-        if (jumpHandler is null) {
-            pendingJumpResult = false;
-        } else {
-            try {
-                pendingJumpResult = jumpHandler(pendingJumpTarget);
-            } catch (Exception) {
-                pendingJumpResult = false;
-            }
-        }
-        atomicStore(jumpCompletedEpoch, sub);
-    }
-
-    /// Tick /api/pick — drain a pending A/B face-pick on the main thread.
-    public void tickPick() {
-        long sub = atomicLoad(pickSubmittedEpoch);
-        long cmp = atomicLoad(pickCompletedEpoch);
-        if (sub <= cmp) return;
-        if (pickProvider is null) {
-            pendingPickError = "pick provider not set";
-        } else {
-            try {
-                pendingPickResult = pickProvider(
-                    pendingPickX, pendingPickY, pendingPickEngine);
-                pendingPickError = "";
-            } catch (Exception e) {
-                pendingPickError = e.msg;
-            }
-        }
-        atomicStore(pickCompletedEpoch, sub);
+    public void tickAll() {
+        foreach (b; bridges) b.tick();
     }
 
     /**
