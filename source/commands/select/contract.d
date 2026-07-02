@@ -32,11 +32,7 @@ class SelectionContract : Command {
                 if (toRemove[i]) mesh.deselectVertex(cast(int)i);
 
         } else if (editMode == EditMode.Edges) {
-            int[][] edgeAdj = new int[][](mesh.edges.length);
-            foreach (i; 0 .. mesh.edges.length)
-                foreach (vi; mesh.edges[i])
-                    foreach (ni; mesh.edgesAroundVertex(vi))
-                        if (ni != i) edgeAdj[i] ~= cast(int)ni;
+            auto edgeAdj = mesh.edgeAdjacencySharingVertex();
 
             bool[] toRemove = new bool[](mesh.selectedEdges.length);
             foreach (i; 0 .. mesh.selectedEdges.length)
@@ -51,21 +47,7 @@ class SelectionContract : Command {
 
         } else if (editMode == EditMode.Polygons) {
             // Adjacency via shared vertices (mirrors SelectionExpand).
-            uint[][] vertFaces = new uint[][](mesh.vertices.length);
-            foreach (fi, face; mesh.faces)
-                foreach (vi; face)
-                    vertFaces[vi] ~= cast(uint)fi;
-
-            int[][] faceAdj = new int[][](mesh.faces.length);
-            foreach (fi, face; mesh.faces) {
-                bool[int] seen;
-                foreach (vi; face)
-                    foreach (adjFi; vertFaces[vi])
-                        if (adjFi != cast(uint)fi && (cast(int)adjFi) !in seen) {
-                            seen[cast(int)adjFi] = true;
-                            faceAdj[fi] ~= cast(int)adjFi;
-                        }
-            }
+            auto faceAdj = mesh.faceAdjacencySharingVertex();
 
             bool[] toRemove = new bool[](mesh.selectedFaces.length);
             foreach (i; 0 .. mesh.selectedFaces.length)

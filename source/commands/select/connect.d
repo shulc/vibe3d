@@ -47,6 +47,12 @@ class SelectConnect : Command {
         // bool[] in place, so capture the view into a local, flood-fill it,
         // then write the result back through the setter.
         if (editMode == EditMode.Vertices) {
+            // Deliberately loop-based (verticesAroundVertex, the half-edge
+            // fan walk) — NOT folded onto the edge-based mesh.vertexAdjacencyCSR
+            // provider. On non-manifold / multi-fan vertices the two relations
+            // yield different neighbor sets (see the mesh.d 0190 non-manifold
+            // unittest); substituting CSR here would silently change
+            // connected-component reachability. Left as its own copy.
             int[][] vertAdj = new int[][](mesh.vertices.length);
             foreach (vi; 0 .. mesh.vertices.length)
                 foreach (ni; mesh.verticesAroundVertex(cast(uint)vi))
@@ -56,15 +62,15 @@ class SelectConnect : Command {
             mesh.setVerticesSelectedFrom(sel);
         } else if (editMode == EditMode.Edges) {
             // Build edge → adjacent edges map via shared vertices
-            int[][] edgeAdj = new int[][](mesh.edges.length);
-            foreach (i; 0 .. mesh.edges.length)
-                foreach (vi; mesh.edges[i])
-                    foreach (ni; mesh.edgesAroundVertex(vi))
-                        if (ni != i) edgeAdj[i] ~= cast(int)ni;
+            auto edgeAdj = mesh.edgeAdjacencySharingVertex();
             auto sel = mesh.selectedEdges;
             bfsSelect(sel, edgeAdj, -1);
             mesh.setEdgesSelectedFrom(sel);
         } else if (editMode == EditMode.Polygons) {
+            // Edge-adjacent faces (mesh.adjacentFaces) — a DIFFERENT relation
+            // from the shared-vertex adjacency (mesh.faceAdjacencySharingVertex)
+            // used by expand/contract: connect does not cross diagonal
+            // neighbours. Intentionally kept separate; do not unify with C.
             int[][] faceAdj = new int[][](mesh.faces.length);
             foreach (fi; 0 .. mesh.faces.length)
                 foreach (adjFi; mesh.adjacentFaces(cast(uint)fi))

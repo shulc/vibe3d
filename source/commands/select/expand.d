@@ -30,11 +30,7 @@ class SelectionExpand : Command {
                 if (toAdd[i]) mesh.selectVertex(cast(int)i);
 
         } else if (editMode == EditMode.Edges) {
-            int[][] edgeAdj = new int[][](mesh.edges.length);
-            foreach (i; 0 .. mesh.edges.length)
-                foreach (vi; mesh.edges[i])
-                    foreach (ni; mesh.edgesAroundVertex(vi))
-                        if (ni != i) edgeAdj[i] ~= cast(int)ni;
+            auto edgeAdj = mesh.edgeAdjacencySharingVertex();
 
             bool[] toAdd = new bool[](mesh.edges.length);
             foreach (i; 0 .. mesh.selectedEdges.length)
@@ -46,21 +42,7 @@ class SelectionExpand : Command {
 
         } else if (editMode == EditMode.Polygons) {
             // Adjacency via shared vertices (includes diagonal neighbours).
-            uint[][] vertFaces = new uint[][](mesh.vertices.length);
-            foreach (fi, face; mesh.faces)
-                foreach (vi; face)
-                    vertFaces[vi] ~= cast(uint)fi;
-
-            int[][] faceAdj = new int[][](mesh.faces.length);
-            foreach (fi, face; mesh.faces) {
-                bool[int] seen;
-                foreach (vi; face)
-                    foreach (adjFi; vertFaces[vi])
-                        if (adjFi != cast(uint)fi && (cast(int)adjFi) !in seen) {
-                            seen[cast(int)adjFi] = true;
-                            faceAdj[fi] ~= cast(int)adjFi;
-                        }
-            }
+            auto faceAdj = mesh.faceAdjacencySharingVertex();
 
             bool[] toAdd = new bool[](mesh.faces.length);
             foreach (i; 0 .. mesh.selectedFaces.length)
