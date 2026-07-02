@@ -74,7 +74,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import ai.interaction : AiInteractionPhase;
-import math : Vec3, Viewport, translationMatrix,
+import math : Vec3, Pin, Viewport, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
                identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
                frameMatrix, frameMatrixInverse;
@@ -239,6 +239,45 @@ struct GestureFrame {
     float[16] mInv() const @safe pure nothrow @nogc { return frameMatrixInverse(right, up, axis); }
 }
 
+// F3a — per-bank gesture-record: the mechanical AoS regroup of the scattered
+// `*Start*` fields (gesturePinStart* / gestureSoftStart* / rotate|
+// scaleSoftStart* / move|rotate|scaleFrameStart / the three
+// `*GestureStartKnown` flags) into ONE struct type, reused per-bank as
+// `moveRec` / `rotateRec` / `scaleRec` (three instances — F3c's optional
+// three-into-one collapse is a SEPARATE, deferred step).
+//
+// TWO known bits, NOT ONE — this is the load-bearing shape, not a stylistic
+// choice:
+//   - `pinKnown` gates `pinStart` + `softStart`. Set ONLY inside beginEdit's
+//     closed->open guard (`if (!wasOpen && editIsOpen())`) — "first freeze of
+//     the session wins".
+//   - `runKnown` gates `runStart` + `frameStart`. Set UNCONDITIONALLY per
+//     mouse-down inside each begin*DragSession, AFTER beginRunGesture.
+// They diverge on the numeric/panel Move edit path (tool.attr TX via
+// reEvaluate -> captureDragBaselineIfStale -> beginEdit, WITHOUT
+// beginMoveDragSession): pinKnown goes true (a real beginEdit-open fired),
+// runKnown stays false (no begin*DragSession ever ran) — so that commit's
+// pin/soft hooks are LIVE while its run/frame hooks are inert (start==end).
+// Merging the two bits would either strand the pin or fabricate a run jump on
+// that path's undo. Rotate/Scale have NO pin-known family: their `pinKnown`
+// stays permanently false (they never restore the userPin on commit).
+//
+// `runStart` is a COMMIT-HOOK COPY of the live, standalone `gestureStart`
+// field (captured at each begin*DragSession's run-capture site, read at the
+// matching commit site) — NOT a replacement for `gestureStart` itself.
+// `gestureStart` stays a single shared field because it is read at IDLE
+// (no active bank) by renderBasis / gestureStartRotationEuler /
+// gestureStartScaleFactor / the rotate-run-gesture drain; an "active-bank"
+// alias would be undefined there.
+struct GestureRecord {
+    bool pinKnown;
+    bool runKnown;
+    XformState    runStart;
+    GestureFrame  frameStart;
+    Pin           softStart;
+    Pin           pinStart;
+}
+
 class XfrmTransformTool : TransformTool {
 public:
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -309,53 +348,27 @@ public:
     private Vec3 attrBaseRotate    = Vec3(0, 0, 0);
     private Vec3 attrBaseScale     = Vec3(1, 1, 1);
 
-    // Per-gesture action-center pin START, captured from the LIVE pin at session
-    // OPEN (the closed->open transition in beginEdit() below) — the gesture-START
-    // value the Move commitEdit pin-revert hook restores (W1 fix). The frozen
-    // snapshot (snapPlaced/snapPlacedCenter) holds the PRE-relocate pin staged at
-    // the LAST relocate, which is the right in-flight cancel baseline but the
-    // WRONG gesture-START for the 2nd+ plain on-gizmo gesture within one
-    // userPlaced run (no boundary → no re-stage → the frozen value is stale, from
-    // a relocate possibly a prior run). The live pin AT beginEdit IS this
-    // gesture's true start: for a plain gesture it equals the previous gesture's
-    // sticky-follow end; for a relocate-opened gesture beginEdit fires AFTER
-    // setUserPlaced+restage so it captures the relocated pin (correct stepping —
-    // undoing the haul returns to the relocate point, undoing further pops the
-    // prior entry whose hooks restore the pre-relocate pin). gesturePinStartKnown
-    // gates the capture so commitEdit can fall back to inert hooks when no
-    // beginEdit-open preceded it (e.g. a relocate-boundary no-op commit).
-    private bool gesturePinStartKnown   = false;
-    private bool gesturePinStartPlaced  = false;
-    private Vec3 gesturePinStartCenter  = Vec3(0, 0, 0);
-
-    // BUG-2 (reviewer BLOCKER) — gesture-START display SOFT-pin, captured LIVE at
-    // beginEdit alongside gesturePinStart* (the W1 lesson: capture the live state
-    // NOW, not a frozen snapshot). The Move soft pin (notifyAcenSoftPlaced, fired
-    // AFTER commitEdit at mouse-up) is otherwise stranded by an in-session Ctrl+Z:
-    // the Move revert hook restored only the userPlaced pin, never the soft pin,
-    // and the update() clear is skipped on undo (undo bumps mutationVersion but
-    // not the selection hash) — so geometry reverted to pristine while the gizmo
-    // pivot stayed floating at the settled height. The commit now carries the
-    // soft-pin endpoints into the same revert/apply closures as the userPlaced pin
-    // + pipe config (disjoint state — no clobber): revert restores this
-    // gesture-START soft state (typically cleared → pivot recomputes to the
-    // reverted-geometry centroid), apply restores the gesture-END (settled) soft
-    // pin. Gated identically to gesturePinStart* so a no-preceding-beginEdit commit
-    // falls back to inert.
-    private bool gestureSoftStartPlaced = false;
-    private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
-
-    // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — the Rotate /
-    // Scale equivalents of the Move gestureSoftStart* pair above. Captured at the
-    // matching mouse-DOWN (begin*DragSession) from the LIVE soft pin so the
-    // per-gesture undo hook can restore the gesture-START soft state on revert
-    // (mirroring the Move commitEdit splice). Without these an in-session Ctrl+Z
-    // after a frozen-frame rotate/scale reverts geometry but leaves the gizmo
-    // floating at the settled pose — the exact desync the Move path already fixed.
-    private bool rotateSoftStartPlaced  = false;
-    private Vec3 rotateSoftStartCenter  = Vec3(0, 0, 0);
-    private bool scaleSoftStartPlaced   = false;
-    private Vec3 scaleSoftStartCenter   = Vec3(0, 0, 0);
+    // F3a — per-bank gesture records (see the `GestureRecord` doc comment
+    // above for the two-known-bit / runStart-vs-gestureStart rationale). One
+    // instance per bank; each begin*DragSession captures into its own
+    // instance, each commit site (Move's commitEdit; the Rotate/Scale
+    // mouse-up blocks) reads and clears its own instance. Rotate/Scale never
+    // set `pinKnown` / `pinStart` — they never restore the userPin on commit.
+    //
+    // Replaces (mechanical field-for-field regroup, no read/write-site
+    // semantics changed):
+    //   gesturePinStartKnown/Placed/Center   -> moveRec.pinKnown / .pinStart
+    //   gestureSoftStartPlaced/Center        -> moveRec.softStart
+    //   rotateSoftStartPlaced/Center         -> rotateRec.softStart
+    //   scaleSoftStartPlaced/Center          -> scaleRec.softStart
+    //   move|rotate|scaleFrameStart          -> *Rec.frameStart
+    //   move|scale|rotateGestureStartKnown   -> *Rec.runKnown
+    //   (runStart is a NEW commit-hook copy of the standalone `gestureStart`
+    //   field below — captured at each begin site, read at the matching
+    //   commit site; `gestureStart` itself is unchanged and un-aliased.)
+    private GestureRecord moveRec;
+    private GestureRecord rotateRec;
+    private GestureRecord scaleRec;
 
     // flex_border_handles_plan.md Phase 3 / COMMIT B — the gesture-end gizmo BASIS
     // persistence frame (the analogue of softPlaced for the rendered orientation),
@@ -382,10 +395,11 @@ public:
     private GestureFrame frame;
 
     // Gizmo-basis undo splice — the per-bank gesture-START snapshot of the
-    // persisted `frame`, the BASIS analogue of the *SoftStart* center snapshots
-    // above. Captured at the matching mouse-DOWN (begin*DragSession) from the
-    // LIVE `frame` so the per-gesture undo hook can restore the gesture-START
-    // basis on revert, exactly as the center is restored via restoreSoftPlaced.
+    // persisted `frame`, the BASIS analogue of the softStart center snapshots
+    // in `GestureRecord` above (folded in there as `*Rec.frameStart`). Captured
+    // at the matching mouse-DOWN (begin*DragSession) from the LIVE `frame` so
+    // the per-gesture undo hook can restore the gesture-START basis on revert,
+    // exactly as the center is restored via restoreSoftPlaced.
     //
     // WHY this is needed only for rotate in practice: an undo bumps the mutation
     // version but NOT the selection hash, so clearFrame() does not fire and the
@@ -397,16 +411,15 @@ public:
     // there and the restore is an identity no-op (restore-to-same, harmless).
     // Non-flex modes never settle a basis (acenSettleAllowed gates it / frame
     // stays invalid), so frameEnd is unchanged from frameStart and the hook is
-    // inert there too. Gated by the SAME *GestureStartKnown flags as the run /
-    // soft-pin splice so a commit with no preceding mouse-down stays inert.
-    private GestureFrame moveFrameStart;
-    private GestureFrame rotateFrameStart;
-    private GestureFrame scaleFrameStart;
+    // inert there too. Gated by each bank's OWN `runKnown` (frameStart rides the
+    // same gate as runStart) so a commit with no preceding mouse-down stays inert.
 
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
-    // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
-    // captured in every begin*DragSession after beginRunGesture). The per-gesture
-    // undo hook restores `gestureStart` (run-START) on revert and `run` (run-END)
+    // THIS gesture's mouse-down lives in `gestureStart` (one standalone struct
+    // snapshot, captured in every begin*DragSession after beginRunGesture, and
+    // copied into `*Rec.runStart` for the commit hook — see the GestureRecord
+    // doc comment above / OBJ 3). The per-gesture undo hook restores
+    // `gestureStart`'s captured value (run-START) on revert and `run` (run-END)
     // on apply; since a single gesture's drain only touches its OWN bank's field
     // (Move → run.t, Rotate → run.r, Scale → run.s), the inactive banks have
     // start == end and restoring them is an identity no-op — so the whole-struct
@@ -414,14 +427,11 @@ public:
     // strictly more coherent across the mergeRun first.revert/last.apply splice
     // (every entry carries the full struct).
     //
-    // The three `*GestureStartKnown` flags survive PER-BANK: each gates the inert
-    // fallback (a commit with no preceding mouse-down — e.g. a relocate-boundary
-    // no-op cmd — falls back to start == end so the hook does not move the field
-    // on undo) for its bank's commit site, which fires independently. They are
-    // set at the matching begin*DragSession and cleared at the matching commit.
-    private bool moveGestureStartKnown     = false;
-    private bool scaleGestureStartKnown    = false;
-    private bool rotateGestureStartKnown   = false;
+    // Each bank's `runKnown` gates the inert fallback (a commit with no
+    // preceding mouse-down — e.g. a relocate-boundary no-op cmd — falls back to
+    // start == end so the hook does not move the field on undo) for its bank's
+    // commit site, which fires independently. Set at the matching
+    // begin*DragSession and cleared at the matching commit.
 
     // P-F Phase 3b — did the PRIOR rotate gesture in this run drive the view-ring
     // (ax==3)? The view-ring angle is a transient applyTRS axis-angle param, NEVER
@@ -565,7 +575,7 @@ public:
         scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
-        gesturePinStartKnown      = false;
+        moveRec.pinKnown          = false;
         // In-session falloff re-grade state — no live gesture, no anchor.
         lastAppliedGestureMutationVersion = ulong.max;
         refireAnchor.length               = 0;
@@ -1858,11 +1868,11 @@ noBankConsumed:
             // P-F Phase 3 — the per-gesture snapshot is the WHOLE `gestureStart`
             // struct (re-captured at the next gesture's begin*DragSession); only
             // the per-bank "known" flags need clearing at a run boundary.
-            moveGestureStartKnown   = false;
-            scaleGestureStartKnown  = false;
+            moveRec.runKnown   = false;
+            scaleRec.runKnown  = false;
             // The view-ring run flag clears so the next run's first principal
             // gesture does not see a stale post-view-ring re-bake demand.
-            rotateGestureStartKnown = false;
+            rotateRec.runKnown = false;
             runPriorRotateWasViewRing  = false;
         }
     }
@@ -2025,6 +2035,137 @@ noBankConsumed:
         return false;
     }
 
+    // F3b — per-bank record accessor shared by beginGesture / buildGestureHooks
+    // / the run-boundary resets, so there is exactly one bank->field mapping.
+    private ref GestureRecord recFor(DragBank bank) {
+        final switch (bank) {
+            case DragBank.None:   assert(false, "recFor: bank must be Move/Rotate/Scale");
+            case DragBank.Move:   return moveRec;
+            case DragBank.Rotate: return rotateRec;
+            case DragBank.Scale:  return scaleRec;
+        }
+    }
+
+    // F3b — single RUN/FRAME-START capture chokepoint: the RK gate of the
+    // "two internal gates" (OBJ 4). Called from every begin*DragSession
+    // UNCONDITIONALLY, immediately after `beginRunGesture(bank)` — matching
+    // the load-bearing ordering `beginEdit (PK capture) -> beginRunGesture ->
+    // RK capture` the plan specifies.
+    //
+    // The SIBLING gate — pin/soft-START (PK) — deliberately does NOT live
+    // here. It stays inside `beginEdit()`'s override (unchanged since F3a),
+    // because `beginEdit()` is the ONE chokepoint EVERY session-open funnels
+    // through, including the numeric/panel-attr path
+    // (`captureDragBaselineIfStale` -> `beginEdit`) that NEVER calls this
+    // function at all — moving the PK capture here would silently drop it on
+    // that path and defeat the OBJ 1 divergence (pinKnown true / runKnown
+    // false) the whole task exists to preserve. So "two gates" resolves to
+    // two call sites by necessity, not by choice: beginEdit's `!wasOpen`
+    // guard (PK) and this function (RK), invoked together in that order from
+    // every begin*DragSession.
+    //
+    // Rotate/Scale additionally capture their gesture-START SOFT pin here
+    // (gated by the SAME runKnown flag — they have no pin-known family, so
+    // their soft-pin rides the run gate; see the GestureRecord field-mapping
+    // comment). Move's soft-pin rides the PK gate instead (captured inside
+    // beginEdit's override alongside pinStart) — so Move does NOT touch
+    // softStart here.
+    private void beginGesture(DragBank bank) {
+        gestureStart = run;   // OBJ 3 — the standalone field, unaliased
+        auto rec = &recFor(bank);
+        rec.runStart   = gestureStart;
+        rec.frameStart = frame;
+        if (bank != DragBank.Move) {
+            if (auto ac = activeAcenStage())
+                rec.softStart = Pin(ac.isSoftPlaced(), ac.currentSoftCenter());
+            else
+                rec.softStart = Pin.init;
+        }
+        rec.runKnown = true;
+    }
+
+    // F3b — {apply, revert} closure pair for a gesture-record undo hook.
+    private struct GestureHooks { void delegate() apply; void delegate() revert; }
+
+    // F3b — single gesture-COMMIT hook-composition chokepoint: reads
+    // `<bank>Rec` (this gesture's START capture) plus the caller-supplied
+    // LIVE gesture-END state, and returns the {apply, revert} pair every
+    // commit site installs. Move's commitEdit composes this with its OWN
+    // falloff/snap/symmetry restore inside `cmd.setHooks`; the Rotate/Scale
+    // mouse-up sites install it directly as
+    // `rotateSub`/`scaleSub`.wrapperField{Apply,Revert}Hook.
+    //
+    // Gates each sub-restore by its OWN known bit, decided ONCE here instead
+    // of three hand-rolled copies: pin+soft-pin by `pinKnown` for Move (soft
+    // rides the SAME gate as pin there — matching beginGesture/beginEdit's
+    // capture side), run+frame by `runKnown`, and — for Rotate/Scale, which
+    // have no pin-known family — soft-pin ALSO by `runKnown`. A commit with
+    // no preceding begin (a no-op relocate-boundary cmd) leaves start==end,
+    // so the hook is inert without a separate branch: the fallback is baked
+    // into the start/end resolution below, not into whether the restore
+    // calls happen (they always happen, mirroring the pre-F3b hook bodies,
+    // which never skipped the restorePinState/restoreSoftPlaced calls either
+    // — only the VALUES were start==end).
+    //
+    // Move ALONE restores the userPin — `bank == DragBank.Move` inside the
+    // helper, so all three call sites look identical.
+    //
+    // Consumes (clears) both known bits, mirroring the pre-F3b per-site
+    // clears (`moveRec.pinKnown = false;` etc.) — call this exactly once per
+    // commit.
+    private GestureHooks buildGestureHooks(DragBank bank,
+        XformState runEnd, GestureFrame frameEnd, Pin softEnd, Pin pinEnd)
+    {
+        auto rec = &recFor(bank);
+
+        bool pinKnown = rec.pinKnown;
+        bool runKnown = rec.runKnown;
+
+        Pin pinStart = pinKnown ? rec.pinStart : pinEnd;
+        Pin softStart;
+        if (bank == DragBank.Move) softStart = pinKnown ? rec.softStart : softEnd;
+        else                       softStart = runKnown ? rec.softStart : softEnd;
+        XformState   runStart = runKnown ? rec.runStart   : runEnd;
+        GestureFrame frmStart = runKnown ? rec.frameStart : frameEnd;
+
+        rec.pinKnown = false;
+        rec.runKnown = false;
+
+        GestureHooks h;
+        if (bank == DragBank.Move) {
+            h.apply = () {
+                if (auto ac = activeAcenStage()) {
+                    ac.restorePinState(pinEnd.placed, pinEnd.center);
+                    ac.restoreSoftPlaced(softEnd.placed, softEnd.center);
+                }
+                run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameEnd; refreshFrameValid();
+            };
+            h.revert = () {
+                if (auto ac = activeAcenStage()) {
+                    ac.restorePinState(pinStart.placed, pinStart.center);
+                    ac.restoreSoftPlaced(softStart.placed, softStart.center);
+                }
+                run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frmStart; refreshFrameValid();
+            };
+        } else {
+            h.apply = () {
+                run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameEnd; refreshFrameValid();
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softEnd.placed, softEnd.center);
+            };
+            h.revert = () {
+                run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frmStart; refreshFrameValid();
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softStart.placed, softStart.center);
+            };
+        }
+        return h;
+    }
+
     // Capture the per-drag state that `applyTRS` and the fast-path
     // bypass read from. Runs exactly once per drag, immediately
     // after `moveSub.onMouseButtonDown` (or `beginScreenPlaneDragAt`)
@@ -2067,18 +2208,11 @@ noBankConsumed:
         // capture once per geometry run (or re-baseline a same-bank repeat),
         // preserving held R/S into the fold on a cross-bank move gesture.
         beginRunGesture(DragBank.Move);
-        // P-F Phase 3 — capture THIS gesture's run-absolute START (the WHOLE run
-        // state before this gesture's drain). AFTER beginRunGesture so a fresh run
-        // (just zeroed) snapshots the identity state and a same-bank repeat
-        // snapshots the held run total. The unified commit hook restores
-        // gestureStart (run-START) / run (run-END); for a Move gesture only run.t
-        // changes, so the R/S fields of the snapshot are inert (start == end).
-        gestureStart          = run;
-        moveGestureStartKnown = true;
-        // Gesture-START gizmo BASIS snapshot for the undo splice (mirror of the
-        // soft-pin capture in beginEdit). Move never rotates the frame, so
-        // frameStart == frameEnd at commit and the restore is an identity no-op.
-        moveFrameStart = frame;
+        // F3b — RK-gate capture (run-absolute START + basis snapshot for the
+        // undo splice), unconditional per mouse-down. See beginGesture's doc
+        // comment for why the PK gate (pin/soft-START) is NOT here — Move's
+        // rides beginEdit()'s own `!wasOpen` guard instead.
+        beginGesture(DragBank.Move);
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -2190,24 +2324,12 @@ noBankConsumed:
         // (and its derived euler) changes, so the T/S fields of the snapshot are
         // inert (start == end). DISTINCT from the sub-tool accumulator anchor
         // (angleAccum) — undo-only, never a fold input.
-        gestureStart            = run;
-        rotateGestureStartKnown = true;
-        // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
-        // gesture-START soft pin LIVE here so the rotate undo hook can restore it
-        // on revert (gesture-1 of a run: typically cleared → pivot recomputes;
-        // gesture-2+: the prior gesture's settle). Mirrors the Move W1 capture.
-        if (auto ac = activeAcenStage()) {
-            rotateSoftStartPlaced = ac.isSoftPlaced();
-            rotateSoftStartCenter = ac.currentSoftCenter();
-        } else {
-            rotateSoftStartPlaced = false;
-            rotateSoftStartCenter = Vec3(0, 0, 0);
-        }
-        // Capture the gesture-START gizmo BASIS for the undo splice (mirrors the
-        // soft-pin capture above). For gesture-1 of a run this is typically the
-        // unsettled default; for gesture-2+ it is the prior gesture's persisted
-        // rotated frame (chaining). Revert restores exactly this on Ctrl+Z.
-        rotateFrameStart = frame;
+        // F3b — RK-gate capture: run-absolute START, gesture-START soft pin
+        // (flex_border_handles_plan.md Phase 3 BUG-1 undo-splice — Rotate has
+        // no pin-known family, so its soft-pin rides THIS gate instead of a
+        // PK guard, mirroring the Move W1 capture), and the gesture-START
+        // gizmo BASIS for the undo splice. See beginGesture's doc comment.
+        beginGesture(DragBank.Rotate);
         // Track whether THIS gesture is a view-ring, for the NEXT gesture's
         // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
         // prior value above.
@@ -2299,30 +2421,12 @@ noBankConsumed:
         // Phase 3a) a scale-after-scale does NOT re-bake/zero: the run keeps ONE
         // frozen baseline and run.s accumulates the run-total factor.
         beginRunGesture(DragBank.Scale);
-        // P-F Phase 3 — capture THIS gesture's run-absolute START (the WHOLE run
-        // state before this gesture's drain). AFTER beginRunGesture so a fresh run
-        // (just zeroed to identity) snapshots the identity state and a same-bank
-        // repeat snapshots the held run-total factor. The unified commit hook
-        // restores gestureStart (run-START) / run (run-END); for a Scale gesture
-        // only run.s changes, so the T/R fields of the snapshot are inert
-        // (start == end). DISTINCT from the sub-tool accumulator anchor
-        // dragStartScaleAccum — undo-only, never a fold input.
-        gestureStart           = run;
-        scaleGestureStartKnown = true;
-        // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
-        // gesture-START soft pin LIVE (mirror of the rotate/Move capture) so the
-        // scale undo hook restores it on revert.
-        if (auto ac = activeAcenStage()) {
-            scaleSoftStartPlaced = ac.isSoftPlaced();
-            scaleSoftStartCenter = ac.currentSoftCenter();
-        } else {
-            scaleSoftStartPlaced = false;
-            scaleSoftStartCenter = Vec3(0, 0, 0);
-        }
-        // Gesture-START gizmo BASIS snapshot for the undo splice (mirror of the
-        // soft-pin capture). Scale never rotates the frame, so frameStart ==
-        // frameEnd at commit and the restore is an identity no-op.
-        scaleFrameStart = frame;
+        // F3b — RK-gate capture: run-absolute START, gesture-START soft pin
+        // (flex_border_handles_plan.md Phase 3 BUG-1 undo-splice, mirror of
+        // the rotate/Move capture — Scale has no pin-known family), and the
+        // gesture-START gizmo BASIS for the undo splice. See beginGesture's
+        // doc comment.
+        beginGesture(DragBank.Scale);
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -2935,7 +3039,7 @@ noBankConsumed:
             // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
             // first.revert/last.apply splices to run-START / run-END at the drop),
             // and redo restores the post-gesture run state. Gated by
-            // rotateGestureStartKnown so a commit with no preceding mouse-down leaves
+            // rotateRec.runKnown so a commit with no preceding mouse-down leaves
             // xfStart == xfEnd (inert). The SAME pre/post is recorded IDENTICALLY in
             // recordPipeRefire so a snap/falloff mid-run refire does not strand it.
             // A Rotate gesture only changes run.r (+ its derived euler); the T/S
@@ -2946,11 +3050,12 @@ noBankConsumed:
             // — consistent with the geometry baseline (the prior axis is carried in
             // geometry). MATRIX-AS-TRUTH: run.r is the truth, headlessRotate is
             // re-derived (eulerZYXFromMatrix) so the panel + matrix never drift.
-            bool rotAbsKnown = rotateGestureStartKnown;
-            XformState xfStart = gestureStart;
+            // F3b — read (not yet consumed: buildGestureHooks below clears
+            // runKnown) so the settle-gate logic can still tell whether this
+            // gesture actually moved the orientation.
+            bool rotAbsKnown = rotateRec.runKnown;
+            XformState xfStart = rotAbsKnown ? rotateRec.runStart : run;
             XformState xfEnd   = run;
-            rotateGestureStartKnown = false;
-            if (!rotAbsKnown) xfStart = xfEnd;   // inert (no preceding mouse-down)
             // flex_border_handles_plan.md Phase 3 (BUG-1) — settle the gesture-end
             // center through the shared helper (relocate gate GONE; the 2-entry
             // acenSettleAllowed() predicate is the sole filter). settleGestureCenter
@@ -2990,28 +3095,23 @@ noBankConsumed:
                 settleGestureBasis(rotateSub.handler.axisX,
                                    rotateSub.handler.axisY,
                                    rotateSub.handler.axisZ);
-            bool softStartPlaced = rotAbsKnown ? rotateSoftStartPlaced : softEndPlaced;
-            Vec3 softStartCenter = rotAbsKnown ? rotateSoftStartCenter : softEndCenter;
             // BASIS undo splice — the rendered-frame analogue of the soft-pin pair
             // above. frameEnd = the gesture-END `frame` settleGestureBasis just
-            // wrote (R_gesture·B0); frameStart = this gesture's mouse-down capture.
-            // An in-session Ctrl+Z bumps the mutation version but not the selection
-            // hash, so clearFrame never fires and the idle renderBasis keeps the
-            // settled (rotated) basis — without this restore the gizmo would render
-            // the rotated frame over the reverted-to-pristine geometry. Gated by
-            // rotAbsKnown so a commit with no preceding mouse-down stays inert.
-            GestureFrame frameEnd   = frame;
-            GestureFrame frameStart = rotAbsKnown ? rotateFrameStart : frameEnd;
-            rotateSub.wrapperFieldApplyHook  = () {
-                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameEnd; refreshFrameValid();
-                if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
-            rotateSub.wrapperFieldRevertHook = () {
-                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameStart; refreshFrameValid();
-                if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
+            // wrote (R_gesture·B0); frameStart (resolved inside buildGestureHooks)
+            // is this gesture's mouse-down capture. An in-session Ctrl+Z bumps the
+            // mutation version but not the selection hash, so clearFrame never
+            // fires and the idle renderBasis keeps the settled (rotated) basis —
+            // without this restore the gizmo would render the rotated frame over
+            // the reverted-to-pristine geometry.
+            GestureFrame frameEnd = frame;
+            // F3b — single chokepoint composing the {apply, revert} pair from
+            // rotateRec + this gesture's live END state (Rotate never restores
+            // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
+            // harmless placeholder). Consumes (clears) rotateRec.runKnown.
+            auto gh = buildGestureHooks(DragBank.Rotate, xfEnd, frameEnd,
+                                         Pin(softEndPlaced, softEndCenter), Pin.init);
+            rotateSub.wrapperFieldApplyHook  = gh.apply;
+            rotateSub.wrapperFieldRevertHook = gh.revert;
             rotateSub.commitGesture();
             // Clear the wrapper-field hooks so a later sub-tool commit with no
             // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
@@ -3058,17 +3158,18 @@ noBankConsumed:
             // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
             // first.revert/last.apply splices to run-START / run-END at the drop),
             // and redo restores the post-gesture run state. Gated by
-            // scaleGestureStartKnown so a commit with no preceding mouse-down leaves
+            // scaleRec.runKnown so a commit with no preceding mouse-down leaves
             // xfStart == xfEnd (inert). The same pre/post is recorded IDENTICALLY in
             // recordPipeRefire (3747-region) so a snap/falloff mid-run refire does
             // not strand it. A Scale gesture only changes run.s; the T/R fields are
             // equal between xfStart and xfEnd, so the whole-struct restore is
             // byte-equivalent to restoring run.s alone.
-            bool scaleAbsKnown = scaleGestureStartKnown;
-            XformState xfStart = gestureStart;
+            // F3b — read (not yet consumed: buildGestureHooks below clears
+            // runKnown) so the settle-gate logic can still tell whether this
+            // gesture actually moved the scale factor.
+            bool scaleAbsKnown = scaleRec.runKnown;
+            XformState xfStart = scaleAbsKnown ? scaleRec.runStart : run;
             XformState xfEnd   = run;
-            scaleGestureStartKnown = false;
-            if (!scaleAbsKnown) xfStart = xfEnd;   // inert
             // flex_border_handles_plan.md Phase 3 (BUG-1) — Scale had NO settle at
             // all; add it through the shared helper (the 2-entry acenSettleAllowed()
             // predicate is the sole mode filter, no relocate gate) so a completed
@@ -3101,23 +3202,18 @@ noBankConsumed:
                 settleGestureBasis(scaleSub.handler.axisX,
                                    scaleSub.handler.axisY,
                                    scaleSub.handler.axisZ);
-            bool softStartPlaced = scaleAbsKnown ? scaleSoftStartPlaced : softEndPlaced;
-            Vec3 softStartCenter = scaleAbsKnown ? scaleSoftStartCenter : softEndCenter;
             // BASIS undo splice (mirror of the rotate hook). Scale's R_gesture is I,
             // so frameStart == frameEnd and the restore is an identity no-op — it
             // exists purely so the splice composes uniformly across the three banks.
-            GestureFrame frameEnd   = frame;
-            GestureFrame frameStart = scaleAbsKnown ? scaleFrameStart : frameEnd;
-            scaleSub.wrapperFieldApplyHook  = () {
-                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameEnd; refreshFrameValid();
-                if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
-            scaleSub.wrapperFieldRevertHook = () {
-                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameStart; refreshFrameValid();
-                if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
+            GestureFrame frameEnd = frame;
+            // F3b — single chokepoint composing the {apply, revert} pair from
+            // scaleRec + this gesture's live END state (Scale never restores
+            // the userPin — pinEnd is unused, Pin.init is a harmless
+            // placeholder). Consumes (clears) scaleRec.runKnown.
+            auto gh = buildGestureHooks(DragBank.Scale, xfEnd, frameEnd,
+                                         Pin(softEndPlaced, softEndCenter), Pin.init);
+            scaleSub.wrapperFieldApplyHook  = gh.apply;
+            scaleSub.wrapperFieldRevertHook = gh.revert;
 
             // Per-gesture commit (record+consolidate, Phase 2): mirrors the
             // rotate path above — each scale drag bakes a tagged in-session entry
@@ -3970,17 +4066,15 @@ noBankConsumed:
                 // this gesture's true start — for a relocate-opened gesture this
                 // fires AFTER setUserPlaced+restage, so it captures the relocated
                 // pin (the correct START for stepping; see the field comment).
-                gesturePinStartPlaced = ac.isUserPlaced();
-                gesturePinStartCenter = ac.currentPinCenter();
-                gesturePinStartKnown  = true;
+                moveRec.pinStart = Pin(ac.isUserPlaced(), ac.currentPinCenter());
+                moveRec.pinKnown = true;
 
                 // BUG-2 — capture the gesture-START SOFT pin LIVE here too (the
                 // W1 lesson). For gesture-1 of a run this is typically unset (no
                 // soft pin yet → revert clears, pivot recomputes to the
                 // reverted-geometry centroid). For gesture-2+ of a sticky run it
                 // is the prior gesture's settle, so revert restores that.
-                gestureSoftStartPlaced = ac.isSoftPlaced();
-                gestureSoftStartCenter = ac.currentSoftCenter();
+                moveRec.softStart = Pin(ac.isSoftPlaced(), ac.currentSoftCenter());
             }
         }
     }
@@ -3996,13 +4090,13 @@ noBankConsumed:
     // entry and DISCARDS the frozen pin snapshot (no open session at idle). The
     // in-session Ctrl+Z is now a plain history.undo()/redo() — so the pin must
     // ride the ENTRY: revert restores the gesture-START pin (the LIVE pin this
-    // gesture's beginEdit captured into gesturePinStart* — W1 fix, NOT the frozen
+    // gesture's beginEdit captured into moveRec.pinStart — W1 fix, NOT the frozen
     // snapshot), apply restores the gesture-END pin (the current pin at mouse-up,
     // post sticky-follow). A plain history step then snaps the action center
     // per-step for free; consolidate()'s first.revert + last.apply splice gives
     // the merged run entry run-START / run-END pin semantics for free.
     //
-    // The gesture-START is the LIVE pin captured at beginEdit (gesturePinStart*),
+    // The gesture-START is the LIVE pin captured at beginEdit (moveRec.pinStart),
     // so commit no longer needs to read it before the base commit's
     // discardUserPlacedSnapshot(). When no gesture-START was captured (a commit
     // with no preceding beginEdit-open —
@@ -4010,63 +4104,6 @@ noBankConsumed:
     // fall back to the current pin for BOTH endpoints, making the hooks inert.
     protected override void commitEdit(string label) {
         if (suppressCommit) { cancelEdit(); return; }
-
-        // pin-START — the LIVE pin captured at this gesture's beginEdit
-        // (closed->open), NOT the frozen snapshot (W1 fix). The frozen snapshot
-        // holds the PRE-relocate pin staged at the last relocate, which is stale
-        // as a gesture-START for the 2nd+ plain gesture in a userPlaced run (no
-        // boundary re-stages it). gesturePinStart* was captured from
-        // isUserPlaced()/currentPinCenter() at beginEdit, so it equals this
-        // gesture's true start in every case (plain = prior gesture's
-        // sticky-follow end; relocate-opened = the relocated pin). Consume the
-        // capture (clear known) so a follow-on commit with no preceding
-        // beginEdit-open (e.g. a relocate-boundary no-op) falls back to inert.
-        bool startPlaced = false;
-        Vec3 startCenter = Vec3(0, 0, 0);
-        bool startKnown  = gesturePinStartKnown;
-        if (startKnown) {
-            startPlaced = gesturePinStartPlaced;
-            startCenter = gesturePinStartCenter;
-        }
-        // BUG-2 — gesture-START SOFT pin, captured live at the same beginEdit and
-        // gated by the SAME known flag (so a no-preceding-beginEdit commit makes
-        // the soft-pin hook inert too, below).
-        bool softStartPlaced = false;
-        Vec3 softStartCenter = Vec3(0, 0, 0);
-        if (startKnown) {
-            softStartPlaced = gestureSoftStartPlaced;
-            softStartCenter = gestureSoftStartCenter;
-        }
-        gesturePinStartKnown = false;
-
-        // P-F Phase 3 — run-absolute WHOLE-STRUCT START/END for the per-gesture undo
-        // hook (the Move arm of the unified hook; the Rotate/Scale arms live at the
-        // gizmo mouse-up sites above). xfStart = this gesture's run-START snapshot
-        // (captured at mouse-down, gestureStart); xfEnd = the current run-total
-        // state. Gated by moveGestureStartKnown so a commit with no preceding
-        // mouse-down (a no-op relocate cmd) leaves xfStart == xfEnd ⇒ the hook is
-        // inert (no field jump on undo). A Move gesture only changes run.t; the R/S
-        // fields are equal between xfStart and xfEnd, so the whole-struct restore is
-        // byte-equivalent to restoring run.t alone. DISJOINT from the pin / soft-pin
-        // / pipe-config hooks (a wrapper struct vs stage state) — composes into the
-        // same closure without clobber.
-        bool moveAbsKnown    = moveGestureStartKnown;
-        XformState moveXfStart = gestureStart;
-        XformState moveXfEnd   = run;
-        moveGestureStartKnown = false;
-        if (!moveAbsKnown) moveXfStart = moveXfEnd;   // inert
-
-        // BASIS undo splice (mirror of the rotate/scale hooks). A Move gesture has
-        // R_gesture == I — it never ROTATES the frame — but it DOES re-settle the
-        // live handler basis via settleGestureBasis(moveSub.handler.axis*) above, so
-        // frameEnd == frameStart only on an unrotated selection; on a selection whose
-        // frame a prior gesture rotated, the re-settle equals frameStart there, so the
-        // restore is effectively an identity no-op in that case too. The splice exists
-        // so the basis restore composes uniformly across the three banks. frameEnd is
-        // the gesture-END `frame` (settleGestureBasis above ran before this
-        // commitEdit), frameStart the mouse-down capture. Gated by moveAbsKnown.
-        GestureFrame moveFrameEnd   = frame;
-        GestureFrame moveFrameStartLocal = moveAbsKnown ? moveFrameStart : moveFrameEnd;
 
         // Base commit discards the frozen pin snapshot, then builds + records the
         // cmd via recordCommit. We replicate the body so we can splice setHooks
@@ -4093,26 +4130,30 @@ noBankConsumed:
         }
 
         // pin-END — current pin at mouse-up. If the gesture-START pin was never
-        // captured (no preceding beginEdit-open), use the current pin for START
-        // too so the hooks are inert (no pin jump on undo of a gesture that never
-        // moved the pin).
-        bool endPlaced = false;
-        Vec3 endCenter = Vec3(0, 0, 0);
+        // captured (no preceding beginEdit-open), buildGestureHooks below falls
+        // back to the current pin for START too so the hooks are inert (no pin
+        // jump on undo of a gesture that never moved the pin).
+        bool pinEndPlaced = false;
+        Vec3 pinEndCenter = Vec3(0, 0, 0);
         // BUG-2 — gesture-END SOFT pin, the LIVE soft state at commit. The Move
         // mouse-up sets it (notifyAcenSoftPlaced) BEFORE this commit when falloff
         // is active and the mode allows relocate, so it is already settled here.
         bool softEndPlaced = false;
         Vec3 softEndCenter = Vec3(0, 0, 0);
         if (auto ac = activeAcenStage()) {
-            endPlaced     = ac.isUserPlaced();
-            endCenter     = ac.currentPinCenter();
+            pinEndPlaced  = ac.isUserPlaced();
+            pinEndCenter  = ac.currentPinCenter();
             softEndPlaced = ac.isSoftPlaced();
             softEndCenter = ac.currentSoftCenter();
         }
-        if (!startKnown) {
-            startPlaced     = endPlaced;     startCenter     = endCenter;
-            softStartPlaced = softEndPlaced; softStartCenter = softEndCenter;
-        }
+
+        // F3b — single chokepoint composing the {apply, revert} pair from
+        // moveRec + this gesture's live END state (run.t/run.r/run.s + frame,
+        // read here since a Move gesture only touches run.t; the R/S fields are
+        // inert start==end automatically). Consumes (clears) moveRec.pinKnown
+        // and moveRec.runKnown.
+        auto gh = buildGestureHooks(DragBank.Move, run, frame,
+            Pin(softEndPlaced, softEndCenter), Pin(pinEndPlaced, pinEndCenter));
 
         // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
         // transient pipe CONFIG restore (falloff + snap + symmetry) alongside the
@@ -4143,47 +4184,28 @@ noBankConsumed:
         if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
 
         cmd.setHooks(
-            // apply (redo): restore the gesture-END pin + SOFT pin + run pipe
-            // config + publish. The userPlaced pin and the display soft pin own
-            // DISJOINT ActionCenterStage state (neither reads the other), so the
-            // two restores compose in one closure without clobber — like the
-            // independent pin / falloff / snap / symmetry restores (P-A).
+            // apply (redo): the F3b-composed pin + SOFT pin + run/frame restore
+            // (gh.apply), plus the falloff/snap/symmetry config restore this
+            // commit site alone carries (R/S never touch pipe config in their
+            // hooks — that is recordPipeRefire's job). The pin restore + the
+            // three config restores are INDEPENDENT stage mutations, so they
+            // compose in one closure without clobber (P-A).
             () {
-                if (auto ac = activeAcenStage()) {
-                    ac.restorePinState(endPlaced, endCenter);
-                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter);
-                }
+                gh.apply();
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-                // P-F Phase 3: restore the gesture-END run state so the panel
-                // TX/TY/TZ (+ RX/RY/RZ + SX/SY/SZ) track the redone geometry (run
-                // total after this gesture). headlessRotate is re-derived from
-                // run.r so the panel + matrix stay locked. DISJOINT wrapper struct —
-                // composes without clobber.
-                run = moveXfEnd; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = moveFrameEnd; refreshFrameValid();
             },
-            // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
-            // config + publish. The gesture-START soft state is typically cleared
-            // (gesture-1 of a run had no soft pin), so the pivot recomputes to the
-            // reverted-geometry centroid — closing the BLOCKER where the gizmo
-            // stayed floating at the settled height.
+            // revert (undo): the F3b-composed gesture-START restore, plus the
+            // same pipe-config restore. The gesture-START soft state is
+            // typically cleared (gesture-1 of a run had no soft pin), so the
+            // pivot recomputes to the reverted-geometry centroid — closing the
+            // BLOCKER where the gizmo stayed floating at the settled height.
             () {
-                if (auto ac = activeAcenStage()) {
-                    ac.restorePinState(startPlaced, startCenter);
-                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter);
-                }
+                gh.revert();
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-                // P-F Phase 3: restore the gesture-START run state so an in-session
-                // Ctrl+Z steps the panel back one gesture (the run total BEFORE this
-                // gesture). headlessRotate is re-derived from run.r. mergeRun
-                // first.revert/last.apply splices these to run-START / run-END at the
-                // drop.
-                run = moveXfStart; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = moveFrameStartLocal; refreshFrameValid();
             },
         );
         recordCommit(cmd);
