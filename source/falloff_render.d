@@ -27,10 +27,28 @@ import d_imgui.imgui_h;
 /// draw list — sits above the 3D scene but below ImGui windows, so
 /// the Tool Properties panel (and other panels) occlude the overlay
 /// instead of being painted over by it.
+///
+/// Task 0213: since each viewport cell is now an opaque `ImGui.Image`
+/// window (task 0170), the background draw list is painted OVER by that
+/// image and the overlay never shows. Callers should prefer the explicit-
+/// `dl` overload below, passing that cell's `GetWindowDrawList()` so the
+/// overlay records AFTER the image on the SAME window's draw list (above
+/// the cell image, still below other panels). This no-`dl` overload is
+/// kept only for source compatibility / any caller with no window
+/// draw list handy; it still targets the (occluded, in a Viewport##k
+/// cell) background list.
 void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
-    if (!cfg.enabled) return;
+    drawFalloffOverlay(ImGui.GetBackgroundDrawList(), cfg, vp);
+}
 
-    auto dl = ImGui.GetBackgroundDrawList();
+/// Same as above but the caller supplies the `ImDrawList*` to record
+/// into — pass a cell's `GetWindowDrawList()` (task 0213) so the overlay
+/// renders above that cell's `ImGui.Image` instead of being occluded by
+/// it. The Screen branch still uses its own `GetForegroundDrawList()`
+/// (transient gesture feedback that must stay above every panel).
+void drawFalloffOverlay(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
+                        const ref Viewport vp) {
+    if (!cfg.enabled) return;
 
     // Cyan linear-falloff overlay (cyan boxes at the endpoints, faint
     // connecting line). Snap uses a similar cyan but

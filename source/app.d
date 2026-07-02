@@ -9347,9 +9347,27 @@ void main(string[] args) {
         g_viewportWindowHovered = false;
         if (!testMode) {
             import std.conv : to;
+            import toolpipe.packets : FalloffPacket;
+            import falloff_render : drawFalloffOverlay;
             immutable int vpWinFlags =
                 ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
+
+            // Task 0213: falloff ring/sphere overlay packet, built ONCE
+            // before the per-cell loop (view-independent — same world-
+            // space rings/sphere for every cell, mirrors the toolMat/
+            // _ovl* reuse in the FBO loop below) and reprojected per
+            // cell under that cell's own resolved Viewport. Emitted on
+            // each cell's OWN window draw list (GetWindowDrawList,
+            // recorded AFTER that cell's ImGui.Image below) so it paints
+            // above the opaque cell image instead of being occluded by
+            // it (task 0170 regression — see doc/falloff_sphere_rings_plan.md).
+            FalloffPacket _wlFp;
+            if (activeTool !is null || anyFalloffActive()) {
+                SubjectPacket _wlSubj; VectorStack _wlVts; buildToolVts(_wlSubj, _wlVts);
+                if (auto p = _wlVts.get!FalloffPacket()) _wlFp = *p;
+            }
+
             foreach (k; 0 .. vpm.cellCount) {
                 Viewport3D _vcell = vpm.views[k];
                 // Zero padding + FBO-clear-colored WindowBg: the un-chromed
@@ -9405,6 +9423,27 @@ void main(string[] args) {
                             ImGui.SetCursorScreenPos(pos);
                             ImGui.Dummy(avail);
                         }
+                    }
+
+                    // Task 0213: falloff ring/sphere overlay for THIS cell,
+                    // recorded on the cell window's OWN draw list — AFTER
+                    // the ImGui.Image call above, so it paints on top of
+                    // the (opaque) cell image instead of being occluded by
+                    // it, and still BELOW any other panel drawn later
+                    // (falloff_render.d's panel-occlusion intent is
+                    // preserved: this is a WINDOW draw list, not the
+                    // foreground one). Runs every frame for every cell
+                    // (not `needRender`-gated like the FBO content below),
+                    // which is required — ImGui is immediate-mode, so an
+                    // overlay not re-emitted this frame simply disappears
+                    // this frame; the FBO loop skips unchanged cells but
+                    // this call must not. `resolvedSnapshot(k)` reads this
+                    // cell's camera live, already stamped with this
+                    // frame's pos/size a few lines up, so no separate
+                    // rect construction is needed.
+                    if (_wlFp.enabled) {
+                        Viewport _wlVp = vpm.resolvedSnapshot(k);
+                        drawFalloffOverlay(ImGui.GetWindowDrawList(), _wlFp, _wlVp);
                     }
 
                     // Active cell only: update outer vp used by picks.  vp.x/y

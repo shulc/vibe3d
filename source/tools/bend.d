@@ -56,13 +56,10 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
-        // No gizmo for now; falloff overlay if active.
-        import toolpipe.packets : FalloffPacket;
-        FalloffPacket fp = currentFalloff(vts);
-        if (fp.enabled) {
-            import falloff_render : drawFalloffOverlay;
-            drawFalloffOverlay(fp, vp);
-        }
+        // No gizmo for now. The falloff ring/sphere overlay is emitted
+        // once per cell from the app.d `Viewport##k` window loop (task
+        // 0213) — a per-tool call here used to draw on ImGui's occluded
+        // background list and was never visible.
     }
 
     /// Headless apply. Bend each masked vert around an axis

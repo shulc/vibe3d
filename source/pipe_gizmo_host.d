@@ -6,7 +6,6 @@ import math    : Viewport;
 import shader  : Shader;
 import handler : ToolHandles;
 import eventlog : queryMouse;
-import falloff_render  : drawFalloffOverlay;
 import falloff_handles : FalloffGizmo;
 import toolpipe.packets : FalloffPacket;
 
@@ -100,11 +99,12 @@ class PipeGizmoHost {
     /// SAME highlighted part appears correctly in every cell.
     void draw(const ref Shader shader, const ref Viewport vp,
               const ref FalloffPacket fp, ToolHandles pool, bool visualOnly = false) {
-        // Passive overlay (gradient lines / sphere wireframe / disc /
-        // lasso polygon) — reads the dispatcher-built packet, drawn every
-        // frame regardless of fp.enabled (the overlay free func no-ops on a
-        // disabled / typeless packet).
-        drawFalloffOverlay(fp, vp);
+        // The passive ImGui overlay (gradient lines / sphere wireframe /
+        // disc / lasso polygon) used to be drawn here, on ImGui's
+        // background list — occluded by the opaque per-cell viewport
+        // image (task 0170) and never visible. It is now emitted once
+        // per cell from the app.d `Viewport##k` window loop instead
+        // (task 0213); only the GL handle draw remains here.
         if (!fp.enabled) return;
 
         if (gizmo is null) gizmo = new FalloffGizmo();

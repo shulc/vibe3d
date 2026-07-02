@@ -107,7 +107,6 @@ import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
                           SnapPacket, SymmetryPacket, SubjectPacket;
-import falloff_render    : drawFalloffOverlay;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
 // MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
@@ -978,12 +977,14 @@ public:
             else                       scaleSub.draw             (shader, vp, vts, visualOnly);
         }
 
-        // Falloff overlay + handles drawn ONCE, on top of the gizmo banks.
-        // `drawFalloffOverlay` is ImGui/world-derived (re-clips to `vp`);
+        // GL falloff handles drawn ONCE, on top of the gizmo banks.
         // `pipeGizmoHost.drawGizmo` is ALREADY render-only (no begin/
-        // register/update — the arbiter cycle above owns that), so neither
-        // needs a `visualOnly` gate.
-        drawFalloffOverlay(fp, vp);
+        // register/update — the arbiter cycle above owns that), so it
+        // needs no `visualOnly` gate. The ImGui ring/sphere overlay
+        // (task 0213) is emitted once per cell from the app.d
+        // `Viewport##k` window loop instead of here — this call used to
+        // draw on ImGui's background list, which is occluded by the
+        // opaque per-cell viewport image (task 0170) and never visible.
         if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.drawGizmo(shader, vp, fp);
 
         syncGpuMatrix();

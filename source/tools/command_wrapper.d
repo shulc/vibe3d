@@ -500,12 +500,14 @@ abstract class CommandWrapperTool : Tool {
         // CommandWrapper has NO gizmo banks, so the falloff emitter has
         // nothing to co-arbitrate — drive the host's FULL-cycle draw on the
         // host's OWN pool, exactly like the no-tool path (host.draw folds in
-        // drawFalloffOverlay + the fp.enabled gate + the whole
-        // begin/register/setHaul/update/draw arbiter cycle). `visualOnly`
-        // forwards straight through — PipeGizmoHost.draw skips its own
-        // register/update cycle for a foreign-cell replica (see its doc
-        // comment); the click-point handle below is world-derived and safe
-        // to draw in every cell unconditionally.
+        // the fp.enabled gate + the whole begin/register/setHaul/update/draw
+        // arbiter cycle for the GL handles; the ImGui ring/sphere overlay is
+        // emitted separately, once per cell, from the app.d `Viewport##k`
+        // window loop — task 0213). `visualOnly` forwards straight through —
+        // PipeGizmoHost.draw skips its own register/update cycle for a
+        // foreign-cell replica (see its doc comment); the click-point handle
+        // below is world-derived and safe to draw in every cell
+        // unconditionally.
         if (pipeGizmoHost !is null)
             pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool(), visualOnly);
 

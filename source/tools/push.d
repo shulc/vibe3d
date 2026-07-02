@@ -11,8 +11,6 @@ import shader;
 
 import params : Param;
 
-import toolpipe.packets : FalloffPacket;
-
 /// Push tool — translates each selected vert along its smooth (per-vert
 /// average of incident face normals) by `dist` units, weighted by the
 /// active falloff stage. An `xfrm.push` tool driven by a `dist`
@@ -49,13 +47,10 @@ public:
     // land later if a use case surfaces.
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
-        // No gizmo for now; the falloff overlay still renders if the
-        // user has set up a falloff stage.
-        FalloffPacket fp = currentFalloff(vts);
-        if (fp.enabled) {
-            import falloff_render : drawFalloffOverlay;
-            drawFalloffOverlay(fp, vp);
-        }
+        // No gizmo for now. The falloff ring/sphere overlay is emitted
+        // once per cell from the app.d `Viewport##k` window loop (task
+        // 0213) — a per-tool call here used to draw on ImGui's occluded
+        // background list and was never visible.
     }
 
     /// Compute per-vert normals on demand: average of incident face
