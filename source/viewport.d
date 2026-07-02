@@ -172,8 +172,13 @@ final class Viewport3D {
         winX = x;  winY = y;  winW = w;  winH = h;
     }
 
-    /// Return the current camera snapshot (calls camera.viewport()).
-    Viewport snapshotOf() { return camera.viewport(); }
+    /// Return the current camera snapshot, computed directly from the
+    /// camera's own transform inputs (no member mirror — viewport camera
+    /// single-source, 0181).
+    Viewport snapshotOf() {
+        return camera.viewportWith(camera.focus, camera.distance,
+                                    camera.azimuth, camera.elevation);
+    }
 
     /// True when this viewport's camera is using orthographic projection.
     bool isOrtho() const { return camera.projKind == ProjKind.Ortho; }
@@ -484,17 +489,15 @@ final class ViewportManager {
         el       = f.indRotate ? f.camera.elevation: m.camera.elevation;
     }
 
-    /// Compute a resolved camera snapshot for cell `id`, writing the derived
-    /// eye/view/proj back into the cell's camera so downstream readers of
-    /// camera.eye/view/proj see the correct values.  Main-thread only (mutates).
+    /// Compute a resolved camera snapshot for cell `id` (follow-resolved
+    /// focus/distance/az/el via resolveFollow). Non-mutating — the manager's
+    /// resolved `Viewport` is the single source of truth for a cell's camera
+    /// matrices; there is no `View` member mirror to write back into
+    /// (viewport camera single-source, 0181).
     Viewport resolvedSnapshot(int id) {
         Vec3 fo; float di, a, e;
         resolveFollow(id, fo, di, a, e);
-        Viewport vp = views[id].camera.viewportWith(fo, di, a, e);
-        views[id].camera.eye  = vp.eye;
-        views[id].camera.view = vp.view;
-        views[id].camera.proj = vp.proj;
-        return vp;
+        return views[id].camera.viewportWith(fo, di, a, e);
     }
 
     /// Resolved snapshot for the currently active cell.

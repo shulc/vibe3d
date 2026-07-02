@@ -22,9 +22,11 @@ class View {
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
     int width, height;
     int x, y;
-    float[16] view;
-    float[16] proj;
-    Vec3 eye;
+    // No eye/view/proj mirror fields — viewport camera single-source (0181).
+    // The single source of camera matrices is `viewportWith(...)` (and, for
+    // a viewport-manager cell, the manager's follow-resolved `Viewport`
+    // snapshot). Callers that need a snapshot use `viewport()` /
+    // `viewportWith(...)`, never a stored field.
     ProjKind   projKind   = ProjKind.Perspective;
     ViewPreset viewPreset = ViewPreset.Perspective;
 
@@ -132,12 +134,12 @@ class View {
         return vp;
     }
 
-    Viewport viewport() {
-        Viewport vp = viewportWith(focus, distance, azimuth, elevation);
-        eye  = vp.eye;
-        view = vp.view;
-        proj = vp.proj;
-        return vp;
+    /// Non-mutating — no member mirror to write back into (viewport camera
+    /// single-source, 0181). Kept as a convenience wrapper over
+    /// `viewportWith` (own transform inputs) so existing call sites and this
+    /// module's unittests stay unchanged.
+    Viewport viewport() const {
+        return viewportWith(focus, distance, azimuth, elevation);
     }
 
     // ---------------------------------------------------------------------------
@@ -148,6 +150,9 @@ class View {
     // 90 % of the viewport (keeping the current orbit azimuth/elevation).
     string toJson() const {
         import std.format : format;
+        // Derive eye from the current transform inputs (viewport camera
+        // single-source, 0181) — no member mirror to read anymore.
+        Vec3 eye_ = viewportWith(focus, distance, azimuth, elevation).eye;
         return format(
             `{"azimuth":%f,"elevation":%f,"distance":%f,` ~
             `"focus":{"x":%f,"y":%f,"z":%f},` ~
@@ -155,7 +160,7 @@ class View {
             `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
             azimuth, elevation, distance,
             focus.x, focus.y, focus.z,
-            eye.x, eye.y, eye.z,
+            eye_.x, eye_.y, eye_.z,
             width, height, x, y);
     }
 
