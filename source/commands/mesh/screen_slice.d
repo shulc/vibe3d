@@ -68,7 +68,7 @@ class MeshScreenSlice : Command, Operator {
         if (vts.get!SubjectPacket() is null) return false;
         if (mesh.vertices.length == 0) return false;
 
-        auto vp = view.viewport();
+        auto vp = effectiveViewport();
 
         // Build the camera plane BEFORE capturing a snapshot so that a
         // degenerate short line produces no undo entry and leaves the mesh

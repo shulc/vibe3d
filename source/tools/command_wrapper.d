@@ -366,9 +366,8 @@ abstract class CommandWrapperTool : Tool {
         // Handle visibility is gated on `dragging`, so it appears here
         // and disappears on LMB-up.
         if (viewRef !is null && clickHandle !is null) {
-            auto vp = viewRef.viewport();
             Vec3 hit;
-            if (screenToWorkPlane(cast(float)e.x, cast(float)e.y, vp, hit))
+            if (screenToWorkPlane(cast(float)e.x, cast(float)e.y, cachedVp, hit))
                 clickHandle.setPos(hit);
         }
         return true;

@@ -1,8 +1,7 @@
 module symmetry_pick;
 
-import math    : Vec3;
+import math    : Vec3, Viewport;
 import mesh    : Mesh;
-import view    : View;
 import editmode : EditMode;
 import toolpipe.pipeline      : g_pipeCtx;
 import toolpipe.packets       : SubjectPacket, SymmetryPacket;
@@ -32,7 +31,7 @@ import operator               : VectorStack;
 /// Select (or deselect when `deselect == true`) vertex `vi` and its
 /// symmetric counterpart. Anchors `baseSide` on the user-picked vertex
 /// on select.
-void symmetricSelectVertex(Mesh* mesh, ref View view, EditMode em,
+void symmetricSelectVertex(Mesh* mesh, Viewport vp, EditMode em,
                            int vi, bool deselect)
 {
     if (deselect) mesh.deselectVertex(vi);
@@ -40,7 +39,7 @@ void symmetricSelectVertex(Mesh* mesh, ref View view, EditMode em,
 
     SymmetryPacket pkt;
     SymmetryStage  sym;
-    if (!captureLiveSymmetry(mesh, view, em, pkt, sym)) return;
+    if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
     if (pkt.pairOf.length != mesh.vertices.length) return;
     if (vi < 0 || vi >= cast(int)mesh.vertices.length) return;
 
@@ -56,7 +55,7 @@ void symmetricSelectVertex(Mesh* mesh, ref View view, EditMode em,
 /// Select (or deselect when `deselect == true`) edge `ei` and its
 /// symmetric counterpart, anchoring `baseSide` on the user-picked
 /// edge's midpoint on select.
-void symmetricSelectEdge(Mesh* mesh, ref View view, EditMode em,
+void symmetricSelectEdge(Mesh* mesh, Viewport vp, EditMode em,
                          int ei, bool deselect)
 {
     if (deselect) mesh.deselectEdge(ei);
@@ -64,7 +63,7 @@ void symmetricSelectEdge(Mesh* mesh, ref View view, EditMode em,
 
     SymmetryPacket pkt;
     SymmetryStage  sym;
-    if (!captureLiveSymmetry(mesh, view, em, pkt, sym)) return;
+    if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
     if (ei < 0 || ei >= cast(int)mesh.edges.length) return;
 
     uint me = mirrorEdge(*mesh, pkt, cast(uint)ei);
@@ -82,7 +81,7 @@ void symmetricSelectEdge(Mesh* mesh, ref View view, EditMode em,
 /// Select (or deselect when `deselect == true`) face `fi` and its
 /// symmetric counterpart, anchoring `baseSide` on the user-picked
 /// face's centroid on select.
-void symmetricSelectFace(Mesh* mesh, ref View view, EditMode em,
+void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
                          int fi, bool deselect)
 {
     if (deselect) mesh.deselectFace(fi);
@@ -90,7 +89,7 @@ void symmetricSelectFace(Mesh* mesh, ref View view, EditMode em,
 
     SymmetryPacket pkt;
     SymmetryStage  sym;
-    if (!captureLiveSymmetry(mesh, view, em, pkt, sym)) return;
+    if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
     if (fi < 0 || fi >= cast(int)mesh.faces.length) return;
 
     uint mf = mirrorFace(*mesh, pkt, cast(uint)fi);
@@ -114,7 +113,7 @@ void symmetricSelectFace(Mesh* mesh, ref View view, EditMode em,
 // caches the upstream workplane normal on every fire), so we skip the
 // call when symmetry is off.
 // ---------------------------------------------------------------------------
-private bool captureLiveSymmetry(Mesh* mesh, ref View view, EditMode em,
+private bool captureLiveSymmetry(Mesh* mesh, Viewport vp, EditMode em,
                                  out SymmetryPacket pkt, out SymmetryStage stage)
 {
     if (g_pipeCtx is null) return false;
@@ -125,7 +124,7 @@ private bool captureLiveSymmetry(Mesh* mesh, ref View view, EditMode em,
     SubjectPacket subj;
     subj.mesh             = mesh;
     subj.editMode         = em;
-    subj.viewport         = view.viewport();
+    subj.viewport         = vp;
     VectorStack vts;
     vts.put(&subj);
     g_pipeCtx.pipeline.evaluate(vts);

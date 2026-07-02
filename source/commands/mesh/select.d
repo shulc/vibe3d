@@ -179,7 +179,7 @@ class MeshSelect : Command {
         SubjectPacket subj;
         subj.mesh             = mesh;
         subj.editMode         = *editModePtr;
-        subj.viewport         = view.viewport();
+        subj.viewport         = effectiveViewport();
         VectorStack vts;
         vts.put(&subj);
         g_pipeCtx.pipeline.evaluate(vts);

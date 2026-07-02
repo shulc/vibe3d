@@ -115,7 +115,7 @@ class MeshTransform : Command, Operator {
                 SubjectPacket symmSubj;
                 symmSubj.mesh             = mesh;
                 symmSubj.editMode         = editMode;
-                symmSubj.viewport         = view.viewport();
+                symmSubj.viewport         = effectiveViewport();
                 VectorStack symmVts;
                 symmVts.put(&symmSubj);
                 g_pipeCtx.pipeline.evaluate(symmVts);

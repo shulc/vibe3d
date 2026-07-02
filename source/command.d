@@ -3,6 +3,7 @@ module command;
 import mesh;
 import view;
 import editmode;
+import math : Viewport;
 import params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
 
@@ -256,8 +257,45 @@ class Command {
     final ref View viewRef() { return view; }
     final EditMode editModeVal() const { return editMode; }
 
+    // Injection point for the follow-resolved viewport snapshot (viewport
+    // camera single-source, doc/tasks/work/0181). Nullable delegate set by a
+    // command factory right after construction (app.d), never by the command
+    // itself. `final` so no override can bypass `effectiveViewport()`.
+    final void setResolvedVpProvider(Viewport delegate() provider) {
+        resolvedVpProvider = provider;
+    }
+
+    // The SOLE accessor a command body should use to obtain a camera
+    // snapshot for screen-space math (camera-plane cuts, symmetry-packet
+    // capture, workplane picks). Prefers the injected resolved-snapshot
+    // provider; falls back to the cell's RAW OWN transform inputs
+    // (`view.viewportWith(view.focus, ...)` — exactly what `view.viewport()`
+    // computes, minus the write-back) when no provider was set.
+    //
+    // HAZARD: the null-provider fallback is the cell's raw own snapshot —
+    // on a linked-follower cell that is precisely the wrong answer (it
+    // ignores `resolveFollow`'s focus/distance/az/el substitution), which is
+    // the mechanism behind the follower-cell mispick this task removes. The
+    // fallback is safe here ONLY because every command that calls this
+    // (`MeshScreenSlice` / `MeshSelect` / `MeshTransform`) is `new`'d in
+    // exactly ONE place — its factory delegate in app.d's `run()` — and that
+    // factory sets `resolvedVpProvider` immediately after construction, so
+    // production code never takes the null branch (it fires only in a
+    // headless/standalone unit where "own" already equals "resolved", e.g.
+    // no active viewport manager). Do not add a second construction site for
+    // these commands without also wiring the provider, and do not read
+    // `resolvedVpProvider` directly anywhere but here.
+    protected final Viewport effectiveViewport() {
+        if (resolvedVpProvider !is null) return resolvedVpProvider();
+        return view.viewportWith(view.focus, view.distance,
+                                  view.azimuth, view.elevation);
+    }
+
 protected:
     Mesh* mesh;
     View view;
     EditMode editMode;
+
+private:
+    Viewport delegate() resolvedVpProvider;
 };
