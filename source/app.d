@@ -1759,6 +1759,30 @@ void main(string[] args) {
     import command_history : CommandHistory;
     auto history = new CommandHistory();
 
+    // Refire/apply-record dispatch helper (task 0183 C4). Folds the
+    // `if (history.refireActive) fire else apply+record` dance that was
+    // re-inlined at 4 call sites (generic command dispatch, selection
+    // handler, transform handler, runCommand) into one place. Two axes are
+    // load-bearing and stay fully parameterized — do NOT flatten them:
+    //   - throwMsg is null  -> failures are silent (runCommand's case)
+    //   - throwMsg not null -> failures throw new Exception(throwMsg)
+    //   - mode selects record() vs recordCoalescing() on a successful apply
+    // Equivalence per call site is documented at each call below.
+    enum RecordMode { Record, Coalescing }
+    void applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
+        if (history.refireActive) {
+            if (!history.fire(cmd) && throwMsg !is null)
+                throw new Exception(throwMsg);
+        } else if (cmd.apply()) {
+            final switch (mode) {
+                case RecordMode.Record:     history.record(cmd);           break;
+                case RecordMode.Coalescing: history.recordCoalescing(cmd); break;
+            }
+        } else if (throwMsg !is null) {
+            throw new Exception(throwMsg);
+        }
+    }
+
     // Phase 7: macro recorder captures successful command lines
     // (via history.onRecord delegate) when active. Survives undo /
     // redo / clear-history — saving a macro after several edits
@@ -4652,12 +4676,7 @@ void main(string[] args) {
                             throw new Exception(
                                 "refire command did not apply");
                     }
-                } else if (history.refireActive) {
-                    if (!history.fire(cmd))
-                        throw new Exception("command '" ~ id ~ "' did not apply");
                 } else {
-                    if (!cmd.apply())
-                        throw new Exception("command '" ~ id ~ "' did not apply");
                     // Programmatic command-dispatch path: route through
                     // recordCoalescing() so consecutive COMPATIBLE delta edits
                     // (same targets, same edit label) collapse into a single
@@ -4665,7 +4684,8 @@ void main(string[] args) {
                     // command except the opted-in delta edit, so every other
                     // command appends exactly as record() would. Interactive
                     // tool commits stay on record() (one entry per gesture).
-                    history.recordCoalescing(cmd);
+                    applyOrRefire(cmd, RecordMode.Coalescing,
+                                  "command '" ~ id ~ "' did not apply");
                 }
 
                 // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
@@ -4873,14 +4893,7 @@ void main(string[] args) {
             auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
             cmd.setMode(mode);
             cmd.setIndices(indices);
-            if (history.refireActive) {
-                if (!history.fire(cmd))
-                    throw new Exception("mesh.select did not apply");
-            } else {
-                if (!cmd.apply())
-                    throw new Exception("mesh.select did not apply");
-                history.record(cmd);
-            }
+            applyOrRefire(cmd, RecordMode.Record, "mesh.select did not apply");
         });
 
         // Phase A.5: dispatch /api/transform through MeshTransform command.
@@ -4925,14 +4938,7 @@ void main(string[] args) {
             cmd.setAngle (floatFrom("angle", 0.0f));
             cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
             cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            if (history.refireActive) {
-                if (!history.fire(cmd))
-                    throw new Exception("mesh.transform did not apply");
-            } else {
-                if (!cmd.apply())
-                    throw new Exception("mesh.transform did not apply");
-                history.record(cmd);
-            }
+            applyOrRefire(cmd, RecordMode.Record, "mesh.transform did not apply");
         });
 
         // Phase A.5: dispatch /api/reset through SceneReset command.
@@ -5083,12 +5089,7 @@ void main(string[] args) {
     // when the user cancels the native dialog).
     void runCommand(Command cmd) {
         if (cmd is null) return;
-        if (history.refireActive) {
-            history.fire(cmd);
-        } else {
-            if (cmd.apply())
-                history.record(cmd);
-        }
+        applyOrRefire(cmd, RecordMode.Record, null);
     }
 
     // Intercept commands that surface an args dialog (the popup that
@@ -7595,21 +7596,7 @@ void main(string[] args) {
         // in a release/no-http run, where no thread ever posts requests.
         if (httpServer.running) {
             httpServer.tickEventPlayer();
-            httpServer.tickReset();
-            httpServer.tickModel();
-            httpServer.tickPipeEval();
-            httpServer.tickPath();
-            httpServer.tickCommand();
-            httpServer.tickSelection();
-            httpServer.tickTransform();
-            httpServer.tickLoadMesh();
-            httpServer.tickCameraSet();
-            httpServer.tickGpuSurface();
-            httpServer.tickPick();
-            httpServer.tickRefire();
-            httpServer.tickBlock();
-            httpServer.tickUndo();
-            httpServer.tickJump();
+            httpServer.tickAll();
         }
 
         // ---- Events ----
