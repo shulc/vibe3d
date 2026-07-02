@@ -827,19 +827,6 @@ unittest {  // (e) per-family normal SIGN — the inside-out guard
                     d0.x*d1.y - d0.y*d1.x);
     }
 
-    // Face centroid.
-    Vec3 faceCentroid(int fi) {
-        auto f = m.faces[fi];
-        Vec3 c = Vec3(0, 0, 0);
-        foreach (vi; f) {
-            c.x += m.vertices[vi].x;
-            c.y += m.vertices[vi].y;
-            c.z += m.vertices[vi].z;
-        }
-        float n = cast(float)f.length;
-        return Vec3(c.x/n, c.y/n, c.z/n);
-    }
-
     // axis=Y: axisIdx=1, +axis direction = (0,1,0).
     // Radial direction for a face = (centroid - axis) projected onto XZ plane.
     Vec3 radialDir(Vec3 cen) {
@@ -852,9 +839,11 @@ unittest {  // (e) per-family normal SIGN — the inside-out guard
     }
 
     // Outer wall faces [0..S): normal dot radialDir > 0 (outward).
+    // Tube faces are always ≥3 verts, so m.faceCentroid's unguarded
+    // divide-by-length is a safe no-op here.
     foreach (fi; 0 .. S) {
         Vec3 n    = faceNormal(fi);
-        Vec3 cen  = faceCentroid(fi);
+        Vec3 cen  = m.faceCentroid(cast(uint)fi);
         Vec3 rdir = radialDir(cen);
         float d   = n.x*rdir.x + n.y*rdir.y + n.z*rdir.z;
         assert(d > 0.0f,
@@ -864,7 +853,7 @@ unittest {  // (e) per-family normal SIGN — the inside-out guard
     // Inner wall faces [S..2S): normal dot radialDir < 0 (inward).
     foreach (fi; S .. 2*S) {
         Vec3 n    = faceNormal(fi);
-        Vec3 cen  = faceCentroid(fi);
+        Vec3 cen  = m.faceCentroid(cast(uint)fi);
         Vec3 rdir = radialDir(cen);
         float d   = n.x*rdir.x + n.y*rdir.y + n.z*rdir.z;
         assert(d < 0.0f,

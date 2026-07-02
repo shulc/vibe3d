@@ -417,10 +417,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 auto face = m.faces[fi];
                 if (face.length == 0) continue;
                 if (!faceVisible(face)) continue;
-                Vec3 c = Vec3(0, 0, 0);
-                foreach (vi; face) c += m.vertices[vi];
-                c = c / cast(float)face.length;
-                consider(c, cast(int)fi, SnapType.PolyCenter, slot);
+                consider(m.faceCentroid(cast(uint)fi), cast(int)fi, SnapType.PolyCenter, slot);
             }
         }
 
@@ -933,10 +930,7 @@ private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
         case Kind.PolyCenter: {
             auto f = mesh.faces[idx];
             if (f.length == 0) return false;
-            Vec3 c = Vec3(0, 0, 0);
-            foreach (vi; f) c += mesh.vertices[vi];
-            c = c / cast(float)f.length;
-            return accumulate(c);
+            return accumulate(mesh.faceCentroid(cast(uint)idx));
         }
         case Kind.Edge: {
             auto e = mesh.edges[idx];

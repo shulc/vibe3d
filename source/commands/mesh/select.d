@@ -159,9 +159,7 @@ class MeshSelect : Command {
                 return Vec3(0, 0, 0);
             auto f = mesh.faces[firstIdx];
             if (f.length == 0) return Vec3(0, 0, 0);
-            Vec3 sum = Vec3(0, 0, 0);
-            foreach (vi; f) sum = sum + mesh.vertices[vi];
-            return sum * (1.0f / cast(float)f.length);
+            return mesh.faceCentroid(cast(uint)firstIdx);
         }
         return Vec3(0, 0, 0);
     }
