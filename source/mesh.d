@@ -6260,6 +6260,127 @@ struct Mesh {
         return m;
     }
 
+    /// Return, for each edge, the indices of every OTHER edge that shares one
+    /// of its two endpoint vertices (relation A: edge→edges-sharing-a-vertex).
+    /// Result length == `edges.length`. No dedup pass — two distinct edges
+    /// can share at most one vertex, so an edge can never appear twice in
+    /// another edge's neighbor list. Order is whatever `edgesAroundVertex`
+    /// yields (order-independent for every current consumer — set-building
+    /// / BFS reachability). Verbatim body of the private builder formerly
+    /// duplicated in `commands/select/expand.d`, `contract.d` and
+    /// `connect.d` (all three Edges-mode adjacency loops) — see
+    /// `doc/tasks/work/0190-select-adjacency-provider.md`.
+    int[][] edgeAdjacencySharingVertex() const {
+        int[][] edgeAdj = new int[][](edges.length);
+        foreach (i; 0 .. edges.length)
+            foreach (vi; edges[i])
+                foreach (ni; edgesAroundVertex(vi))
+                    if (ni != i) edgeAdj[i] ~= cast(int)ni;
+        return edgeAdj;
+    }
+
+    /// Return, for each face, the indices of every OTHER face that shares
+    /// ≥1 vertex with it (relation C: face→faces-sharing-a-vertex — this
+    /// INCLUDES diagonal neighbours, which makes it a different relation
+    /// from `adjacentFaces` (edge-adjacent only); do not conflate the two).
+    /// Result length == `faces.length`. Verbatim body of the private
+    /// builder formerly duplicated in `commands/select/expand.d` and
+    /// `contract.d` (Polygons-mode adjacency loops) — see
+    /// `doc/tasks/work/0190-select-adjacency-provider.md`.
+    int[][] faceAdjacencySharingVertex() const {
+        uint[][] vertFaces = new uint[][](vertices.length);
+        foreach (fi, face; faces)
+            foreach (vi; face)
+                vertFaces[vi] ~= cast(uint)fi;
+
+        int[][] faceAdj = new int[][](faces.length);
+        foreach (fi, face; faces) {
+            bool[int] seen;
+            foreach (vi; face)
+                foreach (adjFi; vertFaces[vi])
+                    if (adjFi != cast(uint)fi && (cast(int)adjFi) !in seen) {
+                        seen[cast(int)adjFi] = true;
+                        faceAdj[fi] ~= cast(int)adjFi;
+                    }
+        }
+        return faceAdj;
+    }
+
+    unittest { // Stage-0 parity golden (0190): providers == old inline builders;
+               // CSR order == inline edge-based order (bit-stability guard for
+               // smooth.d / smoothSubdivide / updateConnectMask, Stage 3).
+        Mesh m = makeCube();
+
+        // --- relation A: edge→edges-sharing-a-vertex, element-wise + per-edge order.
+        int[][] edgeAdjInline = new int[][](m.edges.length);
+        foreach (i; 0 .. m.edges.length)
+            foreach (vi; m.edges[i])
+                foreach (ni; m.edgesAroundVertex(vi))
+                    if (ni != i) edgeAdjInline[i] ~= cast(int)ni;
+        assert(m.edgeAdjacencySharingVertex() == edgeAdjInline,
+            "edgeAdjacencySharingVertex must match the inline edge-adjacency "
+            ~ "builder element-wise (including per-edge order)");
+
+        // --- relation C: face→faces-sharing-a-vertex, element-wise + per-face order.
+        uint[][] vertFacesInline = new uint[][](m.vertices.length);
+        foreach (fi, face; m.faces)
+            foreach (vi; face)
+                vertFacesInline[vi] ~= cast(uint)fi;
+        int[][] faceAdjInline = new int[][](m.faces.length);
+        foreach (fi, face; m.faces) {
+            bool[int] seen;
+            foreach (vi; face)
+                foreach (adjFi; vertFacesInline[vi])
+                    if (adjFi != cast(uint)fi && (cast(int)adjFi) !in seen) {
+                        seen[cast(int)adjFi] = true;
+                        faceAdjInline[fi] ~= cast(int)adjFi;
+                    }
+        }
+        assert(m.faceAdjacencySharingVertex() == faceAdjInline,
+            "faceAdjacencySharingVertex must match the inline face-adjacency "
+            ~ "builder element-wise");
+
+        // --- relation D order-equality: CSR neighbor order == the inline
+        // `foreach (e; edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
+        // order, PER VERTEX. This is the SOLE runtime guarantee (not just a
+        // proof-by-inspection) that Stage 3's swap of smooth.d /
+        // smoothSubdivide / updateConnectMask's inline vert-neighbor build
+        // for `vertexAdjacencyCSR` is bit-identical: float sums accumulate
+        // in iteration order, so ORDER (not merely the neighbor SET) must
+        // match exactly, or the smoothed positions diverge in the last bit.
+        // Checked on two topologies (uniform-valence cube + a subdivided
+        // mesh with non-uniform valence) so this is not a single-valence
+        // coincidence that a reorder elsewhere in the file could sneak past.
+        import std.conv : text;
+        static void checkOrderEquality(ref Mesh mm) {
+            uint[][] neighborsInline = new uint[][](mm.vertices.length);
+            foreach (e; mm.edges) {
+                neighborsInline[e[0]] ~= e[1];
+                neighborsInline[e[1]] ~= e[0];
+            }
+            const(size_t)[] off;
+            const(uint)[] nbrs;
+            mm.vertexAdjacencyCSR(off, nbrs);
+            assert(off.length == mm.vertices.length + 1,
+                "CSR offset array length must be vertices.length + 1");
+            foreach (vi; 0 .. mm.vertices.length) {
+                auto csrSlice = nbrs[off[vi] .. off[vi + 1]];
+                assert(csrSlice.length == neighborsInline[vi].length,
+                    text("CSR neighbor COUNT must match inline edge-based count at vertex ", vi));
+                foreach (k; 0 .. csrSlice.length)
+                    assert(csrSlice[k] == neighborsInline[vi][k],
+                        text("CSR neighbor ORDER must match inline edge-based order at vertex ", vi,
+                             " position ", k, " (bit-stability for smooth.d/smoothSubdivide float sums)"));
+            }
+        }
+        checkOrderEquality(m);
+
+        bool[] allMask = new bool[](m.faces.length);
+        allMask[] = true;
+        Mesh sub = facetedSubdivide(m, allMask);
+        checkOrderEquality(sub);
+    }
+
     /// Return the vertex indices touched by the current edge selection.
     /// Each vertex is included at most once.
     /// If nothing is selected, returns all vertex indices.
@@ -10408,6 +10529,31 @@ unittest { // non-manifold book: spine edge (3 faces) → all spine twins == ~0u
     foreach (e; m.edgesAroundVertex(0)) edgeRing0 ~= e;
     assert(edgeRing0.length > 0 && edgeRing0.length < 64,
            "book v0 edge ring terminates");
+
+    // vertexAdjacencyCSR (relation D, edge-based) vs verticesAroundVertex(0)
+    // (relation E, loop-based fan walk, already captured in nb0 above): on
+    // this non-manifold vertex the two relations yield DIFFERENT neighbor
+    // SETS. v0 has 4 incident edges (spine to v1, page edges to v2/v3/v4)
+    // ⇒ CSR sees all 4 {1,2,3,4}; the loop-based fan walk truncates at the
+    // first boundary/non-manifold dart and only ever sees 2 {1,4} (asserted
+    // above). This is the concrete, runtime-checked reason `connect.d`'s
+    // Vertices mode (loop-based, see `verticesAroundVertex` there) is left
+    // unfolded onto `vertexAdjacencyCSR` in task 0190 — substituting CSR
+    // there would silently change connected-component reachability on
+    // non-manifold meshes. Guards against a future accidental fold.
+    import std.algorithm : sort;
+    const(size_t)[] csrOff;
+    const(uint)[]   csrNbrs;
+    m.vertexAdjacencyCSR(csrOff, csrNbrs);
+    uint[] csrSet0 = csrNbrs[csrOff[0] .. csrOff[1]].dup;
+    csrSet0.sort();
+    uint[] loopSet0 = nb0.dup;
+    loopSet0.sort();
+    assert(csrSet0 != loopSet0,
+        "book v0: CSR (edge-based, relation D) neighbor set must differ from "
+        ~ "the loop-based verticesAroundVertex (relation E) set on this "
+        ~ "non-manifold vertex — proves connect.d Vertices cannot be folded "
+        ~ "onto vertexAdjacencyCSR without a behaviour change");
 }
 
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
@@ -10581,19 +10727,23 @@ Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask)
         }
     }
 
-    // Neighbor lists from sub.edges (both directions), same as smooth.d:243-247.
-    uint[][] neighbors = new uint[][](sub.vertices.length);
-    foreach (e; sub.edges) {
-        neighbors[e[0]] ~= e[1];
-        neighbors[e[1]] ~= e[0];
-    }
+    // Neighbor lists — CSR vert→vert adjacency (relation D, edge-based, both
+    // directions), same provider as smooth.d / updateConnectMask. Per-vertex
+    // order is proven identical to the old inline
+    // `foreach (e; sub.edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
+    // build (Stage-0 parity unittest above), which the float-sum averaging
+    // below depends on for bit-identical results. `sub` is a mutable local
+    // (fresh from facetedSubdivide), so the non-const CSR call is legal.
+    const(size_t)[] adjOff;
+    const(uint)[]   adjNbrs;
+    sub.vertexAdjacencyCSR(adjOff, adjNbrs);
 
     // One Jacobi Laplacian pass (λ = 0.5): read from `prev`, write to `cur`.
     Vec3[] prev = sub.vertices.dup;
     Vec3[] cur  = sub.vertices.dup;
     foreach (vi; 0 .. sub.vertices.length) {
         if (!relaxable[vi]) continue;
-        auto nbrs = neighbors[vi];
+        auto nbrs = adjNbrs[adjOff[vi] .. adjOff[vi + 1]];
         if (nbrs.length == 0) continue;
         Vec3 sum = Vec3(0, 0, 0);
         foreach (nb; nbrs) sum = sum + prev[nb];
