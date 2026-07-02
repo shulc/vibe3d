@@ -11,8 +11,8 @@ import mesh : Mesh, MapDomain;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
-                            LassoStyle, ElementConnect, ElementMode;
+import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
+                            FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
@@ -52,14 +52,16 @@ import params            : Param, ParamHints, IntEnumEntry;
 //   `out`          : float, custom-shape tangent at t=1
 // ---------------------------------------------------------------------------
 class FalloffStage : Stage, Operator {
-    FalloffType  type        = FalloffType.None;
-    FalloffShape shape       = FalloffShape.Smooth;
-
-    Vec3 start  = Vec3(0, 0, 0);
-    Vec3 end    = Vec3(0, 1, 0);
-    Vec3 center = Vec3(0, 0, 0);
-    Vec3 size   = Vec3(1, 1, 1);
-    Vec3 normal = Vec3(0, 1, 0);    // cylinder axis (default +Y, the xfrm.vortex default)
+    // Config field-set (type/shape/start/end/center/size/normal/pickedRadius/
+    // connect/elementMode/steps/anchorRing/screenCx/…/mapName) — the SAME
+    // struct FalloffPacket embeds, so evaluate()/snapshotConfigToPacket()/
+    // restoreConfigFromPacket()/reset() all copy this ONE value instead of a
+    // hand-maintained field list (task 0179 / audit-2 F1). `alias config
+    // this` keeps every unqualified `type` / `start` / `pickedRadius` / …
+    // read-or-write below (and every external `stage.<field>` reader)
+    // resolving exactly as before.
+    FalloffConfig config;
+    alias config this;
 
     // userLocked: true when the user EXPLICITLY chose this falloff (status-bar
     // type pulldown → `tool.pipe.attr falloff type <X>`, or a `falloff.<type>`
@@ -70,46 +72,17 @@ class FalloffStage : Stage, Operator {
     // this flag, and so stays transient (resets on the next tool switch).
     // Cleared by reset() (full reset / SceneReset) and by selecting type=none.
     bool userLocked = false;
-    // Element falloff (Stage 14.1): sphere centred on the ACEN-
-    // published pivot (state.actionCenter.center — same point the
-    // gizmo sits on) with radius `dist`. The sphere CENTRE has a
-    // single source of truth (ACEN); FalloffStage owns only the
-    // RADIUS. To relocate the sphere, push ACEN.userPlaced (via
-    // setUserPlaced from a tool, or HTTP
-    // `tool.pipe.attr actionCenter userPlacedX/Y/Z`).
-    float dist = 1.0f;
-    // Selection falloff (D.7): the "Steps" count — the depth the per-vert
-    // weight is grown across from the selection border inward. The smoothing-
-    // pass count scales QUADRATICALLY with steps (iters ≈ round(0.7·steps² + 2))
-    // because the weight is a diffusion process whose reach grows ∝ √iters,
-    // while the reference engine scales that reach LINEARLY in steps.
-    // Integer by nature (discrete hops); its own field so it stays independent
-    // of the Element `dist` radius above. attr `steps`.
-    int steps = 4;
-    // Connected-Elements gate. When != Ignore, the per-vert weight is
-    // shaped by `connectMask` (BFS component of the picked element):
-    // UseConnectivity gates non-component verts to 0 (attenuating within
-    // the component), Rigid forces component verts to 1, EdgeLoops walks
-    // the quad edge-loop from the picked edge and attenuates non-ring verts
-    // by distance to the loop polyline (no zeroing gate). The mask is filled by
-    // XfrmTransformTool's click-pick OR resolved headless in evaluate()
-    // from `anchorRing` + mesh edge-adjacency (see resolveConnectMask).
-    ElementConnect connect = ElementConnect.Ignore;
+    // NOTE: the Element-falloff sphere RADIUS (wire attr `dist`), the
+    // Selection "Steps" BFS-hop count, the Connected-Elements `connect` gate,
+    // the Element pick-type `elementMode`, and the raw picked `anchorRing`
+    // (weight=1.0 short-circuit indices) all now live in the embedded
+    // `FalloffConfig` above (`config.pickedRadius` / `config.steps` /
+    // `config.connect` / `config.elementMode` / `config.anchorRing` —
+    // resolved unqualified below via `alias config this`). `connectMask`
+    // just below is the DERIVED BFS-component mask (not config — rebuilt
+    // every evaluate() from `anchorRing` + mesh edge-adjacency, see
+    // resolveConnectMask), so it stays a direct stage field.
     bool[]         connectMask;
-    // Anchor ring — vertex indices that get weight=1.0 regardless
-    // of the sphere math. Click-pick populates this with the
-    // clicked element's vert ring (single vert / edge endpoints /
-    // face vert ring). Together with the sphere around ACEN.center,
-    // the two pieces form the `falloff.element` hybrid:
-    // an "anchor + attenuation" weight function. The ring is not a
-    // public attr — it's an implementation detail of the
-    // falloff.element evaluation that short-circuits on it.
-    //
-    // Runtime-only (no setAttr on the field itself except the
-    // `anchorRing` string parser for tests / scripting — most users
-    // never touch it). Cleared on FalloffStage.reset and on type
-    // change away from Element.
-    uint[] anchorRing;
     // Resolved world positions of `anchorRing`, parallel to it. Owned by
     // the stage so the slice published on the packet (pkt.anchorPos) stays
     // valid for the whole pipe walk. Rebuilt every evaluate() from the live
@@ -133,33 +106,13 @@ class FalloffStage : Stage, Operator {
     // as a pre-resolved ring and copied through verbatim (idempotent), so
     // scripted tests can set the full ring directly via `anchorRing`.
     private uint[] loopRing_;
-    // Stage 14.8: pick-type restriction for the Element-falloff click-pick
-    // path. `auto` accepts any element type; `vertex`/`edge`/`polygon`
-    // restrict to that type. All modes anchor at the element centroid.
-    // See ElementMode enum doc in toolpipe/packets.d for the full semantic.
-    ElementMode    elementMode = ElementMode.Auto;
-
-    float screenCx     = 0;
-    float screenCy     = 0;
-    float screenSize   = 64;
-    bool  transparent  = false;
-
-    LassoStyle lassoStyle   = LassoStyle.Freehand;
-    float[]    lassoPolyX;
-    float[]    lassoPolyY;
-    float      softBorderPx = 16;
-
-    float in_  = 0.5f;
-    float out_ = 0.5f;
-
-    // Multi-falloff Mix Mode. When this stage is stacked as a non-first
-    // contributor (Phase 4 add/remove verbs), its weight folds into the
-    // running accumulator via this op (see the Composite branch of
-    // evaluateFalloff). The primary / first contributor's `mix` is unused
-    // (it seeds the accumulator), but every instance carries the field so
-    // it round-trips through snapshot/restore and the forms UI. Default
-    // Multiply preserves single-falloff behaviour (irrelevant for one).
-    FalloffMix mix = FalloffMix.Multiply;
+    // NOTE: `config.elementMode` (Element pick-type restriction),
+    // `config.screenCx/screenCy/screenSize/transparent` (Screen),
+    // `config.lassoStyle/lassoPolyX/lassoPolyY/softBorderPx` (Lasso),
+    // `config.in_/out_` (Custom-shape tangents), and `config.mix`
+    // (multi-falloff Mix Mode) now live in the embedded `FalloffConfig`
+    // above — see that struct's field docs for the full semantics
+    // previously documented at each of these decls.
 
     // Optional refs for auto-size on `setAttr("type", ...)`. Phase 7.5a
     // shipped without them (None type doesn't auto-size); 7.5b wires
@@ -189,7 +142,7 @@ class FalloffStage : Stage, Operator {
     //
     // The weight map is COMPLETELY position-independent: it depends only
     // on mesh topology (edges + vertex count), the selection (per edit
-    // mode), `dist` (→ stepsI/iters), and the shape params (shape/in_/out_).
+    // mode), `steps` (→ stepsI/iters), and the shape params (shape/in_/out_).
     // ALL of those are frozen during a transform drag (selection frozen,
     // topology frozen — transform tools mutate vertex POSITIONS directly
     // without bumping mesh.mutationVersion). So the map can be computed
@@ -199,11 +152,11 @@ class FalloffStage : Stage, Operator {
     // in_, out_); a key miss recomputes.
     private float[] selWeights_;
 
-    // VertexMap: name of the active weight map + the pre-baked weight buffer.
-    // The buffer is re-baked in evaluate() whenever type == VertexMap and is
-    // cleared by reset(). NOT cached by mutationVersion (mesh maps can change
-    // without bumping the topology version) — always rebaked every pipe walk.
-    private string  mapName_;
+    // VertexMap: `config.mapName` (embedded above) names the active weight
+    // map; `vertexMapWeights_` is the pre-baked weight buffer. The buffer is
+    // re-baked in evaluate() whenever type == VertexMap and is cleared by
+    // reset(). NOT cached by mutationVersion (mesh maps can change without
+    // bumping the topology version) — always rebaked every pipe walk.
     private float[] vertexMapWeights_;
 
     // --- selWeights_ cache key (see recomputeSelectionWeights) ---
@@ -275,39 +228,24 @@ class FalloffStage : Stage, Operator {
     /// Restore every mutable field to its declaration-time default.
     /// Invoked by SceneReset (= `/api/reset`) so a "start fresh" wipes
     /// the falloff config along with the mesh.
+    ///
+    /// `config = FalloffConfig.init` resets the WHOLE config field-set
+    /// structurally (every field carries its declaration-time default per
+    /// FalloffConfig's doc — no field can be forgotten the way a hand-listed
+    /// reset previously forgot `connect`/`elementMode`/`dist`/`steps`, see
+    /// [[falloff_reset_incomplete_bleed]]). This is a MORE COMPLETE reset than
+    /// before: the prior hand-written reset() did not touch `normal` (cylinder
+    /// axis) or clear `anchorPos_`; this one does (config.normal resets to
+    /// (0,1,0), and the derived-buffer clears below still zero anchorPos_) —
+    /// intentional robustness fix, not a byte-stability regression, per task
+    /// 0179 guardrail #2.
     override void reset() {
-        type         = FalloffType.None;
-        shape        = FalloffShape.Smooth;
-        start        = Vec3(0, 0, 0);
-        end          = Vec3(0, 1, 0);
-        center       = Vec3(0, 0, 0);
-        size         = Vec3(1, 1, 1);
-        screenCx     = 0;
-        screenCy     = 0;
-        screenSize   = 64;
-        transparent  = false;
-        lassoStyle   = LassoStyle.Freehand;
-        lassoPolyX.length = 0;
-        lassoPolyY.length = 0;
-        softBorderPx = 16;
-        in_          = 0.5f;
-        out_         = 0.5f;
-        mix          = FalloffMix.Multiply;
-        anchorRing.length = 0;
-        // Element-connect config (declaration-time defaults). Without these a
-        // SceneReset left `connect` / `elementMode` / `dist` / `steps` stale,
-        // so a prior test's locked element falloff bled into the next one —
-        // a stale `connect=EdgeLoops` + stale `anchorRing` ran the edge-loop
-        // walk on a dead ring and produced wrong weights.
-        connect      = ElementConnect.Ignore;
-        elementMode  = ElementMode.Auto;
-        dist         = 1.0f;
-        steps        = 4;
-        loopRing_.length   = 0;
-        connectMask_.length = 0;
-        connectMask.length  = 0;
+        config = FalloffConfig.init;
+        loopRing_.length     = 0;
+        connectMask_.length  = 0;
+        connectMask.length   = 0;
+        anchorPos_.length    = 0;
         userLocked   = false;   // full reset clears the user-lock (SceneReset)
-        mapName_             = "";
         vertexMapWeights_.length = 0;
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
@@ -350,20 +288,17 @@ class FalloffStage : Stage, Operator {
             lastVp_      = subj.viewport;
             lastVpValid_ = true;
         }
+        // One copy site (task 0179): the whole config field-set travels in
+        // one assignment instead of ~25 hand-listed `pkt.<field> = <field>;`
+        // lines. `pkt.enabled` / `pkt.pickedCenter` / the derived buffers
+        // below are NOT part of `config` (see FalloffPacket's doc) and are
+        // still set individually.
         FalloffPacket pkt;
-        pkt.enabled      = (type != FalloffType.None);
-        pkt.type         = type;
-        pkt.shape        = shape;
-        pkt.start        = start;
-        pkt.end          = end;
-        pkt.center       = center;
-        pkt.size         = size;
-        pkt.normal       = normal;
+        pkt.config  = config;
+        pkt.enabled = (type != FalloffType.None);
         // Sphere centre tracks ACEN.center. ACEN runs before us.
         if (auto acen = vts.get!ActionCenterPacket())
             pkt.pickedCenter = acen.center;
-        pkt.pickedRadius = dist;
-        pkt.connect      = connect;
         // Edge-Loops: walk the quad edge-loop from the picked edge so the
         // ring (anchorRing + anchorPos) is the ORDERED loop. For other
         // connect modes this is a no-op (returns `anchorRing` unchanged).
@@ -378,24 +313,17 @@ class FalloffStage : Stage, Operator {
         resolveConnectMask();
         pkt.connectMask  = (connectMask.length > 0) ? connectMask
                                                     : cast(bool[]) connectMask_;
-        pkt.anchorRing   = (loopRing_.length > 0) ? loopRing_ : anchorRing;
+        // Published ring is the RESOLVED ring (EdgeLoops substitutes the
+        // ordered loop) — overwrites the RAW `config.anchorRing` the bulk
+        // copy above just carried over. `snapshotConfigToPacket` (config
+        // round-trip) keeps the RAW ring; see FalloffConfig.anchorRing doc.
+        pkt.config.anchorRing = (loopRing_.length > 0) ? loopRing_ : anchorRing;
         // Resolve the picked element's vert indices → world positions so
         // the Element falloff can attenuate by distance to the element
         // GEOMETRY (segment / face), not the centroid point. Owned buffer
         // → slice stays valid for the pipe walk.
         resolveAnchorPos();
         pkt.anchorPos    = anchorPos_;
-        pkt.elementMode  = elementMode;
-        pkt.screenCx     = screenCx;
-        pkt.screenCy     = screenCy;
-        pkt.screenSize   = screenSize;
-        pkt.transparent  = transparent;
-        pkt.lassoStyle   = lassoStyle;
-        pkt.lassoPolyX   = lassoPolyX;
-        pkt.lassoPolyY   = lassoPolyY;
-        pkt.softBorderPx = softBorderPx;
-        pkt.in_          = in_;
-        pkt.out_         = out_;
         if (type == FalloffType.Selection)
             recomputeSelectionWeights();
         else {
@@ -413,8 +341,8 @@ class FalloffStage : Stage, Operator {
         // leaves vertexMapWeights_ empty → evaluateFalloff returns 1.0 per vert.
         if (type == FalloffType.VertexMap) {
             auto m = mesh_;
-            if (m !is null && mapName_.length > 0) {
-                auto map = m.meshMap(mapName_);
+            if (m !is null && mapName.length > 0) {
+                auto map = m.meshMap(mapName);
                 if (map !is null && map.domain == MapDomain.Point && map.dim == 1) {
                     vertexMapWeights_.length = map.data.length;
                     vertexMapWeights_[] = map.data[];
@@ -429,7 +357,6 @@ class FalloffStage : Stage, Operator {
         }
         pkt.vertexMapWeights = vertexMapWeights_;
         pkt.compoundPasses   = 1.0f;
-        pkt.mix              = mix;
 
         // --- Multi-falloff combine (WGHT slot, last-writer-wins) ---
         //
@@ -481,34 +408,15 @@ class FalloffStage : Stage, Operator {
     /// ActionCenterStage.restorePinState — assign + publish, no session.
     ///
     /// Restores only STAGE-owned config (the fields a FalloffPacket round-trips
-    /// from this stage's own fields). It does NOT touch the ACEN-owned sphere
-    /// centre (`pickedCenter`) — that pivot has its own source of truth + its
-    /// own pin hooks — nor the derived caches (selWeights_, adjacency,
-    /// connectMask), which rebuild on the next evaluate(). The `dist` field is
-    /// re-used as the radius / step count, so it tracks `pickedRadius`.
+    /// from this stage's own fields — now the WHOLE `FalloffConfig`, including
+    /// `steps` and `mapName`, which previously had no packet field at all and
+    /// so were silently NOT restored — task 0179 fix). It does NOT touch the
+    /// ACEN-owned sphere centre (`pickedCenter`) — that pivot has its own
+    /// source of truth + its own pin hooks — nor the derived caches
+    /// (selWeights_, adjacency, connectMask), which rebuild on the next
+    /// evaluate().
     void restoreConfigFromPacket(const ref FalloffPacket p) {
-        type         = p.type;
-        shape        = p.shape;
-        start        = p.start;
-        end          = p.end;
-        center       = p.center;
-        size         = p.size;
-        normal       = p.normal;
-        dist         = p.pickedRadius;
-        connect      = p.connect;
-        elementMode  = p.elementMode;
-        screenCx     = p.screenCx;
-        screenCy     = p.screenCy;
-        screenSize   = p.screenSize;
-        transparent  = p.transparent;
-        lassoStyle   = p.lassoStyle;
-        lassoPolyX   = p.lassoPolyX.dup;
-        lassoPolyY   = p.lassoPolyY.dup;
-        softBorderPx = p.softBorderPx;
-        in_          = p.in_;
-        out_         = p.out_;
-        mix          = p.mix;
-        anchorRing   = p.anchorRing.dup;
+        config = p.config.dup();
         // The Selection-weight cache is keyed on (mutationVersion, editMode,
         // selectionSig, steps, shape, in_, out_); restoring config that changes
         // any of those must invalidate it so the next evaluate() recomputes.
@@ -522,37 +430,16 @@ class FalloffStage : Stage, Operator {
     /// config at the moment the first gesture commits, so the merged-run revert
     /// hook (first.revert) can restore both the pin AND the run-start config.
     ///
-    /// Captures only the STAGE-owned fields that round-trip through
-    /// restoreConfigFromPacket (same set, same `dist`↔`pickedRadius` mapping).
-    /// It deliberately does NOT capture the ACEN-owned sphere centre
-    /// (`pickedCenter`) or the derived caches — restoreConfigFromPacket would
-    /// not consume them anyway. Slices are .dup'd so the snapshot is independent
-    /// of subsequent in-place stage mutation.
+    /// Captures the WHOLE `FalloffConfig` (same set restoreConfigFromPacket
+    /// consumes — now including `steps` / `mapName`). It deliberately does NOT
+    /// capture the ACEN-owned sphere centre (`pickedCenter`) or the derived
+    /// caches — restoreConfigFromPacket would not consume them anyway.
+    /// `config.dup()` deep-copies the slice members so the snapshot is
+    /// independent of subsequent in-place stage mutation.
     FalloffPacket snapshotConfigToPacket() const {
         FalloffPacket p;
-        p.enabled      = (type != FalloffType.None);
-        p.type         = type;
-        p.shape        = shape;
-        p.start        = start;
-        p.end          = end;
-        p.center       = center;
-        p.size         = size;
-        p.normal       = normal;
-        p.pickedRadius = dist;
-        p.connect      = connect;
-        p.elementMode  = elementMode;
-        p.screenCx     = screenCx;
-        p.screenCy     = screenCy;
-        p.screenSize   = screenSize;
-        p.transparent  = transparent;
-        p.lassoStyle   = lassoStyle;
-        p.lassoPolyX   = lassoPolyX.dup;
-        p.lassoPolyY   = lassoPolyY.dup;
-        p.softBorderPx = softBorderPx;
-        p.in_          = in_;
-        p.out_         = out_;
-        p.mix          = mix;
-        p.anchorRing   = anchorRing.dup;
+        p.config  = config.dup();
+        p.enabled = (type != FalloffType.None);
         return p;
     }
 
@@ -582,15 +469,17 @@ class FalloffStage : Stage, Operator {
     // valid cross-type attrs at startup. This is the authoritative list of
     // every attr `applySetAttr` accepts regardless of active type.
     //
-    // KEEP IN SYNC with the `applySetAttr` switch (~line 810) AND with
-    // `listAttrs()` below — all three must enumerate the same attr set.
+    // Derived from `listAttrs()` (its names ARE the authoritative attr set)
+    // instead of a second hand-maintained literal — the two could no longer
+    // drift apart. The `applySetAttr` leg still can't be derived (it's a
+    // hand-written string-switch parser, not enumerable), so it stays
+    // in sync via the enforced invariant in the unittest at the bottom of
+    // this file (every `listAttrs()` name must round-trip through a dry-run
+    // `applySetAttr`), rather than a "keep in sync" comment.
     override string[] knownAttrs() {
-        return [
-            "type", "shape", "start", "end", "center", "size", "axis",
-            "dist", "steps", "anchorRing", "connect", "mode", "screenCx", "screenCy",
-            "screenSize", "transparent", "lassoStyle", "lassoPoly",
-            "softBorder", "in", "out", "mix", "map",
-        ];
+        import std.algorithm : map;
+        import std.array     : array;
+        return listAttrs().map!(a => a[0]).array;
     }
 
     override string[2][] listAttrs() const {
@@ -602,7 +491,7 @@ class FalloffStage : Stage, Operator {
             ["center",       vec3Str(center)],
             ["size",         vec3Str(size)],
             ["axis",         vec3Str(normal)],
-            ["dist",         format("%g", dist)],
+            ["dist",         format("%g", pickedRadius)],
             ["steps",        format("%d", steps)],
             ["anchorRing",   anchorRingStr()],
             ["connect",      connectLabel()],
@@ -617,7 +506,7 @@ class FalloffStage : Stage, Operator {
             ["in",           format("%g", in_)],
             ["out",          format("%g", out_)],
             ["mix",          mixLabel()],
-            ["map",          mapName_],
+            ["map",          mapName],
         ];
     }
 
@@ -721,7 +610,7 @@ class FalloffStage : Stage, Operator {
             && g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght).length > 1;
         if (stacked)
             ps ~= Param.intEnum_("mix", "Mix",
-                                 cast(int*)&mix, mixEntries,
+                                 cast(int*)&config.mix, mixEntries,
                                  cast(int)FalloffMix.Multiply);
 
         // Shape preset — the weight-curve shape (Linear / Ease-In / Ease-Out /
@@ -736,14 +625,14 @@ class FalloffStage : Stage, Operator {
         // for screen (value-driven row hiding), same as a per-type field.
         if (type != FalloffType.Screen) {
             ps ~= Param.intEnum_("shape", "Shape Preset",
-                                 cast(int*)&shape, shapeEntries,
+                                 cast(int*)&config.shape, shapeEntries,
                                  cast(int)FalloffShape.Smooth);
 
             // In/Out tangent params are Custom-shape-only.
             if (shape == FalloffShape.Custom) {
-                ps ~= Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
+                ps ~= Param.float_("in",  "In",  &config.in_,  0.5f).min(0.0f).max(1.0f)
                            .widget(ParamHints.Widget.Slider);
-                ps ~= Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
+                ps ~= Param.float_("out", "Out", &config.out_, 0.5f).min(0.0f).max(1.0f)
                            .widget(ParamHints.Widget.Slider);
             }
         }
@@ -752,46 +641,46 @@ class FalloffStage : Stage, Operator {
             case FalloffType.None:
                 break;   // unreachable due to early-return above
             case FalloffType.Linear:
-                ps ~= Param.vec3_("start", "Start", &start, Vec3(0, 0, 0));
-                ps ~= Param.vec3_("end",   "End",   &end,   Vec3(0, 1, 0));
+                ps ~= Param.vec3_("start", "Start", &config.start, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("end",   "End",   &config.end,   Vec3(0, 1, 0));
                 break;
             case FalloffType.Radial:
-                ps ~= Param.vec3_("center", "Center", &center, Vec3(0, 0, 0));
-                ps ~= Param.vec3_("size",   "Size",   &size,   Vec3(1, 1, 1));
+                ps ~= Param.vec3_("center", "Center", &config.center, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("size",   "Size",   &config.size,   Vec3(1, 1, 1));
                 break;
             case FalloffType.Screen:
-                ps ~= Param.float_("screenCx",   "Screen Cx",   &screenCx,   0.0f);
-                ps ~= Param.float_("screenCy",   "Screen Cy",   &screenCy,   0.0f);
-                ps ~= Param.float_("screenSize", "Screen Size", &screenSize, 64.0f);
-                ps ~= Param.bool_ ("transparent", "Transparent", &transparent, false);
+                ps ~= Param.float_("screenCx",   "Screen Cx",   &config.screenCx,   0.0f);
+                ps ~= Param.float_("screenCy",   "Screen Cy",   &config.screenCy,   0.0f);
+                ps ~= Param.float_("screenSize", "Screen Size", &config.screenSize, 64.0f);
+                ps ~= Param.bool_ ("transparent", "Transparent", &config.transparent, false);
                 break;
             case FalloffType.Lasso:
                 ps ~= Param.intEnum_("lassoStyle", "Lasso Style",
-                                     cast(int*)&lassoStyle, lassoEntries,
+                                     cast(int*)&config.lassoStyle, lassoEntries,
                                      cast(int)LassoStyle.Freehand);
-                ps ~= Param.float_("softBorder", "Soft Border", &softBorderPx, 16.0f);
+                ps ~= Param.float_("softBorder", "Soft Border", &config.softBorderPx, 16.0f);
                 break;
             case FalloffType.Cylinder:
-                ps ~= Param.vec3_("center", "Center", &center, Vec3(0, 0, 0));
-                ps ~= Param.vec3_("size",   "Size",   &size,   Vec3(1, 1, 1));
-                ps ~= Param.vec3_("axis",   "Axis",   &normal, Vec3(0, 1, 0));
+                ps ~= Param.vec3_("center", "Center", &config.center, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("size",   "Size",   &config.size,   Vec3(1, 1, 1));
+                ps ~= Param.vec3_("axis",   "Axis",   &config.normal, Vec3(0, 1, 0));
                 break;
             case FalloffType.Element:
                 // Element Mode dropdown first — primary control, restricts
                 // pick type (auto / vertex / edge / polygon).
                 // The `falloff.element` `mode` UI dropdown.
                 ps ~= Param.intEnum_("mode", "Element Mode",
-                                     cast(int*)&elementMode, elementModeEntries,
+                                     cast(int*)&config.elementMode, elementModeEntries,
                                      cast(int)ElementMode.Auto);
-                ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
+                ps ~= Param.float_("dist", "Range", &config.pickedRadius, 1.0f).min(1e-6f);
                 ps ~= Param.intEnum_("connect", "Connected Elements",
-                                     cast(int*)&connect, elementConnectEntries,
+                                     cast(int*)&config.connect, elementConnectEntries,
                                      cast(int)ElementConnect.Ignore);
                 break;
             case FalloffType.Selection:
                 // `falloff.selection` (attr `steps`) — the BFS-hop count, a
                 // proper integer (discrete smoothing iterations).
-                ps ~= Param.int_("steps", "Steps", &steps, 4).min(1);
+                ps ~= Param.int_("steps", "Steps", &config.steps, 4).min(1);
                 break;
             case FalloffType.Composite:
                 // A FalloffStage's own `type` is never Composite — that
@@ -814,7 +703,7 @@ class FalloffStage : Stage, Operator {
                     foreach (n; names)
                         choices ~= [n, n];
                 }
-                ps ~= Param.enum_("map", "Weight Map", &mapName_, choices, "");
+                ps ~= Param.enum_("map", "Weight Map", &config.mapName, choices, "");
                 break;
             }
         }
@@ -913,8 +802,7 @@ class FalloffStage : Stage, Operator {
     /// edges after Catmull-Clark).
     ///
     /// `G` (the "steps" range in geodesic units) =
-    ///   `dist · avg_sel_edge_length`, where `dist` is the `steps`
-    /// attr re-used. An empirical fit puts the exact G at
+    ///   `steps · avg_sel_edge_length`. An empirical fit puts the exact G at
     /// `Steps · avg_edge · 0.81` (the 0.81 factor comes from the
     /// iterative smoothing convergence); we omit the 0.81 for
     /// cleanliness — at the cost of ~5 % residual.
@@ -1222,17 +1110,15 @@ private:
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "type": {
+                import toolpipe.packets : falloffTypeFromName;
                 FalloffType prev = type;
-                if      (value == "none")            type = FalloffType.None;
-                else if (value == "linear")          type = FalloffType.Linear;
-                else if (value == "radial")          type = FalloffType.Radial;
-                else if (value == "screen")          type = FalloffType.Screen;
-                else if (value == "lasso")           type = FalloffType.Lasso;
-                else if (value == "cylinder")        type = FalloffType.Cylinder;
-                else if (value == "element")         type = FalloffType.Element;
-                else if (value == "selection")       type = FalloffType.Selection;
-                else if (value == "vertexMap")       type = FalloffType.VertexMap;
-                else return false;
+                if (value == "none") {
+                    type = FalloffType.None;
+                } else {
+                    FalloffType t;
+                    if (!falloffTypeFromName(value, t)) return false;
+                    type = t;
+                }
                 // anchorRing is Element-only state — wipe on leaving
                 // Element so a later switch back to Element starts
                 // clean (no stale ring from the previous session).
@@ -1269,7 +1155,7 @@ private:
             case "center":       return parseVec3(value, center);
             case "size":         return parseVec3(value, size);
             case "axis":         return parseVec3(value, normal);
-            case "dist":         dist = parseFloat(value); return true;
+            case "dist":         pickedRadius = parseFloat(value); return true;
             case "steps":        steps = cast(int)parseFloat(value); return true;
             case "connect":
                 if      (value == "ignore")          { connect = ElementConnect.Ignore;          return true; }
@@ -1326,7 +1212,7 @@ private:
                 // driven click path. Empty string clears.
                 return parseAnchorRing(value);
             case "map":
-                mapName_ = value;
+                mapName = value;
                 return true;
             default: return false;
         }
@@ -1632,7 +1518,7 @@ private:
                 float maxHalf = bbHalf.x;
                 if (bbHalf.y > maxHalf) maxHalf = bbHalf.y;
                 if (bbHalf.z > maxHalf) maxHalf = bbHalf.z;
-                if (maxHalf > 0) dist = maxHalf;
+                if (maxHalf > 0) pickedRadius = maxHalf;
                 break;
             case FalloffType.Selection:
                 // `steps` is the BFS-hop range — bbox sizing doesn't apply.
@@ -1843,4 +1729,40 @@ unittest {
     assert(abs(w2[vi(4, 4)] - 0.830364f) < 1e-4f); // steps=2, hopDepth 3 (centre)
     assert(abs(w2[vi(3, 3)] - 0.593262f) < 1e-4f); // steps=2, off-axis interior
     assert(abs(w1[vi(4, 4)] - 0.988770f) < 1e-4f); // steps=1 centre (near 1)
+}
+
+// ---------------------------------------------------------------------------
+// Task 0179 Stage 4: enforced invariant replacing the retired "KEEP IN SYNC
+// with applySetAttr" comment on knownAttrs()/listAttrs(). knownAttrs() is now
+// DERIVED from listAttrs() (can't drift from it structurally), but
+// applySetAttr is a hand-written string-switch parser that can't be derived
+// the same way — so this unittest pins the remaining half of the invariant:
+// every name listAttrs() reports must be a name applySetAttr actually
+// accepts, round-tripping the CURRENT value back through a dry-run setAttr.
+// A name present in listAttrs() but rejected by applySetAttr (or vice versa,
+// caught indirectly since knownAttrs() == listAttrs() names by construction)
+// would fail here instead of silently drifting.
+// ---------------------------------------------------------------------------
+unittest {
+    auto fs = new FalloffStage();
+    // Default-state stage — listAttrs() always reports the full static attr
+    // set regardless of the active type (only params(), the Tool Properties
+    // schema, is type-filtered), so one pass over the default values already
+    // exercises every accepted attr name once.
+    foreach (pair; fs.listAttrs()) {
+        string name  = pair[0];
+        string value = pair[1];
+        assert(fs.applySetAttr(name, value),
+               "listAttrs() name '" ~ name ~ "' (value '" ~ value
+               ~ "') was rejected by applySetAttr — knownAttrs()/listAttrs()/"
+               ~ "applySetAttr have drifted apart");
+    }
+    // knownAttrs() is DERIVED from listAttrs() — this is a structural
+    // tautology today, but pins the derivation against a future edit that
+    // reintroduces a second hand-written list.
+    auto known = fs.knownAttrs();
+    auto listed = fs.listAttrs();
+    assert(known.length == listed.length);
+    foreach (i, k; known)
+        assert(k == listed[i][0]);
 }
