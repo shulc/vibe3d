@@ -897,42 +897,27 @@ unittest { // Composite: three contributors fold left-to-right via per-elem mix
 }
 
 // ---------------------------------------------------------------------------
-// falloffPacketsEqual — field-by-field equality check used by
-// CommandWrapperTool and the transform tools to detect live falloff
-// changes (panel slider edits, type swap, endpoint drag) so the
-// preview can re-apply on the next frame.
+// falloffPacketsEqual — live-change equality check used by CommandWrapperTool
+// and the transform tools to detect live falloff changes (panel slider
+// edits, type swap, endpoint drag) so the preview can re-apply on the next
+// frame.
 //
-// Hoisted here in the operator-refactor cleanup so the same equality
-// implementation is shared by all consumers. Two earlier copies
-// (source/tools/transform.d:449 and source/tools/command_wrapper.d)
-// had diverged: the wrapper-side copy was missing lassoStyle /
-// softBorderPx / lassoPolyX / lassoPolyY checks, so Lasso falloff
-// edits would not refresh the preview while a CommandWrapperTool
-// was active.
+// Task 0179 / audit-2 F1: this used to be a hand-maintained field-by-field
+// list that had DRIFTED — it silently omitted `normal` (cylinder axis),
+// `pickedRadius` (Element dist), `connect`, `elementMode`, and `anchorRing`,
+// so idle-session edits of those attrs did not refresh the preview, and
+// `steps` / `mapName` had no packet field to compare AT ALL. Now the whole
+// CONFIG field-set lives in one `FalloffConfig` sub-struct embedded in both
+// `FalloffStage` and `FalloffPacket` (see toolpipe/packets.d), so `a.config
+// == b.config` is the compiler-generated element-wise comparison of the
+// COMPLETE set — it cannot drift again the way the hand-written list did.
+// `enabled` and the Composite `contributors` recursion stay explicit scalar
+// / recursive checks (not part of `config` — see FalloffConfig's doc for
+// what's deliberately excluded, e.g. `pickedCenter` / `compoundPasses`).
 // ---------------------------------------------------------------------------
 bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b) {
     if (a.enabled != b.enabled) return false;
-    if (a.type    != b.type)    return false;
-    if (a.shape   != b.shape)   return false;
-    if (a.mix     != b.mix)     return false;
-    if (a.in_     != b.in_)     return false;
-    if (a.out_    != b.out_)    return false;
-    if (a.start.x  != b.start.x  || a.start.y  != b.start.y  || a.start.z  != b.start.z)  return false;
-    if (a.end.x    != b.end.x    || a.end.y    != b.end.y    || a.end.z    != b.end.z)    return false;
-    if (a.center.x != b.center.x || a.center.y != b.center.y || a.center.z != b.center.z) return false;
-    if (a.size.x   != b.size.x   || a.size.y   != b.size.y   || a.size.z   != b.size.z)   return false;
-    if (a.screenCx     != b.screenCx)     return false;
-    if (a.screenCy     != b.screenCy)     return false;
-    if (a.screenSize   != b.screenSize)   return false;
-    if (a.transparent  != b.transparent)  return false;
-    if (a.lassoStyle   != b.lassoStyle)   return false;
-    if (a.softBorderPx != b.softBorderPx) return false;
-    if (a.lassoPolyX.length != b.lassoPolyX.length) return false;
-    if (a.lassoPolyY.length != b.lassoPolyY.length) return false;
-    foreach (i; 0 .. a.lassoPolyX.length)
-        if (a.lassoPolyX[i] != b.lassoPolyX[i]) return false;
-    foreach (i; 0 .. a.lassoPolyY.length)
-        if (a.lassoPolyY[i] != b.lassoPolyY[i]) return false;
+    if (a.config  != b.config)  return false;
     // Composite contributors — refire correctness: a multi-falloff edit
     // (a contributor's config / mix changed, or one added/removed) must
     // be detected so the preview re-applies. Recurse field-wise; the
