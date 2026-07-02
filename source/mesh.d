@@ -127,6 +127,36 @@ struct Loop {
     uint twin;   // dart in the adjacent face (reverse direction); ~0u if boundary
 }
 
+/// Cache-validity key for a version-keyed cache that lives OUTSIDE the
+/// `Mesh` it was built from (e.g. a toolpipe stage's per-drag cluster or
+/// selection-weight cache). `mutationVersion` alone is not enough for such a
+/// cache: `Mesh` is a value struct whose owning `Layer` can retarget the
+/// stage's `mesh_` delegate to a different primary mid-session, and two
+/// different `Mesh`es can legitimately carry an equal `mutationVersion`
+/// (both default-initialize to 0, or two same-op-count histories collide).
+/// Folding `cast(size_t)&m` in — the same address-key convention already
+/// used by `visibility_cache.d` / `snap.d` / `bvh_pick.d` — closes that hole:
+/// two distinct `Mesh` instances can never satisfy `matches()` for the same
+/// key, no matter how their `mutationVersion`s line up. (A cache that is
+/// itself co-located ON the `Mesh`, like `vertexAdjacencyCSR` above, needs
+/// no such key — the address IS the object.)
+struct MeshCacheKey {
+    size_t addr   = size_t.max;
+    ulong  mutVer = ulong.max;
+
+    bool matches(ref Mesh m) const {
+        return addr == cast(size_t)&m && mutVer == m.mutationVersion;
+    }
+    void stamp(ref Mesh m) {
+        addr   = cast(size_t)&m;
+        mutVer = m.mutationVersion;
+    }
+    void invalidate() {
+        addr   = size_t.max;
+        mutVer = ulong.max;
+    }
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
@@ -155,6 +185,62 @@ struct Mesh {
     private size_t[] buildLoopsEdgesAdjStart;
     private uint[]   buildLoopsEdgesAdj;
     private size_t[] buildLoopsEdgesAdjCursor; // scratch during fill
+
+    // Shared CSR vertex→neighbor adjacency (flattened neighbor list + a
+    // per-vertex [offset, offset+1] bounds pair). Lazily rebuilt on read
+    // whenever `mutationVersion` moves — mirrors the lazy-invalidation
+    // discipline the toolpipe stages used to keep as private per-stage
+    // copies (`ensureVertexAdjacency` in FalloffStage / ActionCenterStage)
+    // before this provider replaced them. Co-locating the cache on `Mesh`
+    // itself dissolves the layer-aliasing hazard those copies had: a
+    // Mesh-owned cache can never be shared across two different Mesh
+    // instances the way a stage-owned cache (keyed only on mutationVersion,
+    // silently retargeted to a new primary layer) could.
+    // INVARIANT: these slices must never be shared live across a
+    // mutating value copy of a Mesh. The rebuild writes in place when the
+    // vertex count is unchanged, so a copy that keeps the source's slice
+    // headers alive AND matches its version would be corrupted silently.
+    // Safe today because every live Mesh copy is source-dies / fresh-local
+    // / snapshot-.dup + a mutationVersion bump (which forces a rebuild).
+    private ulong    _adjCsrVer = ulong.max;
+    private size_t[] _adjCsrOffset;
+    private uint[]   _adjCsrNeighbors;
+
+    // Return the CSR vertex→neighbor adjacency for this mesh: `offset` has
+    // length `vertices.length + 1`; the neighbors of vertex `v` are
+    // `neighbors[offset[v] .. offset[v + 1]]`. Rebuilt only when
+    // `mutationVersion` has moved since the last call (or the vertex count
+    // changed), so repeated calls within one topology/selection-frozen drag
+    // are O(1) after the first. Out-of-range edge endpoints (defensive —
+    // should not occur post-buildLoops) are skipped rather than indexing
+    // out of bounds.
+    void vertexAdjacencyCSR(out const(size_t)[] offset, out const(uint)[] neighbors) {
+        const size_t nV = vertices.length;
+        if (_adjCsrVer != mutationVersion || _adjCsrOffset.length != nV + 1) {
+            // Counting pass → per-vertex degree, then prefix-sum into offsets.
+            _adjCsrOffset.length = nV + 1;
+            _adjCsrOffset[] = 0;
+            foreach (e; edges) {
+                if (e[0] >= nV || e[1] >= nV) continue;
+                _adjCsrOffset[e[0] + 1]++;
+                _adjCsrOffset[e[1] + 1]++;
+            }
+            foreach (i; 1 .. nV + 1) _adjCsrOffset[i] += _adjCsrOffset[i - 1];
+            _adjCsrNeighbors.length = _adjCsrOffset[nV];
+            // Fill pass with a temporary cursor per vertex.
+            auto cursor = new size_t[](nV);
+            foreach (i; 0 .. nV) cursor[i] = _adjCsrOffset[i];
+            foreach (e; edges) {
+                if (e[0] >= nV || e[1] >= nV) continue;
+                _adjCsrNeighbors[cursor[e[0]]++] = e[1];
+                _adjCsrNeighbors[cursor[e[1]]++] = e[0];
+            }
+            _adjCsrVer = mutationVersion;
+        }
+        offset    = _adjCsrOffset;
+        neighbors = _adjCsrNeighbors;
+    }
+
     // --- Per-element marks (single source of truth) ----------------------
     // Bitfield per element folding the per-element flags into one word.
     // These marks arrays are the AUTHORITATIVE storage for per-element
@@ -6166,25 +6252,31 @@ struct Mesh {
         return AdjacentFaceRange(loops, start);
     }
 
-    /// Return a hash of the current vertex selection state (seed = 0).
-    /// Useful for detecting selection changes between frames.
-    uint selectionHashVertices() const {
-        uint h = 0;
-        foreach (i, s; selectedVertices) if (s) h = h * 31 + cast(uint)i;
-        return h;
-    }
-
-    /// Return a hash of the current edge selection state (seed = 1).
-    uint selectionHashEdges() const {
-        uint h = 1;
-        foreach (i, s; selectedEdges) if (s) h = h * 31 + cast(uint)i;
-        return h;
-    }
-
-    /// Return a hash of the current face selection state (seed = 2).
-    uint selectionHashFaces() const {
-        uint h = 2;
-        foreach (i, s; selectedFaces) if (s) h = h * 31 + cast(uint)i;
+    /// Return a rolling FNV-1a hash of the Select bit across the marks array
+    /// for edit mode `m` (vertexMarks / edgeMarks / faceMarks). A cheap
+    /// per-run change-detector: selection writes bump no version counter, so
+    /// callers that need to know "did the selection change since I last
+    /// looked" fold this into a cache key alongside `mutationVersion`. Folds
+    /// in `marks.length` then one bit per selected index, so both WHICH
+    /// elements are selected and HOW MANY are captured. A collision would
+    /// only ever produce a stale same-run cache hit — never wrong output —
+    /// so this is safe for cache-key use but must never be persisted or
+    /// compared across runs. The single canonical replacement for the
+    /// formerly-duplicated per-stage `selectionSignature()` copies in
+    /// FalloffStage / ActionCenterStage and the older `selectionHash{V,E,F}`
+    /// family (a different, weaker `h*31` hash over the same selection).
+    ulong selectionSignature(EditMode m) const {
+        ulong h = 1469598103934665603UL; // FNV-1a offset basis
+        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
+        const(uint)[] marks;
+        final switch (m) {
+            case EditMode.Vertices: marks = vertexMarks; break;
+            case EditMode.Edges:    marks = edgeMarks;   break;
+            case EditMode.Polygons: marks = faceMarks;   break;
+        }
+        mix(marks.length);
+        foreach (i, mk; marks)
+            if (mk & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
         return h;
     }
 
@@ -9245,6 +9337,65 @@ private:
 ulong edgeKey(uint a, uint b) {
     return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
                  : (cast(ulong)b << 32 | cast(ulong)a);
+}
+
+// ---------------------------------------------------------------------------
+// MeshCacheKey.matches: address is the sole discriminator when
+// mutationVersion collides across two distinct Mesh instances.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh a, b;
+    a.vertices = [Vec3(0, 0, 0)];
+    b.vertices = [Vec3(0, 0, 0)];
+    a.mutationVersion = 7;
+    b.mutationVersion = 7;   // hand-forced equal version — the aliasing hazard
+
+    MeshCacheKey key;
+    key.stamp(a);
+    assert(key.matches(a), "key stamped from a must match a");
+    assert(!key.matches(b),
+        "key stamped from a must NOT match b even when mutationVersion is equal — "
+        ~ "address is the sole discriminator");
+
+    key.invalidate();
+    assert(!key.matches(a), "invalidate() must fail every match");
+    assert(!key.matches(b), "invalidate() must fail every match");
+}
+
+// ---------------------------------------------------------------------------
+// vertexAdjacencyCSR provider isolation: two Mesh values at an equal
+// hand-forced mutationVersion but DIFFERENT connectivity must yield
+// DIFFERENT adjacency — each Mesh owns its own cache, so there is no
+// address term to get wrong (the cache lives ON the object).
+// ---------------------------------------------------------------------------
+unittest {
+    // a: a 4-cycle 0-1-2-3-0 (every vertex has 2 neighbors).
+    Mesh a;
+    a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    a.resetSelection();
+    a.addEdge(0, 1); a.addEdge(1, 2); a.addEdge(2, 3); a.addEdge(3, 0);
+
+    // b: two disjoint edges 0-1, 2-3 (every vertex has 1 neighbor).
+    Mesh b;
+    b.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    b.resetSelection();
+    b.addEdge(0, 1); b.addEdge(2, 3);
+
+    a.mutationVersion = 7;
+    b.mutationVersion = 7;   // hand-forced equal version, same vertex count
+
+    const(size_t)[] offA, offB;
+    const(uint)[]    nbA,  nbB;
+    a.vertexAdjacencyCSR(offA, nbA);
+    b.vertexAdjacencyCSR(offB, nbB);
+
+    // Vertex 0's neighbor set differs: {1, 3} in the cycle vs {1} alone
+    // in the disjoint-edges mesh.
+    assert(offA[1] - offA[0] == 2, "cycle: vertex 0 must have 2 neighbors");
+    assert(offB[1] - offB[0] == 1, "disjoint edges: vertex 0 must have 1 neighbor");
+    assert(nbA[offA[0] .. offA[1]] != nbB[offB[0] .. offB[1]],
+        "equal mutationVersion must NOT make two distinct Mesh instances "
+        ~ "share adjacency — each Mesh owns its own CSR cache");
 }
 
 Mesh makeCube() {
