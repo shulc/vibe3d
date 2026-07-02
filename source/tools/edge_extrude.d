@@ -17,6 +17,7 @@ import command_history : CommandHistory;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import display_sync : refreshDisplay;
 import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
     undoTrackerEnabled;
 
@@ -531,13 +532,7 @@ private:
     }
 
     void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length);
-        vc.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
-        ec.resize(mesh.edges.length);
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 
     // Category A live-edit cancel — the former RMB body, factored out so both

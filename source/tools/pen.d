@@ -15,6 +15,7 @@ import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import display_sync : refreshDisplay;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               transformPoint, transformDir, snapLocalHit,
@@ -908,9 +909,7 @@ private:
         // Refresh selection/picking caches so the new face is hover-pickable
         // and selection arrays match the grown geometry.
         mesh.syncSelection();
-        if (vc !is null) { vc.resize(mesh.vertices.length); vc.invalidate(); }
-        if (fc !is null) { fc.resize(mesh.vertices.length, mesh.faces.length); fc.invalidate(); }
-        if (ec !is null) { ec.resize(mesh.edges.length); ec.invalidate(); }
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         // Drop in-progress state — tool stays active for the next polygon.
         state = PenState.Idle;
         clearVertHandlers();

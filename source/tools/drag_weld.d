@@ -11,6 +11,7 @@ import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
 
@@ -190,18 +191,7 @@ public:
 
         // Refresh selection / picking caches (mirrors vertex_place.d:174-187).
         mesh.syncSelection();
-        if (vc_ !is null) {
-            vc_.resize(mesh.vertices.length);
-            vc_.invalidate();
-        }
-        if (ec_ !is null) {
-            ec_.resize(mesh.edges.length);
-            ec_.invalidate();
-        }
-        if (fc_ !is null) {
-            fc_.resize(mesh.vertices.length, mesh.faces.length);
-            fc_.invalidate();
-        }
+        refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
         return true;
     }
 

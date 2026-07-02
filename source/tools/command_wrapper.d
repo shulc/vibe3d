@@ -7,6 +7,7 @@ import mesh    : Mesh, GpuMesh;
 import view    : View;
 import editmode : EditMode;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import display_sync : refreshDisplay;
 import tool   : Tool;
 import params : Param;
 import math   : Vec3, Viewport, screenToWorkPlane;
@@ -640,11 +641,7 @@ abstract class CommandWrapperTool : Tool {
     }
 
     private void refreshCaches() {
-        if (gpu !is null && meshPtr !is null) gpu.upload(*meshPtr);
-        if (vc  !is null) { vc.resize(meshPtr.vertices.length); vc.invalidate(); }
-        if (ec  !is null) { ec.resize(meshPtr.edges.length);    ec.invalidate(); }
-        if (fc  !is null) { fc.resize(meshPtr.vertices.length,
-                                      meshPtr.faces.length); fc.invalidate(); }
+        refreshDisplay(meshPtr, gpu, vc, ec, fc);
     }
 }
 
