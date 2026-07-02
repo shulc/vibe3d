@@ -830,16 +830,17 @@ private void pushElementDist(float dist) {
 
 private FalloffStageState readElementState() {
     // sphere centre = ACEN.center (single source of truth — same
-    // point the gizmo sits on); radius = FalloffStage.dist. The
-    // falloff half goes through primaryFalloffStage() (WGHT task); the
-    // actionCenter half stays a direct task lookup (ACEN task) — this
-    // loop is the one site that mixes both, so only the falloff half
-    // collapses into the shared helper.
+    // point the gizmo sits on); radius = FalloffStage.pickedRadius (config
+    // field, wire attr name stays `dist`). The falloff half goes through
+    // primaryFalloffStage() (WGHT task); the actionCenter half stays a
+    // direct task lookup (ACEN task) — this loop is the one site that
+    // mixes both, so only the falloff half collapses into the shared
+    // helper.
     import toolpipe.stages.actcenter : ActionCenterStage;
     FalloffStageState s;
     if (g_pipeCtx is null) return s;
     if (auto fs = primaryFalloffStage())
-        s.dist = fs.dist;
+        s.dist = fs.pickedRadius;
     if (auto ac = cast(ActionCenterStage) g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
         s.pickedCenter = ac.currentCenter();
     return s;
