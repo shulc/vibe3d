@@ -46,6 +46,11 @@ vibe3d-macos-render/
 # baseline.json is committed as the reference — see tools/perf/README.md)
 tools/perf/results.json
 
+# `frames` subcommand (task 0195) generated output — mirrors results.json
+# above; frames_baseline.json is the committed reference (mirrors
+# baseline.json), frames_results.json is the transient per-run dump.
+tools/perf/frames_results.json
+
 # dyaml 0.10.0 unittests (compiled into -unittest test binaries via
 # test_forms_loader) write a scratch example.yaml into cwd (loader.d:248)
 /example.yaml

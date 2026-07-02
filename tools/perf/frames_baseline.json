@@ -1,0 +1,29 @@
+{
+  "buildType": "perf",
+  "compiler": "ldc2 1.42.0",
+  "host": "fedora",
+  "meshType": "grid",
+  "n": 316,
+  "faceCount": 99856,
+  "viewport": "1280x960",
+  "scenarios": [
+    {
+      "name": "orbit-dense",
+      "p99Ns": 841100,
+      "hitch16": 0,
+      "hitch33": 0
+    },
+    {
+      "name": "hover-sweep",
+      "p99Ns": 817900,
+      "hitch16": 0,
+      "hitch33": 0
+    },
+    {
+      "name": "drag-falloff",
+      "p99Ns": 776500,
+      "hitch16": 1,
+      "hitch33": 1
+    }
+  ]
+}

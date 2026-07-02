@@ -226,6 +226,65 @@ string buildDragLog(int vpX, int vpY, int vpW, int vpH,
     return log;
 }
 
+// KMOD_LALT (SDL2 SDL_Keymod bit layout: LALT=0x0100, RALT=0x0200,
+// ALT=LALT|RALT=0x0300). `(mods & KMOD_ALT) != 0` in app.d's button-down
+// handler only tests the bit is set, so LALT alone is sufficient to drive
+// DragMode.Orbit. EventPlayer.tick() calls SDL_SetModState(entry.mod) for
+// every mouse event before dispatch (eventlog.d), so a recorded "mod" value
+// reliably reproduces a real modifier-held drag under replay.
+enum int SDL_KMOD_LALT = 0x0100;
+
+// Alt+LMB orbit drag (view.d DragMode.Orbit) — camera-only, mesh untouched.
+// Used by the `orbit-dense` frame scenario (tools/perf/run.d frames) to
+// exercise the draw path without any mesh-cache work (F-I1).
+string buildOrbitLog(int vpX, int vpY, int vpW, int vpH,
+                     int x0, int y0, int x1, int y1, int steps = 60) {
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    double tDown = 50.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+        tDown, x0, y0, SDL_KMOD_LALT);
+    double stepMs = 20.0;
+    int lastX = x0, lastY = y0;
+    foreach (i; 1 .. steps + 1) {
+        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        double t = tDown + i * stepMs;
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":%d}` ~ "\n",
+            t, x, y, x - lastX, y - lastY, SDL_KMOD_LALT);
+        lastX = x; lastY = y;
+    }
+    double tUp = tDown + (steps + 1) * stepMs;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+        tUp, x1, y1, SDL_KMOD_LALT);
+    return log;
+}
+
+// Plain mouse sweep, NO button — drives per-frame pickVertices/pickEdges/
+// pickFaces hover resolution. Used by the `hover-sweep` frame scenario.
+string buildHoverLog(int vpX, int vpY, int vpW, int vpH,
+                     int x0, int y0, int x1, int y1, int steps = 80) {
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    double stepMs = 20.0;
+    int lastX = x0, lastY = y0;
+    foreach (i; 0 .. steps + 1) {
+        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        double t = 50.0 + i * stepMs;
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":0,"mod":0}` ~ "\n",
+            t, x, y, x - lastX, y - lastY);
+        lastX = x; lastY = y;
+    }
+    return log;
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
@@ -332,6 +391,70 @@ Vec3 fetchActionCenter() {
 
 JSONValue perfRead() {
     return parseJSON(cast(string)get(g_baseUrl ~ "/api/perf"));
+}
+
+// ---------------------------------------------------------------------------
+// /api/frames — FrameProbe (task 0195). Mirrors the /api/perf helpers above.
+// ---------------------------------------------------------------------------
+
+void framesReset() { postUrl("/api/frames/reset"); }
+
+// One record from FrameProbe's "worst" / "worstN" (source/perf_probe.d
+// FrameRec — total + per-phase ns + GC deltas for a single frame).
+struct FrameRecJ {
+    long totalNs, eventNs, toolNs, cacheNs, drawNs, uploadNs, uiNs;
+    long gcAllocBytes, gcCollections;
+}
+
+FrameRecJ parseFrameRec(JSONValue j) {
+    FrameRecJ r;
+    r.totalNs       = j["totalNs"].integer;
+    r.eventNs       = j["eventNs"].integer;
+    r.toolNs        = j["toolNs"].integer;
+    r.cacheNs       = j["cacheNs"].integer;
+    r.drawNs        = j["drawNs"].integer;
+    r.uploadNs      = j["uploadNs"].integer;
+    r.uiNs          = j["uiNs"].integer;
+    r.gcAllocBytes  = j["gcAllocBytes"].integer;
+    r.gcCollections = j["gcCollections"].integer;
+    return r;
+}
+
+// Parsed /api/frames snapshot. `empty` is true when the binary has no
+// PerfProbe instrumentation (default build ⇒ "{}") or the window recorded
+// zero frames — callers must check it before trusting any other field.
+struct FrameStats {
+    bool empty = true;
+    long frameCount;
+    long p50Ns, p95Ns, p99Ns, maxNs;
+    long hitch16, hitch33;
+    long meshCacheRebuilds;
+    long gcAllocBytes;     // sum across the window
+    long gcCollections;    // sum across the window
+    long steadyMaxAllocBytes;
+    FrameRecJ worst;
+}
+
+FrameStats fetchFrames() {
+    FrameStats s;
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/frames"));
+    if ("frameCount" !in j) return s;   // "{}" — uninstrumented build
+    s.frameCount = j["frameCount"].integer;
+    if (s.frameCount == 0) return s;
+    s.empty = false;
+    auto total = j["total"];
+    s.p50Ns = total["p50_ns"].integer;
+    s.p95Ns = total["p95_ns"].integer;
+    s.p99Ns = total["p99_ns"].integer;
+    s.maxNs = total["max_ns"].integer;
+    s.hitch16 = j["hitch_16ms"].integer;
+    s.hitch33 = j["hitch_33ms"].integer;
+    s.meshCacheRebuilds = j["meshCacheRebuilds"].integer;
+    s.gcAllocBytes  = j["gcAllocBytes"].integer;
+    s.gcCollections = j["gcCollections"].integer;
+    s.steadyMaxAllocBytes = j["steadyMaxAllocBytes"].integer;
+    if (j["worst"].type != JSONType.null_) s.worst = parseFrameRec(j["worst"]);
+    return s;
 }
 
 struct ModelInfo { long vertexCount; long faceCount; }
@@ -895,6 +1018,295 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
 }
 
 // ---------------------------------------------------------------------------
+// `frames` subcommand — FrameProbe scenarios (task 0195,
+// doc/frame_probe_scenarios_plan.md Phase 4). Three scenarios exercise the
+// main-loop phase timers end to end through a real `--build=perf` binary;
+// each resets the frame ring right before its measured drag so the reported
+// window is exactly that scenario's frames.
+// ---------------------------------------------------------------------------
+
+struct FrameScenarioResult {
+    string     name;
+    CaseStatus status;
+    string     detail;
+    FrameStats stats;
+}
+
+FrameScenarioResult* findFrameScenario(FrameScenarioResult[] results, string name) {
+    foreach (ref r; results)
+        if (r.name == name) return &r;
+    return null;
+}
+
+// Post-drag settle: /api/play-events/status reports "finished" once events
+// are POSTED to the SDL queue, not necessarily fully processed by the main
+// loop (same caveat documented in CLAUDE.md for the HTTP test suite) — wait
+// a beat before reading /api/frames so the window includes the drag's last
+// frames.
+void settleAfterPlay() { Thread.sleep(150.msecs); }
+
+// Cold-start settle: a fresh dense mesh's FIRST few rendered frames pay
+// one-time setup costs (GPU buffer allocation, cache first-resize, pipeline
+// first-evaluate) that can legitimately trigger a GC collection — the same
+// class of cost the ops matrix's `runCase` discards via its "warmup drag"
+// (see the comment there). `framesReset()` is always called AFTER this
+// settle so the measured ring only sees steady-state frames, keeping F-I4
+// (0 GC collections) a meaningful signal instead of a cold-start false
+// positive. `--perf` runs uncapped (no vsync, no SDL_Delay), so this window
+// covers many dozens of frames.
+void settleAfterReset() { Thread.sleep(200.msecs); }
+
+// orbit-dense — Alt+LMB orbit around a dense mesh, no selection, no tool.
+// Exercises the draw path; F-I1 target is 0 mesh-cache rebuilds (camera-only
+// invalidation must never touch mesh caches / trigger a GPU upload).
+FrameScenarioResult runOrbitDense(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "orbit-dense";
+
+    resetMesh(meshType, n);
+    selectVertices([]);   // no stale selection from a prior scenario
+
+    auto cam = fetchCamera();
+    int x0 = cam.vpX + cast(int)(cam.width  * 0.20);
+    int y0 = cam.vpY + cast(int)(cam.height * 0.55);
+    int x1 = cam.vpX + cast(int)(cam.width  * 0.80);
+    int y1 = cam.vpY + cast(int)(cam.height * 0.20);
+    string log = buildOrbitLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               x0, y0, x1, y1, 60);
+
+    settleAfterReset();
+    framesReset();
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "orbit drag: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// hover-sweep — plain mouse sweep across a dense mesh (no button), default
+// edit mode. Exercises per-frame pickVertices/pickEdges/pickFaces.
+FrameScenarioResult runHoverSweep(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "hover-sweep";
+
+    resetMesh(meshType, n);
+    selectVertices([]);
+
+    auto cam = fetchCamera();
+    int x0 = cam.vpX + cast(int)(cam.width  * 0.15);
+    int y0 = cam.vpY + cast(int)(cam.height * 0.50);
+    int x1 = cam.vpX + cast(int)(cam.width  * 0.85);
+    int y1 = cam.vpY + cast(int)(cam.height * 0.50);
+    string log = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               x0, y0, x1, y1, 80);
+
+    settleAfterReset();
+    framesReset();
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "hover sweep: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// drag-falloff — whole-mesh move drag with a radial falloff configured.
+// Exercises the tool/events phases with per-vertex falloff evaluation every
+// motion event; F-I2 (steady-state alloc/frame) is read off this scenario.
+FrameScenarioResult runDragFalloff(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "drag-falloff";
+
+    resetMesh(meshType, n);
+    if (!selectVertices([])) {   // whole mesh
+        res.status = CaseStatus.ERROR;
+        res.detail = "selection failed";
+        return res;
+    }
+    if (!script("tool.set move")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "tool.set move failed";
+        return res;
+    }
+    // Radial falloff, mid-plane radius — same recipe as the ops matrix's
+    // move/falloff=radial case (casesForTool above).
+    foreach (a; [PipeAttr("falloff", "type",   "radial"),
+                PipeAttr("falloff", "center", "0,0,0"),
+                PipeAttr("falloff", "size",   "1,1,1")]) {
+        if (!script(format(`tool.pipe.attr %s %s "%s"`, a.stage, a.name, a.value))) {
+            res.status = CaseStatus.SKIP;
+            res.detail = format("pipe attr rejected: %s %s %s", a.stage, a.name, a.value);
+            return res;
+        }
+    }
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+
+    // Builds a fresh drag log targeting the CURRENT live gizmo pivot — like
+    // `runOneDrag` above, re-fetched immediately before each drag so a prior
+    // drag relocating the pivot (the whole mesh translated) doesn't leave a
+    // later drag projecting onto a stale gizmo position.
+    Drag delegate() liveDrag = () {
+        Vec3 pivot = fetchActionCenter();
+        return dragFor(Tool.move, pivot, vp);
+    };
+
+    Drag d0 = liveDrag();
+    if (d0.x0 == 0 && d0.y0 == 0 && d0.x1 == 0 && d0.y1 == 0) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "handle projected off-camera";
+        return res;
+    }
+    // Step count matches the ops matrix's own runOneDrag default (20) —
+    // no need to diverge from that established convention.
+    string warmupLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                    d0.x0, d0.y0, d0.x1, d0.y1, 20);
+
+    // Warmup drag (discarded) — mirrors the ops matrix's runCase: the FIRST
+    // falloff drag over a fresh dense mesh pays one-time setup costs
+    // (symmetry/snap/falloff pipeline first-evaluate, cache first-resize)
+    // that would otherwise land in the measured window and false-trip F-I4.
+    try {
+        playAndWait(warmupLog);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "warmup drag: " ~ e.msg;
+        return res;
+    }
+    settleAfterReset();
+
+    Drag d1 = liveDrag();
+    if (d1.x0 == 0 && d1.y0 == 0 && d1.x1 == 0 && d1.y1 == 0) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "handle projected off-camera after warmup";
+        return res;
+    }
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              d1.x0, d1.y0, d1.x1, d1.y1, 20);
+
+    framesReset();
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "falloff drag: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+double msFromNs(long ns) { return cast(double)ns / 1_000_000.0; }
+
+void printFramesTable(FrameScenarioResult[] results) {
+    writeln();
+    writeln("=== frame scenario results ===");
+    writefln("%-16s %10s %10s %10s %10s %8s %8s %8s %10s",
+             "scenario", "p50 (ms)", "p95 (ms)", "p99 (ms)", "max (ms)",
+             "hitch16", "hitch33", "rebuild", "gcAlloc(B)");
+    writeln("".replicate(96));
+    foreach (r; results) {
+        final switch (r.status) {
+            case CaseStatus.OK:
+                writefln("%-16s %10.3f %10.3f %10.3f %10.3f %8d %8d %8d %10d",
+                         r.name, msFromNs(r.stats.p50Ns), msFromNs(r.stats.p95Ns),
+                         msFromNs(r.stats.p99Ns), msFromNs(r.stats.maxNs),
+                         r.stats.hitch16, r.stats.hitch33,
+                         r.stats.meshCacheRebuilds, r.stats.gcAllocBytes);
+                break;
+            case CaseStatus.SKIP:
+                writefln("%-16s  SKIP  %s", r.name, r.detail);
+                break;
+            case CaseStatus.ERROR:
+                writefln("%-16s  ERROR %s", r.name, r.detail);
+                break;
+        }
+    }
+    writeln("".replicate(96));
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        writefln("  %-16s worst-frame breakdown: total=%.3fms events=%.3fms tool=%.3fms" ~
+                 " cache=%.3fms draw=%.3fms upload=%.3fms ui=%.3fms gcAlloc=%dB gcColl=%d",
+                 r.name, msFromNs(r.stats.worst.totalNs), msFromNs(r.stats.worst.eventNs),
+                 msFromNs(r.stats.worst.toolNs), msFromNs(r.stats.worst.cacheNs),
+                 msFromNs(r.stats.worst.drawNs), msFromNs(r.stats.worst.uploadNs),
+                 msFromNs(r.stats.worst.uiNs), r.stats.worst.gcAllocBytes,
+                 r.stats.worst.gcCollections);
+        writefln("  %-16s F-I2 steady-state alloc/frame (whole-frame, main-thread, " ~
+                 "post-warmup): %d B", r.name, r.stats.steadyMaxAllocBytes);
+    }
+}
+
+void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
+                            string viewport, FrameScenarioResult[] results) {
+    auto a = appender!string();
+    a.put("{\n");
+    a.put(format(`  "buildType": "perf",` ~ "\n"));
+    a.put(format(`  "compiler": "ldc2 1.42.0",` ~ "\n"));
+    a.put(format(`  "host": "%s",` ~ "\n", Socket.hostName));
+    a.put(format(`  "meshType": "%s",` ~ "\n", meshType));
+    a.put(format(`  "n": %d,` ~ "\n", n));
+    a.put(format(`  "faceCount": %d,` ~ "\n", faceCount));
+    a.put(format(`  "viewport": "%s",` ~ "\n", viewport));
+    a.put(`  "scenarios": [` ~ "\n");
+    foreach (i, r; results) {
+        a.put("    {\n");
+        a.put(format(`      "name": "%s",` ~ "\n", r.name));
+        a.put(format(`      "status": "%s",` ~ "\n", r.status.to!string));
+        if (r.status == CaseStatus.OK) {
+            a.put(format(`      "frameCount": %d,` ~ "\n", r.stats.frameCount));
+            a.put(format(`      "p50Ns": %d,` ~ "\n", r.stats.p50Ns));
+            a.put(format(`      "p95Ns": %d,` ~ "\n", r.stats.p95Ns));
+            a.put(format(`      "p99Ns": %d,` ~ "\n", r.stats.p99Ns));
+            a.put(format(`      "maxNs": %d,` ~ "\n", r.stats.maxNs));
+            a.put(format(`      "hitch16": %d,` ~ "\n", r.stats.hitch16));
+            a.put(format(`      "hitch33": %d,` ~ "\n", r.stats.hitch33));
+            a.put(format(`      "meshCacheRebuilds": %d,` ~ "\n", r.stats.meshCacheRebuilds));
+            a.put(format(`      "gcAllocBytes": %d,` ~ "\n", r.stats.gcAllocBytes));
+            a.put(format(`      "gcCollections": %d,` ~ "\n", r.stats.gcCollections));
+            a.put(format(`      "steadyMaxAllocBytes": %d` ~ "\n", r.stats.steadyMaxAllocBytes));
+        } else {
+            a.put(format(`      "detail": "%s"` ~ "\n", r.detail.replaceQuotes));
+        }
+        a.put(i + 1 < results.length ? "    },\n" : "    }\n");
+    }
+    a.put("  ]\n}\n");
+    std.file.write(path, a.data);
+}
+
+// ---------------------------------------------------------------------------
 // Build & launch
 // ---------------------------------------------------------------------------
 
@@ -1315,6 +1727,79 @@ Invariant[] checkInvariants(CaseResult[] results) {
     return inv;
 }
 
+// ---------------------------------------------------------------------------
+// Counter invariants F-I1 / F-I2 / F-I4 for the `frames` subcommand (task
+// 0195 Phase 5). Reuses the SAME `Invariant` struct as `checkInvariants`
+// above — no separate type. ALWAYS run (no header/host gate): F-I1 and F-I4
+// are machine-stable counts, hardware-independent, and GATE the exit code —
+// EXCEPT F-I4 on drag-falloff, which is RECORDED but NON-GATING (see below);
+// F-I2 is RECORDED but NON-GATING (see the plan's Risks section — a nonzero
+// whole-frame alloc floor is expected from ImGui chrome rebuilding every
+// frame, so it would false-fail a gate for reasons unrelated to the drag).
+// ---------------------------------------------------------------------------
+
+Invariant[] checkFramesInvariants(FrameScenarioResult[] results) {
+    Invariant[] inv;
+
+    // F-I1 — GATING. orbit-dense must trigger ZERO mesh-cache rebuilds: the
+    // camera-reprojection branch (vertexCache.needsUpdate(vp)) is gated
+    // `!doingCameraDrag` and is SKIPPED ENTIRELY during an orbit, so only
+    // the two genuinely mesh-driven branches (Geometry/Position) would ever
+    // bump the counter — and neither fires on a pure camera drag.
+    {
+        auto r = findFrameScenario(results, "orbit-dense");
+        if (r !is null && r.status == CaseStatus.OK) {
+            bool ok = r.stats.meshCacheRebuilds == 0;
+            inv ~= Invariant("F-I1", "orbit-dense: 0 mesh-cache rebuilds", ok,
+                format("meshCacheRebuilds=%d", r.stats.meshCacheRebuilds));
+        }
+    }
+
+    // F-I4 — GATING for orbit-dense / hover-sweep: neither scenario touches
+    // per-vertex mesh work (camera-only reprojection / handle hit-testing),
+    // so 0 GC collections during the measured window is a real invariant
+    // there. drag-falloff is RECORDED, NON-GATING: it legitimately trips a
+    // collection (the falloff/drag hot path allocates enough to cross a GC
+    // pool threshold) — a real product finding, not a harness bug. `pass` is
+    // unconditionally true for drag-falloff so it can never flip the run's
+    // exit code, but the count is still reported so the regression stays
+    // visible; the drag-path allocation follow-up (task 0202) will chase it
+    // to a stable floor. Counts, not times, so this is hardware-independent;
+    // a nonzero count means a stop-the-world collection stalled the main
+    // loop (triggered by ANY thread — see the GC-metric-asymmetry note in
+    // perf_probe.d).
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        bool gating = r.name != "drag-falloff";
+        bool ok = gating ? r.stats.gcCollections == 0 : true;
+        string label = gating
+            ? format("%s: 0 GC collections", r.name)
+            : format("%s: GC collections (RECORDED, non-gating)", r.name);
+        inv ~= Invariant("F-I4", label, ok,
+            format("gcCollections=%d", r.stats.gcCollections));
+    }
+
+    // F-I2 — RECORDED, NON-GATING. drag-falloff's steady-state whole-frame
+    // main-thread alloc/frame (post-warmup, from FrameProbe.toJson's
+    // `steadyMaxAllocBytes`). `pass` is unconditionally true so this entry
+    // can never flip the run's exit code — it is a measurement to watch,
+    // not a regression gate, until the ImGui-chrome alloc floor is chased
+    // to a stable number in a follow-up task.
+    {
+        auto r = findFrameScenario(results, "drag-falloff");
+        if (r !is null && r.status == CaseStatus.OK) {
+            inv ~= Invariant("F-I2",
+                "drag-falloff: steady-state alloc/frame (RECORDED, non-gating)",
+                true,
+                format("steadyMaxAllocBytes=%d B (whole-frame main-thread alloc, " ~
+                       "NOT drag-only — see the plan's Risks section)",
+                       r.stats.steadyMaxAllocBytes));
+        }
+    }
+
+    return inv;
+}
+
 struct AbsRegression {
     string name;
     string metric;     // "kernelApply" | "pipeTotal"
@@ -1364,6 +1849,243 @@ AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base,
 }
 
 // ---------------------------------------------------------------------------
+// Absolute p99/hitch budgets for `frames` (task 0195 Phase 6) — same
+// baseline-host header-guard pattern as the ops matrix's absolute lane
+// above, but stored in a SEPARATE `frames_baseline.json` (shares the
+// `RunHeader` shape) so it never collides with the ops `baseline.json`.
+// Generous FIXED ceilings (not baseline-relative growth, unlike the ops
+// lane) — a gross-smoothness regression guard, not a tight benchmark.
+// ---------------------------------------------------------------------------
+
+enum double K_FRAMES_P99_MS = 33.0;   // generous per-scenario p99 ceiling
+enum long   K_FRAMES_HITCH33 = 2;     // generous >33ms-hitch allowance
+
+struct FramesBaselineCase {
+    string name;
+    long   p99Ns;
+    long   hitch16;
+    long   hitch33;
+}
+
+struct FramesBaseline {
+    RunHeader header;
+    FramesBaselineCase[string] byName;
+}
+
+void writeFramesBaselineJson(string path, RunHeader h, FrameScenarioResult[] results) {
+    auto a = appender!string();
+    a.put("{\n");
+    a.put(format(`  "buildType": "%s",` ~ "\n", h.buildType));
+    a.put(format(`  "compiler": "%s",` ~ "\n", h.compiler));
+    a.put(format(`  "host": "%s",` ~ "\n", h.host));
+    a.put(format(`  "meshType": "%s",` ~ "\n", h.meshType));
+    a.put(format(`  "n": %d,` ~ "\n", h.n));
+    a.put(format(`  "faceCount": %d,` ~ "\n", h.faceCount));
+    a.put(format(`  "viewport": "%s",` ~ "\n", h.viewport));
+    a.put(`  "scenarios": [` ~ "\n");
+    bool first = true;
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        if (!first) a.put(",\n");
+        first = false;
+        a.put("    {\n");
+        a.put(format(`      "name": "%s",` ~ "\n", r.name));
+        a.put(format(`      "p99Ns": %d,` ~ "\n", r.stats.p99Ns));
+        a.put(format(`      "hitch16": %d,` ~ "\n", r.stats.hitch16));
+        a.put(format(`      "hitch33": %d` ~ "\n", r.stats.hitch33));
+        a.put("    }");
+    }
+    a.put("\n  ]\n}\n");
+    std.file.write(path, a.data);
+}
+
+FramesBaseline loadFramesBaseline(string path) {
+    FramesBaseline b;
+    auto j = parseJSON(cast(string)std.file.read(path));
+    b.header.buildType = j["buildType"].str;
+    b.header.compiler  = j["compiler"].str;
+    b.header.host      = ("host" in j) ? j["host"].str : "";
+    b.header.meshType  = j["meshType"].str;
+    b.header.viewport  = j["viewport"].str;
+    b.header.n         = cast(int)j["n"].integer;
+    b.header.faceCount = j["faceCount"].integer;
+    foreach (sv; j["scenarios"].array) {
+        FramesBaselineCase bc;
+        bc.name    = sv["name"].str;
+        bc.p99Ns   = sv["p99Ns"].integer;
+        bc.hitch16 = sv["hitch16"].integer;
+        bc.hitch33 = sv["hitch33"].integer;
+        b.byName[bc.name] = bc;
+    }
+    return b;
+}
+
+struct FramesAbsRegression {
+    string name;
+    string metric;   // "p99" | "hitch33"
+    double budget;
+    double actual;
+}
+
+// Fixed generous ceilings, checked against the CURRENT run only (the stored
+// baseline's role is the header-match guard + a captured reference point
+// for humans reading frames_baseline.json — the pass/fail line itself is
+// against K_FRAMES_P99_MS / K_FRAMES_HITCH33, not baseline-relative growth,
+// per the plan's "start at 33ms p99, hitch ≤ K" design).
+FramesAbsRegression[] checkFramesAbsolute(FrameScenarioResult[] results) {
+    FramesAbsRegression[] regs;
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        double p99Ms = msFromNs(r.stats.p99Ns);
+        if (p99Ms > K_FRAMES_P99_MS)
+            regs ~= FramesAbsRegression(r.name, "p99", K_FRAMES_P99_MS, p99Ms);
+        if (r.stats.hitch33 > K_FRAMES_HITCH33)
+            regs ~= FramesAbsRegression(r.name, "hitch33",
+                                        cast(double)K_FRAMES_HITCH33,
+                                        cast(double)r.stats.hitch33);
+    }
+    return regs;
+}
+
+// ---------------------------------------------------------------------------
+// `frames` subcommand entry point (task 0195 Phase 4-6). Launches vibe3d
+// exactly like the ops matrix (shares killStaleVibe/launchVibe/resetMesh),
+// runs the three scenarios (or a requested-substring subset), prints the
+// table + worst-frame breakdowns, writes frames_results.json, then runs the
+// counter invariants (always) + absolute p99/hitch budgets (header-guarded).
+// ---------------------------------------------------------------------------
+
+int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort port,
+                        string[] requested, bool updateFramesBaseline, bool noAbsolute,
+                        bool noBuild) {
+    killStaleVibe();
+    string logPath = "/tmp/vibe3d_perf_frames.log";
+    writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
+             port, viewport);
+    if (!launchVibe(port, viewport, logPath)) return 1;
+    writeln("  vibe3d is up");
+
+    resetMesh(meshType, meshParam);
+    auto mi = modelInfo();
+    writefln("Mesh: %s param=%d → %d verts, %d faces",
+             meshType, meshParam, mi.vertexCount, mi.faceCount);
+
+    alias ScenarioFn = FrameScenarioResult function(int, string);
+    struct ScenarioSpec { string name; ScenarioFn run; }
+    ScenarioSpec[] allScenarios = [
+        ScenarioSpec("orbit-dense",  &runOrbitDense),
+        ScenarioSpec("hover-sweep",  &runHoverSweep),
+        ScenarioSpec("drag-falloff", &runDragFalloff),
+    ];
+
+    ScenarioSpec[] scenarios;
+    foreach (sc; allScenarios) {
+        bool keepIt = requested.length == 0;
+        foreach (req; requested) if (sc.name.canFind(req)) keepIt = true;
+        if (keepIt) scenarios ~= sc;
+    }
+    if (scenarios.length == 0) {
+        writeln("no frame scenarios matched");
+        return 0;
+    }
+
+    FrameScenarioResult[] results;
+    foreach (sc; scenarios) {
+        write("  running ", sc.name, " ... ");
+        stdout.flush();
+        auto r = sc.run(meshParam, meshType);
+        final switch (r.status) {
+            case CaseStatus.OK:    writeln("OK");                  break;
+            case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")"); break;
+            case CaseStatus.ERROR: writeln("ERROR (", r.detail, ")"); break;
+        }
+        results ~= r;
+    }
+
+    printFramesTable(results);
+
+    string outPath = buildPath(g_repoRoot, "tools", "perf", "frames_results.json");
+    writeFramesResultsJson(outPath, meshType, meshParam, mi.faceCount, viewport, results);
+    writeln("\nWrote ", outPath);
+
+    // Header shares the ops RunHeader shape; `repeats` is not meaningful for
+    // `frames` (each scenario runs once) and is NOT compared by
+    // headerMismatch, so any placeholder value is harmless.
+    auto curHeader = currentHeader(meshType, meshParam, mi.faceCount, viewport, 1);
+    string baselinePath = buildPath(g_repoRoot, "tools", "perf", "frames_baseline.json");
+
+    if (updateFramesBaseline) {
+        writeFramesBaselineJson(baselinePath, curHeader, results);
+        writeln("Wrote ", baselinePath, " (frames baseline updated from this run)");
+        noAbsolute = true;
+    }
+
+    int failures = 0;
+
+    // 1. Counter invariants — ALWAYS run (machine-stable). F-I1/F-I4 gate;
+    // F-I2 is recorded, non-gating (see checkFramesInvariants).
+    writeln();
+    writeln("=== frame counter invariants (machine-stable) ===");
+    auto invs = checkFramesInvariants(results);
+    int invFail = 0;
+    foreach (iv; invs) {
+        writefln("  [%s] %-4s %-52s  %s",
+                 iv.pass ? "PASS" : "FAIL", iv.id, iv.desc, iv.detail);
+        if (!iv.pass) { invFail++; failures++; }
+    }
+    if (invs.length == 0)
+        writeln("  (no invariants applicable — no OK scenario results)");
+
+    // 2. Absolute p99/hitch budgets — gated by the build-match guard.
+    writeln();
+    writeln("=== absolute p99/hitch budgets (baseline-host only) ===");
+    int absFail = 0;
+    if (noAbsolute && !updateFramesBaseline) {
+        writeln("  skipped (--no-absolute)");
+    } else if (updateFramesBaseline) {
+        writeln("  skipped (baseline was just written by --update-frames-baseline)");
+    } else if (!exists(baselinePath)) {
+        writeln("  no baseline (", baselinePath, " absent) — run with",
+                " --update-frames-baseline to capture one");
+    } else {
+        auto base = loadFramesBaseline(baselinePath);
+        string mismatch = headerMismatch(base.header, curHeader);
+        if (mismatch.length > 0) {
+            writefln("  build mismatch — skipping absolute comparison: %s", mismatch);
+            writeln("  relative counter invariants only.");
+        } else {
+            auto regs = checkFramesAbsolute(results);
+            if (regs.length == 0) {
+                writefln("  no regressions (p99 <= %.0fms, hitch33 <= %d)",
+                         K_FRAMES_P99_MS, K_FRAMES_HITCH33);
+            } else {
+                foreach (rg; regs) {
+                    writefln("  [FAIL] %-16s %-8s budget=%.2f actual=%.2f",
+                             rg.name, rg.metric, rg.budget, rg.actual);
+                    absFail++;
+                    failures++;
+                }
+            }
+        }
+    }
+
+    // 3. Final verdict.
+    writeln();
+    writeln("=== verdict ===");
+    writefln("  counter invariants: %d/%d passed", invs.length - invFail, invs.length);
+    if (absFail > 0)
+        writefln("  absolute regressions: %d", absFail);
+    writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
+
+    if (!noBuild)
+        writeln("\nNOTE: ./vibe3d is now the perf buildType binary — run "
+                ~ "`dub build` to restore the modeling debug binary before "
+                ~ "reusing it with --no-build test runs.");
+
+    return failures == 0 ? 0 : failures;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1382,6 +2104,7 @@ int main(string[] args) {
     bool   updateBaseline = false;
     bool   noAbsolute     = false;   // skip absolute comparison (invariants only)
     double tolerance      = 0.30;    // absolute regression threshold (+30%)
+    bool   updateFramesBaseline = false;
 
     auto helpInfo = getopt(args,
         config.passThrough,
@@ -1395,10 +2118,12 @@ int main(string[] args) {
         "viewport",  "fixed viewport WxH (default 1280x960)", &viewport,
         "update-baseline", "write tools/perf/baseline.json from this run", &updateBaseline,
         "no-absolute",     "skip absolute baseline comparison (relative invariants only)", &noAbsolute,
-        "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance);
+        "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance,
+        "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline);
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run.d [options] [case-name-substring...]");
+        writeln("       ./run.d frames [options] [scenario-name-substring...]");
         foreach (o; helpInfo.options)
             writefln("  %-14s %s", o.optLong, o.help);
         return 0;
@@ -1411,6 +2136,13 @@ int main(string[] args) {
 
     string[] requested = args[1 .. $];
 
+    // `frames` subcommand: bare/`ops` stays the existing per-tool matrix
+    // (design: bare run == `ops`); a leading "frames" token switches to the
+    // FrameProbe scenario runner (task 0195), consuming that token so the
+    // remaining args act as a scenario-name substring filter.
+    bool framesMode = requested.length > 0 && requested[0] == "frames";
+    if (framesMode) requested = requested[1 .. $];
+
     g_keep = keep;
     g_baseUrl = format("http://localhost:%d", port);
 
@@ -1419,6 +2151,10 @@ int main(string[] args) {
     scope(exit) teardown();
 
     if (!noBuild && !dubBuildPerf()) return 1;
+
+    if (framesMode)
+        return runFramesSubcommand(meshType, meshParam, viewport, port, requested,
+                                   updateFramesBaseline, noAbsolute, noBuild);
 
     // Build the matrix.
     Case[] allCases;
