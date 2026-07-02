@@ -69,10 +69,15 @@ unittest { // B: non-auto -> stage's live basis + center, via the stage accessor
 
     auto ctx = new ToolPipeContext();
     auto wp  = new WorkplaneStage();
-    bool ok  = wp.setAttr("mode", "worldX");   // isAuto=false, rotation=(0,0,-90)
-    assert(ok, "setAttr mode worldX should be accepted");
+    // Add FIRST: pipeline.add -> plug() calls op.reset(), which returns a
+    // freshly-plugged stage to auto. Configure AFTER add (the production
+    // contract — stages are registered once, then driven via commands), so
+    // the mode survives; this also exercises the live-read the accessor
+    // promises (a post-add edit is visible with no re-add).
     ctx.pipeline.add(wp);
     g_pipeCtx = ctx;
+    bool ok  = wp.setAttr("mode", "worldX");   // isAuto=false, rotation=(0,0,-90)
+    assert(ok, "setAttr mode worldX should be accepted");
 
     auto f = currentWorkplaneFrame();
     M.Vec3 en, ea1, ea2;
@@ -214,10 +219,25 @@ void resetRotatedWorkplaneBox(double azOffset, double elSign) {
 unittest { // C: non-auto mover center-drag stays on the workplane plane
     resetRotatedWorkplaneBox(0.0, 1.0);   // az=PI/2, el=+kRotRad
 
-    // A base-only drag already activates the mover (BoxState.BaseSet).
+    // A base-only drag already activates the mover (BoxState.BaseSet), but
+    // at that point the box has zero height, so the bottom height handle
+    // (heightH[0], positioned at the base centroid) sits at EXACTLY the
+    // same world point as the mover's centerBox (also the base centroid).
+    // onMouseButtonDown checks height handles before the mover (see
+    // box.d's "Height handles ... priority over mover centerBox" —
+    // pre-existing, unrelated to this task), so a click dead-center at
+    // this stage would grab the height handle instead of the mover and
+    // exercise a completely different (height-axis) drag. Establish a
+    // throwaway non-zero height first so the mover's centerBox is no
+    // longer coincident with either height handle, THEN click the
+    // (recomputed) center to genuinely hit dragAxis==3.
     int cx, cy;
     projectOrDie(kWpCenter, cx, cy, "rotated workplane center");
     dragPixels(cx, cy, cx + 100, cy + 90);
+
+    int dcx, dcy;
+    projectOrDie(rotatedWpToWorld(localCenter()), dcx, dcy, "base centroid (height decouple)");
+    dragPixels(dcx, dcy, dcx + 40, dcy - 40, 8);
 
     Vec3 normal = Vec3(cast(float)(-sin(kRotRad)), cast(float)cos(kRotRad), 0.0f);
 
@@ -277,6 +297,18 @@ unittest { // D: auto mover center-drag also stays on the camera-facing plane
 
     auto vp = viewportFromCamera(fetchCamera(BASE));
     auto bp = pickAutoBP(vp);
+
+    // As in C: a base-only drag leaves height==0, so heightH[0] (bottom
+    // face handle) sits at the exact same world point as the mover's
+    // centerBox, and height handles win onMouseButtonDown's priority
+    // check. Establish a throwaway non-zero height first so the
+    // subsequent center click unambiguously hits dragAxis==3 instead of
+    // silently turning into a height-axis drag (verified empirically: an
+    // undecoupled click here moves ONLY cenY by exactly the reported
+    // "offPlane" delta — i.e. it's a height drag, not a plane drag).
+    int dcx, dcy;
+    projectOrDie(autoToWorld(bp, localCenter()), dcx, dcy, "base centroid (height decouple)");
+    dragPixels(dcx, dcy, dcx + 40, dcy - 40, 8);
 
     Vec3 worldBefore = autoToWorld(bp, localCenter());
     int hx, hy;
