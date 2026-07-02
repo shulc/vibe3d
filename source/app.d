@@ -8201,49 +8201,87 @@ void main(string[] args) {
                 ImGui.DockBuilderFinish(dockspaceId);
             }
 
-            // Layout-rebuild path (outside the one-shot seed guard) triggered by
-            // viewport.layout commands. Ph6 MAJOR: central-node-scoped rebuild —
-            // clears ONLY the viewport-cell subtree via
-            // DockBuilderRemoveNodeChildNodes(centerId), leaving chrome edge nodes
-            // (Tab bar / Status line / Mesh Info / right-panel) intact so a
-            // viewport.layout switch never destroys the user's panel arrangement.
+            // Layout-rebuild path (outside the one-shot seed guard) triggered
+            // by viewport.layout commands.
+            //
+            // FULL root rebuild (task 0204 hotfix — supersedes the Ph6
+            // central-node-scoped rebuild, which crashed). The scoped
+            // approach — clear only the viewport-cell subtree via
+            // DockBuilderRemoveNodeChildNodes(centralNodeId(...)), re-split,
+            // re-dock — hit a genuine ImGui docking-internals hazard on any
+            // shrink transition (SplitH/Quad -> Single):
+            // DockBuilderDockWindow'ing a still-live window (e.g.
+            // "Viewport##0") away from a node whose *sibling* consequently
+            // empties out makes ImGui synchronously self-delete that
+            // now-empty non-central sibling and merge the split pair back
+            // into their parent (DockNodeRemoveWindow ->
+            // DockContextRemoveNode -> DockNodeTreeMerge in imgui.cpp).
+            // Two failure modes chained from that single root cause:
+            //  1) When the node being docked INTO is that same sibling, the
+            //     merge deletes it out from under the call —
+            //     DockBuilderDockWindow (SetWindowDock) captures the target
+            //     node id *before* the removal-triggered merge and blindly
+            //     writes `window->DockId = <now-deleted node>` afterward,
+            //     leaving a dangling DockId.
+            //  2) Floating every viewport cell to node 0 *before* re-reading
+            //     the central node (so no window's target is ever the node
+            //     being vacated) avoids (1), but DockNodeTreeMerge does NOT
+            //     refresh the root node's cached CentralNode pointer (that
+            //     only happens in the once-per-frame DockNodeUpdateForRootNode
+            //     pass, which already ran before this code executes this
+            //     frame) — so a `centralNodeId()` re-query right after such a
+            //     merge can dereference a dangling pointer into a just-freed
+            //     node and return garbage, corrupting the very id the rebuild
+            //     was trying to re-derive safely.
+            // Both failure modes stem from reusing a node id read back
+            // *during* the same DockBuilder script that also mutates the
+            // tree. A full rebuild sidesteps the whole class: every id used
+            // below comes straight from THIS call's own
+            // DockBuilderSplitNode/AddNode out-params, never from a
+            // side-cached/re-queried lookup, so there is nothing stale to
+            // dereference and no leftover empty sibling to trigger a merge
+            // against. Trade-off: a layout switch also resets the user's
+            // panel arrangement (Layers / Tool Properties / Mesh Info
+            // docking), same as the process-startup seed path below —
+            // acceptable next to a crash.
             if (vpm.layoutDirty) {
                 vpm.layoutDirty = false;
 
-                ImGuiID cid = ImGui.centralNodeId(dockspaceId);
-                if (cid != 0) {
-                    // Scoped rebuild: clear cell subtree, re-split central node.
-                    ImGui.DockBuilderRemoveNodeChildNodes(cid);
-                    dockSplitViewportCells(cid, vpm.layout);
-                    // Undock any dead cell windows [cellCount..4) — on a shrink
-                    // transition (e.g. SplitH->Single) DockBuilderRemoveNodeChildNodes
-                    // re-docks EVERY window that was in the cleared subtree back into
-                    // `cid` (per the binding's own contract), so a cell no longer
-                    // live (not re-docked by dockSplitViewportCells above, and never
-                    // Begin'ed by the window loop this frame) is left as a docked-but-
-                    // never-submitted window — the native dock update chokes on that
-                    // state. Float it (dock to node 0) so it carries no stale
-                    // membership. Harmless no-op for a never-created window name.
-                    foreach (deadK; vpm.cellCount .. 4)
-                        ImGui.DockBuilderDockWindow("Viewport##" ~ to!string(deadK), 0);
-                    ImGui.DockBuilderFinish(dockspaceId);
+                ImGui.DockBuilderRemoveNode(dockspaceId);
+                ImGui.DockBuilderAddNode(dockspaceId, 0);
+                ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
+
+                if (!testMode) {
+                    ImGuiID topId, afterTop;
+                    ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Up, 0.04f,
+                                               &topId, &afterTop);
+                    ImGuiID botId, afterBot;
+                    ImGui.DockBuilderSplitNode(afterTop, ImGuiDir.Down, 0.05f,
+                                               &botId, &afterBot);
+                    ImGuiID leftId, afterLeft;
+                    ImGui.DockBuilderSplitNode(afterBot, ImGuiDir.Left, 0.12f,
+                                               &leftId, &afterLeft);
+                    ImGuiID rightId, centerId;
+                    ImGui.DockBuilderSplitNode(afterLeft, ImGuiDir.Right, 0.22f,
+                                               &rightId, &centerId);
+
+                    ImGui.DockBuilderDockWindow("Tab bar",            topId);
+                    ImGui.DockBuilderDockWindow("Status line",        botId);
+                    ImGui.DockBuilderDockWindow("Mesh Info",          leftId);
+                    ImGui.DockBuilderDockWindow("Layers",             rightId);
+                    ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
+                    ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
+                    dockSplitViewportCells(centerId, vpm.layout);
                 } else {
-                    // Fallback: no central node yet (shouldn't happen after the
-                    // seed ran, but be safe). Full root rebuild so the layout
-                    // still takes effect.
-                    ImGui.DockBuilderRemoveNode(dockspaceId);
-                    ImGui.DockBuilderAddNode(dockspaceId, 0);
-                    ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
-                    ImGuiID rightId, cid2;
+                    // --test: minimal chrome (Layers + viewport cells only),
+                    // matching the seed path's --test branch above.
+                    ImGuiID rightId, centerId;
                     ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
-                                               &rightId, &cid2);
+                                               &rightId, &centerId);
                     ImGui.DockBuilderDockWindow("Layers", rightId);
-                    dockSplitViewportCells(cid2, vpm.layout);
-                    // Same dead-cell undock as the scoped-rebuild branch above.
-                    foreach (deadK; vpm.cellCount .. 4)
-                        ImGui.DockBuilderDockWindow("Viewport##" ~ to!string(deadK), 0);
-                    ImGui.DockBuilderFinish(dockspaceId);
+                    dockSplitViewportCells(centerId, vpm.layout);
                 }
+                ImGui.DockBuilderFinish(dockspaceId);
             }
 
             ImGui.End();
