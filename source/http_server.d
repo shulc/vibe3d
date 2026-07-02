@@ -384,6 +384,15 @@ class HttpServer {
     struct JumpResp { bool result; }
     private MainThreadBridge!(JumpReq, JumpResp) jumpBridge;
 
+    // GET /api/toolpipe — own bridge, own epoch pair (MUST NOT share
+    // pipeEvalBridge's — same rule as pathBridge, see the header note above).
+    // The null-provider case is handled entirely on the HTTP thread (200
+    // {"stages":[]}), so this bridge's service only ever runs when
+    // toolpipeProvider is set.
+    struct ToolPipeReq  { }
+    struct ToolPipeResp { string result; string error; }
+    private MainThreadBridge!(ToolPipeReq, ToolPipeResp) toolpipeBridge;
+
     public this(ushort port = 8080) {
         this.port = port;
         this.isRunning = false;
@@ -422,6 +431,18 @@ class HttpServer {
                         resp.result = toolpipeEvalProvider();
                     else
                         resp.error = "toolpipe eval provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        toolpipeBridge = new MainThreadBridge!(ToolPipeReq, ToolPipeResp)(this,
+            (ref ToolPipeReq req, ref ToolPipeResp resp) {
+                try {
+                    if (toolpipeProvider !is null)
+                        resp.result = toolpipeProvider();
+                    else
+                        resp.error = "toolpipe provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -1231,21 +1252,30 @@ class HttpServer {
                 }
             }
         } else if (request.path == "/api/toolpipe") {
-            if (toolpipeProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = toolpipeProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
+            response.headers["Content-Type"] = "application/json";
+            if (toolpipeProvider is null) {
+                // Preserve the pre-marshaling null-provider contract exactly:
+                // 200 {"stages":[]}, decided on the HTTP thread BEFORE ever
+                // touching the bridge (do NOT copy /api/toolpipe/eval's 500
+                // branch here).
                 response.statusCode = 200;
                 response.body = "{\"stages\":[]}";
-                response.headers["Content-Type"] = "application/json";
+            } else {
+                // Marshal onto the main thread via its own bridge/epoch pair
+                // (see toolpipeBridge decl) so the display path never races
+                // the main thread's own evaluate() over the ACEN cluster cache.
+                toolpipeBridge.resp.result = "";
+                toolpipeBridge.resp.error  = "";
+                if (!toolpipeBridge.submitAndWait())
+                    toolpipeBridge.resp.error = "timeout waiting for main thread";
+                if (toolpipeBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = toolpipeBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\""
+                                   ~ toolpipeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/registry" && request.method == "GET") {
             if (registryProvider !is null) {
