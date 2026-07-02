@@ -9504,14 +9504,28 @@ void main(string[] args) {
                     // longer at `pos` after the combo/letterbox blocks above.
                     // Guard zero-size avail: InvisibleButton asserts size != 0
                     // (a collapsed/degenerate cell). Nothing to hover then.
+                    //
+                    // Deliberately NOT AllowWhenBlockedByPopup (task 0214):
+                    // that flag used to make ##vpHit report hovered even while
+                    // the view-preset combo's dropdown popup floats on top of
+                    // the cell, so g_viewportWindowHovered stayed true and a
+                    // click on a popup Selectable leaked through
+                    // viewportInputAllowed() into scene picking / the active
+                    // tool (selection reset, ACEN/gizmo relocate to the click
+                    // point). Dropping it makes ##vpHit report NOT-hovered
+                    // while ANY popup blocks it, so viewport input is
+                    // suppressed for as long as a popup is open — the click
+                    // that operates the popup no longer also acts on the
+                    // scene. AllowWhenBlockedByActiveItem is kept (unrelated:
+                    // letterbox bars stay input-live while an item is active,
+                    // e.g. mid-drag).
                     if (avail.x > 0.0f && avail.y > 0.0f) {
                         ImGui.SetCursorScreenPos(pos);
                         ImGui.InvisibleButton("##vpHit" ~ to!string(k), avail,
                                               ImGuiButtonFlags.MouseButtonLeft |
                                               ImGuiButtonFlags.MouseButtonRight);
                         if (ImGui.IsItemHovered(
-                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
-                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem))
                             g_viewportWindowHovered = true;
                     }
                 }
