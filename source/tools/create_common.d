@@ -1,6 +1,6 @@
 module tools.create_common;
 
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, dot;
 import std.math : abs;
 
 import toolpipe.pipeline       : g_pipeCtx;
@@ -18,6 +18,17 @@ import snap_render : publishLastSnap, clearLastSnap;
 // Helpers shared by interactive Create-tools (BoxTool and the upcoming
 // SphereTool / CylinderTool / ConeTool / CapsuleTool / TorusTool / PenTool).
 // Extracted from BoxTool's private helpers so multiple Create-tools can share.
+//
+// Single-source note: `WorkplaneStage.evaluate` (source/toolpipe/stages/
+// workplane.d) is the ONE production source of the active construction
+// plane — the camera-facing auto pick only ever runs there, driven by a
+// live `SubjectPacket.viewport`. Every direct `pickMostFacingPlane` call
+// left in this file (`pickWorkplane`, `pickWorkplaneFrame`,
+// `pickWorkplaneGizmoBasis`) is a no-pipe / no-stage fallback — it only
+// fires when `g_pipeCtx` is unset (unit tests with no app loop) or the
+// stage can't be found, and exists purely so those callers still return a
+// sane plane in that degenerate case. Tools should always prefer the
+// pipe-routed accessors over calling `pickMostFacingPlane` themselves.
 // ---------------------------------------------------------------------------
 
 /// The construction plane selected at tool activation: the world axis plane
@@ -35,6 +46,25 @@ struct BuildPlane {
     Vec3 axis2;    /// unit — second in-plane axis (axis1 × normal direction)
 }
 
+/// Shared "most-facing basis axis" argmax, used by every construction-plane
+/// picker in the Create-tools (see the call-site list in each file's
+/// `choosePlane` — box/sphere/cone/cylinder/capsule/torus/tube/pen/
+/// vertex_place, plus `pickMostFacingPlane` and `planeDragDelta`). Returns
+/// only the winning INDEX (0=a, 1=b, 2=c) — callers keep their own
+/// index→axis mapping (signed or unsigned, local or world), so every call
+/// site's output is unchanged by routing through here.
+///
+/// Tie-break matches every existing call site's `>=` chain exactly: `a`
+/// wins ties over `b`/`c`; `b` wins ties over `c`.
+int mostFacingAxis(Vec3 camBack, Vec3 a, Vec3 b, Vec3 c) {
+    float da = abs(dot(camBack, a));
+    float db = abs(dot(camBack, b));
+    float dc = abs(dot(camBack, c));
+    if      (da >= db && da >= dc) return 0;
+    else if (db >= da && db >= dc) return 1;
+    else                            return 2;
+}
+
 /// Select the build plane based on which world axis the camera is most
 /// directly facing. Examines the view matrix's third row (forward vector)
 /// and picks the world-aligned plane whose normal is closest to the camera's
@@ -48,15 +78,11 @@ struct BuildPlane {
 /// PenTool uses this for the initial click then locks to that plane
 /// regardless of subsequent camera changes.
 BuildPlane pickMostFacingPlane(const ref Viewport vp) {
-    float avx = abs(vp.view[2]);
-    float avy = abs(vp.view[6]);
-    float avz = abs(vp.view[10]);
-    if (avx >= avy && avx >= avz) {
-        return BuildPlane(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
-    } else if (avy >= avx && avy >= avz) {
-        return BuildPlane(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1));
-    } else {
-        return BuildPlane(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0));
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    final switch (mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))) {
+        case 0: return BuildPlane(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+        case 1: return BuildPlane(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1));
+        case 2: return BuildPlane(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0));
     }
 }
 
@@ -144,44 +170,42 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
     return f;
 }
 
-/// Build a frame directly from the WorkplaneStage's internal state — no
-/// viewport, no pipeline.evaluate. For headless callers (prim.* commands
-/// invoked over HTTP / from a diff harness) where there's no live
-/// camera and the auto-mode camera-facing pick has no input. In auto-mode
-/// the returned frame is identity (world XZ); in manual / aligned mode
-/// the stage's stored center + rotation drive the basis.
+/// The default construction frame: world XZ plane, normal +Y, origin 0,
+/// isAuto=true. This is the ONE fallback identity — used whenever the
+/// stage can't be consulted (no pipe) or is itself in auto mode (there is
+/// no headless equivalent of the camera-facing pick — see
+/// `currentWorkplaneFrame`'s doc comment).
+private WorkplaneFrame worldXZFrame() {
+    return frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1),
+                           Vec3(0, 0, 0), true);
+}
+
+/// Build a WorkplaneFrame from a WorkplanePacket (stage state or its
+/// default). Shared by `currentWorkplaneFrame`'s stage-found path.
+private WorkplaneFrame frameFromPacket(const WorkplanePacket p) {
+    return frameFromBasis(p.normal, p.axis1, p.axis2, p.center, p.isAuto);
+}
+
+/// The frame accessor used by every plane-consuming tool: the `applyHeadless`
+/// of all 8 interactive Create-tools (sphere/cone/box/tube/torus/cylinder/
+/// capsule + arc), the interactive commit at `arc.d:317`, and the
+/// ACEN.Auto relocate plane at `transform.d:1036` all call this — it is a
+/// live production path, not a headless-only shim. `WorkplaneStage` is the
+/// single owner of the answer:
+///   - auto  ⇒ the `WorkplanePacket.init` default (world XZ, origin 0) —
+///     there is no headless equivalent of the camera-facing pick, so this
+///     is NOT the last-published camera-driven packet (see Risk 1 in
+///     doc/workplane_single_source_plan.md: reading the live camera pick
+///     here would tilt the ACEN.Auto relocate plane and break the
+///     auto-origin=focus behaviour).
+///   - non-auto ⇒ the stage's live basis + center.
+/// `g_pipeCtx is null` or the stage can't be found ⇒ the same world-XZ
+/// default (the one fallback identity, `worldXZFrame`).
 WorkplaneFrame currentWorkplaneFrame() {
-    WorkplaneFrame f;
-    if (g_pipeCtx is null) {
-        f.normal = Vec3(0, 1, 0);
-        f.axis1  = Vec3(1, 0, 0);
-        f.axis2  = Vec3(0, 0, 1);
-        f.origin = Vec3(0, 0, 0);
-        f.isAuto = true;
-        fillFrameMatrices(f);
-        return f;
-    }
-    if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
-        if (wp.isAuto) {
-            f.normal = Vec3(0, 1, 0);
-            f.axis1  = Vec3(1, 0, 0);
-            f.axis2  = Vec3(0, 0, 1);
-            f.origin = Vec3(0, 0, 0);
-            f.isAuto = true;
-        } else {
-            wp.currentBasis(f.normal, f.axis1, f.axis2);
-            f.origin = wp.center;
-            f.isAuto = false;
-        }
-    } else {
-        f.normal = Vec3(0, 1, 0);
-        f.axis1  = Vec3(1, 0, 0);
-        f.axis2  = Vec3(0, 0, 1);
-        f.origin = Vec3(0, 0, 0);
-        f.isAuto = true;
-    }
-    fillFrameMatrices(f);
-    return f;
+    if (g_pipeCtx is null) return worldXZFrame();
+    if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work))
+        return frameFromPacket(wp.currentState());
+    return worldXZFrame();
 }
 
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane

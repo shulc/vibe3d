@@ -169,6 +169,23 @@ class WorkplaneStage : Stage, Operator {
         rotateBasis(rotation, normal, axis1, axis2);
     }
 
+    /// Headless frame query — no viewport, no pipeline.evaluate(). This is
+    /// the single stage-owned answer `currentWorkplaneFrame` (tools/
+    /// create_common.d) builds on: non-auto returns the live stored basis +
+    /// center; auto returns the `WorkplanePacket.init` default (world XZ,
+    /// origin 0) since the camera-facing pick has no meaning without a
+    /// live viewport (there is no "headless auto camera"). Do NOT use this
+    /// for the interactive camera-facing auto pick — that only exists via
+    /// `evaluate()` with a live SubjectPacket.viewport.
+    WorkplanePacket currentState() const {
+        if (isAuto) return WorkplanePacket.init;
+        WorkplanePacket p;
+        rotateBasis(rotation, p.normal, p.axis1, p.axis2);
+        p.center = center;
+        p.isAuto = false;
+        return p;
+    }
+
     /// Local-workplane → world transform, column-major / OpenGL convention.
     /// Columns: [axis1, normal, axis2, center]. Local Y is the workplane
     /// normal (so a primitive built in the local XZ plane lies ON the

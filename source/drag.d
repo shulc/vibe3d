@@ -1,8 +1,9 @@
 module drag;
 
-import std.math : sqrt, abs;
+import std.math : sqrt, isNaN;
 import math;
 import handler : MoveHandler;
+import tools.create_common : mostFacingAxis;
 
 // ---------------------------------------------------------------------------
 // Shared drag-delta functions used by MoveTool and BoxTool (and any future
@@ -135,6 +136,15 @@ Vec3 screenAxisDelta(int mx,     int my,
 // Optional `axisX/axisY/axisZ` rotate the planes into the workplane basis —
 // "XY" then means the axisX×axisY plane, the most-facing pick chooses among
 // the basis axes. Default = world XYZ.
+//
+// Optional trailing `planeNormal` lets a caller that already holds the
+// active workplane normal (the one that produced axisX/axisY/axisZ) hand it
+// straight to the most-facing (dragAxis == 3) branch instead of having it
+// re-derived here. NaN (the default) means "no override — derive as
+// before". Scoped to dragAxis == 3 ONLY: the explicit-axis branches
+// (4/5/6) always keep their requested plane regardless of this argument,
+// so a future explicit-plane caller that also happens to pass a normal
+// can't silently lose its requested plane.
 Vec3 planeDragDelta(int mx,     int my,
                     int lastMX, int lastMY,
                     int dragAxis,
@@ -143,24 +153,25 @@ Vec3 planeDragDelta(int mx,     int my,
                     out bool skip,
                     Vec3 axisX = Vec3(1, 0, 0),
                     Vec3 axisY = Vec3(0, 1, 0),
-                    Vec3 axisZ = Vec3(0, 0, 1))
+                    Vec3 axisZ = Vec3(0, 0, 1),
+                    Vec3 planeNormal = Vec3(float.nan, float.nan, float.nan))
 {
     skip = false;
     Vec3 n;
     if      (dragAxis == 4) n = axisZ;
     else if (dragAxis == 5) n = axisX;
     else if (dragAxis == 6) n = axisY;
+    else if (!isNaN(planeNormal.x)) n = planeNormal;
     else {
         // Most-facing plane: pick the basis axis most aligned with the
         // camera-back direction (view's third row in column-major).
         const ref float[16] v2 = vp.view;
         Vec3 camBack = Vec3(v2[2], v2[6], v2[10]);
-        float aX = abs(camBack.x*axisX.x + camBack.y*axisX.y + camBack.z*axisX.z);
-        float aY = abs(camBack.x*axisY.x + camBack.y*axisY.y + camBack.z*axisY.z);
-        float aZ = abs(camBack.x*axisZ.x + camBack.y*axisZ.y + camBack.z*axisZ.z);
-        n = aX >= aY && aX >= aZ ? axisX
-          : aY >= aX && aY >= aZ ? axisY
-                                 : axisZ;
+        final switch (mostFacingAxis(camBack, axisX, axisY, axisZ)) {
+            case 0: n = axisX; break;
+            case 1: n = axisY; break;
+            case 2: n = axisZ; break;
+        }
     }
 
     Vec3 origCurr, dirCurr, origPrev, dirPrev;
