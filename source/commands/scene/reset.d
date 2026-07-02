@@ -22,8 +22,15 @@ class SceneReset : Command {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private EditMode*        editModePtr;
-    private View*            viewPtr;
     private void delegate()  onResetTool;
+    // Viewport reset (V3): mirrors onResetTool exactly — an optional,
+    // nullable delegate fired at the point the old direct `viewPtr.reset()`
+    // used to run. Wired by BOTH the `file.new` and `scene.reset` app
+    // factories to `() => vpm.resetToDefault()`, so every dispatch path
+    // (menu, keyboard shortcut, HTTP `/api/command`) resets the viewport
+    // uniformly with no per-site hook or command-id dispatch logic. Null in
+    // headless/unit construction (no-op).
+    private void delegate()  onViewportReset;
     // Document handle (layers Stage 2): reset collapses the document to EXACTLY
     // one default layer. Optional — null in unit/headless construction, where
     // the single-layer write-in-place below is already one layer. Undo restores
@@ -63,16 +70,17 @@ class SceneReset : Command {
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
-         EditMode* editModePtr, View* viewPtr,
-         void delegate() onResetTool) {
+         EditMode* editModePtr,
+         void delegate() onResetTool,
+         void delegate() onViewportReset = null) {
         super(mesh, view, editMode);
-        this.gpu         = gpu;
-        this.vc          = vc;
-        this.ec          = ec;
-        this.fc          = fc;
-        this.editModePtr = editModePtr;
-        this.viewPtr     = viewPtr;
-        this.onResetTool = onResetTool;
+        this.gpu             = gpu;
+        this.vc              = vc;
+        this.ec              = ec;
+        this.fc              = fc;
+        this.editModePtr     = editModePtr;
+        this.onResetTool      = onResetTool;
+        this.onViewportReset  = onViewportReset;
     }
 
     override string name() const { return "scene.reset"; }
@@ -157,7 +165,7 @@ class SceneReset : Command {
             case "cube":
             default:           *mesh = makeCube();      break;
         }
-        viewPtr.reset();
+        if (onViewportReset !is null) onViewportReset();
         mesh.resetSelection();
         if (promoteType) promoteType(EditMode.Vertices);
         else *editModePtr = EditMode.Vertices;
@@ -225,9 +233,10 @@ class SceneReset : Command {
             // clamps the index into range).
             document.setActive(prevActiveIndex);
         }
-        // Camera state isn't snapshotted — undoing a reset doesn't restore
-        // the camera, only the mesh. Viewport state isn't part of model
-        // undo.
+        // Camera/viewport state isn't snapshotted — undoing a reset doesn't
+        // restore the camera, only the mesh. The viewport reset is delegated
+        // to the app layer (onViewportReset, fired only from apply()) and is
+        // not part of model undo, same as before.
         refreshCaches();
         return true;
     }

@@ -108,6 +108,9 @@ class MeshLoadRaw : Command {
         m.resetSelection();
         *mesh = m;
 
+        // reset() now also normalizes the projection (Perspective + default
+        // preset), so a raw mesh load lands on the default view even if the
+        // viewport was in Ortho — fresh-scene framing.
         viewPtr.reset();
         mesh.resetSelection();
         if (promoteType) promoteType(EditMode.Vertices);

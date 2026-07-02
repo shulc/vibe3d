@@ -34,10 +34,12 @@ class View {
     void setSize(int w, int h) { width = w; height = h; }
     void setPos(int x, int y) { this.x = x; this.y = y; }
     void reset() {
-        azimuth   =  0.5f;
-        elevation =  0.4f;
-        distance  =  3.0f;
-        focus     =  Vec3(0, 0, 0);
+        azimuth    =  0.5f;
+        elevation  =  0.4f;
+        distance   =  3.0f;
+        focus      =  Vec3(0, 0, 0);
+        projKind   = ProjKind.Perspective;
+        viewPreset = ViewPreset.Perspective;
     }
 
     void orbit(int dx, int dy) {

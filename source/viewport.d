@@ -160,16 +160,26 @@ final class Viewport3D {
     int        masterId  = -1;
 
     // Phase-4: window-space cell rect (for the input router) and stable
-    // ImGui window id string.  winX/Y/W/H are set by the Viewport##k
-    // window loop (interactive) or by cellRectsFor (--test / analytic).
-    int    winX = 0, winY = 0, winW = 0, winH = 0;
+    // ImGui window id string.  The rect has ONE owner — the camera (`View`)
+    // itself, since `View.viewportWith(...)` already bakes x/y/width/height
+    // into every camera-matrix snapshot (viewport camera single-source,
+    // 0181). winX/Y/W/H are named forwarding views onto `camera.x/y/width/
+    // height`, not a second copy — set by the Viewport##k window loop
+    // (interactive) or by cellRectsFor (--test / analytic), same as before.
+    @property int  winX() const { return camera.x; }
+    @property void winX(int v)  { camera.x = v; }
+    @property int  winY() const { return camera.y; }
+    @property void winY(int v)  { camera.y = v; }
+    @property int  winW() const { return camera.width; }
+    @property void winW(int v)  { camera.width = v; }
+    @property int  winH() const { return camera.height; }
+    @property void winH(int v)  { camera.height = v; }
     string windowId;   // "Viewport##0" .. "Viewport##3"
 
     this(int cellIdx, int x, int y, int w, int h) {
         import std.conv : to;
-        camera   = new View(x, y, w, h);
+        camera   = new View(x, y, w, h);   // already sets x/y/width/height
         windowId = "Viewport##" ~ to!string(cellIdx);
-        winX = x;  winY = y;  winW = w;  winH = h;
     }
 
     /// Return the current camera snapshot, computed directly from the
@@ -182,6 +192,17 @@ final class Viewport3D {
 
     /// True when this viewport's camera is using orthographic projection.
     bool isOrtho() const { return camera.projKind == ProjKind.Ortho; }
+
+    /// Reset this cell's independence flags to the fully-independent baseline
+    /// (V4): own center, own scale, own rotate, no per-cell master. The one
+    /// body for a default that used to be duplicated across the field
+    /// initializers, applyLayout's per-cell sweep, and resetToDefault.
+    void resetIndependence() {
+        indCenter = true;
+        indScale  = true;
+        indRotate = true;
+        masterId  = -1;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -334,12 +355,8 @@ final class ViewportManager {
         // Phase-5: reset ALL cells to fully-independent before applying the new
         // preset.  This prevents independence flags from leaking across layout
         // switches (e.g. Quad → Single would keep indCenter=false on cells 0-2).
-        foreach (k; 0..4) {
-            views[k].indCenter = true;
-            views[k].indScale  = true;
-            views[k].indRotate = true;
-            views[k].masterId  = -1;
-        }
+        foreach (k; 0..4)
+            views[k].resetIndependence();
         masterId = 0;
 
         // GPU-init newly-live cells (requires GL context; no-op in unittest).
@@ -379,12 +396,13 @@ final class ViewportManager {
         // Compute initial analytic cell rects (the interactive window loop
         // overrides these once it runs; this serves as a pre-first-frame
         // fallback and as the authoritative rect for --test mode).
+        // The four property writes below ARE the rect's single owner
+        // (camera.x/y/width/height) — no separate camera.setSize needed.
         int[4] cxs, cys, cws, chs;
         cellRectsFor(p, lx, ly, lw, lh, cxs, cys, cws, chs);
         foreach (k; 0..cellCount) {
             views[k].winX = cxs[k];  views[k].winY = cys[k];
             views[k].winW = cws[k];  views[k].winH = chs[k];
-            views[k].camera.setSize(cws[k], chs[k]);
         }
 
         // Hygiene: clear drag origin; clamp activation indices to valid range.
@@ -403,24 +421,22 @@ final class ViewportManager {
     }
 
     /// Restore the launch default so viewport state never bleeds across the
-    /// shared `--test` instance (invoked by `/api/reset`): Single layout, one
-    /// live cell, active/hovered = 0, no in-flight drag, every cell back to
-    /// free perspective.  `applyLayout(Single)` already resets
+    /// shared `--test` instance (invoked by `/api/reset`, `file.new`, and bare
+    /// `scene.reset` via the `onViewportReset` delegate — the SOLE camera-reset
+    /// owner for these paths, V3): Single layout, one live cell, active/hovered
+    /// = 0, no in-flight drag, every cell back to free perspective.
+    /// `applyLayout(Single)` already resets
     /// cellCount/activeId/hoveredId/dragOriginId/ind*/masterId/rects+size (the
-    /// clamp forces activeId→0); this additionally clears any per-cell ortho
-    /// preset a prior Quad left on cells 0-2 (applyLayout's Single path does
-    /// not touch projKind/viewPreset, so without this a Quad→reset test would
-    /// leave the active cell stuck in Ortho Top and poison every later test).
+    /// clamp forces activeId→0); this additionally resets every cell's camera —
+    /// `View.reset()` now covers projKind/viewPreset too, so a prior Quad's
+    /// per-cell ortho preset on cells 0-2 can't survive into the next test.
     void resetToDefault() {
         foreach (k; 0..4) {
             // Reset every cell's camera to the default framing (focus=origin,
-            // standard az/el/distance).  SceneReset only resets the ONE cell its
-            // captured View* points at (the active cell at factory time), so a
-            // non-active cell could keep a stale focus and poison a later test
-            // that assumes a fresh camera (e.g. the Quad Top-cell centre-grab).
+            // standard az/el/distance/projKind/viewPreset). A non-active cell
+            // could otherwise keep a stale focus and poison a later test that
+            // assumes a fresh camera (e.g. the Quad Top-cell centre-grab).
             views[k].camera.reset();
-            views[k].camera.projKind   = ProjKind.Perspective;
-            views[k].camera.viewPreset = ViewPreset.Perspective;
         }
         applyLayout(LayoutPreset.Single);
     }
@@ -466,6 +482,15 @@ final class ViewportManager {
     /// Outside a gesture, falls back to the active cell's camera.
     ref View originCamera() {
         return views[dragOriginId >= 0 ? dragOriginId : activeId].camera;
+    }
+
+    /// True when the ORIGIN cell's camera (same fallback rule as
+    /// originCamera(): the current gesture's cell, or the active cell
+    /// outside a gesture) is orthographic (V7). Mirrors originCamera()'s
+    /// fallback but answers the `Viewport3D.isOrtho()` question instead,
+    /// since `View` itself has no `isOrtho()` — that state lives on the cell.
+    bool originIsOrtho() {
+        return views[dragOriginId >= 0 ? dragOriginId : activeId].isOrtho();
     }
 
     // ------------------------------------------------------------------
