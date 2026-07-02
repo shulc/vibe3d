@@ -111,6 +111,24 @@ unittest { // double-subdivide: 26 → ?, then check Euler holds
             "face " ~ i.to!string ~ " is not a quad after second subdivide");
 }
 
+unittest { // subdivide×4 on a fresh cube is deterministic: 8→26→98→386→1538
+           // verts / 6→24→96→384→1536 faces (Euler-correct throughout).
+           // Folded from the retired tests/test_perf_subdivide.d, which
+           // additionally timed the 4th pass — the wall-clock signal was
+           // near-zero (task 0199); this keeps the deterministic topology
+           // check without the timing loop.
+    resetCube();
+    foreach (_; 0 .. 4)
+        runCmd("mesh.subdivide");
+    auto m = model();
+    assert(m["vertexCount"].integer == 1538,
+        "subdivide×4 from a cube should produce 1538 verts; got "
+        ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 1536,
+        "subdivide×4 from a cube should produce 1536 faces; got "
+        ~ m["faceCount"].integer.to!string);
+}
+
 // ---------------------------------------------------------------------------
 // Selection-aware subdivide
 // ---------------------------------------------------------------------------
