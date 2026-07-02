@@ -140,6 +140,24 @@ struct DirtyKey {
     // every frame before comparing (see app.d N-cell FBO render loop), so the
     // zero default is inert; the --test branch never reaches the compare.
     float[16] toolMat = 0;
+
+    // Task 0206 (Quad/Split multi-cell overlays), Phase 1 — overlay-state
+    // term, mirrors toolMat above. `toolMat` alone only changes during a
+    // LIVE drag (gpuMatrix moves every motion frame); it stays at identity
+    // the moment a tool activates on an unchanged selection or a falloff
+    // gizmo is enabled/edited via the panel with no drag in flight — so
+    // without this term a non-owner Quad/Split cell would not refresh until
+    // its own camera moved, and a static gizmo would appear to not exist in
+    // that cell. This term captures the GIZMO's WORLD state (view-
+    // independent — the interactive render loop stamps the SAME value into
+    // every cell's key, exactly like toolMat), so "gizmo appeared / moved /
+    // falloff center or radius changed" is caught even at rest.
+    // `= 0` CTFE-constant defaults, inert in --test (Single layout never
+    // reaches the compare) — same neutrality argument as toolMat.
+    int       overlayKind    = 0; // bit0 = tool gizmo active, bit1 = falloff active
+    float[3]  overlayCenter  = 0; // gizmo pivot (ActionCenterPacket.center)
+    float[3]  falloffCenter  = 0;
+    float     falloffRadius  = 0;
 }
 
 unittest {
@@ -156,6 +174,76 @@ unittest {
 
     b.toolMat[12] = 1.5f; // e.g. a translate baked into the tool matrix
     assert(a != b, "keys differing only in toolMat must compare unequal");
+}
+
+unittest {
+    // Task 0206 Phase 1: DirtyKey must also discriminate on the overlay
+    // term alone — two keys identical in every other field (including
+    // toolMat, at rest = identity/0) but differing only in overlayKind or
+    // overlayCenter must compare unequal. This is the exact idle-freeze
+    // this term exists to fix: a tool/falloff gizmo appearing or moving
+    // with no live drag in progress (meshMutVer/selEpoch/toolMat all
+    // unchanged).
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.overlayKind = 1; // tool gizmo activated
+    assert(a != b, "keys differing only in overlayKind must compare unequal");
+
+    b.overlayKind = 0;
+    b.overlayCenter = [1.0f, 0.0f, 0.0f]; // gizmo pivot moved (no drag, e.g. panel edit)
+    assert(a != b, "keys differing only in overlayCenter must compare unequal");
+
+    b.overlayCenter = [0.0f, 0.0f, 0.0f];
+    b.falloffCenter = [0.0f, 0.0f, 2.0f];
+    assert(a != b, "keys differing only in falloffCenter must compare unequal");
+
+    b.falloffCenter = [0.0f, 0.0f, 0.0f];
+    b.falloffRadius = 3.0f;
+    assert(a != b, "keys differing only in falloffRadius must compare unequal");
+}
+
+// ---------------------------------------------------------------------------
+// overlayDrawOrder — task 0206 Phase 0/3
+// ---------------------------------------------------------------------------
+
+/// Cell visitation order for the N-cell overlay draw pass: every cell OTHER
+/// than `ownerId` first, then `ownerId` LAST.
+///
+/// The overlay-owner (active/origin) cell's `Interactive` draw pins the
+/// active tool's `cachedVp` + `ToolHandles` registration/hit-test state
+/// (see `Tool.draw`'s `visualOnly` doc comment) — that state must be the
+/// one resident when this frame's draw pass ends, since the NEXT frame's
+/// event handling reads it. Drawing the owner last guarantees that
+/// regardless of how many non-owner `Visual` replicas ran first.
+///
+/// `cellCount == 1` (the `--test` invariant, Single layout) always returns
+/// `[ownerId]` — a single-element order, so the visual (non-owner) branch is
+/// NEVER taken and the FBO render loop is byte-identical to pre-task-0206
+/// behaviour. Pure / no GC churn beyond the returned array.
+int[] overlayDrawOrder(int cellCount, int ownerId) {
+    int[] order;
+    order.reserve(cellCount);
+    foreach (k; 0 .. cellCount)
+        if (k != ownerId) order ~= k;
+    order ~= ownerId;
+    return order;
+}
+
+unittest {
+    // --test byte-neutrality guard: cellCount == 1 must return exactly
+    // [activeId] (the owner), never taking the multi-cell visual branch.
+    assert(overlayDrawOrder(1, 0) == [0]);
+}
+
+unittest {
+    // Quad (cellCount == 4): owner drawn last, every other cell visited
+    // exactly once, order of the non-owner cells otherwise unspecified but
+    // stable (ascending scan order here).
+    assert(overlayDrawOrder(4, 2) == [0, 1, 3, 2]);
+    assert(overlayDrawOrder(4, 0) == [1, 2, 3, 0]);
 }
 
 // ---------------------------------------------------------------------------

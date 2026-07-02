@@ -83,8 +83,23 @@ class PipeGizmoHost {
     ///
     /// Mirror of the falloff block in command_wrapper.d (~481-497), but
     /// using the passed-in `pool` and the mouse from queryMouse().
+    ///
+    /// `visualOnly` (task 0206, Quad/Split multi-cell overlays): true for a
+    /// NON-interactive replica draw in a viewport cell other than the
+    /// active/origin one. Skips `pool.begin()/registerHandles/setHaul/
+    /// update()` entirely — NOT just to avoid re-registering into a foreign
+    /// pool, but because `pool.update()` calls `Handler.setState(...)`
+    /// directly on the registered handle OBJECTS (`FalloffGizmo`'s own
+    /// handles — see `source/handler.d` `Handler.state`), which are SHARED
+    /// regardless of which `ToolHandles` pool did the registering. Hit-
+    /// testing under a foreign cell's `vp` with the ACTIVE mouse coords
+    /// would resolve a wrong hot part and stomp that shared state. Skipping
+    /// the whole cycle leaves the resident hot/captured state from the
+    /// owner cell's last real pass untouched; `gizmo.draw()` below still
+    /// renders the (world-derived) handles reprojected under `vp`, so the
+    /// SAME highlighted part appears correctly in every cell.
     void draw(const ref Shader shader, const ref Viewport vp,
-              const ref FalloffPacket fp, ToolHandles pool) {
+              const ref FalloffPacket fp, ToolHandles pool, bool visualOnly = false) {
         // Passive overlay (gradient lines / sphere wireframe / disc /
         // lasso polygon) — reads the dispatcher-built packet, drawn every
         // frame regardless of fp.enabled (the overlay free func no-ops on a
@@ -94,15 +109,17 @@ class PipeGizmoHost {
 
         if (gizmo is null) gizmo = new FalloffGizmo();
 
-        // Host arbiter cycle: register the falloff handles into the
-        // supplied pool, pin the hauled part during a drag, resolve one
-        // hot/captured winner, then render.
-        pool.begin();
-        gizmo.registerHandles(pool, FALLOFF_BASE, fp);
-        pool.setHaul(gizmo.isDragging() ? gizmo.capturedPart(FALLOFF_BASE) : -1);
-        int mx, my;
-        queryMouse(mx, my);
-        pool.update(mx, my, vp);
+        if (!visualOnly) {
+            // Host arbiter cycle: register the falloff handles into the
+            // supplied pool, pin the hauled part during a drag, resolve one
+            // hot/captured winner, then render.
+            pool.begin();
+            gizmo.registerHandles(pool, FALLOFF_BASE, fp);
+            pool.setHaul(gizmo.isDragging() ? gizmo.capturedPart(FALLOFF_BASE) : -1);
+            int mx, my;
+            queryMouse(mx, my);
+            pool.update(mx, my, vp);
+        }
         gizmo.draw(shader, vp, fp);
     }
 

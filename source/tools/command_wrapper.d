@@ -469,11 +469,12 @@ abstract class CommandWrapperTool : Tool {
     // the local import alias below. The earlier in-class duplicate was
     // missing lasso fields (would freeze the preview on Lasso edits).
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         // Cache the live viewport so pushFalloffToInner has projection
         // matrices ready (Screen / Lasso falloff types need them; the
-        // others ignore vp).
-        cachedVp = vp;
+        // others ignore vp). Task 0206: gate on the interactive (owner-cell)
+        // draw only — see Tool.draw's doc comment.
+        if (!visualOnly) cachedVp = vp;
 
         // Passive falloff overlay (gradient lines / sphere wireframe /
         // disc / lasso polygon). Reads the dispatcher-built vts —
@@ -485,9 +486,13 @@ abstract class CommandWrapperTool : Tool {
         // nothing to co-arbitrate — drive the host's FULL-cycle draw on the
         // host's OWN pool, exactly like the no-tool path (host.draw folds in
         // drawFalloffOverlay + the fp.enabled gate + the whole
-        // begin/register/setHaul/update/draw arbiter cycle).
+        // begin/register/setHaul/update/draw arbiter cycle). `visualOnly`
+        // forwards straight through — PipeGizmoHost.draw skips its own
+        // register/update cycle for a foreign-cell replica (see its doc
+        // comment); the click-point handle below is world-derived and safe
+        // to draw in every cell unconditionally.
         if (pipeGizmoHost !is null)
-            pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+            pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool(), visualOnly);
 
         // Click-point handle. Drawn only while LMB is held — appears
         // on first click, disappears on release. World size matches

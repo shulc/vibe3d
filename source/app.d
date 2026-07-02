@@ -260,6 +260,19 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 
 enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 
+// Task 0206 (Quad/Split multi-cell overlays) — overlay draw mode for a
+// single viewport cell's renderViewportSceneToFbo() call:
+//   None        — no tool/falloff active; nothing to draw.
+//   Visual      — a NON-owner cell's world-derived replica: activeTool.draw
+//                 / pipeGizmoHost.draw run with visualOnly=true, so gizmo
+//                 geometry still renders reprojected under THIS cell's vp,
+//                 but no cachedVp / ToolHandles registration+hit-test state
+//                 is written (would corrupt the owner cell's interaction —
+//                 see Tool.draw's doc comment in source/tool.d).
+//   Interactive — the overlay-owner (active/origin) cell: today's full path,
+//                 visualOnly=false. Pins cachedVp + runs the arbiter cycle.
+enum OverlayMode { None, Visual, Interactive }
+
 // ---------------------------------------------------------------------------
 // Module-level helpers
 // ---------------------------------------------------------------------------
@@ -7616,7 +7629,7 @@ void main(string[] args) {
     // hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode, bgGpuByLayer,
     // gridVao, gridOnlyVertCount, g_pipeCtx, etc.
     void renderViewportSceneToFbo(Viewport3D v, ref Viewport vp,
-                                   bool drawOverlays,
+                                   OverlayMode overlayMode,
                                    bool showVertHover, bool showEdgeHover,
                                    bool showFaceHover) {
         import bindbc.opengl;
@@ -7891,27 +7904,46 @@ void main(string[] args) {
         }
 
         // ---- Active tool / falloff gizmo draws ----
-        // Gated by drawOverlays: the tool/falloff draw runs in EXACTLY ONE
-        // cell per frame — the origin cell during a drag, the active cell
-        // when idle.  This pins every tool's cachedVp (written in draw())
-        // to the origin cell, which is the primary Step-B freeze mechanism.
-        // NOTE: activeTool.update() already ran in the main loop before this
-        // function is called, so handle-hover state is current.
-        if (drawOverlays) {
-            // Cat.drawOverlays (enum) — distinct from the bool drawOverlays
-            // param gating this block; the `Cat.` qualifier disambiguates
-            // for the human reader (compiler never confuses them).
+        // Task 0206 (Quad/Split multi-cell overlays): `overlayMode` decides
+        // WHICH cells draw and HOW:
+        //   - None:        nothing (no tool/falloff active for this cell's
+        //                   call, or a non-eligible tool — see the N-cell
+        //                   loop's `_multiCellEligible` gate).
+        //   - Interactive: the overlay-owner (origin cell during a drag,
+        //                   else the active cell) — today's exact path,
+        //                   visualOnly=false. Pins cachedVp + runs the
+        //                   arbiter cycle; this is the primary Step-B
+        //                   freeze mechanism for multi-viewport drag
+        //                   correctness.
+        //   - Visual:      every OTHER live cell, when the active tool/
+        //                   falloff is multi-cell-eligible (v1: XfrmTransformTool
+        //                   + CommandWrapperTool + no-tool falloff — see
+        //                   doc/quad_overlays_all_cells_plan.md). Draws the
+        //                   SAME world-derived gizmo geometry reprojected
+        //                   under THIS cell's vp with visualOnly=true — no
+        //                   cachedVp / ToolHandles writes, so this cell's
+        //                   draw cannot corrupt the owner cell's
+        //                   interaction state (see Tool.draw's doc comment).
+        // NOTE: activeTool.update() already ran ONCE in the main loop
+        // (against the origin snapshot) before this function is called for
+        // any cell this frame, so handle-hover state is current for all of
+        // them.
+        if (overlayMode != OverlayMode.None) {
+            // Cat.drawOverlays (enum) — distinct from the OverlayMode param
+            // gating this block; the `Cat.` qualifier disambiguates for the
+            // human reader (compiler never confuses them).
             auto zOv = g_perf.scope_(Cat.drawOverlays);
+            bool visualOnly = (overlayMode == OverlayMode.Visual);
             if (activeTool) {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-                activeTool.draw(shader, vp, vts);
+                activeTool.draw(shader, vp, vts, visualOnly);
             } else if (anyFalloffActive()) {
                 import toolpipe.packets : FalloffPacket;
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 FalloffPacket fp;
                 if (auto p = vts.get!FalloffPacket()) fp = *p;
                 if (fp.enabled)
-                    pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
+                    pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool(), visualOnly);
             }
         }
 
@@ -9448,15 +9480,38 @@ void main(string[] args) {
         // For each live cell: ensure FBO storage, compute a per-cell dirty key,
         // and call renderViewportSceneToFbo with that cell's camera snapshot.
         //
-        // Overlay (tool/falloff gizmo) draws in EXACTLY ONE cell per frame:
-        //   - origin cell while a gesture is live (dragOriginId >= 0)
-        //   - active cell at idle
-        // This pins every tool's cachedVp (written in draw()) to that one cell,
-        // which is the primary Step-B freeze for multi-viewport drag correctness.
+        // Task 0206 (Quad/Split multi-cell overlays): the tool/falloff gizmo
+        // now draws in EVERY live cell, each reprojected under its own
+        // camera — the overlay-OWNER cell (origin cell during a drag, else
+        // the active cell) draws INTERACTIVELY (visualOnly=false: pins
+        // cachedVp + runs the arbiter/hit-test cycle, exactly as before);
+        // every other MULTI-CELL-ELIGIBLE cell draws a VISUAL replica
+        // (visualOnly=true: world-derived geometry only, no interaction-
+        // state writes — see Tool.draw's doc comment in source/tool.d). The
+        // owner cell is visited LAST (`overlayDrawOrder`) so its Interactive
+        // draw is the one whose cachedVp / ToolHandles registration survives
+        // into the NEXT frame's event handling, regardless of how many
+        // Visual replicas ran first this frame.
         //
-        // --test: renders ONLY the active cell (Single layout ⇒ cell 0 = ph2).
+        // "Multi-cell-eligible" (v1 scope — see
+        // doc/quad_overlays_all_cells_plan.md): XfrmTransformTool (the
+        // transform gizmo) and CommandWrapperTool (Smooth/Jitter/Quantize —
+        // falloff-only, no gizmo bank) both got their `visualOnly` seam
+        // wired this task; so did the no-tool falloff-only path. Any OTHER
+        // active tool (edge/poly extrude, bevel, cone, bend, edge-extend,
+        // primitives, pen, …) keeps the pre-0206 single-cell-only behaviour
+        // (Visual is never assigned to them, so their draw() only ever runs
+        // in the owner cell) — deferred to v2, since each owns its own
+        // cachedVp / ToolHandles pair that hasn't been made visualOnly-safe.
+        //
+        // --test: renders ONLY the active cell (Single layout ⇒ cell 0 = ph2);
+        // cellCount == 1 ⇒ overlayDrawOrder returns [activeId], so the
+        // Visual branch below is NEVER taken — byte-identical to
+        // pre-task-0206 behaviour.
         {
-            import viewport : DirtyKey;
+            import viewport : DirtyKey, overlayDrawOrder;
+            import tools.xfrm_transform : XfrmTransformTool;
+            import tools.command_wrapper : CommandWrapperTool;
 
             auto _dsz = io.DisplaySize;
             float dpiX = (_dsz.x > 0.0f) ? cast(float)fbW / _dsz.x : 1.0f;
@@ -9466,13 +9521,61 @@ void main(string[] args) {
                             || (dragMode != DragMode.None)
                             || anyFalloffActive();
 
-            foreach (k; 0 .. vpm.cellCount) {
+            // Overlay-owner cell: origin cell during a drag, else the active
+            // cell. IDENTICAL computation to the pre-0206 `_drawOverlays`
+            // gate — same single cell, now just also the LAST one visited.
+            int overlayOwner = (vpm.dragOriginId >= 0) ? vpm.dragOriginId : vpm.activeId;
+
+            bool multiCellEligible =
+                   (cast(XfrmTransformTool)  activeTool !is null)
+                || (cast(CommandWrapperTool) activeTool !is null)
+                || (activeTool is null && anyFalloffActive());
+
+            // Phase 1 (task 0206): overlay-state stamp for DirtyKey, computed
+            // ONCE per frame — the gizmo's WORLD state is view-independent,
+            // so the SAME value is copied into every cell's key below
+            // (mirrors how `toolMat` is computed once and reused per cell).
+            // Only feeds the interactive dirty-key compare; skipped in
+            // --test (which never reaches that compare).
+            int   _ovlKind   = 0;
+            Vec3  _ovlCenter = Vec3(0, 0, 0);
+            Vec3  _flCenter  = Vec3(0, 0, 0);
+            float _flRadius  = 0.0f;
+            if (!testMode && (activeTool !is null || anyFalloffActive())) {
+                import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
+                SubjectPacket _osubj; VectorStack _ovts; buildToolVts(_osubj, _ovts);
+                if (activeTool !is null) {
+                    _ovlKind |= 1;
+                    if (auto p = _ovts.get!ActionCenterPacket()) _ovlCenter = p.center;
+                }
+                FalloffPacket _fp;
+                if (auto p = _ovts.get!FalloffPacket()) _fp = *p;
+                if (_fp.enabled) {
+                    _ovlKind |= 2;
+                    if (_fp.type == FalloffType.Element) {
+                        _flCenter = _fp.pickedCenter;
+                        _flRadius = _fp.pickedRadius;
+                    } else {
+                        _flCenter = _fp.center;
+                        _flRadius = _fp.size.x + _fp.size.y + _fp.size.z;
+                    }
+                }
+            }
+
+            foreach (k; overlayDrawOrder(vpm.cellCount, overlayOwner)) {
                 Viewport3D _cv = vpm.views[k];
 
-                // Overlay draws in exactly one cell (BLOCKER-1 Step-B freeze).
-                bool _drawOverlays = (vpm.dragOriginId >= 0)
-                                     ? (k == vpm.dragOriginId)
-                                     : (k == vpm.activeId);
+                // Per-cell overlay mode: Interactive for the owner cell,
+                // Visual for every other multi-cell-eligible cell, None
+                // otherwise (a v2 tool, or nothing active — matches the
+                // pre-0206 no-op when neither branch inside
+                // renderViewportSceneToFbo's overlay block would fire).
+                OverlayMode _ovMode;
+                if (k == overlayOwner)
+                    _ovMode = (activeTool !is null || anyFalloffActive())
+                            ? OverlayMode.Interactive : OverlayMode.None;
+                else
+                    _ovMode = multiCellEligible ? OverlayMode.Visual : OverlayMode.None;
 
                 // Per-cell camera snapshot.  x/y is the actual screen
                 // position so tool overlay math (cachedVp screen→world) uses
@@ -9494,7 +9597,7 @@ void main(string[] args) {
                 } else {
                     // Interactive: dirty-key compare (skip if nothing changed).
                     bool _hovK = (k == vpm.hoveredId);
-                    if (forceActive && _drawOverlays) {
+                    if (forceActive && k == overlayOwner) {
                         needRender = true;
                     } else {
                         DirtyKey _newKey;
@@ -9516,6 +9619,15 @@ void main(string[] args) {
                             TransformTool tt = cast(TransformTool)activeTool;
                             _newKey.toolMat = (tt !is null) ? tt.gpuMatrix : identityMatrix;
                         }
+                        // Task 0206 Phase 1: overlay-state term (see
+                        // DirtyKey.overlayKind doc) — catches an idle
+                        // gizmo/falloff appearing, moving, or resizing with
+                        // no live drag in progress (meshMutVer/selEpoch/
+                        // toolMat all unchanged in that case).
+                        _newKey.overlayKind   = _ovlKind;
+                        _newKey.overlayCenter = [_ovlCenter.x, _ovlCenter.y, _ovlCenter.z];
+                        _newKey.falloffCenter = [_flCenter.x, _flCenter.y, _flCenter.z];
+                        _newKey.falloffRadius = _flRadius;
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;
@@ -9531,7 +9643,7 @@ void main(string[] args) {
                     // per-call so it accumulates across every rendered cell
                     // this frame. No-op in the default build.
                     auto zFramesDraw = g_frames.phase(Phase.draw);
-                    renderViewportSceneToFbo(_cv, vpk, _drawOverlays,
+                    renderViewportSceneToFbo(_cv, vpk, _ovMode,
                         showVertHover && _hovK,
                         showEdgeHover && _hovK,
                         showFaceHover && _hovK);

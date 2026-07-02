@@ -380,10 +380,13 @@ public:
         }
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        // Task 0206: only the interactive (owner-cell) draw may pin
+        // cachedVp — a Quad/Split visual replica draws under a foreign
+        // cell's projection (see Tool.draw's doc comment).
+        if (!visualOnly) cachedVp = vp;
 
         // Orient the gizmo. When WRAPPED (XfrmTransformTool), the wrapper owns
         // the rendered basis: it calls setWrapperGizmoPose with the Model-C
@@ -424,10 +427,10 @@ public:
         // The banks never touch falloff.
     }
 
-    void drawAxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    void drawAxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
         if (wrapperRef is null) {
@@ -445,10 +448,10 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
-    void drawCompact(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    void drawCompact(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
         if (wrapperRef is null) {

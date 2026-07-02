@@ -116,7 +116,20 @@ class Tool : ParamProvider {
     // Called once per frame after the 3-D geometry has been drawn.
     // Receives the freshly-evaluated toolpipe vts; override to render
     // overlays (gizmos, falloff overlay, snap highlights, etc.).
-    void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {}
+    //
+    // `visualOnly` (task 0206, Quad/Split multi-cell overlays): true when
+    // this draw is a NON-interactive replica in a viewport cell OTHER than
+    // the active/origin one. World-derived geometry (handler.draw, the
+    // falloff gizmo, drawSnapOverlay/drawFalloffOverlay) still renders
+    // reprojected under `vp` — that's what makes the same gizmo appear
+    // correctly in every Quad cell. What MUST be skipped under
+    // `visualOnly` is anything that writes INTERACTION state read by this
+    // tool's event handlers under a FOREIGN cell's projection: `cachedVp`
+    // writes and any ToolHandles register/hit-test (`begin`/`add`/
+    // `update`) cycle. See XfrmTransformTool.draw + the Move/Rotate/Scale
+    // sub-tool draw()s for the gated sites. Default false ⇒ every existing
+    // call site (single-cell / `--test`) is byte-identical.
+    void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {}
 
     // Called once per frame inside the ImGui window to append tool UI.
     // Returns true if the user clicked the activation button.

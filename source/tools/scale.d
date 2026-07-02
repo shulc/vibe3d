@@ -618,10 +618,12 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        // Task 0206: gate cachedVp on the interactive (owner-cell) draw —
+        // see Tool.draw's doc comment.
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns the Model-C renderBasis (set every frame before
         // draw); standalone (no wrapper — unit tests) self-orients from the live
@@ -651,10 +653,10 @@ public:
         // The banks never touch falloff.
     }
 
-    void drawAxisBoxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    void drawAxisBoxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
         if (wrapperRef is null) {

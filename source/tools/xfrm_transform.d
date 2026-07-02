@@ -905,9 +905,14 @@ public:
         syncGpuMatrix();
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         if (!active) return;
-        cachedVp = vp;
+        // Task 0206: `cachedVp` is read by every event handler (screen→world
+        // drag math, hit-test) for THIS tool. Only the interactive (owner)
+        // cell's draw may pin it — a Quad/Split "visual" replica draws under
+        // a FOREIGN cell's projection and must not clobber it. See
+        // Tool.draw's doc comment (source/tool.d) for the full invariant.
+        if (!visualOnly) cachedVp = vp;
 
         // Live falloff packet: frozen snapshot during a gizmo drag, live
         // (so the overlay/handles follow a dragged endpoint) otherwise.
@@ -925,34 +930,54 @@ public:
         // ONE shared arbiter over the falloff handles (registered first =
         // highest priority) + every enabled gizmo bank, resolve ONE
         // hot/captured part, THEN render.
-        toolHandles.begin();
-        if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.registerInto(toolHandles, fp);
-        registerGizmoHandles(toolHandles);
-        // Capture precedence: a live falloff-handle drag wins; else the active
-        // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
-        if      (pipeGizmoHost !is null && pipeGizmoHost.isDragging())  toolHandles.setHaul(pipeGizmoHost.capturedPart());
-        else if (activeDrag is moveSub   && moveSub.dragAxis   >= 0)  toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
-        else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0)  toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
-        else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0)  toolHandles.suppress();
-        else                                                          toolHandles.setHaul(-1);
-        int hmx, hmy;
-        queryMouse(hmx, hmy);
-        toolHandles.update(hmx, hmy, vp);
+        //
+        // Task 0206: the WHOLE block is gated on `!visualOnly`, not just
+        // `begin()`/`add()` — `toolHandles.update(hmx, hmy, vp)` hit-tests
+        // under `vp` using the ACTIVE mouse coords (`queryMouse`), which are
+        // for the OWNER cell. Running it under a foreign cell's `vp` would
+        // resolve a WRONG hot/captured part and stomp the shared
+        // `ToolHandles.hot` / `Handler.state` that the real (owner-cell)
+        // arbiter pass just set — corrupting the highlight (and, if a haul
+        // is in flight, the drag) for every cell. Skipping the whole block
+        // under `visualOnly` leaves the resident registration/hot-state from
+        // the owner cell's most recent real pass untouched; the gizmo banks
+        // below still render (world-derived, reprojected under `vp`), so the
+        // SAME hot part highlights in every cell (MODO-faithful: Test only
+        // in the active cell, Draw — and the persistent hot state — in all).
+        if (!visualOnly) {
+            toolHandles.begin();
+            if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.registerInto(toolHandles, fp);
+            registerGizmoHandles(toolHandles);
+            // Capture precedence: a live falloff-handle drag wins; else the active
+            // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
+            if      (pipeGizmoHost !is null && pipeGizmoHost.isDragging())  toolHandles.setHaul(pipeGizmoHost.capturedPart());
+            else if (activeDrag is moveSub   && moveSub.dragAxis   >= 0)  toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
+            else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0)  toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
+            else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0)  toolHandles.suppress();
+            else                                                          toolHandles.setHaul(-1);
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
+        }
 
         if (flagT) {
-            if (compactPresentation()) moveSub.drawCompact (shader, vp, vts);
-            else                       moveSub.draw        (shader, vp, vts);
+            if (compactPresentation()) moveSub.drawCompact (shader, vp, vts, visualOnly);
+            else                       moveSub.draw        (shader, vp, vts, visualOnly);
         }
         if (flagR) {
-            if (compactPresentation()) rotateSub.drawPrincipalOnly(shader, vp, vts);
-            else                       rotateSub.draw             (shader, vp, vts);
+            if (compactPresentation()) rotateSub.drawPrincipalOnly(shader, vp, vts, visualOnly);
+            else                       rotateSub.draw             (shader, vp, vts, visualOnly);
         }
         if (flagS) {
-            if (compactPresentation()) scaleSub.drawAxisBoxesOnly(shader, vp, vts);
-            else                       scaleSub.draw             (shader, vp, vts);
+            if (compactPresentation()) scaleSub.drawAxisBoxesOnly(shader, vp, vts, visualOnly);
+            else                       scaleSub.draw             (shader, vp, vts, visualOnly);
         }
 
         // Falloff overlay + handles drawn ONCE, on top of the gizmo banks.
+        // `drawFalloffOverlay` is ImGui/world-derived (re-clips to `vp`);
+        // `pipeGizmoHost.drawGizmo` is ALREADY render-only (no begin/
+        // register/update — the arbiter cycle above owns that), so neither
+        // needs a `visualOnly` gate.
         drawFalloffOverlay(fp, vp);
         if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.drawGizmo(shader, vp, fp);
 

@@ -593,10 +593,12 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        // Task 0206: gate cachedVp on the interactive (owner-cell) draw —
+        // see Tool.draw's doc comment.
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns the Model-C renderBasis (= R_gesture·B0 for the
         // ring during a drag), set every frame before draw. Standalone (no
@@ -632,10 +634,10 @@ public:
         // The banks never touch falloff.
     }
 
-    void drawPrincipalOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    void drawPrincipalOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
-        cachedVp = vp;
+        if (!visualOnly) cachedVp = vp;
 
         // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
         if (wrapperRef is null) {
