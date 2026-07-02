@@ -117,22 +117,50 @@ abstract class Stage : ParamProvider {
     bool    paramEnabled(string name) const { return true; }
     void    onParamChanged(string name)      {}
 
+    /// Full STATIC universe of Params this stage can accept via setAttr /
+    /// tool.pipe.attr — the attr UNIVERSE, as opposed to `params()` which is
+    /// the panel VISIBILITY filter over it (task 0184 / audit-2 C2). The base
+    /// `knownAttrs()` / `defaultStageSetAttr` / `defaultStageListAttrs` below
+    /// all derive from THIS, not `params()`, so a stage that filters
+    /// `params()` for the Tool Properties panel (task 0167) still gets the
+    /// full wire surface for free.
+    ///
+    /// Default: `params()` — i.e. universe == visible set, correct for any
+    /// stage whose params() isn't filtered. A stage whose `params()` is
+    /// filtered by an active mode/type (so it under-reports its full attr
+    /// set) must EITHER override `fullParams()` to return the authoritative
+    /// full list and re-express `params()` as a filter over it (Constrain's
+    /// pattern — lets the base derive all three wire methods), OR hand-override
+    /// `knownAttrs`/`setAttr`/`listAttrs` itself (Falloff/ACEN — they carry
+    /// asymmetric read-only/array attrs the base derivation can't express, so
+    /// they fully shadow the base and their `fullParams()` is unused). Do NOT
+    /// leave a filtered `params()` with the base wire helpers still derived
+    /// from it — that silently under-reports the universe.
+    ///
+    /// Self-containment invariant: `fullParams()` MUST NOT call `params()`
+    /// (and vice-versa in a way that reintroduces the default) — the default
+    /// `params()` returns `[]` and the default `fullParams()` returns
+    /// `params()`, so a stage overriding only one side in terms of the other
+    /// risks infinite recursion. Constrain's shape (fullParams() concrete,
+    /// params() = a slice of fullParams()) is the safe pattern.
+    Param[] fullParams() { return params(); }
+
     /// Full STATIC universe of attribute names this stage can accept via
     /// setAttr / tool.pipe.attr — used by the forms-engine startup-strict
     /// validator (`source/forms.d`) to reject a YAML typo against the union
     /// of everything a stage can EVER expose, not the currently-filtered
     /// `params()` list.
     ///
-    /// Default: derive from the live `params()` names. That suffices for a
-    /// stage whose `params()` is a stable, type-independent list. A stage
-    /// whose `params()` is filtered by an active mode (so it under-reports
-    /// its full attr set) — and/or whose `setAttr` is a non-enumerable
-    /// switch — MUST override this to return its authoritative full list.
-    /// See FalloffStage.knownAttrs(): its params() is filtered per active
-    /// falloff type, so the default would reject valid cross-type attrs.
+    /// Default: derive from `fullParams()` names. A stage whose full attr
+    /// set includes attrs `fullParams()` can't express (array attrs,
+    /// read-only/write-only/derived attrs, a non-Param status-bar-owned
+    /// field) — and/or whose `setAttr` is a non-enumerable switch — MUST
+    /// override this to return its authoritative full list. See
+    /// ActionCenterStage.knownAttrs(): `cenX`/`userPlacedCenter`/
+    /// `clusterCount` have no symmetric Param representation.
     string[] knownAttrs() {
         string[] names;
-        foreach (ref p; params())
+        foreach (ref p; fullParams())
             names ~= p.name;
         return names;
     }
@@ -211,7 +239,7 @@ class NopStage : Stage {
 // ---------------------------------------------------------------------------
 
 bool defaultStageSetAttr(Stage s, string name, string value) {
-    foreach (ref p; s.params()) {
+    foreach (ref p; s.fullParams()) {
         if (p.name != name) continue;
         bool ok = parseInto(p, value);
         if (ok) s.onParamChanged(name);
@@ -222,7 +250,7 @@ bool defaultStageSetAttr(Stage s, string name, string value) {
 
 string[2][] defaultStageListAttrs(Stage s) {
     string[2][] out_;
-    foreach (ref p; s.params())
+    foreach (ref p; s.fullParams())
         out_ ~= [p.name, stringifyParam(p)];
     return out_;
 }
