@@ -109,6 +109,19 @@ struct FrameRec {
 /// frame the drag/command runs inside of.
 enum Phase { events, tool, cache, draw, upload, ui }
 
+/// By-value snapshot of `FrameProbe`'s running (ring-eviction-proof) counters
+/// — task 0198 (perf HUD). Declared at module scope (outside `version
+/// (PerfProbe)`) so both builds share one type; the default build's
+/// `FrameProbe.stats()` stub returns `FrameStatsSnapshot.init`.
+struct FrameStatsSnapshot {
+    long frameCount;
+    long hitch16;
+    long hitch33;
+    long sumAllocBytes;
+    long sumCollections;
+    long meshCacheRebuilds;
+}
+
 version (PerfProbe) {
 
     // -----------------------------------------------------------------------
@@ -348,6 +361,40 @@ version (PerfProbe) {
         /// and skipped entirely during an orbit).
         void bumpMeshCacheRebuild() { meshCacheRebuilds++; }
 
+        /// Copy the most-recent COMMITTED frames into `dst` (oldest→newest),
+        /// up to `min(dst.length, ringLen)`. Returns the number copied. No
+        /// allocation — `dst` is a caller-preallocated buffer (task 0198's
+        /// HUD owns one). Read-only; does not touch `ringPos`/`ringLen`.
+        //
+        // Same benign-tear, no-lock diagnostic-read contract as `toJson`
+        // above (and as documented on `endFrame`'s write-then-advance
+        // comment): this reader runs on the MAIN thread, before the current
+        // frame's own `endFrame()` commits, so the newest fully-written slot
+        // it can see is frame N-1 — no intra-thread race. It follows the same
+        // "read ringLen, then copy" discipline as the HTTP thread's `toJson`
+        // even though the HUD's own reads never race the writer (main thread
+        // reads its own prior writes) — kept for symmetry/defensiveness, not
+        // because it is required here. No new lock is added; ringLen/ringPos
+        // stay lock-free like every other FrameProbe field.
+        size_t copyRecent(FrameRec[] dst) {
+            size_t len = ringLen;   // snapshot once
+            size_t n = dst.length < len ? dst.length : len;
+            // newest committed slot is (ringPos - 1); walk back n, emit
+            // oldest-to-newest into dst[0 .. n).
+            foreach (i; 0 .. n) {
+                size_t src = (ringPos + Ring - (n - i)) % Ring;
+                dst[i] = ring[src];
+            }
+            return n;
+        }
+
+        /// By-value snapshot of the running (ring-eviction-proof) counters.
+        /// No allocation.
+        FrameStatsSnapshot stats() const {
+            return FrameStatsSnapshot(frameCount, hitch16, hitch33,
+                sumAllocBytes, sumCollections, meshCacheRebuilds);
+        }
+
         /// Close the frame: stamp totalNs + GC deltas, then commit `cur_`
         /// into the ring. Call BEFORE the present/flush conditional in
         /// app.d's main loop (see the phase-map note above) so `totalNs`
@@ -564,6 +611,8 @@ version (PerfProbe) {
         pragma(inline, true) PhaseTimer phase(Phase) { return PhaseTimer.init; }
         pragma(inline, true) void addPhase(Phase, long) {}
         pragma(inline, true) void bumpMeshCacheRebuild() {}
+        pragma(inline, true) size_t copyRecent(FrameRec[]) { return 0; }
+        pragma(inline, true) FrameStatsSnapshot stats() const { return FrameStatsSnapshot.init; }
         pragma(inline, true) void endFrame() {}
         pragma(inline, true) void reset() {}
         pragma(inline, true) string toJson() { return "{}"; }
