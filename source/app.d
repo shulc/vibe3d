@@ -1387,6 +1387,30 @@ void main(string[] args) {
         ImGui.GetStyle().ScaleAllSizes(uiScale);
     }
     ImGui.StyleColorsDark();
+    // Grey dock-node border/separator override. StyleColorsDark() ships a
+    // translucent grey ImGuiCol.Border/Separator; chromed panels already push
+    // their own black Border (pushPanelChromeStyle, popped on End), but the
+    // DockSpace host and dock-node split handles are never chrome-wrapped, so
+    // the dark-style grey shows through as an outline around panels / dock
+    // separators. This binding's ImGuiStyle (d_imgui/imgui_h.d) exposes no
+    // `Colors[]` array accessor (only ItemSpacing + ScaleAllSizes are bound),
+    // so `style.Colors[ImGuiCol.Border] = ...` is not callable here — instead
+    // push these colors once, right after StyleColorsDark(), and never pop:
+    // an unmatched PushStyleColor simply remains the top of that color's
+    // stack for the rest of the context's life, which is functionally a
+    // permanent style override (DestroyContext discards the stack on exit).
+    // Color-only ⇒ no effect on item rects/picking ⇒ --test-neutral.
+    {
+        ImVec4 black = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        ImGui.PushStyleColor(ImGuiCol.Border,            black);
+        // NB: BorderShadow is left at its transparent (alpha 0) default —
+        // forcing it opaque black would ADD a window-outer shadow (cimgui
+        // only draws the shadow when its alpha > 0), the opposite of intent.
+        ImGui.PushStyleColor(ImGuiCol.Separator,         black);
+        ImGui.PushStyleColor(ImGuiCol.SeparatorHovered,  black);
+        ImGui.PushStyleColor(ImGuiCol.SeparatorActive,   black);
+        ImGui.PushStyleColor(ImGuiCol.DockingEmptyBg,    black);
+    }
     ImGui_ImplSDL2_Init(window);
     ImGui_ImplOpenGL3_Init("#version 330 core");
     scope(exit) {
@@ -8191,6 +8215,17 @@ void main(string[] args) {
                     // Scoped rebuild: clear cell subtree, re-split central node.
                     ImGui.DockBuilderRemoveNodeChildNodes(cid);
                     dockSplitViewportCells(cid, vpm.layout);
+                    // Undock any dead cell windows [cellCount..4) — on a shrink
+                    // transition (e.g. SplitH->Single) DockBuilderRemoveNodeChildNodes
+                    // re-docks EVERY window that was in the cleared subtree back into
+                    // `cid` (per the binding's own contract), so a cell no longer
+                    // live (not re-docked by dockSplitViewportCells above, and never
+                    // Begin'ed by the window loop this frame) is left as a docked-but-
+                    // never-submitted window — the native dock update chokes on that
+                    // state. Float it (dock to node 0) so it carries no stale
+                    // membership. Harmless no-op for a never-created window name.
+                    foreach (deadK; vpm.cellCount .. 4)
+                        ImGui.DockBuilderDockWindow("Viewport##" ~ to!string(deadK), 0);
                     ImGui.DockBuilderFinish(dockspaceId);
                 } else {
                     // Fallback: no central node yet (shouldn't happen after the
@@ -8204,6 +8239,9 @@ void main(string[] args) {
                                                &rightId, &cid2);
                     ImGui.DockBuilderDockWindow("Layers", rightId);
                     dockSplitViewportCells(cid2, vpm.layout);
+                    // Same dead-cell undock as the scoped-rebuild branch above.
+                    foreach (deadK; vpm.cellCount .. 4)
+                        ImGui.DockBuilderDockWindow("Viewport##" ~ to!string(deadK), 0);
                     ImGui.DockBuilderFinish(dockspaceId);
                 }
             }
@@ -9237,6 +9275,14 @@ void main(string[] args) {
                 ImGuiWindowFlags.NoScrollWithMouse;
             foreach (k; 0 .. vpm.cellCount) {
                 Viewport3D _vcell = vpm.views[k];
+                // Zero padding + FBO-clear-colored WindowBg: the un-chromed
+                // Viewport##k window otherwise inherits the dark-style WindowBg
+                // (~black) and default 8px padding, which shows as a dark ring/
+                // letterbox frame around the 3D image. Match the FBO clear
+                // color (renderViewportSceneToFbo, glClearColor 0.36/0.40/0.42)
+                // so any letterbox bar blends with the rendered scene bg.
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, ImVec2(0, 0));
+                ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.36f, 0.40f, 0.42f, 1.0f));
                 if (ImGui.Begin("Viewport##" ~ to!string(k), null, vpWinFlags)) {
                     ImVec2 avail = ImGui.GetContentRegionAvail();
                     ImVec2 pos   = ImGui.GetCursorScreenPos();
@@ -9255,22 +9301,6 @@ void main(string[] args) {
                     // IS the interactive rect authority, no second write needed.
                     _vcell.camera.setSize(cast(int)avail.x, cast(int)avail.y);
                     _vcell.camera.setPos(cast(int)pos.x, cast(int)pos.y);
-
-                    // Full-avail invisible hover surface: drives
-                    // g_viewportWindowHovered so letterbox bars remain input-live.
-                    // Must come BEFORE the Image so IsItemHovered covers the whole
-                    // cell, not just the (possibly smaller) letterboxed image.
-                    // Guard zero-size avail: InvisibleButton asserts size != 0
-                    // (a collapsed/degenerate cell). Nothing to hover then.
-                    if (avail.x > 0.0f && avail.y > 0.0f) {
-                        ImGui.InvisibleButton("##vpHit" ~ to!string(k), avail,
-                                              ImGuiButtonFlags.MouseButtonLeft |
-                                              ImGuiButtonFlags.MouseButtonRight);
-                        if (ImGui.IsItemHovered(
-                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
-                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-                            g_viewportWindowHovered = true;
-                    }
 
                     // Centered letterbox: fit FBO logical size into avail,
                     // preserving the FBO aspect. Kills one-frame stretch when
@@ -9345,8 +9375,33 @@ void main(string[] args) {
                             ImGui.EndCombo();
                         }
                     }
+
+                    // Full-avail invisible hover surface: drives
+                    // g_viewportWindowHovered so letterbox bars remain input-live.
+                    // Submitted AFTER the projection combo (not before the Image,
+                    // as originally) so the combo claims HoveredId in its own
+                    // band first (this binding has no AllowOverlap flag for
+                    // buttons — see d_imgui/imgui_h.d ImGuiButtonFlags — so the
+                    // overlap must be resolved by submission order); the
+                    // full-cell button then wins hover everywhere the combo is
+                    // not. Re-anchor to the content origin: the cursor is no
+                    // longer at `pos` after the combo/letterbox blocks above.
+                    // Guard zero-size avail: InvisibleButton asserts size != 0
+                    // (a collapsed/degenerate cell). Nothing to hover then.
+                    if (avail.x > 0.0f && avail.y > 0.0f) {
+                        ImGui.SetCursorScreenPos(pos);
+                        ImGui.InvisibleButton("##vpHit" ~ to!string(k), avail,
+                                              ImGuiButtonFlags.MouseButtonLeft |
+                                              ImGuiButtonFlags.MouseButtonRight);
+                        if (ImGui.IsItemHovered(
+                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                            g_viewportWindowHovered = true;
+                    }
                 }
                 ImGui.End();
+                ImGui.PopStyleColor(1);
+                ImGui.PopStyleVar(1);
             }
         }
 
@@ -9416,6 +9471,13 @@ void main(string[] args) {
                         _newKey.hovF       = _hovK ? hoveredFace   : -1;
                         _newKey.fboW       = _cv.fbo.w;
                         _newKey.fboH       = _cv.fbo.h;
+                        // Live tool matrix (see DirtyKey.toolMat doc): keeps
+                        // inactive Quad/Split cells re-rendering during a drag
+                        // instead of freezing at the pre-drag mesh state.
+                        {
+                            TransformTool tt = cast(TransformTool)activeTool;
+                            _newKey.toolMat = (tt !is null) ? tt.gpuMatrix : identityMatrix;
+                        }
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;
