@@ -16,7 +16,54 @@ import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffSha
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
-import params            : Param, ParamHints, IntEnumEntry;
+import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
+
+// ---------------------------------------------------------------------------
+// Single-sourced enum token<->value tables (task 0184 / audit-2 C2). Each
+// table used to be rebuilt inline in params() (rebuilding a fresh array every
+// call) AND re-expressed as a hand-written parse switch (applySetAttr) AND a
+// hand-written stringify switch (*Label()) — three bodies per enum, prone to
+// drift. Now params()/applySetAttr/*Label() all read the SAME `static
+// immutable` table via wireTagForValue/valueForWireTag. `type` is NOT one of
+// these five — it is status-bar-owned (falloffTypeFromName/typeLabel), not a
+// Param.
+// ---------------------------------------------------------------------------
+private static immutable IntEnumEntry[] lassoEntries = [
+    IntEnumEntry(cast(int)LassoStyle.Freehand,  "freehand", "Freehand"),
+    IntEnumEntry(cast(int)LassoStyle.Rectangle, "rect",     "Rectangle"),
+    IntEnumEntry(cast(int)LassoStyle.Circle,    "circle",   "Circle"),
+    IntEnumEntry(cast(int)LassoStyle.Ellipse,   "ellipse",  "Ellipse"),
+];
+
+private static immutable IntEnumEntry[] elementModeEntries = [
+    IntEnumEntry(cast(int)ElementMode.Auto,    "auto",    "Auto"),
+    IntEnumEntry(cast(int)ElementMode.Vertex,  "vertex",  "Vertex"),
+    IntEnumEntry(cast(int)ElementMode.Edge,    "edge",    "Edge"),
+    IntEnumEntry(cast(int)ElementMode.Polygon, "polygon", "Polygon"),
+];
+
+private static immutable IntEnumEntry[] elementConnectEntries = [
+    IntEnumEntry(cast(int)ElementConnect.Ignore,          "ignore",          "Ignore"),
+    IntEnumEntry(cast(int)ElementConnect.UseConnectivity, "useConnectivity", "Use Connectivity"),
+    IntEnumEntry(cast(int)ElementConnect.Rigid,           "rigid",           "Rigid Connections"),
+    IntEnumEntry(cast(int)ElementConnect.EdgeLoops,       "edgeLoops",       "Edge Loops"),
+];
+
+private static immutable IntEnumEntry[] mixEntries = [
+    IntEnumEntry(cast(int)FalloffMix.Multiply, "multiply", "Multiply"),
+    IntEnumEntry(cast(int)FalloffMix.Add,      "add",      "Add"),
+    IntEnumEntry(cast(int)FalloffMix.Subtract, "subtract", "Subtract"),
+    IntEnumEntry(cast(int)FalloffMix.Max,      "max",      "Max"),
+    IntEnumEntry(cast(int)FalloffMix.Min,      "min",      "Min"),
+];
+
+private static immutable IntEnumEntry[] shapeEntries = [
+    IntEnumEntry(cast(int)FalloffShape.Linear,  "linear",  "Linear"),
+    IntEnumEntry(cast(int)FalloffShape.EaseIn,  "easeIn",  "Ease-In"),
+    IntEnumEntry(cast(int)FalloffShape.EaseOut, "easeOut", "Ease-Out"),
+    IntEnumEntry(cast(int)FalloffShape.Smooth,  "smooth",  "Smooth"),
+    IntEnumEntry(cast(int)FalloffShape.Custom,  "custom",  "Custom"),
+];
 
 // ---------------------------------------------------------------------------
 // FalloffStage — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
@@ -559,44 +606,12 @@ class FalloffStage : Stage, Operator {
         // HTTP `tool.pipe.attr falloff <attr>` still works for any
         // attr regardless of active type because FalloffStage's own
         // setAttr override (below) covers them all independently.
-        IntEnumEntry[] lassoEntries = [
-            IntEnumEntry(cast(int)LassoStyle.Freehand,  "freehand", "Freehand"),
-            IntEnumEntry(cast(int)LassoStyle.Rectangle, "rect",     "Rectangle"),
-            IntEnumEntry(cast(int)LassoStyle.Circle,    "circle",   "Circle"),
-            IntEnumEntry(cast(int)LassoStyle.Ellipse,   "ellipse",  "Ellipse"),
-        ];
-
-        IntEnumEntry[] elementModeEntries = [
-            IntEnumEntry(cast(int)ElementMode.Auto,    "auto",    "Auto"),
-            IntEnumEntry(cast(int)ElementMode.Vertex,  "vertex",  "Vertex"),
-            IntEnumEntry(cast(int)ElementMode.Edge,    "edge",    "Edge"),
-            IntEnumEntry(cast(int)ElementMode.Polygon, "polygon", "Polygon"),
-        ];
-
-        IntEnumEntry[] elementConnectEntries = [
-            IntEnumEntry(cast(int)ElementConnect.Ignore,          "ignore",          "Ignore"),
-            IntEnumEntry(cast(int)ElementConnect.UseConnectivity, "useConnectivity", "Use Connectivity"),
-            IntEnumEntry(cast(int)ElementConnect.Rigid,           "rigid",           "Rigid Connections"),
-            IntEnumEntry(cast(int)ElementConnect.EdgeLoops,       "edgeLoops",       "Edge Loops"),
-        ];
-
-        IntEnumEntry[] mixEntries = [
-            IntEnumEntry(cast(int)FalloffMix.Multiply, "multiply", "Multiply"),
-            IntEnumEntry(cast(int)FalloffMix.Add,      "add",      "Add"),
-            IntEnumEntry(cast(int)FalloffMix.Subtract, "subtract", "Subtract"),
-            IntEnumEntry(cast(int)FalloffMix.Max,      "max",      "Max"),
-            IntEnumEntry(cast(int)FalloffMix.Min,      "min",      "Min"),
-        ];
-
-        // Wire tags MUST match the applySetAttr("shape", …) switch.
-        IntEnumEntry[] shapeEntries = [
-            IntEnumEntry(cast(int)FalloffShape.Linear,  "linear",  "Linear"),
-            IntEnumEntry(cast(int)FalloffShape.EaseIn,  "easeIn",  "Ease-In"),
-            IntEnumEntry(cast(int)FalloffShape.EaseOut, "easeOut", "Ease-Out"),
-            IntEnumEntry(cast(int)FalloffShape.Smooth,  "smooth",  "Smooth"),
-            IntEnumEntry(cast(int)FalloffShape.Custom,  "custom",  "Custom"),
-        ];
-
+        //
+        // The five IntEnumEntry tables (lasso/elementMode/elementConnect/
+        // mix/shape) are single-sourced module-level `static immutable`
+        // constants (top of file) — read here AND by applySetAttr's parse
+        // legs AND by the *Label() stringifiers, so the tables can no longer
+        // drift apart the way three separately hand-written bodies could.
         Param[] ps;
         // Mix Mode — multi-falloff stacking control: how this falloff combines
         // with the others. A LONE falloff has nothing to combine with, so the
@@ -1091,13 +1106,12 @@ private:
                     anchorRing.length = 0;
                 return true;
             }
-            case "shape":
-                if      (value == "linear")  { shape = FalloffShape.Linear;  return true; }
-                else if (value == "easeIn")  { shape = FalloffShape.EaseIn;  return true; }
-                else if (value == "easeOut") { shape = FalloffShape.EaseOut; return true; }
-                else if (value == "smooth")  { shape = FalloffShape.Smooth;  return true; }
-                else if (value == "custom")  { shape = FalloffShape.Custom;  return true; }
-                return false;
+            case "shape": {
+                int v;
+                if (!valueForWireTag(shapeEntries, value, v)) return false;
+                shape = cast(FalloffShape)v;
+                return true;
+            }
             // ACTION pseudo-attrs (fire-only `cmd` form rows, not readable state
             // — deliberately absent from knownAttrs()/listAttrs()). Both operate
             // on the Linear start/end endpoints, so they no-op for other types.
@@ -1122,22 +1136,28 @@ private:
             case "axis":         return parseVec3(value, normal);
             case "dist":         pickedRadius = parseFloat(value); return true;
             case "steps":        steps = cast(int)parseFloat(value); return true;
-            case "connect":
-                if      (value == "ignore")          { connect = ElementConnect.Ignore;          return true; }
-                else if (value == "useConnectivity") { connect = ElementConnect.UseConnectivity; return true; }
-                else if (value == "rigid")           { connect = ElementConnect.Rigid;           return true; }
-                else if (value == "edgeLoops")       { connect = ElementConnect.EdgeLoops;        return true; }
-                return false;
-            case "mode":
+            case "connect": {
+                int v;
+                if (!valueForWireTag(elementConnectEntries, value, v)) return false;
+                connect = cast(ElementConnect)v;
+                return true;
+            }
+            case "mode": {
                 // 4-mode `element-mode` enum: auto / vertex / edge / polygon.
                 // Retired tokens autoCent / edgeCent / polyCent are accepted
-                // as aliases for their bare equivalents so old scripts keep
-                // working; listAttrs echoes back the bare token.
-                if      (value == "auto"     || value == "autoCent") { elementMode = ElementMode.Auto;    return true; }
-                else if (value == "vertex")                          { elementMode = ElementMode.Vertex;  return true; }
-                else if (value == "edge"     || value == "edgeCent") { elementMode = ElementMode.Edge;    return true; }
-                else if (value == "polygon"  || value == "polyCent") { elementMode = ElementMode.Polygon; return true; }
-                return false;
+                // as PARSE-ONLY aliases for their bare equivalents (normalised
+                // BEFORE the table lookup) so old scripts keep working;
+                // listAttrs still echoes back the bare token (the table has
+                // no alias entries — normalisation happens here, once).
+                string tok = value;
+                if      (tok == "autoCent") tok = "auto";
+                else if (tok == "edgeCent") tok = "edge";
+                else if (tok == "polyCent") tok = "polygon";
+                int v;
+                if (!valueForWireTag(elementModeEntries, tok, v)) return false;
+                elementMode = cast(ElementMode)v;
+                return true;
+            }
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
             case "screenSize": screenSize   = parseFloat(value); return true;
@@ -1145,25 +1165,24 @@ private:
                 if      (value == "true"  || value == "1") { transparent = true;  return true; }
                 else if (value == "false" || value == "0") { transparent = false; return true; }
                 return false;
-            case "lassoStyle":
-                if      (value == "freehand") { lassoStyle = LassoStyle.Freehand;  return true; }
-                else if (value == "rect")     { lassoStyle = LassoStyle.Rectangle; return true; }
-                else if (value == "circle")   { lassoStyle = LassoStyle.Circle;    return true; }
-                else if (value == "ellipse")  { lassoStyle = LassoStyle.Ellipse;   return true; }
-                return false;
+            case "lassoStyle": {
+                int v;
+                if (!valueForWireTag(lassoEntries, value, v)) return false;
+                lassoStyle = cast(LassoStyle)v;
+                return true;
+            }
             case "softBorder": softBorderPx = parseFloat(value); return true;
             case "in":         in_          = parseFloat(value); return true;
             case "out":        out_         = parseFloat(value); return true;
-            case "mix":
+            case "mix": {
                 // Multi-falloff Mix Mode wire keys (5): multiply / add /
                 // subtract / max / min. Bogus values are refused so the
                 // field keeps its previous value (mirrors `connect`/`mode`).
-                if      (value == "multiply") { mix = FalloffMix.Multiply; return true; }
-                else if (value == "add")      { mix = FalloffMix.Add;      return true; }
-                else if (value == "subtract") { mix = FalloffMix.Subtract; return true; }
-                else if (value == "max")      { mix = FalloffMix.Max;      return true; }
-                else if (value == "min")      { mix = FalloffMix.Min;      return true; }
-                return false;
+                int v;
+                if (!valueForWireTag(mixEntries, value, v)) return false;
+                mix = cast(FalloffMix)v;
+                return true;
+            }
             case "lassoPoly":  return parseLassoPoly(value);
             case "lassoClear":
                 lassoPolyX.length = 0;
@@ -1242,51 +1261,29 @@ private:
         }
     }
 
+    // The five table-backed stringifiers below all read the single-sourced
+    // module-level tables (top of file) via wireTagForValue — the same
+    // tables applySetAttr's parse legs read via valueForWireTag. `type` is
+    // NOT one of these (see typeLabel() below, which stays on its own
+    // falloffTypeFromName path — `type` isn't a Param table).
     string connectLabel() const {
-        final switch (connect) {
-            case ElementConnect.Ignore:          return "ignore";
-            case ElementConnect.UseConnectivity: return "useConnectivity";
-            case ElementConnect.Rigid:           return "rigid";
-            case ElementConnect.EdgeLoops:       return "edgeLoops";
-        }
+        return wireTagForValue(elementConnectEntries, cast(int)connect);
     }
 
     string elementModeLabel() const {
-        final switch (elementMode) {
-            case ElementMode.Auto:    return "auto";
-            case ElementMode.Vertex:  return "vertex";
-            case ElementMode.Edge:    return "edge";
-            case ElementMode.Polygon: return "polygon";
-        }
+        return wireTagForValue(elementModeEntries, cast(int)elementMode);
     }
 
     string shapeLabel() const {
-        final switch (shape) {
-            case FalloffShape.Linear:  return "linear";
-            case FalloffShape.EaseIn:  return "easeIn";
-            case FalloffShape.EaseOut: return "easeOut";
-            case FalloffShape.Smooth:  return "smooth";
-            case FalloffShape.Custom:  return "custom";
-        }
+        return wireTagForValue(shapeEntries, cast(int)shape);
     }
 
     string mixLabel() const {
-        final switch (mix) {
-            case FalloffMix.Multiply: return "multiply";
-            case FalloffMix.Add:      return "add";
-            case FalloffMix.Subtract: return "subtract";
-            case FalloffMix.Max:      return "max";
-            case FalloffMix.Min:      return "min";
-        }
+        return wireTagForValue(mixEntries, cast(int)mix);
     }
 
     string lassoStyleLabel() const {
-        final switch (lassoStyle) {
-            case LassoStyle.Freehand:  return "freehand";
-            case LassoStyle.Rectangle: return "rect";
-            case LassoStyle.Circle:    return "circle";
-            case LassoStyle.Ellipse:   return "ellipse";
-        }
+        return wireTagForValue(lassoEntries, cast(int)lassoStyle);
     }
 
     void publishState() {
@@ -1730,6 +1727,81 @@ unittest {
     assert(known.length == listed.length);
     foreach (i, k; known)
         assert(k == listed[i][0]);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0184 / audit-2 C2 — OBJ-3: mandatory round-trip / alias / NEGATIVE /
+// table-completeness asserts for the five single-sourced enum tables (lasso /
+// elementMode / elementConnect / mix / shape). The 0179 invariant above only
+// proves listAttrs()'s CURRENT value round-trips; it can't catch a dropped
+// parse alias, a widened accept-set, or lost `final switch` exhaustiveness
+// (a table lookup with a string/`%d` fallback has none by construction) —
+// this block restores all three.
+// ---------------------------------------------------------------------------
+unittest {
+    import params : tableCoversEnum;
+
+    auto fs = new FalloffStage();
+
+    // --- Round-trip every wire tag through setAttr -> *Label() -------------
+    foreach (tag; ["freehand", "rect", "circle", "ellipse"]) {
+        assert(fs.applySetAttr("lassoStyle", tag), "lassoStyle " ~ tag ~ " rejected");
+        assert(fs.lassoStyleLabel() == tag);
+    }
+    foreach (tag; ["auto", "vertex", "edge", "polygon"]) {
+        assert(fs.applySetAttr("mode", tag), "mode " ~ tag ~ " rejected");
+        assert(fs.elementModeLabel() == tag);
+    }
+    foreach (tag; ["ignore", "useConnectivity", "rigid", "edgeLoops"]) {
+        assert(fs.applySetAttr("connect", tag), "connect " ~ tag ~ " rejected");
+        assert(fs.connectLabel() == tag);
+    }
+    foreach (tag; ["multiply", "add", "subtract", "max", "min"]) {
+        assert(fs.applySetAttr("mix", tag), "mix " ~ tag ~ " rejected");
+        assert(fs.mixLabel() == tag);
+    }
+    foreach (tag; ["linear", "easeIn", "easeOut", "smooth", "custom"]) {
+        assert(fs.applySetAttr("shape", tag), "shape " ~ tag ~ " rejected");
+        assert(fs.shapeLabel() == tag);
+    }
+
+    // --- Alias asserts: retired `mode` tokens accepted, bare token echoed --
+    assert(fs.applySetAttr("mode", "autoCent"));
+    assert(fs.elementModeLabel() == "auto");
+    assert(fs.applySetAttr("mode", "edgeCent"));
+    assert(fs.elementModeLabel() == "edge");
+    assert(fs.applySetAttr("mode", "polyCent"));
+    assert(fs.elementModeLabel() == "polygon");
+
+    // --- (a) NEGATIVE: a bogus token is rejected for every enum leg --------
+    assert(!fs.applySetAttr("lassoStyle", "bogus"));
+    assert(!fs.applySetAttr("mode",       "bogus"));
+    assert(!fs.applySetAttr("connect",    "bogus"));
+    assert(!fs.applySetAttr("mix",        "bogus"));
+    assert(!fs.applySetAttr("shape",      "bogus"));
+
+    // --- (b) TABLE-COMPLETENESS: every enum member has a table entry -------
+    assert(tableCoversEnum(lassoEntries, [
+        cast(int)LassoStyle.Freehand, cast(int)LassoStyle.Rectangle,
+        cast(int)LassoStyle.Circle,   cast(int)LassoStyle.Ellipse,
+    ]));
+    assert(tableCoversEnum(elementModeEntries, [
+        cast(int)ElementMode.Auto, cast(int)ElementMode.Vertex,
+        cast(int)ElementMode.Edge, cast(int)ElementMode.Polygon,
+    ]));
+    assert(tableCoversEnum(elementConnectEntries, [
+        cast(int)ElementConnect.Ignore, cast(int)ElementConnect.UseConnectivity,
+        cast(int)ElementConnect.Rigid,  cast(int)ElementConnect.EdgeLoops,
+    ]));
+    assert(tableCoversEnum(mixEntries, [
+        cast(int)FalloffMix.Multiply, cast(int)FalloffMix.Add,
+        cast(int)FalloffMix.Subtract, cast(int)FalloffMix.Max, cast(int)FalloffMix.Min,
+    ]));
+    assert(tableCoversEnum(shapeEntries, [
+        cast(int)FalloffShape.Linear, cast(int)FalloffShape.EaseIn,
+        cast(int)FalloffShape.EaseOut, cast(int)FalloffShape.Smooth,
+        cast(int)FalloffShape.Custom,
+    ]));
 }
 
 // ---------------------------------------------------------------------------

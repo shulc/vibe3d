@@ -6,7 +6,7 @@ import math    : Vec3, Viewport, screenRay, screenPointToRay, rayPlaneIntersect,
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
-import params           : Param, IntEnumEntry;
+import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
@@ -156,6 +156,61 @@ class ActionCenterStage : Stage, Operator {
         Back   = 3, Front  = 4,
         Left   = 5, Right  = 6,
     }
+
+    // ------------------------------------------------------------------
+    // Single-sourced `mode` / `selectSubMode` token<->value tables (task
+    // 0184 / audit-2 C2). `mode` needs TWO tables — this IS the
+    // universe-vs-visibility split for an enum, not just a hoist:
+    //   - `modeEntries`     (11, no `manual`) — the Tool Properties PANEL
+    //     dropdown (params()). `manual` has no dedicated popup entry (it's
+    //     reached via `cenX`/`cenY`/`cenZ` implicitly promoting the mode —
+    //     see applySetAttr — not a direct panel pick).
+    //   - `modeEntriesFull` (12, incl `manual`) — the WIRE universe read by
+    //     `modeLabel()` (stringify) and `applySetAttr("mode", ...)` (parse).
+    // Both tables are read-only lookups via wireTagForValue/valueForWireTag;
+    // neither can drift from the other's ENTRIES since `modeEntries` is not
+    // duplicated data — it is simply a strict subset chosen for panel
+    // display. See the enforcement unittest at the bottom of this file
+    // (replaces the retired "KEEP IN SYNC" comment on knownAttrs()).
+    // ------------------------------------------------------------------
+    private static immutable IntEnumEntry[] modeEntries = [
+        IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
+        IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
+        IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
+        IntEnumEntry(cast(int)Mode.Border,     "border",     "Selection Border"),
+        IntEnumEntry(cast(int)Mode.SelectAuto, "selectauto", "Selection Center Auto Axis"),
+        IntEnumEntry(cast(int)Mode.Element,    "element",    "Element"),
+        IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
+        IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
+        IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
+        IntEnumEntry(cast(int)Mode.Pivot,      "pivot",      "Pivot"),
+        IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
+    ];
+
+    private static immutable IntEnumEntry[] modeEntriesFull = [
+        IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
+        IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
+        IntEnumEntry(cast(int)Mode.SelectAuto, "selectauto", "Selection Center Auto Axis"),
+        IntEnumEntry(cast(int)Mode.Element,    "element",    "Element"),
+        IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
+        IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
+        IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
+        IntEnumEntry(cast(int)Mode.Border,     "border",     "Selection Border"),
+        IntEnumEntry(cast(int)Mode.Manual,     "manual",     "Manual"),
+        IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
+        IntEnumEntry(cast(int)Mode.Pivot,      "pivot",      "Pivot"),
+        IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
+    ];
+
+    private static immutable IntEnumEntry[] selectSubModeEntries = [
+        IntEnumEntry(cast(int)SelectSubMode.Center, "center", "Center"),
+        IntEnumEntry(cast(int)SelectSubMode.Top,    "top",    "Top"),
+        IntEnumEntry(cast(int)SelectSubMode.Bottom, "bottom", "Bottom"),
+        IntEnumEntry(cast(int)SelectSubMode.Back,   "back",   "Back"),
+        IntEnumEntry(cast(int)SelectSubMode.Front,  "front",  "Front"),
+        IntEnumEntry(cast(int)SelectSubMode.Left,   "left",   "Left"),
+        IntEnumEntry(cast(int)SelectSubMode.Right,  "right",  "Right"),
+    ];
 
     // Default = None — a pristine pulldown state (no
     // center.* / axis.* tools registered until the user picks a
@@ -359,19 +414,6 @@ public:
     // live mode so the dropdown previews the active mode.
     override Param[] params() {
         if (mode == Mode.None) return [];
-        IntEnumEntry[] modeEntries = [
-            IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
-            IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
-            IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
-            IntEnumEntry(cast(int)Mode.Border,     "border",     "Selection Border"),
-            IntEnumEntry(cast(int)Mode.SelectAuto, "selectauto", "Selection Center Auto Axis"),
-            IntEnumEntry(cast(int)Mode.Element,    "element",    "Element"),
-            IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
-            IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
-            IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
-            IntEnumEntry(cast(int)Mode.Pivot,      "pivot",      "Pivot"),
-            IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
-        ];
         Param[] ps;
         ps ~= Param.intEnum_("mode", "Action Center",
                              cast(int*)&mode, modeEntries,
@@ -384,8 +426,13 @@ public:
     // set below — so the base Stage.knownAttrs() default (params() names)
     // would reject perfectly valid attrs like cenX / userPlacedCenter /
     // selectSubMode at boot. Mirror FalloffStage.knownAttrs(): enumerate
-    // everything applySetAttr accepts. KEEP IN SYNC with the applySetAttr
-    // switch and listAttrs().
+    // everything applySetAttr accepts. This asymmetric attr set (read-only
+    // `clusterCount` in listAttrs(), write-only `userPlacedCenter`, a
+    // non-Param `mode` alias token `manual`) can't be base-derived from a
+    // `fullParams()` the way ConstrainStage's symmetric fields could (task
+    // 0184 / audit-2 C2) — enforced instead of hand-verified by the
+    // enforcement unittest at the bottom of this file (replaces the retired
+    // "KEEP IN SYNC" comment).
     override string[] knownAttrs() {
         return [
             "mode", "cenX", "cenY", "cenZ",
@@ -1423,24 +1470,14 @@ private:
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
-                Mode m;
-                if      (value == "auto")       m = Mode.Auto;
-                else if (value == "select")     m = Mode.Select;
-                else if (value == "selectauto") m = Mode.SelectAuto;
-                else if (value == "element")    m = Mode.Element;
-                else if (value == "local")      m = Mode.Local;
-                else if (value == "origin")     m = Mode.Origin;
-                else if (value == "screen")     m = Mode.Screen;
-                else if (value == "border")     m = Mode.Border;
-                else if (value == "manual")     m = Mode.Manual;
-                else if (value == "none")       m = Mode.None;
-                else if (value == "pivot")      m = Mode.Pivot;
-                else if (value == "parent")     m = Mode.Parent;
-                else return false;
+                // 12-token WIRE universe (incl `manual`, which has no panel
+                // entry — see modeEntriesFull's doc above).
+                int v;
+                if (!valueForWireTag(modeEntriesFull, value, v)) return false;
                 // Switching mode (including Auto→Auto re-pick) clears the
                 // Auto-userPlaced sub-state, as a popup re-click does, and the
                 // display settle (a new mode recomputes the center afresh).
-                mode = m;
+                mode = cast(Mode)v;
                 userPlaced       = false;
                 elementVerts_    = null;
                 softPlaced       = false;
@@ -1500,47 +1537,25 @@ private:
                 return true;
             }
             case "selectSubMode": {
-                if      (value == "center") selectSubMode = SelectSubMode.Center;
-                else if (value == "top")    selectSubMode = SelectSubMode.Top;
-                else if (value == "bottom") selectSubMode = SelectSubMode.Bottom;
-                else if (value == "back")   selectSubMode = SelectSubMode.Back;
-                else if (value == "front")  selectSubMode = SelectSubMode.Front;
-                else if (value == "left")   selectSubMode = SelectSubMode.Left;
-                else if (value == "right")  selectSubMode = SelectSubMode.Right;
-                else return false;
+                int v;
+                if (!valueForWireTag(selectSubModeEntries, value, v)) return false;
+                selectSubMode = v;
                 return true;
             }
             default: return false;
         }
     }
 
+    // Table-backed stringifiers reading the single-sourced tables declared
+    // near `enum Mode` / `enum SelectSubMode` above (task 0184 / audit-2 C2).
+    // `modeLabel` reads the 12-entry FULL table (not the 11-entry panel
+    // table) since the wire format must round-trip `manual` too.
     string modeLabel() const {
-        final switch (mode) {
-            case Mode.Auto:       return "auto";
-            case Mode.Select:     return "select";
-            case Mode.SelectAuto: return "selectauto";
-            case Mode.Element:    return "element";
-            case Mode.Local:      return "local";
-            case Mode.Origin:     return "origin";
-            case Mode.Screen:     return "screen";
-            case Mode.Border:     return "border";
-            case Mode.Manual:     return "manual";
-            case Mode.None:       return "none";
-            case Mode.Pivot:      return "pivot";
-            case Mode.Parent:     return "parent";
-        }
+        return wireTagForValue(modeEntriesFull, cast(int)mode);
     }
 
     string selectSubModeLabel() const {
-        final switch (cast(SelectSubMode)selectSubMode) {
-            case SelectSubMode.Center: return "center";
-            case SelectSubMode.Top:    return "top";
-            case SelectSubMode.Bottom: return "bottom";
-            case SelectSubMode.Back:   return "back";
-            case SelectSubMode.Front:  return "front";
-            case SelectSubMode.Left:   return "left";
-            case SelectSubMode.Right:  return "right";
-        }
+        return wireTagForValue(selectSubModeEntries, selectSubMode);
     }
 
     void publishState() {
@@ -1573,6 +1588,112 @@ unittest {
     // Back to None → hidden again.
     acs.mode = ActionCenterStage.Mode.None;
     assert(acs.params().length == 0, "None (reset): expected 0 params");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0184 / audit-2 C2 — ActionCenterStage enforcement unittest, replacing
+// the retired "KEEP IN SYNC with the applySetAttr switch and listAttrs()"
+// comment on knownAttrs(). ACEN's setAttr/listAttrs/knownAttrs stay
+// hand-written overrides (the attr set is genuinely asymmetric: `cenX/Y/Z`
+// READ != the `manualCenter` they WRITE, `clusterCount` is read-only,
+// `userPlacedCenter` is write-only, and `mode` accepts a parse-only alias
+// `manual` with no panel entry) — so instead of a base-derivation assert
+// (OBJ-4, which only applies to a symmetric stage like Constrain), this pins
+// every MANDATORY behaviour by construction: every writable attr name
+// actually round-trips through setAttr, both enum tokens round-trip via
+// their tables, the `manual` / `userPlacedCenter` asymmetric paths work, the
+// panel table is a subset of the wire table, negative asserts hold, and both
+// tables are exhaustive over their enums.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import params : tableCoversEnum;
+
+    Mesh cube = makeCube();
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Vertices;
+    auto acs = new ActionCenterStage(() => meshPtr, &em);
+
+    // --- Every WRITABLE name round-trips through setAttr --------------------
+    // knownAttrs() ∪ the writable subset of listAttrs() (excluding read-only
+    // `clusterCount`) — `userPlacedCenter` is knownAttrs()-only (write-only,
+    // absent from listAttrs()); the rest overlap.
+    assert(acs.setAttr("mode", "auto"));
+    assert(acs.setAttr("cenX", "1"));
+    assert(acs.setAttr("cenY", "2"));
+    assert(acs.setAttr("cenZ", "3"));
+    assert(acs.setAttr("userPlacedCenter", "4,5,6"));
+    assert(acs.setAttr("userPlacedX", "7"));
+    assert(acs.setAttr("userPlacedY", "8"));
+    assert(acs.setAttr("userPlacedZ", "9"));
+    assert(acs.setAttr("selectSubMode", "top"));
+    foreach (name; acs.knownAttrs())
+        assert(name == "mode" || name == "cenX" || name == "cenY" || name == "cenZ"
+            || name == "userPlacedCenter" || name == "userPlacedX"
+            || name == "userPlacedY" || name == "userPlacedZ"
+            || name == "selectSubMode",
+            "unexpected knownAttrs() entry: " ~ name);
+
+    // --- Round-trip every `mode` + `selectSubMode` wireTag -------------------
+    foreach (tag; ["auto", "select", "selectauto", "element", "local", "origin",
+                   "screen", "border", "manual", "none", "pivot", "parent"]) {
+        assert(acs.setAttr("mode", tag), "mode " ~ tag ~ " rejected");
+        assert(acs.modeLabel() == tag, "mode " ~ tag ~ " did not round-trip");
+    }
+    foreach (tag; ["center", "top", "bottom", "back", "front", "left", "right"]) {
+        assert(acs.setAttr("selectSubMode", tag), "selectSubMode " ~ tag ~ " rejected");
+        assert(acs.selectSubModeLabel() == tag);
+    }
+
+    // --- `manual` mode token (parse-only, not in the 11-entry panel table) -
+    assert(acs.setAttr("mode", "manual"));
+    assert(acs.modeLabel() == "manual");
+    bool manualInPanel = false;
+    foreach (e; ActionCenterStage.modeEntries)
+        if (e.wireTag == "manual") manualInPanel = true;
+    assert(!manualInPanel, "'manual' must NOT appear in the panel mode table");
+
+    // --- `userPlacedCenter` write-only path (sets all 3 comps + userPlaced) -
+    assert(acs.setAttr("userPlacedCenter", "1.5,2.5,3.5"));
+    assert(acs.isUserPlaced());
+    auto attrs = acs.listAttrs();
+    bool sawUX = false, sawUY = false, sawUZ = false;
+    foreach (kv; attrs) {
+        if (kv[0] == "userPlacedX") { assert(kv[1] == "1.5"); sawUX = true; }
+        if (kv[0] == "userPlacedY") { assert(kv[1] == "2.5"); sawUY = true; }
+        if (kv[0] == "userPlacedZ") { assert(kv[1] == "3.5"); sawUZ = true; }
+    }
+    assert(sawUX && sawUY && sawUZ);
+
+    // --- Panel table (11) ⊆ full wire table (12) -----------------------------
+    assert(ActionCenterStage.modeEntries.length == 11);
+    assert(ActionCenterStage.modeEntriesFull.length == 12);
+    foreach (e; ActionCenterStage.modeEntries) {
+        int v;
+        assert(valueForWireTag(ActionCenterStage.modeEntriesFull, e.wireTag, v),
+            "panel entry '" ~ e.wireTag ~ "' missing from the full wire table");
+        assert(v == e.value);
+    }
+
+    // --- (a) NEGATIVE: bogus tokens are rejected -----------------------------
+    assert(!acs.setAttr("mode", "bogus"));
+    assert(!acs.setAttr("selectSubMode", "bogus"));
+
+    // --- (b) TABLE-COMPLETENESS: every enum member has a table entry --------
+    assert(tableCoversEnum(ActionCenterStage.modeEntriesFull, [
+        cast(int)ActionCenterStage.Mode.Auto, cast(int)ActionCenterStage.Mode.Select,
+        cast(int)ActionCenterStage.Mode.SelectAuto, cast(int)ActionCenterStage.Mode.Element,
+        cast(int)ActionCenterStage.Mode.Local, cast(int)ActionCenterStage.Mode.Origin,
+        cast(int)ActionCenterStage.Mode.Screen, cast(int)ActionCenterStage.Mode.Border,
+        cast(int)ActionCenterStage.Mode.Manual, cast(int)ActionCenterStage.Mode.None,
+        cast(int)ActionCenterStage.Mode.Pivot, cast(int)ActionCenterStage.Mode.Parent,
+    ]));
+    assert(tableCoversEnum(ActionCenterStage.selectSubModeEntries, [
+        cast(int)ActionCenterStage.SelectSubMode.Center, cast(int)ActionCenterStage.SelectSubMode.Top,
+        cast(int)ActionCenterStage.SelectSubMode.Bottom, cast(int)ActionCenterStage.SelectSubMode.Back,
+        cast(int)ActionCenterStage.SelectSubMode.Front, cast(int)ActionCenterStage.SelectSubMode.Left,
+        cast(int)ActionCenterStage.SelectSubMode.Right,
+    ]));
 }
 
 // ---------------------------------------------------------------------------
