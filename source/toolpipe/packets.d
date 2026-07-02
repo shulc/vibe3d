@@ -141,6 +141,29 @@ enum FalloffType : uint {
     VertexMap = 9,   // per-vertex weight read from a named Point dim-1 MeshMap; defaults to 1.0 for unregistered / out-of-range vertices
 }
 
+/// Maps a wire `type` token to its `FalloffType`, or returns `false` for an
+/// unrecognised token. Deliberately does NOT accept `"none"` — the two
+/// call sites disagree on what to do with it: `FalloffStage.applySetAttr`'s
+/// "type" case accepts it directly (setting `FalloffType.None`, a real state
+/// a stage can hold), while `commands.falloff.validFalloffType` (a
+/// `falloff.add`/`falloff.<type>` guard) must REJECT it (adding an inert
+/// None-type stage makes no sense) — so both share this ONE lookup for the
+/// nine real types instead of two independently hand-maintained token lists
+/// that could drift apart (task 0179 Stage 4).
+bool falloffTypeFromName(string name, out FalloffType type) {
+    switch (name) {
+        case "linear":    type = FalloffType.Linear;    return true;
+        case "radial":    type = FalloffType.Radial;    return true;
+        case "screen":    type = FalloffType.Screen;    return true;
+        case "lasso":     type = FalloffType.Lasso;     return true;
+        case "cylinder":  type = FalloffType.Cylinder;  return true;
+        case "element":   type = FalloffType.Element;   return true;
+        case "selection": type = FalloffType.Selection; return true;
+        case "vertexMap": type = FalloffType.VertexMap; return true;
+        default: return false;
+    }
+}
+
 /// Falloff Mix Mode — how a contributor's per-vertex weight combines with
 /// the running accumulator when multiple falloffs are stacked (see the
 /// Composite branch of `evaluateFalloff` in source/falloff.d). The FIRST
@@ -236,15 +259,29 @@ enum LassoStyle : ubyte {
     Ellipse   = 3,
 }
 
-/// Falloff packet — soft-selection weight, populated by WGHT stage
-/// in 7.5. Value-typed (no `Object`-derived state), matching
-/// SnapPacket's pattern; `evaluateFalloff(packet, pos, vi, vp)` in
-/// `source/falloff.d` does the actual weight math, dispatched on
-/// `type`. Returns 1.0 for every vertex when `enabled == false`, so
-/// transform tools can blindly multiply by the weight without
-/// short-circuiting.
-struct FalloffPacket {
-    bool         enabled;
+/// Falloff CONFIG — the value field-set shared by `FalloffStage` (the live
+/// tool config) and `FalloffPacket` (the published wire copy). Embedding this
+/// ONE struct in both (`FalloffConfig config; alias config this;`) collapses
+/// the ~8 hand-copied field lists (evaluate / snapshotConfigToPacket /
+/// restoreConfigFromPacket / reset / knownAttrs / listAttrs / applySetAttr /
+/// falloffPacketsEqual) down to a single declaration site, so equality
+/// (compiler-generated `==`) and the snapshot/restore round-trip can never
+/// drift again (task 0179 / audit-2 F1: `falloffPacketsEqual` had drifted and
+/// silently omitted `normal` / `pickedRadius` / `connect` / `elementMode` /
+/// `anchorRing`, and `steps` / `mapName` had no packet field at all).
+///
+/// Every field carries its declaration-time default EXPLICITLY (never a bare
+/// `Vec3`/`float` decl) — `float.init` / `Vec3.init` is NaN, and `reset()`
+/// does `config = FalloffConfig.init`, so a bare field would both poison the
+/// reset AND break equality forever (`NaN != NaN` ⇒ `config != config`).
+///
+/// Does NOT hold: `enabled` (derived = `type != None`, compared as its own
+/// scalar), `pickedCenter` (ACEN-owned, published per-evaluate, deliberately
+/// excluded from equality), or any of the derived/published buffers
+/// (`connectMask`, `anchorPos`, `selectionWeights`, `vertexMapWeights`,
+/// `compoundPasses`, `contributors`) — those stay direct members of
+/// `FalloffPacket` / `FalloffStage`, rebuilt every evaluate().
+struct FalloffConfig {
     FalloffType  type        = FalloffType.None;
     FalloffShape shape       = FalloffShape.Smooth;
 
@@ -265,13 +302,12 @@ struct FalloffPacket {
     // axis = +Y matches the xfrm.vortex preset (axisY=1.0).
     Vec3         normal      = Vec3(0, 1, 0);
 
-    // Element: spherical falloff around `pickedCenter`, radius
-    // `pickedRadius`. The centre is the centroid of the clicked
-    // component; radius is the `dist`/Range attr. Default centre at
-    // origin, radius 1.0 —
-    // gets relocated by XfrmTransformTool's click-to-pick (when falloff.element is active) or by the
-    // user via `tool.pipe.attr falloff pickedCenter "x,y,z"`.
-    Vec3         pickedCenter  = Vec3(0, 0, 0);
+    // Element: spherical falloff around `pickedCenter` (ACEN-owned,
+    // NOT config — see struct doc), radius `pickedRadius`. Radius is
+    // the `dist`/Range attr (wire attr name stays `dist`). Default
+    // radius 1.0 — gets relocated by XfrmTransformTool's click-to-pick
+    // (when falloff.element is active) or by the user via
+    // `tool.pipe.attr falloff dist <r>`.
     float        pickedRadius  = 1.0f;
     // Element connectivity gate (Stage 14.4). When != Off, the
     // sphere weight is shaped by the connected-component mask
@@ -289,35 +325,26 @@ struct FalloffPacket {
     // picked element. Default Auto = vert→edge→face priority,
     // centred on the natural pick point.
     ElementMode    elementMode = ElementMode.Auto;
-    // BFS-precomputed component mask for the picked element: index
-    // into the same vert array, `true` for verts in the picked
-    // element's connected component(s). Two producers fill it:
-    // XfrmTransformTool's interactive click-pick, AND — for headless
-    // tool.doApply — FalloffStage.evaluate / transform.d resolve it
-    // from `anchorRing` + mesh edge-adjacency at packet-publish time
-    // (mirroring how `anchorPos` is resolved). Consumers see an empty
-    // mask only when `connect == Ignore` or no anchor ring exists; in
-    // that case `elementWeight` applies the unrestricted sphere.
-    const(bool)[] connectMask;
+
+    // Selection (D.7, xfrm.flex): the "Steps" count — the BFS-hop depth
+    // the per-vert weight grows across from the selection border
+    // inward. See FalloffStage's `steps` field doc for the smoothing-
+    // pass-count formula. Integer by nature (discrete hops).
+    int steps = 4;
+
     // Anchor ring — vertex indices that get weight=1.0 regardless
     // of the sphere math. Click-pick populates with the clicked
     // element's vert ring (single vert / edge endpoints / face vert
     // ring). Together with the sphere around `pickedCenter`, they
     // form a hybrid "anchor + attenuation" weight function. Empty
-    // when no pick.
-    const(uint)[]  anchorRing;
-    // Anchor positions — the WORLD positions of the picked element's
-    // verts, parallel to `anchorRing` (anchorPos[i] is the world
-    // position of vertex anchorRing[i]). This is the GEOMETRY the
-    // Element falloff attenuates from: `elementWeight` measures the
-    // distance from each vert to this geometry (point / segment /
-    // polygon) rather than to the single `pickedCenter` centroid, so
-    // an edge / polygon pick attenuates by distance to the SEGMENT /
-    // FACE — matching the reference editor (a centroid-only sphere
-    // diverges for non-vertex picks). Empty when no pick (or for a
-    // non-pick scripted falloff): `elementWeight` then falls back to
-    // the `pickedCenter` point distance.
-    const(Vec3)[]  anchorPos;
+    // when no pick. RAW picked ring (config round-trip value) — the
+    // PUBLISHED packet's copy is overwritten post-copy in evaluate()
+    // with the RESOLVED ring (EdgeLoops substitutes the ordered loop);
+    // see FalloffStage.evaluate's `pkt.config.anchorRing = …` line.
+    // Mutable (not `const(uint)[]`) — the owning stage mutates it in
+    // reset() / restoreConfigFromPacket() / the `anchorRing` setAttr
+    // parser.
+    uint[]  anchorRing;
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.
@@ -340,6 +367,93 @@ struct FalloffPacket {
     // Bézier control coords at t=0 (in_) and t=1 (out_). Both ∈ [0, 1].
     float        in_         = 0.5f;
     float        out_        = 0.5f;
+
+    // Multi-falloff Mix Mode — how this sub-packet's weight combines with
+    // the accumulator when it is contributor i≥1 inside a Composite (the
+    // first contributor's `mix` is unused; it seeds the accumulator). For
+    // a stand-alone (non-Composite) packet this field is irrelevant and
+    // stays at the default.
+    FalloffMix mix = FalloffMix.Multiply;
+
+    // VertexMap: name of the active weight map (a Point dim-1 MeshMap).
+    // Empty / missing map degenerates to full influence (weight 1.0).
+    string mapName = "";
+
+    /// Deep copy, so the copy is independent of subsequent in-place
+    /// mutation of the source's mutable slice members (`anchorRing`,
+    /// `lassoPolyX`, `lassoPolyY`). Iterates `tupleof` so it CANNOT drift
+    /// as fields are added — a mutable array field is `.dup`'d, a `string`
+    /// (immutable elements) is shared by value, everything else (scalars /
+    /// enums / Vec3) is a plain value copy. Field-by-field (not
+    /// `FalloffConfig c = this;`) because a struct containing mutable slices
+    /// can't implicitly const→mutable copy in D. Used by
+    /// snapshot/restoreConfigFromPacket.
+    FalloffConfig dup() const {
+        FalloffConfig c;
+        foreach (i, ref dst; c.tupleof) {
+            static if (is(typeof(dst) == string))
+                dst = this.tupleof[i];          // immutable elements — share
+            else static if (is(typeof(dst) : E[], E))
+                dst = this.tupleof[i].dup;       // mutable slice — deep copy
+            else
+                dst = this.tupleof[i];          // scalar / enum / Vec3 value
+        }
+        return c;
+    }
+}
+
+/// Falloff packet — soft-selection weight, populated by WGHT stage
+/// in 7.5. Value-typed (no `Object`-derived state), matching
+/// SnapPacket's pattern; `evaluateFalloff(packet, pos, vi, vp)` in
+/// `source/falloff.d` does the actual weight math, dispatched on
+/// `type`. Returns 1.0 for every vertex when `enabled == false`, so
+/// transform tools can blindly multiply by the weight without
+/// short-circuiting.
+///
+/// The CONFIG field-set (type/shape/start/end/…/anchorRing/mapName) lives in
+/// the embedded `FalloffConfig` (`alias config this` — every external
+/// `pkt.<field>` read/write below keeps resolving unqualified). The fields
+/// declared directly here are DERIVED / published-per-evaluate and
+/// deliberately excluded from `config` (and from `falloffPacketsEqual`'s
+/// `config ==` comparison), per FalloffConfig's doc comment.
+struct FalloffPacket {
+    FalloffConfig config;
+    alias config this;
+
+    bool         enabled;
+
+    // Element: spherical falloff centre. ACEN-owned (published per-evaluate
+    // from ActionCenterPacket) — NOT part of `config`, so it never
+    // participates in the live-change equality check (`falloffPacketsEqual`);
+    // the gizmo pivot has its own source of truth and its own pin hooks.
+    // Default centre at origin; relocated by XfrmTransformTool's click-to-
+    // pick (when falloff.element is active) or by the user via
+    // `tool.pipe.attr falloff pickedCenter "x,y,z"`.
+    Vec3         pickedCenter  = Vec3(0, 0, 0);
+
+    // BFS-precomputed component mask for the picked element: index
+    // into the same vert array, `true` for verts in the picked
+    // element's connected component(s). Two producers fill it:
+    // XfrmTransformTool's interactive click-pick, AND — for headless
+    // tool.doApply — FalloffStage.evaluate / transform.d resolve it
+    // from `anchorRing` + mesh edge-adjacency at packet-publish time
+    // (mirroring how `anchorPos` is resolved). Consumers see an empty
+    // mask only when `connect == Ignore` or no anchor ring exists; in
+    // that case `elementWeight` applies the unrestricted sphere.
+    const(bool)[] connectMask;
+
+    // Anchor positions — the WORLD positions of the picked element's
+    // verts, parallel to the RESOLVED `anchorRing` (anchorPos[i] is the
+    // world position of vertex anchorRing[i]). This is the GEOMETRY the
+    // Element falloff attenuates from: `elementWeight` measures the
+    // distance from each vert to this geometry (point / segment /
+    // polygon) rather than to the single `pickedCenter` centroid, so
+    // an edge / polygon pick attenuates by distance to the SEGMENT /
+    // FACE — matching the reference editor (a centroid-only sphere
+    // diverges for non-vertex picks). Empty when no pick (or for a
+    // non-pick scripted falloff): `elementWeight` then falls back to
+    // the `pickedCenter` point distance.
+    const(Vec3)[]  anchorPos;
 
     // Selection (D.7, xfrm.flex): pre-baked per-vert weights ∈
     // [0, 1] from a Dijkstra geodesic + applyShape curve.
@@ -366,15 +480,6 @@ struct FalloffPacket {
     // ignore this field; compounding only makes physical sense
     // for the multiplicative Scale formula.
     float compoundPasses = 1.0f;
-
-    // --- Multi-falloff stacking (Composite) ---
-    //
-    // This sub-packet's OWN Mix Mode — how its weight combines with the
-    // accumulator when it is contributor i≥1 inside a Composite (the
-    // first contributor's `mix` is unused; it seeds the accumulator).
-    // For a stand-alone (non-Composite) packet this field is irrelevant
-    // and stays at the default.
-    FalloffMix mix = FalloffMix.Multiply;
 
     // Composite sub-packets. Only populated when `type == Composite`.
     // Each entry is a VALUE COPY of a contributing falloff's packet (the
