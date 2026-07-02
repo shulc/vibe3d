@@ -5493,7 +5493,7 @@ void main(string[] args) {
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
-        subj.viewport         = vpm.originSnapshot();
+        subj.viewport         = vpm.inputSnapshot();
         vts.put(&subj);
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);
@@ -9520,6 +9520,21 @@ void main(string[] args) {
             import tools.xfrm_transform : XfrmTransformTool;
             import tools.command_wrapper : CommandWrapperTool;
 
+            // Task 0209 (Quad/Split any-cell input), Phase 4: current rollover
+            // ("hot") part on whichever arbiter owns this frame's interaction —
+            // mirrors the multiCellEligible dispatch below. The arbiter lives
+            // on a DIFFERENT object per case (XfrmTransformTool.toolHandles vs
+            // the shared pipeGizmoHost.ownPool(), used by both the wrapper-
+            // primitive and no-tool-falloff cases), so app.d scope has no
+            // single field to read directly — this small dispatcher is the
+            // seam. `hot` is a public int (handler.d:1565).
+            int currentHotPart() {
+                if (auto xf = cast(XfrmTransformTool) activeTool) return xf.hotPart();
+                if (auto cw = cast(CommandWrapperTool) activeTool) return pipeGizmoHost.ownPool().hot;
+                if (activeTool is null && anyFalloffActive())      return pipeGizmoHost.ownPool().hot;
+                return -1;
+            }
+
             auto _dsz = io.DisplaySize;
             float dpiX = (_dsz.x > 0.0f) ? cast(float)fbW / _dsz.x : 1.0f;
             float dpiY = (_dsz.y > 0.0f) ? cast(float)fbH / _dsz.y : 1.0f;
@@ -9528,10 +9543,17 @@ void main(string[] args) {
                             || (dragMode != DragMode.None)
                             || anyFalloffActive();
 
-            // Overlay-owner cell: origin cell during a drag, else the active
-            // cell. IDENTICAL computation to the pre-0206 `_drawOverlays`
-            // gate — same single cell, now just also the LAST one visited.
-            int overlayOwner = (vpm.dragOriginId >= 0) ? vpm.dragOriginId : vpm.activeId;
+            // Overlay-owner cell: origin cell during a drag, else the HOVERED
+            // cell (task 0209 — the arbiter/Test pass now runs where the
+            // cursor is, so hover/hit-test/click work in any Quad/Split
+            // cell), else the active cell. `cellCount > 1` guard makes the
+            // hovered branch inert in `--test` (Single layout invariant), so
+            // this stays IDENTICAL to the pre-0209 `_drawOverlays` gate
+            // there — same single cell (activeId), now also the LAST one
+            // visited.
+            int overlayOwner = (vpm.dragOriginId >= 0) ? vpm.dragOriginId
+                             : (vpm.cellCount > 1 && vpm.hoveredId >= 0) ? vpm.hoveredId
+                             : vpm.activeId;
 
             bool multiCellEligible =
                    (cast(XfrmTransformTool)  activeTool !is null)
@@ -9548,6 +9570,10 @@ void main(string[] args) {
             Vec3  _ovlCenter = Vec3(0, 0, 0);
             Vec3  _flCenter  = Vec3(0, 0, 0);
             float _flRadius  = 0.0f;
+            // Task 0209 Phase 4: shared hot-part stamp — see currentHotPart()
+            // doc above. Computed unconditionally (cheap int field read); the
+            // testMode guard below only gates the packet-evaluating stamps.
+            int _ovlHot = currentHotPart();
             if (!testMode && (activeTool !is null || anyFalloffActive())) {
                 import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
                 SubjectPacket _osubj; VectorStack _ovts; buildToolVts(_osubj, _ovts);
@@ -9640,6 +9666,13 @@ void main(string[] args) {
                         // (falloff) drag, where the VBO is re-uploaded each
                         // frame but meshMutVer/toolMat/overlay* do not move.
                         _newKey.gpuUploadVer = gpu.uploadVersion;
+                        // Task 0209 Phase 4: shared rollover ("hot") part —
+                        // the arbiter now runs in the HOVERED cell each
+                        // frame, and every eligible cell draws the SAME
+                        // shared `hot` state, so a non-hovered cell must
+                        // re-render when `hot` flips even though its own
+                        // view/proj/mesh are unchanged (see DirtyKey.overlayHot doc).
+                        _newKey.overlayHot = _ovlHot;
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;

@@ -170,6 +170,18 @@ struct DirtyKey {
     // inert in --test (Single layout never reaches the compare) — same
     // neutrality argument as toolMat/overlay terms above.
     ulong     gpuUploadVer   = 0;
+
+    // Task 0209 (Quad/Split any-cell input) — shared rollover ("hot") part,
+    // mirrors overlayKind/gpuUploadVer above. The arbiter (ToolHandles /
+    // PipeGizmoHost pool) now runs in the HOVERED cell each frame, and every
+    // eligible cell draws the SAME shared `hot` state (task 0206). Without
+    // this term, a non-hovered eligible cell whose own view/proj/mesh are
+    // unchanged would not re-render when `hot` flips as the cursor rolls
+    // onto/off a handle in another cell — leaving a stale highlight there.
+    // `= -1` (no part hot) is CTFE-constant, inert in --test (Single layout
+    // never reaches the compare) — same neutrality argument as the other
+    // overlay terms.
+    int       overlayHot     = -1;
 }
 
 unittest {
@@ -231,6 +243,23 @@ unittest {
 
     b.gpuUploadVer = 1;
     assert(a != b, "keys differing only in gpuUploadVer must compare unequal");
+}
+
+unittest {
+    // Task 0209: DirtyKey must also discriminate on overlayHot alone — two
+    // keys identical in every other field (including toolMat/overlay*/
+    // gpuUploadVer at rest) but differing only in overlayHot must compare
+    // unequal. This is the exact stale-highlight freeze this term exists to
+    // fix: the cursor rolls onto/off a handle in the hovered (owner) cell,
+    // flipping the shared `hot` part with no drag/mesh/view change, and every
+    // OTHER eligible cell must still notice and re-render to mirror it.
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.overlayHot = 3; // e.g. a move-arrow handle rolled over
+    assert(a != b, "keys differing only in overlayHot must compare unequal");
 }
 
 // ---------------------------------------------------------------------------
@@ -676,6 +705,17 @@ final class ViewportManager {
         return resolvedSnapshot(dragOriginId >= 0 ? dragOriginId : activeId);
     }
 
+    /// Resolved snapshot for the cell that owns the CURRENT pointer input:
+    /// the drag-origin cell during a gesture, else the hovered cell, else the
+    /// active cell. In Single layout (cellCount==1) this is identical to
+    /// originSnapshot() (there is no second cell to hover), so `--test`
+    /// stays byte-neutral.
+    Viewport inputSnapshot() {
+        int id = dragOriginId >= 0 ? dragOriginId
+               : (cellCount > 1 && hoveredId >= 0 ? hoveredId : activeId);
+        return resolvedSnapshot(id);
+    }
+
     /// Return resolved camera JSON for cell `id`.  `const`, non-mutating — safe
     /// on any thread.  Eye is recomputed from the resolved inputs.
     string resolvedCameraJson(int id) const {
@@ -856,6 +896,56 @@ unittest {
     m.views[0].winW = 640; m.views[0].winH = 480;
     assert(m.viewportUnderCursor(100, 100) == 0,   "inside single cell → 0");
     assert(m.viewportUnderCursor(640, 0)   == -1,  "right of single cell → -1");
+}
+
+// ---------------------------------------------------------------------------
+// inputSnapshot() unittests — task 0209 (Quad/Split any-cell input).
+// ---------------------------------------------------------------------------
+unittest {
+    // Quad layout: inputSnapshot() must resolve to the HOVERED cell (no
+    // drag in progress) — the whole point of this task.
+    auto m = new ViewportManager(0, 0, 640, 480);
+    m.lx = 0; m.ly = 0; m.lw = 640; m.lh = 480;
+    m.applyLayout(LayoutPreset.Quad);
+
+    m.activeId  = 0;
+    m.hoveredId = 2;
+    assert(m.dragOriginId == -1, "no gesture in progress");
+    auto snap = m.inputSnapshot();
+    auto want = m.resolvedSnapshot(2);
+    assert(snap.view == want.view && snap.proj == want.proj,
+           "inputSnapshot() with no drag must resolve to the HOVERED cell (2), not active (0)");
+
+    // During a gesture, inputSnapshot() must stay pinned to the DRAG-ORIGIN
+    // cell even though the cursor has since wandered into another cell —
+    // the drag-pin invariant (frozen basis / flip-fix depend on this).
+    m.dragOriginId = 1;
+    m.hoveredId    = 3; // cursor now over a DIFFERENT cell mid-drag
+    snap = m.inputSnapshot();
+    want = m.resolvedSnapshot(1);
+    assert(snap.view == want.view && snap.proj == want.proj,
+           "inputSnapshot() during a drag must stay pinned to dragOriginId (1), ignoring hoveredId (3)");
+    m.dragOriginId = -1; // restore
+
+    // hoveredId == -1 (cursor outside all cells, e.g. over an ImGui panel)
+    // must fall back to the active cell, same as hoveredCamera().
+    m.hoveredId = -1;
+    snap = m.inputSnapshot();
+    want = m.resolvedSnapshot(m.activeId);
+    assert(snap.view == want.view && snap.proj == want.proj,
+           "inputSnapshot() with hoveredId=-1 must fall back to the active cell");
+
+    // Single layout (cellCount==1): inputSnapshot() must be IDENTICAL to
+    // originSnapshot() — the byte-neutrality invariant `--test` relies on.
+    m.applyLayout(LayoutPreset.Single);
+    m.views[0].winX = 0; m.views[0].winY = 0;
+    m.views[0].winW = 640; m.views[0].winH = 480;
+    assert(m.cellCount == 1, "Single: cellCount=1");
+    m.hoveredId = 0;
+    auto inSnap  = m.inputSnapshot();
+    auto orgSnap = m.originSnapshot();
+    assert(inSnap.view == orgSnap.view && inSnap.proj == orgSnap.proj,
+           "cellCount==1: inputSnapshot() must be identical to originSnapshot()");
 }
 
 // ---------------------------------------------------------------------------

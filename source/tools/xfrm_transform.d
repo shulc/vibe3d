@@ -106,7 +106,7 @@ import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
-                          SnapPacket, SymmetryPacket;
+                          SnapPacket, SymmetryPacket, SubjectPacket;
 import falloff_render    : drawFalloffOverlay;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
@@ -1601,7 +1601,29 @@ noBankConsumed:
         return false;
     }
 
+    // Task 0209 (Quad/Split any-cell input): the projection to hit-test/drag
+    // against now arrives WITH the event, via SubjectPacket.viewport
+    // (app.d's buildToolVts stamps `vpm.inputSnapshot()` — the hovered cell
+    // outside a gesture, the drag-origin cell throughout one). Sync it into
+    // `cachedVp` (this tool's own, plus every sub-tool's) as the FIRST
+    // statement of every mouse handler so the hit-test/drag math below never
+    // depends on a stale value left by the last DRAW pass (which only ran for
+    // the previous owner cell). During a drag `inputSnapshot()` returns the
+    // constant drag-origin vp for the whole gesture, so this is a no-op
+    // re-write of the same value each motion frame — the frozen apply-frame
+    // invariants (flip-fix `dragAxis<0` gate, frozen `dragAxisVec`/
+    // `dragRefDir`) are untouched.
+    private void syncInputViewport(ref VectorStack vts) {
+        if (auto sp = vts.get!SubjectPacket()) {
+            cachedVp           = sp.viewport;
+            moveSub.cachedVp   = sp.viewport;
+            rotateSub.cachedVp = sp.viewport;
+            scaleSub.cachedVp  = sp.viewport;
+        }
+    }
+
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncInputViewport(vts);
         // Gizmo-handle hit test FIRST. When a click hits a registered shared
         // handle, dispatch only to that handle's bank; otherwise the Move bank
         // may consume a rotate/scale click as an off-gizmo relocate before R/S
@@ -2483,6 +2505,7 @@ noBankConsumed:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        syncInputViewport(vts);
         if (pipeGizmoHost !is null && pipeGizmoHost.isDragging())
             return pipeGizmoHost.routeMotion(e, cachedVp);
         bool r;
@@ -2847,6 +2870,7 @@ noBankConsumed:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncInputViewport(vts);
         if (pipeGizmoHost !is null && pipeGizmoHost.routeUp(e)) {
             // P-E: a falloff-handle DRAG just ended. Its per-frame setAttrs
             // (issued directly on the stage as the handle was hauled, bypassing
@@ -5284,6 +5308,14 @@ private:
     // rotate + scale, so overlapping handles never co-highlight. Falloff
     // handles fold in here in step 4b. Constructed in the wrapper ctor.
     ToolHandles toolHandles;
+
+    // Task 0209 (Quad/Split any-cell input), Phase 4: the shared "hot"
+    // (rollover) part, exposed publicly so app.d's per-frame DirtyKey stamp
+    // can detect a hot-part flip and re-render every eligible Quad/Split
+    // cell to mirror it (see viewport.d's `DirtyKey.overlayHot` doc).
+    // `toolHandles` itself stays private to this module — everything below
+    // this point in the class is under the `private:` label.
+    public int hotPart() const { return toolHandles.hot; }
 
     // Sub-tool that owns the currently active drag, set on
     // mouse-down and cleared on mouse-up. Null when no drag is
