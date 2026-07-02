@@ -34,7 +34,7 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_frames, Phase;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
@@ -7706,40 +7706,53 @@ void main(string[] args) {
     scope(exit) clearDirectEventDispatch();
 
     while (running) {
-        // ---- Playback: push due events before polling ----
-        if (playbackMode) evPlay.tick();
-        // httpServer is always constructed now; only drain the request queues
-        // when the listener is actually up (start() called). Skipped entirely
-        // in a release/no-http run, where no thread ever posts requests.
-        if (httpServer.running) {
-            httpServer.tickEventPlayer();
-            httpServer.tickAll();
-        }
+        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): beginFrame is
+        // the FIRST statement of the loop body; endFrame (below, before the
+        // present/flush conditional) closes it. No-op in the default build.
+        g_frames.beginFrame();
 
-        // ---- Events ----
-        while (SDL_PollEvent(&event)) {
-            // In --test mode, drop real keyboard/mouse input from the
-            // SDL queue so a stray click or keypress in the test window
-            // can't mutate state and break a running test. The test
-            // harness drives state via HTTP + EventPlayer's direct
-            // dispatch, both of which bypass this queue. SDL_QUIT and
-            // SDL_WINDOWEVENT stay routed so the window can still be
-            // closed (X button / SIGINT).
-            if (testMode &&
-                (event.type == SDL_KEYDOWN
-              || event.type == SDL_KEYUP
-              || event.type == SDL_TEXTINPUT
-              || event.type == SDL_MOUSEMOTION
-              || event.type == SDL_MOUSEBUTTONDOWN
-              || event.type == SDL_MOUSEBUTTONUP
-              || event.type == SDL_MOUSEWHEEL))
-                continue;
-            if (!processEvent(&event)) {
-                running = false;
-                break;
+        // Perf: events phase — playback tick + HTTP event-player drain +
+        // the SDL_PollEvent dispatch loop. `toolNs` (the live geometry apply
+        // during a drag) nests INSIDE this region — see xfrm_transform.d's
+        // applyFold site. Explicit block so the scope timer fires right
+        // after the SDL_PollEvent loop, not at the end of the whole frame.
+        // No-op in the default build.
+        {
+            auto zFramesEvents = g_frames.phase(Phase.events);
+            // ---- Playback: push due events before polling ----
+            if (playbackMode) evPlay.tick();
+            // httpServer is always constructed now; only drain the request queues
+            // when the listener is actually up (start() called). Skipped entirely
+            // in a release/no-http run, where no thread ever posts requests.
+            if (httpServer.running) {
+                httpServer.tickEventPlayer();
+                httpServer.tickAll();
+            }
+
+            // ---- Events ----
+            while (SDL_PollEvent(&event)) {
+                // In --test mode, drop real keyboard/mouse input from the
+                // SDL queue so a stray click or keypress in the test window
+                // can't mutate state and break a running test. The test
+                // harness drives state via HTTP + EventPlayer's direct
+                // dispatch, both of which bypass this queue. SDL_QUIT and
+                // SDL_WINDOWEVENT stay routed so the window can still be
+                // closed (X button / SIGINT).
+                if (testMode &&
+                    (event.type == SDL_KEYDOWN
+                  || event.type == SDL_KEYUP
+                  || event.type == SDL_TEXTINPUT
+                  || event.type == SDL_MOUSEMOTION
+                  || event.type == SDL_MOUSEBUTTONDOWN
+                  || event.type == SDL_MOUSEBUTTONUP
+                  || event.type == SDL_MOUSEWHEEL))
+                    continue;
+                if (!processEvent(&event)) {
+                    running = false;
+                    break;
+                }
             }
         }
-
 
         // The per-frame force-feed that used to stamp the active camera with
         // the full 3D-area size (and the vpm.l* region write that went with
@@ -8667,6 +8680,7 @@ void main(string[] args) {
             // full re-upload after a drag mutates the mesh). No-op in the
             // default build. Single coarse site, per the plan.
             auto zGpu = g_perf.scope_(Cat.gpuUpload);
+            auto zFramesUpload = g_frames.phase(Phase.upload);
             bool wantPreview = subpatchPreview.active;
             gpu.suppressCageUpload = wantPreview;
             bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
@@ -8716,6 +8730,8 @@ void main(string[] args) {
                                    subpatchPreview.trace.faceOrigin);
                         gpuUploadedPreviewTopVersion =
                             subpatchPreview.sourceTopologyVersion;
+                        // F-I1: a full mesh-work GPU upload fired this frame.
+                        g_frames.bumpMeshCacheRebuild();
                     }
                 } else {
                     gpu.upload(mesh);
@@ -8723,6 +8739,8 @@ void main(string[] args) {
                     // marker so the next preview activation triggers a
                     // full upload.
                     gpuUploadedPreviewTopVersion = ulong.max;
+                    // F-I1: a full mesh-work GPU upload fired this frame.
+                    g_frames.bumpMeshCacheRebuild();
                 }
                 gpuUploadedVersion = mesh.mutationVersion;
                 gpuUploadedPreview = wantPreview;
@@ -8764,6 +8782,16 @@ void main(string[] args) {
         // Perf (doc/perf_harness_plan.md): `cacheInvalidate` counts PER-FRAME
         // invalidations; this is the structurally-correct place to measure
         // them. No-op in the default build.
+        //
+        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): the FrameProbe
+        // `cache` phase wraps this whole block AND extends through
+        // `pickFaces(vp, ...)` below (NOT just the inner `{}` block, which
+        // stops before the per-frame vertex/edge/face picks) — otherwise the
+        // hover-sweep scenario's per-frame face pick would land in "other".
+        // Explicit outer block so the scope timer fires right after
+        // pickFaces, not at the end of the whole frame.
+        {
+            auto zFramesCache = g_frames.phase(Phase.cache);
         {
             import change_bus : MeshEditScope;
             auto zCache = g_perf.scope_(Cat.cacheInvalidate);
@@ -8781,13 +8809,22 @@ void main(string[] args) {
                 edgeCache.invalidate();
                 faceCache.invalidate();
                 vertexCache.update(vp);
+                // F-I1: mesh-driven cache rebuild (topology/counts changed).
+                g_frames.bumpMeshCacheRebuild();
             } else if (meshChangedFlags & MeshEditScope.Position) {
                 // Coords moved, counts unchanged — invalidate without resize.
                 vertexCache.invalidate();
                 edgeCache.invalidate();
                 faceCache.invalidate();
                 vertexCache.update(vp);
+                // F-I1: mesh-driven cache rebuild (positions changed).
+                g_frames.bumpMeshCacheRebuild();
             } else if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
+                // Camera-reprojection branch — GATED on !doingCameraDrag, so
+                // it is SKIPPED entirely during an orbit drag (this is WHY
+                // F-I1 == 0 on orbit-dense: this branch never fires while
+                // dragMode is Orbit/Zoom/Pan). Deliberately NOT counted as a
+                // mesh-cache rebuild — camera reprojection is not mesh work.
                 vertexCache.invalidate();
                 vertexCache.update(vp);
             }
@@ -8836,6 +8873,7 @@ void main(string[] args) {
         }
 
         pickFaces(vp, doingCameraDrag);
+        }
         int pickedVertex = hoveredVertex;
         int pickedEdge = hoveredEdge;
         int pickedFace = hoveredFace;
@@ -9097,6 +9135,12 @@ void main(string[] args) {
 
                 if (needRender) {
                     bool _hovK = (k == vpm.hoveredId);
+                    // Perf: draw is a TOP-LEVEL, DISJOINT phase — it runs
+                    // sequentially BEFORE the ImGui section (a blit block
+                    // sits between them), NOT nested inside `ui`. Scoped
+                    // per-call so it accumulates across every rendered cell
+                    // this frame. No-op in the default build.
+                    auto zFramesDraw = g_frames.phase(Phase.draw);
                     renderViewportSceneToFbo(_cv, vpk, _drawOverlays,
                         showVertHover && _hovK,
                         showEdgeHover && _hovK,
@@ -9149,10 +9193,26 @@ void main(string[] args) {
         // behind the transparent DockSpace host window.
         glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        ImGui.Render();
-        // Restore full viewport for ImGui rendering.
-        glViewport(0, 0, fbW, fbH);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
+        {
+            // Perf: ui phase — ImGui's own GPU submission (window-*build*
+            // time earlier in the frame is unattributed "other"). No-op in
+            // the default build.
+            auto zFramesUi = g_frames.phase(Phase.ui);
+            ImGui.Render();
+            // Restore full viewport for ImGui rendering.
+            glViewport(0, 0, fbW, fbH);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
+        }
+
+        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): endFrame MUST
+        // be placed BEFORE the present/flush conditional below. In the
+        // harness's `--test --perf` mode the conditional is TRUE (perfMode
+        // makes `!perfMode` false) so SDL_GL_SwapWindow (present) runs; in
+        // plain `--test` it is FALSE so glFlush + SDL_Delay(4) run instead.
+        // Placing endFrame here excludes present/vsync/the test delay from
+        // `totalNs` in BOTH run modes, keeping it pure CPU submission cost.
+        // No-op in the default build.
+        g_frames.endFrame();
 
         // In --test mode the window is HIDDEN and nothing reads back a
         // presented frame (picking / ViewCache are projection-matrix math;

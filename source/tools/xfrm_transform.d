@@ -96,7 +96,7 @@ import tools.xform_kernels :
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_frames, Phase;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
@@ -4884,6 +4884,13 @@ private:
         g_perf.count(Cat.vertsTouched, nProc);
         if (dragFalloff.enabled) g_perf.count(Cat.falloffEvalCount, nProc);
         auto zKernel = g_perf.scope_(Cat.kernelApply);
+        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): FrameProbe's
+        // `tool` phase — the ONE deliberate nest (toolNs ⊆ eventNs, since
+        // this whole apply runs inside the events/replay-dispatch region of
+        // the main loop). Same scope as `zKernel` above by design: this is
+        // the single per-frame vertex-cloud apply for the live drag. No-op
+        // in the default build.
+        auto zFramesTool = g_frames.phase(Phase.tool);
         // DRIVER pass. Transforms exactly the original selection with each
         // driver's own falloff weight + matrix M. `dragSymmetry` is passed
         // DISABLED so the in-kernel position-copy tail never runs here: the
