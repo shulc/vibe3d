@@ -96,6 +96,16 @@
 			"versions": [
 				"PerfProbe"
 			]
+		},
+		"perf-count": {
+			"_comment": "Debug build with PerfProbe active but no optimizer, for CI counter invariants: counts are control-flow, so ldc/optimize/stable hardware are unnecessary. dmd-buildable. Default build defines no PerfProbe, so this never affects it.",
+			"buildOptions": [
+				"debugMode",
+				"debugInfo"
+			],
+			"versions": [
+				"PerfProbe"
+			]
 		}
 	},
 	"configurations": [

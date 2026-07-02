@@ -108,6 +108,47 @@ jobs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: 'Build perf-count binary'
+      # Debug + PerfProbe, dmd-buildable (task 0200 — perf-count buildType in
+      # dub.json). Overwrites ./vibe3d — safe now that the integration step
+      # above already ran against the modeling binary from the top-level
+      # 'Build' step. No continue-on-error: a broken perf-count build should
+      # hard-fail the job immediately, same as the top-level 'Build' step.
+      run: dub build --build=perf-count --compiler=dmd
+
+    - name: 'Frame scenario invariants (frames --ci)'
+      id: frames
+      continue-on-error: true
+      # --no-build reuses the perf-count ./vibe3d just built. --ci downgrades
+      # F-I4 (GC) to RECORDED/non-gating for every scenario (host-flaky —
+      # see doc/frame_scenarios_ci_plan.md) and implies --no-absolute (the
+      # p99/hitch budgets are baseline-host-relative, meaningless here).
+      # --n 64 keeps the run inside the 4 GiB / -j1 self-hosted runner's
+      # budget (measured ~10s locally). set -o pipefail keeps run.d's exit
+      # code (not tee's) as the step result.
+      run: |
+        set -o pipefail
+        xvfb-run -a rdmd tools/perf/run.d frames --no-build --ci --n 64 2>&1 | tee frames.log
+
+    - name: 'Frame scenario summary'
+      # Surfaces the frames --ci verdict in the job summary. always() so it
+      # renders even if the step above failed (a red frames-invariants run
+      # is exactly when this is most useful to see without digging into logs).
+      if: always()
+      run: |
+        {
+          echo ""
+          echo "### Frame scenario invariants (\`frames --ci\`)"
+          echo ""
+          echo "- Result: **${{ steps.frames.outcome }}**"
+          if [ -f frames.log ]; then
+            echo ""
+            echo '```'
+            tail -n 25 frames.log
+            echo '```'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: 'Reclaim disk (bound dub build cache)'
       # dub caches every build under a content hash in ~/.dub/cache/vibe3d and
       # never evicts old ones, so it grows unbounded across commits and fills the
@@ -124,6 +165,7 @@ jobs:
       # summary/cleanup always run; this gate turns the job red afterwards.
       if: always()
       run: |
-        echo "unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }}"
+        echo "unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
         [ "${{ steps.unit.outcome }}" = "success" ] && \
-        [ "${{ steps.integration.outcome }}" = "success" ]
+        [ "${{ steps.integration.outcome }}" = "success" ] && \
+        [ "${{ steps.frames.outcome }}" = "success" ]

@@ -98,7 +98,7 @@ you want to validate against the 100K baseline on the baseline's host.
 `rdmd tools/perf/run.d frames` is a sibling subcommand that reads
 `/api/frames` (the `FrameProbe` ring buffer — per-frame phase timings +
 GC deltas from the `app.d` main loop; see `doc/frame_probe_scenarios_plan.md`)
-instead of `/api/perf`. It runs three scenarios, each resetting the frame
+instead of `/api/perf`. It runs six scenarios, each resetting the frame
 ring immediately before its measured window:
 
 - **`orbit-dense`** — Alt+LMB camera orbit around a dense mesh, no selection,
@@ -112,24 +112,48 @@ ring immediately before its measured window:
   configured. Exercises the tool/events phases with per-vertex falloff
   evaluation every motion event; **F-I2** (steady-state whole-frame,
   main-thread alloc/frame, warmup-skipped) is read off this scenario.
+- **`tab-subpatch`** (task 0200) — Tab-toggle subpatch preview ON over the
+  whole cage, then hold (no further toggle). Exercises the OSD preview
+  rebuild path; **F-I5** asserts `subpatchPreview.count` (an `/api/perf`
+  timer's `count` field, not its `ns` — a build-independent invocation
+  count) stays a small bounded constant (expected 1, `K_SUBPATCH_REBUILD=2`)
+  while held, catching a per-frame rebuild storm.
+- **`lasso-dense`** (task 0200) — RMB lasso covering the central 60% of the
+  viewport over a dense grid, Polygons mode. Selection is Marks-class
+  (`change_bus.d`), not Geometry/Position, so it must not touch the mesh
+  cache; **F-I6a** asserts `meshCacheRebuilds == 0`, **F-I6b** asserts the
+  lasso actually engaged (`selected polygons > 0` — exact count is not
+  portable across GPUs/rasterizers). The scenario looks at the grid from
+  BELOW (`lib.http.setCameraElevation`) — see that function's doc comment
+  for why the default above-plane camera silently selects zero faces.
+- **`undo-spam`** (task 0200) — `kUndoSpamN` (8) small per-gesture `move`
+  drags, then `kUndoSpamN` paced `POST /api/undo` calls. **F-I7** asserts the
+  new `undoApply` counter (`source/perf_probe.d` `Cat.undoApply`, bumped once
+  per successful `undo()` at `command_history.d:1090`) equals exactly N —
+  immune to main-loop frame batching, unlike `meshCacheRebuilds` which only
+  bounds `[1, N]`.
 
 ```bash
-rdmd tools/perf/run.d frames                       # all 3 scenarios, n=316
+rdmd tools/perf/run.d frames                       # all 6 scenarios, n=316
 rdmd tools/perf/run.d frames --no-build orbit       # subset by substring
 rdmd tools/perf/run.d frames --n 64                 # smaller mesh, fast smoke
 rdmd tools/perf/run.d frames --update-frames-baseline   # capture frames_baseline.json
 rdmd tools/perf/run.d frames --no-absolute          # counter invariants only
+rdmd tools/perf/run.d frames --ci --n 64            # CI mode (see below)
 ```
 
-### Counter invariants F-I1 / F-I2 / F-I4 — always run, machine-stable
+### Counter invariants F-I1 / F-I2 / F-I4 / F-I5 / F-I6 / F-I7 — always run, machine-stable
 
 Reuses the SAME `Invariant` struct/verdict pattern as the ops matrix's I1–I4
 above (`checkFramesInvariants`, alongside `checkInvariants`):
 
 - **F-I1** (GATING) — `orbit-dense`: `meshCacheRebuilds == 0`.
-- **F-I4** (GATING) — every scenario: `gcCollections == 0` (a stop-the-world
-  collection during the measured window, counted globally across threads —
-  see the GC-metric-asymmetry note in `source/perf_probe.d`).
+- **F-I4** (GATING in dev, RECORDED/non-gating under `--ci`) — every
+  scenario: `gcCollections == 0` (a stop-the-world collection during the
+  measured window, counted globally across threads — see the
+  GC-metric-asymmetry note in `source/perf_probe.d`). `drag-falloff` is
+  always RECORDED/non-gating (it legitimately allocates enough to trip a
+  collection).
 - **F-I2** (RECORDED, NON-GATING) — `drag-falloff`'s steady-state alloc/frame
   (`steadyMaxAllocBytes` in the `/api/frames` response, warmup-skipped). This
   is **whole-frame main-thread allocation**, not drag-only — in `--test` the
@@ -137,6 +161,33 @@ above (`checkFramesInvariants`, alongside `checkInvariants`):
   floor is expected. It is reported, not gated, until that floor is chased
   to a stable number in a follow-up (same spirit as the `drawEdges`
   35%/frame find referenced in the plan).
+- **F-I5** (GATING) — `tab-subpatch`: `subpatchPreview.count` bounded
+  `1..K_SUBPATCH_REBUILD` (task 0200).
+- **F-I6a/F-I6b** (GATING) — `lasso-dense`: `meshCacheRebuilds == 0` +
+  `selected polygons > 0` (task 0200).
+- **F-I7** (GATING) — `undo-spam`: `undoApply == kUndoSpamN` exactly
+  (task 0200).
+
+### `--ci` mode (task 0200)
+
+`frames --ci` is the mode CI runs: it downgrades **F-I4 (GC) to
+RECORDED/non-gating for every scenario** — the GC-collection count
+false-positives on a CI host (see the note above and task 0197) and
+hardening it is task 0202's job, not this flag's — and implies
+`--no-absolute` (the p99/hitch budgets are baseline-host-relative and
+meaningless off that host). The GATING set under `--ci` is **F-I1 / F-I5 /
+F-I6a / F-I6b / F-I7** only; F-I2/F-I4 are still printed (RECORDED) so the
+numbers stay visible to a human reading the CI log.
+
+```bash
+rdmd tools/perf/run.d frames --no-build --ci --n 64
+```
+
+CI builds the `perf-count` buildType (`dub build --build=perf-count
+--compiler=dmd` — debug + `version=PerfProbe`, no optimizer, dmd-buildable —
+see dub.json) and runs this against it (`.github/workflows/ci.yaml`'s
+`frames-invariants` step), joining the job's fail gate alongside the unit
+and integration lanes.
 
 ### Absolute p99/hitch budgets — baseline-host only
 
@@ -156,7 +207,11 @@ command — any name from the `ops` table, e.g. `move/baseline`,
 `delete/vertices/half`) or ONE `frames` scenario (`orbit-dense`,
 `hover-sweep`, `drag-falloff`) with `perf record --call-graph dwarf`
 attached, driving the target through the SAME synthesis the `ops`/`frames`
-runners use so the profiled workload matches the measured one.
+runners use so the profiled workload matches the measured one. The task
+0200 scenarios (`tab-subpatch`/`lasso-dense`/`undo-spam`) are **not yet**
+wired into `flame`'s capture loop — passing one of those names fails fast
+with "did not match any ops case or frames scenario" rather than silently
+capturing an idle no-op window.
 
 ```bash
 rdmd tools/perf/run.d flame move/baseline            # ops drag case, 8s capture (default)

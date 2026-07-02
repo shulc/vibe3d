@@ -609,10 +609,11 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
 
 // ---------------------------------------------------------------------------
 // `frames` subcommand — FrameProbe scenarios (task 0195,
-// doc/frame_probe_scenarios_plan.md Phase 4). Three scenarios exercise the
-// main-loop phase timers end to end through a real `--build=perf` binary;
-// each resets the frame ring right before its measured drag so the reported
-// window is exactly that scenario's frames.
+// doc/frame_probe_scenarios_plan.md Phase 4; extended to 6 scenarios in
+// task 0200, doc/frame_scenarios_ci_plan.md). Each scenario exercises the
+// main-loop phase timers end to end through a real `--build=perf`/
+// `--build=perf-count` binary; each resets the frame ring right before its
+// measured window so the reported window is exactly that scenario's frames.
 // ---------------------------------------------------------------------------
 
 struct FrameScenarioResult {
@@ -620,7 +621,23 @@ struct FrameScenarioResult {
     CaseStatus status;
     string     detail;
     FrameStats stats;
+    // Deterministic, build-independent counters for the task 0200
+    // scenarios — -1 means "not applicable to this scenario".
+    long       subpatchRebuilds = -1;  // subpatchPreview.count (tab-subpatch, F-I5)
+    long       lassoSelected    = -1;  // selected polygon count (lasso-dense, F-I6b)
+    long       undoApplies      = -1;  // undoApply counter (undo-spam, F-I7)
 }
+
+// Number of per-gesture move-drag undo entries `undo-spam` builds before
+// firing `N` undos. Referenced by both `runUndoSpam` (drives the gestures
+// + undos) and `checkFramesInvariants` (F-I7's exact-N assertion).
+enum int kUndoSpamN = 8;
+
+// F-I5's bound on `subpatchPreview.count` while the preview is held with no
+// further toggle. Expected value is 1 (one rebuild at Tab-on); K=2 leaves a
+// small margin without hiding a real per-frame rebuild storm (which would
+// scale with frameCount, not sit at a small constant).
+enum long K_SUBPATCH_REBUILD = 2;
 
 FrameScenarioResult* findFrameScenario(FrameScenarioResult[] results, string name) {
     foreach (ref r; results)
@@ -802,23 +819,207 @@ FrameScenarioResult runDragFalloff(int n, string meshType) {
     return res;
 }
 
+// tab-subpatch — Tab-toggle subpatch preview ON over the WHOLE cage (empty
+// Polygons selection ⇒ mesh.subpatch_toggle flips every face, per
+// subpatch_toggle.d), then HOLD across a no-op hover sweep with no further
+// toggle. `SubpatchPreview.rebuildIfStale` (mesh.d) rebuilds the OSD preview
+// exactly once — at activation — then short-circuits on its up-to-date
+// guard (`sourceMeshAddr`/`sourceVersion`/`depth` unchanged) for every
+// subsequent frame while held; F-I5 asserts `subpatchPreview.count` stays a
+// small bounded constant (expected 1), catching a per-frame rebuild storm
+// (sibling of the O(F²) `isSubpatch` regression).
+FrameScenarioResult runTabSubpatch(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "tab-subpatch";
+
+    resetMesh(meshType, n);
+    if (!selectMode("polygons", [])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode polygons failed";
+        return res;
+    }
+    settleAfterReset();
+    framesReset();
+    perfReset();
+
+    if (!postCommand("mesh.subpatch_toggle")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "mesh.subpatch_toggle failed";
+        return res;
+    }
+
+    auto cam = fetchCamera();
+    int cx = cam.vpX + cam.width  / 2;
+    int cy = cam.vpY + cam.height / 2;
+    // No-op-ish hover sweep — holds the preview across many frames without
+    // touching mesh/selection state (no further toggle, no button).
+    string log = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               cx - 20, cy, cx + 20, cy, 60);
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "hold sweep: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+
+    auto perf = perfRead();
+    res.subpatchRebuilds = ("subpatchPreview" in perf)
+        ? perf["subpatchPreview"]["count"].integer : 0;
+
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// lasso-dense — Polygons-mode RMB lasso covering the central 60% of the
+// viewport over a dense grid. Selection is Marks-class (change_bus.d), NOT
+// Geometry/Position, so it must not trigger a mesh-cache rebuild / GPU
+// re-upload (F-I6a); F-I6b confirms the lasso actually engaged (selected
+// polygon count > 0) — the retired `test_perf_picking_lasso` signal,
+// exercising the GPU-pick-buffer-driven visibility + strict "all face verts
+// inside polygon" hit-test (app.d ~5899).
+FrameScenarioResult runLassoDense(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "lasso-dense";
+
+    resetMesh(meshType, n);
+    if (!selectMode("polygons", [])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode polygons failed";
+        return res;
+    }
+    // Look at the grid from BELOW (see lib.http.setCameraElevation's doc
+    // comment): the default above-plane camera trips app.d's Polygons-lasso
+    // CPU backface pre-check against `grid`'s actual (Newell-method) face
+    // winding, selecting zero faces regardless of lasso size — a scenario
+    // camera-setup quirk, not a mesh/winding bug this task fixes.
+    setCameraElevation(-0.4);
+
+    auto cam = fetchCamera();
+    int cx = cam.vpX + cam.width  / 2;
+    int cy = cam.vpY + cam.height / 2;
+    int halfW = cast(int)(cam.width  * 0.30);
+    int halfH = cast(int)(cam.height * 0.30);
+    string log = buildLassoLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               cx, cy, halfW, halfH, 20);
+
+    settleAfterReset();
+    framesReset();
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "lasso drag: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+
+    res.lassoSelected = fetchSelectedFaceCount();
+
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// undo-spam — `kUndoSpamN` small whole-mesh `move` gestures (each a
+// per-gesture undo entry, outside the measured window), then `kUndoSpamN`
+// paced `POST /api/undo` calls inside the measured window. All N undos land
+// on Case A (Model-class entry found from the tail — see
+// doc/frame_scenarios_ci_plan.md's design note), so `Cat.undoApply`
+// (bumped once per successful `undo()`, command_history.d:1090) gives an
+// exact count immune to main-loop frame batching (F-I7), unlike
+// `meshCacheRebuilds` which only bounds `[1, N]` when multiple undos land
+// in one batch.
+FrameScenarioResult runUndoSpam(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "undo-spam";
+
+    resetMesh(meshType, n);
+    if (!selectVertices([])) {   // whole mesh
+        res.status = CaseStatus.ERROR;
+        res.detail = "selection failed";
+        return res;
+    }
+    if (!script("tool.set move")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "tool.set move failed";
+        return res;
+    }
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+
+    // N per-gesture move drags — OUTSIDE the measured window. Each is a
+    // separate mouse-down/motion/up gesture, so each commits its own
+    // undo-able Model-class entry (per-gesture commit granularity).
+    foreach (i; 0 .. kUndoSpamN) {
+        try {
+            runOneDrag(Tool.move, vp, cam);
+        } catch (Exception e) {
+            res.status = CaseStatus.ERROR;
+            res.detail = format("gesture %d: %s", i, e.msg);
+            return res;
+        }
+    }
+    settleAfterReset();
+    framesReset();
+    perfReset();
+
+    foreach (i; 0 .. kUndoSpamN) {
+        postUndo();
+        Thread.sleep(30.msecs);   // pace so each undo lands in its own frame
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+
+    auto perf = perfRead();
+    res.undoApplies = ("undoApply" in perf) ? perf["undoApply"]["count"].integer : 0;
+
+    res.status = CaseStatus.OK;
+    return res;
+}
+
 // msFromNs now lives in lib.stats.
 
 void printFramesTable(FrameScenarioResult[] results) {
     writeln();
     writeln("=== frame scenario results ===");
-    writefln("%-16s %10s %10s %10s %10s %8s %8s %8s %10s",
+    writefln("%-16s %10s %10s %10s %10s %8s %8s %8s %10s %8s %8s %8s",
              "scenario", "p50 (ms)", "p95 (ms)", "p99 (ms)", "max (ms)",
-             "hitch16", "hitch33", "rebuild", "gcAlloc(B)");
-    writeln("".replicate(96));
+             "hitch16", "hitch33", "rebuild", "gcAlloc(B)",
+             "subRbld", "lassoSel", "undoApp");
+    writeln("".replicate(96 + 30));
     foreach (r; results) {
         final switch (r.status) {
             case CaseStatus.OK:
-                writefln("%-16s %10.3f %10.3f %10.3f %10.3f %8d %8d %8d %10d",
+                writefln("%-16s %10.3f %10.3f %10.3f %10.3f %8d %8d %8d %10d %8s %8s %8s",
                          r.name, msFromNs(r.stats.p50Ns), msFromNs(r.stats.p95Ns),
                          msFromNs(r.stats.p99Ns), msFromNs(r.stats.maxNs),
                          r.stats.hitch16, r.stats.hitch33,
-                         r.stats.meshCacheRebuilds, r.stats.gcAllocBytes);
+                         r.stats.meshCacheRebuilds, r.stats.gcAllocBytes,
+                         r.subpatchRebuilds >= 0 ? r.subpatchRebuilds.to!string : "-",
+                         r.lassoSelected    >= 0 ? r.lassoSelected.to!string    : "-",
+                         r.undoApplies      >= 0 ? r.undoApplies.to!string      : "-");
                 break;
             case CaseStatus.SKIP:
                 writefln("%-16s  SKIP  %s", r.name, r.detail);
@@ -870,6 +1071,12 @@ void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
             a.put(format(`      "meshCacheRebuilds": %d,` ~ "\n", r.stats.meshCacheRebuilds));
             a.put(format(`      "gcAllocBytes": %d,` ~ "\n", r.stats.gcAllocBytes));
             a.put(format(`      "gcCollections": %d,` ~ "\n", r.stats.gcCollections));
+            if (r.subpatchRebuilds >= 0)
+                a.put(format(`      "subpatchRebuilds": %d,` ~ "\n", r.subpatchRebuilds));
+            if (r.lassoSelected >= 0)
+                a.put(format(`      "lassoSelected": %d,` ~ "\n", r.lassoSelected));
+            if (r.undoApplies >= 0)
+                a.put(format(`      "undoApplies": %d,` ~ "\n", r.undoApplies));
             a.put(format(`      "steadyMaxAllocBytes": %d` ~ "\n", r.stats.steadyMaxAllocBytes));
         } else {
             a.put(format(`      "detail": "%s"` ~ "\n", r.detail.replaceQuotes));
@@ -1135,17 +1342,22 @@ Invariant[] checkInvariants(CaseResult[] results) {
 }
 
 // ---------------------------------------------------------------------------
-// Counter invariants F-I1 / F-I2 / F-I4 for the `frames` subcommand (task
-// 0195 Phase 5). Reuses the SAME `Invariant` struct as `checkInvariants`
-// above — no separate type. ALWAYS run (no header/host gate): F-I1 and F-I4
-// are machine-stable counts, hardware-independent, and GATE the exit code —
-// EXCEPT F-I4 on drag-falloff, which is RECORDED but NON-GATING (see below);
-// F-I2 is RECORDED but NON-GATING (see the plan's Risks section — a nonzero
-// whole-frame alloc floor is expected from ImGui chrome rebuilding every
-// frame, so it would false-fail a gate for reasons unrelated to the drag).
+// Counter invariants F-I1 / F-I2 / F-I4 / F-I5 / F-I6 / F-I7 for the
+// `frames` subcommand (task 0195 Phase 5; F-I5/6/7 + `ciMode` added task
+// 0200). Reuses the SAME `Invariant` struct as `checkInvariants` above — no
+// separate type. ALWAYS run (no header/host gate): every F-Ix here is a
+// machine-stable, build-independent control-flow count. F-I1/F-I5/F-I6/F-I7
+// GATE the exit code; F-I2 is always RECORDED, NON-GATING (see the plan's
+// Risks section — a nonzero whole-frame alloc floor is expected from ImGui
+// chrome rebuilding every frame). F-I4 GATES on orbit-dense/hover-sweep in
+// DEV runs (drag-falloff is always RECORDED there too — it legitimately
+// trips a collection), but when `ciMode` is true F-I4 is RECORDED/
+// NON-GATING for EVERY scenario: it false-positives on the CI host (0195/
+// 0197 evidence) and hardening it is task 0202's job, not this one's —
+// `--ci` routes around it rather than fixing it.
 // ---------------------------------------------------------------------------
 
-Invariant[] checkFramesInvariants(FrameScenarioResult[] results) {
+Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
     Invariant[] inv;
 
     // F-I1 — GATING. orbit-dense must trigger ZERO mesh-cache rebuilds: the
@@ -1162,14 +1374,17 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results) {
         }
     }
 
-    // F-I4 — GATING for orbit-dense / hover-sweep: neither scenario touches
-    // per-vertex mesh work (camera-only reprojection / handle hit-testing),
-    // so 0 GC collections during the measured window is a real invariant
-    // there. drag-falloff is RECORDED, NON-GATING: it legitimately trips a
-    // collection (the falloff/drag hot path allocates enough to cross a GC
-    // pool threshold) — a real product finding, not a harness bug. `pass` is
-    // unconditionally true for drag-falloff so it can never flip the run's
-    // exit code, but the count is still reported so the regression stays
+    // F-I4 — GATING for orbit-dense / hover-sweep in DEV runs; RECORDED/
+    // NON-GATING for EVERY scenario when `ciMode` (host-flaky GC metric,
+    // task 0202 will stabilize it). Neither orbit-dense nor hover-sweep
+    // touches per-vertex mesh work (camera-only reprojection / handle
+    // hit-testing), so 0 GC collections during the measured window is a
+    // real invariant there in dev. drag-falloff is RECORDED, NON-GATING
+    // even outside `--ci`: it legitimately trips a collection (the
+    // falloff/drag hot path allocates enough to cross a GC pool threshold)
+    // — a real product finding, not a harness bug. `pass` is unconditionally
+    // true whenever non-gating so this entry can never flip the run's exit
+    // code, but the count is still reported so the regression stays
     // visible; the drag-path allocation follow-up (task 0202) will chase it
     // to a stable floor. Counts, not times, so this is hardware-independent;
     // a nonzero count means a stop-the-world collection stalled the main
@@ -1177,11 +1392,12 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results) {
     // perf_probe.d).
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;
-        bool gating = r.name != "drag-falloff";
+        bool gating = !ciMode && r.name != "drag-falloff";
         bool ok = gating ? r.stats.gcCollections == 0 : true;
         string label = gating
             ? format("%s: 0 GC collections", r.name)
-            : format("%s: GC collections (RECORDED, non-gating)", r.name);
+            : format("%s: GC collections (RECORDED, non-gating%s)", r.name,
+                     ciMode ? " — --ci" : "");
         inv ~= Invariant("F-I4", label, ok,
             format("gcCollections=%d", r.stats.gcCollections));
     }
@@ -1201,6 +1417,56 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results) {
                 format("steadyMaxAllocBytes=%d B (whole-frame main-thread alloc, " ~
                        "NOT drag-only — see the plan's Risks section)",
                        r.stats.steadyMaxAllocBytes));
+        }
+    }
+
+    // F-I5 — GATING. tab-subpatch: subpatchPreview.count is bounded
+    // 1..K_SUBPATCH_REBUILD while the preview is held with no further
+    // toggle — NOT proportional to frameCount. Catches a per-frame rebuild
+    // storm (sibling of the O(F²) `isSubpatch` regression).
+    {
+        auto r = findFrameScenario(results, "tab-subpatch");
+        if (r !is null && r.status == CaseStatus.OK) {
+            bool ok = r.subpatchRebuilds >= 1 && r.subpatchRebuilds <= K_SUBPATCH_REBUILD;
+            inv ~= Invariant("F-I5",
+                format("tab-subpatch: subpatchPreview rebuilds bounded (1..%d)",
+                       K_SUBPATCH_REBUILD),
+                ok, format("subpatchPreview.count=%d", r.subpatchRebuilds));
+        }
+    }
+
+    // F-I6a — GATING. lasso-dense: a selection change publishes
+    // MeshEditScope.Marks (change_bus.d), not Geometry/Position, so it must
+    // trigger ZERO mesh-cache rebuilds / GPU re-uploads. Empirically
+    // confirmed on first run (see the task's Risks note); would fall back
+    // to a loose `<= K` bound if a small nonzero constant ever showed up.
+    // F-I6b — GATING. lasso-dense actually engaged: selected polygon
+    // count > 0 (a viewport-covering lasso over a dense grid always selects
+    // hundreds of faces, on any rasterizer — no exact count asserted, GPU
+    // pick-buffer rasterization is not portable across GPUs).
+    {
+        auto r = findFrameScenario(results, "lasso-dense");
+        if (r !is null && r.status == CaseStatus.OK) {
+            bool ok6a = r.stats.meshCacheRebuilds == 0;
+            inv ~= Invariant("F-I6a",
+                "lasso-dense: 0 mesh-cache rebuilds (Marks-class selection)",
+                ok6a, format("meshCacheRebuilds=%d", r.stats.meshCacheRebuilds));
+
+            bool ok6b = r.lassoSelected > 0;
+            inv ~= Invariant("F-I6b", "lasso-dense: lasso engaged (selected polygons > 0)",
+                ok6b, format("selectedFaces=%d", r.lassoSelected));
+        }
+    }
+
+    // F-I7 — GATING. undo-spam: undoApply counter == kUndoSpamN exactly.
+    // Immune to main-loop frame batching (unlike meshCacheRebuilds, which
+    // only bounds [1, N] when multiple undos land in one batch).
+    {
+        auto r = findFrameScenario(results, "undo-spam");
+        if (r !is null && r.status == CaseStatus.OK) {
+            bool ok = r.undoApplies == kUndoSpamN;
+            inv ~= Invariant("F-I7", format("undo-spam: undoApply count == %d", kUndoSpamN),
+                ok, format("undoApply=%d", r.undoApplies));
         }
     }
 
@@ -1313,7 +1579,7 @@ FramesAbsRegression[] checkFramesAbsolute(FrameScenarioResult[] results) {
 
 int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort port,
                         string[] requested, bool updateFramesBaseline, bool noAbsolute,
-                        bool noBuild) {
+                        bool noBuild, bool ciMode) {
     killStaleVibe();
     string logPath = "/tmp/vibe3d_perf_frames.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
@@ -1332,6 +1598,9 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         ScenarioSpec("orbit-dense",  &runOrbitDense),
         ScenarioSpec("hover-sweep",  &runHoverSweep),
         ScenarioSpec("drag-falloff", &runDragFalloff),
+        ScenarioSpec("tab-subpatch", &runTabSubpatch),
+        ScenarioSpec("lasso-dense",  &runLassoDense),
+        ScenarioSpec("undo-spam",    &runUndoSpam),
     ];
 
     ScenarioSpec[] scenarios;
@@ -1378,11 +1647,15 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
 
     int failures = 0;
 
-    // 1. Counter invariants — ALWAYS run (machine-stable). F-I1/F-I4 gate;
-    // F-I2 is recorded, non-gating (see checkFramesInvariants).
+    // 1. Counter invariants — ALWAYS run (machine-stable). F-I1/F-I5/F-I6/
+    // F-I7 gate (F-I4 too, in dev); F-I2 is always recorded, non-gating; in
+    // `--ci` mode F-I4 is recorded, non-gating for every scenario (see
+    // checkFramesInvariants).
     writeln();
     writeln("=== frame counter invariants (machine-stable) ===");
-    auto invs = checkFramesInvariants(results);
+    if (ciMode)
+        writeln("  (--ci: GATING = F-I1/F-I5/F-I6/F-I7 only; F-I2/F-I4 RECORDED)");
+    auto invs = checkFramesInvariants(results, ciMode);
     int invFail = 0;
     foreach (iv; invs) {
         writefln("  [%s] %-4s %-52s  %s",
@@ -1491,6 +1764,13 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
     CmdCase* cmdCase = null;
     foreach (ref cc; allCmds) if (cc.name == target) { cmdCase = &cc; break; }
 
+    // task 0200's 3 new `frames` scenarios (tab-subpatch/lasso-dense/
+    // undo-spam) are deliberately NOT wired into `flame` yet — the capture
+    // loop below only knows how to replay orbit-dense/hover-sweep/
+    // drag-falloff, so adding their names here without a matching branch
+    // would silently no-op the capture window (worse than the explicit
+    // "did not match" error below). Deferred; see doc/frame_scenarios_ci_plan.md
+    // Phase 5 note.
     static immutable string[] frameScenarios =
         ["orbit-dense", "hover-sweep", "drag-falloff"];
     bool isScenario = frameScenarios.canFind(target);
@@ -1700,6 +1980,7 @@ int main(string[] args) {
     int    trendLast = 20;
     int    flameFreq = 999;
     int    flameCapture = 8;
+    bool   ciMode = false;
 
     auto helpInfo = getopt(args,
         config.passThrough,
@@ -1718,7 +1999,9 @@ int main(string[] args) {
         "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
         "last",      "`--trend` window size (default 20 runs)", &trendLast,
         "freq",      "`flame` perf sampling frequency Hz (default 999)", &flameFreq,
-        "capture",   "`flame` idle-capture seconds after the drag/scenario (default 8)", &flameCapture);
+        "capture",   "`flame` idle-capture seconds after the drag/scenario (default 8)", &flameCapture,
+        "ci",        "`frames` CI mode: F-I4 (GC) becomes RECORDED/non-gating for every " ~
+                     "scenario (host-flaky); implies --no-absolute", &ciMode);
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run.d [ops] [options] [case-name-substring...]");
@@ -1735,6 +2018,11 @@ int main(string[] args) {
     string meshType = "grid";
     int meshParam = n;
     if (subdivLevels >= 0) { meshType = "subdivcube"; meshParam = subdivLevels; }
+
+    // `--ci` implies `--no-absolute` — the absolute p99/hitch budgets are
+    // hardware-bound (baseline-host header guard), meaningless on a CI
+    // runner that isn't the baseline host.
+    if (ciMode) noAbsolute = true;
 
     string[] requested = args[1 .. $];
 
@@ -1781,7 +2069,7 @@ int main(string[] args) {
 
     if (subcommand == "frames")
         return runFramesSubcommand(meshType, meshParam, viewport, port, requested,
-                                   updateFramesBaseline, noAbsolute, noBuild);
+                                   updateFramesBaseline, noAbsolute, noBuild, ciMode);
 
     // Build the matrix.
     Case[] allCases;

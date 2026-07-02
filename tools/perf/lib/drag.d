@@ -233,6 +233,61 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH,
     return log;
 }
 
+// RMB lasso drag (app.d rmbDragging / rmbPath) — traces a closed
+// rectangular loop in screen space, centered at (cx,cy), spanning
+// 2×halfW × 2×halfH, so mouse-up commits a lasso selection over the
+// enclosed area. Used by the `lasso-dense` frame scenario (task 0200,
+// F-I6). `state` carries the SDL RMB bitmask for a faithful recording, but
+// app.d's rmbPath accumulation actually gates on the `rmbDragging` flag set
+// at button-down (see app.d's mouse-motion handler), not on `state`.
+enum int SDL_BUTTON_RMASK = 4;   // SDL_BUTTON(SDL_BUTTON_RIGHT) == 1 << (3-1)
+
+string buildLassoLog(int vpX, int vpY, int vpW, int vpH,
+                     int cx, int cy, int halfW, int halfH,
+                     int stepsPerSide = 20) {
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+
+    // Rectangle corners, closing back on the start so the traced loop is
+    // a closed polygon (pointInPolygon2D treats the path as closed
+    // regardless, but ending near the start mirrors a real lasso gesture).
+    int[2][5] corners = [
+        [cx - halfW, cy - halfH],
+        [cx + halfW, cy - halfH],
+        [cx + halfW, cy + halfH],
+        [cx - halfW, cy + halfH],
+        [cx - halfW, cy - halfH],
+    ];
+
+    double t = 50.0;
+    double stepMs = 10.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, corners[0][0], corners[0][1]);
+
+    int lastX = corners[0][0], lastY = corners[0][1];
+    foreach (side; 0 .. 4) {
+        int x0 = corners[side][0],     y0 = corners[side][1];
+        int x1 = corners[side + 1][0], y1 = corners[side + 1][1];
+        foreach (i; 1 .. stepsPerSide + 1) {
+            int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / stepsPerSide);
+            int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / stepsPerSide);
+            t += stepMs;
+            log ~= format(
+                `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%d,"mod":0}` ~ "\n",
+                t, x, y, x - lastX, y - lastY, SDL_BUTTON_RMASK);
+            lastX = x; lastY = y;
+        }
+    }
+
+    t += stepMs;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, lastX, lastY);
+    return log;
+}
+
 // ---------------------------------------------------------------------------
 // Grid selection helpers (row-major (N+1)×(N+1), index(i,j) = i*(N+1)+j;
 // i along Z, j along X, both spanning [-1, 1] — see mesh.d:makeGridPlane).

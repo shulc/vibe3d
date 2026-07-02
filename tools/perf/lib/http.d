@@ -149,6 +149,50 @@ ModelInfo modelInfo() {
     return m;
 }
 
+// Selected polygon count from /api/selection — used by the `lasso-dense`
+// frame scenario (task 0200, F-I6b: "lasso engaged").
+long fetchSelectedFaceCount() {
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/selection"));
+    if ("selectedFaces" !in j) return 0;
+    return j["selectedFaces"].array.length;
+}
+
+// POST /api/camera — sets View azimuth/elevation/distance/focus (existing
+// test-automation endpoint). Used by the `lasso-dense` frame scenario (task
+// 0200) to look at a `grid`-type mesh from BELOW: `makeGridPlane`'s Newell-
+// method face normal computes to -Y (mesh.d), so the DEFAULT above-plane
+// camera trips app.d's Polygons-lasso CPU backface pre-check (`dot(faceNormal,
+// vert - eye) >= 0` skips every face) even though ordinary GPU-FBO click
+// picking is unaffected (a different code path with no CPU pre-check).
+// Looking from below makes the lasso's pre-check agree with the mesh's
+// actual winding. This is a scenario camera-setup choice, not a mesh/
+// winding fix — see doc/frame_scenarios_ci_plan.md's provenance note (pure
+// perf tooling; lasso *correctness* stays owned by tests/test_lasso_select.d).
+bool setCameraElevation(double elevation) {
+    try {
+        auto resp = post(g_baseUrl ~ "/api/camera", format(`{"elevation":%f}`, elevation));
+        auto j = parseJSON(cast(string)resp);
+        return ("status" in j) && j["status"].str == "ok";
+    } catch (Exception) {
+        return false;
+    }
+}
+
+// POST /api/undo — same main-thread sync bridge as /api/command. Used by
+// the `undo-spam` frame scenario (task 0200). Returns true on
+// {"status":"ok"}; a stack-empty/revert-failed noop or an error both
+// return false (the caller only cares whether the request round-tripped —
+// the actual per-undo count comes from /api/perf's `undoApply` counter).
+bool postUndo() {
+    try {
+        auto resp = post(g_baseUrl ~ "/api/undo", "");
+        auto j = parseJSON(cast(string)resp);
+        return ("status" in j) && j["status"].str == "ok";
+    } catch (Exception) {
+        return false;
+    }
+}
+
 // Post-drag settle: /api/play-events/status reports "finished" once events
 // are POSTED to the SDL queue, not necessarily fully processed by the main
 // loop (same caveat documented in CLAUDE.md for the HTTP test suite) — wait

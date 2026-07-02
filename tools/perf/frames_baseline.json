@@ -9,21 +9,39 @@
   "scenarios": [
     {
       "name": "orbit-dense",
-      "p99Ns": 841100,
+      "p99Ns": 617400,
       "hitch16": 0,
       "hitch33": 0
     },
     {
       "name": "hover-sweep",
-      "p99Ns": 817900,
+      "p99Ns": 654200,
       "hitch16": 0,
       "hitch33": 0
     },
     {
       "name": "drag-falloff",
-      "p99Ns": 776500,
+      "p99Ns": 667200,
       "hitch16": 1,
       "hitch33": 1
+    },
+    {
+      "name": "tab-subpatch",
+      "p99Ns": 403918300,
+      "hitch16": 2,
+      "hitch33": 2
+    },
+    {
+      "name": "lasso-dense",
+      "p99Ns": 1310200,
+      "hitch16": 1,
+      "hitch33": 1
+    },
+    {
+      "name": "undo-spam",
+      "p99Ns": 7124900,
+      "hitch16": 3,
+      "hitch33": 2
     }
   ]
 }
