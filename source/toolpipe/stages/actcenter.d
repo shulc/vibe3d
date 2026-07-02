@@ -373,8 +373,12 @@ public:
         // pivot. Other modes report 0 (no per-cluster semantics).
         int clusters = 0;
         if (mode == Mode.Local) {
-            Vec3 dummy;
-            computeLocalClusters(dummy, clusters);
+            // D5 dedup: same cached partition computeCenter's Local arm reads
+            // (see the cast note there) — one BFS body for both consumers.
+            Vec3[] cc;
+            int[]  co;
+            (cast(ActionCenterStage)this).computeLocalClustersFull(cc, co);
+            clusters = _cachedClusterCnt;
         }
         return [
             ["mode",          modeLabel()],
@@ -840,12 +844,19 @@ private:
                 if (userPlaced) return userPlacedCenter;
                 return elementCenter();
             case Mode.Local: {
-                // Unchanged — D5 (single Local-mode BFS) is deferred; see
-                // doc/acen_pin_precedence_hoist_plan.md §D5 deferred.
-                Vec3 first;
-                int  count;
-                computeLocalClusters(first, count);
-                return count > 0 ? first : centroidWithGeometryFallback();
+                // D5 dedup: reuse the SAME cached BFS body `evaluate()` uses
+                // (localCenterAndClustersCached), instead of a second
+                // independent partition. computeCenter() is logically const
+                // (the caller-visible RESULT never depends on cache state) but
+                // the cached path fills cross-frame membership fields, so the
+                // cast mirrors an ordinary memoization. Post Stage-U, the only
+                // caller of this const path off the main thread (GET
+                // /api/toolpipe) is marshaled, so this fill never races
+                // evaluate()'s own use of the same cache.
+                Vec3[] cc;
+                int[]  co;
+                return (cast(ActionCenterStage)this)
+                           .localCenterAndClustersCached(cc, co);
             }
             case Mode.None:
                 // No designated action center — for visual placement
@@ -892,8 +903,9 @@ private:
         }
     }
 
-    // Phase 3 follow-up to computeLocalClusters: enumerate ALL clusters
-    // and assign every selected vertex to its cluster id. Used by
+    // Phase 3 follow-up to the (now-removed, D5-deduped) single-pivot BFS:
+    // enumerate ALL clusters and assign every selected vertex to its cluster
+    // id. Used by
     // evaluate() to populate ActionCenterPacket.{clusterCenters,
     // clusterOf} so tools can apply per-cluster pivots. Cluster centers
     // are bounding-box midpoints (consistent with Phase 2's bbox-Select
@@ -946,9 +958,10 @@ private:
             clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
     }
 
-    // Per-frame Local-mode entry for evaluate(). Returns the SAME single-pivot
-    // center the const computeCenter()/computeLocalClusters path produces
-    // (cluster-0 AVERAGE centroid — NOT the bbox center), while also handing
+    // Per-frame Local-mode entry for evaluate() — and, since D5, the ONLY
+    // Local-mode BFS body (computeCenter()'s Local arm and listAttrs()'s
+    // cluster-count branch both call in here too). Returns the single-pivot
+    // center (cluster-0 AVERAGE centroid — NOT the bbox center), while also handing
     // back the per-cluster BBOX centers + partition for the published packet.
     // Both reuse the cross-frame membership cache so the O(E·V) BFS runs at
     // most once per (topology, selection, edit-mode) change instead of per
@@ -1137,157 +1150,6 @@ private:
                 }
             }
             cid++;
-        }
-    }
-
-    // Local mode: enumerate connected components inside the current
-    // selection (face graph for face mode — faces sharing an edge are
-    // one cluster; vertex graph for vert / edge mode — verts sharing
-    // an edge are one cluster). For each cluster, compute its centroid.
-    // Output: `firstCenter` = clusters[0]; `count` = total clusters.
-    // `state.actionCenter.center` reads firstCenter; per-cluster pivots
-    // for tools that iterate (Rotate, Scale) come in a follow-up
-    // subphase via ElementCenterPacket.
-    void computeLocalClusters(out Vec3 firstCenter, out int count) const {
-        firstCenter = Vec3(0, 0, 0);
-        count = 0;
-        if (mesh_ is null) return;
-        final switch (*editMode_) {
-            case EditMode.Polygons:
-                computeLocalFaceClusters(firstCenter, count);
-                break;
-            case EditMode.Edges:
-                computeLocalEdgeClusters(firstCenter, count);
-                break;
-            case EditMode.Vertices:
-                computeLocalVertClusters(firstCenter, count);
-                break;
-        }
-    }
-
-    void computeLocalFaceClusters(out Vec3 firstCenter, out int count) const {
-        // Face-graph BFS: faces sharing an edge are connected.
-        if (!mesh_.hasAnySelectedFaces()) return;
-        size_t nF = mesh_.faces.length;
-        bool[] visited = new bool[](nF);
-        // Build face-adjacency on the fly: for each pair of selected
-        // faces, check if they share at least one edge (= a vertex
-        // pair). O(F²·avg_face_size); cheap at typical mesh sizes.
-        bool faceShareEdge(uint a, uint b) {
-            const(uint)[] fa = mesh_.faces[a];
-            const(uint)[] fb = mesh_.faces[b];
-            foreach (i; 0 .. fa.length) {
-                uint v0 = fa[i];
-                uint v1 = fa[(i + 1) % fa.length];
-                foreach (j; 0 .. fb.length) {
-                    uint w0 = fb[j];
-                    uint w1 = fb[(j + 1) % fb.length];
-                    if ((v0 == w0 && v1 == w1) || (v0 == w1 && v1 == w0))
-                        return true;
-                }
-            }
-            return false;
-        }
-        foreach (start; 0 .. nF) {
-            if (!mesh_.isFaceSelected(start) || visited[start]) continue;
-            // BFS.
-            uint[] queue;
-            queue ~= cast(uint)start;
-            visited[start] = true;
-            Vec3 sum = Vec3(0, 0, 0);
-            int  n = 0;
-            while (queue.length > 0) {
-                uint cur = queue[0];
-                queue = queue[1 .. $];
-                const(uint)[] face = mesh_.faces[cur];
-                sum += face.length > 0 ? mesh_.faceCentroid(cur) : Vec3(0, 0, 0);
-                n++;
-                foreach (other; 0 .. nF) {
-                    if (!mesh_.isFaceSelected(other) || visited[other]) continue;
-                    if (faceShareEdge(cur, cast(uint)other)) {
-                        visited[other] = true;
-                        queue ~= cast(uint)other;
-                    }
-                }
-            }
-            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
-            if (count == 0) firstCenter = cen;
-            count++;
-        }
-    }
-
-    void computeLocalEdgeClusters(out Vec3 firstCenter, out int count) const {
-        // Vertex-graph BFS over the verts touched by selected edges.
-        if (!mesh_.hasAnySelectedEdges()) return;
-        size_t nV = mesh_.vertices.length;
-        bool[] inSel = new bool[](nV);
-        foreach (i, edge; mesh_.edges) {
-            if (mesh_.isEdgeSelected(i)) {
-                inSel[edge[0]] = true;
-                inSel[edge[1]] = true;
-            }
-        }
-        // Adjacency only via SELECTED edges.
-        bool[] visited = new bool[](nV);
-        foreach (start; 0 .. nV) {
-            if (!inSel[start] || visited[start]) continue;
-            uint[] queue;
-            queue ~= cast(uint)start;
-            visited[start] = true;
-            Vec3 sum = Vec3(0, 0, 0);
-            int  n = 0;
-            while (queue.length > 0) {
-                uint cur = queue[0];
-                queue = queue[1 .. $];
-                sum += mesh_.vertices[cur];
-                n++;
-                foreach (i, edge; mesh_.edges) {
-                    if (!mesh_.isEdgeSelected(i)) continue;
-                    uint other = uint.max;
-                    if      (edge[0] == cur) other = edge[1];
-                    else if (edge[1] == cur) other = edge[0];
-                    if (other == uint.max || visited[other]) continue;
-                    visited[other] = true;
-                    queue ~= other;
-                }
-            }
-            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
-            if (count == 0) firstCenter = cen;
-            count++;
-        }
-    }
-
-    void computeLocalVertClusters(out Vec3 firstCenter, out int count) const {
-        // Vertex-graph BFS via mesh edges among SELECTED verts.
-        if (!mesh_.hasAnySelectedVertices()) return;
-        size_t nV = mesh_.vertices.length;
-        bool[] visited = new bool[](nV);
-        foreach (start; 0 .. nV) {
-            if (!mesh_.isVertexSelected(start)) continue;
-            if (visited[start]) continue;
-            uint[] queue;
-            queue ~= cast(uint)start;
-            visited[start] = true;
-            Vec3 sum = Vec3(0, 0, 0);
-            int  n = 0;
-            while (queue.length > 0) {
-                uint cur = queue[0];
-                queue = queue[1 .. $];
-                sum += mesh_.vertices[cur];
-                n++;
-                foreach (edge; mesh_.edges) {
-                    uint other = uint.max;
-                    if      (edge[0] == cur) other = edge[1];
-                    else if (edge[1] == cur) other = edge[0];
-                    if (other == uint.max || visited[other]) continue;
-                    if (!mesh_.isVertexSelected(other)) continue;
-                    visited[other] = true;
-                    queue ~= other;
-                }
-            }
-            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
-            if (count == 0) firstCenter = cen;
-            count++;
         }
     }
 
@@ -1773,6 +1635,60 @@ unittest {
         "b: two disjoint edges must form exactly 2 clusters. If this reads 1 "
         ~ "(a's value), the address term was dropped from the cache key and "
         ~ "b wrongly reused a's cached partition.");
+}
+
+// ---------------------------------------------------------------------------
+// D1 (task 0188) byte-identity oracle: after the dedup, `computeCenter()`
+// (the display path — GET /api/toolpipe -> listAttrs -> currentCenter, and
+// the 4 other main-thread callers) and `localCenterAndClustersCached()` (the
+// evaluate() path) MUST return the exact same Local-mode center, because
+// they now share ONE BFS body. Uses a cube with two OPPOSITE, disconnected
+// selected faces (indices 4 and 5 — the y=+0.5 and y=-0.5 faces; opposite
+// faces of a cube never share an edge) so cluster-0's average centroid is a
+// DISCRIMINATING value (0, 0.5, 0), not merely a count — a seed-order or
+// cluster-0-identity regression would return face 5's centroid (0, -0.5, 0)
+// instead and this would catch it, whereas a same-count check would not.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh     : makeCube;
+    import std.math : fabs;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return fabs(a.x - b.x) < 1e-6f && fabs(a.y - b.y) < 1e-6f
+            && fabs(a.z - b.z) < 1e-6f;
+    }
+
+    Mesh cube = makeCube();
+    cube.resetSelection();   // size the selection arrays to the geometry
+    cube.selectFace(4);   // y=+0.5 face, centroid (0, 0.5, 0) — lowest-index
+                          // selected face, so this is cluster 0.
+    cube.selectFace(5);   // y=-0.5 face, centroid (0, -0.5, 0) — a second,
+                          // disconnected island (cluster 1).
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Polygons;
+    auto acs = new ActionCenterStage(() => meshPtr, &em);
+    acs.mode = ActionCenterStage.Mode.Local;
+
+    immutable Vec3 cluster0Centroid = Vec3(0, 0.5f, 0);   // face 4's own centroid
+
+    // Display path: computeCenter() via the public currentCenter() wrapper —
+    // this is the const arm the D5 rewrite casts through.
+    Vec3 displayCenter = acs.currentCenter();
+
+    // Evaluate path: the cached BFS directly.
+    Vec3[] cc; int[] co;
+    Vec3 evalCenter = acs.localCenterAndClustersCached(cc, co);
+
+    assert(acs._cachedClusterCnt == 2,
+        "two disconnected opposite faces must form exactly 2 clusters");
+    assert(vecEq(displayCenter, evalCenter),
+        "display path (computeCenter) and evaluate path "
+        ~ "(localCenterAndClustersCached) must return a byte-identical "
+        ~ "Local center post-dedup");
+    assert(vecEq(displayCenter, cluster0Centroid),
+        "the returned center must be cluster-0's (lowest-index island, "
+        ~ "face 4) centroid, NOT the whole-selection centroid nor face 5's — "
+        ~ "this is what discriminates BFS seed-order / cluster-0 identity");
 }
 
 // ---------------------------------------------------------------------------
