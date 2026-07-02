@@ -580,6 +580,9 @@ public:
         lastAppliedGestureMutationVersion = ulong.max;
         refireAnchor.length               = 0;
         refirePreValid                    = false;
+        // (task 0202) Idle tool should not pin the fold-source scratch buffer
+        // between drags; the next drag's first frame re-allocates cold.
+        foldSrc_.length                   = 0;
     }
 
     override void deactivate() {
@@ -611,6 +614,9 @@ public:
         lastAppliedGestureMutationVersion = ulong.max;
         refireAnchor.length               = 0;
         refirePreValid                    = false;
+        // (task 0202) Release the fold-source scratch buffer on tool drop too,
+        // mirroring refireAnchor above.
+        foldSrc_.length                   = 0;
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
@@ -4858,7 +4864,13 @@ private:
 
         // Source = restored baseline gathered ordinal-parallel to the moving set;
         // weight at the BASELINE position (weightVerts == the mesh-length baseline).
-        auto src = new Vec3[](vertexIndicesToProcess.length);
+        // (task 0202) Reuse the tool-owned scratch buffer instead of allocating a
+        // fresh Vec3[] every motion event — guarded resize is a no-op except on a
+        // moving-set length change (grow/shrink only at a NEW drag's first frame);
+        // contents are fully overwritten below, byte-identical to a fresh alloc.
+        if (foldSrc_.length != vertexIndicesToProcess.length)
+            foldSrc_.length = vertexIndicesToProcess.length;
+        auto src = foldSrc_;
         foreach (k, vi; vertexIndicesToProcess)
             src[k] = (vi >= 0 && vi < cast(int)baseline.length)
                    ? baseline[vi] : Vec3(0, 0, 0);
@@ -5358,6 +5370,22 @@ private:
     FalloffPacket  refirePreFalloff;
     SnapPacket     refirePreSnap;
     SymmetryPacket refirePreSym;
+
+    // foldSrc_ — reused per-frame gather buffer for applyFold's ordinal-parallel
+    // baseline source (moving-set length). `applyFold` used to `new Vec3[]`
+    // this every motion event; on a whole-mesh drag (~100K verts) that is a
+    // ~1.2 MB/frame allocation that trips the GC over a multi-event drag
+    // (task 0202). Owned here, guarded-resized (grows/shrinks only when the
+    // moving-set length changes — constant within one drag) and filled in
+    // place every frame — contents are byte-identical to the old fresh
+    // allocation. Main-thread only: `applyFold` runs on the SDL dispatch
+    // thread only (the HTTP thread never calls into the tool's geometry
+    // path), so no lock is needed. Cleared (not merely left stale) on
+    // transient reset so an idle tool does not pin ~1.2 MB between drags;
+    // the next drag's first frame re-allocates cold (see task 0202 plan,
+    // "Cold re-alloc per drag" risk note — well below the GC pool
+    // threshold).
+    private Vec3[] foldSrc_;
 
     // Detect a bank switch at gizmo mouse-down and consolidate the prior run.
     // Called from each mouse-down consume arm AFTER the sub-tool confirmed the

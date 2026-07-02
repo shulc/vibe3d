@@ -1344,17 +1344,16 @@ Invariant[] checkInvariants(CaseResult[] results) {
 // ---------------------------------------------------------------------------
 // Counter invariants F-I1 / F-I2 / F-I4 / F-I5 / F-I6 / F-I7 for the
 // `frames` subcommand (task 0195 Phase 5; F-I5/6/7 + `ciMode` added task
-// 0200). Reuses the SAME `Invariant` struct as `checkInvariants` above — no
-// separate type. ALWAYS run (no header/host gate): every F-Ix here is a
-// machine-stable, build-independent control-flow count. F-I1/F-I5/F-I6/F-I7
-// GATE the exit code; F-I2 is always RECORDED, NON-GATING (see the plan's
-// Risks section — a nonzero whole-frame alloc floor is expected from ImGui
-// chrome rebuilding every frame). F-I4 GATES on orbit-dense/hover-sweep in
-// DEV runs (drag-falloff is always RECORDED there too — it legitimately
-// trips a collection), but when `ciMode` is true F-I4 is RECORDED/
-// NON-GATING for EVERY scenario: it false-positives on the CI host (0195/
-// 0197 evidence) and hardening it is task 0202's job, not this one's —
-// `--ci` routes around it rather than fixing it.
+// 0200; drag-falloff F-I4 re-promoted to gating in task 0202). Reuses the
+// SAME `Invariant` struct as `checkInvariants` above — no separate type.
+// ALWAYS run (no header/host gate): every F-Ix here is a machine-stable,
+// build-independent control-flow count. F-I1/F-I5/F-I6/F-I7 GATE the exit
+// code; F-I2 is always RECORDED, NON-GATING (see the plan's Risks section —
+// a nonzero whole-frame alloc floor is expected from ImGui chrome rebuilding
+// every frame). F-I4 GATES EVERY scenario in DEV runs (drag-falloff included
+// since task 0202 removed its per-frame allocation), but when `ciMode` is
+// true F-I4 is RECORDED/NON-GATING for every scenario: it can false-positive
+// on the CI host (0195/0197 evidence), so `--ci` routes around it.
 // ---------------------------------------------------------------------------
 
 Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
@@ -1379,20 +1378,22 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
     // task 0202 will stabilize it). Neither orbit-dense nor hover-sweep
     // touches per-vertex mesh work (camera-only reprojection / handle
     // hit-testing), so 0 GC collections during the measured window is a
-    // real invariant there in dev. drag-falloff is RECORDED, NON-GATING
-    // even outside `--ci`: it legitimately trips a collection (the
-    // falloff/drag hot path allocates enough to cross a GC pool threshold)
-    // — a real product finding, not a harness bug. `pass` is unconditionally
-    // true whenever non-gating so this entry can never flip the run's exit
-    // code, but the count is still reported so the regression stays
-    // visible; the drag-path allocation follow-up (task 0202) will chase it
-    // to a stable floor. Counts, not times, so this is hardware-independent;
+    // real invariant there in dev. drag-falloff ALSO gates in dev now: task
+    // 0202 replaced the whole-mesh fold's per-motion-event `new Vec3[]`
+    // scratch (~1.2 MB/frame, which used to cross a GC pool threshold) with a
+    // tool-owned reusable buffer (`XfrmTransformTool.foldSrc_`), so it holds
+    // 0 GC at the ImGui-chrome alloc floor — the 0195 carve-out is gone. When
+    // `ciMode` is true F-I4 is RECORDED/NON-GATING for EVERY scenario: the GC
+    // metric can still false-positive under CI-host load (0195/0197 evidence),
+    // so `--ci` routes around it rather than risk a flaky gate. `pass` is
+    // unconditionally true whenever non-gating, but the count is still
+    // reported. Counts, not times, so this is hardware-independent;
     // a nonzero count means a stop-the-world collection stalled the main
     // loop (triggered by ANY thread — see the GC-metric-asymmetry note in
     // perf_probe.d).
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;
-        bool gating = !ciMode && r.name != "drag-falloff";
+        bool gating = !ciMode;
         bool ok = gating ? r.stats.gcCollections == 0 : true;
         string label = gating
             ? format("%s: 0 GC collections", r.name)
