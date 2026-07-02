@@ -504,6 +504,47 @@ private __gshared const(char)* g_layoutIniPathZ = null;
 /// the next frame, independently of the process-lifetime dockLayoutDone flag.
 private __gshared bool g_forceLayoutReseed = false;
 
+import viewport : LayoutPreset;
+
+/// Dock Viewport##0..3 into `parentNodeId`, split according to the layout
+/// preset `p` (V5: the per-preset viewport-cell split existed twice —
+/// identically — as the central-node rebuild and the no-central-node
+/// fallback clone; this is the one body both call).  Only docks the
+/// viewport-cell windows; chrome panels (Layers / Tool Properties / etc.)
+/// are docked by the caller before/around this call.
+void dockSplitViewportCells(ImGuiID parentNodeId, LayoutPreset p) {
+    final switch (p) {
+        case LayoutPreset.Single:
+            ImGui.DockBuilderDockWindow("Viewport##0", parentNodeId);
+            break;
+        case LayoutPreset.SplitH: {
+            ImGuiID l2, r2;
+            ImGui.DockBuilderSplitNode(parentNodeId, ImGuiDir.Left, 0.5f, &l2, &r2);
+            ImGui.DockBuilderDockWindow("Viewport##0", l2);
+            ImGui.DockBuilderDockWindow("Viewport##1", r2);
+            break;
+        }
+        case LayoutPreset.SplitV: {
+            ImGuiID t2, b2;
+            ImGui.DockBuilderSplitNode(parentNodeId, ImGuiDir.Up, 0.5f, &t2, &b2);
+            ImGui.DockBuilderDockWindow("Viewport##0", t2);
+            ImGui.DockBuilderDockWindow("Viewport##1", b2);
+            break;
+        }
+        case LayoutPreset.Quad: {
+            ImGuiID t2, b2, tl, tr, bl, br;
+            ImGui.DockBuilderSplitNode(parentNodeId, ImGuiDir.Up, 0.5f, &t2, &b2);
+            ImGui.DockBuilderSplitNode(t2, ImGuiDir.Left, 0.5f, &tl, &tr);
+            ImGui.DockBuilderSplitNode(b2, ImGuiDir.Left, 0.5f, &bl, &br);
+            ImGui.DockBuilderDockWindow("Viewport##0", tl);
+            ImGui.DockBuilderDockWindow("Viewport##1", tr);
+            ImGui.DockBuilderDockWindow("Viewport##2", bl);
+            ImGui.DockBuilderDockWindow("Viewport##3", br);
+            break;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -1168,25 +1209,17 @@ void main(string[] args) {
     // `cameraView`/`vertexCache`/`faceCache`/`edgeCache` stay textually
     // unchanged at call sites (D optional-parens, same pattern as `mesh`).
     // `gpuSelect` returns the class handle (no ref needed for class types).
-    // `activeCamera()`/`hoveredCamera()` are Phase-4 per-viewport seams.
+    // (V7: the `activeCamera`/`hoveredCamera`/`activeIsOrtho` wrappers that
+    // used to live here were deleted — they duplicated `vpm.activeCamera()`/
+    // `vpm.hoveredCamera()`/`vpm.originIsOrtho()` with no remaining callers
+    // of their own; call the `ViewportManager` methods directly instead.)
     ref View cameraView() { return vpm.views[vpm.activeId].camera; }
-    bool activeIsOrtho() {
-        immutable int _oid = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
-        return vpm.views[_oid].isOrtho();
-    }
     ref VertexCache vertexCache() { return vpm.views[vpm.activeId].vcache; }
     ref FaceBoundsCache faceCache() { return vpm.views[vpm.activeId].fcache; }
     ref EdgeCache edgeCache() { return vpm.views[vpm.activeId].ecache; }
     // gpuSelect: class reference — callers use it as gpuSelect.pick(...) etc.
     // (optional-parens applies; 0 address-of sites so no &gpuSelect() edits needed).
     auto gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
-    ref View activeCamera() { return vpm.views[vpm.activeId].camera; }
-    /// hoveredCamera(): falls back to activeCamera() when hoveredId is -1
-    /// (cursor outside all viewport rects).  In Phase 1 both are views[0].
-    ref View hoveredCamera() {
-        immutable int _hid = vpm.hoveredId >= 0 ? vpm.hoveredId : vpm.activeId;
-        return vpm.views[_hid].camera;
-    }
 
     // Phase 2 — input seam.  `g_viewportWindowHovered` is set each frame
     // by the "Viewport" ImGui window's IsWindowHovered() result.  The seam
@@ -2619,8 +2652,9 @@ void main(string[] args) {
     reg.commandFactories["file.new"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                                  &gpu, &vertexCache(), &edgeCache(), &faceCache(),
-                                 &editMode, &cameraView(),
-                                 () { setActiveTool(null); resetAllPipeStages(); });
+                                 &editMode,
+                                 () { setActiveTool(null); resetAllPipeStages(); },
+                                 () => vpm.resetToDefault());
         c.setDocument(&document);
         c.setEmpty(true);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
@@ -2911,8 +2945,9 @@ void main(string[] args) {
     reg.commandFactories["scene.reset"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache(), &edgeCache(), &faceCache(),
-                       &editMode, &cameraView(),
-                       () { setActiveTool(null); resetAllPipeStages(); });
+                       &editMode,
+                       () { setActiveTool(null); resetAllPipeStages(); },
+                       () => vpm.resetToDefault());
         c.setDocument(&document);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
         return cast(Command) c;
@@ -4915,14 +4950,12 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
-            // Restore the full viewport manager to its launch default so no
-            // viewport state (layout / cellCount / activeId / per-cell ortho
-            // preset / independence flags) bleeds into the next test on the
-            // shared --test instance. This is what CI's -j1 run exposed: a
-            // Quad-layout test left cellCount=4 + cells in Ortho, and the old
-            // reset only fixed the active cell's preset — every later pick /
-            // camera / drag test then ran against the wrong cell/rect.
-            vpm.resetToDefault();
+            // Viewport manager reset (layout / cellCount / activeId / per-cell
+            // ortho preset / independence flags — nothing bleeds into the next
+            // test on the shared --test instance) now happens INSIDE cmd.apply()
+            // via the factory's onViewportReset delegate (V3: single reset
+            // owner, same delegate file.new / bare scene.reset use) — no
+            // second explicit call needed here.
             // The host now owns the no-tool falloff drag (step 3 of the
             // stage-gizmo refactor); a reset must drop any in-flight drag.
             pipeGizmoHost.cancelDrag();
@@ -5020,6 +5053,26 @@ void main(string[] args) {
             // Keep replay-time pixel remapping calibrated to the new layout.
             setReplayCurrentViewport(layout.vpX, layout.vpY,
                                      layout.vpW, layout.vpH, kFovY);
+
+            // Single event-driven writer of the picking region (vpm.l*) and
+            // reflow of the live cells' rects on a resize.  This is a near-
+            // dead path in practice — the interactive ImGui window loop
+            // re-stamps every cell's rect from GetContentRegionAvail/
+            // GetCursorScreenPos on the very next frame, and --test never
+            // resizes the window — but it keeps vpm.l* (read by
+            // viewportUnderCursor/applyLayout) coherent for the narrow
+            // window between this event and that next stamp.  Only rects are
+            // touched (NOT a full applyLayout, which would also reset
+            // independence/preset).
+            vpm.lx = layout.vpX; vpm.ly = layout.vpY;
+            vpm.lw = layout.vpW; vpm.lh = layout.vpH;
+            int[4] _rxs, _rys, _rws, _rhs;
+            ViewportManager.cellRectsFor(vpm.layout, vpm.lx, vpm.ly, vpm.lw, vpm.lh,
+                                         _rxs, _rys, _rws, _rhs);
+            foreach (k; 0 .. vpm.cellCount) {
+                vpm.views[k].winX = _rxs[k]; vpm.views[k].winY = _rys[k];
+                vpm.views[k].winW = _rws[k]; vpm.views[k].winH = _rhs[k];
+            }
         }
     }
 
@@ -5764,7 +5817,7 @@ void main(string[] args) {
         int dx = mot.x - lastMouseX;
         int dy = mot.y - lastMouseY;
 
-        if      (dragMode == DragMode.Orbit && !activeIsOrtho()) vpm.originCamera().orbit(dx, dy);
+        if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) vpm.originCamera().orbit(dx, dy);
         else if (dragMode == DragMode.Zoom)  vpm.originCamera().zoom(dx);
         else if (dragMode == DragMode.Pan)   vpm.originCamera().pan(dx, dy);
 
@@ -7584,13 +7637,13 @@ void main(string[] args) {
         }
 
 
-        cameraView.setSize(layout.vpW, layout.vpH);
-        // Phase 1 — keep vpm's layout rect in sync so viewportUnderCursor()
-        // isn't stale after a window resize.  The camera setPos/setSize are
-        // handled by the cameraView accessor above; only the rect needs updating.
-        vpm.lx = layout.vpX; vpm.ly = layout.vpY;
-        vpm.lw = layout.vpW; vpm.lh = layout.vpH;
-
+        // The per-frame force-feed that used to stamp the active camera with
+        // the full 3D-area size (and the vpm.l* region write that went with
+        // it) is gone — the cell rect has one owner now (Viewport3D.camera,
+        // i.e. the cell's View; see viewport.d).  vpm.l* is written only by
+        // the resize handler (handleWindowEvent), and the active cell's true
+        // size is whatever the interactive window loop / cellRectsFor last
+        // stamped onto its camera — no per-frame overwrite.
         Viewport vp = vpm.activeSnapshot();
 
         // ---- ε-exploration per-frame state machine (task 0033) ----
@@ -7728,43 +7781,13 @@ void main(string[] args) {
             // (Tab bar / Status line / Mesh Info / right-panel) intact so a
             // viewport.layout switch never destroys the user's panel arrangement.
             if (vpm.layoutDirty) {
-                import viewport : LayoutPreset;
                 vpm.layoutDirty = false;
 
                 ImGuiID cid = ImGui.centralNodeId(dockspaceId);
                 if (cid != 0) {
                     // Scoped rebuild: clear cell subtree, re-split central node.
                     ImGui.DockBuilderRemoveNodeChildNodes(cid);
-                    final switch (vpm.layout) {
-                        case LayoutPreset.Single:
-                            ImGui.DockBuilderDockWindow("Viewport##0", cid);
-                            break;
-                        case LayoutPreset.SplitH: {
-                            ImGuiID l2, r2;
-                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Left, 0.5f, &l2, &r2);
-                            ImGui.DockBuilderDockWindow("Viewport##0", l2);
-                            ImGui.DockBuilderDockWindow("Viewport##1", r2);
-                            break;
-                        }
-                        case LayoutPreset.SplitV: {
-                            ImGuiID t2, b2;
-                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Up, 0.5f, &t2, &b2);
-                            ImGui.DockBuilderDockWindow("Viewport##0", t2);
-                            ImGui.DockBuilderDockWindow("Viewport##1", b2);
-                            break;
-                        }
-                        case LayoutPreset.Quad: {
-                            ImGuiID t2, b2, tl, tr, bl, br;
-                            ImGui.DockBuilderSplitNode(cid, ImGuiDir.Up, 0.5f, &t2, &b2);
-                            ImGui.DockBuilderSplitNode(t2, ImGuiDir.Left, 0.5f, &tl, &tr);
-                            ImGui.DockBuilderSplitNode(b2, ImGuiDir.Left, 0.5f, &bl, &br);
-                            ImGui.DockBuilderDockWindow("Viewport##0", tl);
-                            ImGui.DockBuilderDockWindow("Viewport##1", tr);
-                            ImGui.DockBuilderDockWindow("Viewport##2", bl);
-                            ImGui.DockBuilderDockWindow("Viewport##3", br);
-                            break;
-                        }
-                    }
+                    dockSplitViewportCells(cid, vpm.layout);
                     ImGui.DockBuilderFinish(dockspaceId);
                 } else {
                     // Fallback: no central node yet (shouldn't happen after the
@@ -7777,36 +7800,7 @@ void main(string[] args) {
                     ImGui.DockBuilderSplitNode(dockspaceId, ImGuiDir.Right, 0.22f,
                                                &rightId, &cid2);
                     ImGui.DockBuilderDockWindow("Layers", rightId);
-                    final switch (vpm.layout) {
-                        case LayoutPreset.Single:
-                            ImGui.DockBuilderDockWindow("Viewport##0", cid2);
-                            break;
-                        case LayoutPreset.SplitH: {
-                            ImGuiID l2, r2;
-                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Left, 0.5f, &l2, &r2);
-                            ImGui.DockBuilderDockWindow("Viewport##0", l2);
-                            ImGui.DockBuilderDockWindow("Viewport##1", r2);
-                            break;
-                        }
-                        case LayoutPreset.SplitV: {
-                            ImGuiID t2, b2;
-                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Up, 0.5f, &t2, &b2);
-                            ImGui.DockBuilderDockWindow("Viewport##0", t2);
-                            ImGui.DockBuilderDockWindow("Viewport##1", b2);
-                            break;
-                        }
-                        case LayoutPreset.Quad: {
-                            ImGuiID t2, b2, tl, tr, bl, br;
-                            ImGui.DockBuilderSplitNode(cid2, ImGuiDir.Up, 0.5f, &t2, &b2);
-                            ImGui.DockBuilderSplitNode(t2, ImGuiDir.Left, 0.5f, &tl, &tr);
-                            ImGui.DockBuilderSplitNode(b2, ImGuiDir.Left, 0.5f, &bl, &br);
-                            ImGui.DockBuilderDockWindow("Viewport##0", tl);
-                            ImGui.DockBuilderDockWindow("Viewport##1", tr);
-                            ImGui.DockBuilderDockWindow("Viewport##2", bl);
-                            ImGui.DockBuilderDockWindow("Viewport##3", br);
-                            break;
-                        }
-                    }
+                    dockSplitViewportCells(cid2, vpm.layout);
                     ImGui.DockBuilderFinish(dockspaceId);
                 }
             }
@@ -8800,20 +8794,19 @@ void main(string[] args) {
                     ImVec2 pos   = ImGui.GetCursorScreenPos();
 
                     // Stamp this cell's window rect for FBO loop and viewportUnderCursor.
-                    // setPos (not just winX/winY fields) is REQUIRED: the pick
-                    // delegates read cameraView.viewport() (== active cell's
-                    // camera) during SDL event processing, so each cell's docked
-                    // window origin must live on the persistent View — otherwise
+                    // setPos is REQUIRED: the pick delegates read
+                    // cameraView.viewport() (== active cell's camera) during
+                    // SDL event processing, so each cell's docked window
+                    // origin must live on the persistent View — otherwise
                     // picking subtracts the stale construction-time layout origin
                     // and every hover/click is offset by (window-pos − origin).
                     // In --test this loop never runs (no Viewport##k windows), so
                     // the cameras keep layout.vp* → byte-identical.
+                    // winX/Y/W/H are forwarding properties onto these same
+                    // camera fields (the cell rect's single owner, V1) — this
+                    // IS the interactive rect authority, no second write needed.
                     _vcell.camera.setSize(cast(int)avail.x, cast(int)avail.y);
                     _vcell.camera.setPos(cast(int)pos.x, cast(int)pos.y);
-                    _vcell.winX = cast(int)pos.x;
-                    _vcell.winY = cast(int)pos.y;
-                    _vcell.winW = cast(int)avail.x;
-                    _vcell.winH = cast(int)avail.y;
 
                     // Full-avail invisible hover surface: drives
                     // g_viewportWindowHovered so letterbox bars remain input-live.
@@ -8859,13 +8852,14 @@ void main(string[] args) {
                         }
                     }
 
-                    // Active cell only: update outer vp + layout rect used by picks.
+                    // Active cell only: update outer vp used by picks.  vp.x/y
+                    // already equal camera.x/y (the cell rect's single owner,
+                    // V1) via resolvedSnapshot — no patch needed.  vpm.l* (the
+                    // picking region) is written only by the resize handler now
+                    // (single-writer invariant); patching it here from a live
+                    // per-cell rect would corrupt it into a non-full-area value.
                     if (k == vpm.activeId) {
                         vp = vpm.resolvedSnapshot(k);
-                        vp.x = _vcell.winX;
-                        vp.y = _vcell.winY;
-                        vpm.lx = vp.x;  vpm.ly = vp.y;
-                        vpm.lw = vp.width; vpm.lh = vp.height;
                     }
 
                     // Per-cell view-selector dropdown.
@@ -8939,14 +8933,14 @@ void main(string[] args) {
                                      ? (k == vpm.dragOriginId)
                                      : (k == vpm.activeId);
 
-                // Per-cell camera snapshot.  x/y must be the actual screen
+                // Per-cell camera snapshot.  x/y is the actual screen
                 // position so tool overlay math (cachedVp screen→world) uses
-                // the correct viewport origin.  In --test: winX/Y = layout.vpX/Y
-                // = camera construction args.  Interactive: winX/Y is stamped by
+                // the correct viewport origin — resolvedSnapshot bakes it
+                // straight from camera.x/y (the cell rect's single owner, V1),
+                // no patch needed.  In --test: camera.x/y = layout.vpX/Y =
+                // construction args.  Interactive: camera.x/y is stamped by
                 // the Viewport##k window loop from GetCursorScreenPos().
                 Viewport vpk = vpm.resolvedSnapshot(k);
-                vpk.x = _cv.winX;
-                vpk.y = _cv.winY;
 
                 // Per-cell FBO size (hi-DPI scaled from logical window size).
                 _cv.fbo.ensure(cast(int)(_cv.camera.width  * dpiX),
@@ -8992,10 +8986,9 @@ void main(string[] args) {
 
             // Keep the outer `vp` in sync with the active cell's snapshot
             // (so the --visible blit and any post-render code that reads vp
-            // see the correct dimensions for the active cell).
+            // see the correct dimensions for the active cell).  activeSnapshot
+            // already bakes camera.x/y (the cell rect's single owner) — no patch.
             vp = vpm.activeSnapshot();
-            vp.x = vpm.views[vpm.activeId].winX;
-            vp.y = vpm.views[vpm.activeId].winY;
         }
         // ── end N-cell FBO render loop ────────────────────────────────────
 
