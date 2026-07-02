@@ -172,6 +172,22 @@ class PipeGizmoHost {
         gizmo.registerHandles(pool, FALLOFF_BASE, fp);
     }
 
+    /// Task 0212 (rotate/scale hover-highlight flicker fix, optional
+    /// extension): CPU-only, idempotent re-layout of the falloff emitter's
+    /// handles under `vp`, mirroring the gizmo-bank `refreshBankGeometry`
+    /// prepass in XfrmTransformTool. The emitter's hit geometry (endpoint
+    /// `centerBox.size`, radial size-handle positions) is view-dependent
+    /// (`gizmoSize`) and shared like the T/R/S banks, but — unlike
+    /// RotateHandler.startAngle / ScaleHandler's disc normal — it never
+    /// discretely FLIPS (Arrow/Box-style hit shapes, only a benign size
+    /// scale), so this wasn't the reported flicker; call it anyway ahead of
+    /// a Test-pass hit-test for uniform robustness. No-op when no emitter
+    /// exists yet (nothing registered = nothing to refresh).
+    void syncGeometry(const ref Viewport vp, const ref FalloffPacket fp) {
+        if (gizmo is null) return;
+        gizmo.syncGeometry(vp, fp);
+    }
+
     /// The hauled falloff part for the tool's setHaul() precedence check, or
     /// -1 if no emitter / no drag. Null-safe.
     int capturedPart() {

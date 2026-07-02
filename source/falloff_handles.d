@@ -234,15 +234,15 @@ public:
         foreach (h; sizeH) h.destroy();
     }
 
-    void draw(const ref Shader shader, const ref Viewport vp,
-              const ref FalloffPacket cfg)
-    {
+    // Task 0212: CPU-only geometry re-layout, factored out of draw() so it
+    // can be re-run (idempotently, no GL side effects) immediately before a
+    // Test-pass hit-test resolves against these handles — see
+    // PipeGizmoHost.syncGeometry.
+    private void layout(const ref Viewport vp, const ref FalloffPacket cfg) {
         if (!cfg.enabled) return;
         if (cfg.type == FalloffType.Linear) {
             startHandle.update(cfg.start, vp);
             endHandle.update  (cfg.end,   vp);
-            startHandle.draw(shader, vp);
-            endHandle.draw  (shader, vp);
         } else if (cfg.type == FalloffType.Radial) {
             centerHandle.update(cfg.center, vp);
             float[3] sz = [cfg.size.x, cfg.size.y, cfg.size.z];
@@ -254,8 +254,27 @@ public:
                     cfg.center.z + RAD_AXES[i].z * sz[axis]);
                 sizeH[i].pos  = worldPos;
                 sizeH[i].size = gizmoSize(worldPos, vp, 0.04f);
-                sizeH[i].draw(shader, vp);
             }
+        }
+    }
+
+    /// Re-lay this gizmo's handles under `vp` with NO draw call — the same
+    /// idempotent math `draw()` runs, exposed so a Test-pass hit-test can
+    /// refresh geometry ahead of resolving a click/hover (task 0212).
+    void syncGeometry(const ref Viewport vp, const ref FalloffPacket cfg) {
+        layout(vp, cfg);
+    }
+
+    void draw(const ref Shader shader, const ref Viewport vp,
+              const ref FalloffPacket cfg)
+    {
+        if (!cfg.enabled) return;
+        layout(vp, cfg);
+        if (cfg.type == FalloffType.Linear) {
+            startHandle.draw(shader, vp);
+            endHandle.draw  (shader, vp);
+        } else if (cfg.type == FalloffType.Radial) {
+            foreach (i; 0 .. 6) sizeH[i].draw(shader, vp);
             centerHandle.draw(shader, vp);
         }
     }

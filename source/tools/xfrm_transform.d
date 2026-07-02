@@ -948,6 +948,11 @@ public:
             toolHandles.begin();
             if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.registerInto(toolHandles, fp);
             registerGizmoHandles(toolHandles);
+            // Task 0212: refresh OWNER-cell hit geometry (see
+            // refreshBankGeometry's doc comment) BEFORE the Test pass below
+            // (`toolHandles.update`) — this is the fix.
+            refreshBankGeometry(vp);
+            if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.syncGeometry(vp, fp);
             // Capture precedence: a live falloff-handle drag wins; else the active
             // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
             if      (pipeGizmoHost !is null && pipeGizmoHost.isDragging())  toolHandles.setHaul(pipeGizmoHost.capturedPart());
@@ -1334,6 +1339,35 @@ public:
         }
     }
 
+    // Task 0212 (rotate/scale hover-highlight flicker root cause + fix):
+    // re-establish OWNER-cell hit geometry for every enabled bank
+    // immediately before the shared arbiter's Test pass resolves. Without
+    // this, `toolHandles.update()`/`.test()` hit-test against whatever
+    // camera-dependent members (`RotateHandler.startAngle`, ScaleHandler's
+    // `centerDisk.normal`/`radius`, plane-circle offsets) a NON-OWNER
+    // (visualOnly) cell's draw last wrote under its OWN foreign `vp` — a
+    // discrete miss that flips the resolved hot part frame-to-frame (the
+    // `overlayHot` DirtyKey term then amplifies it into a visible flicker;
+    // see doc/rotate_scale_hover_flicker_plan.md).
+    //
+    // `syncGeometry` is exactly the CPU-only, side-effect-free geometry math
+    // the subsequent bank `draw()` would run anyway — idempotent, so this
+    // extra call produces byte-identical rendered output; it only makes the
+    // Test pass see owner-correct geometry a few statements earlier. It
+    // reads center/axis*/scaleAccum (already set by `setSharedGizmoPose`
+    // above) and writes ONLY derived hit/draw geometry — never `axis*` /
+    // `center` themselves — so it cannot perturb the frozen-basis /
+    // `dragAxis < 0` setOrientation gating ([[flex_border_gizmo_model_c]],
+    // [[flex_move_handle_flip_fix]]) or the Model-C render-basis freeze.
+    // Gated on the SAME flagT/R/S the registered set uses, so refreshed ==
+    // registered. In `--test` (single cell, no foreign draws) geometry was
+    // already owner-correct, so this is a byte-neutral no-op on output.
+    private void refreshBankGeometry(const ref Viewport vp) {
+        if (flagT) moveSub.handler.syncGeometry(vp);
+        if (flagR) rotateSub.handler.syncGeometry(vp);
+        if (flagS) scaleSub.handler.syncGeometry(vp);
+    }
+
     // Direct handle to the embedded Move sub-tool so the host can drive the Move
     // GESTURE without routing through the wrapper's drain+applyTRS. MoveTool is a
     // pure gesture-scalar producer: its onMouseButtonDown / onMouseMotion /
@@ -1634,6 +1668,13 @@ noBankConsumed:
         if (e.button == SDL_BUTTON_LEFT) {
             toolHandles.begin();
             registerGizmoHandles(toolHandles);
+            // Task 0212: same owner-geometry refresh as the draw arbiter
+            // block (refreshBankGeometry's doc comment) — closes the
+            // analogous latent CLICK miss: a mouse-down can land while the
+            // shared handler geometry still reflects a non-owner cell's
+            // last draw. `cachedVp` here is the owner cell's pinned vp
+            // (synced by syncInputViewport above).
+            refreshBankGeometry(cachedVp);
             hitPart = toolHandles.test(e.x, e.y, cachedVp,
                                        AiInteractionPhase.mouseDown);
             if (compactPresentation() && flagS && hitPart < 0) {
@@ -1676,6 +1717,13 @@ noBankConsumed:
         // routed at the wrapper through the host-owned falloff emitter.
         if (e.button == SDL_BUTTON_LEFT) {
             FalloffPacket curFp = currentFalloff(vts);
+            // Task 0212 optional extension: the falloff endpoint gizmo's
+            // hit geometry (FalloffEndpointHandle.centerBox.size,
+            // radial size-handle positions) is likewise refreshed from a
+            // shared object a foreign cell's draw may have last touched —
+            // see PipeGizmoHost.syncGeometry's doc comment for why this is
+            // safe to extend uniformly (Arrow/Box-style, no discrete flip).
+            if (pipeGizmoHost !is null) pipeGizmoHost.syncGeometry(cachedVp, curFp);
             if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
                 activeDrag = null;   // falloff owns the drag, no gizmo bank
                 return true;

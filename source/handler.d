@@ -826,6 +826,17 @@ class MoveHandler : Handler {
         center = pos;
     }
 
+    // Task 0212 (rotate/scale hover-highlight flicker): CPU-only, idempotent
+    // re-layout of this handler's hit geometry under `vp`, with NO GL side
+    // effects. Public forwarder to the private `updateGeometry` so the
+    // shared cross-bank arbiter (XfrmTransformTool) can refresh the OWNER
+    // cell's hit geometry immediately before `ToolHandles.test()` resolves —
+    // closing the window where a foreign (non-owner) cell's last `draw()`
+    // left camera-dependent members (e.g. RotateHandler.startAngle,
+    // ScaleHandler's centerDisk normal/radius) stale for the Test pass. See
+    // doc/rotate_scale_hover_flicker_plan.md.
+    void syncGeometry(const ref Viewport vp) { updateGeometry(vp); }
+
     private void updateGeometry(const ref Viewport vp)
     {
         float size = gizmoSize(center, vp);
@@ -937,6 +948,12 @@ class RotateHandler : Handler {
 
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
     void setPosition(Vec3 pos) { center = pos; }
+
+    // Task 0212: see MoveHandler.syncGeometry — same idempotent CPU-only
+    // re-layout forwarder. Re-derives `startAngle` (arcX/Y/Z) from the
+    // passed `vp`'s `camFwd`, which is the exact stale member the flicker's
+    // root cause reads through a Test-before-Draw ordering hole.
+    void syncGeometry(const ref Viewport vp) { updateGeometry(vp); }
 
     private void updateGeometry(const ref Viewport vp)
     {
@@ -1358,6 +1375,16 @@ class ScaleHandler : Handler {
     void setPosition(Vec3 pos) {
         center = pos;
     }
+
+    // Task 0212: see MoveHandler.syncGeometry — same idempotent CPU-only
+    // re-layout forwarder. Keeps the default `axisBoxDistance` (the ONLY
+    // value any draw call site uses — verified: `draw()` and
+    // `drawAxisBoxesOnly()` both call `updateGeometry(vp)` with no override),
+    // so the synced geometry matches whichever bank draw runs afterward.
+    // Re-derives `centerDisk.normal`/`radius` (camFwd/gizmoSize-dependent —
+    // the stale members `CenterDiskGizmo.diskHitCheck` reads) plus the plane
+    // circles' gizmoSize-offset centers.
+    void syncGeometry(const ref Viewport vp) { updateGeometry(vp); }
 
     private void updateGeometry(const ref Viewport vp, float axisBoxDistance = AXIS_BOX_DISTANCE)
     {
