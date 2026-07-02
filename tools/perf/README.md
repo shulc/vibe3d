@@ -1,18 +1,65 @@
 # Interactive-tool perf harness
 
-`run.d` benchmarks the interactive `move` / `rotate` / `scale` tools across a
-selection × falloff × symmetry × ACEN × snap matrix by synthesizing real gizmo
-drags and reading per-stage timers out of `/api/perf`. See
-`doc/perf_harness_plan.md` for the full design.
+`run.d` is the single entry point for vibe3d's perf tooling, with four
+subcommands:
+
+- **`ops`** (bare invocation == `ops`) — the interactive `move` / `rotate` /
+  `scale` tools benchmarked across a selection × falloff × symmetry × ACEN ×
+  snap matrix, synthesizing real gizmo drags and reading per-stage timers out
+  of `/api/perf`. See `doc/perf_harness_plan.md` for the full design.
+- **`frames`** — per-frame smoothness scenarios reading `/api/frames` (task
+  0195). See "`frames`" below.
+- **`flame`** — attaches `perf record` to a running vibe3d and profiles ONE
+  ops case or frames scenario, producing a flamegraph-ready folded-stack
+  file (task 0197). See "`flame`" below.
+- **`--trend`** — prints per-case median drift from the local run history,
+  no vibe3d launch/build. See "History and `--trend`" below.
 
 ```bash
-rdmd tools/perf/run.d                       # full matrix, n=316 (~100K faces)
+rdmd tools/perf/run.d                       # == `ops`, full matrix, n=316 (~100K faces)
 rdmd tools/perf/run.d --no-build --n 64     # fast smoke run
 rdmd tools/perf/run.d --n 64 --update-baseline   # capture baseline.json
 rdmd tools/perf/run.d --n 64                # check against baseline + invariants
 rdmd tools/perf/run.d --no-absolute         # relative invariants only
 rdmd tools/perf/run.d --tolerance 0.5       # looser absolute threshold (+50%)
 ```
+
+## Layout
+
+```
+tools/perf/run.d           subcommand dispatch + case tables + invariant
+                            checkers ("policy" — kept here, not extracted)
+tools/perf/lib/http.d       HTTP plumbing (reset/select/script/command/
+                            play-events/perf/frames/model)
+tools/perf/lib/drag.d       vec/matrix + projection + drag/eventlog
+                            synthesis (a standalone copy — see D1 below)
+tools/perf/lib/lifecycle.d  vibe3d process lifecycle (build/launch/
+                            teardown, the `perf` buildType)
+tools/perf/lib/stats.d      median/p95/ms/JSON-number helpers + the
+                            FrameProbe record/stats shapes
+tools/perf/lib/baseline.d   RunHeader/header-mismatch guard + the ops and
+                            frames baseline.json reader/writers +
+                            invariant-threshold constants
+tools/perf/lib/flame.d      perf(1) record/attach/report choreography +
+                            the profile-fp build
+tools/perf/lib/history.d    per-host run-history JSONL append/read/`--trend`
+```
+
+`run.d` imports these as plain `import lib.xxx;` — a bare `rdmd
+tools/perf/run.d` (no `-I`, exactly how `run_all.d` invokes it) resolves
+them because rdmd adds the root file's own directory as an import root, so
+`import lib.http;` finds `tools/perf/lib/http.d` automatically.
+
+**D1 — why `lib/drag.d` duplicates `tests/drag_helpers.d`.** `lib/drag.d` is
+a small self-contained copy of the same vec/matrix/projection/eventlog-
+synthesis helpers `tests/drag_helpers.d` provides — deliberately NOT a
+shared import. `tools/perf/` (an rdmd unit) and `tests/` (`run_test.d`'s
+dmd static-lib build, which globs every `tests/*_helpers.d` into every test
+binary) are separate compilation universes; true dedup would mean adding an
+`-I tools/perf/lib` to the shared test-compile path, out of scope for a
+"no behavior change" consolidation. See
+`doc/perf_tooling_consolidation_plan.md` design decision D1 for the full
+rationale.
 
 ## Regression detection — two levels
 
@@ -101,6 +148,63 @@ captured reference + header for the guard) but lives in a separate file so
 it never collides with the ops baseline. On a header mismatch (different
 host/build/mesh/viewport), the absolute lane is skipped and only the
 counter invariants gate.
+
+## `flame` — attach `perf record` to one case or scenario (task 0197)
+
+`rdmd tools/perf/run.d flame <name>` profiles ONE ops case (drag or one-shot
+command — any name from the `ops` table, e.g. `move/baseline`,
+`delete/vertices/half`) or ONE `frames` scenario (`orbit-dense`,
+`hover-sweep`, `drag-falloff`) with `perf record --call-graph dwarf`
+attached, driving the target through the SAME synthesis the `ops`/`frames`
+runners use so the profiled workload matches the measured one.
+
+```bash
+rdmd tools/perf/run.d flame move/baseline            # ops drag case, 8s capture (default)
+rdmd tools/perf/run.d flame drag-falloff              # frames scenario
+rdmd tools/perf/run.d flame delete/vertices/half --capture 15 --freq 4999
+rdmd tools/perf/run.d flame move/baseline --no-build  # reuse an existing binary as-is
+```
+
+**The build is `profile-fp`, not `perf`.** `flame` builds `dub build
+--build=profile-fp` (optimized + frame pointers, dub.json's `profile-fp`
+buildType) — NOT the PerfProbe-instrumented `perf` buildType `ops`/`frames`
+use, and NOT a plain `dub build` (debug/unoptimized — bounds-checks and
+asserts stay on, so the flamegraph would localize to bounds-check /
+un-inlined-wrapper noise instead of the real hot line). The exact build
+command is echoed to stdout. After a `flame` run, `./vibe3d` is the
+profile-fp binary; a following `ops`/`frames` run WITHOUT `--no-build`
+rebuilds the right one automatically (with `--no-build` it silently reuses
+whatever's there — `flame` warns about this up front).
+
+Output lands in `tools/perf/flame/out/` (gitignored): `perf.data` (raw
+capture), `perf.txt` (`perf report --stdio --no-children`), and
+`folded.txt` — folded stacks via `stackcollapse-perf.pl` if it's on `PATH`
+(the [FlameGraph](https://github.com/brendangregg/FlameGraph) toolkit),
+otherwise a raw `perf script` dump for later collation. Requires `perf`
+(`linux-perf` / the distro's perf userspace tools) on `PATH`; `flame` exits
+with a clear message if it's absent, before building or launching anything.
+
+A single drag/command repeated for the full capture window can drift the
+mesh/gizmo off-camera (e.g. `move/baseline` translates the whole mesh every
+rep) — `flame` detects this mid-capture and resets to a fresh mesh with the
+same configuration, keeping the capture window full instead of aborting.
+
+## History and `--trend` (task 0197)
+
+Every `ops` and `frames` run (not `flame`, not `--trend` itself) appends one
+JSON line to `tools/perf/history/<host>.jsonl` (gitignored — machine-
+specific, like `.test_timings.json`): the run header (buildType/compiler/
+host/meshType/n/faceCount/viewport/repeats) + a timestamp + a per-case
+median map (`kernelApplyMedianUs` for `ops`, `p99Ms` for `frames`).
+
+```bash
+rdmd tools/perf/run.d --trend               # last 20 runs (default)
+rdmd tools/perf/run.d --trend --last 5      # last 5 runs
+```
+
+`--trend` reads the history file for the CURRENT host and prints a
+per-case/scenario table of first→last median drift plus a coarse ASCII
+sparkline — no vibe3d launch, no build, pure file read.
 
 ## `baseline.json` is committed but MACHINE-SPECIFIC
 

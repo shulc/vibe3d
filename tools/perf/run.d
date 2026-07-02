@@ -14,9 +14,18 @@
 //
 // The drag is SYNTHESIZED at runtime (fetch the live camera, project the
 // gizmo handle to pixels, build a JSON-Lines drag log) — never a frozen
-// .log, which is camera-fragile. The projection helpers below are a small
-// self-contained copy of tests/drag_helpers.d (the test module declares
-// `module drag_helpers;` and would clash if imported into this rdmd unit).
+// .log, which is camera-fragile. The projection/vec/matrix helpers live in
+// lib/drag.d — a small self-contained copy of tests/drag_helpers.d (the
+// test module declares `module drag_helpers;` and lives in a SEPARATE
+// compilation universe from this rdmd unit; see doc/
+// perf_tooling_consolidation_plan.md design decision D1 for why this stays
+// its own copy rather than a shared import with tests/).
+//
+// HTTP plumbing, vibe3d process lifecycle, stats/JSON-shaping helpers, and
+// the baseline/header shapes live in lib/http.d, lib/lifecycle.d,
+// lib/stats.d, lib/baseline.d respectively (task 0197 — perf tooling
+// consolidation). The invariant checkers and the case tables below stay
+// here: they are this harness's policy, not shared plumbing.
 //
 // Output: a median/p95 table to stdout + tools/perf/results.json.
 //
@@ -60,425 +69,20 @@ import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, SIGINT, SIGTERM;
 import core.sys.posix.signal : kill;
 
-// ---------------------------------------------------------------------------
-// Lifecycle state (accessed by signal handler)
-// ---------------------------------------------------------------------------
-
-__gshared int  g_vibePid;
-__gshared bool g_keep;
-
-extern(C) void onSignal(int sig) nothrow @nogc @system {
-    if (g_vibePid != 0) kill(g_vibePid, SIGTERM);
-    import core.stdc.stdio : fputs, stderr;
-    fputs("\ninterrupted\n", stderr);
-    exit(130);
-}
-
-void teardown() {
-    if (g_keep || g_vibePid == 0) return;
-    try { kill(g_vibePid, SIGTERM); } catch (Exception) {}
-    for (int i = 0; i < 20; ++i) {
-        Thread.sleep(50.msecs);
-        if (kill(g_vibePid, 0) != 0) { g_vibePid = 0; return; }
-    }
-    try { kill(g_vibePid, /*SIGKILL*/ 9); } catch (Exception) {}
-    g_vibePid = 0;
-}
+import lib.http;
+import lib.drag;
+import lib.lifecycle;
+import lib.stats;
+import lib.baseline;
+import lib.history;
+import lib.flame;
 
 // ---------------------------------------------------------------------------
-// Minimal vec/matrix + projection (self-contained copy of tests/drag_helpers)
+// Selection-index builders (the grid-index math itself — gridIdx/gridFace —
+// now lives in lib.drag; these builders are matrix "policy": WHICH verts/
+// faces make up each named selection, kept alongside casesForTool/
+// cmdIndices below rather than moved).
 // ---------------------------------------------------------------------------
-
-struct Vec3 {
-    float x = 0, y = 0, z = 0;
-    Vec3 opBinary(string op)(Vec3 b) const {
-        static if (op == "+") return Vec3(x+b.x, y+b.y, z+b.z);
-        else static if (op == "-") return Vec3(x-b.x, y-b.y, z-b.z);
-        else static assert(0);
-    }
-    Vec3 opBinary(string op)(float s) const if (op == "*" || op == "/") {
-        static if (op == "*") return Vec3(x*s, y*s, z*s);
-        else                  return Vec3(x/s, y/s, z/s);
-    }
-}
-
-float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-Vec3  cross(Vec3 a, Vec3 b) {
-    return Vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
-}
-Vec3 normalize(Vec3 v) {
-    float L = sqrt(dot(v, v));
-    return L > 1e-9f ? Vec3(v.x/L, v.y/L, v.z/L) : Vec3(0, 0, 0);
-}
-
-float[16] lookAt(Vec3 eye, Vec3 center, Vec3 worldUp) {
-    Vec3 f = normalize(Vec3(center.x-eye.x, center.y-eye.y, center.z-eye.z));
-    Vec3 r = normalize(cross(f, worldUp));
-    Vec3 u = cross(r, f);
-    return [
-         r.x,  u.x, -f.x, 0,
-         r.y,  u.y, -f.y, 0,
-         r.z,  u.z, -f.z, 0,
-        -(r.x*eye.x + r.y*eye.y + r.z*eye.z),
-        -(u.x*eye.x + u.y*eye.y + u.z*eye.z),
-         (f.x*eye.x + f.y*eye.y + f.z*eye.z), 1,
-    ];
-}
-
-float[16] perspectiveMatrix(float fovY, float aspect, float near, float far) {
-    float fnum = 1.0f / tan(fovY * 0.5f);
-    float nf   = near - far;
-    return [
-        fnum/aspect, 0,    0,             0,
-        0,           fnum, 0,             0,
-        0,           0,    (far+near)/nf, -1,
-        0,           0,    2*far*near/nf, 0,
-    ];
-}
-
-struct Viewport {
-    float[16] view;
-    float[16] proj;
-    int width, height, x, y;
-}
-
-struct CameraState {
-    Vec3 eye, focus;
-    int width, height, vpX, vpY;
-}
-
-string g_baseUrl = "http://localhost:8088";
-
-CameraState fetchCamera() {
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/camera"));
-    CameraState c;
-    c.eye   = Vec3(cast(float)j["eye"]["x"].floating,
-                   cast(float)j["eye"]["y"].floating,
-                   cast(float)j["eye"]["z"].floating);
-    c.focus = Vec3(cast(float)j["focus"]["x"].floating,
-                   cast(float)j["focus"]["y"].floating,
-                   cast(float)j["focus"]["z"].floating);
-    c.width  = cast(int)j["width"].integer;
-    c.height = cast(int)j["height"].integer;
-    c.vpX    = cast(int)j["vpX"].integer;
-    c.vpY    = cast(int)j["vpY"].integer;
-    return c;
-}
-
-Viewport viewportFromCamera(CameraState c) {
-    Viewport vp;
-    vp.view   = lookAt(c.eye, c.focus, Vec3(0, 1, 0));
-    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                  cast(float)c.width / c.height, 0.001f, 100.0f);
-    vp.width  = c.width;
-    vp.height = c.height;
-    vp.x      = c.vpX;
-    vp.y      = c.vpY;
-    return vp;
-}
-
-bool projectToWindow(Vec3 w, const ref Viewport vp, out float px, out float py) {
-    float vx = vp.view[0]*w.x + vp.view[4]*w.y + vp.view[8]*w.z + vp.view[12];
-    float vy = vp.view[1]*w.x + vp.view[5]*w.y + vp.view[9]*w.z + vp.view[13];
-    float vz = vp.view[2]*w.x + vp.view[6]*w.y + vp.view[10]*w.z + vp.view[14];
-    float vw = vp.view[3]*w.x + vp.view[7]*w.y + vp.view[11]*w.z + vp.view[15];
-    float cx = vp.proj[0]*vx + vp.proj[4]*vy + vp.proj[8] *vz + vp.proj[12]*vw;
-    float cy = vp.proj[1]*vx + vp.proj[5]*vy + vp.proj[9] *vz + vp.proj[13]*vw;
-    float cw = vp.proj[3]*vx + vp.proj[7]*vy + vp.proj[11]*vz + vp.proj[15]*vw;
-    if (!(cw > 0.0f)) return false;
-    float nx = cx / cw, ny = cy / cw;
-    px = (nx * 0.5f + 0.5f)          * vp.width  + vp.x;
-    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height + vp.y;
-    return true;
-}
-
-float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 90.0f) {
-    float depth = -(vp.view[2]*pos.x + vp.view[6]*pos.y + vp.view[10]*pos.z + vp.view[14]);
-    if (depth < 1e-4f) depth = 1e-4f;
-    float vh = vp.height > 0 ? cast(float)vp.height : 1.0f;
-    return 2.0f * gizmoPixels * depth / (vp.proj[5] * vh);
-}
-
-string buildDragLog(int vpX, int vpY, int vpW, int vpH,
-                    int x0, int y0, int x1, int y1, int steps = 20) {
-    string log = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
-        vpX, vpY, vpW, vpH);
-    double tDown = 50.0;
-    log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        tDown, x0, y0);
-    double stepMs = 50.0;
-    int lastX = x0, lastY = y0;
-    foreach (i; 1 .. steps + 1) {
-        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
-        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
-        double t = tDown + i * stepMs;
-        log ~= format(
-            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
-            t, x, y, x - lastX, y - lastY);
-        lastX = x; lastY = y;
-    }
-    double tUp = tDown + (steps + 1) * stepMs;
-    log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        tUp, x1, y1);
-    return log;
-}
-
-// KMOD_LALT (SDL2 SDL_Keymod bit layout: LALT=0x0100, RALT=0x0200,
-// ALT=LALT|RALT=0x0300). `(mods & KMOD_ALT) != 0` in app.d's button-down
-// handler only tests the bit is set, so LALT alone is sufficient to drive
-// DragMode.Orbit. EventPlayer.tick() calls SDL_SetModState(entry.mod) for
-// every mouse event before dispatch (eventlog.d), so a recorded "mod" value
-// reliably reproduces a real modifier-held drag under replay.
-enum int SDL_KMOD_LALT = 0x0100;
-
-// Alt+LMB orbit drag (view.d DragMode.Orbit) — camera-only, mesh untouched.
-// Used by the `orbit-dense` frame scenario (tools/perf/run.d frames) to
-// exercise the draw path without any mesh-cache work (F-I1).
-string buildOrbitLog(int vpX, int vpY, int vpW, int vpH,
-                     int x0, int y0, int x1, int y1, int steps = 60) {
-    string log = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
-        vpX, vpY, vpW, vpH);
-    double tDown = 50.0;
-    log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
-        tDown, x0, y0, SDL_KMOD_LALT);
-    double stepMs = 20.0;
-    int lastX = x0, lastY = y0;
-    foreach (i; 1 .. steps + 1) {
-        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
-        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
-        double t = tDown + i * stepMs;
-        log ~= format(
-            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":%d}` ~ "\n",
-            t, x, y, x - lastX, y - lastY, SDL_KMOD_LALT);
-        lastX = x; lastY = y;
-    }
-    double tUp = tDown + (steps + 1) * stepMs;
-    log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
-        tUp, x1, y1, SDL_KMOD_LALT);
-    return log;
-}
-
-// Plain mouse sweep, NO button — drives per-frame pickVertices/pickEdges/
-// pickFaces hover resolution. Used by the `hover-sweep` frame scenario.
-string buildHoverLog(int vpX, int vpY, int vpW, int vpH,
-                     int x0, int y0, int x1, int y1, int steps = 80) {
-    string log = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
-        vpX, vpY, vpW, vpH);
-    double stepMs = 20.0;
-    int lastX = x0, lastY = y0;
-    foreach (i; 0 .. steps + 1) {
-        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
-        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
-        double t = 50.0 + i * stepMs;
-        log ~= format(
-            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":0,"mod":0}` ~ "\n",
-            t, x, y, x - lastX, y - lastY);
-        lastX = x; lastY = y;
-    }
-    return log;
-}
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
-
-void postUrl(string path, string body_ = "") {
-    post(g_baseUrl ~ path, body_);
-}
-
-// `tool.set` / `tool.pipe.attr` go through /api/script as a plain command
-// string. Returns true on {"status":"ok"}.
-bool script(string cmd) {
-    try {
-        auto resp = post(g_baseUrl ~ "/api/script", cmd);
-        auto j = parseJSON(cast(string)resp);
-        return ("status" in j) && j["status"].str == "ok";
-    } catch (Exception e) {
-        return false;
-    }
-}
-
-void resetMesh(string type, int n) {
-    string key = (type == "subdivcube") ? "levels" : "n";
-    postUrl(format("/api/reset?type=%s&%s=%d", type, key, n));
-}
-
-bool selectVertices(int[] indices) {
-    auto a = appender!string();
-    a.put(`{"mode":"vertices","indices":[`);
-    foreach (i, v; indices) {
-        if (i) a.put(",");
-        a.put(v.to!string);
-    }
-    a.put("]}");
-    try {
-        auto resp = post(g_baseUrl ~ "/api/select", a.data);
-        auto j = parseJSON(cast(string)resp);
-        return ("status" in j) && j["status"].str == "ok";
-    } catch (Exception) {
-        return false;
-    }
-}
-
-// Mode-aware selection. POST /api/select {"mode":mode,"indices":[...]}.
-// `mesh.select` sets the app's editMode to match `mode` as a side effect,
-// and an empty `indices` clears the selection (⇒ "whole mesh"). Returns
-// true on {"status":"ok"}.
-bool selectMode(string mode, int[] indices) {
-    auto a = appender!string();
-    a.put(`{"mode":"`);
-    a.put(mode);
-    a.put(`","indices":[`);
-    foreach (i, v; indices) {
-        if (i) a.put(",");
-        a.put(v.to!string);
-    }
-    a.put("]}");
-    try {
-        auto resp = post(g_baseUrl ~ "/api/select", a.data);
-        auto j = parseJSON(cast(string)resp);
-        return ("status" in j) && j["status"].str == "ok";
-    } catch (Exception) {
-        return false;
-    }
-}
-
-// POST a bare command-id argstring to /api/command (e.g. "mesh.delete").
-// Returns true on {"status":"ok"}.
-bool postCommand(string id) {
-    try {
-        auto resp = post(g_baseUrl ~ "/api/command", id);
-        auto j = parseJSON(cast(string)resp);
-        return ("status" in j) && j["status"].str == "ok";
-    } catch (Exception) {
-        return false;
-    }
-}
-
-void playAndWait(string log) {
-    auto resp = post(g_baseUrl ~ "/api/play-events", log);
-    auto j = parseJSON(cast(string)resp);
-    if (j["status"].str != "success")
-        throw new Exception("play-events failed: " ~ cast(string)resp);
-    foreach (i; 0 .. 400) {
-        auto s = parseJSON(cast(string)get(g_baseUrl ~ "/api/play-events/status"));
-        if (s["finished"].type == JSONType.true_) return;
-        Thread.sleep(25.msecs);
-    }
-    throw new Exception("play-events did not finish within 10s");
-}
-
-void perfReset() { postUrl("/api/perf/reset"); }
-
-// Authoritative gizmo pivot: /api/toolpipe/eval runs the pipeline once and
-// returns the evaluated ActionCenterPacket.center — the exact point the
-// gizmo sits on, regardless of ACEN mode/submode. Using this instead of a
-// re-derived centroid eliminates handle-projection misses when ACEN
-// relocates the pivot (select/local modes).
-Vec3 fetchActionCenter() {
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/toolpipe/eval"));
-    auto c = j["actionCenter"]["center"].array;
-    return Vec3(cast(float)c[0].floating, cast(float)c[1].floating,
-                cast(float)c[2].floating);
-}
-
-JSONValue perfRead() {
-    return parseJSON(cast(string)get(g_baseUrl ~ "/api/perf"));
-}
-
-// ---------------------------------------------------------------------------
-// /api/frames — FrameProbe (task 0195). Mirrors the /api/perf helpers above.
-// ---------------------------------------------------------------------------
-
-void framesReset() { postUrl("/api/frames/reset"); }
-
-// One record from FrameProbe's "worst" / "worstN" (source/perf_probe.d
-// FrameRec — total + per-phase ns + GC deltas for a single frame).
-struct FrameRecJ {
-    long totalNs, eventNs, toolNs, cacheNs, drawNs, uploadNs, uiNs;
-    long gcAllocBytes, gcCollections;
-}
-
-FrameRecJ parseFrameRec(JSONValue j) {
-    FrameRecJ r;
-    r.totalNs       = j["totalNs"].integer;
-    r.eventNs       = j["eventNs"].integer;
-    r.toolNs        = j["toolNs"].integer;
-    r.cacheNs       = j["cacheNs"].integer;
-    r.drawNs        = j["drawNs"].integer;
-    r.uploadNs      = j["uploadNs"].integer;
-    r.uiNs          = j["uiNs"].integer;
-    r.gcAllocBytes  = j["gcAllocBytes"].integer;
-    r.gcCollections = j["gcCollections"].integer;
-    return r;
-}
-
-// Parsed /api/frames snapshot. `empty` is true when the binary has no
-// PerfProbe instrumentation (default build ⇒ "{}") or the window recorded
-// zero frames — callers must check it before trusting any other field.
-struct FrameStats {
-    bool empty = true;
-    long frameCount;
-    long p50Ns, p95Ns, p99Ns, maxNs;
-    long hitch16, hitch33;
-    long meshCacheRebuilds;
-    long gcAllocBytes;     // sum across the window
-    long gcCollections;    // sum across the window
-    long steadyMaxAllocBytes;
-    FrameRecJ worst;
-}
-
-FrameStats fetchFrames() {
-    FrameStats s;
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/frames"));
-    if ("frameCount" !in j) return s;   // "{}" — uninstrumented build
-    s.frameCount = j["frameCount"].integer;
-    if (s.frameCount == 0) return s;
-    s.empty = false;
-    auto total = j["total"];
-    s.p50Ns = total["p50_ns"].integer;
-    s.p95Ns = total["p95_ns"].integer;
-    s.p99Ns = total["p99_ns"].integer;
-    s.maxNs = total["max_ns"].integer;
-    s.hitch16 = j["hitch_16ms"].integer;
-    s.hitch33 = j["hitch_33ms"].integer;
-    s.meshCacheRebuilds = j["meshCacheRebuilds"].integer;
-    s.gcAllocBytes  = j["gcAllocBytes"].integer;
-    s.gcCollections = j["gcCollections"].integer;
-    s.steadyMaxAllocBytes = j["steadyMaxAllocBytes"].integer;
-    if (j["worst"].type != JSONType.null_) s.worst = parseFrameRec(j["worst"]);
-    return s;
-}
-
-struct ModelInfo { long vertexCount; long faceCount; }
-ModelInfo modelInfo() {
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/model"));
-    ModelInfo m;
-    m.vertexCount = j["vertexCount"].integer;
-    m.faceCount   = j["faceCount"].integer;
-    return m;
-}
-
-Vec3 vertexPos(int idx) {
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/model"));
-    auto v = j["vertices"].array[idx].array;
-    return Vec3(cast(float)v[0].floating, cast(float)v[1].floating,
-                cast(float)v[2].floating);
-}
-
-// ---------------------------------------------------------------------------
-// Grid selection helpers (row-major (N+1)×(N+1), index(i,j) = i*(N+1)+j;
-// i along Z, j along X, both spanning [-1, 1] — see mesh.d:makeGridPlane).
-// ---------------------------------------------------------------------------
-
-int gridIdx(int n, int i, int j) { return i * (n + 1) + j; }
 
 // One vertex near the grid centre.
 int[] selSingle(int n) {
@@ -507,10 +111,6 @@ int[] selHalf(int n) {
 // "whole" — empty selection ⇒ the whole mesh moves (universal transform
 // rule, CLAUDE.md). We model it as NO selection call; the caller skips
 // /api/select for whole.
-
-// Grid faces are row-major: face(i,j) = i*n + j, for i,j in 0..n (n×n
-// faces). Mirrors selHalf's lower-half style but in face space.
-int gridFace(int n, int i, int j) { return i * n + j; }
 
 // Faces in the lower-Z half: rows i < n/2, all columns j in 0..n.
 int[] faceHalf(int n) {
@@ -754,17 +354,7 @@ JSONValue runOneDrag(Tool t, const ref Viewport vp, CameraState cam) {
     return perfRead();
 }
 
-double medianOf(double[] xs) {
-    if (xs.length == 0) return 0;
-    auto s = xs.dup; s.sort();
-    return s[s.length / 2];
-}
-double p95Of(double[] xs) {
-    if (xs.length == 0) return 0;
-    auto s = xs.dup; s.sort();
-    size_t idx = cast(size_t)((s.length - 1) * 95 / 100);
-    return s[idx];
-}
+// medianOf/p95Of now live in lib.stats.
 
 // From a /api/perf breakdown, the dominant pipeline stage by sum_ns.
 string dominantStage(JSONValue perf) {
@@ -1038,23 +628,7 @@ FrameScenarioResult* findFrameScenario(FrameScenarioResult[] results, string nam
     return null;
 }
 
-// Post-drag settle: /api/play-events/status reports "finished" once events
-// are POSTED to the SDL queue, not necessarily fully processed by the main
-// loop (same caveat documented in CLAUDE.md for the HTTP test suite) — wait
-// a beat before reading /api/frames so the window includes the drag's last
-// frames.
-void settleAfterPlay() { Thread.sleep(150.msecs); }
-
-// Cold-start settle: a fresh dense mesh's FIRST few rendered frames pay
-// one-time setup costs (GPU buffer allocation, cache first-resize, pipeline
-// first-evaluate) that can legitimately trigger a GC collection — the same
-// class of cost the ops matrix's `runCase` discards via its "warmup drag"
-// (see the comment there). `framesReset()` is always called AFTER this
-// settle so the measured ring only sees steady-state frames, keeping F-I4
-// (0 GC collections) a meaningful signal instead of a cold-start false
-// positive. `--perf` runs uncapped (no vsync, no SDL_Delay), so this window
-// covers many dozens of frames.
-void settleAfterReset() { Thread.sleep(200.msecs); }
+// settleAfterPlay/settleAfterReset now live in lib.http.
 
 // orbit-dense — Alt+LMB orbit around a dense mesh, no selection, no tool.
 // Exercises the draw path; F-I1 target is 0 mesh-cache rebuilds (camera-only
@@ -1228,7 +802,7 @@ FrameScenarioResult runDragFalloff(int n, string meshType) {
     return res;
 }
 
-double msFromNs(long ns) { return cast(double)ns / 1_000_000.0; }
+// msFromNs now lives in lib.stats.
 
 void printFramesTable(FrameScenarioResult[] results) {
     writeln();
@@ -1306,65 +880,8 @@ void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
     std.file.write(path, a.data);
 }
 
-// ---------------------------------------------------------------------------
-// Build & launch
-// ---------------------------------------------------------------------------
-
-enum LDC2 = "/home/ashagarov/.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2";
-
-string g_repoRoot;
-
-bool dubBuildPerf() {
-    write("Building vibe3d (perf buildType, ldc2 1.42)... ");
-    stdout.flush();
-    auto r = execute(["dub", "build", "--build=perf",
-                      "--compiler=" ~ LDC2, "--root", g_repoRoot]);
-    if (r.status != 0) {
-        writeln("FAIL");
-        writeln(r.output);
-        return false;
-    }
-    writeln("OK");
-    return true;
-}
-
-void killStaleVibe() {
-    // pkill -x vibe3d (NOT -f 'vibe3d --test' — that self-kills this shell).
-    executeShell("pkill -x vibe3d 2>/dev/null");
-    for (int i = 0; i < 30; ++i) {
-        auto r = executeShell("pgrep -x vibe3d >/dev/null");
-        if (r.status != 0) return;
-        Thread.sleep(100.msecs);
-    }
-}
-
-bool launchVibe(ushort port, string viewport, string logPath) {
-    auto logFile = File(logPath, "wb");
-    string[] argv = [buildPath(g_repoRoot, "vibe3d"),
-                     "--test", "--perf",
-                     "--http-port", port.to!string,
-                     "--viewport", viewport];
-    Pid pid;
-    try {
-        pid = spawnProcess(argv, stdin, logFile, logFile, null,
-                           Config.suppressConsole);
-    } catch (ProcessException e) {
-        stderr.writeln("failed to spawn vibe3d: ", e.msg);
-        return false;
-    }
-    g_vibePid = pid.processID;
-    // Wait for /api/camera to respond 200.
-    string probe = format("curl -s -o /dev/null -w '%%{http_code}' " ~
-                          "http://localhost:%d/api/camera", port);
-    for (int i = 0; i < 150; ++i) {
-        auto r = executeShell(probe);
-        if (r.status == 0 && r.output.strip == "200") return true;
-        Thread.sleep(100.msecs);
-    }
-    stderr.writeln("vibe3d did not become responsive");
-    try { stderr.writeln(File(logPath, "r").byLine.join("\n")); } catch (Exception) {}
-    return false;
-}
+// Build & launch (LDC2/g_repoRoot/dubBuildPerf/killStaleVibe/launchVibe) now
+// live in lib.lifecycle.
 
 // ---------------------------------------------------------------------------
 // Output
@@ -1406,19 +923,7 @@ void printTable(CaseResult[] results) {
              ok, skip, err, results.length);
 }
 
-// JSON-safe number: a bare `%.3f` renders NaN as `nan`, which is INVALID
-// JSON and breaks loadBaseline (std.json throws). Command cases have no
-// pipe stages, so their pipe median is legitimately NaN — emit `null`.
-string jsonNum(double v) {
-    import std.math : isNaN;
-    return v.isNaN ? "null" : format("%.3f", v);
-}
-
-string replicate(string s, size_t n) {
-    auto a = appender!string();
-    foreach (_; 0 .. n) a.put(s);
-    return a.data;
-}
+// jsonNum/replicate now live in lib.stats.
 
 void writeResultsJson(string path, string meshType, int n, long faceCount,
                       string viewport, int repeats, CaseResult[] results) {
@@ -1484,113 +989,21 @@ string replaceQuotes(string s) {
 //                 thresholds: gross-regression guards, not tight benchmarks.
 // ---------------------------------------------------------------------------
 
-// Baseline.json shares the same header shape the runner already writes for
-// results.json, so a header mismatch can be detected field-by-field.
-struct RunHeader {
-    string buildType, compiler, host, meshType, viewport;
-    int    n;
-    long   faceCount;
-    int    repeats;
-}
-
-RunHeader currentHeader(string meshType, int n, long faceCount,
-                        string viewport, int repeats) {
-    return RunHeader("perf", "ldc2 1.42.0", Socket.hostName, meshType, viewport,
-                     n, faceCount, repeats);
-}
-
-// One per-case row stored in baseline.json.
-struct BaselineCase {
-    string name;
-    double kernelMedianUs, kernelP95Us, pipeMedianUs;
-    string dominantStage;
-    long   vertsTouched;
-}
-
+// RunHeader/currentHeader/headerMismatch and the BaselineCase/Baseline
+// reader-writer pair now live in lib.baseline. writeBaselineJson here is a
+// thin CaseResult[]→lib.baseline.BaselineCase[] row mapper (lib.baseline
+// cannot depend on run.d's CaseResult — that's this harness's own case-table
+// policy type — so the boundary is this small adapter, not a re-derivation
+// of the JSON writer itself).
 void writeBaselineJson(string path, RunHeader h, CaseResult[] results) {
-    auto a = appender!string();
-    a.put("{\n");
-    a.put(format(`  "buildType": "%s",` ~ "\n", h.buildType));
-    a.put(format(`  "compiler": "%s",` ~ "\n", h.compiler));
-    a.put(format(`  "host": "%s",` ~ "\n", h.host));
-    a.put(format(`  "meshType": "%s",` ~ "\n", h.meshType));
-    a.put(format(`  "n": %d,` ~ "\n", h.n));
-    a.put(format(`  "faceCount": %d,` ~ "\n", h.faceCount));
-    a.put(format(`  "viewport": "%s",` ~ "\n", h.viewport));
-    a.put(format(`  "repeats": %d,` ~ "\n", h.repeats));
-    a.put(`  "cases": [` ~ "\n");
-    bool first = true;
+    lib.baseline.BaselineCase[] rows;
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;  // only OK cases are baselined
-        if (!first) a.put(",\n");
-        first = false;
-        a.put("    {\n");
-        a.put(format(`      "name": "%s",` ~ "\n", r.name));
-        a.put(format(`      "kernelMedianUs": %s,` ~ "\n", jsonNum(r.kernelMedianUs)));
-        a.put(format(`      "kernelP95Us": %s,` ~ "\n", jsonNum(r.kernelP95Us)));
-        a.put(format(`      "pipeMedianUs": %s,` ~ "\n", jsonNum(r.pipeMedianUs)));
-        a.put(format(`      "dominantStage": "%s",` ~ "\n", r.dominantStage));
-        a.put(format(`      "vertsTouched": %d` ~ "\n", r.vertsTouched));
-        a.put("    }");
+        rows ~= lib.baseline.BaselineCase(r.name, r.kernelMedianUs, r.kernelP95Us,
+                                          r.pipeMedianUs, r.dominantStage,
+                                          r.vertsTouched);
     }
-    a.put("\n  ]\n}\n");
-    std.file.write(path, a.data);
-}
-
-struct Baseline {
-    RunHeader header;
-    BaselineCase[string] byName;   // keyed by case name
-}
-
-Baseline loadBaseline(string path) {
-    Baseline b;
-    auto j = parseJSON(cast(string)std.file.read(path));
-    b.header.buildType = j["buildType"].str;
-    b.header.compiler  = j["compiler"].str;
-    // host may be absent in a legacy (pre-host) baseline ⇒ empty string,
-    // which headerMismatch treats as "no host recorded" and does not compare.
-    b.header.host      = ("host" in j) ? j["host"].str : "";
-    b.header.meshType  = j["meshType"].str;
-    b.header.viewport  = j["viewport"].str;
-    b.header.n         = cast(int)j["n"].integer;
-    b.header.faceCount = j["faceCount"].integer;
-    b.header.repeats   = cast(int)j["repeats"].integer;
-    foreach (cv; j["cases"].array) {
-        BaselineCase bc;
-        bc.name           = cv["name"].str;
-        bc.kernelMedianUs = cv["kernelMedianUs"].floating;
-        bc.kernelP95Us    = cv["kernelP95Us"].floating;
-        // `null` = NaN round-trip (command cases have no pipe stages).
-        bc.pipeMedianUs   = (cv["pipeMedianUs"].type == JSONType.null_)
-                            ? double.nan : cv["pipeMedianUs"].floating;
-        bc.dominantStage  = cv["dominantStage"].str;
-        bc.vertsTouched   = cv["vertsTouched"].integer;
-        b.byName[bc.name] = bc;
-    }
-    return b;
-}
-
-// The build-mismatch guard. Absolute comparison is only meaningful when the
-// baseline was captured on the SAME build + mesh + viewport. Returns a
-// non-empty reason string if the configs differ (⇒ skip absolute).
-string headerMismatch(RunHeader baseH, RunHeader curH) {
-    if (baseH.buildType != curH.buildType)
-        return format("buildType %s vs %s", baseH.buildType, curH.buildType);
-    if (baseH.compiler != curH.compiler)
-        return format("compiler %s vs %s", baseH.compiler, curH.compiler);
-    // Host is only compared when the baseline actually recorded one — a
-    // legacy host-less baseline (empty) still compares on the other fields.
-    // Absolute timings are hardware-bound, so a different host with the same
-    // toolchain would false-flag; this guard makes it auto-skip instead.
-    if (baseH.host.length && baseH.host != curH.host)
-        return format("host %s vs %s", baseH.host, curH.host);
-    if (baseH.meshType != curH.meshType)
-        return format("meshType %s vs %s", baseH.meshType, curH.meshType);
-    if (baseH.n != curH.n)
-        return format("n %d vs %d", baseH.n, curH.n);
-    if (baseH.viewport != curH.viewport)
-        return format("viewport %s vs %s", baseH.viewport, curH.viewport);
-    return "";
+    lib.baseline.writeBaselineJson(path, h, rows);
 }
 
 // Find an OK case result by exact name.
@@ -1602,16 +1015,10 @@ CaseResult* findCase(CaseResult[] results, string name) {
 
 // ----- Relative invariant thresholds -----------------------------------
 //
-// Tuned from observed n=64 ratios with generous margin (gross-regression
-// guards, not tight benchmarks). Observed (worst tool) ⇒ chosen K:
-//   I1 falloff radial / baseline kernelApply:  ~1.95×   ⇒ K1 = 6.0
-//   I2 pipeSymmetry sum when symmetry OFF:     ≤ ~7.5µs ⇒ K2 = 200µs (abs)
-//   I3 symmetry=X / baseline kernelApply:      ~1.86×   ⇒ K3 = 4.0
-//   I4 baseline pipeTotal / kernelApply:       ~1.19×   ⇒ K4 = 4.0
-enum double K1_FALLOFF        = 6.0;
-enum double K2_SYM_OFF_US     = 200.0;   // absolute µs ceiling, per case
-enum double K3_SYMMETRY       = 4.0;
-enum double K4_PIPE_OVERHEAD  = 4.0;
+// K1_FALLOFF/K2_SYM_OFF_US/K3_SYMMETRY/K4_PIPE_OVERHEAD now live in
+// lib.baseline (tuned from observed n=64 ratios with generous margin — see
+// that module for the derivation notes).
+//
 // I5 — snap is actually engaged: when a snap=* case is active, snapCursor
 // must have been CALLED during the drag (count > 0). We check the call
 // COUNT, not its time, because grid snap is legitimately near-free (pure
@@ -1806,11 +1213,9 @@ struct AbsRegression {
     double baseUs, curUs, growth;   // growth = cur/base - 1
 }
 
-// Below this baseline median (µs), a metric is in the timing noise floor and a
-// percentage-growth comparison is meaningless (e.g. selection=single touches
-// ~20 verts ⇒ kernelApply 0.1µs, where +0.2µs reads as +200%). Real
-// regressions land on the heavy cases (kernelApply ~550µs+), far above this.
-enum double ABS_NOISE_FLOOR_US = 50.0;
+// ABS_NOISE_FLOOR_US now lives in lib.baseline (below this baseline median
+// (µs), a metric is in the timing noise floor and a percentage-growth
+// comparison is meaningless).
 
 // Compare current results to a baseline. Flags a regression when the
 // kernelApply median grows by more than `tolerance` (e.g. 0.30 ⇒ +30%).
@@ -1857,67 +1262,18 @@ AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base,
 // lane) — a gross-smoothness regression guard, not a tight benchmark.
 // ---------------------------------------------------------------------------
 
-enum double K_FRAMES_P99_MS = 33.0;   // generous per-scenario p99 ceiling
-enum long   K_FRAMES_HITCH33 = 2;     // generous >33ms-hitch allowance
-
-struct FramesBaselineCase {
-    string name;
-    long   p99Ns;
-    long   hitch16;
-    long   hitch33;
-}
-
-struct FramesBaseline {
-    RunHeader header;
-    FramesBaselineCase[string] byName;
-}
-
+// K_FRAMES_P99_MS/K_FRAMES_HITCH33 and the FramesBaselineCase/FramesBaseline
+// reader-writer pair now live in lib.baseline. writeFramesBaselineJson here
+// is a thin FrameScenarioResult[]→lib.baseline.FramesBaselineCase[] row
+// mapper (same seam-adapter rationale as writeBaselineJson above).
 void writeFramesBaselineJson(string path, RunHeader h, FrameScenarioResult[] results) {
-    auto a = appender!string();
-    a.put("{\n");
-    a.put(format(`  "buildType": "%s",` ~ "\n", h.buildType));
-    a.put(format(`  "compiler": "%s",` ~ "\n", h.compiler));
-    a.put(format(`  "host": "%s",` ~ "\n", h.host));
-    a.put(format(`  "meshType": "%s",` ~ "\n", h.meshType));
-    a.put(format(`  "n": %d,` ~ "\n", h.n));
-    a.put(format(`  "faceCount": %d,` ~ "\n", h.faceCount));
-    a.put(format(`  "viewport": "%s",` ~ "\n", h.viewport));
-    a.put(`  "scenarios": [` ~ "\n");
-    bool first = true;
+    lib.baseline.FramesBaselineCase[] rows;
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;
-        if (!first) a.put(",\n");
-        first = false;
-        a.put("    {\n");
-        a.put(format(`      "name": "%s",` ~ "\n", r.name));
-        a.put(format(`      "p99Ns": %d,` ~ "\n", r.stats.p99Ns));
-        a.put(format(`      "hitch16": %d,` ~ "\n", r.stats.hitch16));
-        a.put(format(`      "hitch33": %d` ~ "\n", r.stats.hitch33));
-        a.put("    }");
+        rows ~= lib.baseline.FramesBaselineCase(r.name, r.stats.p99Ns,
+                                                 r.stats.hitch16, r.stats.hitch33);
     }
-    a.put("\n  ]\n}\n");
-    std.file.write(path, a.data);
-}
-
-FramesBaseline loadFramesBaseline(string path) {
-    FramesBaseline b;
-    auto j = parseJSON(cast(string)std.file.read(path));
-    b.header.buildType = j["buildType"].str;
-    b.header.compiler  = j["compiler"].str;
-    b.header.host      = ("host" in j) ? j["host"].str : "";
-    b.header.meshType  = j["meshType"].str;
-    b.header.viewport  = j["viewport"].str;
-    b.header.n         = cast(int)j["n"].integer;
-    b.header.faceCount = j["faceCount"].integer;
-    foreach (sv; j["scenarios"].array) {
-        FramesBaselineCase bc;
-        bc.name    = sv["name"].str;
-        bc.p99Ns   = sv["p99Ns"].integer;
-        bc.hitch16 = sv["hitch16"].integer;
-        bc.hitch33 = sv["hitch33"].integer;
-        b.byName[bc.name] = bc;
-    }
-    return b;
+    lib.baseline.writeFramesBaselineJson(path, h, rows);
 }
 
 struct FramesAbsRegression {
@@ -2077,12 +1433,247 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         writefln("  absolute regressions: %d", absFail);
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
 
+    // History (task 0197 Phase 4) — one line per `frames` run, {scenario:
+    // p99Ms}. Best-effort: a history-append failure must never fail the run.
+    try {
+        double[string] p99ByScenario;
+        foreach (r; results)
+            if (r.status == CaseStatus.OK)
+                p99ByScenario[r.name] = msFromNs(r.stats.p99Ns);
+        lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario);
+    } catch (Exception e) {
+        stderr.writeln("warning: history append failed: ", e.msg);
+    }
+
     if (!noBuild)
         writeln("\nNOTE: ./vibe3d is now the perf buildType binary — run "
                 ~ "`dub build` to restore the modeling debug binary before "
                 ~ "reusing it with --no-build test runs.");
 
     return failures == 0 ? 0 : failures;
+}
+
+// ---------------------------------------------------------------------------
+// `flame` subcommand (task 0197 Phase 3) — absorbs tools/perf_subpatch/
+// run.d's perf-record-attach logic, generalized to any CURRENT ops case
+// (drag or one-shot command) or `frames` scenario. Drives the target
+// through the SAME synthesis the `ops`/`frames` runners use (reuses
+// casesForTool/commandCases/applySelection/dragFor/buildDragLog/
+// buildOrbitLog/buildHoverLog) so the profiled workload matches the
+// measured one. Builds+launches its OWN profile-fp binary (lib.flame.
+// dubBuildProfileFp) rather than the PerfProbe `perf` buildType — see
+// lib.flame's header comment for why. tab-subpatch coverage (the scenario
+// perf_subpatch originally targeted) lands once `frames tab-subpatch`
+// exists (task 0200/F6); today `flame` covers any case/scenario this file
+// already knows about.
+// ---------------------------------------------------------------------------
+
+int runFlameSubcommand(string target, string meshType, int meshParam,
+                       string viewport, ushort port, int freq, int captureSecs,
+                       bool noBuild) {
+    if (target.length == 0) {
+        stderr.writeln("flame: missing <case-or-scenario-name> argument "
+                       ~ "(e.g. `./run.d flame move/baseline` or "
+                       ~ "`./run.d flame orbit-dense`)");
+        return 1;
+    }
+
+    // Match `target` against an ops drag case, an ops command case, or a
+    // frames scenario name — whichever matches, generalized (Phase 3 §2).
+    // Validated BEFORE any build/launch so a typo fails fast.
+    Case[] allCases;
+    foreach (t; [Tool.move, Tool.rotate, Tool.scale])
+        allCases ~= casesForTool(t);
+    Case* dragCase = null;
+    foreach (ref c; allCases) if (c.name == target) { dragCase = &c; break; }
+
+    CmdCase[] allCmds = commandCases();
+    CmdCase* cmdCase = null;
+    foreach (ref cc; allCmds) if (cc.name == target) { cmdCase = &cc; break; }
+
+    static immutable string[] frameScenarios =
+        ["orbit-dense", "hover-sweep", "drag-falloff"];
+    bool isScenario = frameScenarios.canFind(target);
+
+    if (dragCase is null && cmdCase is null && !isScenario) {
+        stderr.writefln("flame: %s did not match any ops case or frames "
+                        ~ "scenario", target);
+        stderr.writeln("  ops cases: run `./run.d --help` or see "
+                       ~ "casesForTool()/commandCases() in this file.");
+        stderr.writefln("  frames scenarios: %-(%s, %)", frameScenarios);
+        return 1;
+    }
+
+    if (!lib.flame.perfAvailable()) {
+        stderr.writeln("flame: `perf` not found in PATH "
+                       ~ "(install linux-perf / perf userspace tools)");
+        return 1;
+    }
+
+    // R3: flame builds its OWN profile-fp binary — NOT dubBuildPerf (the
+    // PerfProbe binary `ops`/`frames` use). A following `--no-build`
+    // ops/perf-abs run would silently reuse whatever `./vibe3d` currently
+    // is, so a mismatched binary is always explicitly labeled (never
+    // silent) — the pre-build skip note and the post-run NOTE below both
+    // name the buildType `./vibe3d` now is.
+    if (!noBuild) {
+        if (!lib.flame.dubBuildProfileFp(g_repoRoot)) return 1;
+    } else {
+        writeln("--no-build: reusing the existing ./vibe3d as-is — if it is "
+               ~ "not the profile-fp buildType, the flamegraph will localize "
+               ~ "to the wrong (uninstrumented-noise or debug-noise) frames.");
+    }
+
+    killStaleVibe();
+    string logPath = "/tmp/vibe3d_perf_flame.log";
+    writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
+             port, viewport);
+    if (!launchVibe(port, viewport, logPath)) return 1;
+    writeln("  vibe3d is up");
+
+    resetMesh(meshType, meshParam);
+    auto mi = modelInfo();
+    writefln("Mesh: %s param=%d → %d verts, %d faces",
+             meshType, meshParam, mi.vertexCount, mi.faceCount);
+
+    string outDir = buildPath(g_repoRoot, "tools", "perf", "flame", "out");
+    mkdirRecurse(outDir);
+    string perfData = buildPath(outDir, "perf.data");
+    string perfTxt  = buildPath(outDir, "perf.txt");
+    string foldTxt  = buildPath(outDir, "folded.txt");
+
+    // Configure the pipe / warm up exactly like the case would under `ops`/
+    // `frames`, so the profiled workload matches the measured one.
+    CameraState cam;
+    Viewport vp;
+    if (dragCase !is null) {
+        if (!applySelection(*dragCase, meshParam)) {
+            stderr.writeln("flame: selection failed");
+            return 1;
+        }
+        if (!script("tool.set " ~ dragCase.tool.to!string)) {
+            stderr.writeln("flame: tool.set failed");
+            return 1;
+        }
+        foreach (a; dragCase.attrs)
+            script(format(`tool.pipe.attr %s %s "%s"`, a.stage, a.name, a.value));
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        // Warmup drag (untimed) — pays cache/pipeline first-evaluate cost
+        // OUTSIDE the perf-record window, mirroring runCase's warmup.
+        try runOneDrag(dragCase.tool, vp, cam); catch (Exception e) {
+            stderr.writeln("flame: warmup drag failed: ", e.msg);
+            return 1;
+        }
+    } else if (isScenario) {
+        selectVertices([]);
+        if (target == "drag-falloff") {
+            if (!script("tool.set move")) {
+                stderr.writeln("flame: tool.set move failed");
+                return 1;
+            }
+            foreach (a; [PipeAttr("falloff", "type",   "radial"),
+                        PipeAttr("falloff", "center", "0,0,0"),
+                        PipeAttr("falloff", "size",   "1,1,1")])
+                script(format(`tool.pipe.attr %s %s "%s"`, a.stage, a.name, a.value));
+        }
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+    }
+
+    // Attach perf, then drive the target repeatedly for `captureSecs` wall-
+    // clock seconds so the sampled window holds substantial hot-path work
+    // (mirrors perf_subpatch's "toggle N times" amplification — a single
+    // drag/command is too brief at -F%d to be visible in the profile).
+    auto perfPid = lib.flame.startPerfRecord(perfData, g_vibePid, freq, g_repoRoot);
+
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+    auto sw = StopWatch(AutoStart.yes);
+    int reps = 0, resets = 0;
+    writefln("[flame] capturing %s for %ds ...", target, captureSecs);
+    while (sw.peek.total!"seconds" < captureSecs) {
+        try {
+            if (dragCase !is null) {
+                runOneDrag(dragCase.tool, vp, cam);
+            } else if (cmdCase !is null) {
+                resetMesh(meshType, meshParam);
+                selectMode(cmdCase.mode, cmdIndices(*cmdCase, meshParam));
+                postCommand(cmdCase.commandId);
+            } else if (target == "orbit-dense") {
+                int x0 = cam.vpX + cast(int)(cam.width  * 0.20);
+                int y0 = cam.vpY + cast(int)(cam.height * 0.55);
+                int x1 = cam.vpX + cast(int)(cam.width  * 0.80);
+                int y1 = cam.vpY + cast(int)(cam.height * 0.20);
+                playAndWait(buildOrbitLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                          x0, y0, x1, y1, 60));
+            } else if (target == "hover-sweep") {
+                int x0 = cam.vpX + cast(int)(cam.width  * 0.15);
+                int y0 = cam.vpY + cast(int)(cam.height * 0.50);
+                int x1 = cam.vpX + cast(int)(cam.width  * 0.85);
+                int y1 = cam.vpY + cast(int)(cam.height * 0.50);
+                playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                          x0, y0, x1, y1, 80));
+            } else if (target == "drag-falloff") {
+                Vec3 pivot = fetchActionCenter();
+                Drag d = dragFor(Tool.move, pivot, vp);
+                if (!(d.x0 == 0 && d.y0 == 0 && d.x1 == 0 && d.y1 == 0))
+                    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                             d.x0, d.y0, d.x1, d.y1, 20));
+            }
+            reps++;
+        } catch (Exception e) {
+            // A `move`/`drag-falloff` case cumulatively translates the mesh
+            // (unlike the ops matrix's bounded 5-repeat window) — over a
+            // multi-second capture the gizmo/mesh eventually drifts
+            // off-camera ("handle projected off-camera"). Re-apply the same
+            // configuration on a fresh mesh and keep sampling for the rest
+            // of the window rather than aborting the capture.
+            resetMesh(meshType, meshParam);
+            if (dragCase !is null) {
+                applySelection(*dragCase, meshParam);
+                script("tool.set " ~ dragCase.tool.to!string);
+                foreach (a; dragCase.attrs)
+                    script(format(`tool.pipe.attr %s %s "%s"`, a.stage, a.name, a.value));
+            } else {
+                selectVertices([]);
+                if (target == "drag-falloff") {
+                    script("tool.set move");
+                    foreach (a; [PipeAttr("falloff", "type",   "radial"),
+                                PipeAttr("falloff", "center", "0,0,0"),
+                                PipeAttr("falloff", "size",   "1,1,1")])
+                        script(format(`tool.pipe.attr %s %s "%s"`, a.stage, a.name, a.value));
+                }
+            }
+            resets++;
+        }
+    }
+    writefln("[flame] %d repetitions captured (%d mid-capture resets)", reps, resets);
+
+    lib.flame.stopPerfRecord(perfPid);
+    writeln("[flame] generating reports");
+    lib.flame.generateReports(perfData, perfTxt, foldTxt);
+
+    writefln("[flame] DONE.\n"
+            ~ "  target             : %s\n"
+            ~ "  repetitions        : %d\n"
+            ~ "  raw capture        : %s\n"
+            ~ "  text summary       : %s\n"
+            ~ "  folded/script      : %s",
+            target, reps, perfData, perfTxt, foldTxt);
+
+    // R3: after a `flame` run that (re)built, ./vibe3d is the profile-fp
+    // binary — NOT the PerfProbe `perf` binary a following `--no-build`
+    // ops/frames/perf-abs lane expects. Inverted NOTE from dubBuildPerf's
+    // (never leave a mismatched binary unlabeled). With --no-build this
+    // run never touched ./vibe3d, so there is nothing new to label.
+    if (!noBuild)
+        writeln("\nNOTE: ./vibe3d is now the profile-fp buildType binary "
+               ~ "(optimized, no PerfProbe) — a following `ops`/`frames` "
+               ~ "`--no-build` run will silently reuse it and read all-zero "
+               ~ "PerfProbe counters; run `./run.d [ops|frames]` WITHOUT "
+               ~ "--no-build (or `dub build`) first to rebuild the right binary.");
+
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2105,6 +1696,10 @@ int main(string[] args) {
     bool   noAbsolute     = false;   // skip absolute comparison (invariants only)
     double tolerance      = 0.30;    // absolute regression threshold (+30%)
     bool   updateFramesBaseline = false;
+    bool   trend = false;
+    int    trendLast = 20;
+    int    flameFreq = 999;
+    int    flameCapture = 8;
 
     auto helpInfo = getopt(args,
         config.passThrough,
@@ -2119,11 +1714,18 @@ int main(string[] args) {
         "update-baseline", "write tools/perf/baseline.json from this run", &updateBaseline,
         "no-absolute",     "skip absolute baseline comparison (relative invariants only)", &noAbsolute,
         "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance,
-        "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline);
+        "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline,
+        "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
+        "last",      "`--trend` window size (default 20 runs)", &trendLast,
+        "freq",      "`flame` perf sampling frequency Hz (default 999)", &flameFreq,
+        "capture",   "`flame` idle-capture seconds after the drag/scenario (default 8)", &flameCapture);
 
     if (helpInfo.helpWanted) {
-        writeln("usage: ./run.d [options] [case-name-substring...]");
+        writeln("usage: ./run.d [ops] [options] [case-name-substring...]");
         writeln("       ./run.d frames [options] [scenario-name-substring...]");
+        writeln("       ./run.d flame <case-or-scenario-name> [options]");
+        writeln("       ./run.d --trend [--last N]");
+        writeln("  bare invocation == `ops` (the per-tool matrix).");
         foreach (o; helpInfo.options)
             writefln("  %-14s %s", o.optLong, o.help);
         return 0;
@@ -2136,23 +1738,48 @@ int main(string[] args) {
 
     string[] requested = args[1 .. $];
 
-    // `frames` subcommand: bare/`ops` stays the existing per-tool matrix
-    // (design: bare run == `ops`); a leading "frames" token switches to the
-    // FrameProbe scenario runner (task 0195), consuming that token so the
-    // remaining args act as a scenario-name substring filter.
-    bool framesMode = requested.length > 0 && requested[0] == "frames";
-    if (framesMode) requested = requested[1 .. $];
+    // Subcommand dispatch: the first non-flag token selects the mode. Bare
+    // (no matching token) ⇔ `ops` (design: bare run == `ops`, unchanged
+    // since task 0195's `frames` addition) — this SUBSUMES the old ad-hoc
+    // framesMode check, it does not fork a second dispatch path (R6). The
+    // token is consumed so the remaining args stay a name-substring filter,
+    // exactly as before.
+    string subcommand = "ops";
+    if (requested.length > 0 &&
+        (requested[0] == "ops" || requested[0] == "frames" || requested[0] == "flame")) {
+        subcommand = requested[0];
+        requested = requested[1 .. $];
+    }
 
     g_keep = keep;
     g_baseUrl = format("http://localhost:%d", port);
+
+    // `--trend` needs no vibe3d (pure history-file read) and short-circuits
+    // before killStaleVibe/launchVibe/dubBuildPerf (task 0197 Phase 4).
+    if (trend) {
+        auto path = lib.history.historyPath(g_repoRoot, Socket.hostName);
+        auto entries = lib.history.loadHistory(path);
+        lib.history.printTrend(entries, trendLast);
+        return 0;
+    }
 
     signal(SIGINT,  &onSignal);
     signal(SIGTERM, &onSignal);
     scope(exit) teardown();
 
+    // `flame` builds its OWN profile-fp binary (lib.flame.dubBuildProfileFp)
+    // — dispatch BEFORE the shared `dubBuildPerf()` call below so a `flame`
+    // run never wastefully builds the PerfProbe binary first only to
+    // immediately overwrite it.
+    if (subcommand == "flame") {
+        string target = requested.length > 0 ? requested[0] : "";
+        return runFlameSubcommand(target, meshType, meshParam, viewport, port,
+                                  flameFreq, flameCapture, noBuild);
+    }
+
     if (!noBuild && !dubBuildPerf()) return 1;
 
-    if (framesMode)
+    if (subcommand == "frames")
         return runFramesSubcommand(meshType, meshParam, viewport, port, requested,
                                    updateFramesBaseline, noAbsolute, noBuild);
 
@@ -2312,6 +1939,19 @@ int main(string[] args) {
     if (absFail > 0)
         writefln("  absolute regressions: %d", absFail);
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
+
+    // History (task 0197 Phase 4) — one line per `ops` run, {caseName:
+    // kernelApplyMedianUs}. Best-effort: a history-append failure must never
+    // fail the run.
+    try {
+        double[string] kernelMedianByCase;
+        foreach (r; results)
+            if (r.status == CaseStatus.OK)
+                kernelMedianByCase[r.name] = r.kernelMedianUs;
+        lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase);
+    } catch (Exception e) {
+        stderr.writeln("warning: history append failed: ", e.msg);
+    }
 
     // The perf build replaced ./vibe3d with the ldc-release perf binary; a
     // later `./run_test.d --no-build` would silently reuse it. Remind.

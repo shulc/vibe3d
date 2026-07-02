@@ -51,6 +51,15 @@ tools/perf/results.json
 # baseline.json), frames_results.json is the transient per-run dump.
 tools/perf/frames_results.json
 
+# Per-host run history (task 0197 — perf tooling consolidation): one JSONL
+# per host, appended to by every `ops`/`frames` run. Machine-specific (like
+# .test_timings.json above), read by `--trend`.
+tools/perf/history/
+
+# `flame` subcommand generated output (task 0197) — perf.data/perf.txt/
+# folded stacks, mirrors the retired tools/perf_subpatch/out/.
+tools/perf/flame/out/
+
 # dyaml 0.10.0 unittests (compiled into -unittest test binaries via
 # test_forms_loader) write a scratch example.yaml into cwd (loader.d:248)
 /example.yaml
