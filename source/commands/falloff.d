@@ -187,15 +187,13 @@ class FalloffReverseCommand : Command {
 
 // Accepted `falloff.add <type>` type names — the same set FalloffStage's
 // setAttr("type", …) recognises (minus "none", which would add an inert
-// stage). Kept in lockstep with the applySetAttr "type" switch.
+// stage). Routed through the shared `falloffTypeFromName` lookup
+// (toolpipe/packets.d) so this and the `applySetAttr` "type" switch can't
+// drift apart (task 0179 Stage 4).
 private bool validFalloffType(string t) {
-    switch (t) {
-        case "linear", "radial", "screen", "lasso", "cylinder",
-             "element", "selection", "vertexMap":
-            return true;
-        default:
-            return false;
-    }
+    import toolpipe.packets : FalloffType, falloffTypeFromName;
+    FalloffType dummy;
+    return falloffTypeFromName(t, dummy);
 }
 
 // Lowest free "falloff#N" id (N≥1) not already taken by a registered WGHT
