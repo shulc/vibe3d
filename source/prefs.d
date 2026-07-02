@@ -25,7 +25,7 @@
 module prefs;
 
 import std.json   : JSONValue, JSONType, parseJSON, JSONException;
-import std.file   : exists, read, write, mkdirRecurse;
+import std.file   : exists, read, write, mkdirRecurse, copy;
 import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
@@ -276,6 +276,49 @@ unittest {
     assert(baseName(p1) == "imgui_layout_v1.ini", "v1 filename");
     assert(p1 != p2,                              "version bump → different file");
     assert(baseName(p2) == "imgui_layout_v2.ini", "v2 filename");
+}
+
+/// Copy `defaultIniPath` (the shipped, user-confirmed default arrangement,
+/// `config/default_layout.ini`) into `userIniPath` if nothing lives at
+/// `userIniPath` yet. NEVER overwrites an existing user file — a first-run
+/// seed only. Best-effort: any I/O failure (missing shipped file, unwritable
+/// dir, etc.) is swallowed; the caller then falls back to whatever ran
+/// before this helper existed (ImGui's own bare programmatic default seed).
+/// Returns true iff a copy actually happened.
+bool seedLayoutIniIfMissing(string defaultIniPath, string userIniPath) {
+    try {
+        if (!exists(userIniPath) && exists(defaultIniPath)) {
+            copy(defaultIniPath, userIniPath);
+            return true;
+        }
+    } catch (Exception) {}
+    return false;
+}
+
+unittest {
+    auto dir = makeScratch("seedlayout");
+    scope(exit) cleanScratch(dir);
+
+    auto defaultIni = buildPath(dir, "shipped_default.ini");
+    auto userIni    = buildPath(dir, "user.ini");
+    write(defaultIni, "[Window][Mesh Info]\nDockId=0x00000003,0\n");
+
+    // First run: no user ini yet -> copies the shipped default.
+    assert(seedLayoutIniIfMissing(defaultIni, userIni) == true);
+    assert(exists(userIni));
+    assert(cast(string) read(userIni) == cast(string) read(defaultIni));
+
+    // Second run: user ini already exists (e.g. re-arranged by the user) ->
+    // NEVER overwritten, even though the shipped default still exists.
+    write(userIni, "[Window][Mesh Info]\nDockId=0x00000099,0\n");
+    assert(seedLayoutIniIfMissing(defaultIni, userIni) == false);
+    assert(cast(string) read(userIni) == "[Window][Mesh Info]\nDockId=0x00000099,0\n");
+
+    // Missing shipped default (best-effort, non-fatal) -> no-op, no throw.
+    auto missingDefault = buildPath(dir, "does_not_exist.ini");
+    auto freshUser      = buildPath(dir, "fresh_user.ini");
+    assert(seedLayoutIniIfMissing(missingDefault, freshUser) == false);
+    assert(!exists(freshUser));
 }
 
 // ---------------------------------------------------------------------------

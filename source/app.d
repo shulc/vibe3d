@@ -502,7 +502,46 @@ private __gshared const(char)* g_layoutIniPathZ = null;
 
 /// Set true by the Reset Layout button to force a full dock-tree reseed on
 /// the next frame, independently of the process-lifetime dockLayoutDone flag.
+/// Fallback-only: the button sets this iff the shipped default could NOT be
+/// re-copied (see below), so the programmatic DockBuilder rebuild is the
+/// last resort rather than the default reset path.
 private __gshared bool g_forceLayoutReseed = false;
+
+/// Set by the Reset Layout button after a successful re-copy of the shipped
+/// default ini. Consumed once, right before the next `ImGui.NewFrame()`,
+/// via `ImGui.LoadIniSettingsFromDisk` — NOT called inline from the button
+/// handler because that runs mid-frame (between NewFrame/EndFrame), which
+/// the ini loader documents as unsafe. Deferring to the top of the next
+/// frame mirrors how the startup path loads (`io.IniFilename` is read by
+/// ImGui's own NewFrame-time UpdateSettings on the very first frame).
+private __gshared const(char)* g_pendingLayoutReloadPathZ = null;
+
+/// Thin app-layer wrapper over `prefs.seedLayoutIniIfMissing` (the tested
+/// unit — see its unittests in prefs.d) that fixes the source path to the
+/// shipped default panel layout, `config/default_layout.ini` (the user's
+/// confirmed arrangement). NEVER overwrites an existing user ini. Returns
+/// true iff a copy actually happened (i.e. the shipped default is now the
+/// content at `userIniPath`).
+/// Interactive-session only — callers gate on !testMode.
+private bool seedDefaultLayoutIfMissing(string userIniPath) {
+    import std.file : exists;
+    string defaultPath = "config/default_layout.ini";
+    if (!exists(defaultPath)) {
+        // cwd-relative shipped default not found — e.g. a system install
+        // (/usr/bin/vibe3d) launched from an arbitrary cwd. Fall back to
+        // resolving alongside the executable itself. (The macOS .app bundle
+        // case is unaffected: useAppBundleResourceCwd() already chdirs into
+        // Resources/ at startup, so the cwd-relative path above resolves
+        // there directly and this fallback never triggers.)
+        try {
+            import std.file : thisExePath;
+            import std.path : buildPath, dirName;
+            string exeRelative = buildPath(thisExePath().dirName, "config", "default_layout.ini");
+            if (exists(exeRelative)) defaultPath = exeRelative;
+        } catch (Exception) {}
+    }
+    return prefs.seedLayoutIniIfMissing(defaultPath, userIniPath);
+}
 
 import viewport : LayoutPreset;
 
@@ -1020,7 +1059,14 @@ void main(string[] args) {
         try { import std.file : mkdirRecurse; mkdirRecurse(iniDir); iniDirOk = true; }
         catch (Exception) {}
         if (iniDirOk) {
-            g_layoutIniPathZ = layoutIniPath(iniDir, kLayoutIniVersion).toStringz;
+            string userIniPath = layoutIniPath(iniDir, kLayoutIniVersion);
+            // First-run seed: the user confirmed this arrangement
+            // (config/default_layout.ini) as the shipped default, so a
+            // fresh profile opens with it instead of ImGui's bare
+            // programmatic seed. Non-destructive — only fires when the
+            // user has no layout ini of their own yet at this path.
+            seedDefaultLayoutIfMissing(userIniPath);
+            g_layoutIniPathZ = userIniPath.toStringz;
             io.IniFilename   = g_layoutIniPathZ;
             // MINOR 4: sweep old-version ini files (best-effort, non-fatal).
             try {
@@ -2692,7 +2738,14 @@ void main(string[] args) {
                                  &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                  &editMode,
                                  () { setActiveTool(null); resetAllPipeStages(); },
-                                 () => vpm.resetToDefault());
+                                 () {
+                                     vpm.resetToDefault();
+                                     // Mirror the live reset (always Single)
+                                     // into prefs so a clean-shutdown save
+                                     // doesn't persist a stale multi-cell
+                                     // preset from before this reset.
+                                     g_prefs.viewportLayout = LayoutPreset.Single;
+                                 });
         c.setDocument(&document);
         c.setEmpty(true);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
@@ -2985,7 +3038,14 @@ void main(string[] args) {
                        &vertexCache(), &edgeCache(), &faceCache(),
                        &editMode,
                        () { setActiveTool(null); resetAllPipeStages(); },
-                       () => vpm.resetToDefault());
+                       () {
+                           vpm.resetToDefault();
+                           // Mirror the live reset (always Single) into
+                           // prefs so a clean-shutdown save doesn't persist
+                           // a stale multi-cell preset from before this
+                           // reset.
+                           g_prefs.viewportLayout = LayoutPreset.Single;
+                       });
         c.setDocument(&document);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
         return cast(Command) c;
@@ -7211,16 +7271,54 @@ void main(string[] args) {
             ImGui.Dummy(ImVec2(0, 2));
             ImGui.Separator();
             if (ImGui.Button("Reset Layout")) {
-                g_forceLayoutReseed = true;
-                // Remove the persisted ini so the seed starts clean (best-effort).
+                // The shipped default ini is Single (only Viewport##0), so
+                // mirror the persisted cell preset too — otherwise a Quad
+                // user hitting Reset Layout would restore the shipped dock
+                // arrangement but keep g_prefs.viewportLayout == Quad, and a
+                // later clean-shutdown save would silently resurrect the
+                // stale multi-cell preset on the next launch. Mirrors the
+                // same assignment in the onViewportReset delegates (file.new
+                // / scene.reset) below.
+                g_prefs.viewportLayout = LayoutPreset.Single;
+                // Remove the persisted ini, then immediately re-seed it from
+                // the shipped default (config/default_layout.ini — the
+                // user's confirmed arrangement) via the same first-run copy
+                // helper. Without this, ImGui's ~5s autosave timer (or the
+                // save-on-shutdown at DestroyContext) would overwrite the
+                // freshly-copied file with the programmatic DockBuilder
+                // rebuild below before the NEXT launch ever sees it — so we
+                // pull the shipped bytes into the LIVE in-memory settings
+                // now (deferred to just before the next NewFrame — see
+                // g_pendingLayoutReloadPathZ) so this session's own eventual
+                // autosave/shutdown-save also reflects the shipped default,
+                // not the programmatic seed. The programmatic DockBuilder
+                // reseed (g_forceLayoutReseed) becomes a FALLBACK, used only
+                // when no shipped default could be re-copied (e.g. running
+                // from a location where config/default_layout.ini isn't
+                // found).
+                bool restored = false;
                 if (!command.g_testMode && g_layoutIniPathZ !is null) {
+                    import std.string : fromStringz;
+                    string p = cast(string) fromStringz(g_layoutIniPathZ);
                     try {
-                        import std.file   : remove, exists;
-                        import std.string : fromStringz;
-                        string p = cast(string) fromStringz(g_layoutIniPathZ);
+                        import std.file : remove, exists;
                         if (exists(p)) remove(p);
                     } catch (Exception) {}
+                    if (seedDefaultLayoutIfMissing(p)) {
+                        // Defer the reload: this button handler runs
+                        // mid-frame (between NewFrame/EndFrame), and
+                        // ImGui.LoadIniSettingsFromDisk documents that as
+                        // unsafe. g_pendingLayoutReloadPathZ is consumed
+                        // once, right before the next NewFrame().
+                        g_pendingLayoutReloadPathZ = g_layoutIniPathZ;
+                        restored = true;
+                    }
                 }
+                // Fallback only: no shipped default was available to
+                // re-copy, so fall back to the bare programmatic seed for
+                // THIS session (still won't persist past the ini-autosave,
+                // but there is no better default to persist).
+                g_forceLayoutReseed = !restored;
             }
         }
         ImGui.End();
@@ -7669,6 +7767,22 @@ void main(string[] args) {
                 aiLogWriter.append(res.record);
             // Discard and None both require no action (Discard already cleared
             // the pending buffer inside step()).
+        }
+
+        // Deferred layout-ini reload (Reset Layout button): pulls the
+        // just-re-copied shipped default bytes into ImGui's LIVE in-memory
+        // settings, so this session's own eventual autosave (or the
+        // shutdown save at DestroyContext) reflects the shipped default
+        // instead of re-persisting whatever dock arrangement was live
+        // before the reset. Must run strictly BEFORE ImGui.NewFrame() —
+        // LoadIniSettingsFromDisk is unsafe once a frame is in progress
+        // (between NewFrame/EndFrame); the button handler itself runs
+        // mid-frame, so it only sets the flag and this is where it's
+        // actually consumed, exactly once.
+        if (g_pendingLayoutReloadPathZ !is null) {
+            import std.string : fromStringz;
+            ImGui.LoadIniSettingsFromDisk(cast(string) fromStringz(g_pendingLayoutReloadPathZ));
+            g_pendingLayoutReloadPathZ = null;
         }
 
         // ---- ImGui ----
