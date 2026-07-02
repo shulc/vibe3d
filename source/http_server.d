@@ -12,7 +12,7 @@ import core.thread;
 
 import mesh : Surface;
 import core.atomic;
-import perf_probe : g_perf;
+import perf_probe : g_perf, g_frames;
 
 // For event player functionality
 import bindbc.sdl;
@@ -1142,6 +1142,32 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
+                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/frames/reset" && request.method == "POST") {
+            // Zero the per-frame ring + counters before a measured run
+            // (task 0195). No-op in the default build (g_frames.reset
+            // compiles away).
+            g_frames.reset();
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/frames" && request.method == "GET") {
+            // Per-frame phase-timing + GC-delta breakdown (task 0195,
+            // doc/frame_probe_scenarios_plan.md). Direct read of the
+            // process-wide FrameProbe from the HTTP thread — same
+            // no-lock diagnostic contract as /api/perf above (single-writer
+            // main-loop, write-then-advance ring discipline makes a racy
+            // read tear-free at frame granularity). Returns "{}" in the
+            // default (non-PerfProbe) build.
+            try {
+                response.statusCode = 200;
+                response.body = g_frames.toJson();
+                response.headers["Content-Type"] = "application/json";
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
                                e.msg.replace("\"", "\\\"") ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
