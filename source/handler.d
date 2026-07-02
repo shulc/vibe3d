@@ -135,7 +135,77 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float scale = 1.0f) {
     // divide by zero. Fall back to a 1-px-equivalent so the gizmo is
     // visible but tiny rather than NaN.
     float vh = vp.height > 0 ? cast(float)vp.height : 1.0f;
+    // Orthographic projections map world size to screen size independently
+    // of view-space depth (no perspective divide) — the `depth` factor below
+    // is only correct for perspective, where NDC size ~ 1/Z and `depth`
+    // cancels distance to give a constant screen size. Dropping it here
+    // keeps handles a constant pixel size at any ortho zoom (zoom changes
+    // proj[5] via the ortho half-height, not depth).
+    if (isOrtho(vp))
+        return 2.0f * g_gizmoPixels * scale / (vp.proj[5] * vh);
     return 2.0f * g_gizmoPixels * scale * depth / (vp.proj[5] * vh);
+}
+
+unittest {
+    import std.math : abs;
+
+    // Build a simple lookAt view (camera at +Z looking at origin, +Y up).
+    float[16] view = lookAt(Vec3(0, 0, 10), Vec3(0, 0, 0), Vec3(0, 1, 0));
+
+    // --- Perspective regression: gizmoSize must equal the ORIGINAL
+    // expression byte-for-byte (the perspective return is verbatim-unchanged,
+    // so this is an exact `==`, not a tolerance compare).
+    {
+        Viewport vp;
+        vp.view   = view;
+        vp.proj   = perspectiveMatrix(PI / 4, 1.0f, 0.1f, 100.0f);
+        vp.height = 600;
+        Vec3 pos = Vec3(1, 2, 3);
+        float scale = 1.5f;
+
+        float depth = -(vp.view[2]*pos.x + vp.view[6]*pos.y + vp.view[10]*pos.z + vp.view[14]);
+        if (depth < 1e-4f) depth = 1e-4f;
+        float vh = vp.height > 0 ? cast(float)vp.height : 1.0f;
+        float expected = 2.0f * g_gizmoPixels * scale * depth / (vp.proj[5] * vh);
+
+        assert(gizmoSize(pos, vp, scale) == expected,
+               "perspective gizmoSize must be bit-identical to the original expression");
+    }
+
+    // --- Ortho depth-independence: two positions at different view-space
+    // depths must yield the SAME screen size (this fails before the fix,
+    // since the old formula scaled linearly with depth even in ortho).
+    {
+        Viewport vp;
+        vp.view   = view;
+        vp.proj   = orthographicMatrix(5.0f, 1.0f, 0.1f, 100.0f);
+        vp.height = 600;
+        Vec3 posNear = Vec3(0, 0, 8);  // close to the camera (view-space Z small)
+        Vec3 posFar  = Vec3(0, 0, -8); // far from the camera (view-space Z large)
+
+        float sNear = gizmoSize(posNear, vp);
+        float sFar  = gizmoSize(posFar, vp);
+        assert(abs(sNear - sFar) < 1e-6f,
+               "ortho gizmoSize must be depth-independent");
+    }
+
+    // --- Ortho zoom-linearity: halving halfH (zooming in) must halve the
+    // world-space gizmo size (constant screen size ⇒ world size ∝ extent).
+    {
+        Viewport vpWide, vpNarrow;
+        vpWide.view   = view;
+        vpWide.proj   = orthographicMatrix(10.0f, 1.0f, 0.1f, 100.0f);
+        vpWide.height = 600;
+        vpNarrow.view   = view;
+        vpNarrow.proj   = orthographicMatrix(5.0f, 1.0f, 0.1f, 100.0f);
+        vpNarrow.height = 600;
+
+        Vec3 pos = Vec3(0, 0, 0);
+        float sWide   = gizmoSize(pos, vpWide);
+        float sNarrow = gizmoSize(pos, vpNarrow);
+        assert(abs(sNarrow - sWide * 0.5f) < 1e-6f,
+               "halving ortho halfH must halve gizmoSize");
+    }
 }
 
 void initThickLineProgram(GLuint prog, int screenW, int screenH) {
