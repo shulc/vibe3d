@@ -129,6 +129,33 @@ struct DirtyKey {
     int       editMode_k;
     int       hovV, hovE, hovF;
     int       fboW,  fboH;
+    // Live tool matrix (transform gizmo's gpuMatrix, identity when idle/no
+    // tool). During a drag this changes every frame while meshMutVer/selEpoch
+    // do not (the edit only commits to the mesh at gesture end), so without
+    // this field an inactive Quad/Split cell's key never changes mid-gesture
+    // and the cell freezes. `= 0` (not `identityMatrix`): a struct field
+    // default must be CTFE-constant, and `identityMatrix` (math.d) is
+    // `immutable float[16]` — casting that to a mutable field default is not
+    // supported at compile time. The interactive render loop overwrites this
+    // every frame before comparing (see app.d N-cell FBO render loop), so the
+    // zero default is inert; the --test branch never reaches the compare.
+    float[16] toolMat = 0;
+}
+
+unittest {
+    // DirtyKey must discriminate on toolMat alone: two keys identical in
+    // every other field but different toolMat must compare unequal, or an
+    // inactive cell's dirty-key compare would silently ignore a live drag on
+    // another cell (the exact freeze this field exists to fix).
+    DirtyKey a, b;
+    a.meshMutVer = 7; b.meshMutVer = 7;
+    a.selEpoch   = 3; b.selEpoch   = 3;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.toolMat[12] = 1.5f; // e.g. a translate baked into the tool matrix
+    assert(a != b, "keys differing only in toolMat must compare unequal");
 }
 
 // ---------------------------------------------------------------------------
