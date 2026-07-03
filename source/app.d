@@ -9009,38 +9009,6 @@ void main(string[] args) {
         // ShowDemoWindow();
 
 
-        // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        // Manual workplane: corner gizmo follows it (visual cue that the
-        // local frame is set explicitly). Auto workplane: stay locked to
-        // world XYZ — `pickMostFacingPlane` swaps every 45° of camera
-        // rotation, which made the corner indicator's X/Y/Z labels jump
-        // around as the user orbited. Tool handles still pick the most-
-        // facing-camera basis via AxisStage; only the corner indicator
-        // is pinned to world here.
-        Vec3 gz_a1 = Vec3(1, 0, 0);
-        Vec3 gz_n  = Vec3(0, 1, 0);
-        Vec3 gz_a2 = Vec3(0, 0, 1);
-        if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
-            if (!wp.isAuto) {
-                wp.currentBasis(gz_n, gz_a1, gz_a2);
-            }
-        }
-        // DrawGizmo uses window-space coords (ImGui foreground drawlist).
-        // Anchor at the bottom-left of the 3D viewport: x = sideW + 32
-        // (one-gizmo-radius in from the side-panel edge), y = vpY + vpH
-        // − 32 (one radius up from the viewport's bottom edge, which
-        // sits flush against the top of the status bar). The previous
-        // formula `cameraView.height − statusH − 32` was missing the
-        // vpY offset, leaving the gizmo `2·statusH` above the real
-        // corner where it could collide with a Tool Properties window
-        // parked low in the viewport.
-        // Phase 2: anchor gizmo to the docked Viewport window's content rect
-        // (vp.x/vp.y) so it follows the window when docked/undocked rather than
-        // always pinning to the static layout.vpX/vpY from the pre-NewFrame stamp.
-        DrawGizmo(cast(float)(vp.x + 32),
-                  cast(float)(vp.y + vp.height - 32),
-                  vp.view, gz_a1, gz_n, gz_a2);
-
         // ---- Playback cursor overlay ----
         {
             int cursorX, cursorY;
@@ -9609,6 +9577,25 @@ void main(string[] args) {
                 if (auto p = _wlVts.get!FalloffPacket()) _wlFp = *p;
             }
 
+            // Task 0218: corner axes/orientation-gizmo basis, built ONCE
+            // before the per-cell loop (the active workplane is one
+            // document-wide state, not per-cell — mirrors the _wlFp reuse
+            // above). Manual workplane: corner gizmo follows it (visual
+            // cue that the local frame is set explicitly). Auto workplane:
+            // stay locked to world XYZ — `pickMostFacingPlane` swaps every
+            // 45° of camera rotation, which made the corner indicator's
+            // X/Y/Z labels jump around as the user orbited. Tool handles
+            // still pick the most-facing-camera basis via AxisStage; only
+            // the corner indicator is pinned to world here.
+            Vec3 gz_a1 = Vec3(1, 0, 0);
+            Vec3 gz_n  = Vec3(0, 1, 0);
+            Vec3 gz_a2 = Vec3(0, 0, 1);
+            if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+                if (!wp.isAuto) {
+                    wp.currentBasis(gz_n, gz_a1, gz_a2);
+                }
+            }
+
             foreach (k; 0 .. vpm.cellCount) {
                 Viewport3D _vcell = vpm.views[k];
                 // Zero padding + FBO-clear-colored WindowBg: the un-chromed
@@ -9685,6 +9672,28 @@ void main(string[] args) {
                     if (_wlFp.enabled) {
                         Viewport _wlVp = vpm.resolvedSnapshot(k);
                         drawFalloffOverlay(ImGui.GetWindowDrawList(), _wlFp, _wlVp);
+                    }
+
+                    // Task 0218: corner axes/orientation gizmo for THIS
+                    // cell — same window draw list, same z-order rationale
+                    // as the falloff overlay just above (paints on top of
+                    // this cell's opaque image, still below any panel
+                    // window drawn later this frame — see gizmo.d's header
+                    // comment). Anchored at THIS cell's bottom-left corner
+                    // (resolvedSnapshot(k).x/y/height, already stamped with
+                    // this frame's pos/size above) using THIS cell's own
+                    // resolved camera basis (`.view`), so each Quad/Split
+                    // cell shows its own view's axes (top/front/side/
+                    // persp) rather than one master camera's. Display-only
+                    // (no hit-testing exists on DrawGizmo's screen rect —
+                    // grepped, none found), so no per-cell interaction to
+                    // restore.
+                    {
+                        Viewport _gzVp = vpm.resolvedSnapshot(k);
+                        DrawGizmo(ImGui.GetWindowDrawList(),
+                                  cast(float)(_gzVp.x + 32),
+                                  cast(float)(_gzVp.y + _gzVp.height - 32),
+                                  _gzVp.view, gz_a1, gz_n, gz_a2);
                     }
 
                     // Active cell only: update outer vp used by picks.  vp.x/y

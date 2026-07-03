@@ -10,18 +10,27 @@ import math : Vec3;
 // XYZ. Pass the WorkplaneStage basis (axis1, normal, axis2) to make the
 // gizmo follow the active workplane: tools, numeric coord fields and
 // transform-gizmos all use the same local frame, this is the visual cue.
-void DrawGizmo(float x, float y, float[16] view,
+//
+// Draw list is caller-supplied (task 0218). Each Quad/Split viewport cell
+// is an opaque `ImGui.Image` window (task 0170); a shared background-list
+// draw (the original design) is painted FIRST each frame and gets
+// occluded by every cell's image, exactly the falloff-overlay regression
+// fixed in task 0213 (see doc/falloff_sphere_rings_plan.md). The caller
+// (source/app.d) now emits one call per cell on that cell's OWN
+// `GetWindowDrawList()` — recorded right after that cell's `ImGui.Image`,
+// so it paints ON TOP of the cell image but is still recorded BEFORE any
+// other panel window (Tool Properties parked low in the viewport, status
+// bar tooltips, etc.), which are `Begin()`-ed later in the frame. That
+// ordering is what actually gives "panels occlude the gizmo, not vice
+// versa" — the property that motivated the background-list choice
+// originally; a window draw list preserves it exactly as the background
+// list did, it's just no longer the SAME draw list for every cell.
+void DrawGizmo(ImDrawList* gdl, float x, float y, float[16] view,
                Vec3 a1 = Vec3(1, 0, 0),
                Vec3 n  = Vec3(0, 1, 0),
                Vec3 a2 = Vec3(0, 0, 1))
 {
     enum float SIZE = 20.0f;
-
-    // Background drawlist so ImGui windows (Tool Properties parked low
-    // in the viewport, status bar tooltips, etc.) sit ON TOP of the
-    // gizmo. Foreground would render it over panels — wrong z-order
-    // for a corner orientation indicator.
-    ImDrawList* gdl = ImGui.GetBackgroundDrawList();
 
     // Project a world-space offset (wx,wy,wz) to screen, anchored at (x,y).
     ImVec2 proj(float wx, float wy, float wz) {
