@@ -865,20 +865,21 @@ class MoveHandler : Handler {
         circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
         circleXZ.normal = axisY; circleXZ.radius = circR;
 
-        // Hide arrows that point too directly toward/away from the camera.
-        // viewDir is the normalised eye→center vector.
-        Vec3  d    = vp.eye - center;
-        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        viewDir = dist > 1e-6f
-            ? d / dist
-            : Vec3(0,0,1);
-        // Hide each axis when its world direction aligns with the camera
-        // ray (parallel ⇒ zero on-screen length). Use the dot of viewDir
-        // with the axis (works for non-canonical orientations).
-        enum float HIDE_THRESHOLD = 0.995f;
-        arrowX.setVisible(abs(dot(viewDir, axisX)) < HIDE_THRESHOLD);
-        arrowY.setVisible(abs(dot(viewDir, axisY)) < HIDE_THRESHOLD);
-        arrowZ.setVisible(abs(dot(viewDir, axisZ)) < HIDE_THRESHOLD);
+        // Orthographic cull (task 0225): in an ORTHO cell the axis arrow
+        // parallel to the (parallel) view direction is edge-on — zero on-screen
+        // length, useless to drag — so hide it AND drop it from the hit-test
+        // (the shared arbiter's ToolHandles.test() skips invisible handles).
+        // PERSPECTIVE keeps all three arrows. The view direction is the camera
+        // forward derived from the view matrix — correct for ortho's parallel
+        // projection (the eye→center ray is only right when the gizmo sits at
+        // the focus), so the cull is right for a gizmo offset from the focus and
+        // for a non-world (workplane/flex) basis.
+        viewDir = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+        enum float VIEW_ALIGN = 0.999f;
+        bool ortho = isOrtho(vp);
+        arrowX.setVisible(!ortho || abs(dot(viewDir, axisX)) < VIEW_ALIGN);
+        arrowY.setVisible(!ortho || abs(dot(viewDir, axisY)) < VIEW_ALIGN);
+        arrowZ.setVisible(!ortho || abs(dot(viewDir, axisZ)) < VIEW_ALIGN);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -994,6 +995,21 @@ class RotateHandler : Handler {
         applyStart(arcX, axisX);
         applyStart(arcY, axisY);
         applyStart(arcZ, axisZ);
+
+        // Orthographic cull (task 0225): in an ORTHO cell a principal ring is
+        // face-on (useful — its rotation axis points at the camera, i.e. screen
+        // rotation) only when its axis is PARALLEL to the view direction; the
+        // other two rings are edge-on (their planes are seen as a line — near
+        // impossible to grab), so hide them and drop them from the hit-test.
+        // The view-plane ring (arcView, normal = camFwd) always stays — it is
+        // the screen-plane rotation. PERSPECTIVE keeps all three arcs. This is
+        // the INVERSE of the Move/Scale rule (which hides the axis PARALLEL to
+        // the view): an arrow is useful when in-plane, a ring when face-on.
+        enum float VIEW_ALIGN = 0.999f;
+        bool ortho = isOrtho(vp);
+        arcX.setVisible(!ortho || abs(dot(camFwd, axisX)) >= VIEW_ALIGN);
+        arcY.setVisible(!ortho || abs(dot(camFwd, axisY)) >= VIEW_ALIGN);
+        arcZ.setVisible(!ortho || abs(dot(camFwd, axisZ)) >= VIEW_ALIGN);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -1408,17 +1424,19 @@ class ScaleHandler : Handler {
         scaleArrowZ.end           = center + axisZ * (size * axisBoxDistance * scaleAccum.z);
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
-        Vec3  d    = vp.eye - center;
-        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        viewDir = dist > 1e-6f
-            ? d / dist
-            : Vec3(0,0,1);
-        enum float HIDE_THRESHOLD = 0.995f;
-        arrowX.setVisible(abs(dot(viewDir, axisX)) < HIDE_THRESHOLD);
-        arrowY.setVisible(abs(dot(viewDir, axisY)) < HIDE_THRESHOLD);
-        arrowZ.setVisible(abs(dot(viewDir, axisZ)) < HIDE_THRESHOLD);
-
+        // Orthographic cull (task 0225) — mirror of MoveHandler: hide the axis
+        // box/arrow parallel to the view direction (edge-on) in an ORTHO cell
+        // and drop it from the hit-test (the ScaleHeadHandle proxy also reports
+        // no-hit once its target arrow is invisible). PERSPECTIVE keeps all
+        // three. Uses the camera forward (ortho's parallel projection dir).
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+        viewDir = camFwd;
+        enum float VIEW_ALIGN = 0.999f;
+        bool ortho = isOrtho(vp);
+        arrowX.setVisible(!ortho || abs(dot(camFwd, axisX)) < VIEW_ALIGN);
+        arrowY.setVisible(!ortho || abs(dot(camFwd, axisY)) < VIEW_ALIGN);
+        arrowZ.setVisible(!ortho || abs(dot(camFwd, axisZ)) < VIEW_ALIGN);
+
         centerDisk.center = center;
         centerDisk.normal = camFwd;
         centerDisk.radius = size * 0.08f;
