@@ -46,6 +46,7 @@ import tools.bend;
 import tools.scale;
 import tools.rotate;
 import tools.box;
+import tools.mirror;
 import tools.sphere;
 import tools.cylinder;
 import tools.cone;
@@ -2622,6 +2623,16 @@ void main(string[] args) {
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
+    reg.toolFactories["mesh.mirrorTool"] = () {
+        auto t = new MirrorTool(() => &mesh(), &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["mesh.mirrorTool"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                "mesh.mirrorTool", reg.toolFactories["mesh.mirrorTool"]);
+
     reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(() => &mesh(), &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
