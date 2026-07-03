@@ -1474,6 +1474,31 @@ void main(string[] args) {
         ImGui.PushStyleColor(ImGuiCol.SeparatorHovered,  black);
         ImGui.PushStyleColor(ImGuiCol.SeparatorActive,   black);
         ImGui.PushStyleColor(ImGuiCol.DockingEmptyBg,    black);
+        // Dock-tab palette. The dock tab bar renders while the visible panel's
+        // chrome push (pushPanelChromeStyle) is active, so tab LABELS inherit
+        // that black Text — StyleColorsDark's near-black default tab fills then
+        // give black-on-near-black, i.e. unreadable inactive labels. Black text
+        // needs LIGHT fills, which also matches our panel scheme (medium-grey
+        // panels + black text + beige buttons + a muted, desaturated accent —
+        // not the stock saturated blue). So: inactive tabs = neutral mid-greys a
+        // step below the panel bg (0.561); the active tab = a light muted
+        // steel-blue accent, distinguished from the greys by HUE (not just
+        // luminance) so active-vs-inactive is unambiguous while black labels
+        // stay readable on every state. Dimmed = the panel-unfocused variants.
+        ImVec4 tabInactive        = ImVec4(0.500f, 0.500f, 0.510f, 1.0f); // (128,128,130)
+        ImVec4 tabInactiveDim     = ImVec4(0.455f, 0.455f, 0.465f, 1.0f); // (116,116,119)
+        ImVec4 tabAccent          = ImVec4(0.510f, 0.635f, 0.804f, 1.0f); // (130,162,205)
+        ImVec4 tabAccentDim       = ImVec4(0.439f, 0.549f, 0.698f, 1.0f); // (112,140,178)
+        ImVec4 tabHover           = ImVec4(0.612f, 0.718f, 0.851f, 1.0f); // (156,183,217)
+        ImVec4 tabOverline        = ImVec4(0.694f, 0.792f, 0.925f, 1.0f); // (177,202,236)
+        ImVec4 tabOverlineDim     = ImVec4(0.545f, 0.545f, 0.557f, 1.0f); // (139,139,142)
+        ImGui.PushStyleColor(ImGuiCol.Tab,                       tabInactive);
+        ImGui.PushStyleColor(ImGuiCol.TabHovered,               tabHover);
+        ImGui.PushStyleColor(ImGuiCol.TabSelected,              tabAccent);
+        ImGui.PushStyleColor(ImGuiCol.TabSelectedOverline,      tabOverline);
+        ImGui.PushStyleColor(ImGuiCol.TabDimmed,                tabInactiveDim);
+        ImGui.PushStyleColor(ImGuiCol.TabDimmedSelected,        tabAccentDim);
+        ImGui.PushStyleColor(ImGuiCol.TabDimmedSelectedOverline, tabOverlineDim);
     }
     ImGui_ImplSDL2_Init(window);
     ImGui_ImplOpenGL3_Init("#version 330 core");
