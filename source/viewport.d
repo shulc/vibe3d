@@ -426,6 +426,48 @@ final class ViewportManager {
     /// SDL window-resize path so viewportUnderCursor() isn't stale.
     int          lx, ly, lw, lh;
 
+    /// Task 0223 (quad cross splitter): user-adjustable cell split ratios.
+    /// `hRatio` places the VERTICAL divider at `x = rx + hRatio*rw` — this
+    /// is the divider seen in SplitH (left|right) and Quad (both rows).
+    /// `vRatio` places the HORIZONTAL divider at `y = ry + vRatio*rh` — seen
+    /// in SplitV (top/bottom) and Quad (both columns). Naming mirrors the
+    /// AXIS the ratio controls, not the preset name (see cellRectsForRatios'
+    /// doc comment for the naming-trap explanation). Defaults reproduce the
+    /// existing 0.5 halving exactly (see the byte-neutrality unittest below).
+    float        hRatio = 0.5f;
+    float        vRatio = 0.5f;
+
+    /// crossDrag: which cross-splitter arm currently owns the drag gesture.
+    /// -1 = idle, 0 = V (vertical/hRatio) arm, 1 = H (horizontal/vRatio) arm.
+    /// There is no separate "center" arm: a drag that engaged inside the
+    /// intersection zone sets `crossBothAxes` so the owning arm drives BOTH
+    /// ratios. The owning arm is the one whose InvisibleButton is active, so
+    /// exactly one arm ever runs the update/release logic. Drives the ratio
+    /// update in the app-loop cross-widget block (source/app.d).
+    int          crossDrag = -1;
+    bool         crossBothAxes = false;
+
+    /// Task 0223: one-shot "re-front the cross-splitter arm windows" request,
+    /// raised by applyLayout on every layout change and consumed by the
+    /// cross-widget block (source/app.d) on the next frame. A layout switch
+    /// reactivates hidden cells, which — lacking NoFocusOnAppearing — call
+    /// FocusWindow as they reappear and jump ABOVE the arm overlay windows,
+    /// stealing the arms' InvisibleButton hover so the splitter stops
+    /// resizing. The widget answers this flag by explicitly SetWindowFocus-ing
+    /// both arms (submitted after the cells) so they return to the top; it is
+    /// a one-shot so steady-state layouts have no per-frame focus churn.
+    bool         crossNeedsRefocus = false;
+
+    /// Cross-widget drag anchor (source/app.d's per-frame widget block):
+    /// the widget is now built from per-arm ImGui InvisibleButtons inside
+    /// dedicated thin overlay windows (so the popup layer blocks its hover
+    /// natively — see the widget block in source/app.d). The drag motion is
+    /// driven by ImGui's cumulative GetMouseDragDelta(), so on the frame a
+    /// drag engages we snapshot the ratio the divider started at; each frame
+    /// the live ratio = start + delta/extent. No raw-SDL mouse poll is used.
+    float        crossStartHRatio = 0.5f;
+    float        crossStartVRatio = 0.5f;
+
     this(int x, int y, int w, int h) {
         // Pre-allocate all 4 cells (stable length — HTTP thread indexes this).
         // Only views[0] is live at startup (cellCount = 1).  Cells 1-3 exist
@@ -527,6 +569,66 @@ final class ViewportManager {
         }
     }
 
+    /// Task 0223: ratio-driven cell rects for the custom cross-splitter.
+    /// Mirrors `cellRectsFor` above but the split fraction is a caller-
+    /// supplied ratio instead of a hardcoded 0.5 — `cellRectsFor` itself is
+    /// left BYTE-FOR-BYTE UNCHANGED (it remains the sole `--test` rect
+    /// authority; not touching it is the cheapest byte-neutrality guarantee).
+    ///
+    /// NAMING TRAP (verify before touching call sites): `LayoutPreset.SplitH`
+    /// / `SplitV` are named for the pane ARRANGEMENT, which is the OPPOSITE
+    /// of the divider ORIENTATION.  SplitH gives a left|right pane pair, so
+    /// its divider is a VERTICAL line — driven by `hR`.  SplitV gives a
+    /// top/bottom pane pair, so its divider is a HORIZONTAL line — driven by
+    /// `vR`.  Quad uses both.  Get this backwards and the wrong widget moves
+    /// the wrong divider; see the mapping unittest below.
+    ///
+    /// `hR`/`vR` are fractions in (0,1); NOT clamped here (this function
+    /// stays pure / side-effect-free) — the caller (the drag site) is
+    /// responsible for clamping the stored ratio to a sane range before it
+    /// ever reaches this function.
+    ///
+    /// Uses TRUNCATING `cast(int)`, not `round` — `cast(int)(rw*0.5f) ==
+    /// rw/2` for every int `rw` (even AND odd), so at the default 0.5/0.5
+    /// this is byte-identical to `cellRectsFor`'s `rw/2` integer division.
+    /// `round` would diverge on odd dimensions — do not switch to it.
+    static void cellRectsForRatios(LayoutPreset p,
+                              int rx, int ry, int rw, int rh,
+                              float hR, float vR,
+                              out int[4] xs, out int[4] ys,
+                              out int[4] ws, out int[4] hs)
+        pure nothrow @nogc
+    {
+        xs[] = 0; ys[] = 0; ws[] = 0; hs[] = 0;
+        final switch (p) {
+            case LayoutPreset.Single:
+                xs[0] = rx; ys[0] = ry; ws[0] = rw; hs[0] = rh;
+                break;
+            case LayoutPreset.SplitH: {
+                // Vertical divider, driven by hRatio.
+                int hw = cast(int)(rw * hR);
+                xs[0] = rx;      ys[0] = ry; ws[0] = hw;      hs[0] = rh;
+                xs[1] = rx + hw; ys[1] = ry; ws[1] = rw - hw; hs[1] = rh;
+                break;
+            }
+            case LayoutPreset.SplitV: {
+                // Horizontal divider, driven by vRatio.
+                int hh = cast(int)(rh * vR);
+                xs[0] = rx; ys[0] = ry;      ws[0] = rw; hs[0] = hh;
+                xs[1] = rx; ys[1] = ry + hh; ws[1] = rw; hs[1] = rh - hh;
+                break;
+            }
+            case LayoutPreset.Quad: {
+                int hw = cast(int)(rw * hR), hh = cast(int)(rh * vR);
+                xs[0] = rx;      ys[0] = ry;      ws[0] = hw;      hs[0] = hh;
+                xs[1] = rx + hw; ys[1] = ry;      ws[1] = rw - hw; hs[1] = hh;
+                xs[2] = rx;      ys[2] = ry + hh; ws[2] = hw;      hs[2] = rh - hh;
+                xs[3] = rx + hw; ys[3] = ry + hh; ws[3] = rw - hw; hs[3] = rh - hh;
+                break;
+            }
+        }
+    }
+
     /// Switch to a new layout preset: update cellCount, gpu-init newly-live
     /// cells, assign per-cell camera presets (Quad only), compute initial
     /// cell rects, clamp indices, dirty all live cells, raise layoutDirty.
@@ -592,6 +694,18 @@ final class ViewportManager {
 
         // Hygiene: clear drag origin; clamp activation indices to valid range.
         dragOriginId = -1;
+        // Task 0223: a layout switch tears down / re-seeds the cross-splitter
+        // arm windows, so any in-flight cross-drag gesture (crossDrag>=0) can
+        // never see its own InvisibleButton release. Clear the drag state here
+        // (applyLayout is the sole layout-change entry) so a drag interrupted
+        // by a layout switch leaves no latched owner that would swallow the
+        // next arm's press in the re-entered layout.
+        crossDrag     = -1;
+        crossBothAxes = false;
+        // Ask the cross-widget to re-front its arm windows next frame (see the
+        // field doc): a layout switch reappears cells that would otherwise
+        // bury the arms and steal their hover.
+        crossNeedsRefocus = true;
         if (activeId  >= cellCount) activeId  = cellCount - 1;
         if (hoveredId >= cellCount) hoveredId = cellCount - 1;
         if (masterId  >= cellCount) masterId  = 0;
@@ -926,6 +1040,66 @@ unittest {
         assert(xs[1] == 100 + ws[0] && ys[1] == 50, "Quad TR origin");
         assert(xs[2] == 100 && ys[2] == 50 + hs[0], "Quad BL origin");
         assert(xs[3] == 100 + ws[0] && ys[3] == 50 + hs[0], "Quad BR origin");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// cellRectsForRatios unittests (task 0223, quad cross splitter, M0)
+// ---------------------------------------------------------------------------
+unittest {
+    // Byte-neutrality: at hR=vR=0.5, cellRectsForRatios must reproduce
+    // cellRectsFor exactly for every preset, across even AND odd dimensions
+    // (proves the truncating cast(int) matches the existing `rw/2` divide).
+    foreach (dims; [[640, 480], [641, 481], [101, 51], [1, 1]]) {
+        int rw = dims[0], rh = dims[1];
+        foreach (p; [LayoutPreset.Single, LayoutPreset.SplitH,
+                     LayoutPreset.SplitV, LayoutPreset.Quad]) {
+            int[4] xs0, ys0, ws0, hs0;
+            int[4] xs1, ys1, ws1, hs1;
+            ViewportManager.cellRectsFor(p, 7, 11, rw, rh, xs0, ys0, ws0, hs0);
+            ViewportManager.cellRectsForRatios(p, 7, 11, rw, rh, 0.5f, 0.5f,
+                                                xs1, ys1, ws1, hs1);
+            assert(xs0 == xs1 && ys0 == ys1 && ws0 == ws1 && hs0 == hs1,
+                   "cellRectsForRatios(0.5,0.5) must equal cellRectsFor");
+        }
+    }
+
+    // Naming-trap mapping (see cellRectsForRatios' doc comment): SplitH's
+    // divider is VERTICAL and driven by hRatio — cell0 width must track hR,
+    // NOT vR. Use an asymmetric ratio pair so a swapped mapping would fail.
+    {
+        int[4] xs, ys, ws, hs;
+        ViewportManager.cellRectsForRatios(LayoutPreset.SplitH, 0, 0, 640, 480,
+                                            0.25f, 0.75f, xs, ys, ws, hs);
+        assert(ws[0] == cast(int)(640 * 0.25f),
+               "SplitH cell0 width must be driven by hRatio, not vRatio");
+        assert(ys[0] == 0 && hs[0] == 480, "SplitH: full height, no vRatio effect");
+    }
+
+    // SplitV's divider is HORIZONTAL and driven by vRatio — cell0 height
+    // must track vR, NOT hR.
+    {
+        int[4] xs, ys, ws, hs;
+        ViewportManager.cellRectsForRatios(LayoutPreset.SplitV, 0, 0, 640, 480,
+                                            0.75f, 0.25f, xs, ys, ws, hs);
+        assert(hs[0] == cast(int)(480 * 0.25f),
+               "SplitV cell0 height must be driven by vRatio, not hRatio");
+        assert(xs[0] == 0 && ws[0] == 640, "SplitV: full width, no hRatio effect");
+    }
+
+    // Quad: both axes independently driven by hRatio/vRatio.
+    {
+        int[4] xs, ys, ws, hs;
+        ViewportManager.cellRectsForRatios(LayoutPreset.Quad, 0, 0, 640, 480,
+                                            0.25f, 0.75f, xs, ys, ws, hs);
+        int hw = cast(int)(640 * 0.25f), hh = cast(int)(480 * 0.75f);
+        assert(ws[0] == hw && ws[2] == hw, "Quad left column width == hRatio*rw");
+        assert(hs[0] == hh && hs[1] == hh, "Quad top row height == vRatio*rh");
+        assert(ws[1] == 640 - hw && ws[3] == 640 - hw, "Quad right column remainder");
+        assert(hs[2] == 480 - hh && hs[3] == 480 - hh, "Quad bottom row remainder");
+        // No gap / no overlap, edge-to-edge like cellRectsFor.
+        assert(xs[1] == xs[0] + ws[0] && xs[3] == xs[2] + ws[2]);
+        assert(ys[2] == ys[0] + hs[0] && ys[3] == ys[1] + hs[1]);
     }
 }
 

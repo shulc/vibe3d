@@ -585,13 +585,15 @@ private extern(C) @nogc nothrow {
     bool ImGuiDockNode_IsEmpty(ImGuiDockNode* self);
 }
 
-// Private imgui dock-node flags (imgui_internal.h:1992/1993) — internal-only
-// bits, not part of the public `ImGuiDockNodeFlags` enum bound in
-// d_imgui/imgui_h.d, so declared locally. Values confirmed against the
-// vendored cimgui.h copy in ~/Code/D-ImGui. (The former `kDockFlagHiddenTabBar`
-// shim bit is gone — superseded by the public `AutoHideTabBar` SharedFlag,
-// task 0211 Phase 4.)
-private enum int kDockFlagDockSpace    = 1 << 10; // "a DockSpace() node" (nested dockspace)
+// Private imgui dock-node flag (imgui_internal.h:1993) — internal-only bit,
+// not part of the public `ImGuiDockNodeFlags` enum bound in d_imgui/imgui_h.d,
+// so declared locally. Value confirmed against the vendored cimgui.h copy in
+// ~/Code/D-ImGui. (The former `kDockFlagHiddenTabBar` shim bit is gone —
+// superseded by the public `AutoHideTabBar` SharedFlag, task 0211 Phase 4.
+// The sibling `kDockFlagDockSpace` bit — "a DockSpace() node", used to mark
+// the nested `viewportDockId` root — is gone too: task 0223 dropped that
+// inner dockspace entirely, so nothing declares a nested DockSpace node
+// anymore.)
 private enum int kDockFlagCentralNode  = 1 << 11;
 
 /// Dock Viewport##0..3 into `parentNodeId`, split according to the layout
@@ -1635,6 +1637,11 @@ void main(string[] args) {
     if (!testMode) {
         vpm.applyLayout(g_prefs.viewportLayout);
         vpm.layoutDirty = false;
+        // Task 0223: restore the persisted cross-splitter ratios. prefs.d's
+        // loadPrefs() already clamped these to [0.05, 0.95], so no further
+        // validation is needed here.
+        vpm.hRatio = g_prefs.hRatio;
+        vpm.vRatio = g_prefs.vRatio;
     }
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
@@ -8446,13 +8453,15 @@ void main(string[] args) {
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
                     ImGui.DockBuilderDockWindow("Tab bar",            topId);
                     ImGui.DockBuilderDockWindow("Status line",        botId);
-                    // Central node: "ViewportHost" (task 0211) — a plain
-                    // window that nests its OWN DockSpace (viewportDockId,
-                    // see the ViewportHost block just before the per-cell
-                    // Viewport##k loop below). The actual Viewport##0..3
-                    // cells are seeded/rebuilt there, scoped to that inner
-                    // root, so a runtime `viewport.layout` switch never
-                    // touches this outer chrome tree again.
+                    // Central node: "ViewportHost" (task 0211; task 0223
+                    // dropped its inner DockSpace) — a plain window whose
+                    // ONLY job now is to read the host content rect (see the
+                    // ViewportHost block just before the per-cell Viewport##k
+                    // loop below). The actual Viewport##0..3 cells are
+                    // top-level, non-docked, positioned windows computed from
+                    // that rect + `vpm.hRatio/vRatio` every frame, so a
+                    // runtime `viewport.layout` switch or a cross-splitter
+                    // drag never touches this outer chrome tree.
                     // In --test this window is never created → PassthruCentralNode
                     // hole → picking rect unchanged (but we're in !testMode here).
                     ImGui.DockBuilderDockWindow("ViewportHost", vpRegion);
@@ -8507,24 +8516,23 @@ void main(string[] args) {
             // fix was to fall back to a FULL rebuild of `dockspaceId`
             // (resetting chrome too) to sidestep the hazard entirely.
             //
-            // Task 0211 supersedes that FOR INTERACTIVE SESSIONS: the
-            // viewport cells now live in their OWN nested dockspace
-            // (`viewportDockId`, see the "ViewportHost" block below, just
-            // before the per-cell Viewport##k window loop). That inner
-            // dockspace is a genuine dock-tree ROOT, not nested inside
-            // `dockspaceId` — so `DockBuilderRemoveNodeChildNodes` scopes
-            // correctly to it (re-homes every descendant window's DockId to
-            // the root itself before removing anything, and removes with
-            // merge_sibling_into_parent=false, which disables the exact
-            // merge path 0204 hit) — see
-            // doc/scoped_viewport_layout_switch_plan.md for the full
-            // source-level argument. So for `!testMode`, `vpm.layoutDirty` is
-            // deliberately left SET here — untouched — and consumed later,
-            // in the ViewportHost block, where it drives a rebuild scoped to
-            // `viewportDockId` alone. This outer `dockspaceId` tree (all of
-            // chrome: Tab bar / Status line / Mesh Info / Layers / Tool
-            // Properties / Viewport Properties, plus the "ViewportHost"
-            // window itself) is never touched by a layout switch anymore.
+            // Task 0211 superseded that FOR INTERACTIVE SESSIONS by moving the
+            // viewport cells into their own nested dockspace; task 0223 (quad
+            // cross splitter) goes further and drops docking for the cells
+            // entirely — they are now top-level, non-docked, procedurally
+            // positioned windows (`SetNextWindowPos/Size` from
+            // `cellRectsForRatios`, computed in the "ViewportHost" block just
+            // before the per-cell Viewport##k loop). There is no dock
+            // subtree left to rebuild for `!testMode` at all: `vpm.layoutDirty`
+            // is cleared unconditionally in that ViewportHost block every
+            // frame (viewport.d's `applyLayout` is its only setter, and a
+            // layout switch just changes `vpm.cellCount` / camera presets —
+            // the next frame's ratio-rect computation already reflects the
+            // new preset with no rebuild step needed). This outer
+            // `dockspaceId` tree (all of chrome: Tab bar / Status line / Mesh
+            // Info / Layers / Tool Properties / Viewport Properties, plus the
+            // "ViewportHost" window itself) is never touched by a layout
+            // switch.
             //
             // `--test` keeps the ORIGINAL 0204 full-rebuild behavior
             // unconditionally (byte-neutrality — task 0211 Phase 4): no real
@@ -9544,88 +9552,84 @@ void main(string[] args) {
             activeTool.update(vts);
         }
 
-        // ── Task 0211: scoped viewport-only DockSpace host ("ViewportHost") ──
+        // ── Task 0223: ratio-driven cell layout host ("ViewportHost") ────────
         //
         // "ViewportHost" is the plain window docked into the outer
-        // dockspace's central node (see the seed above); it nests its OWN
-        // DockSpace, rooted at the stable id `viewportDockId`. Because that
-        // inner dockspace is a genuine dock-tree ROOT — not a node nested
-        // inside the outer `MainDockSpace` tree — `DockBuilderRemoveNodeChildNodes`
-        // scopes correctly to it (see doc/scoped_viewport_layout_switch_plan.md
-        // for the source-level argument for why the outer tree can't be
-        // scoped this way). A runtime `viewport.layout` switch rebuilds ONLY
-        // this subtree; chrome panels (Tab bar / Status line / Mesh Info /
-        // Layers / Tool Properties / Viewport Properties), docked in the
-        // OUTER tree above, are never touched.
+        // dockspace's central node (see the seed above). Through task 0222 it
+        // nested its OWN inner DockSpace (`viewportDockId`) that bound the
+        // cells via ImGui docking; task 0223 (quad cross splitter) DROPS that
+        // inner dockspace — a docked window ignores `SetNextWindowPos/Size`,
+        // and the custom cross-splitter widget (built on top of caller-
+        // supplied ratios, see the per-cell loop + widget below) needs to
+        // position each cell itself. "ViewportHost" now serves ONE purpose:
+        // read the host content rect (the region the outer chrome dockspace
+        // grants the viewport area), so the ratio-cell math below tracks
+        // outer-panel resizes exactly like the old dockspace-fed rect did.
         //
-        // Must run BEFORE the per-cell Viewport##k window loop just below,
-        // in the same frame, so the cells it seeds/rebuilds exist by the
-        // time those windows try to dock into them.
+        // Must run BEFORE the per-cell Viewport##k window loop just below, in
+        // the same frame, so `_cellXs/Ys/Ws/Hs` are ready when those windows
+        // position themselves.
         //
         // `!testMode` only: in `--test` no "ViewportHost"/"Viewport##k"
-        // windows are ever created (see the per-cell loop's `!testMode`
-        // gate below) — this whole block is skipped, so zero `SetLocalFlags`
-        // / `DockSpace(viewportDockId)` calls execute in test and the outer
-        // central node stays the PassthruCentralNode hole exactly as before
-        // (byte-identical HTTP suite geometry).
+        // windows are ever created (see the per-cell loop's `!testMode` gate
+        // below) — this whole block is skipped, so the outer central node
+        // stays the PassthruCentralNode hole exactly as before (byte-
+        // identical HTTP suite geometry). The `--test` rect authority remains
+        // the unchanged `cellRectsFor` via `applyLayout` / the SDL resize
+        // handler (task 0223 plan §6).
+        int[4] _cellXs, _cellYs, _cellWs, _cellHs;
         if (!testMode) {
+            // Task 0223: "ViewportHost" no longer draws any content of its
+            // own (it used to host the inner DockSpace) — it exists purely
+            // to read the host content rect. NoBackground is REQUIRED: the
+            // per-cell `Viewport##k` windows below are now plain top-level
+            // (non-docked) windows rather than docked children, so they are
+            // NOT automatically brought in front of "ViewportHost" the way a
+            // docked child would be — without NoBackground here,
+            // "ViewportHost"'s own opaque WindowBg fully occludes them
+            // (reproduced live: solid black quad, camera rects correct but
+            // nothing drawn). With NoBackground there is nothing to occlude
+            // regardless of the two windows' relative z-order.
+            //
+            // NoMouseInputs: "ViewportHost" occupies the EXACT same screen
+            // rect as the Viewport##k cells stacked on top of it. Belt-and-
+            // suspenders with the cell flags below (this task's live-Xvfb
+            // pass found the REAL culprit was `NoBringToFrontOnFocus` on the
+            // cells themselves — see vpWinFlags' doc comment — but leaving
+            // "ViewportHost" mouse-transparent too means the cells' hover
+            // resolution never has to compete with it regardless of z-order
+            // details, and it has no interactive purpose of its own).
             immutable int hostFlags =
                 ImGuiWindowFlags.NoScrollbar |
-                ImGuiWindowFlags.NoScrollWithMouse;
+                ImGuiWindowFlags.NoScrollWithMouse |
+                ImGuiWindowFlags.NoBackground |
+                ImGuiWindowFlags.NoMouseInputs;
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(0, 0));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
             if (ImGui.Begin("ViewportHost", null, hostFlags)) {
+                ImVec2 hostPos   = ImGui.GetCursorScreenPos();
                 ImVec2 hostAvail = ImGui.GetContentRegionAvail();
-                immutable ImGuiID viewportDockId = ImGui.GetID("ViewportDockSpace");
-                ImGui.DockSpace(viewportDockId, ImVec2(0, 0),
-                                ImGuiDockNodeFlags.AutoHideTabBar);
 
-                // Same dead-guard hazard as the outer seed (task 0211 Phase 1):
-                // the `DockSpace()` call just above ALWAYS creates the node if
-                // absent (imgui.cpp `DockSpace()` calls `DockContextAddNode`
-                // inline when `DockContextFindNodeByID` finds none), so
-                // `DockBuilderGetNode(viewportDockId) is null` is never true
-                // here — checking it would silently skip the first-ever seed
-                // forever, leaving "Viewport##0" undocked/floating (exactly
-                // the symptom this task kills, just one level deeper). Use the
-                // same `IsEmpty()` discriminator as the outer guard instead: a
-                // freshly auto-created node has no children AND no windows; a
-                // genuinely restored inner tree always has at least the
-                // seeded window(s) from a prior session, so this never fires
-                // against a valid restore.
-                auto viewportDockNode = ImGui.DockBuilderGetNode(viewportDockId);
-                bool viewportDockEmpty =
-                    viewportDockNode is null || ImGuiDockNode_IsEmpty(viewportDockNode);
-                if (viewportDockEmpty) {
-                    // First-ever build of the inner tree: a fresh profile, or
-                    // a just-bumped kLayoutIniVersion with nothing restored
-                    // from the ini yet (see prefs.d). Seed it from the
-                    // current preset — mirrors the outer seed's one-shot
-                    // guard, just scoped to this root instead of dockspaceId.
-                    ImGui.DockBuilderAddNode(viewportDockId, kDockFlagDockSpace);
-                    ImGui.DockBuilderSetNodeSize(viewportDockId, hostAvail);
-                    dockSplitViewportCells(viewportDockId, vpm.layout);
-                    ImGui.DockBuilderFinish(viewportDockId);
-                    vpm.layoutDirty = false;
-                } else if (vpm.layoutDirty) {
-                    // Scoped rebuild (task 0211 Phase 2) — the crash-sensitive
-                    // core. Safe because `viewportDockId` is a true dock-tree
-                    // root: `DockBuilderRemoveNodeChildNodes` re-homes every
-                    // descendant window's DockId to the root itself before
-                    // removing any node, and removes with
-                    // merge_sibling_into_parent=false — neither 0204 failure
-                    // mode (dangling DockId / stale re-queried CentralNode)
-                    // applies here. Chrome (the outer `dockspaceId` tree) is
-                    // untouched — this call only ever mutates descendants of
-                    // `viewportDockId`.
-                    vpm.layoutDirty = false;
-                    ImGui.DockBuilderRemoveNodeChildNodes(viewportDockId);
-                    dockSplitViewportCells(viewportDockId, vpm.layout);
-                    ImGui.DockBuilderFinish(viewportDockId);
-                }
-                // else: node exists and layoutDirty is false — nothing to do,
-                // trust whatever ImGui just restored/kept for this frame
-                // (0208-style: the persisted ini is the source of truth).
+                // This is now the interactive single-writer of vpm.l* (the
+                // picking region) — it tracks the REAL host content rect every
+                // frame, strictly more correct than the old hardcoded
+                // layout.vp* the SDL resize handler stamps (that handler's
+                // write remains a pre-first-frame / --test fallback only; see
+                // its comment at handleWindowEvent, ~app.d:5537-5548, and the
+                // per-cell-loop comment below, updated to match).
+                vpm.lx = cast(int)hostPos.x;   vpm.ly = cast(int)hostPos.y;
+                vpm.lw = cast(int)hostAvail.x; vpm.lh = cast(int)hostAvail.y;
+
+                // layoutDirty's only interactive consumer (the old inner-
+                // dockspace rebuild) is gone; clear it here so a pending
+                // viewport.layout switch doesn't leave the flag stuck set
+                // (applyLayout() is the sole setter — see viewport.d).
+                vpm.layoutDirty = false;
+
+                ViewportManager.cellRectsForRatios(vpm.layout, vpm.lx, vpm.ly,
+                                                    vpm.lw, vpm.lh,
+                                                    vpm.hRatio, vpm.vRatio,
+                                                    _cellXs, _cellYs, _cellWs, _cellHs);
             }
             ImGui.End();
             ImGui.PopStyleVar(2);
@@ -9649,9 +9653,33 @@ void main(string[] args) {
             import std.conv : to;
             import toolpipe.packets : FalloffPacket;
             import falloff_render : drawFalloffOverlay;
+            // Task 0223: cells are plain top-level windows, procedurally
+            // positioned every frame from `_cellXs/Ys/Ws/Hs` (see the
+            // ViewportHost block above) rather than docked. NoDocking is
+            // mandatory — the outer chrome dockspace still exists, and a
+            // floating window without it could dock itself into the chrome.
+            // NoSavedSettings keeps these procedurally-positioned cells out
+            // of the layout ini entirely (so a stale saved DockId from a
+            // pre-0223 ini is simply never read for them).
+            //
+            // NoBringToFrontOnFocus is deliberately NOT set here: in this
+            // binding a NoBringToFrontOnFocus window is pinned to the BACKGROUND
+            // z-band (behind normal windows), so flagging the cells demoted
+            // them below the (normal) "ViewportHost" window and the whole quad
+            // rendered dimmed (reproduced live). The cross-splitter arm overlay
+            // windows are created AFTER the cells each frame, so they start
+            // above them; the splitter's own hit-test tolerates a
+            // freshly-clicked cell transiently rising over an arm (see the
+            // widget block after this loop).
             immutable int vpWinFlags =
                 ImGuiWindowFlags.NoScrollbar |
-                ImGuiWindowFlags.NoScrollWithMouse;
+                ImGuiWindowFlags.NoScrollWithMouse |
+                ImGuiWindowFlags.NoTitleBar |
+                ImGuiWindowFlags.NoResize |
+                ImGuiWindowFlags.NoMove |
+                ImGuiWindowFlags.NoCollapse |
+                ImGuiWindowFlags.NoDocking |
+                ImGuiWindowFlags.NoSavedSettings;
 
             // Task 0213: falloff ring/sphere overlay packet, built ONCE
             // before the per-cell loop (view-independent — same world-
@@ -9695,6 +9723,14 @@ void main(string[] args) {
                 // letterbox frame around the 3D image. Match the FBO clear
                 // color (renderViewportSceneToFbo, glClearColor 0.36/0.40/0.42)
                 // so any letterbox bar blends with the rendered scene bg.
+                // Task 0223: position this cell BEFORE Begin — a plain
+                // (non-docked) window honors SetNextWindowPos/Size every
+                // frame. With WindowPadding=0 and WindowBorderSize=0 (pushed
+                // above / at ViewportHost), the content rect below equals
+                // this computed rect exactly, so the live stamp two lines
+                // down self-corrects to the same numbers — see that comment.
+                ImGui.SetNextWindowPos (ImVec2(_cellXs[k], _cellYs[k]));
+                ImGui.SetNextWindowSize(ImVec2(_cellWs[k], _cellHs[k]));
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, ImVec2(0, 0));
                 ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.36f, 0.40f, 0.42f, 1.0f));
                 if (ImGui.Begin("Viewport##" ~ to!string(k), null, vpWinFlags)) {
@@ -9704,15 +9740,18 @@ void main(string[] args) {
                     // Stamp this cell's window rect for FBO loop and viewportUnderCursor.
                     // setPos is REQUIRED: the pick delegates read
                     // cameraView.viewport() (== active cell's camera) during
-                    // SDL event processing, so each cell's docked window
-                    // origin must live on the persistent View — otherwise
-                    // picking subtracts the stale construction-time layout origin
-                    // and every hover/click is offset by (window-pos − origin).
+                    // SDL event processing, so each cell's window origin must
+                    // live on the persistent View — otherwise picking
+                    // subtracts the stale construction-time layout origin and
+                    // every hover/click is offset by (window-pos − origin).
                     // In --test this loop never runs (no Viewport##k windows), so
                     // the cameras keep layout.vp* → byte-identical.
                     // winX/Y/W/H are forwarding properties onto these same
                     // camera fields (the cell rect's single owner, V1) — this
-                    // IS the interactive rect authority, no second write needed.
+                    // IS the interactive rect authority. Re-stamping from the
+                    // REAL content rect here (rather than trusting
+                    // `_cellXs/Ys/Ws/Hs` directly) keeps this self-correcting
+                    // if ImGui ever nudges anything (e.g. a min-size clamp).
                     _vcell.camera.setSize(cast(int)avail.x, cast(int)avail.y);
                     _vcell.camera.setPos(cast(int)pos.x, cast(int)pos.y);
 
@@ -9790,9 +9829,13 @@ void main(string[] args) {
                     // Active cell only: update outer vp used by picks.  vp.x/y
                     // already equal camera.x/y (the cell rect's single owner,
                     // V1) via resolvedSnapshot — no patch needed.  vpm.l* (the
-                    // picking region) is written only by the resize handler now
-                    // (single-writer invariant); patching it here from a live
-                    // per-cell rect would corrupt it into a non-full-area value.
+                    // picking region) is now written every frame by the
+                    // ViewportHost block above (task 0223 — the interactive
+                    // single writer moved there, off the real host content
+                    // rect); the SDL resize handler's write is a pre-first-
+                    // frame / --test fallback only.  Patching it here from a
+                    // live per-cell rect would corrupt it into a non-full-
+                    // area value.
                     if (k == vpm.activeId) {
                         vp = vpm.resolvedSnapshot(k);
                     }
@@ -9904,6 +9947,265 @@ void main(string[] args) {
                 ImGui.PopStyleColor(1);
                 ImGui.PopStyleVar(1);
             }
+
+            // ── Task 0223: cross-splitter widget (drives hRatio/vRatio) ──────
+            //
+            // Each arm of the cross (vertical / horizontal / center) is a
+            // dedicated thin, borderless, NoBackground ImGui WINDOW submitted
+            // AFTER the per-cell Viewport##k loop, each holding one
+            // InvisibleButton that fills it. This construction fixes the two
+            // popup-layer bugs by design:
+            //
+            //   1. DRAW-ORDER — the arms/knob are drawn on the arm window's
+            //      own GetWindowDrawList(), NOT GetForegroundDrawList().
+            //      A foreground draw list composites above EVERYTHING incl.
+            //      popups (so the old code painted the divider over an open
+            //      `mesh.subdivide` dialog); a normal window's draw list
+            //      renders BELOW the popup layer but ABOVE the cell images
+            //      (these windows are created after the cells, so they sit
+            //      above them in window order).
+            //   2. HOVER/GRAB — hit-testing is `InvisibleButton` +
+            //      `IsItemHovered()` with DEFAULT flags (NO
+            //      AllowWhenBlockedByPopup — exactly like the per-cell
+            //      ##vpHit gate above). ImGui returns hovered==false wherever
+            //      a popup (or any higher-priority window) covers the point,
+            //      so the divider cannot be hovered/grabbed UNDER a popup —
+            //      the popup owns that hover. This is per-pixel: the parts of
+            //      the arm the popup does NOT cover stay grabbable.
+            //
+            // Binding note (D-ImGui): this binding exposes InvisibleButton /
+            // IsItemHovered / IsItemActive / GetMouseDragDelta / SetMouseCursor
+            // / GetWindowDrawList but NOT the io.MousePos/MouseDown FIELDS
+            // (nor GetMousePos/IsMouseDown functions) — so the drag is driven
+            // by IsItemActive() + cumulative GetMouseDragDelta() off a
+            // per-gesture ratio anchor (vpm.crossStart*Ratio), not a raw SDL
+            // poll. Only the arms relevant to the CURRENT preset exist — see
+            // the naming-trap table in cellRectsForRatios' doc comment:
+            // SplitH/Quad get the vertical (hRatio) arm; SplitV/Quad get the
+            // horizontal (vRatio) arm; Quad alone gets the center handle.
+            {
+                enum int kGrab    = 5;   // px, half-width of the hit strip
+                enum int kMinCell = 40;  // px, minimum cell extent when dragging
+
+                bool hasV      = (vpm.layout == LayoutPreset.SplitH || vpm.layout == LayoutPreset.Quad);
+                bool hasH      = (vpm.layout == LayoutPreset.SplitV || vpm.layout == LayoutPreset.Quad);
+                bool hasCenter = (vpm.layout == LayoutPreset.Quad);
+
+                int hx = vpm.lx, hy = vpm.ly, hw = vpm.lw, hh = vpm.lh;
+                int vx  = hx + cast(int)(hw * vpm.hRatio);   // vertical arm x
+                int hyv = hy + cast(int)(hh * vpm.vRatio);   // horizontal arm y
+
+                // Engage only when idle: no cell-scoped gesture
+                // (dragOriginId), no camera/select drag (dragMode), no
+                // in-flight tool/gizmo drag. A lasso or tool-drag already in
+                // progress that happens to cross the divider strip must never
+                // be hijacked (task 0223 plan §3 / §9 risk register). Note an
+                // InvisibleButton only ACTIVATES on a fresh press begun while
+                // hovered, so an in-flight gesture (mouse already held over a
+                // cell) can't grab an arm anyway — this guard is defence in
+                // depth.
+                bool anyGestureActive = vpm.dragOriginId >= 0
+                                     || dragMode != DragMode.None
+                                     || (activeTool !is null && activeTool.isDragging())
+                                     || pipeGizmoHost.isDragging();
+
+                immutable ImU32 kLineCol = IM_COL32(160, 160, 160, 180);
+                immutable ImU32 kHotCol  = IM_COL32(255, 255, 255, 230);
+
+                // Mouse position for CENTER-ZONE CLASSIFICATION only (1D arm vs
+                // 2D center) and for the resize-cursor. SDL_GetMouseState
+                // returns window-client coords, which equal ImGui's main-
+                // viewport coords used for vx/hyv (verified: the original
+                // widget hit-tested vx against this and worked). This does NOT
+                // gate engagement — that goes through the InvisibleButton's
+                // IsItemActive below, so popups still block a grab per-pixel.
+                int smx, smy; SDL_GetMouseState(&smx, &smy);
+                bool inCenterZone = hasCenter
+                                 && smx >= vx - kGrab && smx <= vx + kGrab
+                                 && smy >= hyv - kGrab && smy <= hyv + kGrab;
+
+                // Thin overlay-window flags. WindowMinSize is pushed to (1,1):
+                // the default (32,32) would clamp an ~10px arm strip up to
+                // 32px and block cell picking in a fat band around the
+                // divider. NoBackground keeps the window invisible except for
+                // our own draw-list strokes. These are PLAIN windows (NO
+                // NoBringToFrontOnFocus — that flag pins a window to the
+                // background z-band BEHIND the opaque cells, which occludes
+                // the arm's line and makes its InvisibleButton unhittable).
+                // Created after the cells each frame → above them ON FIRST
+                // CREATION.
+                //
+                // Z-ORDER ACROSS A LAYOUT SWITCH (task 0223 regression fix):
+                // "created after the cells" only guarantees front-most on the
+                // FIRST Quad frame. On any layout switch the hidden cells that
+                // become live again REAPPEAR, and a reappearing window with no
+                // NoFocusOnAppearing calls FocusWindow (ImGui Begin sets
+                // want_focus when window_just_activated_by_user), jumping ABOVE
+                // any arm that didn't itself reappear (e.g. the vertical arm
+                // stays visible across SplitH↔Quad and so never re-fronts). The
+                // reappeared cells then steal the arm's InvisibleButton hover
+                // and the splitter silently stops resizing. NoFocusOnAppearing
+                // on the arms only stops THEM stealing focus; it does not keep
+                // them on top. The reliable fix is to explicitly re-front both
+                // arms on the frame after a layout change — see the
+                // `refocusArms` handling below (driven by
+                // ViewportManager.crossNeedsRefocus, set in applyLayout). The
+                // arms are submitted AFTER the cells, so the explicit
+                // SetWindowFocus runs after the cells' reappear-focus and wins.
+                immutable int armBaseFlags =
+                    ImGuiWindowFlags.NoTitleBar        | ImGuiWindowFlags.NoResize |
+                    ImGuiWindowFlags.NoMove            | ImGuiWindowFlags.NoCollapse |
+                    ImGuiWindowFlags.NoScrollbar       | ImGuiWindowFlags.NoScrollWithMouse |
+                    ImGuiWindowFlags.NoDocking         | ImGuiWindowFlags.NoSavedSettings |
+                    ImGuiWindowFlags.NoBackground      | ImGuiWindowFlags.NoNav |
+                    ImGuiWindowFlags.NoFocusOnAppearing;
+
+                // Consume the "layout just changed" flag: on this frame we must
+                // explicitly raise both arms above the (possibly just-
+                // reappeared, focus-stealing) cells. One-shot — cleared here so
+                // steady-state Quad has zero focus churn (and never steals
+                // focus from an open popup or a chrome text input).
+                bool refocusArms = vpm.crossNeedsRefocus;
+                vpm.crossNeedsRefocus = false;
+
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize,    ImVec2(1, 1));
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(0, 0));
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+
+                // Whether the intersection knob should render hot: set by
+                // whichever arm is hovered while the cursor is in the center
+                // zone (there is NO separate center window — the two arm strips
+                // overlap at the intersection and one of them owns the hover
+                // there; a dedicated center window could not stay above an arm
+                // the user just focus-raised by dragging it).
+                bool centerHovered = false;
+
+                // One arm. `arm` = 0 V (vertical/hRatio), 1 H (horizontal/
+                // vRatio). A press begun inside the center zone promotes the
+                // drag to mode 2 (both axes). Returns whether it is hot
+                // (hovered or dragging) so the caller can suppress the scene-
+                // input gate. Draws its line — and, for the H arm, the center
+                // knob — on its own window's draw list (below popups, above
+                // the cells).
+                bool runArm(int arm, string title, int wx, int wy, int ww, int wh) {
+                    if (ww <= 0 || wh <= 0) return false;
+                    ImGui.SetNextWindowPos (ImVec2(cast(float)wx, cast(float)wy));
+                    ImGui.SetNextWindowSize(ImVec2(cast(float)ww, cast(float)wh));
+                    bool hot = false;
+                    if (ImGui.Begin(title, null, armBaseFlags)) {
+                        // On the frame after a layout switch, force this arm to
+                        // the front so a just-reappeared cell can't sit over it
+                        // and swallow the hover (task 0223). V is submitted
+                        // before H, so H's SetWindowFocus runs last → the H arm
+                        // (which paints the knob) ends topmost at the crossing.
+                        if (refocusArms) ImGui.SetWindowFocus();
+                        ImGui.SetCursorScreenPos(ImVec2(cast(float)wx, cast(float)wy));
+                        ImGui.InvisibleButton(title ~ "##b",
+                                              ImVec2(cast(float)ww, cast(float)wh),
+                                              ImGuiButtonFlags.MouseButtonLeft);
+                        // DEFAULT IsItemHovered() → false while a popup blocks
+                        // this point (fixes bug 2).
+                        bool hovered = ImGui.IsItemHovered();
+                        bool active  = ImGui.IsItemActive();
+                        hot = hovered || active;
+                        if (hovered && inCenterZone) centerHovered = true;
+
+                        if (active) {
+                            if (vpm.crossDrag < 0 && !anyGestureActive) {
+                                // Own the gesture; a press in the center zone
+                                // drives BOTH axes from this one arm.
+                                vpm.crossDrag        = arm;
+                                vpm.crossBothAxes    = inCenterZone;
+                                vpm.crossStartHRatio = vpm.hRatio;
+                                vpm.crossStartVRatio = vpm.vRatio;
+                            }
+                            if (vpm.crossDrag == arm) {
+                                ImVec2 d = ImGui.GetMouseDragDelta(ImGuiMouseButton.Left, 0.0f);
+                                if ((arm == 0 || vpm.crossBothAxes) && hw > 0)
+                                    vpm.hRatio = vpm.crossStartHRatio + d.x / cast(float)hw;
+                                if ((arm == 1 || vpm.crossBothAxes) && hh > 0)
+                                    vpm.vRatio = vpm.crossStartVRatio + d.y / cast(float)hh;
+                                if (hw > 2 * kMinCell) {
+                                    float lo = kMinCell / cast(float)hw, hi = 1.0f - lo;
+                                    if (vpm.hRatio < lo) vpm.hRatio = lo;
+                                    if (vpm.hRatio > hi) vpm.hRatio = hi;
+                                }
+                                if (hh > 2 * kMinCell) {
+                                    float lo = kMinCell / cast(float)hh, hi = 1.0f - lo;
+                                    if (vpm.vRatio < lo) vpm.vRatio = lo;
+                                    if (vpm.vRatio > hi) vpm.vRatio = hi;
+                                }
+                            }
+                        } else if (vpm.crossDrag == arm) {
+                            // Released (or focus lost) — persist once per
+                            // gesture. savePrefs() throws only on filesystem
+                            // failure (mirrors the window-resize save site
+                            // ~1302); a failed save here is non-fatal.
+                            vpm.crossDrag     = -1;
+                            vpm.crossBothAxes = false;
+                            g_prefs.hRatio = vpm.hRatio;
+                            g_prefs.vRatio = vpm.vRatio;
+                            try savePrefs(); catch (Exception) {}
+                        }
+
+                        // A center drag (crossBothAxes) is owned by exactly one
+                        // arm, so highlight/cursor must react to it in BOTH.
+                        bool centerDrag = vpm.crossDrag >= 0 && vpm.crossBothAxes;
+                        if (hot) {
+                            bool centerCursor = centerDrag
+                                             || (vpm.crossDrag < 0 && inCenterZone);
+                            ImGui.SetMouseCursor(
+                                centerCursor ? ImGuiMouseCursor.ResizeAll :
+                                arm == 0     ? ImGuiMouseCursor.ResizeEW :
+                                               ImGuiMouseCursor.ResizeNS);
+                        }
+
+                        // Draw on THIS window's draw list. Highlight while this
+                        // arm — or a center drag that moves it — is active, or
+                        // on hover.
+                        auto dl = ImGui.GetWindowDrawList();
+                        bool draggingHere = vpm.crossDrag == arm || centerDrag;
+                        ImU32 col = (draggingHere || hovered) ? kHotCol : kLineCol;
+                        if (arm == 0)
+                            dl.AddLine(ImVec2(cast(float)vx, cast(float)hy),
+                                       ImVec2(cast(float)vx, cast(float)(hy + hh)),
+                                       col, 1.0f);
+                        else
+                            dl.AddLine(ImVec2(cast(float)hx, cast(float)hyv),
+                                       ImVec2(cast(float)(hx + hw), cast(float)hyv),
+                                       col, 1.0f);
+                        // The H arm (submitted last, so its knob sits atop the
+                        // V line at the crossing) also paints the center knob.
+                        if (arm == 1 && hasCenter) {
+                            bool knobHot = centerDrag || centerHovered;
+                            dl.AddCircleFilled(ImVec2(cast(float)vx, cast(float)hyv),
+                                               3.5f, knobHot ? kHotCol : kLineCol);
+                        }
+                    }
+                    ImGui.End();
+                    return hot;
+                }
+
+                bool crossHot = false;
+                // Submit V then H (H last → its knob draws atop the crossing).
+                if (hasV)
+                    crossHot |= runArm(0, "##vsplitV", vx - kGrab, hy, 2 * kGrab, hh);
+                if (hasH)
+                    crossHot |= runArm(1, "##vsplitH", hx, hyv - kGrab, hw, 2 * kGrab);
+
+                ImGui.PopStyleVar(3);
+
+                // Belt-and-suspenders: when the cursor is over the splitter,
+                // force the scene-input gate false so the drag never leaks to
+                // picking / the active tool on the next frame's SDL events
+                // (viewportInputAllowed(), 1-frame lag by design). The arm
+                // window is normally ImGui's resolved hovered window over the
+                // strip, so the cells' ##vpHit would not have set this true
+                // there anyway — this just guarantees it.
+                if (crossHot)
+                    g_viewportWindowHovered = false;
+            }
+            // ── end cross-splitter widget ─────────────────────────────────────
         }
 
         // ── Phase 4 N-cell FBO render loop ───────────────────────────────────

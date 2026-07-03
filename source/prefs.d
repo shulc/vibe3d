@@ -77,6 +77,17 @@ struct Prefs {
     /// to Single) — the startup `applyLayout(g_prefs.viewportLayout)` call
     /// deterministically rebuilds the cell tree from THIS field instead.
     LayoutPreset viewportLayout = LayoutPreset.Single;
+
+    /// Task 0223 (quad cross splitter): the user-adjustable cell-split
+    /// ratios (ViewportManager.hRatio/vRatio — see source/viewport.d's
+    /// cellRectsForRatios doc comment for the axis-naming convention). These
+    /// are a SEPARATE store from the ImGui layout ini deliberately: the cells
+    /// are procedurally positioned, non-docked, `NoSavedSettings` windows
+    /// (task 0223 M2/M3), so nothing about their geometry lives in the ini at
+    /// all — ratios persist here instead, independent of the (unbumped)
+    /// `kLayoutIniVersion`.
+    float hRatio = 0.5f;
+    float vRatio = 0.5f;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -192,6 +203,25 @@ Prefs loadPrefs(string dir) {
                     case "Quad":   p.viewportLayout = LayoutPreset.Quad;   break;
                     default: break; // unrecognized -> keep default (Single)
                 }
+
+        // Task 0223: cross-splitter ratios. Accept either JSON number kind
+        // (std.json parses "0.5" as floating but a hand-edited "1" or "0"
+        // would parse as integer/uinteger) and clamp to a sane range so a
+        // corrupted/out-of-range value can't degenerate a cell to zero size.
+        float readRatio(string key, float def) {
+            auto rp = key in doc;
+            if (rp is null) return def;
+            float v = def;
+            if (rp.type == JSONType.float_) v = cast(float) rp.floating;
+            else if (rp.type == JSONType.integer) v = cast(float) rp.integer;
+            else if (rp.type == JSONType.uinteger) v = cast(float) rp.uinteger;
+            else return def;
+            if (v < 0.05f) v = 0.05f;
+            if (v > 0.95f) v = 0.95f;
+            return v;
+        }
+        p.hRatio = readRatio("hRatio", 0.5f);
+        p.vRatio = readRatio("vRatio", 0.5f);
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -233,6 +263,8 @@ void savePrefs(ref const Prefs p, string dir) {
 
     import std.conv : to;
     doc["viewportLayout"] = JSONValue(to!string(p.viewportLayout));
+    doc["hRatio"] = JSONValue(p.hRatio);
+    doc["vRatio"] = JSONValue(p.vRatio);
 
     mkdirRecurse(dir);
     write(prefsFilePath(dir), doc.toPrettyString());
@@ -436,6 +468,36 @@ unittest {
         `{ "version": 1, "viewportLayout": "NotARealPreset" }`);
     auto r = loadPrefs(dir);
     assert(r.viewportLayout == LayoutPreset.Single, "unrecognized -> default Single");
+}
+
+// Task 0223: hRatio/vRatio round-trip, default, and clamp-on-load.
+unittest {
+    auto dir = makeScratch("crossratio");
+    scope(exit) cleanScratch(dir);
+
+    auto def = loadPrefs(dir);
+    assert(def.hRatio == 0.5f && def.vRatio == 0.5f, "unset -> default 0.5/0.5");
+
+    Prefs p;
+    p.hRatio = 0.3f;
+    p.vRatio = 0.7f;
+    savePrefs(p, dir);
+    auto q = loadPrefs(dir);
+    assert(q.hRatio == 0.3f && q.vRatio == 0.7f, "round-trip");
+
+    // Out-of-range values (corrupted / hand-edited) are clamped, not thrown.
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "hRatio": 1.5, "vRatio": -0.2 }`);
+    auto r = loadPrefs(dir);
+    assert(r.hRatio == 0.95f, "hRatio clamped to max");
+    assert(r.vRatio == 0.05f, "vRatio clamped to min");
+
+    // A hand-edited integer literal (no decimal point) still parses.
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "hRatio": 1, "vRatio": 0 }`);
+    auto s = loadPrefs(dir);
+    assert(s.hRatio == 0.95f, "integer 1 clamped to max");
+    assert(s.vRatio == 0.05f, "integer 0 clamped to min");
 }
 
 // missing file → defaults, no throw.
