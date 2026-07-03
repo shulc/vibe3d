@@ -8145,7 +8145,20 @@ void main(string[] args) {
         // Route through viewportInputAllowed() so mouse events over the docked
         // "Viewport" window still reach 3D picking/orbit (objection 1 fix).
         // In --test viewportInputAllowed()==!io.WantCaptureMouse → byte-identical.
-        if (!testMode && !viewportInputAllowed() &&
+        //
+        // Drag-capture (task 0222): once a pointer gesture is ACTIVE
+        // (`vpm.dragOriginId >= 0`, set on button-DOWN over a cell), the
+        // remaining MOTION/UP events must reach the origin cell REGARDLESS of
+        // where the cursor now is — over a panel, another Quad/Split cell, or
+        // outside the window. Without this bypass an RMB-lasso (or LMB
+        // box-select / camera drag) whose cursor left the origin cell had its
+        // terminating UP swallowed by the gate → the gesture hung (lasso kept
+        // drawing, selection never committed). The active-gesture guard lets
+        // the UP through so handleMouseButtonUp always completes + clears it.
+        // (SDL-level capture for the out-of-window case is already provided by
+        // ImGui: the ##vpHit InvisibleButton becomes the active item on press,
+        // and ImGui's SDL2 backend SDL_CaptureMouse()s while an item is active.)
+        if (!testMode && !viewportInputAllowed() && vpm.dragOriginId < 0 &&
             (ev.type == SDL_MOUSEBUTTONDOWN ||
              ev.type == SDL_MOUSEBUTTONUP   ||
              ev.type == SDL_MOUSEMOTION      ||
@@ -9094,10 +9107,28 @@ void main(string[] args) {
         // ---- RMB path trail ----
         if (rmbPath.length >= 2) {
             ImDrawList* dl = ImGui.GetForegroundDrawList();
+            // Task 0222: the lasso belongs to ONE gesture in ONE cell, but
+            // rmbPath is stored in absolute screen coords and drawn on the
+            // shared foreground draw list — so in Quad/Split it painted across
+            // EVERY cell as the cursor swept over them. Clip it to the origin
+            // cell (where the gesture began) so it renders only there. In
+            // --test cellCount==1 → the clip rect is the whole viewport, a
+            // visual no-op (and the trail is never presented anyway).
+            int _oc = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
+            bool _clipCell = (_oc >= 0 && _oc < vpm.cellCount);
+            if (_clipCell) {
+                auto _ocv = vpm.views[_oc];
+                dl.PushClipRect(
+                    ImVec2(cast(float)_ocv.winX, cast(float)_ocv.winY),
+                    ImVec2(cast(float)(_ocv.winX + _ocv.winW),
+                           cast(float)(_ocv.winY + _ocv.winH)),
+                    true);
+            }
             for (size_t i = 1; i < rmbPath.length; i++)
                 dl.AddLine(rmbPath[i - 1], rmbPath[i], IM_COL32(0, 255, 255, 220), 1.0f);
             // Closing line: start → end
             dl.AddLine(rmbPath[0], rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
+            if (_clipCell) dl.PopClipRect();
         }
 
         // Change-notification bus flush (doc/change_notification_bus_plan.md,
