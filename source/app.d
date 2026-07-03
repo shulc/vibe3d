@@ -6247,7 +6247,12 @@ void main(string[] args) {
 
     void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
         if (wheel.y == 0) return;
-        vpm.hoveredCamera().zoom(wheel.y * 10);
+        // Coupled zoom (task 0217): a wheel zoom over a default follower
+        // (e.g. an ortho Quad cell) writes the linkage owner's distance, not
+        // the hovered cell's own (which resolvedSnapshot never reads unless
+        // that cell has `viewport.indScale` on).
+        int hid = vpm.hoveredId >= 0 ? vpm.hoveredId : vpm.activeId;
+        vpm.scaleOwnerCamera(hid).zoom(wheel.y * 10);
     }
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
@@ -6309,9 +6314,21 @@ void main(string[] args) {
         int dx = mot.x - lastMouseX;
         int dy = mot.y - lastMouseY;
 
+        // Coupled pan/zoom (task 0217): drag math (basis, screen-space delta)
+        // always uses the ORIGIN cell's own camera (its ortho preset basis
+        // for Pan; its own distance scale for Zoom), but the write target is
+        // redirected to the linkage owner (scaleOwner/focusOwner) so a
+        // default follower's drag moves the whole linked group instead of a
+        // field `resolveFollow` never reads. A cell with `indScale`/
+        // `indCenter` on (opt-in override) owns itself, so it zooms/pans
+        // independently exactly as before.
+        int originId = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
         if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) vpm.originCamera().orbit(dx, dy);
-        else if (dragMode == DragMode.Zoom)  vpm.originCamera().zoom(dx);
-        else if (dragMode == DragMode.Pan)   vpm.originCamera().pan(dx, dy);
+        else if (dragMode == DragMode.Zoom)  vpm.scaleOwnerCamera(originId).zoom(dx);
+        else if (dragMode == DragMode.Pan) {
+            Vec3 delta = vpm.originCamera().panDelta(dx, dy);
+            vpm.focusOwnerCamera(originId).focus += delta;
+        }
 
         // Select-drag: run the appropriate picker on EVERY motion event.
         // Without this, picks only happen once per render frame; in fast

@@ -11,6 +11,9 @@ import std.json      : parseJSON, JSONValue, JSONType;
 import std.exception : enforce;
 import std.math      : isClose;
 import std.conv      : to;
+import std.format    : format;
+import core.thread   : Thread;
+import core.time     : msecs;
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -57,6 +60,203 @@ double getField(JSONValue j, string[] path...) {
         case JSONType.uinteger: return cast(double)cur.uinteger;
         default: throw new Exception("not a number at " ~ path[$-1]);
     }
+}
+
+// --------------------------------------------------------------------------
+// Drag-injection helpers (task 0217 — coupled pan/zoom via a real gesture,
+// not a direct POST /api/camera, since the bug/fix lives in the input-router
+// write-target, not the resolved-read path).
+// --------------------------------------------------------------------------
+
+// SDL_Keymod bit values (bindbc-sdl keycode.d) — Pan = Alt+Shift, Zoom = Ctrl+Alt.
+enum uint MOD_PAN  = 0x0100 | 0x0001;  // KMOD_LALT | KMOD_LSHIFT
+enum uint MOD_ZOOM = 0x0040 | 0x0100;  // KMOD_LCTRL | KMOD_LALT
+
+// One button-down/motion/button-up gesture at (x0,y0) -> (x1,y1) with the
+// given modifier held throughout. No VIEWPORT meta line — the coordinates
+// are already computed against the CURRENT cell rects (via /api/camera?
+// viewport=N), so remapPixel/remapDelta must stay inert (no recorded
+// viewport => no-op), not distort them a second time.
+string dragLog(int x0, int y0, int x1, int y1, uint mod) {
+    string log = format(
+        `{"t":0.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+        x0, y0, mod);
+    log ~= format(
+        `{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":%d}` ~ "\n",
+        x1, y1, x1 - x0, y1 - y0, mod);
+    log ~= format(
+        `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+        x1, y1, mod);
+    return log;
+}
+
+void playEvents(string log) {
+    auto r = parseJSON(httpPost("/api/play-events", log));
+    enforce(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    foreach (_; 0 .. 200) {
+        auto j = parseJSON(httpGet("/api/play-events/status"));
+        if (j["finished"].type == JSONType.TRUE) return;
+        Thread.sleep(50.msecs);
+    }
+    enforce(false, "playback didn't finish within 10s");
+}
+
+// Cell rect + resolved focus/distance in one shot.
+struct CamState { double vpX, vpY, w, h, fx, fy, fz, distance; }
+
+CamState getCam(int id) {
+    auto j = parseJSON(httpGet("/api/camera?viewport=" ~ to!string(id)));
+    CamState c;
+    c.vpX = getField(j, "vpX");   c.vpY = getField(j, "vpY");
+    c.w   = getField(j, "width"); c.h   = getField(j, "height");
+    c.fx  = getField(j, "focus", "x");
+    c.fy  = getField(j, "focus", "y");
+    c.fz  = getField(j, "focus", "z");
+    c.distance = getField(j, "distance");
+    return c;
+}
+
+// --------------------------------------------------------------------------
+// Flow C — coupled PAN: a drag in a default-follower ortho cell (Quad cell 0,
+// Top preset) must (a) use ITS OWN ortho basis for the screen-space delta
+// (proven by focus.y staying put — the master's PERSPECTIVE basis would move
+// it) and (b) write that delta into the LINKAGE OWNER (the group master,
+// cell 3) — the field `resolveFollow` actually reads — so every linked
+// follower (cells 0/1/2) observes the same new center (task 0217).
+// --------------------------------------------------------------------------
+
+bool testFlowC() {
+    writeln("  [C] Coupled pan: Quad ortho follower drags the group center...");
+    resetApp();
+    postCommand("viewport.layout", "Quad");
+
+    auto cam0 = getCam(0);
+    auto before3 = getCam(3);
+
+    int cx = cast(int)(cam0.vpX + cam0.w * 0.5);
+    int cy = cast(int)(cam0.vpY + cam0.h * 0.5);
+    // dx=+50 (rightward), dy=-30 (upward) — nonzero on both drag axes so a
+    // basis mismatch (master's spherical basis vs. cell 0's own Top basis)
+    // would show up as an unexpected focus.y move.
+    playEvents(dragLog(cx, cy, cx + 50, cy - 30, MOD_PAN));
+
+    auto after3 = getCam(3);
+    double speed = cam0.distance * 0.001;
+    double expDx = -50.0 * speed;         // right=(1,0,0): focus.x += -dx*speed
+    double expDz =  30.0 * speed;         // up=(0,0,-1):  focus.z += dy*speed*(-1), dy=-30
+
+    enforce(isClose(after3.fx - before3.fx, expDx, 1e-2, 1e-4),
+        format("Flow C: master focus.x delta = %.6f, expected %.6f (Top-basis pan not coupled to master)",
+               after3.fx - before3.fx, expDx));
+    enforce(isClose(after3.fz - before3.fz, expDz, 1e-2, 1e-4),
+        format("Flow C: master focus.z delta = %.6f, expected %.6f",
+               after3.fz - before3.fz, expDz));
+    enforce(isClose(after3.fy, before3.fy, 1e-4, 1e-4),
+        "Flow C: master focus.y must NOT move — a Top-ortho pan must use ITS OWN " ~
+        "axis-locked basis, not the master's perspective spherical basis");
+    writefln("    C1 PASS: master (cell 3) focus moved by (%.4f, ~0, %.4f) from cell 0's own Top-basis drag",
+        after3.fx - before3.fx, after3.fz - before3.fz);
+
+    // Every other default follower (cells 0/1/2) must resolve to the SAME
+    // new center — "coupled" means the WHOLE linked group moves together.
+    foreach (id; [0, 1, 2]) {
+        auto c = getCam(id);
+        enforce(isClose(c.fx, after3.fx, 1e-3) && isClose(c.fz, after3.fz, 1e-3),
+            format("Flow C: follower cell %d must track the new group center " ~
+                   "(master=(%.4f,%.4f), cell %d=(%.4f,%.4f))",
+                   id, after3.fx, after3.fz, id, c.fx, c.fz));
+    }
+    writeln("    C2 PASS: cells 0/1/2 all resolve to the new group center");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow D — coupled ZOOM: a wheel/drag-zoom in a default-follower cell must
+// write the group master's distance (the field `resolveFollow` reads for
+// indScale=false), not its own dead-end distance.
+// --------------------------------------------------------------------------
+
+bool testFlowD() {
+    writeln("  [D] Coupled zoom: Quad ortho follower zooms the group...");
+    resetApp();
+    postCommand("viewport.layout", "Quad");
+
+    auto before3 = getCam(3);
+    auto cam1 = getCam(1);   // Front ortho follower — a different cell than C
+
+    int cx = cast(int)(cam1.vpX + cam1.w * 0.5);
+    int cy = cast(int)(cam1.vpY + cam1.h * 0.5);
+    playEvents(dragLog(cx, cy, cx + 40, cy, MOD_ZOOM));   // dx=+40
+
+    auto after3 = getCam(3);
+    double expected = before3.distance * (1.0 - 0.01 * 40.0);   // View.zoom(dx)
+    enforce(isClose(after3.distance, expected, 1e-2),
+        format("Flow D: master distance = %.6f, expected %.6f (follower zoom not coupled to master)",
+               after3.distance, expected));
+    writefln("    D1 PASS: master (cell 3) distance %.4f -> %.4f from cell 1's zoom drag",
+        before3.distance, after3.distance);
+
+    foreach (id; [0, 1, 2]) {
+        auto c = getCam(id);
+        enforce(isClose(c.distance, after3.distance, 1e-3),
+            format("Flow D: follower cell %d must track the new group distance " ~
+                   "(master=%.4f, cell %d=%.4f)", id, after3.distance, id, c.distance));
+    }
+    writeln("    D2 PASS: cells 0/1/2 all resolve to the new group distance");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow E — `viewport.indScale yes` OVERRIDE: a zoom-drag in the MASTER cell
+// must still couple to every default follower EXCEPT the one cell opted out
+// via indScale (keeps its own distance); pan stays coupled regardless.
+// --------------------------------------------------------------------------
+
+bool testFlowE() {
+    writeln("  [E] indScale=yes keeps own distance under a group zoom (pan still coupled)...");
+    resetApp();
+    postCommand("viewport.layout", "Quad");
+
+    // Cell 0 is active by default right after Quad — flip it to own-scale.
+    postCommand("viewport.indScale", "yes");
+
+    auto dist0Baseline = getCam(0).distance;
+    auto cam3 = getCam(3);   // master / perspective cell
+
+    int cx = cast(int)(cam3.vpX + cam3.w * 0.5);
+    int cy = cast(int)(cam3.vpY + cam3.h * 0.5);
+    playEvents(dragLog(cx, cy, cx + 40, cy, MOD_ZOOM));   // zoom-drag IN the master
+
+    auto after0 = getCam(0);
+    auto after1 = getCam(1);   // default follower — must track
+    auto after3 = getCam(3);
+
+    enforce(isClose(after0.distance, dist0Baseline, 1e-3),
+        format("Flow E: cell 0 (indScale=yes) distance must stay own (expected %.4f, got %.4f)",
+               dist0Baseline, after0.distance));
+    enforce(!isClose(after3.distance, dist0Baseline, 1e-3),
+        "Flow E: master distance must actually have changed (test setup sanity)");
+    enforce(isClose(after1.distance, after3.distance, 1e-3),
+        format("Flow E: default-follower cell 1 must track the master's new distance " ~
+               "(master=%.4f, cell1=%.4f)", after3.distance, after1.distance));
+    writefln("    E1 PASS: cell 0 kept its own distance (%.4f) while cell 1 tracked the master (%.4f)",
+        after0.distance, after1.distance);
+
+    // Pan must still couple even with indScale=yes on cell 0 (indCenter still
+    // false by default — only Scale was opted out).
+    auto before3Focus = getCam(3);
+    playEvents(dragLog(cx, cy, cx + 30, cy, MOD_PAN));
+    auto after3Focus = getCam(3);
+    enforce(!isClose(after3Focus.fx, before3Focus.fx, 1e-4),
+        "Flow E: pan must still couple to the master even with indScale=yes on cell 0");
+    auto after0Focus = getCam(0);
+    enforce(isClose(after0Focus.fx, after3Focus.fx, 1e-3),
+        "Flow E: cell 0 must still resolve the coupled focus (indCenter untouched)");
+    writeln("    E2 PASS: pan stayed coupled after the indScale override");
+
+    return true;
 }
 
 // --------------------------------------------------------------------------
@@ -200,6 +400,9 @@ int main(string[] args) {
 
     run(&testFlowA,      "Flow A — Quad linked-center+scale follow");
     run(&testFlowB,      "Flow B — explicit master + indCenter");
+    run(&testFlowC,      "Flow C — coupled pan (ortho follower drags group center)");
+    run(&testFlowD,      "Flow D — coupled zoom (ortho follower zooms group)");
+    run(&testFlowE,      "Flow E — indScale=yes keeps own distance under group zoom");
     run(&testRegression, "Regression — default GET/POST /api/camera");
 
     writefln("\n%d passed, %d failed", passed, failed);

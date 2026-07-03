@@ -690,14 +690,55 @@ final class ViewportManager {
                        out Vec3 focus, out float distance,
                        out float az,   out float el) const {
         auto f   = views[id];
-        int  mid = f.masterId >= 0 ? f.masterId : masterId;
-        if (mid < 0 || mid >= cellCount) mid = id;   // safety: self
+        int  mid = groupMasterOf(id);
         auto m   = views[mid];
         focus    = f.indCenter ? f.camera.focus    : m.camera.focus;
         distance = f.indScale  ? f.camera.distance : m.camera.distance;
         az       = f.indRotate ? f.camera.azimuth  : m.camera.azimuth;
         el       = f.indRotate ? f.camera.elevation: m.camera.elevation;
     }
+
+    /// Resolve cell `id`'s effective linkage master: its own `masterId` if
+    /// set, else the group `masterId`, falling back to `id` itself if that
+    /// resolves out of range. Single-hop, cycle-safe — shared by
+    /// `resolveFollow` and the coupled-pan/zoom owner resolvers below
+    /// (task 0217).
+    int groupMasterOf(int id) const {
+        auto f   = views[id];
+        int  mid = f.masterId >= 0 ? f.masterId : masterId;
+        if (mid < 0 || mid >= cellCount) mid = id;   // safety: self
+        return mid;
+    }
+
+    /// Resolve which cell's `camera.distance` a zoom gesture originating at
+    /// cell `id` should mutate (task 0217, coupled zoom): itself when
+    /// independently-scaled (`indScale=true` — the `viewport.indScale`
+    /// opt-in override), otherwise the linkage owner (`groupMasterOf`), so a
+    /// zoom in a default follower (e.g. an ortho Quad cell) couples to the
+    /// whole linked group instead of writing a field `resolveFollow` never
+    /// reads.
+    int scaleOwner(int id) const {
+        return views[id].indScale ? id : groupMasterOf(id);
+    }
+
+    /// The camera whose `distance` a zoom gesture originating at cell `id`
+    /// should mutate. See `scaleOwner`.
+    ref View scaleOwnerCamera(int id) { return views[scaleOwner(id)].camera; }
+
+    /// Resolve which cell's `camera.focus` a pan gesture originating at cell
+    /// `id` should mutate (task 0217, coupled pan): itself when
+    /// independently-centered (`indCenter=true`), otherwise the linkage
+    /// owner (`groupMasterOf`). The screen-space delta itself must still be
+    /// computed from the ORIGIN cell's own basis (`View.panDelta`) — only
+    /// the write target is redirected here, so an ortho follower's drag
+    /// direction stays correct while the shared (master) center moves.
+    int focusOwner(int id) const {
+        return views[id].indCenter ? id : groupMasterOf(id);
+    }
+
+    /// The camera whose `focus` a pan gesture originating at cell `id`
+    /// should mutate. See `focusOwner`.
+    ref View focusOwnerCamera(int id) { return views[focusOwner(id)].camera; }
 
     /// Compute a resolved camera snapshot for cell `id` (follow-resolved
     /// focus/distance/az/el via resolveFollow). Non-mutating — the manager's

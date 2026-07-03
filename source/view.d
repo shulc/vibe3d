@@ -56,6 +56,17 @@ class View {
     }
 
     void pan(int dx, int dy) {
+        focus += panDelta(dx, dy);
+    }
+
+    /// World-space focus delta for a screen-space drag of (dx, dy), computed
+    /// from THIS camera's own basis (projKind/viewPreset/distance/azimuth/
+    /// elevation) but not written anywhere — pure, `const`. Extracted from
+    /// `pan()` (task 0217) so a quad/split cell can compute its own
+    /// screen-correct delta while the caller decides which camera's `focus`
+    /// actually receives it (coupled-pan: the linkage owner, not necessarily
+    /// `this`).
+    Vec3 panDelta(int dx, int dy) const {
         float speed = distance * 0.001f;
         if (projKind == ProjKind.Ortho) {
             // Ortho: derive right/up from the preset axis so pan tracks
@@ -78,17 +89,14 @@ class View {
                 case ViewPreset.Camera:
                     right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); break;
             }
-            focus += right * (-dx * speed);
-            focus += up    * (dy * speed);
-            return;
+            return right * (-dx * speed) + up * (dy * speed);
         }
         // Perspective: existing spherical basis (byte-identical).
         Vec3 off     = sphericalToCartesian(azimuth, elevation, distance);
         Vec3 forward = normalize(-off);
         Vec3 right   = normalize(cross(forward, Vec3(0, 1, 0)));
         Vec3 up      = cross(right, forward);
-        focus += right * (-dx * speed);
-        focus += up    * (dy * speed);
+        return right * (-dx * speed) + up * (dy * speed);
     }
 
     /// Compute Viewport matrices from explicit transform inputs instead of member
