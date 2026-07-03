@@ -1007,15 +1007,16 @@ protected:
     // Used by computeClickRelocateHit (which then optionally snaps the
     // result) and by updateLiveSnapPreview (which decides separately
     // what to do with the hit).
-    // Note: in-plane numeric point is PROVISIONAL (0058 follow-up —
-    // perspective ray kept for harness compatibility; ortho model not yet
-    // matched).
+    // Both projection kinds are handled: screenPointToRay builds a
+    // perspective ray from the eye or an ortho ray parallel to the view
+    // forward, and the Auto/None branch swaps in a camera-perpendicular
+    // plane under ortho so the parallel ray never degenerates (task 0226).
     protected bool computeClickRelocateHitRaw(int sx, int sy, out Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
         import tools.create_common         : currentWorkplaneFrame;
-        import math : screenRay, rayPlaneIntersect, screenPointToRay;
+        import math : screenRay, rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
         auto mode = ActionCenterStage.Mode.Auto;
@@ -1035,8 +1036,27 @@ protected:
                 // lands on the plane the user is actually looking at.
                 auto wf = currentWorkplaneFrame();
                 if (wf.isAuto) wf.origin = cachedVp.focus;
+                Vec3 planeNormal = wf.normal;
+                // Ortho fix: an orthographic camera projects all rays parallel
+                // to its forward vector. When that forward is (near-)parallel to
+                // the workplane (the Front / Side quad cells, whose view dir is
+                // perpendicular to the +Y ground plane's normal), the projection
+                // ray lies IN the plane — rayPlaneIntersect degenerates
+                // (denom≈0 → returns false) and the relocate silently no-ops.
+                // Even in the Top cell, where it happens to hit, projecting onto
+                // an off-axis workplane would not land under the cursor. Swap in
+                // a camera-perpendicular plane through the same origin so the
+                // click always projects to the point under the cursor at focus
+                // depth — matching the perspective relocate in every cell (and
+                // reducing to the identical XZ plane in the Top cell, where the
+                // view forward already equals the workplane normal). Perspective
+                // is untouched: its diverging rays hit the workplane fine.
+                if (isOrtho(cachedVp))
+                    planeNormal = Vec3(cachedVp.view[2],
+                                       cachedVp.view[6],
+                                       cachedVp.view[10]);
                 return rayPlaneIntersect(crHitOrig, dir,
-                                         wf.origin, wf.normal, worldHit);
+                                         wf.origin, planeNormal, worldHit);
             }
             case ActionCenterStage.Mode.Screen: {
                 Vec3 selCen = currentSelectionBBoxCenter();
