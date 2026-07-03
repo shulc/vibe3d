@@ -646,6 +646,26 @@ final class ViewportManager {
         return -1;
     }
 
+    /// Focus-follows-mouse: make `activeId` track `hoveredId` on every
+    /// positioned mouse event (motion/wheel/down/up), not just on click —
+    /// so key-driven per-cell commands (fit, view presets, ind*/master,
+    /// snap, ...) that read `views[activeId]` act on whichever cell the
+    /// mouse is over, matching key-based dispatch conventions where the
+    /// pointer's cell is implicitly the target. Call AFTER `hoveredId` has
+    /// been refreshed via `viewportUnderCursor()` for the current event.
+    ///
+    /// Two guards:
+    ///  - Pinned during an active gesture (`dragOriginId >= 0`): the
+    ///    per-cell picking caches (vertexCache/faceCache/edgeCache/gpuSelect,
+    ///    all indexed by activeId) must not switch cells mid-drag.
+    ///  - No-op when the cursor is outside every cell (`hoveredId < 0`,
+    ///    e.g. over a docked panel) — sticky-last, activeId stays put
+    ///    rather than snapping to an arbitrary cell.
+    void followHover() {
+        if (dragOriginId < 0 && hoveredId >= 0)
+            activeId = hoveredId;
+    }
+
     // ------------------------------------------------------------------
     // Camera accessors (Phase-4 seams)
     // ------------------------------------------------------------------
@@ -950,6 +970,45 @@ unittest {
     m.views[0].winW = 640; m.views[0].winH = 480;
     assert(m.viewportUnderCursor(100, 100) == 0,   "inside single cell → 0");
     assert(m.viewportUnderCursor(640, 0)   == -1,  "right of single cell → -1");
+}
+
+// ---------------------------------------------------------------------------
+// followHover() unittests — task 0220 (focus-follows-mouse; key-driven
+// per-cell commands like fit target the HOVERED cell, not the last-clicked
+// one).
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = new ViewportManager(0, 0, 640, 480);
+    m.lx = 0; m.ly = 0; m.lw = 640; m.lh = 480;
+    m.applyLayout(LayoutPreset.Quad);
+
+    // No gesture in progress: activeId must track hoveredId as the mouse
+    // moves into another cell (motion event into cell 2, active was 0).
+    m.activeId     = 0;
+    m.hoveredId    = 2;
+    m.dragOriginId = -1;
+    m.followHover();
+    assert(m.activeId == 2,
+        "followHover(): no drag in progress → activeId must follow hoveredId");
+
+    // Mid-gesture: activeId must stay PINNED to the drag-origin cell even
+    // though hoveredId has since wandered into a different cell (the
+    // per-cell picking caches indexed by activeId must not switch mid-drag).
+    m.activeId     = 1;
+    m.dragOriginId = 1;
+    m.hoveredId    = 3;
+    m.followHover();
+    assert(m.activeId == 1,
+        "followHover(): drag in progress → activeId must NOT follow hoveredId");
+
+    // Cursor outside every cell (e.g. over a docked panel): sticky-last —
+    // activeId is left untouched rather than snapping to an arbitrary cell.
+    m.activeId     = 2;
+    m.dragOriginId = -1;
+    m.hoveredId    = -1;
+    m.followHover();
+    assert(m.activeId == 2,
+        "followHover(): hoveredId < 0 → activeId must stay put (sticky-last)");
 }
 
 // ---------------------------------------------------------------------------

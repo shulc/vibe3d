@@ -8166,6 +8166,11 @@ void main(string[] args) {
             }
             if (_rtx >= 0) {
                 vpm.hoveredId = vpm.viewportUnderCursor(_rtx, _rty);
+                // Focus-follows-mouse: the active cell tracks the hovered one
+                // on every positioned mouse event (motion/wheel/down/up), not
+                // just on click — see ViewportManager.followHover() for the
+                // dragOriginId pin + panel-hover fallback rationale.
+                vpm.followHover();
                 if (ev.type == SDL_MOUSEBUTTONDOWN && vpm.hoveredId >= 0) {
                     vpm.activeId     = vpm.hoveredId;
                     vpm.dragOriginId = vpm.hoveredId;
