@@ -64,6 +64,7 @@ import tools.poly_extrude : PolyExtrudeTool;
 import tools.poly_bevel : PolyBevelTool;
 import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
+import tools.loop_slice_tool : LoopSliceTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
@@ -101,6 +102,7 @@ import commands.mesh.split_face  : MeshSplitFace;
 import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
+import commands.mesh.loop_slice_edit : MeshLoopSliceEdit;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.vertex_extrude : MeshVertexExtrude;
 import commands.mesh.vertex_bevel   : MeshVertexBevel;
@@ -2478,6 +2480,8 @@ void main(string[] args) {
                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto bevelEditFactory = () => new MeshBevelEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    auto loopSliceEditFactory = () => new MeshLoopSliceEdit(&mesh(), cameraView, editMode,
+                                                             &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto reduceEditFactory = () => new MeshReduceEdit(&mesh(), cameraView, editMode,
                                                       &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto cloneEditFactory = () => new MeshCloneEdit(&mesh(), cameraView, editMode,
@@ -2808,6 +2812,17 @@ void main(string[] args) {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Loop Slice — hover-seeded interactive edge-loop cut. Topology-creating
+    // tool: reuses the SAME collectEdgeRing/insertEdgeLoops kernel as the
+    // mesh.loopSlice/mesh.addLoop commands (untouched); mutate/revert preview,
+    // one MeshLoopSliceEdit undo entry PER committed cut. Gated to Edges mode.
+    reg.toolFactories["mesh.loopSliceTool"] = () {
+        auto t = new LoopSliceTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, loopSliceEditFactory);
         return cast(Tool)t;
     };
 

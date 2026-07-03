@@ -7245,7 +7245,21 @@ struct Mesh {
     /// along the quad ring crossing seedEdge.  Positions must be in (0,1);
     /// the call is a no-op (returns false) if the ring is empty or positions
     /// is empty.  Rebuilds edges + half-edge loops; clears all selection.
+    /// Thin forwarder over the 3-arg overload below — existing callers that
+    /// don't need the created-face indices are unaffected.
     bool insertEdgeLoops(uint seedEdge, const(float)[] positions) {
+        uint[] unused;
+        return insertEdgeLoops(seedEdge, positions, unused);
+    }
+
+    /// Same as the 2-arg `insertEdgeLoops`, but also reports the indices of
+    /// every sub-quad face this call created (e.g. for a Select-New-Polygons
+    /// affordance). `newFaceIndices` is cleared and repopulated; left empty
+    /// on a no-op (false return). Does NOT select the faces itself — the
+    /// caller decides whether/how to apply the returned indices to the
+    /// selection (`resetSelection()` below always clears it first).
+    bool insertEdgeLoops(uint seedEdge, const(float)[] positions,
+                          out uint[] newFaceIndices) {
         if (positions.length == 0) return false;
         if (seedEdge >= edges.length) return false;
 
@@ -7296,11 +7310,15 @@ struct Mesh {
 
             // First sub-quad: [a, p0, q0, d]
             newFaces ~= [a, p[0], q[0], d];
+            newFaceIndices ~= cast(uint)(newFaces.length - 1);
             // Middle sub-quads (N>1 loops only)
-            foreach (k; 1 .. positions.length)
+            foreach (k; 1 .. positions.length) {
                 newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
+                newFaceIndices ~= cast(uint)(newFaces.length - 1);
+            }
             // Last sub-quad: [p_last, b, c, q_last]
             newFaces ~= [p[$-1], b, c, q[$-1]];
+            newFaceIndices ~= cast(uint)(newFaces.length - 1);
         }
 
         faces = newFaces;
@@ -13804,6 +13822,52 @@ unittest {
         assert(m.edgeIndex(mLeft, mRight) == ~0u,
                "mLeft and mRight must NOT be directly connected (open ring)");
     }
+}
+
+// ---------------------------------------------------------------------------
+// insertEdgeLoops (3-arg, Select-New-Polygons affordance) — the returned
+// `newFaceIndices` must name exactly the sub-quads this call created, and
+// nothing else. On the cube fixture above the closed ring crosses 4
+// equatorial quad faces (ringLen=4); one loop (count=1) replaces each ring
+// face with exactly 2 sub-quads (first+last, no middle sub-quad) → the
+// returned set must have length 2*ringLen == 8, and every referenced face
+// index must still be a quad.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m = makeCube();
+    m.buildLoops();
+
+    uint eiSeed = m.edgeIndex(0, 1);
+    assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
+
+    uint[] newFaceIndices;
+    bool ok = m.insertEdgeLoops(eiSeed, [0.5f], newFaceIndices);
+    assert(ok, "insertEdgeLoops(3-arg) must succeed on cube");
+
+    enum ringLen = 4;   // the equatorial ring crosses 4 quad faces
+    assert(newFaceIndices.length == 2 * ringLen,
+           "count=1 must report 2 sub-quads per ring face (first+last, no middle)");
+
+    // No duplicate indices, and every returned index names a real quad face.
+    bool[uint] seen;
+    foreach (fi; newFaceIndices) {
+        assert(fi !in seen, "newFaceIndices must not repeat an index");
+        seen[fi] = true;
+        assert(fi < m.faces.length, "newFaceIndices must index into the rebuilt faces array");
+        assert(m.faces[fi].length == 4, "every reported new face must be a quad");
+    }
+
+    // The 2-arg forwarder must be byte-identical to the 3-arg call (ignoring
+    // the out-param) — same V/E/F on an independent mesh.
+    Mesh m2 = makeCube();
+    m2.buildLoops();
+    uint eiSeed2 = m2.edgeIndex(0, 1);
+    bool ok2 = m2.insertEdgeLoops(eiSeed2, [0.5f]);
+    assert(ok2, "2-arg forwarder must still succeed");
+    assert(m2.vertices.length == m.vertices.length
+           && m2.edges.length == m.edges.length
+           && m2.faces.length == m.faces.length,
+           "2-arg forwarder must produce the same geometry as the 3-arg overload");
 }
 
 // ---------------------------------------------------------------------------

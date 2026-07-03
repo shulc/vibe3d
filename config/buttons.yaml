@@ -192,6 +192,7 @@ panels:
       - title: Slice
         buttons:
           - { label: "Loop Slice",   action: { kind: command, id: mesh.loopSlice } }
+          - { label: "Loop Slice Tool", action: { kind: tool, id: mesh.loopSliceTool } }
           - { label: Julienne,       action: { kind: command, id: mesh.julienne } }
           - { label: "Axis Slice",   action: { kind: command, id: mesh.axisSlice } }
           - { label: "Screen Slice", action: { kind: command, id: mesh.screenSlice } }
