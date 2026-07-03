@@ -317,3 +317,90 @@ unittest { // mid-drag: activeId must stay pinned to the drag-origin cell
     // later unittest block in this binary.
     playEvents(format(`{"t":0.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n", cx1, cy1));
 }
+
+// ----------------------------------------------------------------------
+// task 0221 — fit while hovering a DEFAULT (non-detached) ortho follower
+// must reframe the whole LINKED GROUP, not write the follower's dead-end
+// own camera (which resolveFollow never reads → silent no-op, the bug).
+// The default Quad group: cells 0/1/2 are Top/Front/Left ortho followers
+// (indCenter=indScale=false), cell 3 is the Perspective group master. Fit
+// routes through the focus/scale OWNER (the master) so every cell's
+// RESOLVED /api/camera snapshot reframes together.
+// ----------------------------------------------------------------------
+
+unittest { // fit hovering an ortho follower reframes the coupled group
+    resetCube();
+    postCommand("viewport.layout", "Quad");
+
+    // Displace the group's shared center + distance by moving the MASTER
+    // (cell 3) camera off origin. Followers pull from it, so all cells now
+    // resolve to (2,2,2)/distance 8.
+    setCam(3, 2, 2, 2, 8);
+
+    // Every cell (master + followers) resolves to the displaced center.
+    foreach (vp; [0, 1, 2, 3]) {
+        auto c = camAt(vp);
+        assert(approxEqual(c["focus"]["x"].floating, 2.0) &&
+               approxEqual(c["focus"]["y"].floating, 2.0) &&
+               approxEqual(c["focus"]["z"].floating, 2.0) &&
+               approxEqual(c["distance"].floating, 8.0),
+            "pre-fit: cell " ~ vp.to!string ~ " should resolve to the master's "
+            ~ "displaced center/distance, got " ~ c.toString);
+    }
+
+    // Hover an ORTHO follower (cell 0 = Top) WITHOUT clicking, then A.
+    auto r0 = cellRect(0);
+    playEvents(hoverLog(r0.x + r0.w / 2, r0.y + r0.h / 2));
+    runCmd("viewport.fit");
+
+    // The whole group reframed: EVERY cell's resolved focus is back at the
+    // cube centroid (origin) and the shared distance shrank from 8.
+    foreach (vp; [0, 1, 2, 3]) {
+        auto c = camAt(vp);
+        assert(approxEqual(c["focus"]["x"].floating, 0.0) &&
+               approxEqual(c["focus"]["y"].floating, 0.0) &&
+               approxEqual(c["focus"]["z"].floating, 0.0),
+            "post-fit: fit while hovering the ortho follower must reframe the "
+            ~ "coupled group — cell " ~ vp.to!string ~ " focus=" ~ c["focus"].toString);
+        assert(c["distance"].floating > 0.0 && c["distance"].floating < 8.0,
+            "post-fit: shared distance must shrink from 8 for cell "
+            ~ vp.to!string ~ ", got " ~ c["distance"].floating.to!string);
+    }
+
+    // Coupling proof: the ortho follower (0) and the master (3) resolve to
+    // the SAME distance (indScale=false ⇒ follower pulls the master's).
+    assert(approxEqual(camAt(0)["distance"].floating, camAt(3)["distance"].floating),
+        "follower (0) and master (3) must share one resolved distance after fit");
+}
+
+unittest { // an INDEPENDENT (indScale/indCenter) cell still fits only itself
+    resetCube();
+    postCommand("viewport.layout", "Quad");
+
+    // Detach cell 0 fully; leave the rest of the group linked to the master.
+    auto r0 = cellRect(0);
+    playEvents(clickLog(r0.x + r0.w / 2, r0.y + r0.h / 2));   // activate cell 0
+    postCommand("viewport.master",   "-1");
+    postCommand("viewport.indCenter", "yes");
+    postCommand("viewport.indScale",  "yes");
+    postCommand("viewport.indRotate", "yes");
+    setCam(0, 7, 7, 7, 9);          // cell 0 owns itself, parked off origin
+    setCam(3, 2, 2, 2, 8);          // master + linked followers elsewhere
+
+    // Hover the independent cell 0, fit → only cell 0 moves; master untouched.
+    playEvents(hoverLog(r0.x + r0.w / 2, r0.y + r0.h / 2));
+    runCmd("viewport.fit");
+
+    auto c0 = camAt(0);
+    assert(approxEqual(c0["focus"]["x"].floating, 0.0) &&
+           approxEqual(c0["focus"]["y"].floating, 0.0) &&
+           approxEqual(c0["focus"]["z"].floating, 0.0),
+        "independent cell 0 must fit itself to origin, got " ~ c0["focus"].toString);
+
+    auto c3 = camAt(3);
+    assert(approxEqual(c3["focus"]["x"].floating, 2.0) &&
+           approxEqual(c3["focus"]["y"].floating, 2.0) &&
+           approxEqual(c3["focus"]["z"].floating, 2.0) &&
+           approxEqual(c3["distance"].floating, 8.0),
+        "fitting the independent cell must NOT touch the master group, got " ~ c3.toString);
+}

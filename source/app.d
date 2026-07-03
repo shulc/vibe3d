@@ -3017,8 +3017,17 @@ void main(string[] args) {
     reg.commandFactories["select.convert"]   = () => cast(Command)
         (new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh(), cameraView, editMode);
-    reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(), cameraView, editMode);
+    // Fit routes through the focus/scale OWNER cameras of the active (=
+    // hovered, per 0220) cell — not the cell's own (possibly follower)
+    // camera. For a default Quad follower both owners are the group master,
+    // so A/Shift+A reframe the whole linked group (visible in every cell);
+    // an indCenter/indScale cell owns itself and fits independently. Same
+    // owner redirect 0217 uses for pan/zoom. Single view: owners = self →
+    // byte-neutral under --test.
+    reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh(),
+        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
+    reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(),
+        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
     {
         import commands.snap.toggle : SnapToggleCommand;
         import commands.snap.mode   : SnapModeCommand;

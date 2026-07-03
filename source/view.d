@@ -190,7 +190,17 @@ class View {
             width, height, x, y);
     }
 
-    void frameToVertices(Vec3[] verts)
+    // Pure framing computation shared by `frameToVertices` and the
+    // viewport-owner fit redirect (task 0221). Writes NOTHING to `this` —
+    // returns the fitted center + distance via out params. Byte-identical
+    // math to the historical `frameToVertices` body. `const` so it is
+    // callable without races from any thread. Splitting the computation from
+    // the assignment lets the fit path write the CENTER to the focus-owner
+    // camera and the DISTANCE to the scale-owner camera when a Quad cell's
+    // independence flags route them to different cells (mirrors task 0217's
+    // owner redirect for pan/zoom). With an empty `verts` the out params are
+    // left at their default init — callers must guard on `verts.length`.
+    void computeFrame(Vec3[] verts, out Vec3 outFocus, out float outDistance) const
     {
         if (verts.length == 0) return;
 
@@ -206,7 +216,7 @@ class View {
             if (v.z > mx.z) mx.z = v.z;
         }
 
-        focus = (mn + mx) * 0.5f;
+        outFocus = (mn + mx) * 0.5f;
 
         float dx = mx.x - mn.x, dy = mx.y - mn.y, dz = mx.z - mn.z;
         float radius = sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;
@@ -218,11 +228,22 @@ class View {
         float halfTanX  = halfTanY * aspect;
         float halfTanMin = halfTanY < halfTanX ? halfTanY : halfTanX;
 
-        distance = radius / (0.9f * halfTanMin);
+        outDistance = radius / (0.9f * halfTanMin);
         // Keep the bounding sphere fully beyond the near clip plane (0.1).
-        if (distance < radius + 0.001f) distance = radius + 0.001f;
-        if (distance < minDist) distance = minDist;
-        if (distance > maxDist) distance = maxDist;
+        if (outDistance < radius + 0.001f) outDistance = radius + 0.001f;
+        if (outDistance < minDist) outDistance = minDist;
+        if (outDistance > maxDist) outDistance = maxDist;
+    }
+
+    // Adjusts `focus` and `distance` so the bounding sphere of `verts` fills
+    // 90 % of the viewport (keeping the current orbit azimuth/elevation).
+    void frameToVertices(Vec3[] verts)
+    {
+        if (verts.length == 0) return;
+        Vec3 f; float d;
+        computeFrame(verts, f, d);
+        focus    = f;
+        distance = d;
     }
 };
 

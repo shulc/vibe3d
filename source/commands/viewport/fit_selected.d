@@ -8,7 +8,15 @@ import view;
 import math;
 
 class FitSelected : Command {
-    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    // Owner cameras a fit writes to — see commands.viewport.fit for the full
+    // rationale (task 0221). `view` (base-class camera) == scale owner
+    // (aspect + distance); `focusCam` receives the framed center.
+    private View focusCam;
+
+    this(Mesh* mesh, ref View focusCam, ref View scaleCam, EditMode editMode) {
+        super(mesh, scaleCam, editMode);
+        this.focusCam = focusCam;
+    }
 
     override string name() const { return "viewport.fit_selected"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UI; }   // camera-only
@@ -37,7 +45,11 @@ class FitSelected : Command {
                     if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
             }
         }
-        view.frameToVertices(verts);
+        if (verts.length == 0) return true;
+        Vec3 c; float d;
+        view.computeFrame(verts, c, d);   // view == scale owner
+        focusCam.focus = c;
+        view.distance  = d;
         return true;
     }
 };
