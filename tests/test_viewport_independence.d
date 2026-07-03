@@ -68,9 +68,11 @@ double getField(JSONValue j, string[] path...) {
 // write-target, not the resolved-read path).
 // --------------------------------------------------------------------------
 
-// SDL_Keymod bit values (bindbc-sdl keycode.d) — Pan = Alt+Shift, Zoom = Ctrl+Alt.
-enum uint MOD_PAN  = 0x0100 | 0x0001;  // KMOD_LALT | KMOD_LSHIFT
-enum uint MOD_ZOOM = 0x0040 | 0x0100;  // KMOD_LCTRL | KMOD_LALT
+// SDL_Keymod bit values (bindbc-sdl keycode.d) — Pan = Alt+Shift, Zoom = Ctrl+Alt,
+// Orbit = Alt alone (task 0224: Orbit in an ortho cell resolves to a pan).
+enum uint MOD_PAN   = 0x0100 | 0x0001;  // KMOD_LALT | KMOD_LSHIFT
+enum uint MOD_ZOOM  = 0x0040 | 0x0100;  // KMOD_LCTRL | KMOD_LALT
+enum uint MOD_ORBIT = 0x0100;           // KMOD_LALT
 
 // One button-down/motion/button-up gesture at (x0,y0) -> (x1,y1) with the
 // given modifier held throughout. No VIEWPORT meta line — the coordinates
@@ -102,7 +104,7 @@ void playEvents(string log) {
 }
 
 // Cell rect + resolved focus/distance in one shot.
-struct CamState { double vpX, vpY, w, h, fx, fy, fz, distance; }
+struct CamState { double vpX, vpY, w, h, fx, fy, fz, distance, azimuth, elevation; }
 
 CamState getCam(int id) {
     auto j = parseJSON(httpGet("/api/camera?viewport=" ~ to!string(id)));
@@ -112,7 +114,9 @@ CamState getCam(int id) {
     c.fx  = getField(j, "focus", "x");
     c.fy  = getField(j, "focus", "y");
     c.fz  = getField(j, "focus", "z");
-    c.distance = getField(j, "distance");
+    c.distance  = getField(j, "distance");
+    c.azimuth   = getField(j, "azimuth");
+    c.elevation = getField(j, "elevation");
     return c;
 }
 
@@ -255,6 +259,89 @@ bool testFlowE() {
     enforce(isClose(after0Focus.fx, after3Focus.fx, 1e-3),
         "Flow E: cell 0 must still resolve the coupled focus (indCenter untouched)");
     writeln("    E2 PASS: pan stayed coupled after the indScale override");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow F — task 0224: Alt+LMB (no Shift) in an ORTHO cell resolves to the
+// same coupled PAN as Alt+Shift+LMB — orbit is meaningless in an axis-locked
+// ortho view. Mirrors Flow C's math/assertions but drags with MOD_ORBIT.
+// --------------------------------------------------------------------------
+
+bool testFlowF() {
+    writeln("  [F] Alt+LMB in an ortho follower cell pans (task 0224)...");
+    resetApp();
+    postCommand("viewport.layout", "Quad");
+
+    auto cam0 = getCam(0);        // Top ortho follower
+    auto before3 = getCam(3);     // perspective master
+
+    int cx = cast(int)(cam0.vpX + cam0.w * 0.5);
+    int cy = cast(int)(cam0.vpY + cam0.h * 0.5);
+    playEvents(dragLog(cx, cy, cx + 50, cy - 30, MOD_ORBIT));
+
+    auto after3 = getCam(3);
+    double speed = cam0.distance * 0.001;
+    double expDx = -50.0 * speed;
+    double expDz =  30.0 * speed;
+
+    enforce(isClose(after3.fx - before3.fx, expDx, 1e-2, 1e-4),
+        format("Flow F: master focus.x delta = %.6f, expected %.6f (ortho Alt+LMB not coupled-panning)",
+               after3.fx - before3.fx, expDx));
+    enforce(isClose(after3.fz - before3.fz, expDz, 1e-2, 1e-4),
+        format("Flow F: master focus.z delta = %.6f, expected %.6f",
+               after3.fz - before3.fz, expDz));
+    enforce(isClose(after3.azimuth, before3.azimuth, 1e-4, 1e-4) &&
+            isClose(after3.elevation, before3.elevation, 1e-4, 1e-4),
+        "Flow F: master azimuth/elevation must NOT change — this must be a pan, not an orbit");
+    writefln("    F1 PASS: master (cell 3) focus moved by (%.4f, ~0, %.4f) from cell 0's Alt+LMB drag, azimuth/elevation untouched",
+        after3.fx - before3.fx, after3.fz - before3.fz);
+
+    foreach (id; [0, 1, 2]) {
+        auto c = getCam(id);
+        enforce(isClose(c.fx, after3.fx, 1e-3) && isClose(c.fz, after3.fz, 1e-3),
+            format("Flow F: follower cell %d must track the new group center " ~
+                   "(master=(%.4f,%.4f), cell %d=(%.4f,%.4f))",
+                   id, after3.fx, after3.fz, id, c.fx, c.fz));
+    }
+    writeln("    F2 PASS: cells 0/1/2 all resolve to the new group center");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow G — regression: Alt+LMB in the PERSPECTIVE master cell still orbits
+// (azimuth/elevation change, focus untouched) — task 0224 only remaps the
+// gesture inside an ortho cell.
+// --------------------------------------------------------------------------
+
+bool testFlowG() {
+    writeln("  [G] Alt+LMB in the perspective master cell still orbits...");
+    resetApp();
+    postCommand("viewport.layout", "Quad");
+
+    auto before3 = getCam(3);   // perspective master
+
+    int cx = cast(int)(before3.vpX + before3.w * 0.5);
+    int cy = cast(int)(before3.vpY + before3.h * 0.5);
+    playEvents(dragLog(cx, cy, cx + 50, cy - 10, MOD_ORBIT));
+
+    auto after3 = getCam(3);
+    double expAz = before3.azimuth   - 50.0 * 0.005;
+    double expEl = before3.elevation + (-10.0) * 0.005;
+
+    enforce(isClose(after3.azimuth, expAz, 1e-3, 1e-4),
+        format("Flow G: master azimuth = %.6f, expected %.6f (perspective Alt+LMB must still orbit)",
+               after3.azimuth, expAz));
+    enforce(isClose(after3.elevation, expEl, 1e-3, 1e-4),
+        format("Flow G: master elevation = %.6f, expected %.6f",
+               after3.elevation, expEl));
+    enforce(isClose(after3.fx, before3.fx, 1e-4, 1e-4) &&
+            isClose(after3.fz, before3.fz, 1e-4, 1e-4),
+        "Flow G: master focus must NOT change — this must be an orbit, not a pan");
+    writefln("    G1 PASS: master orbited (az %.4f -> %.4f, el %.4f -> %.4f), focus untouched",
+        before3.azimuth, after3.azimuth, before3.elevation, after3.elevation);
 
     return true;
 }
@@ -403,6 +490,8 @@ int main(string[] args) {
     run(&testFlowC,      "Flow C — coupled pan (ortho follower drags group center)");
     run(&testFlowD,      "Flow D — coupled zoom (ortho follower zooms group)");
     run(&testFlowE,      "Flow E — indScale=yes keeps own distance under group zoom");
+    run(&testFlowF,      "Flow F — Alt+LMB in an ortho cell pans (task 0224)");
+    run(&testFlowG,      "Flow G — Alt+LMB in the perspective master still orbits");
     run(&testRegression, "Regression — default GET/POST /api/camera");
 
     writefln("\n%d passed, %d failed", passed, failed);

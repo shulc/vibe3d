@@ -6359,7 +6359,11 @@ void main(string[] args) {
         int originId = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
         if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) vpm.originCamera().orbit(dx, dy);
         else if (dragMode == DragMode.Zoom)  vpm.scaleOwnerCamera(originId).zoom(dx);
-        else if (dragMode == DragMode.Pan) {
+        else if (dragMode == DragMode.Pan ||
+                 (dragMode == DragMode.Orbit && vpm.originIsOrtho())) {
+            // Alt+LMB in an orthographic cell (task 0224): orbit is meaningless
+            // in an axis-locked ortho view, so it pans instead — same coupled
+            // focusOwner path as Alt+Shift+LMB (task 0217).
             Vec3 delta = vpm.originCamera().panDelta(dx, dy);
             vpm.focusOwnerCamera(originId).focus += delta;
         }
