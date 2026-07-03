@@ -9697,6 +9697,18 @@ void main(string[] args) {
                         vp = vpm.resolvedSnapshot(k);
                     }
 
+                    // Tracks whether the mouse is over ANY interactive widget
+                    // drawn inside this cell (the view-selector combo, and any
+                    // widget added here later). The full-cell ##vpHit hit-surface
+                    // below covers the ENTIRE cell — including the pixels under
+                    // these widgets — so on its own it would report hovered even
+                    // over a widget and leak the click into scene picking. We OR
+                    // each widget's own hover-rect into this flag and then require
+                    // it to be FALSE before ##vpHit is allowed to mark the
+                    // viewport hovered. New per-cell widgets must OR themselves in
+                    // here the same way.
+                    bool _cellWidgetHovered = false;
+
                     // Per-cell view-selector dropdown.
                     {
                         import view : ProjKind, ViewPreset;
@@ -9716,7 +9728,19 @@ void main(string[] args) {
                         }
                         ImGui.SetCursorPos(ImVec2(4, 4));
                         ImGui.SetNextItemWidth(120.0f);
-                        if (ImGui.BeginCombo("##vpPreset" ~ to!string(k), presetNames[curIdx])) {
+                        bool _comboOpen = ImGui.BeginCombo("##vpPreset" ~ to!string(k), presetNames[curIdx]);
+                        // Capture the combo preview-button's hover-rect NOW, while
+                        // LastItemData is the combo button (before the popup body
+                        // is submitted). The relax flags make this report hovered
+                        // whenever the cursor is geometrically over the combo,
+                        // even while the combo is the active item / has an open
+                        // popup — so the exclusion below holds for the whole combo
+                        // interaction, not just the closed-combo frame.
+                        if (ImGui.IsItemHovered(
+                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                            _cellWidgetHovered = true;
+                        if (_comboOpen) {
                             foreach (i, pn; presetNames) {
                                 bool sel = (i == curIdx);
                                 if (ImGui.Selectable(pn, sel))
@@ -9729,16 +9753,11 @@ void main(string[] args) {
 
                     // Full-avail invisible hover surface: drives
                     // g_viewportWindowHovered so letterbox bars remain input-live.
-                    // Submitted AFTER the projection combo (not before the Image,
-                    // as originally) so the combo claims HoveredId in its own
-                    // band first (this binding has no AllowOverlap flag for
-                    // buttons — see d_imgui/imgui_h.d ImGuiButtonFlags — so the
-                    // overlap must be resolved by submission order); the
-                    // full-cell button then wins hover everywhere the combo is
-                    // not. Re-anchor to the content origin: the cursor is no
-                    // longer at `pos` after the combo/letterbox blocks above.
-                    // Guard zero-size avail: InvisibleButton asserts size != 0
-                    // (a collapsed/degenerate cell). Nothing to hover then.
+                    // Submitted AFTER the projection combo. Re-anchor to the
+                    // content origin: the cursor is no longer at `pos` after the
+                    // combo/letterbox blocks above. Guard zero-size avail:
+                    // InvisibleButton asserts size != 0 (a collapsed/degenerate
+                    // cell). Nothing to hover then.
                     //
                     // Deliberately NOT AllowWhenBlockedByPopup (task 0214):
                     // that flag used to make ##vpHit report hovered even while
@@ -9754,12 +9773,29 @@ void main(string[] args) {
                     // scene. AllowWhenBlockedByActiveItem is kept (unrelated:
                     // letterbox bars stay input-live while an item is active,
                     // e.g. mid-drag).
+                    //
+                    // ##vpHit covers the WHOLE cell — including the pixels under
+                    // the view combo — and, submitted after the combo, it reports
+                    // IsItemHovered()==true even while the cursor is over the
+                    // combo (both the combo and this full-cell button claim their
+                    // overlapping rect). That is the OPEN-menu leak (task 0216):
+                    // the click that opens the combo also set
+                    // g_viewportWindowHovered=true → passed viewportInputAllowed()
+                    // → picking moved the handle. Fix: require _cellWidgetHovered
+                    // to be FALSE (cursor NOT over any in-cell widget) before this
+                    // surface marks the viewport hovered. A normal viewport click
+                    // (cursor over bare ##vpHit, no widget) keeps working; a click
+                    // on the combo (or any future in-cell widget) is gated for ALL
+                    // tools. This is stricter than — and layered on top of — the
+                    // popup gate above, and the letterbox bars (part of ##vpHit,
+                    // never a widget rect) stay input-live.
                     if (avail.x > 0.0f && avail.y > 0.0f) {
                         ImGui.SetCursorScreenPos(pos);
                         ImGui.InvisibleButton("##vpHit" ~ to!string(k), avail,
                                               ImGuiButtonFlags.MouseButtonLeft |
                                               ImGuiButtonFlags.MouseButtonRight);
-                        if (ImGui.IsItemHovered(
+                        if (!_cellWidgetHovered &&
+                            ImGui.IsItemHovered(
                                 ImGuiHoveredFlags.AllowWhenBlockedByActiveItem))
                             g_viewportWindowHovered = true;
                     }
