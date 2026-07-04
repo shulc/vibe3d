@@ -179,6 +179,8 @@ panels:
               action: { kind: command, id: mesh.duplicate } }
           - { label: Mirror,
               action: { kind: command, id: mesh.mirror } }
+          - { label: "Mirror Tool",
+              action: { kind: tool, id: mesh.mirrorTool } }
           - { label: Array,
               action: { kind: command, id: mesh.array } }
           - { label: "Radial Array",
