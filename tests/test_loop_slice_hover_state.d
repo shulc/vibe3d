@@ -154,3 +154,67 @@ unittest { // hover parity: sliceRing == perpendicular cut ring, != parallel edg
     cmd("tool.set mesh.loopSliceTool off");
     settle();
 }
+
+unittest { // hover-vs-active-drag: the ring highlight is a PRE-ARM affordance
+    // Task 0246 (live highlight parity). The reference app's live Loop Slice
+    // feedback splits into two states: a pre-commit HOVER (the ring the cut
+    // will cross) and an ARMED/active drag (the standing preview + the "Loop
+    // Slice Slider" position marker, NOT a mesh ring overlay). vibe3d mirrors
+    // this: `wantsEdgeLoopHover()` is `!armed_`, so app.d draws the perpendicular
+    // ring ONLY before arming and suppresses it once armed (hasUncommittedEdit).
+    // This test locks the observable state transition that drives that switch:
+    // hover -> armed==false (ring shown); a click-drag on the seed edge ->
+    // armed==true (ring suppressed, live cut + slider shown instead).
+    resetCube();
+    auto model = getModel();
+    int va = vertAt(model, V3(0.5, -0.5, 0.5));
+    int vb = vertAt(model, V3(0.5,  0.5, 0.5));
+    assert(va >= 0 && vb >= 0, "cube seed verts not found");
+    int ei = edgeIndex(model, va, vb);
+    assert(ei >= 0, "cube seed edge not found");
+
+    // Edge component mode BEFORE the tool activates: onMouseButtonDown only
+    // arms in Edges/Polygons mode (hover works in any mode via the tool's
+    // HoverEdges flag, but arming is mode-gated), and a front-flipping mode
+    // switch drops the active tool — so set the mode first.
+    cmd("select.typeFrom edge");
+    cmd("tool.set mesh.loopSliceTool on");
+    settle();
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    Vec3 mid = Vec3(0.5f, 0.0f, 0.5f);   // seed edge midpoint
+    float sx, sy;
+    assert(projectToWindow(mid, vp, sx, sy), "seed midpoint should be on-camera");
+
+    // (1) HOVER state: ring shown, nothing armed.
+    playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                        cast(int)sx, cast(int)sy));
+    settle();
+    auto hov = getToolState();
+    assert(hov["armed"].type == JSONType.false_,
+        "must NOT be armed on hover-only (ring is the pre-arm affordance)");
+    int[] hoverRing = dedupSorted(hov["sliceRing"]);
+    assert(hoverRing == [0, 2, 5, 7],
+        "hover ring should be the perpendicular belt, got " ~ hoverRing.to!string);
+
+    // (2) ARMED state: a click-drag on the seed edge arms the standing preview.
+    // Model B mouse-up keeps it armed (no commit), so armed stays true after.
+    // A tiny drag near the midpoint (hover already latched hoveredEdge==seed).
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)sx, cast(int)sy,
+                             cast(int)sx + 8, cast(int)sy, 6));
+    settle();
+    auto arm = getToolState();
+    assert(arm["armed"].type == JSONType.true_,
+        "a click-drag on the seed edge should arm the standing preview, got: "
+        ~ arm.toString);
+    assert(arm["seedEdge"].integer == ei,
+        "armed seed should be the hovered edge " ~ ei.to!string ~
+        ", got " ~ arm["seedEdge"].integer.to!string);
+    assert(arm["built"].type == JSONType.true_,
+        "arming materialises the default-position cut (built==true)");
+
+    cmd("tool.set mesh.loopSliceTool off");
+    settle();
+}

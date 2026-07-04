@@ -10054,9 +10054,16 @@ void main(string[] args) {
                                         ImVec2(curX + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
                                         col);
                                 }
-                                import std.format : format;
+                                import tools.loop_slice_tool : loopSliceHudLabel;
+                                // Position is a 0..1 fraction internally; the
+                                // slider readout is a true PERCENT (0.13 ->
+                                // "13.00 %") — see loopSliceHudLabel (pure +
+                                // unit-tested). The pre-0246 inline draw printed
+                                // the bare fraction next to a "%" ("0.13 %"),
+                                // which reads as ~0%; the live reference slider
+                                // shows the scaled percent (task 0246 capture).
                                 dl.AddText(ImVec2(trackLeft, trackY + 4),
-                                           kLabelCol, format("%.2f %%", lst.position()));
+                                           kLabelCol, loopSliceHudLabel(lst.position()));
                             }
                         }
                     }

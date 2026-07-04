@@ -20,6 +20,29 @@ import display_sync : refreshDisplay;
 
 alias LoopSliceEditFactory = MeshLoopSliceEdit delegate();
 
+/// The Loop Slice Slider HUD readout string. `position` is the authoritative
+/// 0..1 slice offset; the slider shows it as a TRUE PERCENT (0.13 -> "13.00 %",
+/// 0.9 -> "90.00 %"), matching the live reference slider (captured task 0246 —
+/// the reference "Loop Slice Slider" prints the scaled percentage above a
+/// purple track + position marker). Pure + unit-tested so the ×100 scaling law
+/// is locked by `dub test` even though the draw itself is visual (app.d reads
+/// this for the per-cell HUD label).
+string loopSliceHudLabel(float positionFraction) {
+    import std.format : format;
+    return format("%.2f %%", positionFraction * 100.0f);
+}
+
+unittest {
+    // 0..1 fraction -> percent readout (the ×100 the inline draw used to omit,
+    // which printed the bare fraction next to a "%" — "0.13 %" instead of the
+    // reference's "13.00 %").
+    assert(loopSliceHudLabel(0.13f) == "13.00 %");
+    assert(loopSliceHudLabel(0.9f)  == "90.00 %");
+    assert(loopSliceHudLabel(0.5f)  == "50.00 %");
+    assert(loopSliceHudLabel(0.0f)  == "0.00 %");
+    assert(loopSliceHudLabel(1.0f)  == "100.00 %");
+}
+
 // ---------------------------------------------------------------------------
 // LoopSliceTool — interactive Loop Slice / edge-loop cut (factory id
 // `mesh.loopSliceTool`). Coexists with the one-shot `mesh.loopSlice` /
