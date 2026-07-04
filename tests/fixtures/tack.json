@@ -1,0 +1,67 @@
+{
+  "name": "tack_two_cubes",
+  "description": "Tack (mesh.tack) headless one-shot: polygon-to-polygon rigid alignment of a disjoint source cube's +Y face onto a disjoint target cube's tilted +Y face, at an explicit off-centroid clicked point. Golden numbers reproduced exactly from doc/tack_tool_plan.md's Phase-0 capture (R, t, and the 4 source-face after-verts); the remaining 4 source-island verts (0,1,4,5) were computed from the SAME R/t via after = R*before + t (not re-derived independently). Box B (target, indices 8-15) is read-only and must stay byte-identical.",
+  "source": "hand-derived from doc/tack_tool_plan.md Phase-0 RFB-capture golden (private doc; golden numbers reproduced here, not the capture provenance itself)",
+  "tolerance": 1e-4,
+  "setup": [
+    { "endpoint": "load-mesh", "body": {
+      "vertices": [
+        [-2.5, -0.5, -0.5],
+        [-2.5, -0.5,  0.5],
+        [-2.5,  0.5, -0.2],
+        [-2.5,  0.5,  0.5],
+        [-1.5, -0.5, -0.5],
+        [-1.5, -0.5,  0.5],
+        [-1.5,  0.5, -0.5],
+        [-1.5,  0.5,  0.5],
+        [2.5, -0.5, -0.5],
+        [2.5, -0.5,  0.5],
+        [2.5,  0.5, -0.5],
+        [2.5,  1.3,  0.5],
+        [3.5, -0.5, -0.5],
+        [3.5, -0.5,  0.5],
+        [3.5,  0.5, -0.5],
+        [3.5,  1.3,  0.5]
+      ],
+      "faces": [
+        [0, 2, 6, 4],
+        [1, 5, 7, 3],
+        [0, 1, 3, 2],
+        [4, 6, 7, 5],
+        [2, 3, 7, 6],
+        [0, 4, 5, 1],
+        [8, 10, 14, 12],
+        [9, 13, 15, 11],
+        [8, 9, 11, 10],
+        [12, 14, 15, 13],
+        [10, 11, 15, 14],
+        [8, 12, 13, 9]
+      ]
+    }},
+    { "endpoint": "select", "body": { "mode": "polygons", "indices": [4] } },
+    { "endpoint": "command", "body": { "id": "mesh.tack", "params": {
+      "targetFace": 10,
+      "targetPoint": [2.9793753623962402, 0.6579021662473679, -0.30262226052582264]
+    }}}
+  ],
+  "expected": {
+    "vertices": [
+      [3.4793753623962402, 0.23623302951584946, 0.7710723541560149],
+      [3.4793753623962402, -0.38846201821512516, -0.009796455507703389],
+      [3.4793753623962402, 0.8296933174133301, -0.0878833457827568],
+      [3.4793753623962402, 0.39240679144859314, -0.634491503238678],
+      [2.4793753623962402, 0.23623302951584946, 0.7710723541560149],
+      [2.4793753623962402, -0.38846201821512516, -0.009796455507703389],
+      [2.4793753623962402, 1.017101764678955, 0.1463773101568222],
+      [2.4793753623962402, 0.39240679144859314, -0.634491503238678],
+      [2.5, -0.5, -0.5],
+      [2.5, -0.5, 0.5],
+      [2.5, 0.5, -0.5],
+      [2.5, 1.3, 0.5],
+      [3.5, -0.5, -0.5],
+      [3.5, -0.5, 0.5],
+      [3.5, 0.5, -0.5],
+      [3.5, 1.3, 0.5]
+    ]
+  }
+}

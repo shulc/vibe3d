@@ -67,6 +67,7 @@ import tools.edge_bevel : EdgeBevelTool;
 import tools.loop_slice_tool : LoopSliceTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
+import tools.tack : TackTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -2680,6 +2681,19 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.mirrorTool", reg.toolFactories["mesh.mirrorTool"]);
+
+    // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
+    // mesh.mirrorTool block above: same generic MeshBevelEdit/bevelEditFactory
+    // undo path, same ToolHeadlessCommand one-shot wiring.
+    reg.toolFactories["mesh.tack"] = () {
+        auto t = new TackTool(() => &mesh(), &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["mesh.tack"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                "mesh.tack", reg.toolFactories["mesh.tack"]);
 
     reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(() => &mesh(), &gpu, litShader);

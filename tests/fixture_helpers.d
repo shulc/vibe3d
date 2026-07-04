@@ -48,6 +48,7 @@ private string endpointPath(string ep) {
         case "command":   return BASE ~ "/api/command";
         case "transform": return BASE ~ "/api/transform";
         case "script":    return BASE ~ "/api/script";
+        case "load-mesh": return BASE ~ "/api/load-mesh";
         default: assert(false, "fixture: unknown setup endpoint '" ~ ep ~ "'");
     }
 }

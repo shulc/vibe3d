@@ -1029,6 +1029,85 @@ struct Mesh {
         return weldVerticesByMask(inSelection, 1e-12);
     }
 
+    /// Return a bool mask (indexed by vertex index) marking every vertex in
+    /// the CONNECTED COMPONENT (island) reachable from face `faceIndex` —
+    /// i.e. the transitive closure of "shares a face with" over every face
+    /// in the mesh. Two faces are unioned whenever they share ANY vertex; a
+    /// face's own corners are unioned to each other first so a face is
+    /// always wholly inside one island even before any cross-face union
+    /// happens. Same union-find shape as `collapseEdgesByMask`
+    /// (mesh.d:877) / `collapseFacesByMask` (mesh.d:956) — parent[] +
+    /// findRoot + unite — but this walks EVERY face in the mesh (not just a
+    /// masked subset), since island membership isn't selection-driven here.
+    ///
+    /// Used by TackTool's moving-set rule (task 0126, capture-verified):
+    /// a rigid polygon-align moves the picked polygon "and all connected
+    /// vertices" — the whole geometric island the picked face belongs to,
+    /// not just its own 4 corners and not the whole mesh. On a mesh built
+    /// from disjoint parts (e.g. two separate cubes), this returns exactly
+    /// the picked cube's 8 vertices; the other cube's mask stays false.
+    ///
+    /// Returns an all-false mask when `faceIndex` is out of range.
+    bool[] connectedComponentVertices(uint faceIndex) const {
+        bool[] mask = new bool[](vertices.length);
+        if (faceIndex >= faces.length) return mask;
+
+        int[] parent;
+        parent.length = vertices.length;
+        foreach (i; 0 .. vertices.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        foreach (fi; 0 .. faces.length) {
+            const uint[] f = faces[fi];
+            if (f.length < 2) continue;
+            foreach (i; 1 .. f.length) {
+                if (f[0] >= vertices.length || f[i] >= vertices.length) continue;
+                unite(cast(int)f[0], cast(int)f[i]);
+            }
+        }
+
+        const uint[] srcFace = faces[faceIndex];
+        if (srcFace.length == 0) return mask;
+        int root = findRoot(cast(int)srcFace[0]);
+        foreach (vi; 0 .. vertices.length) {
+            if (findRoot(cast(int)vi) == root) mask[vi] = true;
+        }
+        return mask;
+    }
+
+    unittest { // connectedComponentVertices: two disjoint cubes — island is
+               // exactly the picked cube's 8 verts, not the other cube's.
+        import std.conv : to;
+        Mesh m = makeCube();
+        Mesh other = makeCube();
+        foreach (v; other.vertices) m.vertices ~= Vec3(v.x + 3.0f, v.y, v.z);
+        foreach (f; other.faces) {
+            uint[] shifted;
+            foreach (vi; f) shifted ~= vi + 8;
+            m.addFace(shifted);
+        }
+        m.buildLoops();
+        assert(m.vertices.length == 16 && m.faces.length == 12);
+
+        bool[] mask = m.connectedComponentVertices(0);   // a face of the first cube
+        size_t count = 0;
+        foreach (i, b; mask) { if (b) { assert(i < 8, "leaked into second cube's verts"); ++count; } }
+        assert(count == 8, "expected exactly the first cube's 8 verts, got " ~ count.to!string);
+
+        bool[] mask2 = m.connectedComponentVertices(8);  // a face of the second cube
+        size_t count2 = 0;
+        foreach (i, b; mask2) { if (b) { assert(i >= 8, "leaked into first cube's verts"); ++count2; } }
+        assert(count2 == 8, "expected exactly the second cube's 8 verts, got " ~ count2.to!string);
+    }
+
     unittest {
         import std.math : abs;
 
