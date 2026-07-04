@@ -140,6 +140,12 @@ public:
     // computed from a frozen/now-invalid hover index, would just be noise).
     override bool wantsEdgeLoopHover() const { return !dragging_; }
 
+    // The hover ring must be the ring the SLICE lands on (seed + quad-ring exit
+    // rails), NOT the classic edge loop through the hovered edge — those run
+    // perpendicular. Without this the highlighted ring and the actual cut point
+    // in different directions (task 0231).
+    override bool edgeLoopHoverSliceRing() const { return true; }
+
     override bool isDragging() const { return dragging_; }
 
     override Param[] params() {

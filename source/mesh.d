@@ -7240,6 +7240,26 @@ struct Mesh {
         return result;
     }
 
+    /// The set of EXISTING cage-edge indices a loop-slice at `seedEdge` would
+    /// split: the seed edge itself plus every quad-ring exit rail crossed by
+    /// `collectEdgeRing`. This is the ring the cut actually lands on — it runs
+    /// PERPENDICULAR to the classic edge LOOP (`edgeLoopRing`), so a hover
+    /// preview for the Loop Slice tool must use THIS, not the edge loop, or the
+    /// highlighted ring won't match where the cut appears. Returns just
+    /// `[seedEdge]` on a non-quad / boundary seed (no ring); empty is never
+    /// returned for a valid seed index.
+    int[] loopSliceRingEdges(uint seedEdge) const {
+        if (seedEdge >= edges.length) return [];
+        bool closed;
+        auto ring = collectEdgeRing(seedEdge, closed);
+        int[] res = [cast(int)seedEdge];
+        foreach (ent; ring) {
+            uint ei = edgeIndex(ent.c, ent.d);
+            if (ei != ~0u) res ~= cast(int)ei;
+        }
+        return res;
+    }
+
     /// Collect the ordered quad ring crossed by a loop insert at seedEdge.
     /// Each entry carries the ring-edge direction (p-rail a→b, q-rail d→c)
     /// and face index.  closed==true when the ring wraps (e.g. a cube belt).

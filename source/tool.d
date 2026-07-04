@@ -199,6 +199,18 @@ class Tool : ParamProvider {
     // loop-edge mask (see source/app.d's edge-hover branch).
     bool wantsEdgeLoopHover() const { return false; }
 
+    // When wantsEdgeLoopHover() is true, choose WHICH ring the hover mask
+    // pre-highlights:
+    //   false (default) — the classic edge LOOP through the hovered edge
+    //     (edgeLoopRing), matching ElementMove / EdgeLoops-falloff whose apply
+    //     expands the picked edge to its loop.
+    //   true — the loop-SLICE ring: the seed edge plus every quad-ring exit
+    //     rail that a loop cut would actually split (Mesh.loopSliceRingEdges).
+    //     These run PERPENDICULAR to the edge loop, so a slice tool must use
+    //     this or the highlighted ring won't match the cut. LoopSliceTool
+    //     overrides it.
+    bool edgeLoopHoverSliceRing() const { return false; }
+
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}
 

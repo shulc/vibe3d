@@ -1838,6 +1838,7 @@ void main(string[] args) {
     bool[] loopHoverEdgesCache;
     int    loopHoverPrevEdge = -2;        // hoveredEdge at last rebuild (-2 = never)
     ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
+    bool   loopHoverPrevSlice = false;    // ring KIND at last rebuild (slice vs edge-loop)
 
     DragMode dragMode = DragMode.None;
     // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`.
@@ -1917,19 +1918,36 @@ void main(string[] args) {
     // valence-3 / boundary / non-quad edge `edgeLoopRing` falls back to the
     // seed edge, so the mask just lights the single hovered edge.
     const(bool)[] rebuildLoopHoverMask(int hovEdge) {
+        // `sliceRing`: highlight the ring the loop-SLICE lands on (seed +
+        // quad-ring exit rails) instead of the classic edge LOOP. Those run
+        // perpendicular, so the Loop Slice tool needs this or the highlighted
+        // ring won't match the cut (task 0231). Part of the cache key: two
+        // tools can share hovEdge + topology yet want different rings.
+        bool sliceRing = activeTool !is null && activeTool.edgeLoopHoverSliceRing();
+
         if (loopHoverPrevEdge == hovEdge
             && loopHoverPrevTopo == mesh.topologyVersion
+            && loopHoverPrevSlice == sliceRing
             && loopHoverEdgesCache.length == mesh.edges.length)
             return loopHoverEdgesCache;   // cache hit — no walk
 
         loopHoverPrevEdge = hovEdge;
         loopHoverPrevTopo = mesh.topologyVersion;
+        loopHoverPrevSlice = sliceRing;
         if (loopHoverEdgesCache.length != mesh.edges.length)
             loopHoverEdgesCache = new bool[](mesh.edges.length);
         loopHoverEdgesCache[] = false;
 
         if (hovEdge < 0 || hovEdge >= cast(int)mesh.edges.length)
             return loopHoverEdgesCache;
+
+        if (sliceRing) {
+            // The exact set of cage edges the cut splits — directly indexed.
+            foreach (ei; mesh.loopSliceRingEdges(cast(uint)hovEdge))
+                if (ei >= 0 && ei < cast(int)loopHoverEdgesCache.length)
+                    loopHoverEdgesCache[ei] = true;
+            return loopHoverEdgesCache;
+        }
 
         auto seed = mesh.edges[hovEdge];
         uint[] ring = edgeLoopRing(mesh, seed[0], seed[1]);
@@ -8066,7 +8084,26 @@ void main(string[] args) {
         {
             auto zEdges = g_perf.scope_(Cat.drawEdges);
             if (editMode == EditMode.Edges) {
-                gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
+                // A tool can pre-highlight the WHOLE ring it will act on: Loop
+                // Slice shows the ring its cut will land on (via wantsEdgeLoop-
+                // Hover + rebuildLoopHoverMask). And while that tool DRAGS, the
+                // per-frame edge picker is frozen (pickEdges early-returns on
+                // isDragging), so `hoveredEdge` keeps a stale numeric index that
+                // now aliases an unrelated edge once the tool's mutate/revert
+                // preview rebuilds the edge array — highlighting it would light
+                // a random edge far from the cursor (task 0231). Suppress the
+                // single-edge hover then; the live cut geometry already shows
+                // what will happen.
+                int          hovForDraw = hoveredEdge;
+                const(bool)[] loopMask  = (bool[]).init;
+                if (activeTool !is null) {
+                    if (activeTool.isDragging())
+                        hovForDraw = -1;
+                    else if (activeTool.wantsEdgeLoopHover()
+                             && showEdgeHover && hoveredEdge >= 0)
+                        loopMask = rebuildLoopHoverMask(hoveredEdge);
+                }
+                gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdges, loopMask);
             } else if (editMode == EditMode.Polygons) {
                 if (faceSelEdgesPrevSel != mesh.selectedFaces) {
                     faceSelEdgesPrevSel = mesh.selectedFaces.dup;
