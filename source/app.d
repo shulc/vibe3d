@@ -2342,6 +2342,13 @@ void main(string[] args) {
     // captured the instant the drag started, not accumulated incrementally.
     float lsHudDragAnchorFrac = 0.5f;
     bool  lsHudDragActive     = false;
+    // Task 0239 (Loop Slice v2): which slice index the CURRENT marker drag
+    // targets — decided once at drag-start (either the marker under the
+    // press, or the tool's existing Current if the press landed on the bare
+    // track), then held for the rest of the drag so a fast mouse motion
+    // that momentarily crosses another marker's pixel column doesn't
+    // reassign mid-gesture.
+    int   lsHudDragMarker     = -1;
     // Phase 4: substring filter for the History panel list.
     // Type-to-narrow — both command name and args searched (case-
     // sensitive substring).
@@ -9968,31 +9975,37 @@ void main(string[] args) {
                     }
 
                     // Task 0232: Loop Slice Slider HUD — a top-left, purple
-                    // track + yellow start marker + cyan current-position
-                    // marker + "%" label, drawn on THIS cell's own window
-                    // draw list (same z-order rationale as the falloff
-                    // overlay / gizmo just above: paints over the opaque
-                    // cell image, stays below any panel drawn later this
-                    // frame). Active cell + active Loop Slice tool only —
-                    // Position is a single global tool param, so only one
-                    // HUD (and later, one draggable marker) may exist at a
-                    // time. Count>1 hides it: `positions()` ignores
-                    // `position_` once Count>1 owns every position (the
-                    // marker would be misleading there).
+                    // track + yellow start marker + one triangle marker PER
+                    // slice + "%" label for Current, drawn on THIS cell's own
+                    // window draw list (same z-order rationale as the
+                    // falloff overlay / gizmo just above: paints over the
+                    // opaque cell image, stays below any panel drawn later
+                    // this frame). Active cell + active Loop Slice tool only
+                    // — Position is a single global tool param, so only one
+                    // HUD (and its markers) may exist at a time.
+                    //
+                    // Task 0239 (Loop Slice v2) generalises this from a
+                    // single Count==1-gated marker to N markers (one per
+                    // `positionsArray()[k]`), Current highlighted in cyan,
+                    // the rest dimmed grey — and UN-GATES it for Count>1 (the
+                    // pre-0239 gate existed only because v1's Count>1 law had
+                    // no per-slice addressing to draw a meaningful marker
+                    // for).
                     if (k == vpm.activeId) {
                         if (auto lst = cast(LoopSliceTool) activeTool) {
-                            if (lst.count() == 1) {
+                            int lsN = lst.count();
+                            if (lsN > 0) {
                                 Viewport _lsVp = vpm.resolvedSnapshot(k);
                                 auto dl = ImGui.GetWindowDrawList();
                                 immutable ImU32 kTrackCol  = IM_COL32(160, 90, 220, 255);
                                 immutable ImU32 kStartCol  = IM_COL32(230, 180, 40, 255);
                                 immutable ImU32 kCurCol    = IM_COL32(60, 210, 220, 255);
+                                immutable ImU32 kOtherCol  = IM_COL32(140, 140, 150, 255);
                                 immutable ImU32 kLabelCol  = IM_COL32(230, 230, 230, 255);
                                 float trackY    = _lsVp.y + lst.sliderY();
                                 float trackLeft = _lsVp.x + lst.sliderX();
                                 float lenPx     = cast(float)lst.length_px();
                                 float trackRight = trackLeft + lenPx;
-                                float curX = trackLeft + lst.position() * lenPx;
                                 dl.AddLine(ImVec2(trackLeft, trackY), ImVec2(trackRight, trackY),
                                            kTrackCol, 2.0f);
                                 enum float kTriHalf = 5.0f;
@@ -10002,12 +10015,18 @@ void main(string[] args) {
                                     ImVec2(trackLeft - kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
                                     ImVec2(trackLeft + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
                                     kStartCol);
-                                // Current-position marker.
-                                dl.AddTriangleFilled(
-                                    ImVec2(curX, trackY - kTriHalf * 2),
-                                    ImVec2(curX - kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
-                                    ImVec2(curX + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
-                                    kCurCol);
+                                // One marker per slice; Current highlighted.
+                                auto lsPositions = lst.positionsArray();
+                                int  lsCurrent    = lst.current();
+                                foreach (lsIdx; 0 .. lsN) {
+                                    float curX = trackLeft + lsPositions[lsIdx] * lenPx;
+                                    ImU32 col = (cast(int)lsIdx == lsCurrent) ? kCurCol : kOtherCol;
+                                    dl.AddTriangleFilled(
+                                        ImVec2(curX, trackY - kTriHalf * 2),
+                                        ImVec2(curX - kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                        ImVec2(curX + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                        col);
+                                }
                                 import std.format : format;
                                 dl.AddText(ImVec2(trackLeft, trackY + 4),
                                            kLabelCol, format("%.2f %%", lst.position()));
@@ -10083,45 +10102,111 @@ void main(string[] args) {
                         }
                     }
 
-                    // Task 0232: Loop Slice Slider HUD marker hit-test. Fold
-                    // #2 (opponent objection, load-bearing): submitted BEFORE
+                    // Task 0232/0239: Loop Slice Slider HUD hit-test. Fold #2
+                    // (opponent objection, load-bearing): submitted BEFORE
                     // ##vpHit — exactly like the view combo above — and its
                     // hover ORed into `_cellWidgetHovered` with the SAME
-                    // relaxed flags as the combo, so a press on the corner
-                    // marker never leaks into ##vpHit → viewportInputAllowed()
-                    // → the tool's SDL onMouseButtonDown (which would
-                    // mis-arm/mis-scrub a ring under the cursor instead of
-                    // dragging the marker). Active cell + active Loop Slice
-                    // tool + Count==1 only (mirrors the draw gate above).
+                    // relaxed flags as the combo, so a press on the HUD never
+                    // leaks into ##vpHit → viewportInputAllowed() → the
+                    // tool's SDL onMouseButtonDown (which would mis-arm/mis-
+                    // scrub a ring under the cursor instead of interacting
+                    // with the HUD).
+                    //
+                    // Task 0239 generalises the single Count==1 marker
+                    // button to ONE invisible button spanning the WHOLE
+                    // track (bare track + every marker's pixel column) —
+                    // avoids N overlapping InvisibleButtons (ImGui doesn't
+                    // arbitrate overlapping siblings well) — then resolves
+                    // marker-vs-bare-track by NEAREST-marker distance at the
+                    // live mouse position. Edit governs what a hit does:
+                    // Move drags whichever marker is nearest (or Current, if
+                    // the nearest marker is farther than the hit radius —
+                    // dragging the bare track still scrubs Current); Add
+                    // inserts a new slice at the click fraction, but ONLY
+                    // when the click did NOT land on an existing marker
+                    // (avoids an accidental duplicate); Remove drops the
+                    // clicked marker (a bare-track click does nothing).
                     if (k == vpm.activeId) {
                         if (auto lst = cast(LoopSliceTool) activeTool) {
-                            if (lst.count() == 1) {
+                            int lsN = lst.count();
+                            if (lsN > 0) {
                                 Viewport _lsVp2   = vpm.resolvedSnapshot(k);
                                 float trackLeft2  = _lsVp2.x + lst.sliderX();
                                 float trackY2     = _lsVp2.y + lst.sliderY();
                                 float lenPx2       = cast(float)lst.length_px();
-                                float curX2        = trackLeft2 + lst.position() * lenPx2;
                                 enum float kHitHalf = 8.0f;
-                                ImGui.SetCursorScreenPos(ImVec2(curX2 - kHitHalf, trackY2 - kHitHalf * 3));
-                                ImGui.InvisibleButton("##loopSliceMarker" ~ to!string(k),
-                                                      ImVec2(kHitHalf * 2, kHitHalf * 3),
+                                ImGui.SetCursorScreenPos(ImVec2(trackLeft2 - kHitHalf, trackY2 - kHitHalf * 3));
+                                ImGui.InvisibleButton("##loopSliceHud" ~ to!string(k),
+                                                      ImVec2(lenPx2 + kHitHalf * 2, kHitHalf * 4),
                                                       ImGuiButtonFlags.MouseButtonLeft);
                                 if (ImGui.IsItemHovered(
                                         ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
                                         ImGuiHoveredFlags.AllowWhenBlockedByPopup))
                                     _cellWidgetHovered = true;
+
+                                // D-ImGui's trimmed binding has no
+                                // GetMousePos()/io.MousePos accessor — read
+                                // the live cursor position straight from SDL
+                                // (same window-pixel space `resolvedSnapshot`
+                                // and the marker's own screen-space X already
+                                // use), exactly like the resize-cursor code
+                                // elsewhere in this file (app.d ~10324).
+                                int lsMouseX, lsMouseY;
+                                SDL_GetMouseState(&lsMouseX, &lsMouseY);
+                                auto lsPositions = lst.positionsArray();
+                                int   lsNearest   = -1;
+                                float lsNearestPx = float.max;
+                                foreach (lsIdx; 0 .. lsN) {
+                                    float px = trackLeft2 + lsPositions[lsIdx] * lenPx2;
+                                    float d  = px - cast(float)lsMouseX; if (d < 0.0f) d = -d;
+                                    if (d < lsNearestPx) { lsNearestPx = d; lsNearest = cast(int)lsIdx; }
+                                }
+                                bool lsOnMarker = lsNearest >= 0 && lsNearestPx <= kHitHalf;
+                                float lsClickFrac = lenPx2 > 0.0f
+                                    ? (cast(float)lsMouseX - trackLeft2) / lenPx2 : 0.0f;
+
                                 if (ImGui.IsItemActive()) {
-                                    if (!lsHudDragActive) {
-                                        lsHudDragActive     = true;
-                                        lsHudDragAnchorFrac = lst.position();
+                                    if (lst.edit() == LoopSliceTool.Edit.Move) {
+                                        if (!lsHudDragActive) {
+                                            lsHudDragActive = true;
+                                            lsHudDragMarker = lsOnMarker ? lsNearest : lst.current();
+                                            lst.setCurrent(lsHudDragMarker);
+                                            lsHudDragAnchorFrac =
+                                                (lsHudDragMarker >= 0 && lsHudDragMarker < cast(int)lsPositions.length)
+                                                ? lsPositions[lsHudDragMarker] : lst.position();
+                                        }
+                                        ImVec2 d = ImGui.GetMouseDragDelta(ImGuiMouseButton.Left, 0.0f);
+                                        float frac = lenPx2 > 0.0f
+                                            ? lsHudDragAnchorFrac + d.x / lenPx2
+                                            : lsHudDragAnchorFrac;
+                                        lst.scrubPosition(frac);
                                     }
-                                    ImVec2 d = ImGui.GetMouseDragDelta(ImGuiMouseButton.Left, 0.0f);
-                                    float frac = lenPx2 > 0.0f
-                                        ? lsHudDragAnchorFrac + d.x / lenPx2
-                                        : lsHudDragAnchorFrac;
-                                    lst.scrubPosition(frac);
                                 } else {
                                     lsHudDragActive = false;
+                                }
+
+                                // D-ImGui has no IsItemClicked() wrapper —
+                                // IsItemDeactivated() (release-after-active
+                                // on THIS item) is an adequate substitute
+                                // here: Add/Remove don't have a drag
+                                // behaviour of their own to distinguish from
+                                // a plain click (only Move does, handled
+                                // entirely by the IsItemActive() branch
+                                // above).
+                                if (ImGui.IsItemDeactivated()) {
+                                    final switch (lst.edit()) {
+                                        case LoopSliceTool.Edit.Move:
+                                            break;   // handled by the drag path above
+                                        case LoopSliceTool.Edit.Add:
+                                            if (!lsOnMarker) lst.addSlice(lsClickFrac);
+                                            break;
+                                        case LoopSliceTool.Edit.Remove:
+                                            if (lsOnMarker) {
+                                                lst.setCurrent(lsNearest);
+                                                lst.removeSlice();
+                                            }
+                                            break;
+                                    }
                                 }
                             }
                         }

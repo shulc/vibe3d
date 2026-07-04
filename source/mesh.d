@@ -7307,22 +7307,109 @@ struct Mesh {
     /// on a no-op (false return). Does NOT select the faces itself — the
     /// caller decides whether/how to apply the returned indices to the
     /// selection (`resetSelection()` below always clears it first).
+    ///
+    /// Thin forwarder over `insertEdgeLoopsMulti([seedEdge], positions, ...)`
+    /// (task 0239 M1) — single-seed callers (`mesh.addLoop`/`mesh.loopSlice`,
+    /// the interactive tool's single-ring path) are unaffected: with exactly
+    /// one seed, `insertEdgeLoopsMulti` never enters its dedup or grid-split
+    /// branches, so this produces byte-identical geometry to the pre-0239
+    /// implementation (guarded by the existing unittests just below, which
+    /// assert exact V/E/F/vertex-position/newFaceIndices shape and are
+    /// unchanged by this refactor).
     bool insertEdgeLoops(uint seedEdge, const(float)[] positions,
                           out uint[] newFaceIndices) {
-        if (positions.length == 0) return false;
-        if (seedEdge >= edges.length) return false;
+        return insertEdgeLoopsMulti([seedEdge], positions, newFaceIndices);
+    }
 
-        bool closed;
-        auto ring = collectEdgeRing(seedEdge, closed);
-        if (ring.length == 0) return false;
+    /// Insert `positions.length` parallel edge loops on the DISTINCT quad
+    /// rings crossed by each seed in `seeds`, in ONE topology-rebuild pass
+    /// (task 0239 M1 — the Loop Slice v2 multi-seed backend). Positions must
+    /// be in (0,1). Returns false (no mutation) if `seeds`/`positions` is
+    /// empty or every seed's ring collect is empty.
+    ///
+    /// — Rings are collected from the ORIGINAL (unmutated) mesh, one
+    ///   `collectEdgeRing` per seed; a seed whose ring is empty (non-quad /
+    ///   boundary-adjacent / invalid index) is silently skipped — it never
+    ///   blocks the OTHER seeds' rings from being cut.
+    /// — DEDUP by canonical ring identity (the sorted set of face indices the
+    ///   ring's walk touches): two selected edges that land on the SAME ring
+    ///   contribute only ONE cut, never a doubled one — this is what keeps
+    ///   "Count loops per DISTINCT ring" true under an over-selected edge set
+    ///   (task 0239 owner-decision D1 / risk 2).
+    /// — A face crossed by exactly ONE distinct ring gets the ORIGINAL
+    ///   single-ring split (P+1 sub-quads, lifted unchanged from the pre-
+    ///   0239 body). A face crossed by TWO PERPENDICULAR distinct rings gets
+    ///   a GRID split: (P+1)×(P+1) sub-quads, with the 4 boundary rails
+    ///   rail-shared (same `railByKey` cache the single-ring path uses — so
+    ///   a grid face's boundary midpoints are the SAME vertices its 1-ring
+    ///   neighbours reference) and the interior grid vertices bilinearly
+    ///   interpolated from the face's 4 original corners at each
+    ///   `(positions[i], positions[j])`.
+    ///
+    ///   The grid's bilerp is PROVABLY equal to applying the two rings'
+    ///   single-ring inserts SEQUENTIALLY (ring A first, then ring B on the
+    ///   already-cut mesh): expanding the sequential construction's second
+    ///   cut — which linearly interpolates between the untouched opposite
+    ///   rail and the FIRST cut's new rail-vertex-to-rail-vertex segment —
+    ///   algebraically collapses to the exact 4-corner bilinear weights
+    ///   `(1-u)(1-v)·A + u(1-v)·B + u·v·C + (1-u)·v·D` this function computes
+    ///   directly. (Verified in the M1 grid-equivalence unittest below by
+    ///   literally comparing this function's output mesh, position-for-
+    ///   position, against a two-call sequential `insertEdgeLoops` run.)
+    ///
+    ///   A THIRD distinct ring touching the same face is defensively
+    ///   SKIPPED for that face (not expected on a well-formed quad mesh — any
+    ///   single quad has only 2 independent ring directions — but degenerate
+    ///   topology should degrade gracefully rather than corrupt geometry).
+    ///   Likewise, if a 2nd ring's entry edge doesn't align with either of
+    ///   the base ring's two OTHER sides (should be topologically
+    ///   impossible for two truly distinct rings on a manifold quad face —
+    ///   see the orientation-reconciliation comment inline), the face falls
+    ///   back to a single-ring split on the first ring only.
+    bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
+                              out uint[] newFaceIndices) {
+        newFaceIndices = [];
+        if (seeds.length == 0 || positions.length == 0) return false;
 
-        // Rail map: canonical edge key → (stored va direction, midpoint verts)
+        // 1. Collect + dedup rings from the ORIGINAL (unmutated) mesh.
+        import std.algorithm : sort;
+        EdgeRingEntry[][] rings;
+        bool[immutable(uint)[]] seenRingKey;
+        foreach (seed; seeds) {
+            if (seed >= edges.length) continue;
+            bool closed;
+            auto ring = collectEdgeRing(seed, closed);
+            if (ring.length == 0) continue;   // degenerate/no-op seed — skip
+
+            uint[] faceIds;
+            faceIds.reserve(ring.length);
+            foreach (e; ring) faceIds ~= e.fi;
+            faceIds.sort();
+            auto key = faceIds.idup;
+            if (key in seenRingKey) continue;   // same ring as an earlier seed
+            seenRingKey[key] = true;
+            rings ~= ring;
+        }
+        if (rings.length == 0) return false;
+
+        // 2. Per-face ring map — at most 2 entries/face for a well-formed
+        //    quad mesh; a 3rd+ is dropped (documented above).
+        EdgeRingEntry[][uint] perFaceRings;
+        foreach (ref ring; rings)
+            foreach (e; ring) {
+                auto p = e.fi in perFaceRings;
+                if (p is null) perFaceRings[e.fi] = [e];
+                else if (p.length < 2) (*p) ~= e;
+            }
+
+        // Rail cache — SHARED across every face and both grid axes: a
+        // directed edge key is only ever midpoint-split once, however many
+        // rings/faces reference it (identical caching to the pre-0239
+        // single-ring body).
         struct Rail { uint va; uint[] mids; }
         Rail[]      rails;
         uint[ulong] railByKey;
 
-        // Return (or create) the midpoint vertex list for directed edge va→vb.
-        // Handles anti-parallel reuse via reversal.
         uint[] getMids(uint va, uint vb) {
             ulong k = edgeKey(va, vb);
             if (auto rp = k in railByKey) {
@@ -7342,32 +7429,102 @@ struct Mesh {
             return mids;
         }
 
-        bool[uint]        ringSet;
-        EdgeRingEntry[uint] ringByFi;
-        foreach (ref e; ring) { ringSet[e.fi] = true; ringByFi[e.fi] = e; }
-
-        uint[][] newFaces;
-        newFaces.reserve(faces.length + ring.length * positions.length);
-
-        foreach (uint fi; 0 .. cast(uint)faces.length) {
-            if (fi !in ringSet) { newFaces ~= faces[fi].dup; continue; }
-
-            auto e = ringByFi[fi];
-            uint a = e.a, b = e.b, c = e.c, d = e.d;
+        // Emit the standard (P+1)-subquad single-ring split of one face,
+        // given its (a,b,c,d) CCW frame — shared by the 1-ring path and the
+        // 2-ring fallback below.
+        void emitSingleRingSplit(uint a, uint b, uint c, uint d,
+                                  ref uint[][] newFaces) {
             uint[] p = getMids(a, b);  // p-rail: midpoints on a→b
             uint[] q = getMids(d, c);  // q-rail: midpoints on d→c
-
-            // First sub-quad: [a, p0, q0, d]
             newFaces ~= [a, p[0], q[0], d];
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
-            // Middle sub-quads (N>1 loops only)
             foreach (k; 1 .. positions.length) {
                 newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
                 newFaceIndices ~= cast(uint)(newFaces.length - 1);
             }
-            // Last sub-quad: [p_last, b, c, q_last]
             newFaces ~= [p[$-1], b, c, q[$-1]];
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
+        }
+
+        uint[][] newFaces;
+        newFaces.reserve(faces.length + rings.length * positions.length * 4);
+
+        foreach (uint fi; 0 .. cast(uint)faces.length) {
+            auto pr = fi in perFaceRings;
+            if (pr is null) { newFaces ~= faces[fi].dup; continue; }
+            auto entries = *pr;
+
+            if (entries.length == 1) {
+                auto e = entries[0];
+                emitSingleRingSplit(e.a, e.b, e.c, e.d, newFaces);
+                continue;
+            }
+
+            // Two distinct rings cross this quad. Reconcile both entries'
+            // local (a,b,c,d) framing into ONE consistent orientation using
+            // entries[0] as the base CCW frame (A,B,C,D around the quad).
+            // entries[1]'s ENTRY edge must be one of the base frame's other
+            // two sides — (B,C) or (D,A) — walked in either direction (a
+            // ring can approach from either end); this is a pure identity
+            // check, entries[1]'s own field values are never used for
+            // geometry (the base frame alone fully describes the quad).
+            auto e0 = entries[0];
+            uint A = e0.a, B = e0.b, C = e0.c, D = e0.d;
+            auto e1 = entries[1];
+            static bool matchesUndirected(uint x, uint y, uint p, uint q) {
+                return (x == p && y == q) || (x == q && y == p);
+            }
+            bool aligned = matchesUndirected(e1.a, e1.b, B, C)
+                        || matchesUndirected(e1.a, e1.b, D, A);
+            if (!aligned) {
+                // Should not happen on a well-formed quad mesh (two truly
+                // distinct rings can only cross via the two non-entry sides)
+                // — fall back to a single-ring split on the base ring only,
+                // rather than emit an inconsistent grid.
+                emitSingleRingSplit(A, B, C, D, newFaces);
+                continue;
+            }
+
+            // Grid split. u runs A→B (bottom) / D→C (top); v runs B→C
+            // (right) / A→D (left) — see the doc comment above for the
+            // bilerp-equals-sequential-inserts derivation.
+            uint[] pU = getMids(A, B);   // bottom rail, u-direction
+            uint[] qU = getMids(D, C);   // top rail, u-direction
+            uint[] pV = getMids(B, C);   // right rail, v-direction
+            uint[] qV = getMids(A, D);   // left rail, v-direction
+
+            size_t Pu = positions.length, Pv = positions.length;
+            uint[][] grid = new uint[][](Pu + 2, Pv + 2);
+            grid[0][0]       = A;
+            grid[Pu+1][0]    = B;
+            grid[Pu+1][Pv+1] = C;
+            grid[0][Pv+1]    = D;
+            foreach (i; 0 .. Pu) {
+                grid[i+1][0]    = pU[i];
+                grid[i+1][Pv+1] = qU[i];
+            }
+            foreach (j; 0 .. Pv) {
+                grid[0][j+1]    = qV[j];
+                grid[Pu+1][j+1] = pV[j];
+            }
+            // Interior vertices are strictly per-face (never shared with a
+            // neighbour) — fresh bilerp'd verts every time.
+            foreach (i; 0 .. Pu)
+                foreach (j; 0 .. Pv) {
+                    float u = positions[i], v = positions[j];
+                    Vec3 pt = vertices[A] * ((1.0f - u) * (1.0f - v))
+                            + vertices[B] * (u * (1.0f - v))
+                            + vertices[C] * (u * v)
+                            + vertices[D] * ((1.0f - u) * v);
+                    grid[i+1][j+1] = addVertex(pt);
+                }
+
+            foreach (i; 0 .. Pu + 1)
+                foreach (j; 0 .. Pv + 1) {
+                    newFaces ~= [grid[i][j], grid[i+1][j],
+                                 grid[i+1][j+1], grid[i][j+1]];
+                    newFaceIndices ~= cast(uint)(newFaces.length - 1);
+                }
         }
 
         faces = newFaces;
@@ -13917,6 +14074,238 @@ unittest {
            && m2.edges.length == m.edges.length
            && m2.faces.length == m.faces.length,
            "2-arg forwarder must produce the same geometry as the 3-arg overload");
+}
+
+// ---------------------------------------------------------------------------
+// insertEdgeLoopsMulti (task 0239 M1) — multi-seed backend.
+//
+// Two disconnected unit cubes (the second translated +3 on X) give two
+// DISTINCT, NON-CROSSING closed rings with no shared faces at all — the
+// simplest possible "Count loops per distinct ring" fixture (owner-decision
+// D1). Cube A occupies vertex indices 0-7 exactly like `makeCube()`; cube B
+// is the same 8 vertices offset by (+3,0,0), indices 8-15.
+// ---------------------------------------------------------------------------
+
+private Mesh makeTwoDisjointCubes() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f, -0.5f, -0.5f), Vec3( 0.5f, -0.5f, -0.5f),
+        Vec3( 0.5f,  0.5f, -0.5f), Vec3(-0.5f,  0.5f, -0.5f),
+        Vec3(-0.5f, -0.5f,  0.5f), Vec3( 0.5f, -0.5f,  0.5f),
+        Vec3( 0.5f,  0.5f,  0.5f), Vec3(-0.5f,  0.5f,  0.5f),
+        Vec3(2.5f, -0.5f, -0.5f), Vec3(3.5f, -0.5f, -0.5f),
+        Vec3(3.5f,  0.5f, -0.5f), Vec3(2.5f,  0.5f, -0.5f),
+        Vec3(2.5f, -0.5f,  0.5f), Vec3(3.5f, -0.5f,  0.5f),
+        Vec3(3.5f,  0.5f,  0.5f), Vec3(2.5f,  0.5f,  0.5f),
+    ];
+    m.addFace([0, 3, 2, 1]);  m.addFace([4, 5, 6, 7]);
+    m.addFace([0, 4, 7, 3]);  m.addFace([1, 2, 6, 5]);
+    m.addFace([3, 7, 6, 2]);  m.addFace([0, 1, 5, 4]);
+    m.addFace([8, 11, 10, 9]);   m.addFace([12, 13, 14, 15]);
+    m.addFace([8, 12, 15, 11]);  m.addFace([9, 10, 14, 13]);
+    m.addFace([11, 15, 14, 10]); m.addFace([8, 9, 13, 12]);
+    m.buildLoops();
+    return m;
+}
+
+// (b)+(c) Two distinct non-crossing rings: Count==N gives exactly N loops
+// per ring (total inserted == N × 2 rings); a 2nd seed edge landing on the
+// SAME ring as a 1st dedups to one cut, not a doubled one.
+unittest {
+    // (b) — one seed per cube, N=2 loops each.
+    {
+        Mesh m = makeTwoDisjointCubes();
+        uint eiA = m.edgeIndex(0, 1);   // cube A belt seed
+        uint eiB = m.edgeIndex(8, 9);   // cube B belt seed (translated analog)
+        assert(eiA != ~0u && eiB != ~0u, "both cube belt seeds must exist");
+
+        uint[] newFaceIndices;
+        bool ok = m.insertEdgeLoopsMulti([eiA, eiB], [0.3f, 0.7f], newFaceIndices);
+        assert(ok, "insertEdgeLoopsMulti must succeed on two disjoint cubes");
+
+        // Each cube independently: single-ring insert of count=2 gives
+        // V:8->8+2*4=16(2 rails*... wait computed inline below), matched
+        // against the SAME single-ring kernel run on one cube alone.
+        Mesh ref1 = makeCube();
+        uint eiRef = ref1.edgeIndex(0, 1);
+        bool okRef = ref1.insertEdgeLoops(eiRef, [0.3f, 0.7f]);
+        assert(okRef, "reference single-cube insert must succeed");
+
+        assert(m.vertices.length == 2 * ref1.vertices.length,
+               "two independent rings: total V must be 2x the single-cube result");
+        assert(m.faces.length == 2 * ref1.faces.length,
+               "two independent rings: total F must be 2x the single-cube result");
+        assert(m.edges.length == 2 * ref1.edges.length,
+               "two independent rings: total E must be 2x the single-cube result");
+
+        // Count=2 (P=2 loops) → P+1=3 sub-quads per ring face; ringLen=4
+        // faces per ring; 2 distinct (disjoint) rings.
+        enum ringLen = 4;
+        enum subQuadsPerFace = 3;   // positions.length + 1
+        assert(newFaceIndices.length == 2 * (subQuadsPerFace * ringLen),
+               "Count=2 per ring, 2 distinct rings: newFaceIndices must total "
+               ~ "2 * (P+1) * ringLen");
+    }
+
+    // (c) — dedup: a 2nd seed edge on the SAME ring as the 1st must NOT
+    // double the cut. Edge (0,1) and edge (2,3) are both members of cube A's
+    // belt ring (see the closed-ring unittest above — rung mA-mB-mC-mD
+    // includes both edge 0-1's and edge 2-3's midpoints).
+    {
+        Mesh m = makeTwoDisjointCubes();
+        uint ei01 = m.edgeIndex(0, 1);
+        uint ei23 = m.edgeIndex(2, 3);
+        assert(ei01 != ~0u && ei23 != ~0u, "both same-ring seeds must exist");
+
+        uint[] newFaceIndices;
+        bool ok = m.insertEdgeLoopsMulti([ei01, ei23], [0.5f], newFaceIndices);
+        assert(ok, "insertEdgeLoopsMulti must succeed with 2 same-ring seeds");
+
+        Mesh single = makeTwoDisjointCubes();
+        uint eiSingle = single.edgeIndex(0, 1);
+        bool okSingle = single.insertEdgeLoops(eiSingle, [0.5f]);
+        assert(okSingle, "single-seed reference insert must succeed");
+
+        assert(m.vertices.length == single.vertices.length,
+               "dedup: 2 seeds on the same ring must produce the SAME vertex count as 1 seed");
+        assert(m.faces.length == single.faces.length,
+               "dedup: 2 seeds on the same ring must produce the SAME face count as 1 seed");
+        assert(m.edges.length == single.edges.length,
+               "dedup: 2 seeds on the same ring must produce the SAME edge count as 1 seed");
+    }
+}
+
+// (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
+// cube has exactly 2 perpendicular closed rings crossing at 2 shared faces —
+// seed edge (0,1) (the horizontal "equatorial" belt, established above) and
+// seed edge (0,4) (the vertical belt) share faces F4=[3,7,6,2] (Top) and
+// F5=[0,1,5,4] (Bottom). insertEdgeLoopsMulti must GRID-split those two
+// shared faces. The oracle: compare against applying the SAME two single-
+// ring inserts SEQUENTIALLY (ring A via insertEdgeLoops, then re-finding the
+// vertical seed on the mutated mesh and inserting ring B) — this is a
+// stronger check than a count-only comparison because a winding/corner-
+// reconciliation flip could preserve counts while producing the WRONG
+// sub-quad shapes; comparing actual VERTEX POSITIONS (order-independent)
+// catches that.
+unittest {
+    import std.math : abs;
+
+    static bool hasVertNear(const Mesh m, Vec3 p, float eps = 1e-4f) {
+        foreach (v; m.vertices)
+            if (abs(v.x - p.x) < eps && abs(v.y - p.y) < eps && abs(v.z - p.z) < eps)
+                return true;
+        return false;
+    }
+
+    // --- Grid path: one insertEdgeLoopsMulti call, both seeds together.
+    Mesh grid = makeCube();
+    uint eiHoriz = grid.edgeIndex(0, 1);
+    uint eiVert  = grid.edgeIndex(0, 4);
+    assert(eiHoriz != ~0u && eiVert != ~0u, "both cube seeds must exist");
+    uint[] gridNewFaces;
+    bool okGrid = grid.insertEdgeLoopsMulti([eiHoriz, eiVert], [0.3f, 0.7f], gridNewFaces);
+    assert(okGrid, "grid insertEdgeLoopsMulti must succeed on the cube");
+
+    // --- Sequential path: ring A alone, then re-find ring B's seed (the
+    //     vertical edges are never touched by ring A's rails — see the
+    //     kernel doc comment — so edgeIndex(0,4) is still valid post-cut).
+    Mesh seq = makeCube();
+    uint eiHoriz2 = seq.edgeIndex(0, 1);
+    bool okA = seq.insertEdgeLoops(eiHoriz2, [0.3f, 0.7f]);
+    assert(okA, "sequential ring-A insert must succeed");
+    uint eiVert2 = seq.edgeIndex(0, 4);
+    assert(eiVert2 != ~0u, "vertical seed edge 0-4 must survive ring-A's cut");
+    bool okB = seq.insertEdgeLoops(eiVert2, [0.3f, 0.7f]);
+    assert(okB, "sequential ring-B insert must succeed");
+
+    // Equivalence: identical V/E/F counts...
+    assert(grid.vertices.length == seq.vertices.length,
+           "grid vs sequential: vertex counts differ");
+    assert(grid.edges.length == seq.edges.length,
+           "grid vs sequential: edge counts differ");
+    assert(grid.faces.length == seq.faces.length,
+           "grid vs sequential: face counts differ");
+
+    // ...and every vertex position in the grid result has a coincident
+    // match in the sequential result (order-independent) — proves the grid
+    // split lands vertices at EXACTLY the same points a sequential two-pass
+    // insert would, catching a winding/reconciliation flip that a count-only
+    // check would miss.
+    foreach (v; grid.vertices)
+        assert(hasVertNear(seq, v),
+               "grid vertex has no coincident match in the sequential result");
+
+    // No degenerate sub-quad: every face must be a quad with 4 DISTINCT
+    // vertex indices, and the mesh must still be a closed manifold (Euler
+    // V-E+F=2) — `rebuildEdges`/`buildLoops` would otherwise have silently
+    // produced a non-manifold mess.
+    foreach (const f; grid.faces) {
+        assert(f.length == 4, "grid split must only ever produce quads");
+        assert(f[0] != f[1] && f[1] != f[2] && f[2] != f[3] && f[3] != f[0]
+               && f[0] != f[2] && f[1] != f[3],
+               "grid split must not produce a degenerate (repeated-vertex) sub-quad");
+    }
+    assert(cast(int)grid.vertices.length - cast(int)grid.edges.length
+           + cast(int)grid.faces.length == 2,
+           "grid-split result must still satisfy Euler's formula (closed manifold)");
+}
+
+// (e) Degenerate seed among valid ones: a seed whose collectEdgeRing is
+// empty (non-quad-adjacent) must be silently skipped, WITHOUT blocking the
+// other valid seed's ring from being cut; if EVERY seed is degenerate, the
+// call is a no-op (false, no mutation).
+unittest {
+    // One valid cube seed + one triangle-adjacent (non-quad) seed sharing
+    // NO faces with the cube — the mixed-valence fixture from the
+    // `collectEdgeRing` non-quad-guard unittest just below, merged with a
+    // disjoint cube.
+    Mesh m = makeCube();
+    // Triangulate F2=[0,4,7,3] (Left face — NOT part of the (0,1) BeltX
+    // ring) by hand: split it into two triangles sharing diagonal 0-7.
+    uint[][] withTri = m.faces.dup;
+    withTri[2] = [0u, 4u, 7u];          // shrink F2 to a triangle
+    withTri ~= [0u, 7u, 3u];            // the other half as a 2nd triangle
+    m.faces = withTri;
+    m.rebuildEdges();
+    m.buildLoops();
+
+    uint eiValid = m.edgeIndex(0, 1);          // still a valid BeltX seed
+    uint eiDegenerate = m.edgeIndex(0, 7);     // now triangle-adjacent
+    assert(eiValid != ~0u, "valid seed edge must exist");
+    assert(eiDegenerate != ~0u, "degenerate seed edge must exist");
+
+    bool closedDegenerate;
+    assert(m.collectEdgeRing(eiDegenerate, closedDegenerate).length == 0,
+           "sanity: the degenerate seed's ring must indeed be empty");
+
+    uint[] newFaceIndices;
+    bool ok = m.insertEdgeLoopsMulti([eiValid, eiDegenerate], [0.5f], newFaceIndices);
+    assert(ok, "one valid + one degenerate seed must still succeed (valid seed's ring cut)");
+    assert(m.vertices.length == 12, "valid seed's ring must still be cut (V=12, as single-seed)");
+    // F=11: the base cube's single-seed cut gives F=10 (see the closed-ring
+    // unittest above); triangulating F2 into 2 triangles (replacing 1 quad)
+    // adds exactly 1 extra face on top of that, and F2/its 2 triangles sit
+    // OUTSIDE the BeltX ring so they pass through untouched.
+    assert(m.faces.length == 11, "valid seed's ring must still be cut (F=11 = 10 + 1 extra tri)");
+
+    // All-degenerate: no-op.
+    Mesh m2 = makeCube();
+    uint[][] withTri2 = m2.faces.dup;
+    withTri2[2] = [0u, 4u, 7u];
+    withTri2 ~= [0u, 7u, 3u];
+    m2.faces = withTri2;
+    m2.rebuildEdges();
+    m2.buildLoops();
+    uint eiDeg2 = m2.edgeIndex(0, 7);
+    assert(eiDeg2 != ~0u);
+    uint vBefore = cast(uint)m2.vertices.length;
+    uint eBefore = cast(uint)m2.edges.length;
+    uint fBefore = cast(uint)m2.faces.length;
+    uint[] unused;
+    bool okAll = m2.insertEdgeLoopsMulti([eiDeg2], [0.5f], unused);
+    assert(!okAll, "all-degenerate seed set must return false");
+    assert(m2.vertices.length == vBefore && m2.edges.length == eBefore
+           && m2.faces.length == fBefore, "all-degenerate call must not mutate the mesh");
 }
 
 // ---------------------------------------------------------------------------

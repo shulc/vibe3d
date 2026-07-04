@@ -2,13 +2,14 @@ module tools.loop_slice_tool;
 
 import bindbc.sdl;
 import std.json : JSONValue;
+import std.algorithm : sort;
 import operator : VectorStack;
 
 import tool;
 import mesh;
 import math;
 import editmode : EditMode;
-import params : Param;
+import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -23,89 +24,66 @@ alias LoopSliceEditFactory = MeshLoopSliceEdit delegate();
 // LoopSliceTool — interactive Loop Slice / edge-loop cut (factory id
 // `mesh.loopSliceTool`). Coexists with the one-shot `mesh.loopSlice` /
 // `mesh.addLoop` commands (source/commands/mesh/loop_slice.d) — those stay
-// untouched; this tool is a hover-seeded, drag-to-position alternative that
-// reuses the SAME kernel (`Mesh.collectEdgeRing` + `Mesh.insertEdgeLoops`).
+// untouched (single-seed only); this tool reuses the SAME kernel
+// (`Mesh.collectEdgeRing` + `Mesh.insertEdgeLoops`/`insertEdgeLoopsMulti`).
 //
-// v1 scope: Position (single cut) + Count/Uniform (evenly-spaced multi-cut,
-// `(k+1)/(count+1)`) + Select New Polygons. Deferred (not greyed, simply
-// absent): Inset / Tension / Preserve Curvature / Reverse / Keep Aspect /
-// Split / Cap / Gap / Profiles / Free per-slice / Edit=Add-Remove /
-// Slice-Selected / Keep-Quads / Slice-N-gon / HUD slider. No n-gon ring
-// support (kernel stays quads-only).
+// v2 (task 0239, "Loop Slice v2"), building on v1 (0228) + the highlight fix
+// (0231) + the HUD/Model-B lifecycle (0232) + the state hook (0234):
 //
-// Interaction model — task 0232, Model B ("arm-then-commit standing
-// preview"), superseding 0228's commit-on-release cycle (see
-// doc/loop_slice_slider_hud_impl_plan.md):
+//   — SELECTION-BASED ACTIVATION: arming from a NON-EMPTY edge selection
+//     seeds from EVERY selected edge (`seeds_[]`, multi-ring); the 0228
+//     hover fallback (single seed from `g_hoveredEdge`) is preserved
+//     byte-for-byte when nothing is selected.
+//   — Edit (Move/Add/Remove) and Mode (Free/Uniform/Symmetry) govern how
+//     `positions_[]`/`current_` are laid out and mutated — see the enum doc
+//     comments below for the exact laws.
+//   — Count = number of slices PER DISTINCT SEEDED RING (owner-decision D1):
+//     the kernel (`Mesh.insertEdgeLoopsMulti`) dedups rings by canonical
+//     face-set, so an over-selected edge set never double-cuts one ring.
 //
-//   HOVER  (no button held) — highlight-only via `wantsEdgeLoopHover()` +
-//     the `HoverEdges` capability (needed so app.d's edge picker keeps
-//     publishing `hover_state.g_hoveredEdge` while this tool owns the
-//     viewport). The mesh is NEVER mutated during hover.
+// Interaction model — UNCHANGED from 0232's Model B ("arm-then-commit
+// standing preview"): hover/select (no mutation) → ARM (LMB-down latches
+// `seeds_[]` and immediately materialises the default-position cut) →
+// SCRUB (mesh drag / HUD marker / panel edit, all converging on
+// `scrubPosition()`) → COMMIT (Enter, or tool-drop while armed+built, one
+// `MeshLoopSliceEdit` undo entry, then RE-ARMS) → CANCEL (Esc/RMB, restores
+// `before_`, no undo entry). See doc/loop_slice_slider_hud_impl_plan.md for
+// the full mechanism-by-mechanism rationale (navHistory redo-cancel,
+// scene.reset/onActiveLayerChanged `dropArmedPreview()` calls, `armedKey_`
+// mesh-swap guard) — none of that changed for v2, only WHAT gets latched
+// (`seeds_[]` instead of a single `seedEdge_`) and WHAT gets rebuilt from
+// (`positions_[]`/`current_` instead of a scalar `position_` + derived
+// even-spacing).
 //
-//   ARM (LMB-down on a valid hovered ring) — `seedEdge_` latches from
-//     `g_hoveredEdge`. If there is no valid hover, or `collectEdgeRing`
-//     bails (non-quad / boundary / T-junction guard), the click is a no-op:
-//     nothing arms, the event falls through (return false) so a normal
-//     edge-select click still works. A valid seed sets `armed_=true`,
-//     `scrubbing_=true` and immediately materialises the default-position
-//     cut — a STANDING preview that persists on the real mesh.
-//
-//   SCRUB — repositions the armed preview via THREE equivalent entry points
-//     that all converge on `scrubPosition()`:
-//       - mesh drag (`onMouseMotion`, gated on `scrubbing_`): cursor →
-//         world-ray → `closestPointOnSegmentToRay` against the ORIGINAL
-//         (cached-at-arm) seed segment → recovered scalar `t`;
-//       - the HUD marker (app.d, `LoopSliceTool.scrubPosition` called
-//         directly — the marker has no mesh-drag session of its own);
-//       - a Tool-Properties panel edit of `Position` while armed
-//         (`onParamChanged`).
-//     `scrubPosition()` clamps and re-runs `rebuildCut()` whenever `armed_`
-//     — so a HUD/panel scrub moves the STANDING preview even with the mouse
-//     up, and a mesh drag moves it while held. Releasing the mouse
-//     (`onMouseButtonUp`) sets `scrubbing_=false` but does NOT commit —
-//     the preview stays armed (the change vs 0228).
-//
-//   COMMIT (Enter/Return, `onKeyDown`, or tool-drop while armed+built) —
-//     one snapshot-pair undo entry (`MeshLoopSliceEdit`) is recorded, then
-//     `before_` is RE-CAPTURED from the now-committed mesh so the tool
-//     re-arms for another cut on the next click.
-//
-//   CANCEL (Esc/RMB) — restores `before_`, discards the standing preview,
-//     no undo entry.
-//
-// Every path that touches the mesh on commit/cancel/rebuild
-// (`commitEdit`/`cancelLiveEdit`/`rebuildCut`) first checks `armedKey_`
-// (a `mesh.d` `MeshCacheKey` — address + mutationVersion) against the
-// CURRENT mesh. `armedKey_` is stamped to reflect the mesh exactly as WE
-// last left it after every mutation we make; if some OTHER path swapped the
-// mesh out from under an armed preview since then — scene.reset rewrites
-// `*mesh` IN PLACE (same address, `mutationVersion` resets — `mesh.d:143`),
-// an active-layer switch retargets `meshSrc_()` to a DIFFERENT Layer's mesh
-// field entirely (different address) — the key mismatches and every one of
-// these paths calls `dropArmedPreview()` instead: clears `armed_` /
-// `scrubbing_` / `built_` / `seedEdge_` / `armedKey_` WITHOUT touching the
-// mesh or history. app.d additionally calls `dropArmedPreview()` explicitly,
-// BEFORE the generic tool-drop, at the two known mesh-swap sites
-// (scene.reset / file.new's `onResetTool`, and `onActiveLayerChanged`) —
-// see the comments there. `navHistory` (app.d) also widens its
-// cancel-an-open-session guard to cover REDO (not just undo) so a redo can
-// never apply on top of an uncommitted standing preview.
-//
-// Count>1 drag is a deliberate v1 no-op on geometry: `positions()` ignores
-// `position_` whenever `count_ > 1` (the evenly-spaced law owns every
-// position), so scrubbing while Count>1 recomputes the SAME spacing every
-// time. Uniform is present for parity but v1 has no Free per-slice law, so
-// toggling it off still yields even spacing (documented, not invented). The
-// HUD (app.d) is hidden entirely when `count_ > 1` for the same reason.
-//
-// Headless (`tool.set mesh.loopSliceTool on; tool.attr ... ; tool.doApply`)
-// seeds from the FIRST SELECTED EDGE — mirrors `MeshLoopSlice.evaluate`
-// (loop_slice.d) — NOT from hover (headless has no cursor) and NEVER sets
-// `armed_`/`scrubbing_` (`--test` never arms). applyHeadless() must never
-// touch `seedEdge_` / session state: `ToolDoApplyCommand` captures its own
-// snapshot pair around the call and IS the undo entry.
+// Headless (`tool.set mesh.loopSliceTool on; tool.attr ...; tool.doApply`)
+// seeds from EVERY SELECTED EDGE (was: first-selected only, pre-0239) — NOT
+// from hover (headless has no cursor) and NEVER sets `armed_`/`scrubbing_`
+// (`--test` never arms). `applyHeadless()` must never touch `seeds_`/session
+// state: `ToolDoApplyCommand` captures its own snapshot pair around the call
+// and IS the undo entry.
 // ---------------------------------------------------------------------------
 final class LoopSliceTool : Tool {
+public:
+    // Edit — what a click on the HUD track / a marker does (task 0239).
+    // Move (default): reposition the Current slice (today's scrub,
+    // generalised to `current_`). Add: a click on the bare track at
+    // fraction `t` inserts a NEW slice there (`addSlice`). Remove: a click
+    // on a marker drops it (`removeSlice`, clamped at Count==1 — D7).
+    enum Edit { Move, Add, Remove }
+
+    // Mode — the placement LAW governing `positions_[]` (task 0239).
+    // Free: independent per-slice positions; a scrub moves only
+    // `positions_[current_]`. Uniform (reference default for Count>1):
+    // `(k+1)/(count_+1)` for every slice — a scrub of Current is IGNORED,
+    // the law owns every position (owner-decision D3 — this is what keeps
+    // the pre-0239 `positions()` behaviour: Count>1 drag was always a
+    // geometric no-op). Symmetry: slices form mirrored pairs about 0.5 —
+    // scrubbing Current also moves its mirror partner to `1-t`
+    // (owner-decision D4; the even-spacing law is ALSO the correct
+    // symmetric-pairs default, since `(k+1)/(N+1)` is always symmetric
+    // about 0.5 — see `applyModeLaw`).
+    enum Mode { Free, Uniform, Symmetry }
+
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -120,11 +98,27 @@ private:
     CommandHistory       history;
     LoopSliceEditFactory factory;
 
+    static immutable IntEnumEntry[3] editTable = [
+        IntEnumEntry(cast(int)Edit.Move,   "move",   "Move"),
+        IntEnumEntry(cast(int)Edit.Add,    "add",    "Add"),
+        IntEnumEntry(cast(int)Edit.Remove, "remove", "Remove"),
+    ];
+    static immutable IntEnumEntry[3] modeTable = [
+        IntEnumEntry(cast(int)Mode.Free,     "free",     "Free"),
+        IntEnumEntry(cast(int)Mode.Uniform,  "uniform",  "Uniform"),
+        IntEnumEntry(cast(int)Mode.Symmetry, "symmetry", "Symmetry"),
+    ];
+
     // Panel params (shared by the interactive path and `tool.attr`).
-    float position_  = 0.5f;
-    int   count_     = 1;
-    bool  uniform_    = true;
-    bool  selectNew_  = true;
+    Edit    edit_          = Edit.Move;
+    Mode    mode_          = Mode.Uniform;   // reference default for Count>1
+    int     count_         = 1;
+    int     current_       = 0;             // 0-based (owner-decision D6)
+    float[] positions_     = [0.5f];         // authoritative slice offsets, length == count_
+    float   positionProxy_ = 0.5f;           // Param-bound mirror of positions_[current_]
+    float   insertAt_      = 0.5f;           // Add-trigger value (onParamChanged fires the add)
+    bool    removeTrigger_ = false;          // Remove-trigger (self-resetting bool)
+    bool    selectNew_     = true;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -136,13 +130,13 @@ private:
     int   sliderX_ = 20;
     int   sliderY_ = 50;
 
-    // Session state (task 0232, Model B).
+    // Session state (task 0232 Model B, generalised to multi-seed in 0239).
     bool         active;
     bool         armed_;       // a standing preview cut sits on the real mesh
     bool         scrubbing_;   // a MESH drag is currently repositioning it (subset of armed_)
     bool         built_;       // true once the last rebuildCut() materialised a cut
-    int          seedEdge_ = -1;
-    Vec3         seedA_, seedB_;   // ORIGINAL (pre-cut) world-space endpoints, cached at arm
+    uint[]       seeds_;       // latched seed set (was scalar seedEdge_ pre-0239)
+    Vec3         seedA_, seedB_;   // ORIGINAL (pre-cut) world-space endpoints of seeds_[0]'s ring, cached at arm
     MeshSnapshot before_;      // idle baseline: mesh == before_ whenever !armed_
     // Address + mutationVersion of the mesh exactly as WE last left it — see
     // the header comment. Stamped at the end of every successful rebuildCut()
@@ -196,31 +190,40 @@ public:
     // real drag gesture, not for the whole (potentially long) armed period.
     override bool isDragging() const { return scrubbing_; }
 
-    // Task 0234 (GET /api/tool/state): hover/latch/slice-position dump so a
-    // test can assert the 0231 hover-parity WITHOUT a screenshot.
+    // Task 0234 (GET /api/tool/state), extended by task 0239 with
+    // edit/mode/current/positions[]/seeds[] so a headless test can assert
+    // the full v2 state without a screenshot. `seedEdge` stays a scalar
+    // (seeds_[0], or -1 when nothing is armed) for backward compatibility
+    // with the pre-0239 hover-parity test (`test_loop_slice_hover_state.d`),
+    // which only ever observes the hover (pre-arm) state.
     //
-    // `sliceRing` is gated on `edgeLoopHoverSliceRing()` — the SAME switch
-    // app.d's `rebuildLoopHoverMask` reads (source/app.d, the `sliceRing`
-    // local there) to choose between the perpendicular cut ring
-    // (`Mesh.loopSliceRingEdges`, when true — this tool's steady-state
-    // answer, task 0231) and the classic parallel edge loop
-    // (`edgeLoopRing` + an edgeIndexMap lookup, when false). Mirroring the
-    // gate — not just always reporting the slice ring — means reverting the
-    // 0231 fix (this override going back to the `Tool` base's `false`)
-    // flips this field to the loop ring and a test asserting `sliceRing ==
-    // loopSliceRingEdges(hoveredEdge)` genuinely fails, instead of the
-    // assertion vacuously passing because the JSON always agrees with
-    // itself.
+    // `sliceRing` is UNCHANGED from 0234/0231: gated on
+    // `edgeLoopHoverSliceRing()` (the same switch app.d's
+    // `rebuildLoopHoverMask` reads) and computed from `g_hoveredEdge` alone
+    // — the single-hover-ring preview, not a union over an armed multi-seed
+    // set (that preview is the STANDING cut itself once armed; the hover
+    // ring is only ever shown pre-arm, per `wantsEdgeLoopHover`).
     public override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
         root["tool"]        = JSONValue("loopSlice");
         root["hoveredEdge"] = JSONValue(g_hoveredEdge);
-        root["seedEdge"]    = JSONValue(seedEdge_);
+        root["seedEdge"]    = JSONValue(seeds_.length > 0 ? cast(int)seeds_[0] : -1);
         root["dragging"]    = JSONValue(scrubbing_);   // 0232 renamed dragging_ -> scrubbing_ (mesh drag)
         root["armed"]       = JSONValue(armed_);       // 0232 standing preview held on the mesh
         root["built"]       = JSONValue(built_);
-        root["position"]    = JSONValue(position_);
+        root["position"]    = JSONValue(positionProxy_);
         root["count"]       = JSONValue(count_);
+        root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
+        root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
+        root["current"]     = JSONValue(current_);
+
+        JSONValue[] posArr;
+        foreach (p; positions_) posArr ~= JSONValue(p);
+        root["positions"] = JSONValue(posArr);
+
+        JSONValue[] seedArr;
+        foreach (s; seeds_) seedArr ~= JSONValue(cast(int)s);
+        root["seeds"] = JSONValue(seedArr);
 
         int[] ringEdges;
         if (g_hoveredEdge >= 0 && g_hoveredEdge < cast(int)mesh.edges.length) {
@@ -251,10 +254,15 @@ public:
 
     override Param[] params() {
         return [
-            Param.float_("position", "Position", &position_, 0.5f)
+            Param.float_("position", "Position", &positionProxy_, 0.5f)
                  .min(0.001f).max(0.999f),
             Param.int_("count", "Count", &count_, 1).min(1),
-            Param.bool_("uniform", "Uniform", &uniform_, true),
+            Param.int_("current", "Current", &current_, 0).min(0),
+            Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
+            Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Uniform),
+            Param.float_("insertAt", "Insert At", &insertAt_, 0.5f)
+                 .min(0.001f).max(0.999f),
+            Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false),
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
@@ -264,14 +272,29 @@ public:
     }
 
     // -------------------------------------------------------------------
-    // Task 0232 — read-only accessors for app.d's HUD block (kept the
-    // fields private; the HUD reads through here rather than reaching in).
+    // Read-only accessors for app.d's HUD block (kept the fields private;
+    // the HUD reads through here rather than reaching in).
     // -------------------------------------------------------------------
-    public float position() const { return position_; }
+    public float position() const { return positionProxy_; }
     public int   length_px() const { return length_; }
     public int   sliderX()  const { return sliderX_; }
     public int   sliderY()  const { return sliderY_; }
     public int   count()    const { return count_; }
+    public int   current()  const { return current_; }
+    public const(float)[] positionsArray() const { return positions_; }
+    public Edit  edit()     const { return edit_; }
+    public Mode  mode()     const { return mode_; }
+
+    /// HUD marker-select (task 0239 M5): choose WHICH slice a subsequent
+    /// drag/scrub targets, without touching the mesh (mirrors the
+    /// `onParamChanged("current")` clamp+sync, but callable directly from
+    /// app.d's per-frame HUD code rather than through the Param/attr path).
+    public void setCurrent(int k) {
+        if (k < 0) k = 0;
+        if (k >= count_) k = count_ - 1;
+        current_ = k;
+        syncProxy();
+    }
 
     override void activate() {
         active = true;
@@ -279,14 +302,19 @@ public:
     }
 
     private void reinitSession() {
-        armed_     = false;
-        scrubbing_ = false;
-        built_     = false;
-        seedEdge_  = -1;
-        position_  = 0.5f;
-        count_     = 1;
-        uniform_   = true;
-        selectNew_ = true;
+        armed_          = false;
+        scrubbing_      = false;
+        built_          = false;
+        seeds_          = [];
+        edit_           = Edit.Move;
+        mode_           = Mode.Uniform;
+        count_          = 1;
+        current_        = 0;
+        positions_      = [0.5f];
+        positionProxy_  = 0.5f;
+        insertAt_       = 0.5f;
+        removeTrigger_  = false;
+        selectNew_      = true;
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
         before_    = MeshSnapshot.capture(*mesh);
@@ -347,56 +375,149 @@ public:
     /// has already run; an active-layer-change hook fires AFTER the primary
     /// already switched — committing or restoring there would corrupt the
     /// new mesh or fabricate a bogus undo entry (task 0232). Safe to call
-    /// even when nothing is armed (no-op).
+    /// even when nothing is armed (no-op). Task 0239: resets `seeds_`
+    /// (formerly the scalar `seedEdge_`) — `positions_`/`current_`/`edit_`/
+    /// `mode_`/`count_` are session PARAMS, not per-arm latch state, and are
+    /// intentionally left untouched here (they're reset by
+    /// `reinitSession()`, called at tool activation, and persist across a
+    /// single re-arm-after-commit within the same activation — matching
+    /// pre-0239 behaviour for `position_`/`count_`/`uniform_`).
     public void dropArmedPreview() {
         armed_     = false;
         scrubbing_ = false;
         built_     = false;
-        seedEdge_  = -1;
+        seeds_     = [];
         armedKey_.invalidate();
     }
 
     override void onParamChanged(string pname) {
         // HUD geometry only — never touches the cut.
         if (pname == "length" || pname == "sliderX" || pname == "sliderY") return;
+
+        if (pname == "count") {
+            syncPositionsToCount();
+            if (armed_) rebuildCut();
+            return;
+        }
+        if (pname == "current") {
+            if (current_ < 0) current_ = 0;
+            if (current_ >= count_) current_ = count_ - 1;
+            syncProxy();
+            return;
+        }
+        if (pname == "edit") return;   // pure interactive-affordance state (HUD click semantics)
+        if (pname == "mode") {
+            applyModeLaw();
+            syncProxy();
+            if (armed_) rebuildCut();
+            return;
+        }
+        if (pname == "insertAt") { addSlice(insertAt_); return; }
+        if (pname == "removeCurrent") {
+            if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
+            return;
+        }
+        if (pname == "position") { scrubPosition(positionProxy_); return; }
+
         if (interactiveParamEdit && armed_) rebuildCut();
     }
     override void evaluate() {}
 
-    /// Single entry point for repositioning the ARMED standing preview —
-    /// the mesh-drag path (`onMouseMotion`), the HUD marker (app.d), and a
-    /// Tool-Properties panel edit of `Position` (`onParamChanged`) all
-    /// converge here so they can never diverge in effect. Clamps and, while
-    /// armed, re-runs `rebuildCut()` — so a HUD/panel scrub moves the
-    /// standing preview even with the mouse up.
+    /// Single entry point for repositioning the ARMED standing preview's
+    /// CURRENT slice — the mesh-drag path (`onMouseMotion`), the HUD marker
+    /// (app.d), and a Tool-Properties panel edit of `Position`
+    /// (`onParamChanged`) all converge here so they can never diverge in
+    /// effect. Clamps to (0,1) and applies the Mode law (task 0239 D3/D4),
+    /// then, while armed, re-runs `rebuildCut()`.
     public void scrubPosition(float p) {
         if      (p < 0.001f) p = 0.001f;
         else if (p > 0.999f) p = 0.999f;
-        position_ = p;
+
+        if (count_ <= 1) {
+            // Owner objection #1 (MAJOR, task 0239): Count<=1 ALWAYS honors
+            // the scrub regardless of Mode — a default Mode (Uniform) must
+            // never freeze a Count==1 Position at 0.5. Preserves the pre-
+            // 0239 T2 test AND the 0232 HUD scrub, both of which are
+            // Count==1-gated.
+            if (positions_.length == 0) positions_ ~= p;
+            else                        positions_[0] = p;
+            current_ = 0;
+        } else final switch (mode_) {
+            case Mode.Uniform:
+                // D3: the even-spacing law owns every position — a scrub is
+                // a no-op (preserves the pre-0239 T6 "Count>1 drag is a
+                // deliberate geometric no-op" test, since Uniform is the
+                // default Mode for Count>1).
+                break;
+            case Mode.Free:
+                if (current_ >= 0 && cast(size_t)current_ < positions_.length)
+                    positions_[current_] = p;
+                break;
+            case Mode.Symmetry:
+                if (current_ >= 0 && cast(size_t)current_ < positions_.length) {
+                    positions_[current_] = p;
+                    size_t mirror = cast(size_t)count_ - 1 - cast(size_t)current_;
+                    if (mirror != cast(size_t)current_ && mirror < positions_.length)
+                        positions_[mirror] = 1.0f - p;
+                }
+                break;
+        }
+        syncProxy();
+        if (armed_) rebuildCut();
+    }
+
+    /// Edit=Add: insert a NEW slice at fraction `t` (a click on the bare HUD
+    /// track, or the `insertAt` param headlessly). Count grows by one,
+    /// Current moves to the new slice, and the Mode law re-lays the whole
+    /// set (a no-op for Free, which keeps the appended `t` as-is).
+    public void addSlice(float t) {
+        if      (t < 0.001f) t = 0.001f;
+        else if (t > 0.999f) t = 0.999f;
+        positions_ ~= t;
+        count_   = cast(int)positions_.length;
+        current_ = cast(int)positions_.length - 1;
+        applyModeLaw();
+        syncProxy();
+        if (armed_) rebuildCut();
+    }
+
+    /// Edit=Remove: drop `positions_[current_]` (a click on a HUD marker, or
+    /// the `removeCurrent` trigger headlessly). Owner-decision D7: a no-op
+    /// at Count==1 (stays armed, does nothing — Remove never de-arms the
+    /// tool or drops below one slice).
+    public void removeSlice() {
+        if (count_ <= 1) return;
+        if (positions_.length > 0) {
+            size_t idx = (current_ >= 0 && cast(size_t)current_ < positions_.length)
+                       ? cast(size_t)current_ : positions_.length - 1;
+            positions_ = positions_[0 .. idx] ~ positions_[idx + 1 .. $];
+        }
+        count_ = cast(int)positions_.length;
+        if (current_ >= count_) current_ = count_ - 1;
+        if (current_ < 0) current_ = 0;
+        applyModeLaw();
+        syncProxy();
         if (armed_) rebuildCut();
     }
 
     // -------------------------------------------------------------------
-    // Headless apply (tool.doApply). Seeds from the FIRST SELECTED EDGE
-    // (mirrors MeshLoopSlice) — MUST NOT touch seedEdge_/armed_/scrubbing_/
-    // built_; ToolDoApplyCommand wraps this with its own snapshot pair.
+    // Headless apply (tool.doApply). Seeds from EVERY SELECTED EDGE (task
+    // 0239 — was: first-selected only, pre-0239) — MUST NOT touch seeds_/
+    // armed_/scrubbing_/built_; ToolDoApplyCommand wraps this with its own
+    // snapshot pair.
     // -------------------------------------------------------------------
     override bool applyHeadless() {
         if (*editMode != EditMode.Edges) return false;
         if (mesh.edges.length == 0)      return false;
         if (!mesh.hasAnySelectedEdges()) return false;
 
-        int ei = -1;
+        uint[] seeds;
         foreach (i, sel; mesh.selectedEdges)
-            if (sel) { ei = cast(int)i; break; }
-        if (ei < 0 || ei >= cast(int)mesh.edges.length) return false;
-
-        bool closed;
-        auto ring = mesh.collectEdgeRing(cast(uint)ei, closed);
-        if (ring.length == 0) return false;
+            if (sel) seeds ~= cast(uint)i;
+        if (seeds.length == 0) return false;
 
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoops(cast(uint)ei, positions(), newFaceIndices);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -415,36 +536,54 @@ public:
 
         if (armed_) {
             // D2 (task 0232): a press while already armed re-scrubs the
-            // SAME ring — seed stays fixed. To cut a different ring the
-            // user commits/cancels first. If the mesh underneath the armed
+            // SAME seed set. To cut a different ring/set the user
+            // commits/cancels first. If the mesh underneath the armed
             // preview was swapped/clobbered since our last touch, drop it
             // instead of re-engaging against the wrong target.
-            if (seedEdge_ < 0 || !armedKey_.matches(*mesh)) {
+            if (seeds_.length == 0 || !armedKey_.matches(*mesh)) {
                 dropArmedPreview();
                 return false;
             }
-            seedRail(cast(uint)seedEdge_, seedA_, seedB_);
+            seedRail(seeds_[0], seedA_, seedB_);
             scrubbing_ = true;
             return true;
         }
 
-        int hov = g_hoveredEdge;
-        if (hov < 0 || hov >= cast(int)mesh.edges.length) return false;
+        // Selection-based activation (task 0239 M2): a non-empty edge
+        // selection seeds from EVERY selected edge (multi-ring). Falls back
+        // to the 0228 single hover seed when nothing is selected — byte-
+        // for-byte preserved.
+        uint[] candSeeds;
+        if (mesh.hasAnySelectedEdges()) {
+            foreach (i, sel; mesh.selectedEdges)
+                if (sel && i < mesh.edges.length) candSeeds ~= cast(uint)i;
+        } else {
+            int hov = g_hoveredEdge;
+            if (hov < 0 || hov >= cast(int)mesh.edges.length) return false;
+            candSeeds = [cast(uint)hov];
+        }
+        if (candSeeds.length == 0) return false;
 
-        bool closed;
-        auto ring = mesh.collectEdgeRing(cast(uint)hov, closed);
-        if (ring.length == 0) return false;   // non-quad/boundary seed — no engage
+        // Require at least ONE candidate seed to yield a real ring — don't
+        // arm (latch armed_=true) on a set that would produce nothing (the
+        // 0228 no-engage-on-bad-seed guard, generalised to a set).
+        bool anyValid = false;
+        foreach (s; candSeeds) {
+            bool closed;
+            if (mesh.collectEdgeRing(s, closed).length > 0) { anyValid = true; break; }
+        }
+        if (!anyValid) return false;
 
-        seedEdge_ = hov;
-        seedRail(cast(uint)hov, seedA_, seedB_);
+        seeds_ = candSeeds;
+        seedRail(seeds_[0], seedA_, seedB_);
         armed_     = true;
         scrubbing_ = true;
         built_     = false;
         // Trusted baseline: this IS the mesh we're arming against (nothing
-        // could have swapped it out between the hover-read above and here,
-        // all synchronous within this one handler).
+        // could have swapped it out between the hover/selection read above
+        // and here, all synchronous within this one handler).
         armedKey_.stamp(*mesh);
-        rebuildCut();   // materialise the default-position cut immediately
+        rebuildCut();   // materialise the default-position cut(s) immediately
         return true;
     }
 
@@ -525,6 +664,10 @@ private:
     // relative to this. Documented v1 limitation (not invented/fixed here):
     // an open-ring drag may occasionally run toward the opposite end from
     // the cursor; the resulting cut is still valid, undoable geometry.
+    // (Task 0239: multi-seed drag reference is always seeds_[0]'s ring —
+    // the HUD/scrub is ONE shared track over the shared positions_[], per
+    // the plan; the OTHER seeded rings are cut with the SAME positions_ but
+    // don't need their own drag reference.)
     void seedRail(uint seedEdge, out Vec3 a, out Vec3 b) {
         uint firstFace = uint.max;
         foreach (fi; mesh.facesAroundEdge(seedEdge)) { firstFace = fi; break; }
@@ -542,39 +685,95 @@ private:
         b = mesh.vertices[vb];
     }
 
-    // Evenly-spaced positions for count_ > 1: (k+1)/(count_+1). count_ == 1
-    // uses the live drag position_ directly. Uniform is present for parity
-    // only — v1 has no Free per-slice law, so it does not change this.
-    float[] positions() const {
-        if (count_ <= 1) return [position_];
-        float[] pos;
-        pos.reserve(count_);
-        foreach (k; 0 .. count_)
-            pos ~= (k + 1.0f) / (count_ + 1.0f);
-        return pos;
+    // Re-lay `positions_` per the Mode law (task 0239). A no-op below
+    // Count==2 for either law (owner objection #1 — see `scrubPosition`):
+    // Count<=1 is ALWAYS just whatever `positions_[0]` currently is,
+    // regardless of Mode.
+    void applyModeLaw() {
+        if (count_ <= 1) return;
+        final switch (mode_) {
+            case Mode.Free:
+                break;   // independent positions — nothing to re-lay
+            case Mode.Uniform:
+            case Mode.Symmetry:
+                // `(k+1)/(count_+1)` is ALSO the correct symmetric-pairs-
+                // about-0.5 default for Symmetry (D4): position(k) and
+                // position(count_-1-k) always sum to 1 under this formula,
+                // so a fresh (re-)layout under either law looks identical —
+                // they diverge only in how a SUBSEQUENT scrub behaves
+                // (`scrubPosition` above).
+                foreach (k; 0 .. count_)
+                    positions_[k] = (k + 1.0f) / (count_ + 1.0f);
+                break;
+        }
+    }
+
+    // Grow/shrink `positions_` to match `count_` (a direct Count param
+    // write — headless-testable path for "Add grows / Remove shrinks", the
+    // count-only shape of Edit; the CURRENT-aware `addSlice`/`removeSlice`
+    // are what the HUD's Add-track-click / Remove-marker-click actually
+    // invoke). New slots default to 0.5 before the Mode law re-lays them.
+    void syncPositionsToCount() {
+        if (count_ < 1) count_ = 1;
+        if (positions_.length < cast(size_t)count_) {
+            while (positions_.length < cast(size_t)count_) positions_ ~= 0.5f;
+        } else if (positions_.length > cast(size_t)count_) {
+            positions_.length = cast(size_t)count_;
+        }
+        if (current_ >= count_) current_ = count_ - 1;
+        if (current_ < 0)       current_ = 0;
+        applyModeLaw();
+        syncProxy();
+    }
+
+    // Keep the Param-bound `positionProxy_` mirror in sync with
+    // `positions_[current_]` after ANY mutation that isn't itself driven by
+    // a "position" param write — so the Tool Properties panel always shows
+    // the TRUE current value (e.g. after a Uniform-mode scrub was ignored,
+    // or Current/Count/Mode changed which slot "Position" refers to).
+    void syncProxy() {
+        positionProxy_ = (positions_.length > 0
+                           && current_ >= 0 && cast(size_t)current_ < positions_.length)
+                        ? positions_[current_] : 0.5f;
+    }
+
+    // The kernel feed: a SORTED copy of positions_. `positions_`'s own
+    // array order follows insertion/Current-indexing history (stable
+    // addressing for the UI), but `insertEdgeLoopsMulti` builds each ring's
+    // sub-quad chain in ARRAY order — an out-of-order Free-mode scrub (a
+    // later slice's `t` smaller than an earlier one's) would otherwise fold
+    // the chain back on itself into a self-overlapping/degenerate sub-quad.
+    // Sorting the kernel feed is a pure safety measure: it is a no-op for
+    // every case the DoD specifies (Uniform/Symmetry are already
+    // monotonic-by-construction; Count<=1 is trivially sorted).
+    float[] kernelPositions() const {
+        auto copy = positions_.dup;
+        sort(copy);
+        return copy;
     }
 
     // The mutate/revert preview: restore the idle baseline, then reapply the
-    // cut from the ORIGINAL seedEdge_ index (valid again immediately after
-    // the restore — insertEdgeLoops rebuilds `edges` from scratch every call,
-    // so seedEdge_ would be stale against the mesh's CURRENT edge array).
+    // cut from the ORIGINAL seeds_ (valid again immediately after the
+    // restore — insertEdgeLoopsMulti rebuilds `edges`/`faces` from scratch
+    // every call, so seeds_ would be stale against the mesh's CURRENT edge
+    // array otherwise).
     //
     // Guarded by `armedKey_` (task 0232 fold #1): if the mesh underneath an
     // armed preview was swapped/clobbered by something else since our last
     // touch, drop the preview instead of restoring/inserting against the
     // WRONG mesh.
     void rebuildCut() {
-        if (!before_.filled || seedEdge_ < 0) return;
+        if (!before_.filled || seeds_.length == 0) return;
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         before_.restore(*mesh);
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoops(cast(uint)seedEdge_, positions(), newFaceIndices);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
         // Re-stamp regardless of `ok` — after this line the mesh is in a
         // KNOWN state WE produced (either the successful cut, or just the
-        // restored baseline if insertEdgeLoops failed).
+        // restored baseline if insertEdgeLoopsMulti failed).
         armedKey_.stamp(*mesh);
         refreshCaches();
     }
