@@ -1,0 +1,52 @@
+{
+  "name": "loop_slice_preview",
+  "description": "Loop Slice preview-state parity: transient tool state (count / mode / slice positions) read from /api/tool/state after activating on a seed edge.",
+  "source": "Self-golden capture via gen.py selfdrive-loopslice.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "belt_count3",
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "edges",
+            "coords": [
+              [
+                [
+                  -0.5,
+                  -0.5,
+                  -0.5
+                ],
+                [
+                  0.5,
+                  -0.5,
+                  -0.5
+                ]
+              ]
+            ]
+          }
+        },
+        {
+          "endpoint": "command",
+          "argstring": "tool.set mesh.loopSliceTool on"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "tool.attr mesh.loopSliceTool count 3"
+        }
+      ],
+      "state_checks": {
+        "count": 3,
+        "mode": "uniform",
+        "positions": [
+          0.25,
+          0.5,
+          0.75
+        ]
+      }
+    }
+  ]
+}

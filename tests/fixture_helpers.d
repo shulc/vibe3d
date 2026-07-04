@@ -420,6 +420,31 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
         cmd("tool.doApply", ctx);
         cmd(format("tool.set %s off", tl), ctx);
+    } else if ("loop_slice" in step) {
+        // Loop Slice tool (topology op — adds verts/edges/faces). Activates on
+        // the CURRENT edge selection (set by a prior {"select":{"mode":"edges",
+        // ...}} step), places the slices, and commits via tool.doApply.
+        //   { "loop_slice": { "positions": [t0, t1, ...] } }   // Free mode
+        //   { "loop_slice": { "count": N, "mode": "uniform" } } // N uniform slices
+        // `positions` lays the first slice via `position` and any extras via
+        // `insertAt` (each `insertAt` grows Count and makes the new slice
+        // Current); `count` lays N evenly-spaced slices under the given Mode.
+        auto ls = step["loop_slice"];
+        cmd("tool.set mesh.loopSliceTool on", ctx);
+        if ("positions" in ls) {
+            cmd("tool.attr mesh.loopSliceTool mode free", ctx);
+            auto ps = ls["positions"].array;
+            cmd(format("tool.attr mesh.loopSliceTool position %g", asDouble(ps[0])), ctx);
+            foreach (k; 1 .. ps.length)
+                cmd(format("tool.attr mesh.loopSliceTool insertAt %g", asDouble(ps[k])), ctx);
+        } else {
+            if ("mode" in ls)
+                cmd(format("tool.attr mesh.loopSliceTool mode %s", ls["mode"].str), ctx);
+            long cnt = ("count" in ls) ? ls["count"].integer : 1;
+            cmd(format("tool.attr mesh.loopSliceTool count %d", cnt), ctx);
+        }
+        cmd("tool.doApply", ctx);
+        cmd("tool.set mesh.loopSliceTool off", ctx);
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
@@ -557,5 +582,200 @@ private void runOneParity(string name, double tol,
             assert(fabs(postV[j][c] - expected[j][c]) <= tol,
                 format("%s: v%d[%d] reference=%.6f vibe3d=%.6f (tol %.1e)",
                        name, j, c, expected[j][c], postV[j][c], tol));
+    }
+}
+
+// ===========================================================================
+// Verifier shelf (tool-port pipeline Stage 2). A generated fixture declares a
+// "verifier" (chosen by the captured gesture's effect_class) that names one of
+// the runners below. `runParitySuite` above IS the `rigid-cluster` verifier
+// (the transform family); the runners here cover the other effect classes:
+//   topology-diff  — count deltas + per-vertex nearest-match (+ analytic lerp)
+//   preview-state  — hover/transient parity read from /api/tool/state (0234)
+//   attr-echo      — an attr edit echoes in tool state + its derived geometry
+// All are engine-neutral: the golden is frozen in the fixture, no external
+// reference tool runs at test time.
+// ===========================================================================
+
+// GET /api/model and return [vertexCount, edgeCount, faceCount].
+private long[3] readCounts() {
+    auto m = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    long ec = ("edgeCount" in m) ? m["edgeCount"].integer : -1;
+    return [m["vertexCount"].integer, ec, m["faceCount"].integer];
+}
+
+private void assertCounts(string name, string phase, JSONValue exp, long[3] got) {
+    if ("verts" in exp) assert(exp["verts"].integer == got[0],
+        format("%s: %s vertex count expected %d, got %d",
+               name, phase, exp["verts"].integer, got[0]));
+    if ("edges" in exp && got[1] >= 0) assert(exp["edges"].integer == got[1],
+        format("%s: %s edge count expected %d, got %d",
+               name, phase, exp["edges"].integer, got[1]));
+    if ("faces" in exp) assert(exp["faces"].integer == got[2],
+        format("%s: %s face count expected %d, got %d",
+               name, phase, exp["faces"].integer, got[2]));
+}
+
+// True iff some vibe3d vertex sits within `tol` of `p`.
+private bool hasVertexNear(double[3][] verts, double[3] p, double tol) {
+    double t2 = tol * tol;
+    foreach (v; verts) if (dist2(v, p) <= t2) return true;
+    return false;
+}
+
+// Approximate JSON equality: strings exact, bools by type, numbers within tol,
+// arrays element-wise. Used to compare an `expected` state fragment against the
+// live /api/tool/state.
+private bool jApproxEq(JSONValue e, JSONValue a, double tol) {
+    if (e.type == JSONType.array) {
+        if (a.type != JSONType.array || e.array.length != a.array.length) return false;
+        foreach (k; 0 .. e.array.length)
+            if (!jApproxEq(e.array[k], a.array[k], tol)) return false;
+        return true;
+    }
+    if (e.type == JSONType.string)
+        return a.type == JSONType.string && e.str == a.str;
+    if (e.type == JSONType.true_ || e.type == JSONType.false_)
+        return e.type == a.type;
+    return fabs(asDouble(e) - asDouble(a)) <= tol;   // numeric
+}
+
+/// `topology-diff` verifier. For each case: run `input` (reach the pre-op
+/// mesh), optionally assert `expected_before` counts, run `op` (the topology-
+/// changing gesture, e.g. loop_slice), then assert `expected_after` counts and
+/// that vibe3d's post-op vertices match the frozen golden by BIDIRECTIONAL
+/// nearest-match (a topology-changing op renumbers verts, so match by position
+/// both ways rather than by index).
+/// Optional `lerp_checks` add a reference-INDEPENDENT analytic assertion: each
+/// new vertex must sit at lerp(a, b, t) of a pre-op edge (a Loop Slice cut lands
+/// every new vertex on its rail at the slice parameter). Schema:
+///   { "name": "...", "tolerance": 1e-4,
+///     "cases": [ { "name": "...", "input": [...], "op": [...],
+///                  "expected_before": {"verts":V,"edges":E,"faces":F},
+///                  "expected_after":  {"verts":V,"edges":E,"faces":F},
+///                  "expected_vertices": [[x,y,z], ...],
+///                  "lerp_checks": [ {"a":[..],"b":[..],"t":0.3,"point":[..]} ]
+///                } ] }
+void runTopologyDiffSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<topo-suite>";
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+        if ("expected_before" in cs)
+            assertCounts(cn, "before", cs["expected_before"], readCounts());
+
+        foreach (i, step; cs["op"].array) runStep(step, cn, "op", i);
+        if ("expected_after" in cs)
+            assertCounts(cn, "after", cs["expected_after"], readCounts());
+
+        auto got = readVertices();
+        if ("expected_vertices" in cs) {
+            auto want = cs["expected_vertices"].array;
+            foreach (w; want) {
+                double[3] wp = jvec3(w);
+                assert(hasVertexNear(got, wp, tol),
+                    format("%s: golden vertex [%.4f,%.4f,%.4f] has no vibe3d "
+                           ~ "match (tol %.1e)", cn, wp[0], wp[1], wp[2], tol));
+            }
+            foreach (g; got) {
+                bool found = false;
+                foreach (w; want) if (dist2(g, jvec3(w)) <= tol*tol) { found = true; break; }
+                assert(found,
+                    format("%s: vibe3d vertex [%.4f,%.4f,%.4f] not in golden "
+                           ~ "set (tol %.1e)", cn, g[0], g[1], g[2], tol));
+            }
+        }
+        if ("lerp_checks" in cs) {
+            foreach (lc; cs["lerp_checks"].array) {
+                double[3] a = jvec3(lc["a"]), b = jvec3(lc["b"]);
+                double t = asDouble(lc["t"]);
+                double[3] p = [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+                if ("point" in lc) {
+                    double[3] pt = jvec3(lc["point"]);
+                    assert(dist2(p, pt) <= tol*tol,
+                        format("%s: lerp(a,b,%.4f)=[%.4f,%.4f,%.4f] != frozen "
+                               ~ "point [%.4f,%.4f,%.4f]", cn, t,
+                               p[0],p[1],p[2], pt[0],pt[1],pt[2]));
+                }
+                assert(hasVertexNear(got, p, tol),
+                    format("%s: no vibe3d vertex at lerp(a,b,%.4f)="
+                           ~ "[%.4f,%.4f,%.4f] (slice vert missing; tol %.1e)",
+                           cn, t, p[0], p[1], p[2], tol));
+            }
+        }
+    }
+}
+
+/// `preview-state` verifier. Runs `input` (which activates the tool, e.g.
+/// selecting a seed edge + `tool.set`), then asserts the live /api/tool/state
+/// (0234) matches the frozen `state_checks` fragment — hover/transient parity
+/// by DATA, no screenshots. Schema:
+///   { "name": "...", "tolerance": 1e-4,
+///     "cases": [ { "name": "...", "input": [...],
+///                  "state_checks": { "count": 1, "mode": "free",
+///                                    "positions": [0.5] } } ] }
+void runPreviewStateSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<preview-suite>";
+    double tol   = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    foreach (cs; fx["cases"].array) {
+        string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+        auto st = parseJSON(cast(string) get(BASE ~ "/api/tool/state"));
+        foreach (string key, exp; cs["state_checks"].object) {
+            assert(key in st, format("%s: tool/state missing key '%s'", cn, key));
+            assert(jApproxEq(exp, st[key], tol),
+                format("%s: tool/state['%s'] expected %s, got %s",
+                       cn, key, exp.toString, st[key].toString));
+        }
+    }
+}
+
+/// `attr-echo` verifier. Runs `input` (activate the tool), sets one attr, and
+/// asserts it echoes back in /api/tool/state (`echo`) — then optionally commits
+/// (`op`) and checks the attr's DERIVED geometry appears (`derived_vertices`,
+/// nearest-match). Schema:
+///   { "name": "...", "tolerance": 1e-4,
+///     "cases": [ { "name": "...", "input": [...],
+///                  "attr": { "tool": "mesh.loopSliceTool", "name": "position",
+///                            "value": 0.3 },
+///                  "echo": { "position": 0.3 },
+///                  "op": [ {"loop_slice": {"positions":[0.3]}} ],
+///                  "derived_vertices": [[x,y,z], ...] } ] }
+void runAttrEchoSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<attr-echo-suite>";
+    double tol   = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    foreach (cs; fx["cases"].array) {
+        string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+
+        auto at = cs["attr"];
+        cmd(format("tool.attr %s %s %g",
+                   at["tool"].str, at["name"].str, asDouble(at["value"])), cn);
+
+        auto st = parseJSON(cast(string) get(BASE ~ "/api/tool/state"));
+        foreach (string key, exp; cs["echo"].object) {
+            assert(key in st, format("%s: tool/state missing echoed key '%s'", cn, key));
+            assert(jApproxEq(exp, st[key], tol),
+                format("%s: attr echo '%s' expected %s, got %s",
+                       cn, key, exp.toString, st[key].toString));
+        }
+
+        if ("op" in cs)
+            foreach (i, step; cs["op"].array) runStep(step, cn, "op", i);
+        if ("derived_vertices" in cs) {
+            auto got = readVertices();
+            foreach (w; cs["derived_vertices"].array) {
+                double[3] wp = jvec3(w);
+                assert(hasVertexNear(got, wp, tol),
+                    format("%s: derived vertex [%.4f,%.4f,%.4f] absent after "
+                           ~ "attr edit (tol %.1e)", cn, wp[0], wp[1], wp[2], tol));
+            }
+        }
     }
 }
