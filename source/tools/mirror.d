@@ -3,6 +3,7 @@ module tools.mirror;
 import bindbc.opengl;
 import bindbc.sdl;
 import operator : VectorStack;
+import std.math : PI;
 
 import tool;
 import mesh;
@@ -14,8 +15,8 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
-import handler : MoveHandler, ToolHandles, Arrow;
-import drag : axisDragDelta, planeDragDelta;
+import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
+import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import eventlog : queryMouse;
 
 version (unittest) import std.conv : to;
@@ -42,8 +43,8 @@ void rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 {
     baseSnap.restore(previewMesh);
     float weld = params_.mergeVerts ? params_.distance : 0.0f;
-    previewMesh.mirrorFaces(baseMask, "XYZ"[params_.axis], params_.center,
-                            weld, params_.invertPolys);
+    previewMesh.mirrorFacesPlane(baseMask, params_.center, toolNormal(params_),
+                                 weld, params_.invertPolys);
     previewMesh.buildLoops();
 }
 
@@ -52,32 +53,103 @@ void rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // BoxParams, box.d:46). Every handle drag and every panel edit writes into
 // this struct; render + handle position + commit derive from it on demand.
 //
-// v1 is axis-aligned (Mesh.mirrorFaces, mesh.d:4172): axis/center/
-// invertPolys/mergeVerts/distance are live. angle/mode/left/up are shown in
-// the panel (matching the reference layout) but greyed via paramEnabled() —
-// they have no backend wiring yet (v2: oriented Center/Left/Up plane).
+// v2 (task 0230): the mirror plane is ORIENTED (arbitrary normal), not just
+// axis-aligned. `axis` + `angle` together are the single source of truth for
+// the plane normal — see `toolNormal(in MirrorParams)` below, a PURE function
+// of this struct (NOT a tool-cached field: the free preview path
+// `rebuildMirrorPreview` has no MirrorTool instance to read a cached normal
+// from). The rotate box (M4) writes ONLY `angle`; `Axis` presets (X/Y/Z) set
+// the base direction `angle` rotates away from. `left`/`up` are DERIVED
+// readouts (an orthonormal basis of the current normal) recomputed in
+// `evaluate()` — read-only in v2 (owner decision (d): editable Left/Up would
+// need a 3rd rotate input path, deferred).
+//
+// `distance`/`mergeVerts`/`invertPolys` are unchanged from v1.
+// `mode` stays greyed to Axis (Free-Rotation/Three-Points deferred).
 // ---------------------------------------------------------------------------
 struct MirrorParams {
-    int   axis        = 0;            // 0=X 1=Y 2=Z — mirrorFaces wants uppercase 'X'/'Y'/'Z'
+    int   axis        = 0;            // 0=X 1=Y 2=Z — base direction `angle` rotates away from
     Vec3  center       = Vec3(0, 0, 0);
     bool  invertPolys  = true;         // -> mirrorFaces flipNormals
     bool  mergeVerts   = true;         // gates the weld pass
     float distance     = 0.001f;       // -> mirrorFaces weld (only when mergeVerts)
-    // --- shown but greyed in v1 (no backend wiring yet; v2 oriented plane) ---
+    // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
+    // Default 180 is the captured reference default (0227 design). Harmless
+    // for the mirror OPERATION regardless of value: reflection is invariant
+    // under negating the plane normal (v - n*(2*dot(v-c,n)) is unchanged by
+    // n -> -n, since both the dot term and the outer factor flip sign), and
+    // rotating a fixed axis by exactly 180 degrees about any perpendicular
+    // reference axis just negates it — so the DEFAULT axis-aligned geometry
+    // is byte-for-byte the same as if angle were 0.
     float angle = 180.0f;
-    int   mode  = 0;                   // 0=Axis (only value live)
+    int   mode  = 0;                   // 0=Axis (only value live; Free-Rotation/Three-Points deferred)
+    // --- derived readouts (written by evaluate(), read-only in the panel) ---
     Vec3  left  = Vec3(0, 0, 0);
     Vec3  up    = Vec3(0, 0, 0);
 }
 
 // ---------------------------------------------------------------------------
-// MirrorTool — interactive generator tool wrapping Mesh.mirrorFaces
-// (source/mesh.d:4172). Modelled on BoxTool (source/tools/box.d): the
+// unitAxis / refAxis / toolNormal — the oriented-plane normal, a PURE
+// function of MirrorParams (task 0230, opponent objection #2). No tool field
+// caches this; every call site (preview, commit, headless, handle draw)
+// recomputes it from `params_` directly.
+// ---------------------------------------------------------------------------
+
+/// The Axis preset's base unit direction (before any rotate-box tilt).
+Vec3 unitAxis(int axis) pure nothrow @nogc @safe {
+    final switch (axis) {
+        case 0: return Vec3(1, 0, 0);
+        case 1: return Vec3(0, 1, 0);
+        case 2: return Vec3(0, 0, 1);
+    }
+}
+
+/// The FIXED in-plane reference axis the rotate-box single-DOF drag turns
+/// `angle` about — perpendicular to `unitAxis(axis)`, constant for the whole
+/// gesture (does NOT retarget off the live tilting normal: recomputing it
+/// from the current normal mid-drag would reintroduce the documented
+/// mid-drag basis-flip/oscillation family from the transform-tool handles).
+/// Convention (task 0230 spec): base X -> ref Z; base Y -> ref X; base Z ->
+/// ref X. Any fixed, per-axis-perpendicular choice works — this one just
+/// needs to stay consistent between draw() and the drag handler.
+Vec3 refAxis(int axis) pure nothrow @nogc @safe {
+    final switch (axis) {
+        case 0: return Vec3(0, 0, 1);   // base X -> ref Z
+        case 1: return Vec3(1, 0, 0);   // base Y -> ref X
+        case 2: return Vec3(1, 0, 0);   // base Z -> ref X
+    }
+}
+
+/// The live mirror-plane normal: `R(angle, refAxis(axis)) * unitAxis(axis)`.
+/// Single-DOF Axis-mode rotation (task 0230 design §Risk 3) — recommended
+/// over a full free-rotation basis since there is no geometry golden to pin
+/// the drag->angle transfer (a UX-mapping divergence, not a mesh-geometry
+/// one: the reflection itself is deterministic given center+normal).
+Vec3 toolNormal(in MirrorParams p) {
+    float rad = p.angle * (PI / 180.0f);
+    auto  R   = pivotRotationMatrix(Vec3(0, 0, 0), refAxis(p.axis), rad);
+    return normalize(transformPoint(R, unitAxis(p.axis)));
+}
+
+/// Derived Up/Left readouts (task 0230 M5, owner decision (d): read-only in
+/// v2) — an orthonormal basis of the current normal, built from the same
+/// fixed `refAxis` the rotate box turns about so the panel's Left/Up track
+/// the live plane without a separate stored basis.
+Vec3 derivedUp(in MirrorParams p) pure nothrow @nogc @safe { return refAxis(p.axis); }
+Vec3 derivedLeft(in MirrorParams p) {
+    return normalize(cross(derivedUp(p), toolNormal(p)));
+}
+
+// ---------------------------------------------------------------------------
+// MirrorTool — interactive generator tool wrapping Mesh.mirrorFacesPlane
+// (source/mesh.d, task 0230). Modelled on BoxTool (source/tools/box.d): the
 // document mesh is never mutated during interaction, only in deactivate().
 //
-// v1 = axis-aligned (Axis + Center live; Angle/Mode/Left/Up greyed).
-// M1 (this milestone): panel + commit-on-deactivate only — no handle, no
-// preview mesh yet (M2/M3).
+// v2 (task 0230) = ORIENTED plane (Axis + Angle + Center all live; Left/Up
+// derived readouts; Mode greyed to Axis). Two box handles: `mover.centerBox`
+// (enlarged — "large box": click-to-place + drag-move the plane center) and
+// `rotateBox` (small — drags `angle`, tilting the plane about the fixed
+// `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
 class MirrorTool : Tool {
 private:
@@ -112,6 +184,10 @@ private:
     bool  cachedInvert;
     bool  cachedMerge;
     float cachedDistance;
+    float cachedAngle;   // task 0230 M2: normal is derived from axis+angle —
+                         // an angle-only edit (rotate-box drag) must also
+                         // invalidate the cache, or the preview silently
+                         // no-ops on orientation changes.
 
     // Commit guard (§4.2 of the impl plan): true once the user has actually
     // interacted (handle drag / param edit / headless attr write). Prevents
@@ -121,16 +197,29 @@ private:
     CommandHistory    history;
     MirrorEditFactory mirrorEditFactory;
 
-    // ----- Center handle (M2) — axis-aligned drag only (§3 of the impl
-    // plan): reuse MoveHandler exactly as BoxTool does (box.d:1857/1896),
-    // with the three plane-corner circles hidden so only the 3 axis arrows
-    // + center box remain. World-axis orientation (no workplane concept —
-    // the mirror plane is genuinely world-axis-aligned in v1).
+    // ----- Center handle (M2) — reuse MoveHandler exactly as BoxTool does
+    // (box.d:1857/1896), with the three plane-corner circles hidden so only
+    // the 3 axis arrows + center box remain. World-axis orientation (the
+    // arrows stay world-XYZ; only the mirror PLANE itself tilts via
+    // `toolNormal` — the arrows are a coarse per-axis move aid, not meant to
+    // track the tilt). `mover.centerBoxScale` (handler.d) enlarges the center
+    // box into the reference's "large box".
     MoveHandler mover;
+    // ----- Rotate box (M4) — small BoxHandler, world position derived each
+    // frame from `center + toolNormal(params_) * rotateArm(...)`; dragging it
+    // writes `params_.angle` only (see onMouseMotion).
+    BoxHandler  rotateBox;
     ToolHandles toolHandles;
-    int      moverDragAxis = -1;  // 0/1/2 = X/Y/Z arrow, 3 = centerBox, -1 = none
+    int      moverDragAxis = -1;  // 0/1/2 = X/Y/Z arrow, 3 = centerBox, 4 = rotateBox, -1 = none
     int      moverLastMX, moverLastMY;
     Viewport cachedVp;
+
+    // ----- Plane visualization (M4) — a wire quad ⟂ normal + a dashed line
+    // along the normal through center, both rebuilt (world-space vertex data
+    // re-uploaded) every draw() call — mirrors MoveTool's constraintLineVao
+    // pattern (tools/move.d:492-506): lazy VAO init, GL_DYNAMIC_DRAW update.
+    GLuint planeQuadVao, planeQuadVbo;
+    GLuint axisLineVao,  axisLineVbo;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
@@ -141,11 +230,16 @@ public:
         mover.circleXY.setVisible(false);
         mover.circleYZ.setVisible(false);
         mover.circleXZ.setVisible(false);
+        mover.centerBoxScale = 2.4f;   // "large box" — reads distinctly bigger than rotateBox
+        rotateBox = new BoxHandler(Vec3(0, 0, 0), Vec3(0.95f, 0.55f, 0.05f));
         toolHandles = new ToolHandles();
     }
 
     void destroy() {
         mover.destroy();
+        rotateBox.destroy();
+        if (planeQuadVao != 0) { glDeleteVertexArrays(1, &planeQuadVao); glDeleteBuffers(1, &planeQuadVbo); }
+        if (axisLineVao  != 0) { glDeleteVertexArrays(1, &axisLineVao);  glDeleteBuffers(1, &axisLineVbo); }
     }
 
     /// CPU-only preview rebuild (fold #2) — no GL calls, so it can be driven
@@ -184,8 +278,8 @@ public:
         size_t inserted = 0;
         if (willCommit) {
             float weld = params_.mergeVerts ? params_.distance : 0.0f;
-            inserted = mesh.mirrorFaces(commitMask(), "XYZ"[params_.axis],
-                                        params_.center, weld, params_.invertPolys);
+            inserted = mesh.mirrorFacesPlane(commitMask(), params_.center,
+                                             toolNormal(params_), weld, params_.invertPolys);
             if (inserted > 0) {
                 mesh.buildLoops();
                 gpu.upload(*mesh);
@@ -262,19 +356,22 @@ public:
             Param.bool_("invertPolys", "Invert Polygons", &params_.invertPolys, true),
             Param.bool_("mergeVerts", "Merge Vertices", &params_.mergeVerts, true),
             Param.float_("distance", "Distance", &params_.distance, 0.001f).min(0.0f),
-            // --- shown but greyed (v2 oriented plane) ---
+            // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
             Param.float_("angle", "Angle", &params_.angle, 180.0f).angle(),
+            // Mode stays greyed to Axis — Free-Rotation/Three-Points deferred.
             Param.intEnum_("mode", "Mode", cast(int*)&params_.mode,
                 [IntEnumEntry(0, "axis", "Axis")], 0),
-            Param.vec3_("left", "Left", &params_.left, Vec3(0, 0, 0)),
-            Param.vec3_("up", "Up", &params_.up, Vec3(0, 0, 0)),
+            // Left/Up are DERIVED readouts (written in evaluate()) — read-only
+            // in v2 (owner decision (d)): editing them would need a 3rd rotate
+            // input path on top of the rotate box's single `angle` DOF.
+            Param.vec3_("left", "Left", &params_.left, Vec3(0, 0, 0)).readonly(),
+            Param.vec3_("up", "Up", &params_.up, Vec3(0, 0, 0)).readonly(),
         ];
     }
 
     override bool paramEnabled(string name) const {
-        // v2-deferred fields: shown but greyed in v1.
-        if (name == "angle" || name == "mode" || name == "left" || name == "up")
-            return false;
+        // Mode stays greyed to Axis-only (Free-Rotation/Three-Points deferred).
+        if (name == "mode") return false;
         // Distance only matters when merge is on.
         if (name == "distance") return params_.mergeVerts;
         return true;
@@ -291,8 +388,8 @@ public:
     override bool applyHeadless() {
         bool[] mask = buildMaskFromSelection();
         float weld  = params_.mergeVerts ? params_.distance : 0.0f;
-        size_t inserted = mesh.mirrorFaces(mask, "XYZ"[params_.axis],
-                                           params_.center, weld, params_.invertPolys);
+        size_t inserted = mesh.mirrorFacesPlane(mask, params_.center,
+                                                toolNormal(params_), weld, params_.invertPolys);
         if (inserted == 0) return false;
         mesh.buildLoops();
         gpu.upload(*mesh);
@@ -312,17 +409,25 @@ public:
             && cachedCenter   == params_.center
             && cachedInvert   == params_.invertPolys
             && cachedMerge    == params_.mergeVerts
-            && cachedDistance == params_.distance)
+            && cachedDistance == params_.distance
+            && cachedAngle    == params_.angle)
             return;
 
         rebuildPreviewMesh();
         previewGpu.upload(previewMesh);
+
+        // Derived Left/Up readouts (task 0230 M5) — recomputed alongside the
+        // preview since both are pure functions of axis+angle, the exact
+        // fields this dirty guard already keys on.
+        params_.left = derivedLeft(params_);
+        params_.up   = derivedUp(params_);
 
         cachedAxis       = params_.axis;
         cachedCenter     = params_.center;
         cachedInvert     = params_.invertPolys;
         cachedMerge      = params_.mergeVerts;
         cachedDistance   = params_.distance;
+        cachedAngle      = params_.angle;
         havePreviewCache = true;
     }
 
@@ -363,14 +468,29 @@ public:
         mover.setPosition(params_.center);
         mover.setOrientation(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
 
+        // --- Rotate box + plane viz (M4) — derived every frame from
+        // toolNormal(params_); computed regardless of `visualOnly` so the
+        // plane/handle reprojects correctly in every Quad cell (tool.d:132
+        // contract), matching the preview draw above.
+        Vec3  curNormal = toolNormal(params_);
+        float gs        = gizmoSize(params_.center, vp);
+        float arm       = gs * 0.55f;
+        rotateBox.pos  = params_.center + curNormal * arm;
+        rotateBox.size = gs * 0.03f;
+
+        drawPlaneViz(vp, params_.center, curNormal, gs, shader.program);
+        rotateBox.draw(shader, vp);
+
         if (!visualOnly) {
             toolHandles.begin();
             toolHandles.add(mover.centerBox, 13);
             toolHandles.add(mover.arrowX,    10);
             toolHandles.add(mover.arrowY,    11);
             toolHandles.add(mover.arrowZ,    12);
+            toolHandles.add(rotateBox,       14);
             if (moverDragAxis >= 0)
-                toolHandles.setHaul(moverDragAxis <= 2 ? 10 + moverDragAxis : 13);
+                toolHandles.setHaul(moverDragAxis <= 2 ? 10 + moverDragAxis
+                                    : moverDragAxis == 3 ? 13 : 14);
             else
                 toolHandles.setHaul(-1);
             int hmx, hmy;
@@ -381,13 +501,121 @@ public:
         mover.draw(shader, vp);
     }
 
+    /// Wire quad ⟂ `normal` at `center` + a dashed line along `normal` through
+    /// `center` — the mirror-plane visualization (task 0230 M4). Lazy VAO
+    /// init + `GL_DYNAMIC_DRAW` re-upload every call, mirroring MoveTool's
+    /// `constraintLineVao` pattern (tools/move.d:492-506): the geometry (world
+    /// positions) changes every frame the plane tilts or moves, so there is no
+    /// static VAO to reuse — only the buffer OBJECT is cached.
+    private void drawPlaneViz(const ref Viewport vp, Vec3 center, Vec3 normal, float gs,
+                              GLuint restoreProgram) {
+        immutable Vec3 planeColor = Vec3(0.85f, 0.25f, 0.85f);   // magenta, matches the reference viz
+
+        // In-plane orthonormal basis (⟂ normal) — same construction as
+        // handler.d's private `localFrame`, inlined here since that helper
+        // isn't exported.
+        Vec3 tmp = (normal.x < 0.9f && normal.x > -0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+        Vec3 tA  = normalize(cross(normal, tmp));
+        Vec3 tB  = cross(normal, tA);
+
+        float qs = gs * 0.9f;
+        Vec3 c0 = center + tA * qs + tB * qs;
+        Vec3 c1 = center - tA * qs + tB * qs;
+        Vec3 c2 = center - tA * qs - tB * qs;
+        Vec3 c3 = center + tA * qs - tB * qs;
+        float[12] quadData = [
+            c0.x, c0.y, c0.z,  c1.x, c1.y, c1.z,
+            c2.x, c2.y, c2.z,  c3.x, c3.y, c3.z,
+        ];
+
+        if (planeQuadVao == 0) {
+            glGenVertexArrays(1, &planeQuadVao);
+            glGenBuffers(1, &planeQuadVbo);
+            glBindVertexArray(planeQuadVao);
+            glBindBuffer(GL_ARRAY_BUFFER, planeQuadVbo);
+            glBufferData(GL_ARRAY_BUFFER, quadData.sizeof, quadData.ptr, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+        } else {
+            glBindBuffer(GL_ARRAY_BUFFER, planeQuadVbo);
+            glBufferData(GL_ARRAY_BUFFER, quadData.sizeof, quadData.ptr, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        // Dashed axis/normal line through center, drawn as a series of short
+        // GL_LINES segments (GL 3.3 core has no glLineStipple).
+        float dashLen = qs * 0.10f;
+        float gapLen  = qs * 0.07f;
+        float axisLen = qs * 1.3f;
+        float[] axisData;
+        for (float t = -axisLen; t < axisLen; t += dashLen + gapLen) {
+            float t1 = t + dashLen;
+            if (t1 > axisLen) t1 = axisLen;
+            Vec3 p0 = center + normal * t;
+            Vec3 p1 = center + normal * t1;
+            axisData ~= [p0.x, p0.y, p0.z, p1.x, p1.y, p1.z];
+        }
+        int axisVertCount = cast(int)(axisData.length / 3);
+
+        if (axisLineVao == 0) {
+            glGenVertexArrays(1, &axisLineVao);
+            glGenBuffers(1, &axisLineVbo);
+            glBindVertexArray(axisLineVao);
+            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
+            glBufferData(GL_ARRAY_BUFFER, axisData.length * float.sizeof, axisData.ptr, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+        } else {
+            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
+            glBufferData(GL_ARRAY_BUFFER, axisData.length * float.sizeof, axisData.ptr, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        glDisable(GL_DEPTH_TEST);
+        drawThickLinesExt(planeQuadVao, 4, GL_LINE_LOOP, identityMatrix, vp,
+                          planeColor, 1.5f, restoreProgram);
+        if (axisVertCount > 0)
+            drawThickLinesExt(axisLineVao, axisVertCount, GL_LINES, identityMatrix, vp,
+                              planeColor, 1.5f, restoreProgram);
+        glEnable(GL_DEPTH_TEST);
+    }
+
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
 
         int hit = moverHitTest(e.x, e.y);
-        if (hit < 0) return false;
+        if (hit < 0) {
+            // Click-to-place (task 0230 M3): a viewport click that misses
+            // every handle places the plane center under the cursor,
+            // projected onto a SCREEN-FACING plane through the CURRENT
+            // center — a fresh placement lands at the prior center's depth
+            // regardless of the mirror plane's own tilt, mirroring the
+            // transform tool's relocate feel. The upstream viewport-input
+            // gate (app.d's onMouseButtonDown dispatch, which only reaches a
+            // tool for genuine viewport clicks — not cell-widget/camera-chord
+            // ones) already filters what gets here; no extra gate is added
+            // (opponent objection #4: tools cannot call the nested
+            // viewportInputAllowed() app.d helper directly).
+            //
+            // Behaviour change vs v1 (documented, task 0230 §Risk 4): a
+            // no-handle click used to fall through to selection-clear; while
+            // Mirror is active it now places the center instead.
+            Vec3 origin, dir;
+            screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, origin, dir);
+            Vec3 planeN = cameraForwardDir(cachedVp);
+            Vec3 hitPt;
+            if (rayPlaneIntersect(origin, dir, params_.center, planeN, hitPt)) {
+                params_.center = hitPt;
+                engaged = true;
+                evaluate();
+                return true;
+            }
+            return false;
+        }
         moverDragAxis = hit;
         moverLastMX   = e.x;
         moverLastMY   = e.y;
@@ -404,6 +632,34 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (moverDragAxis < 0) return false;
+
+        if (moverDragAxis == 4) {
+            // Rotate box (M4): single-DOF drag along the tangent direction
+            // `refAxis(axis) × currentNormal` — the direction the box itself
+            // moves along as `angle` increases — converted to an angle delta
+            // via arc length / radius (radius = the SAME `arm` used to place
+            // the box in draw(), so the pixel/degree ratio matches what's
+            // rendered). Reuses `screenAxisDelta` (drag.d) rather than a
+            // bespoke projection, consistent with the center handle's reuse
+            // of axisDragDelta/planeDragDelta.
+            Vec3  curNormal = toolNormal(params_);
+            Vec3  rAxis     = refAxis(params_.axis);
+            Vec3  tangent   = normalize(cross(rAxis, curNormal));
+            float arm       = gizmoSize(params_.center, cachedVp) * 0.55f;
+            bool skip;
+            Vec3 delta = screenAxisDelta(e.x, e.y, moverLastMX, moverLastMY,
+                                         rotateBox.pos, tangent, cachedVp, skip);
+            if (!skip && arm > 1e-6f) {
+                float d = dot(delta, tangent);   // signed world length along tangent
+                params_.angle += (d / arm) * (180.0f / PI);
+                engaged = true;
+                evaluate();
+            }
+            moverLastMX = e.x;
+            moverLastMY = e.y;
+            return true;
+        }
+
         bool skip;
         Vec3 delta = moverDragAxis <= 2
             ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
@@ -423,8 +679,11 @@ public:
     /// Mirrors BoxTool.moverHitTest (box.d:2768) — Arrow.hitTest is
     /// `protected` (handler.d), so the segment-distance test is duplicated
     /// here rather than called; BoxHandler.hitTest is re-exported public
-    /// (handler.d:1086) so centerBox can be hit-tested directly.
+    /// (handler.d:1086) so centerBox/rotateBox can be hit-tested directly.
+    /// rotateBox is tested FIRST — it is the smaller target and (depending on
+    /// camera distance) can sit close to the enlarged centerBox's screen area.
     private int moverHitTest(int mx, int my) {
+        if (rotateBox.hitTest(mx, my, cachedVp)) return 4;
         if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
         Arrow[3] arrows = [mover.arrowX, mover.arrowY, mover.arrowZ];
         foreach (i, arrow; arrows) {
@@ -439,6 +698,15 @@ public:
         }
         return -1;
     }
+}
+
+/// Camera forward direction from a Viewport's view matrix (not necessarily
+/// unit length — rayPlaneIntersect's t = dot(n,d)/dot(n,dir) is invariant
+/// under scaling n, so this is safe to use unnormalized as a plane normal).
+/// Not exported from math.d as a reusable helper; inlined here since it's
+/// only needed for the click-to-place screen-facing plane (M3).
+private Vec3 cameraForwardDir(const ref Viewport vp) pure nothrow @nogc @safe {
+    return Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +750,58 @@ unittest {
             assert(previewMesh.faces.length == expectedFaces,
                 "preview accumulated faces on repeat #" ~ i.to!string ~ ": expected "
                 ~ expectedFaces.to!string ~ ", got " ~ previewMesh.faces.length.to!string);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TILTED-plane non-cumulative preview (task 0230 M2 §5) — the same 5×-repeat
+// proof as above, but with a genuinely non-axis-aligned normal (angle=45 off
+// the X axis) to prove the oriented-plane preview path (rebuildMirrorPreview
+// -> mirrorFacesPlane -> toolNormal) is non-cumulative too, not just the
+// axis-aligned v1 path exercised above.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    Mesh cube = makeCube();               // 8 verts, 6 faces
+    MeshSnapshot baseSnap = MeshSnapshot.capture(cube);
+    bool[] baseMask = new bool[](cube.faces.length);
+    baseMask[] = true;                    // whole-mesh mirror
+
+    MirrorParams params_;
+    params_.axis        = 0;              // base X ...
+    params_.angle       = 45.0f;          // ... tilted 45 degrees off-axis
+    params_.center      = Vec3(1, 0, 0);
+    params_.mergeVerts  = false;          // weld = 0 -> no dedup
+    params_.invertPolys = true;
+
+    // Sanity: this really is a non-axis-aligned normal (not incidentally
+    // reducing to +-X/+-Y/+-Z), so the test exercises the oriented path.
+    Vec3 n = toolNormal(params_);
+    assert(n.x > 0.01f && n.y > 0.01f && abs(n.z) < 1e-4f,
+        "test setup: expected a tilted-in-XY normal, got " ~ n.to!string);
+
+    Mesh previewMesh;
+    size_t expectedVerts = size_t.max, expectedFaces = size_t.max;
+    foreach (i; 0 .. 5) {
+        rebuildMirrorPreview(baseSnap, previewMesh, baseMask, params_);
+        if (i == 0) {
+            expectedVerts = previewMesh.vertices.length;
+            expectedFaces = previewMesh.faces.length;
+            assert(expectedVerts == 16, "tilted preview: expected 16 verts, got "
+                ~ expectedVerts.to!string);
+            assert(expectedFaces == 12, "tilted preview: expected 12 faces, got "
+                ~ expectedFaces.to!string);
+        } else {
+            assert(previewMesh.vertices.length == expectedVerts,
+                "tilted preview accumulated verts on repeat #" ~ i.to!string
+                ~ ": expected " ~ expectedVerts.to!string ~ ", got "
+                ~ previewMesh.vertices.length.to!string);
+            assert(previewMesh.faces.length == expectedFaces,
+                "tilted preview accumulated faces on repeat #" ~ i.to!string
+                ~ ": expected " ~ expectedFaces.to!string ~ ", got "
+                ~ previewMesh.faces.length.to!string);
         }
     }
 }

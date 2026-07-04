@@ -795,6 +795,13 @@ class MoveHandler : Handler {
         axisX = ax; axisY = ay; axisZ = az;
     }
 
+    // Multiplier applied on top of the default `size*0.04` centerBox
+    // half-extent. Default 1.0 leaves every existing MoveHandler user
+    // (MoveTool, primitive movers) byte-identical; MirrorTool (task 0230)
+    // sets this > 1 so its "large box" click-to-place/move handle reads
+    // distinctly bigger than the small rotate box beside it.
+    float centerBoxScale = 1.0f;
+
     this(Vec3 center) {
         this.center = center;
         arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
@@ -852,7 +859,7 @@ class MoveHandler : Handler {
         arrowZ.end   = center + axisZ * size;
 
         centerBox.pos  = center;
-        centerBox.size = size * 0.04f;
+        centerBox.size = size * 0.04f * centerBoxScale;
 
         float circR = size * 0.07f;
         float cirOffset = size * 0.75f;

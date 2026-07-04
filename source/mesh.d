@@ -4156,22 +4156,27 @@ struct Mesh {
         return newFaceIndices.length;
     }
 
-    /// Mirror the faces marked true in `mask` across the plane defined
-    /// by axis ∈ {'X','Y','Z'} passing through `center`. Verts are
-    /// cloned and reflected (`v' = reflect(v, plane)`); when
-    /// `flipNormals` is true the winding of each cloned face is
-    /// reversed so the mirrored surface has outward-facing normals.
-    /// When `weld > 0`, coincident verts (seam verts that lie on the
-    /// mirror plane, plus any pre-existing coincidences) are welded
-    /// via `weldCoincidentVertices(weld*weld)` and orphan verts are
-    /// compacted.
+    /// Mirror the faces marked true in `mask` across the plane defined by
+    /// `center` + (unit or non-unit) `normal` — the general, arbitrarily-
+    /// oriented form of `mirrorFaces` below (which delegates here). Verts
+    /// are cloned and reflected via the same formula as `mirrorPosition`
+    /// (symmetry.d:41): `v' = v - normal*(2*dot(v-center, normal))`. When
+    /// `flipNormals` is true the winding of each cloned face is reversed so
+    /// the mirrored surface has outward-facing normals — a reflection is
+    /// orientation-reversing for ANY plane, so this pass is plane-independent
+    /// and identical to the axis-aligned path. When `weld > 0`, coincident
+    /// verts (seam verts that lie on the mirror plane, plus any pre-existing
+    /// coincidences) are welded via `weldCoincidentVertices(weld*weld)` and
+    /// orphan verts are compacted.
     ///
     /// Selection ends on the newly created mirrored faces (plus any
-    /// originals not in the mirror mask). Returns the number of new
-    /// faces actually inserted; 0 = noop (empty mask).
-    size_t mirrorFaces(in bool[] mask, char axis, Vec3 center, float weld, bool flipNormals) {
+    /// originals not in the mirror mask). Returns the number of new faces
+    /// actually inserted; 0 = noop (empty mask or near-zero-length normal).
+    size_t mirrorFacesPlane(in bool[] mask, Vec3 center, Vec3 normal, float weld, bool flipNormals) {
         if (mask.length != faces.length) return 0;
-        if (axis != 'X' && axis != 'Y' && axis != 'Z') return 0;
+        float nlen = normal.length;
+        if (nlen < 1e-9f) return 0;
+        normal = normal / nlen;
         size_t toMirror = 0;
         foreach (b; mask) if (b) ++toMirror;
         if (toMirror == 0) return 0;
@@ -4212,13 +4217,14 @@ struct Mesh {
         // Reflect every cloned vert across the mirror plane. `vertMap`
         // values are the new vert indices (≥ original vertices.length
         // at the time the clone began), so iterating it covers exactly
-        // the new range without disturbing the originals.
+        // the new range without disturbing the originals. Same formula as
+        // symmetry.d's mirrorPosition; for a unit axis normal this is
+        // TOLERANCE-identical (not bit-for-bit, see the mirrorFaces wrapper's
+        // doc comment) to the prior per-component axis-aligned formula.
         foreach (oldVid, newVid; vertMap) {
             Vec3 v = vertices[newVid];
-            if      (axis == 'X') v.x = 2.0f * center.x - v.x;
-            else if (axis == 'Y') v.y = 2.0f * center.y - v.y;
-            else                  v.z = 2.0f * center.z - v.z;
-            vertices[newVid] = v;
+            float d = dot(v - center, normal);
+            vertices[newVid] = v - normal * (2.0f * d);
         }
 
         // Re-derive edges from the (now larger) face list.
@@ -4312,6 +4318,29 @@ struct Mesh {
         buildLoops();
         commitChange(MeshEditScope.Geometry);
         return toClone.length;
+    }
+
+    /// Mirror the faces marked true in `mask` across the plane defined by
+    /// axis ∈ {'X','Y','Z'} passing through `center` — thin wrapper over
+    /// `mirrorFacesPlane` kept for existing callers (commands/mesh/mirror.d,
+    /// MirrorTool). Computes the unit-axis normal and delegates.
+    ///
+    /// TOLERANCE-identical (not bit-for-bit) to the pre-refactor axis-only
+    /// implementation: the general formula `v - normal*(2*dot(v-center,
+    /// normal))` with `normal=(1,0,0)` reduces to `v.x - 2*(v.x-center.x)` =
+    /// `2*center.x - v.x` on the x component (y/z: dot term is 0, so they
+    /// pass through EXACTLY) — algebraically identical to the prior
+    /// `2.0f*center.x - v.x`, but computed via an extra subtract/multiply
+    /// step that can differ by ~1 ULP for non-dyadic inputs. `weld`/`flip`/
+    /// selection passes are untouched. Returns 0 for an invalid axis char
+    /// (mirrors the prior guard).
+    size_t mirrorFaces(in bool[] mask, char axis, Vec3 center, float weld, bool flipNormals) {
+        Vec3 normal;
+        if      (axis == 'X') normal = Vec3(1, 0, 0);
+        else if (axis == 'Y') normal = Vec3(0, 1, 0);
+        else if (axis == 'Z') normal = Vec3(0, 0, 1);
+        else return 0;
+        return mirrorFacesPlane(mask, center, normal, weld, flipNormals);
     }
 
     /// Duplicate the currently selected faces in place: every vertex used
@@ -15550,4 +15579,75 @@ unittest { // buildEdgeFaces: all-faces, masked, and faceLimit prefix +
     assert(prefixEf.length == 8,
         "buildEdgeFaces faceLimit=2: expected 8 distinct edges, got "
         ~ prefixEf.length.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// mirrorFacesPlane / mirrorFaces (task 0230, oriented mirror-plane backend).
+// ---------------------------------------------------------------------------
+
+unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
+           // the general reflection formula directly (independent check of
+           // the same math the implementation uses, on a non-axis-aligned
+           // normal), and each cloned face's normal is the REFLECTION of its
+           // source face's normal across the plane (with the extra winding-
+           // flip negation) — proves the winding-reversal pass stays correct
+           // for an arbitrary plane, not just "points away from center".
+    import std.conv : to;
+
+    auto m = makeCube();               // 8 verts, 6 faces
+    bool[] mask = new bool[](m.faces.length);
+    mask[] = true;                     // whole-mesh mirror
+
+    Vec3 center = Vec3(0, 0, 0);
+    // Unit normal at 45° between +X and +Z (NOT axis-aligned).
+    Vec3 normal = normalize(Vec3(1, 0, 1));
+
+    size_t origVertCount = m.vertices.length;
+    size_t origFaceCount = m.faces.length;
+    size_t inserted = m.mirrorFacesPlane(mask, center, normal, 0.0f, true);
+    assert(inserted == origFaceCount, "mirrorFacesPlane: expected " ~
+        origFaceCount.to!string ~ " new faces, got " ~ inserted.to!string);
+    assert(m.faces.length == origFaceCount * 2,
+        "mirrorFacesPlane: face count must double");
+
+    // (a) Every cloned vert equals the general reflection formula applied
+    // to its ORIGINAL position (verts 0..7 map to cloned 8..15 — whole-mesh
+    // mirror with no pre-existing coincidences clones each vert exactly once
+    // and appends in traversal order, so index i+8 corresponds to source i;
+    // proved structurally by comparing SETS below instead of relying on
+    // that order).
+    bool[] matched = new bool[](origVertCount);
+    foreach (i; 0 .. origVertCount) {
+        Vec3 orig = m.vertices[i];
+        float d = dot(orig - center, normal);
+        Vec3 expectedReflected = orig - normal * (2.0f * d);
+        bool found = false;
+        foreach (j; origVertCount .. m.vertices.length) {
+            Vec3 c = m.vertices[j];
+            if ((c - expectedReflected).length < 1e-4f) { found = true; break; }
+        }
+        assert(found, "mirrorFacesPlane: no cloned vert matches the "
+            ~ "reflection of original vert " ~ i.to!string);
+    }
+
+    // (b) Winding inversion is plane-independent: for a REFLECTION (an
+    // orientation-reversing linear map, det = -1), reflecting a face's
+    // vertices while keeping the SAME winding order yields normal
+    // -R(srcNormal) (the standard A(u)×A(v) = det(A)·A(u×v) identity for an
+    // orthogonal A). Reversing the winding order (flipNormals) negates the
+    // normal again, so the net result is exactly R(srcNormal) — the plain
+    // reflection of the source normal, no extra sign flip. This is the
+    // "outward-facing" invariant flipNormals is meant to produce, verified
+    // directly (not the weaker "points away from center" check) so the
+    // proof holds for any plane orientation, not just axis-aligned ones.
+    foreach (fi; 0 .. origFaceCount) {
+        Vec3 srcN = m.faceNormal(cast(uint)fi);
+        float dn = dot(srcN, normal);
+        Vec3 expectedClonedN = srcN - normal * (2.0f * dn);
+        Vec3 clonedN = m.faceNormal(cast(uint)(origFaceCount + fi));
+        assert((clonedN - expectedClonedN).length < 1e-3f,
+            "mirrorFacesPlane: cloned face " ~ fi.to!string ~ " normal does "
+            ~ "not match the reflected source normal (flipNormals must "
+            ~ "reproduce R(srcNormal), not its negation)");
+    }
 }
