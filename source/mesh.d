@@ -5117,6 +5117,70 @@ struct Mesh {
         if (hasAnySelectedVertices())  return EditMode.Vertices;
         return current;  // truly nothing selected anywhere → whole-mesh convention
     }
+    /// Loop-Slice activation from a POLYGON selection (task 0245): the
+    /// "interior" cage edges of the selected face region — every existing edge
+    /// incident to TWO OR MORE selected faces, i.e. the edges that lie
+    /// *between* the selected polygons. For two adjacent selected quads this is
+    /// exactly their single shared edge; a lone selected face, or two
+    /// non-adjacent faces, yields an empty result. The set is deduplicated and
+    /// returned in ascending edge-index order. Reads only the current face
+    /// selection + topology (`edgeIndexMap`); never mutates.
+    ///
+    /// This backs the Loop Slice tool's "act on the edge BETWEEN the selected
+    /// polygons" activation rule: a polygon selection PICKS the loop the same
+    /// way an edge selection names its seed edge(s) — the ring crossing each
+    /// seed edge is what the cut lands on (see `loopSliceRingEdges` /
+    /// `collectEdgeRing`).
+    uint[] interiorEdgesOfSelectedFaces() const {
+        uint[uint] incident;   // edge index → count of selected faces touching it
+        foreach (fi; 0 .. faces.length) {
+            if (!isFaceSelected(fi)) continue;
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                uint ei = edgeIndex(f[k], f[(k + 1) % f.length]);
+                if (ei == ~0u) continue;
+                incident[ei] = (ei in incident ? incident[ei] : 0u) + 1u;
+            }
+        }
+        uint[] res;
+        foreach (ei, c; incident) if (c >= 2) res ~= ei;
+        import std.algorithm : sort;
+        res.sort();
+        return res;
+    }
+    unittest {
+        // interiorEdgesOfSelectedFaces — Loop Slice polygon-activation rule.
+        // Cube faces (makeCube): 0=z-0.5, 1=z+0.5, 2=x-0.5, 3=x+0.5,
+        // 4=y+0.5, 5=y-0.5.
+        bool[] mask(size_t[] on...) {
+            auto m = new bool[](6);
+            foreach (i; on) m[i] = true;
+            return m;
+        }
+
+        // Two ADJACENT faces (front z=-0.5 & bottom y=-0.5) share edge (0,1)
+        // → exactly one interior edge = that shared edge.
+        auto m = makeCube();
+        m.setFacesSelectedFrom(mask(0, 5));
+        auto sharedEdges = m.interiorEdgesOfSelectedFaces();
+        assert(sharedEdges.length == 1,
+            "2 adjacent faces must yield exactly 1 shared edge");
+        assert(sharedEdges[0] == m.edgeIndex(0, 1),
+            "shared edge of front+bottom must be edge (0,1)");
+
+        // Two NON-adjacent (opposite) faces (front z=-0.5 & back z=+0.5) share
+        // no edge → empty.
+        auto m2 = makeCube();
+        m2.setFacesSelectedFrom(mask(0, 1));
+        assert(m2.interiorEdgesOfSelectedFaces().length == 0,
+            "2 opposite faces share no edge → no seed");
+
+        // A single face has no interior edge (every edge touches only it).
+        auto m3 = makeCube();
+        m3.setFacesSelectedFrom(mask(0));
+        assert(m3.interiorEdgesOfSelectedFaces().length == 0,
+            "a lone selected face yields no seed");
+    }
     /// True iff every face is subpatch-marked AND there's at least one
     /// face. Gates the OSD-accelerated SubpatchPreview fast path:
     /// OpenSubdiv subdivides the WHOLE mesh, so selective subpatch

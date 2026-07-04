@@ -166,7 +166,10 @@ public:
 
     override string name() const { return "Loop Slice"; }
 
-    override EditMode[] supportedModes() const { return [EditMode.Edges]; }
+    // Edges is the classic activation type; Polygons is the 0245 activation
+    // model — a face selection acts on the edge(s) BETWEEN the selected
+    // polygons (see `activationSeeds`), so the tool is offered in both modes.
+    override EditMode[] supportedModes() const { return [EditMode.Edges, EditMode.Polygons]; }
 
     // HoverEdges: needed so app.d's picker keeps writing hover_state while
     // this tool owns the viewport (pickEdges() gates on wantsHoverForType).
@@ -507,13 +510,13 @@ public:
     // snapshot pair.
     // -------------------------------------------------------------------
     override bool applyHeadless() {
-        if (*editMode != EditMode.Edges) return false;
-        if (mesh.edges.length == 0)      return false;
-        if (!mesh.hasAnySelectedEdges()) return false;
+        if (mesh.edges.length == 0) return false;
 
-        uint[] seeds;
-        foreach (i, sel; mesh.selectedEdges)
-            if (sel) seeds ~= cast(uint)i;
+        // Same activation rule as the interactive arm (0245): EDGES mode seeds
+        // every selected edge (unchanged from 0239); POLYGONS mode seeds the
+        // interior/shared edge(s) between the selected faces. No hover fallback
+        // here — headless has no cursor.
+        uint[] seeds = activationSeeds();
         if (seeds.length == 0) return false;
 
         uint[] newFaceIndices;
@@ -531,7 +534,9 @@ public:
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
-        if (*editMode != EditMode.Edges)    return false;
+        // Edges (classic hover/edge-select activation) OR Polygons (0245
+        // face-selection activation). Other modes never arm this tool.
+        if (*editMode != EditMode.Edges && *editMode != EditMode.Polygons) return false;
         if (scrubbing_)                     return false;   // re-entrancy guard
 
         if (armed_) {
@@ -549,20 +554,18 @@ public:
             return true;
         }
 
-        // Selection-based activation (task 0239 M2): a non-empty edge
-        // selection seeds from EVERY selected edge (multi-ring). Falls back
-        // to the 0228 single hover seed when nothing is selected — byte-
-        // for-byte preserved.
-        uint[] candSeeds;
-        if (mesh.hasAnySelectedEdges()) {
-            foreach (i, sel; mesh.selectedEdges)
-                if (sel && i < mesh.edges.length) candSeeds ~= cast(uint)i;
-        } else {
+        // Selection-based activation (task 0239 M2 + 0245): EDGES mode seeds
+        // from EVERY selected edge (multi-ring); POLYGONS mode seeds the
+        // interior/shared edge(s) between the selected faces (0245 — two
+        // adjacent selected quads seed their shared edge, so the ring crossing
+        // it is cut). Falls back to the 0228 single hover seed only when the
+        // selection yields nothing — the edge/hover paths stay byte-for-byte.
+        uint[] candSeeds = activationSeeds();
+        if (candSeeds.length == 0) {
             int hov = g_hoveredEdge;
             if (hov < 0 || hov >= cast(int)mesh.edges.length) return false;
             candSeeds = [cast(uint)hov];
         }
-        if (candSeeds.length == 0) return false;
 
         // Require at least ONE candidate seed to yield a real ring — don't
         // arm (latch armed_=true) on a set that would produce nothing (the
@@ -645,6 +648,32 @@ public:
     }
 
 private:
+    // Shared activation seeding (task 0245) — the single source of truth for
+    // "which ring(s) does the current selection cut", used by BOTH the headless
+    // apply (`applyHeadless`) and the interactive arm (`onMouseButtonDown`):
+    //   • EDGES mode + a non-empty edge selection → every selected edge, in
+    //     ascending index order (unchanged from 0239 — `insertEdgeLoopsMulti`
+    //     dedups rings by canonical face-set, so an over-selected loop never
+    //     double-cuts one ring).
+    //   • POLYGONS mode + a face selection → the interior/shared cage edges of
+    //     the selected region (`Mesh.interiorEdgesOfSelectedFaces`): two
+    //     adjacent selected quads seed their one shared edge, so the ring
+    //     crossing that edge is cut; a lone / non-adjacent face selection
+    //     yields nothing.
+    //   • Anything else → empty (the interactive path then tries a hover seed;
+    //     the headless path treats empty as a no-op).
+    uint[] activationSeeds() {
+        if (*editMode == EditMode.Edges && mesh.hasAnySelectedEdges()) {
+            uint[] s;
+            foreach (i, sel; mesh.selectedEdges)
+                if (sel && i < mesh.edges.length) s ~= cast(uint)i;
+            return s;
+        }
+        if (*editMode == EditMode.Polygons && mesh.hasAnySelectedFaces())
+            return mesh.interiorEdgesOfSelectedFaces();
+        return [];
+    }
+
     // The directed world-space endpoints `position_`/`t` are measured against
     // — MUST match the direction `insertEdgeLoops` actually treats as this
     // seed edge's p-rail, or a drag toward one end lands the cut near the
