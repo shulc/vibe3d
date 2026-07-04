@@ -461,6 +461,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         if ("caps" in ls)
             cmd(format("tool.attr mesh.loopSliceTool caps %d",
                        ls["caps"].type == JSONType.true_ ? 1 : 0), ctx);
+        // Optional Gap (task 0253): with Split on, push the two split boundary
+        // loops apart by this width (±gap/2 along the cut direction) so any cap
+        // quads gain real area. `{ "loop_slice": { ..., "split": true, "gap": G } }`.
+        if ("gap" in ls)
+            cmd(format("tool.attr mesh.loopSliceTool gap %g", asDouble(ls["gap"])), ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

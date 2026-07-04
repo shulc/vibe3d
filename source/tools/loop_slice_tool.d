@@ -184,6 +184,15 @@ private:
     // — the TOPOLOGY is built now so Gap only relocates verts. Default TRUE, but a
     // no-op whenever Split is off, so it never perturbs the default (unsplit) cut.
     bool    sliceCaps_     = true;
+    // Gap (`gap`, task 0253, distance): only meaningful when Split is ON. `0` (the
+    // factory default — the reference's live ~54.2 mm is a sticky seeded pref, not
+    // a fresh default) keeps the two split boundary loops coincident, byte-for-byte
+    // with 0251/0252. Non-zero opens a gap of that width between them: the kernel
+    // pushes each `[lo,hi]` seam pair apart by `gap` (±gap/2, symmetric about the
+    // split line) along the rail/cut direction, so any Cap Sections quads become
+    // real (non-degenerate) walls. Positions only — no topology change. Threads
+    // into the kernel's `gap` argument; a no-op whenever Split is off.
+    float   gap_           = 0.0f;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -291,6 +300,7 @@ public:
         root["ngon"]        = JSONValue(sliceNgon_);        // Slice N-gon (task 0250)
         root["split"]       = JSONValue(sliceSplit_);       // Split (task 0251)
         root["caps"]        = JSONValue(sliceCaps_);        // Cap Sections (task 0252)
+        root["gap"]         = JSONValue(gap_);              // Gap (task 0253)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -347,6 +357,7 @@ public:
             Param.bool_("ngon", "Slice N-gon", &sliceNgon_, false),
             Param.bool_("split", "Split", &sliceSplit_, false),
             Param.bool_("caps", "Cap Sections", &sliceCaps_, true),
+            Param.float_("gap", "Gap", &gap_, 0.0f),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -403,6 +414,7 @@ public:
         sliceNgon_      = false;
         sliceSplit_     = false;
         sliceCaps_      = true;   // reference default ON; no-op while Split is off
+        gap_            = 0.0f;   // factory default 0 (coincident) — no-op unless Split
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -507,6 +519,7 @@ public:
         if (pname == "ngon")   { if (armed_) rebuildCut(); return; }
         if (pname == "split")  { if (armed_) rebuildCut(); return; }
         if (pname == "caps")   { if (armed_) rebuildCut(); return; }
+        if (pname == "gap")    { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -614,7 +627,7 @@ public:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
                                             restrictFor(selectedFaceIndices()), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_);
+                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -913,7 +926,7 @@ private:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
                                             restrictFor(armedSelFaces_), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_);
+                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

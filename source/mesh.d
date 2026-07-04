@@ -7676,6 +7676,24 @@ struct Mesh {
     ///   each pair's two verts apart along the cut normal; Cap (built in-kernel via
     ///   `caps`) bridges the lo/hi loops using these pairs. Empty when `split` is
     ///   off or no rail was duplicated.
+    ///
+    /// `gap` (task 0253, distance) — only meaningful when `split` is on. `0` (the
+    ///   default) keeps every `[lo, hi]` seam pair COINCIDENT, so the geometry is
+    ///   byte-for-byte the 0251/0252 result. Non-zero OPENS a gap of the given
+    ///   width between the two split boundary loops: each seam pair's two verts are
+    ///   pushed apart along the rail (cut) direction by `gap` total — `lo` moves
+    ///   `gap/2` toward its own corner (the canonical `va` side of the loop) and
+    ///   `hi` moves `gap/2` toward the opposite corner (the canonical `vb` side).
+    ///   The displacement is SYMMETRIC about the split line ("a width around the
+    ///   split line, thickening the cut"), so the two boundary loops end up `gap`
+    ///   apart, centred on the original cut. The direction follows each rail edge
+    ///   `va→vb`, which lies ON the surface and runs perpendicular to the inserted
+    ///   loop, so the gap opens the way the two sides pull apart. Because each seam
+    ///   vert is pushed toward the corner on ITS OWN side of the loop, every vert
+    ///   of one shell moves the same way (consistent per rail even though the
+    ///   canonical `va` corner varies), and any cap quads built by `caps` gain real
+    ///   area (they were zero-area walls while lo/hi coincided). Topology is
+    ///   UNCHANGED — Gap only relocates the duplicated verts.
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
@@ -7683,7 +7701,8 @@ struct Mesh {
                               bool ngon = false,
                               bool split = false,
                               bool caps = false,
-                              uint[2][]* splitPairsOut = null) {
+                              uint[2][]* splitPairsOut = null,
+                              float gap = 0.0f) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7746,6 +7765,7 @@ struct Mesh {
         Rail[]      rails;
         uint[ulong] railByKey;
         uint[2][]   splitSeams;   // [loVert, hiVert] per duplicated midpoint (0251)
+        Vec3[]      splitSeamDirs; // unit lo→hi rail (cut) direction per seam (0253 Gap)
 
         static void reverseInPlace(uint[] a) {
             size_t i = 0, j = a.length - 1;
@@ -7794,11 +7814,20 @@ struct Mesh {
             if (wantVaSide) return base;          // midsVa side, already oriented
             // Toward the canonical `vb` corner — the duplicated (hi) side.
             if (rails[rp].midsVb is null) {
+                // Cut (gap-opening) direction for this rail: the unit vector from
+                // the canonical `va` corner (lo side) to the canonical `vb` corner
+                // (hi side). Caller's (va,vb) already gives the two endpoints;
+                // orient it canonical va→vb so lo (midsVa) is the `-dir` end and
+                // hi (midsVb) the `+dir` end (task 0253 Gap). Constant per rail.
+                uint cva = rails[rp].va;         // canonical va (lo-side corner)
+                uint cvb = forward ? vb : va;    // canonical vb (hi-side corner)
+                Vec3 dir = normalize(vertices[cvb] - vertices[cva]);
                 uint[] dup;
                 foreach (v; rails[rp].midsVa) {
                     uint nv = addVertex(vertices[v]);
                     dup ~= nv;
                     splitSeams ~= cast(uint[2])[v, nv];
+                    splitSeamDirs ~= dir;
                 }
                 rails[rp].midsVb = dup;
             }
@@ -8049,6 +8078,24 @@ struct Mesh {
                 uint u = loDir[kk][0], v = loDir[kk][1];
                 newFaces ~= [v, u, loToHi[u], loToHi[v]];
                 newFaceIndices ~= cast(uint)(newFaces.length - 1);
+            }
+        }
+
+        // Gap (task 0253): open a gap of width `gap` between the two split
+        // boundary loops by pushing each coincident seam pair apart along its rail
+        // (cut) direction — `lo` by `gap/2` toward the canonical `va` corner,
+        // `hi` by `gap/2` toward the canonical `vb` corner, symmetric about the
+        // split line. `gap == 0` (or `split` off, so `splitSeams` is empty) leaves
+        // every vert coincident, byte-for-byte with 0251/0252. Positions only — no
+        // topology change; any `caps` quads gain real area as a side effect. Each
+        // seam vert is unique to one pair (lo = a distinct rail midpoint, hi its
+        // sole duplicate), so no vert is displaced twice.
+        if (split && gap != 0.0f && splitSeams.length > 0) {
+            immutable float half = gap * 0.5f;
+            foreach (i, pr; splitSeams) {
+                Vec3 d = splitSeamDirs[i];
+                vertices[pr[0]] = vertices[pr[0]] - d * half;   // lo → toward va
+                vertices[pr[1]] = vertices[pr[1]] + d * half;   // hi → toward vb
             }
         }
 
@@ -15054,6 +15101,71 @@ unittest {
     assert(boundaryEdgeCount(nosplit) == 0 && componentCount(nosplit) == 1,
            "caps no-op with Split off: still the closed connected cube");
     assert(nosplit.faces.length == openF, "caps no-op with Split off: no cap faces added");
+}
+
+// insertEdgeLoopsMulti — Gap guard (task 0253, depends on Split/0251 + Caps/0252).
+// Same unit cube + equatorial seed (0,1); Split ON duplicates each rail midpoint
+// into a coincident lo/hi pair and Caps ON bridges them with (initially zero-area)
+// cap quads. Gap pushes each seam pair apart by `gap` (±gap/2, symmetric) along the
+// rail/cut direction. gap=0 leaves the pairs COINCIDENT (byte-for-byte 0251/0252);
+// gap=G separates every [lo,hi] pair by EXACTLY G and gives the cap quads real area.
+// Topology is identical to the gap=0 caps-on case either way (Gap only moves verts).
+unittest {
+    import std.math : abs, sqrt;
+    static double faceArea(ref Mesh m, uint fi) {
+        // Newell's method: |area vector| for a planar polygon.
+        auto f = m.faces[fi];
+        Vec3 n = Vec3(0, 0, 0);
+        foreach (k; 0 .. f.length) {
+            Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
+            n.x += (a.y - b.y) * (a.z + b.z);
+            n.y += (a.z - b.z) * (a.x + b.x);
+            n.z += (a.x - b.x) * (a.y + b.y);
+        }
+        return 0.5 * sqrt(cast(double)(n.x*n.x + n.y*n.y + n.z*n.z));
+    }
+
+    enum float G = 0.2f;
+
+    // gap=0 baseline (== the caps-on result): 4 seam pairs still coincident.
+    Mesh z = makeCube();
+    uint eiZ = z.edgeIndex(0, 1);
+    assert(eiZ != ~0u, "cube seed edge (0,1) must exist");
+    uint[] nfZ; uint[2][] prZ;
+    assert(z.insertEdgeLoopsMulti([eiZ], [0.5f], nfZ, null, false, false,
+                                  /*split*/true, /*caps*/true, &prZ, /*gap*/0.0f),
+           "split+caps, gap=0 insert must succeed");
+    immutable zV = z.vertices.length, zE = z.edges.length, zF = z.faces.length;
+    assert(prZ.length == 4, "gap=0: 4 seam pairs");
+    foreach (pr; prZ) {
+        Vec3 a = z.vertices[pr[0]], b = z.vertices[pr[1]];
+        assert(abs(a.x-b.x) < 1e-6f && abs(a.y-b.y) < 1e-6f && abs(a.z-b.z) < 1e-6f,
+               "gap=0: seam lo/hi still coincide");
+    }
+
+    // gap=G opens the pairs: same topology, each pair separated by EXACTLY G.
+    Mesh g = makeCube();
+    uint eiG = g.edgeIndex(0, 1);
+    uint[] nfG; uint[2][] prG;
+    assert(g.insertEdgeLoopsMulti([eiG], [0.5f], nfG, null, false, false,
+                                  /*split*/true, /*caps*/true, &prG, /*gap*/G),
+           "split+caps, gap>0 insert must succeed");
+    // Topology unchanged by Gap (positions only).
+    assert(g.vertices.length == zV && g.edges.length == zE && g.faces.length == zF,
+           "gap>0: topology identical to gap=0 (Gap relocates verts only)");
+    assert(prG.length == 4, "gap>0: 4 seam pairs");
+    foreach (pr; prG) {
+        Vec3 a = g.vertices[pr[0]], b = g.vertices[pr[1]];
+        float d = sqrt((a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y) + (a.z-b.z)*(a.z-b.z));
+        assert(abs(d - G) < 1e-5f, "gap>0: seam lo/hi separated by exactly G");
+    }
+    // The 4 cap quads (the last 4 created faces) now have real, non-zero area;
+    // at gap=0 they are degenerate (zero area).
+    assert(nfG.length >= 4, "gap>0: cap faces reported as new polys");
+    foreach (fi; nfG[$ - 4 .. $]) {
+        assert(faceArea(z, fi) < 1e-9, "gap=0: cap quad is degenerate (zero area)");
+        assert(faceArea(g, fi) > 1e-6, "gap>0: cap quad gained real (non-zero) area");
+    }
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
