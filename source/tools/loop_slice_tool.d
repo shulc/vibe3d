@@ -165,6 +165,15 @@ private:
     // byte-for-byte. Composes with `quad`/`select` (all flow through the same
     // per-face split machinery in `Mesh.insertEdgeLoopsMulti`).
     bool    sliceNgon_     = false;
+    // Split (`split`, task 0251): when ON the inserted loop DUPLICATES its rail
+    // midpoints, so the single connected loop becomes TWO coincident boundary
+    // edge-loops and the two sides of the cut are topologically DISCONNECTED
+    // along it (each shared interior loop edge becomes two separate boundary
+    // edges). OFF (default) is the single connected loop, byte-for-byte as
+    // before. Foundation for Cap Sections (0252) + Gap (0253). Threads into the
+    // kernel's `split` flag; composes with select/quad/ngon (the absorb/grid
+    // neighbours attach to the connected side).
+    bool    sliceSplit_    = false;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -270,6 +279,7 @@ public:
         root["select"]      = JSONValue(sliceSelected_);   // Slice Selected (task 0248)
         root["quad"]        = JSONValue(keepQuads_);        // Keep Quads (task 0249)
         root["ngon"]        = JSONValue(sliceNgon_);        // Slice N-gon (task 0250)
+        root["split"]       = JSONValue(sliceSplit_);       // Split (task 0251)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -324,6 +334,7 @@ public:
             Param.bool_("select", "Slice Selected", &sliceSelected_, false),
             Param.bool_("quad", "Keep Quads", &keepQuads_, false),
             Param.bool_("ngon", "Slice N-gon", &sliceNgon_, false),
+            Param.bool_("split", "Split", &sliceSplit_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -378,6 +389,7 @@ public:
         sliceSelected_  = false;
         keepQuads_      = false;
         sliceNgon_      = false;
+        sliceSplit_     = false;
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -480,6 +492,7 @@ public:
         if (pname == "select") { if (armed_) rebuildCut(); return; }
         if (pname == "quad")   { if (armed_) rebuildCut(); return; }
         if (pname == "ngon")   { if (armed_) rebuildCut(); return; }
+        if (pname == "split")  { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -587,7 +600,7 @@ public:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
                                             restrictFor(selectedFaceIndices()), keepQuads_,
-                                            sliceNgon_);
+                                            sliceNgon_, sliceSplit_);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -886,7 +899,7 @@ private:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
                                             restrictFor(armedSelFaces_), keepQuads_,
-                                            sliceNgon_);
+                                            sliceNgon_, sliceSplit_);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

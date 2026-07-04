@@ -448,6 +448,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // instead of terminating at it. `{ "loop_slice": { ..., "ngon": true } }`.
         if ("ngon" in ls && ls["ngon"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool ngon 1", ctx);
+        // Optional Split (task 0251): duplicate the loop's rail midpoints so the
+        // single connected loop becomes two disconnected boundary edge-loops.
+        // `{ "loop_slice": { ..., "split": true } }`.
+        if ("split" in ls && ls["split"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool split 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

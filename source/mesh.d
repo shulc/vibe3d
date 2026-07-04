@@ -7629,11 +7629,43 @@ struct Mesh {
     ///   deliberately NOT attempted here; see the task notes. Composes with
     ///   `restrictFaces` orthogonally (which rings/faces are cut vs which faces
     ///   the ring is allowed to traverse are independent axes).
+    /// `split` (optional, default false) — the Loop Slice "Split" guard (task
+    ///   0251). Off (default) the inserted loop is a SINGLE connected edge loop:
+    ///   the midpoint verts on each rail are SHARED between the sub-face on the
+    ///   "toward-first-corner" side of the loop and the one on the
+    ///   "toward-second-corner" side, so the surface stays watertight across the
+    ///   cut (byte-for-byte unchanged). On, each rail midpoint is DUPLICATED into
+    ///   two coincident verts — a "lo" copy (toward the rail's first/`va` corner,
+    ///   == the original connected vert) used by every sub-face on that side of
+    ///   the loop, and a fresh "hi" copy (toward the `vb` corner) used by every
+    ///   sub-face on the other side. Because the lo copies stay shared around the
+    ///   ring (and the hi copies likewise), the one connected loop becomes TWO
+    ///   distinct boundary edge-loops overlapping in space, and the two sides of
+    ///   the cut are topologically DISCONNECTED along it (each shared interior
+    ///   loop edge becomes two separate boundary edges). This is the foundation
+    ///   for Cap Sections (fill each boundary) + Gap (push the two loops apart).
+    ///   The split is applied to the single-ring split (`emitSingleRingSplit`)
+    ///   and the n-gon crossing (`emitNgonRingSplit`); the rare two-ring GRID
+    ///   split and the two-pass ABSORB neighbour (select/quad) attach to the lo
+    ///   (connected) side, so split composes with select/quad/ngon without
+    ///   special-casing (the absorbed neighbour stays joined to the lo loop; the
+    ///   hi loop is a free boundary). On an all-quad mesh with `split` off the
+    ///   output is byte-identical to before.
+    ///
+    /// `splitPairsOut` (optional) — when non-null AND `split` is on, receives one
+    ///   `[loVert, hiVert]` pair per duplicated rail midpoint: `loVert` sits on
+    ///   the lo boundary loop, `hiVert` its coincident duplicate on the hi loop.
+    ///   This is the seam data Cap Sections (0252) / Gap (0253) consume: Gap moves
+    ///   each pair's two verts apart along the cut normal; Cap connects the lo and
+    ///   hi loops (walk the mesh boundary from any pair vert for ordering). Empty
+    ///   when `split` is off or no rail was duplicated.
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
                               bool keepQuads = false,
-                              bool ngon = false) {
+                              bool ngon = false,
+                              bool split = false,
+                              uint[2][]* splitPairsOut = null) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7686,18 +7718,29 @@ struct Mesh {
         // directed edge key is only ever midpoint-split once, however many
         // rings/faces reference it (identical caching to the pre-0239
         // single-ring body).
-        struct Rail { uint va; uint[] mids; }
+        // `midsVa` = the interpolated rail midpoints (the CONNECTED verts, used
+        // by the default path byte-for-byte). `midsVb` = the split "hi"-side
+        // duplicates (task 0251), created lazily by `railMids` only when the
+        // Split option requests the toward-`vb` side; stays null otherwise so no
+        // orphan verts appear for rails a split face never references on its hi
+        // side (grid / absorb rails).
+        struct Rail { uint va; uint[] midsVa; uint[] midsVb; }
         Rail[]      rails;
         uint[ulong] railByKey;
+        uint[2][]   splitSeams;   // [loVert, hiVert] per duplicated midpoint (0251)
+
+        static void reverseInPlace(uint[] a) {
+            size_t i = 0, j = a.length - 1;
+            while (i < j) { uint t = a[i]; a[i] = a[j]; a[j] = t; ++i; --j; }
+        }
 
         uint[] getMids(uint va, uint vb) {
             ulong k = edgeKey(va, vb);
             if (auto rp = k in railByKey) {
-                if (rails[*rp].va == va) return rails[*rp].mids;
+                if (rails[*rp].va == va) return rails[*rp].midsVa;
                 // Anti-parallel: reversed copy.
-                auto rev = rails[*rp].mids.dup;
-                size_t i = 0, j = rev.length - 1;
-                while (i < j) { uint t = rev[i]; rev[i] = rev[j]; rev[j] = t; ++i; --j; }
+                auto rev = rails[*rp].midsVa.dup;
+                reverseInPlace(rev);
                 return rev;
             }
             uint[] mids;
@@ -7705,8 +7748,45 @@ struct Mesh {
             foreach (float t; positions)
                 mids ~= addVertex(va3 + (vb3 - va3) * t);
             railByKey[k] = cast(uint)rails.length;
-            rails ~= Rail(va, mids);
+            rails ~= Rail(va, mids, null);
             return mids;
+        }
+
+        // Loop-Slice Split (task 0251): the rail midpoints on edge va→vb, ORIENTED
+        // va→vb, on the side of the loop toward the FIRST corner (`towardFirst` =
+        // true → toward `va`; false → toward `vb`). With `split` off both sides
+        // resolve to the same shared `midsVa` verts, so this is exactly `getMids`
+        // (byte-for-byte). With `split` on the toward-`va` side is the original
+        // connected verts (`midsVa`) and the toward-`vb` side is a distinct set of
+        // coincident duplicates (`midsVb`, made once per rail). The lo/hi choice is
+        // keyed to the rail's CANONICAL `va`, so the same physical rail always
+        // resolves the same duplicate for a given loop side regardless of which
+        // face (or traversal direction) asks — that is what keeps each side's loop
+        // connected around the ring while the two sides stay disconnected.
+        uint[] railMids(uint va, uint vb, bool towardFirst) {
+            uint[] base = getMids(va, vb);        // midsVa oriented va→vb
+            if (!split) return base;
+            ulong k = edgeKey(va, vb);
+            uint rp = railByKey[k];
+            bool forward = (rails[rp].va == va);
+            // Which stored side does "toward the caller's first corner" map to?
+            //   forward  (va == canonical va): toward va == midsVa side
+            //   !forward (va == canonical vb): toward va == midsVb side
+            bool wantVaSide = towardFirst ? forward : !forward;
+            if (wantVaSide) return base;          // midsVa side, already oriented
+            // Toward the canonical `vb` corner — the duplicated (hi) side.
+            if (rails[rp].midsVb is null) {
+                uint[] dup;
+                foreach (v; rails[rp].midsVa) {
+                    uint nv = addVertex(vertices[v]);
+                    dup ~= nv;
+                    splitSeams ~= cast(uint[2])[v, nv];
+                }
+                rails[rp].midsVb = dup;
+            }
+            uint[] side = rails[rp].midsVb;
+            if (!forward) { side = side.dup; reverseInPlace(side); }
+            return side;
         }
 
         // Emit the standard (P+1)-subquad single-ring split of one face,
@@ -7714,15 +7794,19 @@ struct Mesh {
         // 2-ring fallback below.
         void emitSingleRingSplit(uint a, uint b, uint c, uint d,
                                   ref uint[][] newFaces) {
-            uint[] p = getMids(a, b);  // p-rail: midpoints on a→b
-            uint[] q = getMids(d, c);  // q-rail: midpoints on d→c
-            newFaces ~= [a, p[0], q[0], d];
+            // pLo/qLo = toward the a/d corners (the loop's "first" side); pHi/qHi
+            // = toward b/c. With Split off all four are the same shared rail verts
+            // (byte-for-byte `getMids`); with Split on the hi verts are distinct
+            // duplicates so the two sides of the loop are disconnected (task 0251).
+            uint[] pLo = railMids(a, b, true),  pHi = railMids(a, b, false);
+            uint[] qLo = railMids(d, c, true),  qHi = railMids(d, c, false);
+            newFaces ~= [a, pLo[0], qLo[0], d];               // toward-a/d cap
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
             foreach (k; 1 .. positions.length) {
-                newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
+                newFaces ~= [pHi[k-1], pLo[k], qLo[k], qHi[k-1]];
                 newFaceIndices ~= cast(uint)(newFaces.length - 1);
             }
-            newFaces ~= [p[$-1], b, c, q[$-1]];
+            newFaces ~= [pHi[$-1], b, c, qHi[$-1]];           // toward-b/c cap
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
         }
 
@@ -7742,8 +7826,10 @@ struct Mesh {
             int  ej = e.entryJ, xj = e.exitJ;
             uint a = f[ej], b = f[(ej + 1) % N];   // entry edge a→b
             uint c = f[xj], d = f[(xj + 1) % N];   // exit  edge c→d
-            uint[] p = getMids(a, b);              // p-rail on entry edge (a→b)
-            uint[] q = getMids(d, c);              // q-rail on exit edge (d→c)
+            // Side-aware rails (task 0251 Split): lo = toward a/d (the S2 cap
+            // side), hi = toward b/c (the S1 cap side). Split off ⇒ lo==hi==getMids.
+            uint[] pLo = railMids(a, b, true),  pHi = railMids(a, b, false);
+            uint[] qLo = railMids(d, c, true),  qHi = railMids(d, c, false);
 
             // S1 = the boundary chain from b (entry-edge far vertex) forward to
             // c (exit-edge near vertex); S2 = from d forward to a.
@@ -7757,17 +7843,17 @@ struct Mesh {
                 if (k == cast(uint)ej) break;
             }
 
-            // Start cap (S2 side): [p0, q0] ~ S2.
-            uint[] capB = [p[0], q[0]] ~ s2;
+            // Start cap (S2 side, toward a/d): [pLo0, qLo0] ~ S2.
+            uint[] capB = [pLo[0], qLo[0]] ~ s2;
             newFaces ~= capB;
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
             // Middle quads between consecutive rails.
             foreach (k; 1 .. positions.length) {
-                newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
+                newFaces ~= [pHi[k-1], pLo[k], qLo[k], qHi[k-1]];
                 newFaceIndices ~= cast(uint)(newFaces.length - 1);
             }
-            // End cap (S1 side): [p_last] ~ S1 ~ [q_last].
-            uint[] capA = [p[$-1]] ~ s1 ~ [q[$-1]];
+            // End cap (S1 side, toward b/c): [pHi_last] ~ S1 ~ [qHi_last].
+            uint[] capA = [pHi[$-1]] ~ s1 ~ [qHi[$-1]];
             newFaces ~= capA;
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
         }
@@ -7867,10 +7953,11 @@ struct Mesh {
             ulong k = edgeKey(va, vb);
             auto rp = k in railByKey;
             if (rp is null) return null;
-            if (rails[*rp].va == va) return rails[*rp].mids;
-            auto rev = rails[*rp].mids.dup;
-            size_t i = 0, j = rev.length - 1;
-            while (i < j) { uint t = rev[i]; rev[i] = rev[j]; rev[j] = t; ++i; --j; }
+            // Absorb attaches to the lo (connected) side (`midsVa`) — under Split
+            // the neighbour stays joined to the lo loop; the hi loop is free.
+            if (rails[*rp].va == va) return rails[*rp].midsVa;
+            auto rev = rails[*rp].midsVa.dup;
+            reverseInPlace(rev);
             return rev;
         }
 
@@ -7908,6 +7995,8 @@ struct Mesh {
                 newFaces ~= nf;
             }
         }
+
+        if (splitPairsOut !is null) *splitPairsOut = splitSeams;
 
         faces = newFaces;
         rebuildEdges();
@@ -14755,6 +14844,86 @@ unittest {
     assert(on.edgeIndex(3, 8) == ~0u, "on: full edge (3,8) gone (hexagon+Q2 sliced)");
     // Hexagon chord split emits 2 sub-faces; Q0,Q1,Q2 emit 2 each = 8 total.
     assert(nfOn.length == 8, "on: 8 created sub-faces across the 4 ring faces");
+}
+
+// insertEdgeLoopsMulti — Split guard (task 0251). A unit cube, seed = the
+// equatorial belt edge (0,1); the ring cuts a horizontal loop around the 4 side
+// faces (4 rails → 4 midpoints). Split OFF keeps ONE connected loop (watertight
+// closed cube: 0 boundary edges, 1 component). Split ON DUPLICATES each rail
+// midpoint (+4 verts, +4 edges, SAME face count) so the single loop becomes TWO
+// boundary edge-loops → 8 boundary edges + 2 disconnected shells. The seam pairs
+// (splitPairsOut) list each coincident [lo,hi] duplicate for Cap/Gap (0252/0253).
+unittest {
+    import std.math : abs;
+
+    static size_t boundaryEdgeCount(ref Mesh m) {
+        size_t n = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            size_t nf = 0;
+            foreach (fi; m.facesAroundEdge(cast(uint)ei)) ++nf;
+            if (nf == 1) ++n;
+        }
+        return n;
+    }
+    // Connected-component count over faces joined by any shared vertex.
+    static size_t componentCount(ref Mesh m) {
+        auto nf = m.faces.length;
+        if (nf == 0) return 0;
+        auto parent = new size_t[](nf);
+        foreach (i; 0 .. nf) parent[i] = i;
+        size_t find(size_t x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void uni(size_t a, size_t b) { parent[find(a)] = find(b); }
+        uint[][uint] vFaces;
+        foreach (fi, f; m.faces) foreach (v; f) vFaces[v] ~= cast(uint)fi;
+        foreach (v, fs; vFaces) foreach (k; 1 .. fs.length) uni(fs[0], fs[k]);
+        bool[size_t] roots;
+        foreach (i; 0 .. nf) roots[find(i)] = true;
+        return roots.length;
+    }
+
+    // Split OFF (default) — one connected loop, closed manifold cube.
+    Mesh off = makeCube();
+    uint eiOff = off.edgeIndex(0, 1);
+    assert(eiOff != ~0u, "cube seed edge (0,1) must exist");
+    uint[] nfOff;
+    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, false, /*split*/false),
+           "split-off insert must succeed");
+    immutable offV = off.vertices.length, offE = off.edges.length, offF = off.faces.length;
+    assert(boundaryEdgeCount(off) == 0, "split off: closed cube, no boundary edges");
+    assert(componentCount(off) == 1, "split off: one connected shell");
+
+    // Split ON — each rail midpoint duplicated → two disconnected boundary loops.
+    Mesh on = makeCube();
+    uint eiOn = on.edgeIndex(0, 1);
+    uint[] nfOn;
+    uint[2][] pairs;
+    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false, /*split*/true, &pairs),
+           "split-on insert must succeed");
+    assert(on.vertices.length == offV + 4, "split on: 4 rail midpoints duplicated");
+    assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
+    assert(on.faces.length    == offF,     "split on: splitting duplicates verts, not faces");
+    assert(boundaryEdgeCount(on) == 8, "split on: two 4-edge boundary loops (8 boundary edges)");
+    assert(componentCount(on) == 2, "split on: two disconnected shells");
+    assert(nfOn.length == nfOff.length, "split on: same created sub-face count as off");
+
+    // Seam pairs: one [lo,hi] per duplicated rail midpoint, coincident + distinct.
+    assert(pairs.length == 4, "split on: 4 seam pairs (one per rail midpoint)");
+    foreach (pr; pairs) {
+        assert(pr[0] != pr[1], "seam lo/hi must be distinct verts");
+        Vec3 a = on.vertices[pr[0]], b = on.vertices[pr[1]];
+        assert(abs(a.x-b.x) < 1e-6f && abs(a.y-b.y) < 1e-6f && abs(a.z-b.z) < 1e-6f,
+               "seam lo/hi coincide (zero gap — Gap/0253 moves them apart later)");
+    }
+
+    // Split OFF emits no seam pairs even when a splitPairsOut sink is given.
+    Mesh off2 = makeCube();
+    uint[] nf2;
+    uint[2][] pairs2;
+    off2.insertEdgeLoopsMulti([off2.edgeIndex(0, 1)], [0.5f], nf2, null, false, false, false, &pairs2);
+    assert(pairs2.length == 0, "split off: no seam pairs emitted");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
