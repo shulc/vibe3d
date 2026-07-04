@@ -802,6 +802,17 @@ class MoveHandler : Handler {
     // distinctly bigger than the small rotate box beside it.
     float centerBoxScale = 1.0f;
 
+    // Master gate for the three axis arrows. Default true leaves every
+    // existing MoveHandler user byte-identical; MirrorTool (task 0233) sets
+    // this false so its gizmo shows ONLY the center box (+ its own rotate box
+    // + plane viz) — no axis arrows. Applied inside updateGeometry so it wins
+    // over the per-frame ortho-cull re-enable below (a plain setVisible(false)
+    // in the ctor would be overwritten every frame); a false arrow is then
+    // skipped by Arrow.draw (visible guard), by ToolHandles.test (invisible
+    // handles skipped), and by MirrorTool.moverHitTest (isVisible guard) — so
+    // it drops from BOTH draw and hit-test.
+    bool arrowsVisible = true;
+
     this(Vec3 center) {
         this.center = center;
         arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
@@ -884,9 +895,9 @@ class MoveHandler : Handler {
         viewDir = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
         enum float VIEW_ALIGN = 0.999f;
         bool ortho = isOrtho(vp);
-        arrowX.setVisible(!ortho || abs(dot(viewDir, axisX)) < VIEW_ALIGN);
-        arrowY.setVisible(!ortho || abs(dot(viewDir, axisY)) < VIEW_ALIGN);
-        arrowZ.setVisible(!ortho || abs(dot(viewDir, axisZ)) < VIEW_ALIGN);
+        arrowX.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisX)) < VIEW_ALIGN));
+        arrowY.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisY)) < VIEW_ALIGN));
+        arrowZ.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisZ)) < VIEW_ALIGN));
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)

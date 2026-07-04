@@ -1,7 +1,8 @@
-// Interactive drag coverage for the Mirror tool's Center handle (M2 of task
-// 0227): dragging the mover's axis arrow (axisDragDelta path) and its
-// center box (planeDragDelta path) both write into params_.center, and the
-// panel/tool.attr `center` field tracks the drag live.
+// Interactive drag coverage for the Mirror tool's Center handle. Task 0233
+// REMOVED the axis arrows from the Mirror gizmo (reference = 2 boxes + plane,
+// no arrows), so center MOVE now runs only through the center box
+// (planeDragDelta path), and a click where the old arrow shaft used to be is a
+// free click-to-place relocation — no longer an axis-locked arrow drag.
 
 import std.conv : to;
 import std.json;
@@ -75,7 +76,14 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
 }
 
 // ---------------------------------------------------------------------------
-// 1. Drag the X arrow — axis-constrained: only center.x should move.
+// 1. The axis arrows are GONE (task 0233). A drag that begins where the old X
+//    arrow shaft used to be no longer hits an axis handle — it misses every
+//    handle and falls through to click-to-place, which relocates the center to
+//    the cursor's screen-projected point on the screen-facing plane through the
+//    current center. So the OLD axis-constrained signature (center.x moves,
+//    center.y/z stay exactly 0) must NO LONGER hold: the relocation is a free
+//    screen-plane point that generally leaves the X axis. This is the
+//    regression guard that the arrows were truly removed (not merely hidden).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -83,16 +91,23 @@ unittest {
 
     auto vp = viewportFromCamera(fetchCamera(BASE));
     float size = gizmoSize(Vec3(0, 0, 0), vp);
-    // A point along the arrowX shaft (start..end = size/6..size), well clear
-    // of the center box so the hit-test picks the arrow, not the box.
+    // The former arrowX shaft location — now empty (no arrow handle there),
+    // and well clear of the center box, so this click hits nothing.
     Vec3 grabPoint = Vec3(size * 0.5f, 0, 0);
 
     dragWorldHandle(grabPoint, Vec3(1, 0, 0));
 
     auto c = queriedCenter();
-    assert(c.x > 0.05, "dragging the X arrow should move center.x, got " ~ c.x.to!string);
-    assert(approx(c.y, 0.0), "X-arrow drag must not move center.y, got " ~ c.y.to!string);
-    assert(approx(c.z, 0.0), "X-arrow drag must not move center.z, got " ~ c.z.to!string);
+    // Center relocated (click-to-place fired) ...
+    bool moved = abs(c.x) > 0.02 || abs(c.y) > 0.02 || abs(c.z) > 0.02;
+    assert(moved, "a click at the former arrow location should relocate the center, got ("
+        ~ c.x.to!string ~ "," ~ c.y.to!string ~ "," ~ c.z.to!string ~ ")");
+    // ... and it is NOT an axis-locked X-only arrow move: with the arrow gone
+    // the free screen-plane relocation leaves the X axis (y or z non-zero).
+    assert(abs(c.y) > 1e-3 || abs(c.z) > 1e-3,
+        "arrows removed (task 0233): a drag at the old X-arrow spot must be a free "
+        ~ "click-to-place, not an axis-locked X-only move; got ("
+        ~ c.x.to!string ~ "," ~ c.y.to!string ~ "," ~ c.z.to!string ~ ")");
 
     cmd("tool.set " ~ TOOL ~ " off");
 }

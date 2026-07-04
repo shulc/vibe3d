@@ -16,7 +16,7 @@ import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
-import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
+import drag : planeDragDelta, screenAxisDelta;
 import eventlog : queryMouse;
 
 version (unittest) import std.conv : to;
@@ -198,12 +198,12 @@ private:
     MirrorEditFactory mirrorEditFactory;
 
     // ----- Center handle (M2) — reuse MoveHandler exactly as BoxTool does
-    // (box.d:1857/1896), with the three plane-corner circles hidden so only
-    // the 3 axis arrows + center box remain. World-axis orientation (the
-    // arrows stay world-XYZ; only the mirror PLANE itself tilts via
-    // `toolNormal` — the arrows are a coarse per-axis move aid, not meant to
-    // track the tilt). `mover.centerBoxScale` (handler.d) enlarges the center
-    // box into the reference's "large box".
+    // (box.d:1857/1896), with the three plane-corner circles AND the three
+    // axis arrows hidden (task 0233: reference gizmo is 2 boxes + plane, no
+    // arrows) so only the center box remains from MoveHandler. Center MOVE is
+    // driven by dragging that (enlarged) center box (planeDragDelta), not the
+    // arrows. `mover.centerBoxScale` (handler.d) enlarges it into the
+    // reference's "large box"; `mover.arrowsVisible=false` drops the arrows.
     MoveHandler mover;
     // ----- Rotate box (M4) — small BoxHandler, world position derived each
     // frame from `center + toolNormal(params_) * rotateArm(...)`; dragging it
@@ -230,6 +230,11 @@ public:
         mover.circleXY.setVisible(false);
         mover.circleYZ.setVisible(false);
         mover.circleXZ.setVisible(false);
+        // Task 0233: drop the X/Y/Z axis arrows entirely — the reference
+        // Mirror gizmo is 2 boxes + a plane, no arrows. Center MOVE stays on
+        // the (enlarged) center box drag (planeDragDelta). arrowsVisible=false
+        // hides them from draw AND hit-test (see MoveHandler.arrowsVisible).
+        mover.arrowsVisible = false;
         mover.centerBoxScale = 2.4f;   // "large box" — reads distinctly bigger than rotateBox
         rotateBox = new BoxHandler(Vec3(0, 0, 0), Vec3(0.95f, 0.55f, 0.05f));
         toolHandles = new ToolHandles();
@@ -483,14 +488,13 @@ public:
 
         if (!visualOnly) {
             toolHandles.begin();
+            // Task 0233: only the center box + rotate box are registered — the
+            // axis arrows are gone (mover.arrowsVisible=false). moverDragAxis is
+            // now only ever 3 (centerBox) or 4 (rotateBox).
             toolHandles.add(mover.centerBox, 13);
-            toolHandles.add(mover.arrowX,    10);
-            toolHandles.add(mover.arrowY,    11);
-            toolHandles.add(mover.arrowZ,    12);
             toolHandles.add(rotateBox,       14);
             if (moverDragAxis >= 0)
-                toolHandles.setHaul(moverDragAxis <= 2 ? 10 + moverDragAxis
-                                    : moverDragAxis == 3 ? 13 : 14);
+                toolHandles.setHaul(moverDragAxis == 3 ? 13 : 14);
             else
                 toolHandles.setHaul(-1);
             int hmx, hmy;
@@ -660,12 +664,11 @@ public:
             return true;
         }
 
+        // Task 0233: with the axis arrows gone, the only remaining center
+        // drag is the center box (moverDragAxis == 3) — always a planar drag.
         bool skip;
-        Vec3 delta = moverDragAxis <= 2
-            ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
-                             moverDragAxis, mover, cachedVp, skip)
-            : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                             moverDragAxis, mover.center, cachedVp, skip);
+        Vec3 delta = planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
+                                    moverDragAxis, mover.center, cachedVp, skip);
         if (!skip) {
             params_.center += delta;
             engaged = true;
