@@ -1,0 +1,54 @@
+{
+  "name": "loop_slice_caps",
+  "description": "Loop Slice 'Cap Sections' option (task 0252, depends on Split/0251). Reuses the 0251 unit cube (8 verts / 12 edges / 6 quad faces); the seed edge is the vertical edge (1,-1,-1)-(1,1,-1), so the ring cuts a horizontal belt around the 4 side faces at y=0 (4 vertical rails). Split (always ON here) duplicates each of the 4 rail midpoints into a coincident lo/hi pair, opening the surface into TWO boundary edge-loops (verts 12-15 sit on top of 8-11). With Cap Sections OFF the two loops are left open: 16 verts / 24 edges / 10 faces, 8 boundary edges, 2 disconnected shells (exactly 0251's split-on result). With Cap Sections ON each lo cut edge is bridged to its coincident hi twin by one cap quad, so the 4-edge lo loop and 4-edge hi loop are closed by a ring of 4 cap quads whose side seams pair up between adjacent caps: 16 verts / 28 edges / 14 faces, 0 boundary edges, one closed manifold (Euler V-E+F = 16-28+14 = 2). Cap Sections adds NO new vertices (the cap quads only reference the existing lo/hi verts), so expected_vertices is identical to the OFF case — only the 4 cap quads (+4 seam-side edges) differ. The caps are DEGENERATE (zero area) while the lo/hi pairs are coincident; Gap (task 0253) later moves hi off lo to give the cap band real area. Reference-independent geometry law: capping adds one quad per lo cut edge and never moves or adds a vertex.",
+  "source": "Analytic self-golden. The 'Cap Sections' rule is DERIVED from the live-captured reference `caps` attribute (toolcards/mesh.loopSlice spec.json, task 0244 live probe: 'Cap cross sections -- with Split on, creates a single polygon cap connecting the two resulting edge loops, closing off the new edges', default true, greyed/enabled only when Split is on). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the ON/OFF cap topology is NOT independently re-captured live. Implementation choice (documented): the section is closed by a STRIP of cap quads, one per lo boundary cut edge, each bridging the lo edge to its coincident hi twin ([v,u,hi(u),hi(v)], wound to oppose the owning face). This decomposes the reference's 'single polygon cap connecting the two edge loops' into a well-formed per-segment quad band so the caps stay valid quads and Gap (0253) turns the zero-area band into a real wall by only moving verts. Flagged honestly.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "caps_off_open_boundaries",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1],
+              [-1,1,-1],[1,1,-1],[1,1,1],[-1,1,1]
+            ],
+            "faces": [ [0,3,2,1], [4,5,6,7], [0,1,5,4], [1,2,6,5], [2,3,7,6], [3,0,4,7] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,-1,-1],[1,1,-1]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "split": true, "caps": false } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 10 },
+      "expected_vertices": [
+        [-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1],
+        [-1,1,-1],[1,1,-1],[1,1,1],[-1,1,1],
+        [1,0,-1],[-1,0,-1],[1,0,1],[-1,0,1],
+        [1,0,-1],[-1,0,-1],[1,0,1],[-1,0,1]
+      ]
+    },
+    {
+      "name": "caps_on_closed_sections",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1],
+              [-1,1,-1],[1,1,-1],[1,1,1],[-1,1,1]
+            ],
+            "faces": [ [0,3,2,1], [4,5,6,7], [0,1,5,4], [1,2,6,5], [2,3,7,6], [3,0,4,7] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,-1,-1],[1,1,-1]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "split": true, "caps": true } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 28, "faces": 14 },
+      "expected_vertices": [
+        [-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1],
+        [-1,1,-1],[1,1,-1],[1,1,1],[-1,1,1],
+        [1,0,-1],[-1,0,-1],[1,0,1],[-1,0,1],
+        [1,0,-1],[-1,0,-1],[1,0,1],[-1,0,1]
+      ]
+    }
+  ]
+}

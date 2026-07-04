@@ -45,7 +45,7 @@
         } },
         { "select": { "mode": "edges", "coords": [ [[1,-1,-1],[1,1,-1]] ] } }
       ],
-      "op": [ { "loop_slice": { "positions": [0.5], "split": true } } ],
+      "op": [ { "loop_slice": { "positions": [0.5], "split": true, "caps": false } } ],
       "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
       "expected_after":  { "verts": 16, "edges": 24, "faces": 10 },
       "expected_vertices": [

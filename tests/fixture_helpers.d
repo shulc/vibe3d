@@ -453,6 +453,14 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // `{ "loop_slice": { ..., "split": true } }`.
         if ("split" in ls && ls["split"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool split 1", ctx);
+        // Optional Cap Sections (task 0252): with Split on, close each opened
+        // section by bridging its lo/hi boundary loops with a strip of cap quads
+        // (a closed ring caps to boundary-edge count 0). Default is ON in the tool,
+        // so this is only sent when the key is PRESENT (true → 1, false → 0) to let
+        // a fixture pin either state. `{ "loop_slice": { ..., "caps": false } }`.
+        if ("caps" in ls)
+            cmd(format("tool.attr mesh.loopSliceTool caps %d",
+                       ls["caps"].type == JSONType.true_ ? 1 : 0), ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

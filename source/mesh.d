@@ -7652,19 +7652,37 @@ struct Mesh {
     ///   hi loop is a free boundary). On an all-quad mesh with `split` off the
     ///   output is byte-identical to before.
     ///
+    /// `caps` (optional, default false) — the Loop Slice "Cap Sections" guard
+    ///   (task 0252). Only meaningful when `split` is on (a no-op otherwise). When
+    ///   on, each section opened by Split is CLOSED with a strip of cap quads that
+    ///   bridge the lo boundary loop to its coincident hi boundary loop: for every
+    ///   lo cut edge `(u,v)` (a boundary edge whose two ends are both duplicated lo
+    ///   midpoints) one quad `[v, u, hi(u), hi(v)]` is emitted, joining the lo edge
+    ///   to the twin hi edge `(hi(u), hi(v))`. Around a CLOSED ring the strip is a
+    ///   ring of quads whose side seams pair up between adjacent caps, so both
+    ///   boundary loops vanish (boundary-edge count drops to 0) and the two split
+    ///   shells re-join into one closed manifold; around an OPEN ring the two end
+    ///   caps leave the section's end seams open. The cap quads are DEGENERATE
+    ///   (zero area) while the seam pairs are coincident (`gap`==0) — Gap (0253)
+    ///   then just moves `hi` off `lo` to give them area. The topology is built
+    ///   here so 0253 only relocates verts. Cap faces add NO new vertices and are
+    ///   appended to `newFaceIndices` (they are new polys, so Select-New selects
+    ///   them). `split` off (or no rail duplicated) ⇒ no caps, byte-for-byte.
+    ///
     /// `splitPairsOut` (optional) — when non-null AND `split` is on, receives one
     ///   `[loVert, hiVert]` pair per duplicated rail midpoint: `loVert` sits on
     ///   the lo boundary loop, `hiVert` its coincident duplicate on the hi loop.
     ///   This is the seam data Cap Sections (0252) / Gap (0253) consume: Gap moves
-    ///   each pair's two verts apart along the cut normal; Cap connects the lo and
-    ///   hi loops (walk the mesh boundary from any pair vert for ordering). Empty
-    ///   when `split` is off or no rail was duplicated.
+    ///   each pair's two verts apart along the cut normal; Cap (built in-kernel via
+    ///   `caps`) bridges the lo/hi loops using these pairs. Empty when `split` is
+    ///   off or no rail was duplicated.
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
                               bool keepQuads = false,
                               bool ngon = false,
                               bool split = false,
+                              bool caps = false,
                               uint[2][]* splitPairsOut = null) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
@@ -7993,6 +8011,44 @@ struct Mesh {
                     foreach (m; absorbMids(va, vb)) nf ~= m;
                 }
                 newFaces ~= nf;
+            }
+        }
+
+        // Cap Sections (task 0252): with Split on, close each opened section by
+        // bridging its lo boundary loop to the coincident hi loop. Every rail
+        // midpoint duplicated by `railMids` produced a `[lo, hi]` seam pair, so a
+        // "lo cut edge" is any boundary edge whose BOTH ends are lo mids (`u,v` in
+        // `loToHi`); the twin hi edge is `(hi(u), hi(v))`. We emit one quad per lo
+        // cut edge, wound REVERSED to the face that owns the edge so the manifold
+        // stays consistent. Interior lo–lo edges (shared by two sub-faces, e.g.
+        // the middle cut of a multi-position split) have face-incidence 2 and are
+        // skipped — only the section BOUNDARY (incidence 1) is capped. Zero-area
+        // now (lo/hi coincident); Gap (0253) later separates them.
+        if (split && caps && splitSeams.length > 0) {
+            uint[uint] loToHi;
+            foreach (pr; splitSeams) loToHi[pr[0]] = pr[1];
+            // Tally lo–lo edge face-incidence, keeping one directed representative
+            // (its sole owning face's direction) so the cap can oppose it.
+            uint[ulong]   loCount;
+            uint[2][ulong] loDir;
+            foreach (ref f; newFaces)
+                foreach (k; 0 .. f.length) {
+                    uint u = f[k], v = f[(k + 1) % f.length];
+                    if (u in loToHi && v in loToHi) {
+                        ulong kk = edgeKey(u, v);
+                        if (kk !in loCount) loDir[kk] = cast(uint[2])[u, v];
+                        loCount[kk]++;
+                    }
+                }
+            // Deterministic order (AA iteration is unordered): sort boundary keys.
+            import std.algorithm : sort;
+            ulong[] boundaryKeys;
+            foreach (kk, cnt; loCount) if (cnt == 1) boundaryKeys ~= kk;
+            boundaryKeys.sort();
+            foreach (kk; boundaryKeys) {
+                uint u = loDir[kk][0], v = loDir[kk][1];
+                newFaces ~= [v, u, loToHi[u], loToHi[v]];
+                newFaceIndices ~= cast(uint)(newFaces.length - 1);
             }
         }
 
@@ -14900,7 +14956,7 @@ unittest {
     uint eiOn = on.edgeIndex(0, 1);
     uint[] nfOn;
     uint[2][] pairs;
-    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false, /*split*/true, &pairs),
+    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false, /*split*/true, /*caps*/false, &pairs),
            "split-on insert must succeed");
     assert(on.vertices.length == offV + 4, "split on: 4 rail midpoints duplicated");
     assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
@@ -14922,8 +14978,82 @@ unittest {
     Mesh off2 = makeCube();
     uint[] nf2;
     uint[2][] pairs2;
-    off2.insertEdgeLoopsMulti([off2.edgeIndex(0, 1)], [0.5f], nf2, null, false, false, false, &pairs2);
+    off2.insertEdgeLoopsMulti([off2.edgeIndex(0, 1)], [0.5f], nf2, null, false, false, false, /*caps*/false, &pairs2);
     assert(pairs2.length == 0, "split off: no seam pairs emitted");
+}
+
+// insertEdgeLoopsMulti — Cap Sections guard (task 0252, depends on Split/0251).
+// Same unit cube + equatorial seed (0,1); the ring cuts a belt around the 4 side
+// faces (4 rails → 4 duplicated lo/hi pairs under Split). Split ON + caps OFF is
+// exactly 0251's result: 8 boundary edges, 2 disconnected shells. Split ON +
+// caps ON bridges each lo cut edge to its coincident hi twin with one cap quad,
+// so the 4-quad cap ring closes BOTH boundary loops (boundary edges 8→0) and
+// re-joins the two shells into one closed manifold (+4 faces, +4 seam-side
+// edges, NO new verts). caps is a no-op when Split is off (byte-for-byte).
+unittest {
+    static size_t boundaryEdgeCount(ref Mesh m) {
+        size_t n = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            size_t nf = 0;
+            foreach (fi; m.facesAroundEdge(cast(uint)ei)) ++nf;
+            if (nf == 1) ++n;
+        }
+        return n;
+    }
+    static size_t componentCount(ref Mesh m) {
+        auto nf = m.faces.length;
+        if (nf == 0) return 0;
+        auto parent = new size_t[](nf);
+        foreach (i; 0 .. nf) parent[i] = i;
+        size_t find(size_t x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void uni(size_t a, size_t b) { parent[find(a)] = find(b); }
+        uint[][uint] vFaces;
+        foreach (fi, f; m.faces) foreach (v; f) vFaces[v] ~= cast(uint)fi;
+        foreach (v, fs; vFaces) foreach (k; 1 .. fs.length) uni(fs[0], fs[k]);
+        bool[size_t] roots;
+        foreach (i; 0 .. nf) roots[find(i)] = true;
+        return roots.length;
+    }
+
+    // Split ON, caps OFF — open sections (0251's split-on topology).
+    Mesh open = makeCube();
+    uint eiO = open.edgeIndex(0, 1);
+    assert(eiO != ~0u, "cube seed edge (0,1) must exist");
+    uint[] nfOpen;
+    assert(open.insertEdgeLoopsMulti([eiO], [0.5f], nfOpen, null, false, false, /*split*/true, /*caps*/false),
+           "split-on caps-off insert must succeed");
+    immutable openV = open.vertices.length, openE = open.edges.length, openF = open.faces.length;
+    assert(boundaryEdgeCount(open) == 8, "caps off: two 4-edge boundary loops (8 boundary edges)");
+    assert(componentCount(open) == 2, "caps off: two disconnected shells");
+
+    // Split ON, caps ON — cap ring closes both boundary loops.
+    Mesh capped = makeCube();
+    uint eiC = capped.edgeIndex(0, 1);
+    uint[] nfCap;
+    assert(capped.insertEdgeLoopsMulti([eiC], [0.5f], nfCap, null, false, false, /*split*/true, /*caps*/true),
+           "split-on caps-on insert must succeed");
+    assert(capped.vertices.length == openV,     "caps on: adds NO new vertices");
+    assert(capped.faces.length    == openF + 4, "caps on: +4 cap quads (one per lo cut edge)");
+    assert(capped.edges.length    == openE + 4, "caps on: +4 seam-side edges (cut edges reused)");
+    assert(boundaryEdgeCount(capped) == 0, "caps on: both boundary loops closed (0 boundary edges)");
+    assert(componentCount(capped) == 1, "caps on: the cap band re-joins the two shells");
+    // Euler characteristic of the resulting closed genus-0 manifold: V-E+F = 2.
+    assert(cast(long)capped.vertices.length - cast(long)capped.edges.length
+           + cast(long)capped.faces.length == 2, "caps on: closed manifold, V-E+F = 2");
+    // The 4 cap quads are reported as new polys (Select-New selects them).
+    assert(nfCap.length == nfOpen.length + 4, "caps on: 4 extra new faces vs caps-off");
+
+    // caps is a no-op when Split is off (byte-for-byte the connected loop).
+    Mesh nosplit = makeCube();
+    uint[] nfNo;
+    assert(nosplit.insertEdgeLoopsMulti([nosplit.edgeIndex(0, 1)], [0.5f], nfNo, null, false, false, /*split*/false, /*caps*/true),
+           "caps-on split-off insert must succeed");
+    assert(boundaryEdgeCount(nosplit) == 0 && componentCount(nosplit) == 1,
+           "caps no-op with Split off: still the closed connected cube");
+    assert(nosplit.faces.length == openF, "caps no-op with Split off: no cap faces added");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
