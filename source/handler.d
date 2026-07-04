@@ -12,6 +12,7 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
 import math;
 import eventlog;
 import shader;
+import std.json : JSONValue;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -30,6 +31,19 @@ private Vec3 handleStateColor(HandleState state, Vec3 base) {
         case HandleState.Rollover:         return Vec3(1.0f, 0.95f, 0.15f);
         case HandleState.Selected:         return Vec3(1.0f, 0.64f, 0.0f);
         case HandleState.SecondaryDefault: return Vec3(0.55f, 0.75f, 1.0f);
+    }
+}
+
+// HandleState → lowercase string, for JSON serialization (task 0234,
+// /api/tool/handles). Deliberately a string, not the raw enum int: a future
+// reordering of HandleState's declaration can't silently shift a test's
+// meaning the way an int would.
+string handleStateToString(HandleState state) {
+    final switch (state) {
+        case HandleState.Normal:           return "normal";
+        case HandleState.Rollover:         return "rollover";
+        case HandleState.Selected:         return "selected";
+        case HandleState.SecondaryDefault: return "secondaryDefault";
     }
 }
 
@@ -366,6 +380,18 @@ public:
     void setState(HandleState s) { state = s; }
     HandleState getState() const { return state; }
 
+    // A representative screen-space pixel for this handle, for test
+    // introspection (task 0234, /api/tool/handles) — "press here to grab this
+    // handle". Returns false when the handle has no stable world position to
+    // project (e.g. it's off-camera) or the base class default (no geometry).
+    // Override per handle-geometry family; see ShaftedArrow / the disc-family
+    // handlers below. Center-based overrides are serialization-only — a
+    // rim/tangent point (needed for a semantically correct rotate/scale
+    // drag-by-part press) is a follow-up, out of scope here.
+    bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const {
+        return false;
+    }
+
     // Override in subclasses to define the hover hit area.
     protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
     protected float aiScreenDistance(int mx, int my, const ref Viewport vp) {
@@ -412,6 +438,18 @@ public:
         float t;
         return closestOnSegment2D(cast(float)mx, cast(float)my,
                                   sax, say, sbx, sby, t);
+    }
+
+    // Grab point at 70% along the shaft from start toward end — matches the
+    // press convention drag tests use against the real gizmo geometry (well
+    // clear of the centerBox at `start`'s end and any plane handle beyond
+    // `end`). See tests/drag_helpers.d's axisGrabPx for the prior duplicated
+    // approximation this replaces at the call site.
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        Vec3 grab = start + (end - start) * 0.7f;
+        float ndcZ;
+        return projectToWindowFull(grab, vp, sx, sy, ndcZ);
     }
 }
 
@@ -683,6 +721,16 @@ public:
         }
         return best;
     }
+
+    // Center-based anchor — serialization-only. A rotate ring's semantically
+    // "correct" grab point is a point ON the arc, not its center; that needs a
+    // reference direction the JSON caller doesn't have (out of scope here —
+    // see doc/tool_handles_state_plan.md risk 2 / the base class doc comment).
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        float ndcZ;
+        return projectToWindowFull(center, vp, sx, sy, ndcZ);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -771,6 +819,14 @@ public:
             if (d < best) best = d;
         }
         return best;
+    }
+
+    // Center-based anchor — serialization-only (same caveat as
+    // SemicircleHandler.screenAnchor above).
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        float ndcZ;
+        return projectToWindowFull(center, vp, sx, sy, ndcZ);
     }
 }
 
@@ -1115,6 +1171,12 @@ public:
         return doHitTest(mx, my, vp) ? 0.0f : float.infinity;
     }
 
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        float ndcZ;
+        return projectToWindowFull(pos, vp, sx, sy, ndcZ);
+    }
+
 private:
     bool doHitTest(int mx, int my, const ref Viewport vp)
     {
@@ -1207,6 +1269,14 @@ public:
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp) {
         return doHitTest(mx, my, vp) ? 0.0f : float.infinity;
+    }
+
+    // Center-based anchor — serialization-only (same caveat as
+    // SemicircleHandler.screenAnchor above).
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        float ndcZ;
+        return projectToWindowFull(center, vp, sx, sy, ndcZ);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -1314,6 +1384,14 @@ class CenterDiskGizmo : Handler {
 
     override bool hitTest(int mx, int my, const ref Viewport vp) {
         return diskHitCheck(mx, my, vp);
+    }
+
+    // Center-based anchor — serialization-only (same caveat as
+    // SemicircleHandler.screenAnchor above).
+    override bool screenAnchor(const ref Viewport vp, out float sx, out float sy) const
+    {
+        float ndcZ;
+        return projectToWindowFull(center, vp, sx, sy, ndcZ);
     }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp) {
@@ -1758,6 +1836,45 @@ class ToolHandles {
 
     void setHaul(int part) { captured = part; }
     void clearHaul()       { captured = -1;  }
+
+    // Serialize the registered handles for test introspection (task 0234,
+    // /api/tool/handles). `entries` stays private to this module; this is the
+    // only exported view of it. Thread-safety: called from the HTTP
+    // background thread with no lock, same quiescence contract as
+    // /api/selection — the caller (Tool.toolHandlesJson override) is read-only
+    // over data that only the main thread's draw()/update() ever writes, and
+    // tests only probe between play-events settles, never mid-drag. This is
+    // NOT the marshal-to-main-thread pattern used by /api/toolpipe/eval or
+    // /api/snap: those mutate shared g_pipeCtx caches on evaluation, so they
+    // must run on the main thread. Do not extend this "read on the HTTP
+    // thread" shortcut to any state this method would have to MUTATE to read.
+    //
+    // Shape: {"parts":[{part,state,visible,screen:[sx,sy]|null}, ...],
+    //         "hot":N, "captured":N, "secondaryDefault":N}
+    // `screen` is null when the handle has no `screenAnchor` override or its
+    // anchor point is off-camera. Draw-only (unregistered) handles never
+    // appear here — matches the arbiter's own contract (only `add()`-ed
+    // handles are ever hit-tested / highlighted).
+    JSONValue toJson(const ref Viewport vp) const {
+        JSONValue[] parts;
+        foreach (e; entries) {
+            auto obj = JSONValue.emptyObject;
+            obj["part"]    = JSONValue(e.part);
+            obj["state"]   = JSONValue(handleStateToString(e.h.getState()));
+            obj["visible"] = JSONValue(e.h.isVisible());
+            float sx, sy;
+            obj["screen"] = e.h.screenAnchor(vp, sx, sy)
+                ? JSONValue([JSONValue(sx), JSONValue(sy)])
+                : JSONValue(null);
+            parts ~= obj;
+        }
+        auto root = JSONValue.emptyObject;
+        root["parts"]            = JSONValue(parts);
+        root["hot"]              = JSONValue(hot);
+        root["captured"]         = JSONValue(captured);
+        root["secondaryDefault"] = JSONValue(secondaryDefault);
+        return root;
+    }
 
     private int publishHandleTrace(int mx, int my, AiInteractionPhase phase,
                                    int defaultPart,

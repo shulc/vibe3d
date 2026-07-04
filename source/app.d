@@ -4138,6 +4138,22 @@ void main(string[] args) {
                 buildJsonArray(mesh.selectedEdges),
                 buildJsonArray(mesh.selectedFaces));
         });
+        // Task 0234 — GET /api/tool/handles + GET /api/tool/state. Read-only
+        // test-introspection over the active tool; null-guard mirrors every
+        // other activeTool-reading provider in this file. See the
+        // ToolHandlesDataProvider doc comment in http_server.d for the
+        // thread-safety discriminator (no lock needed — the reads mutate
+        // nothing, unlike the toolpipe/snap providers below which marshal to
+        // the main thread).
+        httpServer.setToolHandlesDataProvider(() {
+            import std.json : JSONValue;
+            JSONValue root = JSONValue.emptyObject;
+            root["handles"] = activeTool is null ? JSONValue(null) : activeTool.toolHandlesJson();
+            return root.toString();
+        });
+        httpServer.setToolStateDataProvider(() {
+            return activeTool is null ? "{}" : activeTool.toolStateJson().toString();
+        });
         httpServer.setRecordedEventsProvider(() {
             import std.file : exists, readText;
             if (!exists("recording.jsonl")) return null;

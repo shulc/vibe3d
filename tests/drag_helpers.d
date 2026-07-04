@@ -201,6 +201,30 @@ double[3] vertexPos(int idx, string baseUrl = "http://localhost:8080") {
     return [v[0].floating, v[1].floating, v[2].floating];
 }
 
+// GET /api/tool/handles — fetch the screen anchor of a registered handle by
+// its stable part id (task 0234). `found` is false when the tool has no
+// arbiter (`{"handles":null}`), the part isn't registered, or its anchor is
+// off-camera (`screen:null`) — callers should assert `found` and fail loud,
+// since a missing part is usually a genuine regression (numbering shift,
+// gizmo not drawn yet), not something to silently skip.
+void fetchHandlePart(int part, out double sx, out double sy, out bool found,
+                     string baseUrl = "http://localhost:8080")
+{
+    found = false;
+    auto j = parseJSON(cast(string)get(baseUrl ~ "/api/tool/handles"));
+    auto handles = j["handles"];
+    if (handles.type == JSONType.null_) return;
+    foreach (p; handles["parts"].array) {
+        if (cast(int)p["part"].integer != part) continue;
+        if (p["screen"].type == JSONType.null_) return;   // off-camera
+        auto s = p["screen"].array;
+        sx = s[0].floating;
+        sy = s[1].floating;
+        found = true;
+        return;
+    }
+}
+
 // GET /api/snap/last — the most recent SnapResult any tool published during a
 // drag (snap_render.publishLastSnap). Carries snapped / highlighted /
 // targetType / targetIndex / targetSource (0 = active mesh, 1..N = background

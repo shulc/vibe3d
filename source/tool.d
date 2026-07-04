@@ -9,6 +9,7 @@ import params : Param, ParamHints, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
 import command : Command;
+import std.json : JSONValue;
 
 // ---------------------------------------------------------------------------
 // Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
@@ -210,6 +211,22 @@ class Tool : ParamProvider {
     //     this or the highlighted ring won't match the cut. LoopSliceTool
     //     overrides it.
     bool edgeLoopHoverSliceRing() const { return false; }
+
+    // Test-introspection hook (task 0234, GET /api/tool/handles): serialize
+    // this tool's ToolHandles registry (part id / hover-state / visibility /
+    // screen anchor per handle, plus the shared hot/captured part) so tests
+    // can press a handle by data instead of reconstructing gizmo geometry.
+    // Default `null` — tools with no handle arbiter (most non-transform
+    // tools) report no handles; the HTTP provider wraps this under a
+    // top-level `{"handles": ...}` key regardless. XfrmTransformTool
+    // overrides this to wrap its shared `toolHandles.toJson(cachedVp)`.
+    JSONValue toolHandlesJson() const { return JSONValue(null); }
+
+    // Test-introspection hook (task 0234, GET /api/tool/state): per-tool
+    // transient-state dump (active bank, drag axis, hover/latch state, etc.)
+    // for tests that need to assert something other than final geometry.
+    // Default empty object; XfrmTransformTool + LoopSliceTool override it.
+    JSONValue toolStateJson() const { return JSONValue.emptyObject; }
 
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}

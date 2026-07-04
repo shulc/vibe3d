@@ -1,6 +1,7 @@
 module tools.loop_slice_tool;
 
 import bindbc.sdl;
+import std.json : JSONValue;
 import operator : VectorStack;
 
 import tool;
@@ -194,6 +195,59 @@ public:
     // per-frame hover freeze (isDragging-guard) only needs to hold during a
     // real drag gesture, not for the whole (potentially long) armed period.
     override bool isDragging() const { return scrubbing_; }
+
+    // Task 0234 (GET /api/tool/state): hover/latch/slice-position dump so a
+    // test can assert the 0231 hover-parity WITHOUT a screenshot.
+    //
+    // `sliceRing` is gated on `edgeLoopHoverSliceRing()` — the SAME switch
+    // app.d's `rebuildLoopHoverMask` reads (source/app.d, the `sliceRing`
+    // local there) to choose between the perpendicular cut ring
+    // (`Mesh.loopSliceRingEdges`, when true — this tool's steady-state
+    // answer, task 0231) and the classic parallel edge loop
+    // (`edgeLoopRing` + an edgeIndexMap lookup, when false). Mirroring the
+    // gate — not just always reporting the slice ring — means reverting the
+    // 0231 fix (this override going back to the `Tool` base's `false`)
+    // flips this field to the loop ring and a test asserting `sliceRing ==
+    // loopSliceRingEdges(hoveredEdge)` genuinely fails, instead of the
+    // assertion vacuously passing because the JSON always agrees with
+    // itself.
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]        = JSONValue("loopSlice");
+        root["hoveredEdge"] = JSONValue(g_hoveredEdge);
+        root["seedEdge"]    = JSONValue(seedEdge_);
+        root["dragging"]    = JSONValue(scrubbing_);   // 0232 renamed dragging_ -> scrubbing_ (mesh drag)
+        root["armed"]       = JSONValue(armed_);       // 0232 standing preview held on the mesh
+        root["built"]       = JSONValue(built_);
+        root["position"]    = JSONValue(position_);
+        root["count"]       = JSONValue(count_);
+
+        int[] ringEdges;
+        if (g_hoveredEdge >= 0 && g_hoveredEdge < cast(int)mesh.edges.length) {
+            if (edgeLoopHoverSliceRing()) {
+                foreach (ei; mesh.loopSliceRingEdges(cast(uint)g_hoveredEdge))
+                    ringEdges ~= ei;
+            } else {
+                // Classic parallel edge loop — reproduces app.d's
+                // rebuildLoopHoverMask else-branch (ring-vert-pairs → cage
+                // edge index via edgeIndexMap) so this field means the SAME
+                // thing whichever way the gate above resolves.
+                auto seed = mesh.edges[g_hoveredEdge];
+                uint[] ring = edgeLoopRing(*mesh, seed[0], seed[1]);
+                foreach (i; 0 .. ring.length) {
+                    uint a = ring[i];
+                    uint b = ring[(i + 1) % ring.length];
+                    if (a == b) continue;
+                    if (auto p = edgeKey(a, b) in mesh.edgeIndexMap)
+                        ringEdges ~= cast(int)*p;
+                }
+            }
+        }
+        JSONValue[] ringArr;
+        foreach (ei; ringEdges) ringArr ~= JSONValue(ei);
+        root["sliceRing"] = JSONValue(ringArr);
+        return root;
+    }
 
     override Param[] params() {
         return [

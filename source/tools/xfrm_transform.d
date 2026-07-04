@@ -71,6 +71,7 @@ module tools.xfrm_transform;
 // flip.
 
 import bindbc.sdl;
+import std.json : JSONValue;
 import operator : VectorStack;
 
 import ai.interaction : AiInteractionPhase;
@@ -5365,6 +5366,54 @@ private:
     // `toolHandles` itself stays private to this module — everything below
     // this point in the class is under the `private:` label.
     public int hotPart() const { return toolHandles.hot; }
+
+    // Task 0234 (GET /api/tool/handles): wrap the shared cross-bank arbiter's
+    // registry as JSON, keyed against the owner-cell viewport it was last
+    // hit-tested/drawn against. `viewport` is echoed so a future
+    // `?viewport=N` extension (Quad/Split, see the plan's risk 2) has
+    // something to compare against — this tool doesn't expose `cachedVp`
+    // itself, only its serialization.
+    public override JSONValue toolHandlesJson() const {
+        JSONValue root = toolHandles.toJson(cachedVp);
+        auto vpObj = JSONValue.emptyObject;
+        vpObj["x"]      = JSONValue(cachedVp.x);
+        vpObj["y"]      = JSONValue(cachedVp.y);
+        vpObj["width"]  = JSONValue(cachedVp.width);
+        vpObj["height"] = JSONValue(cachedVp.height);
+        root["viewport"] = vpObj;
+        return root;
+    }
+
+    // Task 0234 (GET /api/tool/state): active bank + drag axis + pivot.
+    // `activeBank` is "none" while idle (mouse motion goes to every enabled
+    // sub-tool for hover-preview, per the `activeDrag` doc comment below);
+    // `dragAxis` mirrors whichever sub-tool's own convention is live (-1
+    // idle). `pivot` reads the shared gizmo center — every enabled bank's
+    // handler is posed to the same center each frame by `setSharedGizmoPose`,
+    // so reading it off `moveSub` is bank-agnostic as long as T is enabled;
+    // when only R/S are enabled (T off) `moveGizmoCenter()` still holds the
+    // right value because `moveSub` exists (composed unconditionally) and is
+    // posed alongside the enabled banks — only its GIZMO isn't drawn/hit-tested.
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"] = JSONValue("xfrm");
+        auto enabled = JSONValue.emptyObject;
+        enabled["t"] = JSONValue(flagT);
+        enabled["r"] = JSONValue(flagR);
+        enabled["s"] = JSONValue(flagS);
+        root["enabled"] = enabled;
+        string bankName = "none";
+        int    dragAxis = -1;
+        if (activeDrag is moveSub)        { bankName = "move";   dragAxis = moveSub.dragAxisPublic(); }
+        else if (activeDrag is rotateSub) { bankName = "rotate"; dragAxis = rotateSub.dragAxisPublic(); }
+        else if (activeDrag is scaleSub)  { bankName = "scale";  dragAxis = scaleSub.dragAxisPublic(); }
+        root["activeBank"] = JSONValue(bankName);
+        root["dragAxis"]   = JSONValue(dragAxis);
+        root["dragging"]   = JSONValue(activeDrag !is null);
+        Vec3 pivot = moveGizmoCenter();
+        root["pivot"] = JSONValue([JSONValue(pivot.x), JSONValue(pivot.y), JSONValue(pivot.z)]);
+        return root;
+    }
 
     // Sub-tool that owns the currently active drag, set on
     // mouse-down and cleared on mouse-up. Null when no drag is

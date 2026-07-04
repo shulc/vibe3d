@@ -9,6 +9,16 @@
 //      hit-test → axisDragDelta → applyDelta path that the UI uses.
 //   4. /api/model verifies v6 moved in +X and stayed put in Y/Z; all
 //      other cube vertices are untouched.
+//
+// Task 0234 (M3): the press point comes from `/api/tool/handles` part 0
+// (the X-move arrow — MOVE_BASE+0, source/tools/move.d:registerHandles) —
+// the tool's OWN serialization of its OWN gizmo geometry — instead of this
+// test reconstructing `ShaftedArrow` start/end offsets (size/6, size*1.18…)
+// by hand. The DRAG DIRECTION still comes from projecting the world +X
+// pivot offset (`/api/tool/state`'s `pivot` + a world-space nudge) — that
+// part isn't semantic, it's just "which way is +X on screen right now",
+// and turning that into data too is a follow-up (see the plan's note on
+// rotate/scale drag-by-part needing a rim point, not a center).
 
 import std.net.curl;
 import std.json;
@@ -40,34 +50,42 @@ unittest { // X-axis drag of v6 only moves v6 in +X
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
 
-    // ACEN.Auto with single-vertex selection ⇒ gizmo pivot = v6.
-    Vec3 pivot = Vec3(0.5f, 0.5f, 0.5f);
-    float size = gizmoSize(pivot, vp);
-    // Match handler.d:MoveHandler — arrow shaft starts at pivot+axis*(size/6)
-    // so it doesn't clip into the centerBox; tip at pivot+axis*size.
-    Vec3 arrowStart = Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size,         pivot.y, pivot.z);
-    float sx1, sy1, sx2, sy2;
-    assert(projectToWindow(arrowStart, vp, sx1, sy1),
-        "X-arrow start projects off-camera");
-    assert(projectToWindow(arrowEnd,   vp, sx2, sy2),
-        "X-arrow end projects off-camera");
+    // /api/tool/handles only reflects the gizmo AFTER a draw() frame has run
+    // (it registers `toolHandles.entries` + sets `cachedVp`) — settle before
+    // fetching so part 0 is actually present; fail loud (assert) rather than
+    // retry-loop, so a real regression (numbering shift, gizmo never drawn)
+    // surfaces as a clear failure instead of a flaky timeout.
+    import core.thread : Thread;
+    import core.time   : msecs;
+    Thread.sleep(150.msecs);
 
-    // Click ~70 % along the arrow from start — far from the centerBox at
-    // pivot and from any plane circle at the corners. Hit-test threshold
-    // is 8 px so the click lands solidly on the shaft.
-    int x0 = cast(int)(sx1 + 0.7f * (sx2 - sx1));
-    int y0 = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    double sx0, sy0;
+    bool found;
+    fetchHandlePart(0, sx0, sy0, found);
+    assert(found, "X-move handle (part 0) not found in /api/tool/handles — " ~
+        "gizmo numbering or draw timing regressed");
+    int x0 = cast(int)sx0;
+    int y0 = cast(int)sy0;
+
+    // ACEN.Auto with single-vertex selection ⇒ gizmo pivot = v6. Project the
+    // pivot itself + a small +X world nudge to recover the on-screen drag
+    // DIRECTION (not the click point — that came from the handle above).
+    Vec3 pivot = Vec3(0.5f, 0.5f, 0.5f);
+    float sxPivot, syPivot, sxNudge, syNudge;
+    assert(projectToWindow(pivot, vp, sxPivot, syPivot),
+        "pivot projects off-camera");
+    assert(projectToWindow(Vec3(pivot.x + 1.0f, pivot.y, pivot.z), vp, sxNudge, syNudge),
+        "pivot+X projects off-camera");
 
     // Drag ~100 px along the on-screen projection of the world X-axis.
     // Magnitude chosen so the world delta is comfortably > 0.1 regardless
     // of camera aspect — tiny layout drift won't shrink the actual move
     // below the 0.1 lower-bound assertion.
-    double sdx = cast(double)(sx2 - sx1);
-    double sdy = cast(double)(sy2 - sy1);
+    double sdx = cast(double)(sxNudge - sxPivot);
+    double sdy = cast(double)(syNudge - syPivot);
     double sLen = sqrt(sdx*sdx + sdy*sdy);
     assert(sLen > 1.0,
-        "X-arrow projects too short to drive a robust drag (camera bad?)");
+        "world +X projects too short to drive a robust drag (camera bad?)");
     int x1 = x0 + cast(int)(100.0 * sdx / sLen);
     int y1 = y0 + cast(int)(100.0 * sdy / sLen);
 

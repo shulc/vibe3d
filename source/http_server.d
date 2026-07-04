@@ -100,6 +100,23 @@ class HttpServer {
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
     private SelectionDataProvider selectionDataProvider;
+    // GET /api/tool/handles — the active tool's ToolHandles registry (part
+    // id / hover-state / visibility / screen anchor per handle, plus the
+    // shared hot/captured part), and GET /api/tool/state — its per-tool
+    // transient dump (task 0234, doc/tool_handles_state_plan.md). Both are
+    // read-only test-introspection endpoints served straight from the HTTP
+    // thread — same quiescence contract as /api/selection: the provider
+    // reads live tool state (registered handles, cached viewport, transient
+    // fields) with no lock, which is safe because tests only probe between
+    // play-events settles, never mid-drag, and the reads MUTATE nothing (no
+    // g_pipeCtx cache write, unlike /api/toolpipe/eval or /api/snap, which
+    // ARE marshaled to the main thread because their read evaluates the
+    // pipeline). Do not extend this no-lock pattern to a tool-state read
+    // that would need to mutate shared state to answer.
+    private alias ToolHandlesDataProvider = string delegate();
+    private ToolHandlesDataProvider toolHandlesDataProvider;
+    private alias ToolStateDataProvider = string delegate();
+    private ToolStateDataProvider toolStateDataProvider;
     // /api/layers (GET) — JSON layer list. /api/model?layer=N — a layer-aware
     // detailed provider (N=-1 → active layer). Both marshal onto the main
     // thread via the existing model epoch handshake (tickModel).
@@ -654,6 +671,16 @@ class HttpServer {
         this.selectionDataProvider = provider;
     }
 
+    /// GET /api/tool/handles — see the ToolHandlesDataProvider doc comment above.
+    public void setToolHandlesDataProvider(ToolHandlesDataProvider provider) {
+        this.toolHandlesDataProvider = provider;
+    }
+
+    /// GET /api/tool/state — see the ToolStateDataProvider doc comment above.
+    public void setToolStateDataProvider(ToolStateDataProvider provider) {
+        this.toolStateDataProvider = provider;
+    }
+
     /// GET /api/layers — JSON layer list (layers Stage 2).
     public void setLayersDataProvider(LayersDataProvider provider) {
         this.layersDataProvider = provider;
@@ -1104,6 +1131,40 @@ class HttpServer {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Selection data provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/tool/handles" && request.method == "GET") {
+            // Task 0234. Read-only; served straight from the HTTP thread —
+            // see the ToolHandlesDataProvider doc comment (above, near its
+            // field declaration) for the thread-safety discriminator.
+            response.headers["Content-Type"] = "application/json";
+            if (toolHandlesDataProvider is null) {
+                response.statusCode = 200;
+                response.body = `{"handles":null}`;
+            } else {
+                try {
+                    response.statusCode = 200;
+                    response.body = toolHandlesDataProvider();
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                }
+            }
+        } else if (request.path == "/api/tool/state" && request.method == "GET") {
+            // Task 0234. Same read-only / no-lock contract as /api/tool/handles.
+            response.headers["Content-Type"] = "application/json";
+            if (toolStateDataProvider is null) {
+                response.statusCode = 200;
+                response.body = `{}`;
+            } else {
+                try {
+                    response.statusCode = 200;
+                    response.body = toolStateDataProvider();
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/layers" && request.method == "GET") {
             // Layer list (layers Stage 2). Read-only; served straight from the
