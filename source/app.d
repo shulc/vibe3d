@@ -3228,6 +3228,13 @@ void main(string[] args) {
                                          lst.dropArmedPreview();
                                      setActiveTool(null);
                                      resetAllPipeStages();
+                                     // A reset is a clean slate: force the
+                                     // subpatch preview OFF so a leftover
+                                     // `active` preview cannot carry into the
+                                     // fresh scene and turn tool-side cage
+                                     // uploads into stray mutationVersion bumps
+                                     // (see SubpatchPreview.deactivate).
+                                     subpatchPreview.deactivate();
                                  },
                                  () {
                                      vpm.resetToDefault();
@@ -3528,7 +3535,13 @@ void main(string[] args) {
         auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache(), &edgeCache(), &faceCache(),
                        &editMode,
-                       () { setActiveTool(null); resetAllPipeStages(); },
+                       () {
+                           setActiveTool(null);
+                           resetAllPipeStages();
+                           // Clean slate: force the subpatch preview OFF (see
+                           // SubpatchPreview.deactivate / the scene.reset hook).
+                           subpatchPreview.deactivate();
+                       },
                        () {
                            vpm.resetToDefault();
                            // Mirror the live reset (always Single) into

@@ -11301,6 +11301,30 @@ struct SubpatchPreview {
 
     import subpatch_osd : GpuFanOutTargets;
 
+    /// Force the preview OFF and invalidate the staleness keys.
+    ///
+    /// A scene reset replaces the source mesh IN PLACE (same heap address,
+    /// fresh contents), so a still-`active` preview whose cached
+    /// (sourceMeshAddr, sourceVersion, depth) key happens to match the
+    /// replacement would be left live by `rebuildIfStale`'s early-out — a
+    /// cross-reset state leak. While the preview is live,
+    /// `GpuMesh.suppressCageUpload` turns a tool-side cage upload into a bare
+    /// `++mesh.mutationVersion` (the main loop owns the real upload). Those
+    /// spurious version bumps then trip the transform tool's mutation-boundary
+    /// poll, which resets the run and silently cancels an in-session falloff
+    /// re-grade in the NEXT edit. Clearing the keys here forces the next
+    /// `rebuildIfStale` to re-derive from scratch (and stay OFF for a
+    /// non-subpatch mesh), so no reset can carry the preview into a fresh scene.
+    void deactivate() {
+        active                = false;
+        sourceMeshAddr        = size_t.max;
+        sourceVersion         = ulong.max;
+        sourceTopologyVersion = ulong.max;
+        depth                 = -1;
+        reusablePreviewReady  = false;
+        reusablePreviewKey    = 0;
+    }
+
     private ulong computeReusablePreviewKey(ref const Mesh source, int d) const {
         import core.internal.hash : hashOf;
         ulong h = hashOf(d);
