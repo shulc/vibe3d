@@ -156,6 +156,15 @@ private:
     // cut watertight AND all-quad. OFF (default) is the whole-ring behaviour
     // byte-for-byte. Composes with `select` (both use the same absorb pass).
     bool    keepQuads_     = false;
+    // Slice N-gon (`ngon`, task 0250): the quad ring stops at any non-quad face
+    // by default. When ON, the ring is allowed to CONTINUE THROUGH a face with
+    // more than four sides (N >= 5) — it enters, picks the opposite exit edge,
+    // and the n-gon is sliced by the chord between the two edge midpoints, so
+    // the cut spans the n-gon and reaches the faces beyond. Triangles still stop
+    // the ring. OFF (default) is the whole-ring/terminate-at-non-quad behaviour
+    // byte-for-byte. Composes with `quad`/`select` (all flow through the same
+    // per-face split machinery in `Mesh.insertEdgeLoopsMulti`).
+    bool    sliceNgon_     = false;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -260,6 +269,7 @@ public:
         root["count"]       = JSONValue(count_);
         root["select"]      = JSONValue(sliceSelected_);   // Slice Selected (task 0248)
         root["quad"]        = JSONValue(keepQuads_);        // Keep Quads (task 0249)
+        root["ngon"]        = JSONValue(sliceNgon_);        // Slice N-gon (task 0250)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -313,6 +323,7 @@ public:
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
             Param.bool_("select", "Slice Selected", &sliceSelected_, false),
             Param.bool_("quad", "Keep Quads", &keepQuads_, false),
+            Param.bool_("ngon", "Slice N-gon", &sliceNgon_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -366,6 +377,7 @@ public:
         selectNew_      = true;
         sliceSelected_  = false;
         keepQuads_      = false;
+        sliceNgon_      = false;
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -467,6 +479,7 @@ public:
         }
         if (pname == "select") { if (armed_) rebuildCut(); return; }
         if (pname == "quad")   { if (armed_) rebuildCut(); return; }
+        if (pname == "ngon")   { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -573,7 +586,8 @@ public:
 
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
-                                            restrictFor(selectedFaceIndices()), keepQuads_);
+                                            restrictFor(selectedFaceIndices()), keepQuads_,
+                                            sliceNgon_);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -871,7 +885,8 @@ private:
         before_.restore(*mesh);
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
-                                            restrictFor(armedSelFaces_), keepQuads_);
+                                            restrictFor(armedSelFaces_), keepQuads_,
+                                            sliceNgon_);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

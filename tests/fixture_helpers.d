@@ -443,6 +443,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "quad": true } }`.
         if ("quad" in ls && ls["quad"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool quad 1", ctx);
+        // Optional Slice N-gon (task 0250): let the ring continue THROUGH a
+        // non-quad face with >4 sides (it is sliced by the entry→exit chord)
+        // instead of terminating at it. `{ "loop_slice": { ..., "ngon": true } }`.
+        if ("ngon" in ls && ls["ngon"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool ngon 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

@@ -1,0 +1,68 @@
+{
+  "name": "loop_slice_ngon",
+  "description": "Loop Slice 'Slice N-gon' option (task 0250). Planar horizontal strip: two left quads Q0=[0,1,6,5], Q1=[1,2,7,6], a HEXAGON H=[2,10,3,8,11,7] whose top+bottom are split at x=2.5 (verts 10,11), then a right quad Q2=[3,4,9,8]. The seed edge is the vertical edge (1,0,0)-(1,1,0) shared by Q0 and Q1. The quad ring walks LEFT via Q0 to the boundary and RIGHT via Q1 into the hexagon. With Slice N-gon OFF (default, whole-ring behaviour byte-for-byte) the ring TERMINATES at the hexagon (walkRingSide stops at the non-quad) — only Q0,Q1 are sliced (3 midpoints), so 15 verts / 21 edges / 6 faces; the exit edge (2,0)-(2,1) into the hexagon survives full (a T-junction against the uncut hexagon). With Slice N-gon ON the ring CROSSES the hexagon: it enters via its left vertical edge and exits via the opposite (right vertical) edge, splitting the hexagon by the chord between the two edge midpoints, then continues into Q2. All four faces are sliced (5 midpoints), so 17 verts / 24 edges / 8 faces; the full edges (2,0)-(2,1) and (3,0)-(3,1) are gone (replaced by their half-edges) — the crossing is watertight. Reference-independent geometry law: every new vertex sits at the 0.5 midpoint of a pre-op vertical edge (0/1/2/3/4, x=0.5 apart). The countable OFF/ON difference (2 extra midpoints, 2 extra faces, the two exit rails reached) is the proof the ring traversed the n-gon.",
+  "source": "Analytic self-golden. The 'Slice N-gon' rule is DERIVED from the live-captured reference `ngon` attribute (toolcards/mesh.loopSlice spec.json, task 0244 live probe: 'Enable to slice n-sided polygons -- attempts to continue a loop slice across polygons with more than four sides', default off). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the ON/OFF traversal topology is NOT independently re-captured live. Implementation choice (documented): the ring enters via its current edge and exits via the edge `entryJ + N/2` (mod N) — the diametrically opposite edge for even N; the n-gon is sliced by the single chord between the two edge midpoints (leaving a quad + an (N-1)-gon for one cut — a plain 'slice n-gon', NOT a quad-only decomposition, which is the deeper Keep-Quads-inside-n-gon facet the reference computes by an unknowable heuristic and is left out honestly). Triangles never traverse (no clean opposite edge). Flagged honestly.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "ngon_off_default",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[1,0,0],[2,0,0],[3,0,0],[4,0,0],
+              [0,1,0],[1,1,0],[2,1,0],[3,1,0],[4,1,0],
+              [2.5,0,0],[2.5,1,0]
+            ],
+            "faces": [ [0,1,6,5], [1,2,7,6], [2,10,3,8,11,7], [3,4,9,8] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[1,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5] } } ],
+      "expected_before": { "verts": 12, "edges": 15, "faces": 4 },
+      "expected_after":  { "verts": 15, "edges": 21, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[3,0,0],[4,0,0],
+        [0,1,0],[1,1,0],[2,1,0],[3,1,0],[4,1,0],
+        [2.5,0,0],[2.5,1,0],
+        [1,0.5,0],[0,0.5,0],[2,0.5,0]
+      ],
+      "lerp_checks": [
+        { "a": [1,0,0], "b": [1,1,0], "t": 0.5, "point": [1,0.5,0] },
+        { "a": [0,0,0], "b": [0,1,0], "t": 0.5, "point": [0,0.5,0] },
+        { "a": [2,0,0], "b": [2,1,0], "t": 0.5, "point": [2,0.5,0] }
+      ]
+    },
+    {
+      "name": "ngon_on",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[1,0,0],[2,0,0],[3,0,0],[4,0,0],
+              [0,1,0],[1,1,0],[2,1,0],[3,1,0],[4,1,0],
+              [2.5,0,0],[2.5,1,0]
+            ],
+            "faces": [ [0,1,6,5], [1,2,7,6], [2,10,3,8,11,7], [3,4,9,8] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[1,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "ngon": true } } ],
+      "expected_before": { "verts": 12, "edges": 15, "faces": 4 },
+      "expected_after":  { "verts": 17, "edges": 24, "faces": 8 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[3,0,0],[4,0,0],
+        [0,1,0],[1,1,0],[2,1,0],[3,1,0],[4,1,0],
+        [2.5,0,0],[2.5,1,0],
+        [1,0.5,0],[0,0.5,0],[2,0.5,0],[3,0.5,0],[4,0.5,0]
+      ],
+      "lerp_checks": [
+        { "a": [1,0,0], "b": [1,1,0], "t": 0.5, "point": [1,0.5,0] },
+        { "a": [0,0,0], "b": [0,1,0], "t": 0.5, "point": [0,0.5,0] },
+        { "a": [2,0,0], "b": [2,1,0], "t": 0.5, "point": [2,0.5,0] },
+        { "a": [3,0,0], "b": [3,1,0], "t": 0.5, "point": [3,0.5,0] },
+        { "a": [4,0,0], "b": [4,1,0], "t": 0.5, "point": [4,0.5,0] }
+      ]
+    }
+  ]
+}

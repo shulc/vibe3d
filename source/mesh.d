@@ -7333,14 +7333,45 @@ struct Mesh {
         uint a, b;  // entry edge: p-rail direction a→b
         uint c, d;  // exit edge in CCW order (q-rail = lerp(d,c,t))
         uint fi;    // face index at collection time
+        // N-gon traversal (task 0250 "Slice N-gon"). For a QUAD `ngon` is false
+        // and (a,b,c,d) fully describe the split (byte-for-byte unchanged path).
+        // For a non-quad face the ring is allowed to CROSS under the `ngon`
+        // option: (a,b,c,d) then hold the entry/exit DARTS but the face has more
+        // than 4 corners, so the split needs the whole face — `entryJ`/`exitJ`
+        // are the local CCW edge indices (edge k = face[k]→face[(k+1)%N]) of the
+        // entry and exit edges, and `ngon` marks the face for the general
+        // polygon split (`emitNgonRingSplit`). Unused (`-1`/`false`) for quads.
+        int  entryJ = -1, exitJ = -1;
+        bool ngon = false;
+    }
+
+    /// Exit-edge rule for a loop slice crossing an N-sided face (task 0250).
+    /// The ring enters via local edge `entryJ` (edge k = face[k]→face[k+1]) and
+    /// leaves via the edge "most opposite" to it: `entryJ + N/2` (mod N). For an
+    /// even N this is the diametrically opposite edge; for an odd N it is one of
+    /// the two edges flanking the far vertex (deterministic floor choice). The
+    /// chord from the entry-edge midpoint to the exit-edge midpoint continues
+    /// the loop across the face. Only ever consulted for N >= 5 (triangles never
+    /// traverse — see `walkRingSide`).
+    private static int ngonExitEdge(uint n, int entryJ) {
+        return cast(int)((cast(uint)entryJ + n / 2) % n);
     }
 
     /// Walk one side of the ring from startFace, following the exit edge of each
     /// quad until: the exit key equals seedKey (closed — sets closed=true), a
     /// boundary is hit, the face is not a quad, or a face is revisited.
     /// Does NOT include the initial seed edge itself in the entries.
+    ///
+    /// `ngon` (task 0250 "Slice N-gon"): when true the ring is allowed to CROSS
+    /// a non-quad face with MORE than 4 sides (N >= 5) instead of terminating at
+    /// it — it enters via the current edge and leaves via `ngonExitEdge` (the
+    /// opposite edge), recording an `ngon`-flagged entry that `splitFace` then
+    /// slices with `emitNgonRingSplit`. Triangles (N < 4) still ALWAYS stop the
+    /// ring (a tri has no clean opposite edge). With `ngon` false (default) the
+    /// walk is byte-for-byte the original quad-only walk (any non-quad stops it).
+    /// The seed face itself must still be a quad (guaranteed by `collectEdgeRing`).
     private EdgeRingEntry[] walkRingSide(uint seedEdge, uint startFace,
-                                         out bool closed) const {
+                                         out bool closed, bool ngon = false) const {
         EdgeRingEntry[] result;
         closed = false;
         if (startFace >= faces.length) return result;
@@ -7357,22 +7388,45 @@ struct Mesh {
         for (;;) {
             if (curFi in vis) break;
             const f = faces[curFi];
-            if (f.length != 4) break;
+            uint N = cast(uint)f.length;
 
-            uint a = f[curJ],       b = f[(curJ+1)%4],
-                 c = f[(curJ+2)%4], d = f[(curJ+3)%4];
-            result ~= EdgeRingEntry(a, b, c, d, curFi);
-            vis[curFi] = true;
+            uint exitEi;
+            ulong exitKey;
+            if (N == 4) {
+                // Quad — the original record (byte-for-byte). Exit = opposite edge.
+                uint a = f[curJ],       b = f[(curJ+1)%4],
+                     c = f[(curJ+2)%4], d = f[(curJ+3)%4];
+                result ~= EdgeRingEntry(a, b, c, d, curFi);
+                vis[curFi] = true;
+                exitEi = edgeIndex(c, d);
+                if (exitEi == ~0u) break;                   // no exit edge
+                exitKey = edgeKeyOf(exitEi);
+            } else {
+                // N-gon crossing (only reached under `ngon`, and only for N >= 5
+                // — the step below never advances the walk onto a triangle). Exit
+                // = ngonExitEdge(N, entryJ); record the full-face split intent.
+                int exitJ = ngonExitEdge(N, curJ);
+                uint a = f[curJ],  b = f[(curJ + 1) % N],
+                     c = f[exitJ], d = f[(exitJ + 1) % N];
+                auto ent = EdgeRingEntry(a, b, c, d, curFi);
+                ent.entryJ = curJ;
+                ent.exitJ  = exitJ;
+                ent.ngon   = true;
+                result ~= ent;
+                vis[curFi] = true;
+                exitEi = edgeIndex(c, d);
+                if (exitEi == ~0u) break;
+                exitKey = edgeKeyOf(exitEi);
+            }
 
-            uint exitEi = edgeIndex(c, d);
-            if (exitEi == ~0u) break;                       // no exit edge
-
-            ulong exitKey = edgeKeyOf(exitEi);
             if (exitKey == seedKey) { closed = true; break; } // closed ring
 
             int nf = adjacentFaceThrough(exitEi, curFi);
             if (nf < 0) break;                              // open boundary
-            if (faces[nf].length != 4) break;               // non-quad stop
+            uint nN = cast(uint)faces[nf].length;
+            // Advance only onto a quad, or (under `ngon`) an N >= 5 face.
+            // A triangle always stops the ring, `ngon` or not.
+            if (!(nN == 4 || (ngon && nN > 4))) break;
 
             int j2 = findEdgeInFace(cast(uint)nf, exitKey);
             if (j2 < 0) break;
@@ -7407,7 +7461,13 @@ struct Mesh {
     /// Each entry carries the ring-edge direction (p-rail a→b, q-rail d→c)
     /// and face index.  closed==true when the ring wraps (e.g. a cube belt).
     /// Returns an empty slice if no quad face is incident on seedEdge.
-    EdgeRingEntry[] collectEdgeRing(uint seedEdge, out bool closed) const {
+    /// `ngon` (task 0250): forwarded to `walkRingSide` so the ring may CROSS
+    /// non-quad (N >= 5) faces mid-walk instead of terminating at them. The SEED
+    /// edge's own two incident faces must still be quads either way (the seed
+    /// receives its p-rail from a quad frame); only faces reached DURING the walk
+    /// are traversed. `ngon` false (default) is the unchanged quad-only ring.
+    EdgeRingEntry[] collectEdgeRing(uint seedEdge, out bool closed,
+                                    bool ngon = false) const {
         closed = false;
         if (seedEdge >= edges.length) return [];
 
@@ -7423,13 +7483,13 @@ struct Mesh {
             if (faces[incFaces[i]].length != 4) return [];
 
         bool closedA;
-        auto sideA = walkRingSide(seedEdge, incFaces[0], closedA);
+        auto sideA = walkRingSide(seedEdge, incFaces[0], closedA, ngon);
         if (closedA) { closed = true; return sideA; }  // one pass hit closure
 
         if (nFaces == 1) return sideA;                 // boundary edge, open
 
         bool closedB;
-        auto sideB = walkRingSide(seedEdge, incFaces[1], closedB);
+        auto sideB = walkRingSide(seedEdge, incFaces[1], closedB, ngon);
         return sideA ~ sideB;
     }
 
@@ -7545,10 +7605,35 @@ struct Mesh {
     ///   mesh no non-quad exists to absorb, so `keepQuads` produces geometry
     ///   IDENTICAL to the default (only the face-emission ORDER differs — the
     ///   two-pass path emits all split faces before the untouched ones).
+    ///
+    /// `ngon` (optional, default false) — the Loop Slice "Slice N-gon" guard
+    ///   (task 0250). Off (default) the ring terminates at ANY non-quad face
+    ///   (`collectEdgeRing`/`walkRingSide` stop there), byte-for-byte unchanged.
+    ///   On, the ring is allowed to CONTINUE THROUGH a non-quad face with more
+    ///   than four sides (N >= 5): it enters via its current edge, leaves via the
+    ///   opposite edge (`ngonExitEdge`), and the n-gon is sliced by the chord
+    ///   between the two edge midpoints (`emitNgonRingSplit`) — so the cut spans
+    ///   the n-gon and reaches the faces beyond. Triangles still stop the ring
+    ///   (no clean opposite edge). The n-gon's two rail midpoints are shared with
+    ///   its ring neighbours through the SAME rail cache, so the crossing is
+    ///   watertight WITHOUT needing the absorb pass. The chord split leaves the
+    ///   two n-gon sub-faces as whatever arity the side chains dictate (a quad
+    ///   plus an (N-1)-gon for a single cut) — matching a plain "slice n-gon"
+    ///   (NOT a quad-only decomposition). Composes with `keepQuads`: when both
+    ///   are on the n-gon is still TRAVERSED (it is a ring face, so it is split,
+    ///   never absorbed), and `keepQuads` continues to absorb the terminating
+    ///   midpoint at any REMAINING non-quad border the ring still stops at (e.g.
+    ///   a triangle). Forcing the n-gon's OWN sub-faces to be all-quad — the
+    ///   deeper "keep quads inside a sliced n-gon" facet — is an unknowable
+    ///   reference heuristic (closed source, not headlessly capturable) and is
+    ///   deliberately NOT attempted here; see the task notes. Composes with
+    ///   `restrictFaces` orthogonally (which rings/faces are cut vs which faces
+    ///   the ring is allowed to traverse are independent axes).
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
-                              bool keepQuads = false) {
+                              bool keepQuads = false,
+                              bool ngon = false) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7559,7 +7644,7 @@ struct Mesh {
         foreach (seed; seeds) {
             if (seed >= edges.length) continue;
             bool closed;
-            auto ring = collectEdgeRing(seed, closed);
+            auto ring = collectEdgeRing(seed, closed, ngon);
             if (ring.length == 0) continue;   // degenerate/no-op seed — skip
 
             uint[] faceIds;
@@ -7644,11 +7729,63 @@ struct Mesh {
         uint[][] newFaces;
         newFaces.reserve(faces.length + rings.length * positions.length * 4);
 
+        // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
+        // chord runs from the entry-edge rail to the exit-edge rail, splitting
+        // the polygon into two sub-faces plus (P-1) middle quads between rails.
+        // Generalises `emitSingleRingSplit`: with P positions and the two side
+        // chains S1 (entry→exit) / S2 (exit→entry), the end caps carry the
+        // chains and the rails pair up exactly as in the quad case (a quad's S1
+        // = [b,c], S2 = [d,a] collapse this to `emitSingleRingSplit` verbatim).
+        void emitNgonRingSplit(EdgeRingEntry e) {
+            auto f = faces[e.fi];
+            uint N = cast(uint)f.length;
+            int  ej = e.entryJ, xj = e.exitJ;
+            uint a = f[ej], b = f[(ej + 1) % N];   // entry edge a→b
+            uint c = f[xj], d = f[(xj + 1) % N];   // exit  edge c→d
+            uint[] p = getMids(a, b);              // p-rail on entry edge (a→b)
+            uint[] q = getMids(d, c);              // q-rail on exit edge (d→c)
+
+            // S1 = the boundary chain from b (entry-edge far vertex) forward to
+            // c (exit-edge near vertex); S2 = from d forward to a.
+            uint[] s1, s2;
+            for (uint k = cast(uint)((ej + 1) % N); ; k = (k + 1) % N) {
+                s1 ~= f[k];
+                if (k == cast(uint)xj) break;
+            }
+            for (uint k = cast(uint)((xj + 1) % N); ; k = (k + 1) % N) {
+                s2 ~= f[k];
+                if (k == cast(uint)ej) break;
+            }
+
+            // Start cap (S2 side): [p0, q0] ~ S2.
+            uint[] capB = [p[0], q[0]] ~ s2;
+            newFaces ~= capB;
+            newFaceIndices ~= cast(uint)(newFaces.length - 1);
+            // Middle quads between consecutive rails.
+            foreach (k; 1 .. positions.length) {
+                newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
+                newFaceIndices ~= cast(uint)(newFaces.length - 1);
+            }
+            // End cap (S1 side): [p_last] ~ S1 ~ [q_last].
+            uint[] capA = [p[$-1]] ~ s1 ~ [q[$-1]];
+            newFaces ~= capA;
+            newFaceIndices ~= cast(uint)(newFaces.length - 1);
+        }
+
         // Split ONE ring-crossed face (single-ring or grid). Precondition:
         // `fi in perFaceRings`. Factored out so the whole-ring path and the
         // Slice-Selected restrict path share IDENTICAL split geometry.
         void splitFace(uint fi) {
             auto entries = perFaceRings[fi];
+
+            // A non-quad face crossed under `ngon`: all its entries describe the
+            // SAME polygon, so the first ngon entry fully determines the cut (a
+            // 2nd distinct ring through the same n-gon is rare/degenerate and
+            // defensively ignored — the chord split is single-ring).
+            if (entries[0].ngon) {
+                emitNgonRingSplit(entries[0]);
+                return;
+            }
 
             if (entries.length == 1) {
                 auto e = entries[0];
@@ -14549,6 +14686,75 @@ unittest {
     // Both created only the 4 sub-quads of Q0+Q1; the absorbed T is excluded.
     assert(nfOn.length == 4,  "on: newFaceIndices = 4 created sub-quads (T excluded)");
     assert(nfOff.length == 4, "off: newFaceIndices = 4 created sub-quads");
+}
+
+// insertEdgeLoopsMulti — Slice N-gon guard (task 0250). A planar horizontal
+// strip Q0=[0,1,6,5], Q1=[1,2,7,6], a HEXAGON H=[2,10,3,8,11,7] (top+bottom
+// split at x=2.5), Q2=[3,4,9,8]. Seed = the vertical edge (1,6) between the two
+// left quads. The quad ring walks left to the boundary (via Q0) and right into
+// H. With ngon OFF (default) the ring TERMINATES at the hexagon → only {Q0,Q1}
+// are sliced (H, Q2 untouched; the exit rail leaves a T-junction against H).
+// With ngon ON the ring CROSSES the hexagon (chord between its two vertical-edge
+// midpoints) and reaches Q2 → {Q0,Q1,H,Q2} all sliced. Countable proof: OFF =
+// 15 verts / 21 edges / 6 faces; ON = 17 verts / 24 edges / 8 faces.
+unittest {
+    import std.math : abs;
+    static bool hasV(const Mesh m, Vec3 p, float eps = 1e-4f) {
+        foreach (v; m.vertices)
+            if (abs(v.x-p.x) < eps && abs(v.y-p.y) < eps && abs(v.z-p.z) < eps)
+                return true;
+        return false;
+    }
+    static Mesh makeStrip() {
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0), // v0..v4
+            Vec3(0,1,0), Vec3(1,1,0), Vec3(2,1,0), Vec3(3,1,0), Vec3(4,1,0), // v5..v9
+            Vec3(2.5f,0,0), Vec3(2.5f,1,0),                                  // v10 BM, v11 TM
+        ];
+        m.addFace([0u,1u,6u,5u]);         // Q0
+        m.addFace([1u,2u,7u,6u]);         // Q1
+        m.addFace([2u,10u,3u,8u,11u,7u]); // H (hexagon)
+        m.addFace([3u,4u,9u,8u]);         // Q2
+        m.rebuildEdges();
+        m.buildLoops();
+        return m;
+    }
+
+    // ngon OFF (default) — ring terminates at the hexagon; only Q0,Q1 sliced.
+    Mesh off = makeStrip();
+    uint eiOff = off.edgeIndex(1, 6);
+    assert(eiOff != ~0u, "seed edge (1,6) must exist");
+    uint[] nfOff;
+    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, /*ngon*/false),
+           "ngon-off insert must succeed");
+    assert(off.vertices.length == 15, "off: 12 + 3 midpoints = 15 verts");
+    assert(off.edges.length    == 21, "off: 21 edges (T-junction at uncut hexagon)");
+    assert(off.faces.length    == 6,  "off: Q0×2 + Q1×2 + H + Q2 = 6 faces");
+    // The hexagon + Q2 rails were never reached — no midpoints there.
+    assert(!hasV(off, Vec3(3,0.5f,0)), "off: hexagon exit rail NOT cut");
+    assert(!hasV(off, Vec3(4,0.5f,0)), "off: Q2 rail NOT cut (ring stopped at hexagon)");
+    // The exit edge into the hexagon survives full (uncut hexagon → T-junction).
+    assert(off.edgeIndex(2, 7) != ~0u, "off: full edge (2,7) survives (hexagon uncut)");
+    assert(nfOff.length == 4, "off: 4 created sub-quads (Q0+Q1)");
+
+    // ngon ON — ring crosses the hexagon and reaches Q2; all four faces sliced.
+    Mesh on = makeStrip();
+    uint eiOn = on.edgeIndex(1, 6);
+    uint[] nfOn;
+    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, /*ngon*/true),
+           "ngon-on insert must succeed");
+    assert(on.vertices.length == 17, "on: 12 + 5 midpoints = 17 verts");
+    assert(on.edges.length    == 24, "on: 24 edges (watertight crossing, no T-junction)");
+    assert(on.faces.length    == 8,  "on: Q0×2 + Q1×2 + H×2 + Q2×2 = 8 faces");
+    // The hexagon was traversed: its two vertical-edge midpoints now exist and
+    // the exit-into-hexagon edge is gone (replaced by the two half-edges).
+    assert(hasV(on, Vec3(3,0.5f,0)), "on: hexagon exit rail midpoint present");
+    assert(hasV(on, Vec3(4,0.5f,0)), "on: Q2 rail cut (ring reached past hexagon)");
+    assert(on.edgeIndex(2, 7) == ~0u, "on: full edge (2,7) gone (hexagon sliced)");
+    assert(on.edgeIndex(3, 8) == ~0u, "on: full edge (3,8) gone (hexagon+Q2 sliced)");
+    // Hexagon chord split emits 2 sub-faces; Q0,Q1,Q2 emit 2 each = 8 total.
+    assert(nfOn.length == 8, "on: 8 created sub-faces across the 4 ring faces");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
