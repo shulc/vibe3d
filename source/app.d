@@ -2274,6 +2274,16 @@ void main(string[] args) {
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
         import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
+        // 0. Task 0232 fold #1(b): drop any Loop Slice standing preview
+        //    BEFORE the tool-drop below. By the time this hook fires the
+        //    primary has ALREADY switched (this command's
+        //    fireSwitchIfChanged runs after the mutation), so `mesh` (via
+        //    the tool's meshSrc_() delegate) already resolves to the NEW
+        //    layer — a generic deactivate()-driven commit/restore would
+        //    touch the WRONG mesh. dropArmedPreview() never touches mesh,
+        //    so it's safe regardless of the swap having already happened;
+        //    it just needs to run before step 1's setActiveTool(null).
+        if (auto lst = cast(LoopSliceTool) activeTool) lst.dropArmedPreview();
         // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
         setActiveTool(null);
         // 2. explicit coalesce barrier on the history.
@@ -2323,6 +2333,15 @@ void main(string[] args) {
     int layerRenameIndex = -1;
     char[256] layerRenameBuf;
     layerRenameBuf[] = 0;
+
+    // Task 0232: Loop Slice Slider HUD marker drag-anchor. Persists across
+    // frames while the marker InvisibleButton is held — mirrors the cross-
+    // splitter arm's anchor pattern (app.d ~10160): this binding's
+    // GetMouseDragDelta is CUMULATIVE since the press began, not per-frame,
+    // so the live fraction is re-derived each frame from the fraction
+    // captured the instant the drag started, not accumulated incrementally.
+    float lsHudDragAnchorFrac = 0.5f;
+    bool  lsHudDragActive     = false;
     // Phase 4: substring filter for the History panel list.
     // Type-to-narrow — both command name and args searched (case-
     // sensitive substring).
@@ -3170,7 +3189,25 @@ void main(string[] args) {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                                  &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                  &editMode,
-                                 () { setActiveTool(null); resetAllPipeStages(); },
+                                 () {
+                                     // Task 0232 fold #1(a): a Loop Slice
+                                     // standing preview must be dropped BEFORE
+                                     // the generic tool-drop below —
+                                     // deactivate()'s normal commit/cancel path
+                                     // would otherwise fire against the mesh
+                                     // this reset already overwrote in place
+                                     // (`*mesh = ...` runs earlier in
+                                     // SceneReset.apply(), before onResetTool).
+                                     // dropArmedPreview() never touches the
+                                     // mesh or history, so its ordering
+                                     // relative to that swap doesn't matter
+                                     // for correctness — it only matters that
+                                     // it runs BEFORE setActiveTool(null).
+                                     if (auto lst = cast(LoopSliceTool) activeTool)
+                                         lst.dropArmedPreview();
+                                     setActiveTool(null);
+                                     resetAllPipeStages();
+                                 },
                                  () {
                                      vpm.resetToDefault();
                                      // Mirror the live reset (always Single)
@@ -5662,11 +5699,25 @@ void main(string[] args) {
     // (R/S per-gesture recording lands in a later phase) — both reported by
     // hasUncommittedEdit() ONLY when activeDrag is null, so a mid-gizmo-drag
     // Ctrl+Z still falls through to history.undo() and never aborts the live
-    // drag. The cancel is gated to the UNDO direction: a redo never cancels an
-    // open session (there is nothing to redo into one).
+    // drag. The UNDO direction always cancels an open edit ("a redo never
+    // cancels an open session — there is nothing to redo into one" was the
+    // original rule), but task 0232's Loop Slice standing preview (armed_)
+    // needs a NARROW exception in the REDO direction: unlike the transient
+    // panel/gizmo sessions this branch was written for, an armed preview can
+    // sit on the mesh across an arbitrary number of frames, so a REDO reachable
+    // while armed would otherwise apply on top of an uncommitted cut — and
+    // resyncSession() would then re-baseline `before_` from that dirty mesh,
+    // permanently baking the cut in. So the redo direction cancels ONLY when
+    // the tool opts in via cancelsOnRedo() (LoopSliceTool ⇔ armed_); every
+    // other tool — crucially the refire-based BoxTool live property edit, which
+    // reports hasUncommittedEdit()==true yet MUST redo normally on Ctrl+Shift+Z
+    // — keeps the pre-0232 "redo steps the stack" behavior. Cancelling first
+    // has no history side effect (nothing was recorded while armed), so a
+    // second press still reaches the real undo/redo.
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navHistory(bool isUndo) {
-        if (isUndo && activeTool !is null && activeTool.hasUncommittedEdit()) {
+        if (activeTool !is null && activeTool.hasUncommittedEdit()
+            && (isUndo || activeTool.cancelsOnRedo())) {
             activeTool.cancelUncommittedEdit();
             if (activeTool !is null && !activeTool.hasUncommittedEdit()) {
                 setActiveTool(null);
@@ -8093,11 +8144,22 @@ void main(string[] args) {
                 // preview rebuilds the edge array — highlighting it would light
                 // a random edge far from the cursor (task 0231). Suppress the
                 // single-edge hover then; the live cut geometry already shows
-                // what will happen.
+                // what will happen. Task 0232 widens this suppression to
+                // ALSO cover an ARMED (but not currently dragging) Loop Slice
+                // standing preview: `isDragging()` alone (== `scrubbing_`)
+                // goes false the instant the mouse releases, but the
+                // preview's edge array keeps getting rebuilt on every HUD/
+                // panel scrub while armed — so the same frozen-numeric-index
+                // aliasing risk applies for the WHOLE armed period, not just
+                // the held-drag sub-window. `hasUncommittedEdit()` (==
+                // `armed_` for this tool) is the generic, already-existing
+                // Tool hook for exactly this "an uncommitted edit is live"
+                // condition — every other tool defaults it to false, so this
+                // is a no-op change for them.
                 int          hovForDraw = hoveredEdge;
                 const(bool)[] loopMask  = (bool[]).init;
                 if (activeTool !is null) {
-                    if (activeTool.isDragging())
+                    if (activeTool.isDragging() || activeTool.hasUncommittedEdit())
                         hovForDraw = -1;
                     else if (activeTool.wantsEdgeLoopHover()
                              && showEdgeHover && hoveredEdge >= 0)
@@ -9889,6 +9951,54 @@ void main(string[] args) {
                                   _gzVp.view, gz_a1, gz_n, gz_a2);
                     }
 
+                    // Task 0232: Loop Slice Slider HUD — a top-left, purple
+                    // track + yellow start marker + cyan current-position
+                    // marker + "%" label, drawn on THIS cell's own window
+                    // draw list (same z-order rationale as the falloff
+                    // overlay / gizmo just above: paints over the opaque
+                    // cell image, stays below any panel drawn later this
+                    // frame). Active cell + active Loop Slice tool only —
+                    // Position is a single global tool param, so only one
+                    // HUD (and later, one draggable marker) may exist at a
+                    // time. Count>1 hides it: `positions()` ignores
+                    // `position_` once Count>1 owns every position (the
+                    // marker would be misleading there).
+                    if (k == vpm.activeId) {
+                        if (auto lst = cast(LoopSliceTool) activeTool) {
+                            if (lst.count() == 1) {
+                                Viewport _lsVp = vpm.resolvedSnapshot(k);
+                                auto dl = ImGui.GetWindowDrawList();
+                                immutable ImU32 kTrackCol  = IM_COL32(160, 90, 220, 255);
+                                immutable ImU32 kStartCol  = IM_COL32(230, 180, 40, 255);
+                                immutable ImU32 kCurCol    = IM_COL32(60, 210, 220, 255);
+                                immutable ImU32 kLabelCol  = IM_COL32(230, 230, 230, 255);
+                                float trackY    = _lsVp.y + lst.sliderY();
+                                float trackLeft = _lsVp.x + lst.sliderX();
+                                float lenPx     = cast(float)lst.length_px();
+                                float trackRight = trackLeft + lenPx;
+                                float curX = trackLeft + lst.position() * lenPx;
+                                dl.AddLine(ImVec2(trackLeft, trackY), ImVec2(trackRight, trackY),
+                                           kTrackCol, 2.0f);
+                                enum float kTriHalf = 5.0f;
+                                // Fixed start marker (the 0% anchor), left end.
+                                dl.AddTriangleFilled(
+                                    ImVec2(trackLeft, trackY - kTriHalf * 2),
+                                    ImVec2(trackLeft - kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                    ImVec2(trackLeft + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                    kStartCol);
+                                // Current-position marker.
+                                dl.AddTriangleFilled(
+                                    ImVec2(curX, trackY - kTriHalf * 2),
+                                    ImVec2(curX - kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                    ImVec2(curX + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
+                                    kCurCol);
+                                import std.format : format;
+                                dl.AddText(ImVec2(trackLeft, trackY + 4),
+                                           kLabelCol, format("%.2f %%", lst.position()));
+                            }
+                        }
+                    }
+
                     // Active cell only: update outer vp used by picks.  vp.x/y
                     // already equal camera.x/y (the cell rect's single owner,
                     // V1) via resolvedSnapshot — no patch needed.  vpm.l* (the
@@ -9954,6 +10064,50 @@ void main(string[] args) {
                                 if (sel) ImGui.SetItemDefaultFocus();
                             }
                             ImGui.EndCombo();
+                        }
+                    }
+
+                    // Task 0232: Loop Slice Slider HUD marker hit-test. Fold
+                    // #2 (opponent objection, load-bearing): submitted BEFORE
+                    // ##vpHit — exactly like the view combo above — and its
+                    // hover ORed into `_cellWidgetHovered` with the SAME
+                    // relaxed flags as the combo, so a press on the corner
+                    // marker never leaks into ##vpHit → viewportInputAllowed()
+                    // → the tool's SDL onMouseButtonDown (which would
+                    // mis-arm/mis-scrub a ring under the cursor instead of
+                    // dragging the marker). Active cell + active Loop Slice
+                    // tool + Count==1 only (mirrors the draw gate above).
+                    if (k == vpm.activeId) {
+                        if (auto lst = cast(LoopSliceTool) activeTool) {
+                            if (lst.count() == 1) {
+                                Viewport _lsVp2   = vpm.resolvedSnapshot(k);
+                                float trackLeft2  = _lsVp2.x + lst.sliderX();
+                                float trackY2     = _lsVp2.y + lst.sliderY();
+                                float lenPx2       = cast(float)lst.length_px();
+                                float curX2        = trackLeft2 + lst.position() * lenPx2;
+                                enum float kHitHalf = 8.0f;
+                                ImGui.SetCursorScreenPos(ImVec2(curX2 - kHitHalf, trackY2 - kHitHalf * 3));
+                                ImGui.InvisibleButton("##loopSliceMarker" ~ to!string(k),
+                                                      ImVec2(kHitHalf * 2, kHitHalf * 3),
+                                                      ImGuiButtonFlags.MouseButtonLeft);
+                                if (ImGui.IsItemHovered(
+                                        ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                                        ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                                    _cellWidgetHovered = true;
+                                if (ImGui.IsItemActive()) {
+                                    if (!lsHudDragActive) {
+                                        lsHudDragActive     = true;
+                                        lsHudDragAnchorFrac = lst.position();
+                                    }
+                                    ImVec2 d = ImGui.GetMouseDragDelta(ImGuiMouseButton.Left, 0.0f);
+                                    float frac = lenPx2 > 0.0f
+                                        ? lsHudDragAnchorFrac + d.x / lenPx2
+                                        : lsHudDragAnchorFrac;
+                                    lst.scrubPosition(frac);
+                                } else {
+                                    lsHudDragActive = false;
+                                }
+                            }
                         }
                     }
 

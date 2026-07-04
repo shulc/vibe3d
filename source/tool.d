@@ -250,6 +250,19 @@ class Tool : ParamProvider {
     // transform-cancel code) — this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
+    // Whether an interactive history REDO (Ctrl+Shift+Z) should CANCEL this
+    // tool's open uncommitted edit instead of stepping the redo stack. The
+    // undo direction always cancels an open edit (there is nothing to undo
+    // into a still-open session); the redo direction, by default, does NOT —
+    // refire-based tools (e.g. BoxTool's live property edit) legitimately hold
+    // an uncommitted edit AND must redo their own param changes on Ctrl+Shift+Z.
+    // Only a tool whose uncommitted edit is a STANDING preview sitting on the
+    // mesh across arbitrary frames (LoopSliceTool's `armed_`) overrides this to
+    // true, so a redo reachable while the preview is up cancels it first rather
+    // than applying a redo on top of the dirty mesh. Default false ⇒ every
+    // other tool keeps the pre-0232 redo-steps-the-stack behavior.
+    bool cancelsOnRedo() const { return false; }
+
     // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
     // after history navigation moved geometry underneath an active tool. P0
     // ships a minimal stub (default no-op; transform marks its caches dirty,
