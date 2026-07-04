@@ -142,6 +142,12 @@ private:
     float   insertAt_      = 0.5f;           // Add-trigger value (onParamChanged fires the add)
     bool    removeTrigger_ = false;          // Remove-trigger (self-resetting bool)
     bool    selectNew_     = true;
+    // Slice Selected (`select`, task 0248): when ON, the cut is restricted to
+    // the selected FACE region — only the run of selected faces each ring
+    // crosses is sliced, and the cut terminates watertight at the selection
+    // border (boundary neighbours absorb the terminating midpoints). When OFF
+    // (default) the whole ring around the mesh is cut, byte-for-byte as before.
+    bool    sliceSelected_ = false;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -169,6 +175,11 @@ private:
     // than committed/restored against the wrong target.
     MeshCacheKey armedKey_;
     Viewport     cachedVp;
+    // The ORIGINAL selected-face set latched at arm time (before the standing
+    // preview overwrote the selection). Slice-Selected reads its restriction
+    // from THIS, so toggling `select` mid-arm still restricts to the faces the
+    // user actually selected rather than the cut's re-selected sub-quads.
+    uint[]       armedSelFaces_;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
@@ -239,6 +250,7 @@ public:
         root["built"]       = JSONValue(built_);
         root["position"]    = JSONValue(positionProxy_);
         root["count"]       = JSONValue(count_);
+        root["select"]      = JSONValue(sliceSelected_);   // Slice Selected (task 0248)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -290,6 +302,7 @@ public:
                  .min(0.001f).max(0.999f),
             Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false),
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
+            Param.bool_("select", "Slice Selected", &sliceSelected_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -341,6 +354,8 @@ public:
         insertAt_       = 0.5f;
         removeTrigger_  = false;
         selectNew_      = true;
+        sliceSelected_  = false;
+        armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
         before_    = MeshSnapshot.capture(*mesh);
@@ -413,6 +428,7 @@ public:
         scrubbing_ = false;
         built_     = false;
         seeds_     = [];
+        armedSelFaces_ = [];
         armedKey_.invalidate();
     }
 
@@ -438,6 +454,7 @@ public:
             if (armed_) rebuildCut();
             return;
         }
+        if (pname == "select") { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -543,7 +560,8 @@ public:
         if (seeds.length == 0) return false;
 
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
+                                            restrictFor(selectedFaceIndices()));
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -601,6 +619,9 @@ public:
         if (!anyValid) return false;
 
         seeds_ = candSeeds;
+        // Latch the ORIGINAL selection now, before rebuildCut()'s standing
+        // preview overwrites it — Slice Selected restricts to THIS set.
+        armedSelFaces_ = selectedFaceIndices();
         seedRail(seeds_[0], seedA_, seedB_);
         armed_     = true;
         scrubbing_ = true;
@@ -695,6 +716,24 @@ private:
         if (*editMode == EditMode.Polygons && mesh.hasAnySelectedFaces())
             return mesh.interiorEdgesOfSelectedFaces();
         return [];
+    }
+
+    // The currently-selected face indices, ascending. Empty when nothing is
+    // face-selected. Read once at arm (latched into `armedSelFaces_`) and
+    // live in the headless path.
+    uint[] selectedFaceIndices() {
+        uint[] r;
+        if (!mesh.hasAnySelectedFaces()) return r;
+        foreach (i, sel; mesh.selectedFaces)
+            if (sel) r ~= cast(uint)i;
+        return r;
+    }
+
+    // The face-restriction set the kernel should honour for THIS cut: the
+    // given selected-face set when Slice Selected is ON and a face selection
+    // exists, else `null` (⇒ whole ring, byte-for-byte unchanged).
+    uint[] restrictFor(uint[] selFaces) {
+        return (sliceSelected_ && selFaces.length > 0) ? selFaces : null;
     }
 
     // The directed world-space endpoints `position_`/`t` are measured against
@@ -819,7 +858,8 @@ private:
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         before_.restore(*mesh);
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
+                                            restrictFor(armedSelFaces_));
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

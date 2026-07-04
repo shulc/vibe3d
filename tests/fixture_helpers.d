@@ -432,6 +432,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // Current); `count` lays N evenly-spaced slices under the given Mode.
         auto ls = step["loop_slice"];
         cmd("tool.set mesh.loopSliceTool on", ctx);
+        // Optional Slice Selected (task 0248): restrict the cut to the selected
+        // face region instead of the whole ring. `{ "loop_slice": { ...,
+        // "select": true } }`.
+        if ("select" in ls && ls["select"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool select 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

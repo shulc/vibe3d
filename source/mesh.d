@@ -7509,8 +7509,24 @@ struct Mesh {
     ///   impossible for two truly distinct rings on a manifold quad face —
     ///   see the orientation-reconciliation comment inline), the face falls
     ///   back to a single-ring split on the first ring only.
+    ///
+    /// `restrictFaces` (optional) — when non-null, the cut is RESTRICTED to
+    ///   only the faces in this set: a ring face NOT listed is left uncut, so
+    ///   the inserted loop spans only the run of listed faces crossed by each
+    ///   ring rather than the whole ring around the mesh. To keep the result
+    ///   watertight the boundary rails (where a listed, split face meets an
+    ///   unlisted, uncut neighbour) are still midpoint-split, and the unlisted
+    ///   neighbour ABSORBS those midpoints into its own boundary (becoming an
+    ///   n-gon) — the "respecting corners" termination at the selection edge.
+    ///   Passing `null` (the default) reproduces the whole-ring behaviour
+    ///   BYTE-FOR-BYTE (same single-pass face-index emission order); the
+    ///   restrict path is a separate two-pass branch that never runs for the
+    ///   default call. `newFaceIndices` still reports only the sub-quads the
+    ///   slice CREATED (the absorbed n-gon neighbours are modified originals,
+    ///   not new, so they are excluded — matching the Select-New-Polygons law).
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
-                              out uint[] newFaceIndices) {
+                              out uint[] newFaceIndices,
+                              const(uint)[] restrictFaces = null) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7544,6 +7560,20 @@ struct Mesh {
                 if (p is null) perFaceRings[e.fi] = [e];
                 else if (p.length < 2) (*p) ~= e;
             }
+
+        // Slice-Selected restriction: keep only ring faces in `restrictFaces`
+        // as SPLIT faces; dropped ring faces fall through to the absorb pass
+        // (they take the boundary midpoints of their split neighbours as an
+        // n-gon). `restrictFaces is null` ⇒ no restriction (whole ring).
+        immutable bool restricting = restrictFaces !is null;
+        if (restricting) {
+            bool[uint] allowSet;
+            foreach (f; restrictFaces) allowSet[f] = true;
+            uint[] toDrop;
+            foreach (fi, _; perFaceRings) if (fi !in allowSet) toDrop ~= fi;
+            foreach (fi; toDrop) perFaceRings.remove(fi);
+            if (perFaceRings.length == 0) return false;  // nothing selected to cut
+        }
 
         // Rail cache — SHARED across every face and both grid axes: a
         // directed edge key is only ever midpoint-split once, however many
@@ -7592,15 +7622,16 @@ struct Mesh {
         uint[][] newFaces;
         newFaces.reserve(faces.length + rings.length * positions.length * 4);
 
-        foreach (uint fi; 0 .. cast(uint)faces.length) {
-            auto pr = fi in perFaceRings;
-            if (pr is null) { newFaces ~= faces[fi].dup; continue; }
-            auto entries = *pr;
+        // Split ONE ring-crossed face (single-ring or grid). Precondition:
+        // `fi in perFaceRings`. Factored out so the whole-ring path and the
+        // Slice-Selected restrict path share IDENTICAL split geometry.
+        void splitFace(uint fi) {
+            auto entries = perFaceRings[fi];
 
             if (entries.length == 1) {
                 auto e = entries[0];
                 emitSingleRingSplit(e.a, e.b, e.c, e.d, newFaces);
-                continue;
+                return;
             }
 
             // Two distinct rings cross this quad. Reconcile both entries'
@@ -7625,7 +7656,7 @@ struct Mesh {
                 // — fall back to a single-ring split on the base ring only,
                 // rather than emit an inconsistent grid.
                 emitSingleRingSplit(A, B, C, D, newFaces);
-                continue;
+                return;
             }
 
             // Grid split. u runs A→B (bottom) / D→C (top); v runs B→C
@@ -7668,6 +7699,50 @@ struct Mesh {
                                  grid[i+1][j+1], grid[i][j+1]];
                     newFaceIndices ~= cast(uint)(newFaces.length - 1);
                 }
+        }
+
+        // Read-only rail lookup for the absorb pass — returns the existing
+        // midpoints on edge va→vb (in that direction) if it was split by a
+        // neighbouring face, else null. NEVER creates a rail (unlike getMids).
+        uint[] absorbMids(uint va, uint vb) {
+            ulong k = edgeKey(va, vb);
+            auto rp = k in railByKey;
+            if (rp is null) return null;
+            if (rails[*rp].va == va) return rails[*rp].mids;
+            auto rev = rails[*rp].mids.dup;
+            size_t i = 0, j = rev.length - 1;
+            while (i < j) { uint t = rev[i]; rev[i] = rev[j]; rev[j] = t; ++i; --j; }
+            return rev;
+        }
+
+        if (!restricting) {
+            // Whole-ring path — UNCHANGED (byte-for-byte): one pass in face
+            // index order, dup non-ring faces, split ring faces.
+            foreach (uint fi; 0 .. cast(uint)faces.length) {
+                if (fi in perFaceRings) splitFace(fi);
+                else                    newFaces ~= faces[fi].dup;
+            }
+        } else {
+            // Slice-Selected path — TWO passes. Pass 1 splits the listed ring
+            // faces (populating the rail cache, including the boundary rails
+            // shared with unlisted neighbours). Pass 2 emits every non-split
+            // face, ABSORBING any boundary midpoints on its edges so the cut
+            // terminates watertight at the selection border (an unlisted
+            // neighbour of a split face becomes an n-gon; a face untouched by
+            // the cut re-emits identically).
+            foreach (uint fi; 0 .. cast(uint)faces.length)
+                if (fi in perFaceRings) splitFace(fi);
+            foreach (uint fi; 0 .. cast(uint)faces.length) {
+                if (fi in perFaceRings) continue;   // already split in pass 1
+                auto f = faces[fi];
+                uint[] nf;
+                foreach (k; 0 .. f.length) {
+                    uint va = f[k], vb = f[(k + 1) % f.length];
+                    nf ~= va;
+                    foreach (m; absorbMids(va, vb)) nf ~= m;
+                }
+                newFaces ~= nf;
+            }
         }
 
         faces = newFaces;
@@ -14340,6 +14415,58 @@ unittest {
         assert(m.edges.length == single.edges.length,
                "dedup: 2 seeds on the same ring must produce the SAME edge count as 1 seed");
     }
+}
+
+// insertEdgeLoopsMulti — Slice Selected restriction (task 0248). Seed edge
+// (0,1) crosses the belt ring {front(0), top(4), back(1), bottom(5)} of the
+// default cube. Restricting the cut to faces {0,5} (front + bottom) must slice
+// ONLY those two, absorbing the terminating midpoints into their unsliced belt
+// neighbours (top, back) as n-gons — a watertight partial cut.
+unittest {
+    import std.math : abs;
+    static bool hasVertNear(const Mesh m, Vec3 p, float eps = 1e-4f) {
+        foreach (v; m.vertices)
+            if (abs(v.x - p.x) < eps && abs(v.y - p.y) < eps && abs(v.z - p.z) < eps)
+                return true;
+        return false;
+    }
+
+    // Whole-ring baseline (restrictFaces = null) — 4 belt faces sliced.
+    Mesh whole = makeCube();
+    uint eiW = whole.edgeIndex(0, 1);
+    uint[] nfW;
+    assert(whole.insertEdgeLoopsMulti([eiW], [0.5f], nfW),
+           "whole-ring insert must succeed");
+    assert(whole.vertices.length == 12,
+           "whole ring: 8 + 4 belt midpoints = 12 verts");
+    assert(whole.faces.length == 10,
+           "whole ring: 4 sliced belt faces (×2) + 2 caps = 10 faces");
+
+    // Restricted to {front=0, bottom=5}: only those two are sliced; top+back
+    // absorb the boundary midpoints → 3 new verts, 8 faces.
+    Mesh restr = makeCube();
+    uint eiR = restr.edgeIndex(0, 1);
+    uint[] nfR;
+    assert(restr.insertEdgeLoopsMulti([eiR], [0.5f], nfR, [0u, 5u]),
+           "restricted insert must succeed");
+    assert(restr.vertices.length == 11,
+           "restricted: 8 + 3 (two boundary + one shared seed) midpoints = 11 verts");
+    assert(restr.faces.length == 8,
+           "restricted: front+bottom sliced (4 quads) + top/back n-gons + left/right = 8");
+
+    // The three midpoints that MUST exist (seed + two selection-border rails).
+    assert(hasVertNear(restr, Vec3( 0.0f, -0.5f, -0.5f)), "seed midpoint present");
+    assert(hasVertNear(restr, Vec3( 0.0f,  0.5f, -0.5f)), "front→top border midpoint present");
+    assert(hasVertNear(restr, Vec3( 0.0f, -0.5f,  0.5f)), "bottom→back border midpoint present");
+    // The whole-ring-only midpoint on the top-back edge must be ABSENT — the
+    // cut never reached that edge because neither incident face was selected.
+    assert(!hasVertNear(restr, Vec3(0.0f, 0.5f, 0.5f)),
+           "top-back midpoint must NOT appear under Slice Selected");
+
+    // newFaceIndices reports only the CREATED sub-quads (front+bottom = 4),
+    // not the absorbed n-gon neighbours (modified originals).
+    assert(nfR.length == 4,
+           "restricted newFaceIndices = 4 sliced sub-quads (2 faces × 2 each)");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit

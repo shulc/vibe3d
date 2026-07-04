@@ -1,0 +1,62 @@
+{
+  "name": "loop_slice_slice_selected",
+  "description": "Loop Slice 'Slice Selected' option (task 0248): when ON, the cut is RESTRICTED to the selected face region instead of the whole ring. On the default cube (makeCube ±0.5), select two adjacent faces — front (z=-0.5) and bottom (y=-0.5). Their shared edge seeds the belt ring around the X axis {front, top, back, bottom}. With Slice Selected OFF the whole belt is cut (4 new midpoints → 12 verts, 10 faces). With it ON only the two selected faces are sliced; the cut terminates watertight at the selection border — the two unselected belt neighbours (top, back) each absorb ONE terminating midpoint as an n-gon, and NO cut lands on the top-back edge (v6-v7), so only 3 new midpoints appear (11 verts, 8 faces). Reference-independent geometry law: every new vertex sits at the 0.5 midpoint of a pre-op cube edge, and the whole-ring-only midpoint [0,0.5,0.5] is provably ABSENT under Slice Selected (guaranteed by the bidirectional vertex-set match).",
+  "source": "Analytic self-golden. The 'Slice Selected' restriction rule (restrict to selected faces, respecting corners at the selection border) is DERIVED from the live-captured reference `select` attribute semantics (toolcards/mesh.loopSlice spec.json, task 0244 live probe: 'restrict the slice to only the selected portion of the mesh (respecting corners) rather than using the selection merely to pick the loop'). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the restricted-cut geometry is NOT independently re-captured live; the watertight n-gon boundary absorption is the canonical topology that satisfies 'respecting corners'. Flagged honestly.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "restricted_two_faces",
+      "input": [
+        { "reset": true },
+        {
+          "select": {
+            "mode": "polygons",
+            "coords": [
+              [[-0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,-0.5,-0.5]],
+              [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[-0.5,-0.5,0.5]]
+            ]
+          }
+        }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "select": true } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after": { "verts": 11, "faces": 8 },
+      "expected_vertices": [
+        [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+        [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5],
+        [0.0,-0.5,-0.5],[0.0,0.5,-0.5],[0.0,-0.5,0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5,-0.5,-0.5], "b": [0.5,-0.5,-0.5], "t": 0.5, "point": [0.0,-0.5,-0.5] },
+        { "a": [-0.5,0.5,-0.5],  "b": [0.5,0.5,-0.5],  "t": 0.5, "point": [0.0,0.5,-0.5] },
+        { "a": [-0.5,-0.5,0.5],  "b": [0.5,-0.5,0.5],  "t": 0.5, "point": [0.0,-0.5,0.5] }
+      ]
+    },
+    {
+      "name": "whole_ring_default_off",
+      "input": [
+        { "reset": true },
+        {
+          "select": {
+            "mode": "polygons",
+            "coords": [
+              [[-0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,-0.5,-0.5]],
+              [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[-0.5,-0.5,0.5]]
+            ]
+          }
+        }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5] } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after": { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+        [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5],
+        [0.0,-0.5,-0.5],[0.0,0.5,-0.5],[0.0,0.5,0.5],[0.0,-0.5,0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5,0.5,0.5], "b": [0.5,0.5,0.5], "t": 0.5, "point": [0.0,0.5,0.5] }
+      ]
+    }
+  ]
+}
