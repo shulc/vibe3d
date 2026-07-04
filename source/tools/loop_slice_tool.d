@@ -148,6 +148,14 @@ private:
     // border (boundary neighbours absorb the terminating midpoints). When OFF
     // (default) the whole ring around the mesh is cut, byte-for-byte as before.
     bool    sliceSelected_ = false;
+    // Keep Quads (`quad`, task 0249): the quad ring already only splits quads
+    // (so every NEW sub-face is a quad regardless), but where the ring
+    // terminates against a NON-QUAD face the default leaves that face uncut (a
+    // T-junction on the terminating rail). When ON, the non-quad neighbour
+    // ABSORBS the terminating midpoint into its boundary (n-gon), keeping the
+    // cut watertight AND all-quad. OFF (default) is the whole-ring behaviour
+    // byte-for-byte. Composes with `select` (both use the same absorb pass).
+    bool    keepQuads_     = false;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -251,6 +259,7 @@ public:
         root["position"]    = JSONValue(positionProxy_);
         root["count"]       = JSONValue(count_);
         root["select"]      = JSONValue(sliceSelected_);   // Slice Selected (task 0248)
+        root["quad"]        = JSONValue(keepQuads_);        // Keep Quads (task 0249)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -303,6 +312,7 @@ public:
             Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false),
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
             Param.bool_("select", "Slice Selected", &sliceSelected_, false),
+            Param.bool_("quad", "Keep Quads", &keepQuads_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -355,6 +365,7 @@ public:
         removeTrigger_  = false;
         selectNew_      = true;
         sliceSelected_  = false;
+        keepQuads_      = false;
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -455,6 +466,7 @@ public:
             return;
         }
         if (pname == "select") { if (armed_) rebuildCut(); return; }
+        if (pname == "quad")   { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -561,7 +573,7 @@ public:
 
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
-                                            restrictFor(selectedFaceIndices()));
+                                            restrictFor(selectedFaceIndices()), keepQuads_);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -859,7 +871,7 @@ private:
         before_.restore(*mesh);
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
-                                            restrictFor(armedSelFaces_));
+                                            restrictFor(armedSelFaces_), keepQuads_);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

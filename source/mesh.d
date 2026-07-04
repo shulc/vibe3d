@@ -7524,9 +7524,31 @@ struct Mesh {
     ///   default call. `newFaceIndices` still reports only the sub-quads the
     ///   slice CREATED (the absorbed n-gon neighbours are modified originals,
     ///   not new, so they are excluded — matching the Select-New-Polygons law).
+    ///
+    /// `keepQuads` (optional, default false) — the Loop Slice "Keep Quads"
+    ///   guard. The quad ring already propagates ONLY through quads and
+    ///   terminates at any non-quad face (`collectEdgeRing`/`walkRingSide`), so
+    ///   every sub-face the slice CREATES is a quad regardless of this flag.
+    ///   What it governs is the TERMINATION at a non-quad boundary. With
+    ///   `keepQuads=false` (the default, byte-for-byte whole-ring behaviour)
+    ///   the non-quad face where the ring stops is re-emitted UNCUT — the
+    ///   terminating rail is midpoint-split on the quad side only, leaving a
+    ///   T-junction against the untouched non-quad. With `keepQuads=true` the
+    ///   non-quad neighbour ABSORBS that terminating midpoint into its own
+    ///   boundary (becoming an n-gon), so the cut stays watertight AND every
+    ///   newly created sub-face is a quad — the "keep quads" guarantee. This
+    ///   reuses the SAME two-pass split/absorb machinery as `restrictFaces`
+    ///   (they compose: a restricted keep-quads cut absorbs at both the
+    ///   selection border and the non-quad border). Like the restrict path,
+    ///   `newFaceIndices` reports only the created sub-quads (an absorbed
+    ///   non-quad neighbour is a modified original, excluded). On an all-quad
+    ///   mesh no non-quad exists to absorb, so `keepQuads` produces geometry
+    ///   IDENTICAL to the default (only the face-emission ORDER differs — the
+    ///   two-pass path emits all split faces before the untouched ones).
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
-                              const(uint)[] restrictFaces = null) {
+                              const(uint)[] restrictFaces = null,
+                              bool keepQuads = false) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7715,7 +7737,12 @@ struct Mesh {
             return rev;
         }
 
-        if (!restricting) {
+        // Two passes are needed whenever some non-split face must ABSORB a
+        // terminating midpoint: the Slice-Selected restriction (absorb at the
+        // selection border) OR Keep-Quads (absorb at the non-quad border where
+        // the quad ring stops). Neither on ⇒ the byte-for-byte whole-ring path.
+        immutable bool twoPass = restricting || keepQuads;
+        if (!twoPass) {
             // Whole-ring path — UNCHANGED (byte-for-byte): one pass in face
             // index order, dup non-ring faces, split ring faces.
             foreach (uint fi; 0 .. cast(uint)faces.length) {
@@ -7723,13 +7750,13 @@ struct Mesh {
                 else                    newFaces ~= faces[fi].dup;
             }
         } else {
-            // Slice-Selected path — TWO passes. Pass 1 splits the listed ring
-            // faces (populating the rail cache, including the boundary rails
-            // shared with unlisted neighbours). Pass 2 emits every non-split
-            // face, ABSORBING any boundary midpoints on its edges so the cut
-            // terminates watertight at the selection border (an unlisted
-            // neighbour of a split face becomes an n-gon; a face untouched by
-            // the cut re-emits identically).
+            // Slice-Selected / Keep-Quads path — TWO passes. Pass 1 splits the
+            // ring faces (populating the rail cache, including the boundary
+            // rails shared with unlisted / non-quad neighbours). Pass 2 emits
+            // every non-split face, ABSORBING any boundary midpoints on its
+            // edges so the cut terminates watertight at the selection border /
+            // non-quad border (that neighbour becomes an n-gon; a face
+            // untouched by the cut re-emits identically).
             foreach (uint fi; 0 .. cast(uint)faces.length)
                 if (fi in perFaceRings) splitFace(fi);
             foreach (uint fi; 0 .. cast(uint)faces.length) {
@@ -14467,6 +14494,61 @@ unittest {
     // not the absorbed n-gon neighbours (modified originals).
     assert(nfR.length == 4,
            "restricted newFaceIndices = 4 sliced sub-quads (2 faces × 2 each)");
+}
+
+// insertEdgeLoopsMulti — Keep Quads guard (task 0249). A planar strip of two
+// quads Q0=[0,1,4,3], Q1=[1,2,5,4] capped by a triangle T=[2,6,5]. The seed
+// edge (1,4) makes the quad ring walk {Q0,Q1} and TERMINATE at the non-quad T.
+// Both ON and OFF land the SAME 10 verts / 5 faces (3 midpoints at 0.5). The
+// difference is the termination against T: OFF leaves T uncut (a T-junction —
+// the full edge (2,5) survives beside its two halves), ON makes T absorb the
+// terminating midpoint (becomes the quad [2,6,5,mid]; the full edge (2,5) is
+// gone). Countable proof: 15 edges OFF vs 14 edges ON.
+unittest {
+    static Mesh makeStrip() {
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),      // v0 v1 v2
+            Vec3(0,1,0), Vec3(1,1,0), Vec3(2,1,0),      // v3 v4 v5
+            Vec3(3,0.5f,0),                             // v6 triangle apex
+        ];
+        m.addFace([0u,1u,4u,3u]);   // Q0
+        m.addFace([1u,2u,5u,4u]);   // Q1
+        m.addFace([2u,6u,5u]);      // T (triangle)
+        m.rebuildEdges();
+        m.buildLoops();
+        return m;
+    }
+
+    // Keep Quads OFF (default) — T re-emitted uncut → T-junction on edge (2,5).
+    Mesh off = makeStrip();
+    uint eiOff = off.edgeIndex(1, 4);
+    assert(eiOff != ~0u, "seed edge (1,4) must exist");
+    uint[] nfOff;
+    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, /*keepQuads*/false),
+           "keep-quads-off insert must succeed");
+    assert(off.vertices.length == 10, "off: 7 + 3 midpoints = 10 verts");
+    assert(off.faces.length == 5,     "off: Q0×2 + Q1×2 + T = 5 faces");
+    assert(off.edges.length == 15,    "off: 15 edges (T-junction full edge (2,5) survives)");
+    // The un-absorbed full seed-exit edge (v2..v5) is still present (T uncut).
+    assert(off.edgeIndex(2, 5) != ~0u,
+           "off: full exit edge (2,5) survives (non-quad T left uncut → T-junction)");
+
+    // Keep Quads ON — T absorbs the midpoint → all-quad, watertight, one fewer edge.
+    Mesh on = makeStrip();
+    uint eiOn = on.edgeIndex(1, 4);
+    uint[] nfOn;
+    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, /*keepQuads*/true),
+           "keep-quads-on insert must succeed");
+    assert(on.vertices.length == 10, "on: identical vertex set (10 verts)");
+    assert(on.faces.length == 5,     "on: same 5 faces (T is now a quad)");
+    assert(on.edges.length == 14,    "on: 14 edges (T absorbed the midpoint — no T-junction)");
+    // The full exit edge (2,5) is GONE — T now references (2,mid) and (mid,5).
+    assert(on.edgeIndex(2, 5) == ~0u,
+           "on: full exit edge (2,5) removed (non-quad T absorbed the midpoint)");
+    // Both created only the 4 sub-quads of Q0+Q1; the absorbed T is excluded.
+    assert(nfOn.length == 4,  "on: newFaceIndices = 4 created sub-quads (T excluded)");
+    assert(nfOff.length == 4, "off: newFaceIndices = 4 created sub-quads");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit
