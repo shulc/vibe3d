@@ -576,7 +576,57 @@ public:
     // No standing preview persists across frames outside a drag, so there is
     // never an uncommitted edit to coordinate with history navigation.
     override void evaluate() {}
-    override void onParamChanged(string pname) {}   // no live rebuild from panel edits
+
+    // Tool Properties param edit (task 0283). A panel edit of any CUT-AFFECTING
+    // param must re-apply to the CURRENT live slice immediately — not wait for
+    // the next drag. The field was already written by injectParamsInto BEFORE
+    // this fires (commands/tool/attr.d, and PropertyPanel), so for startX..endZ
+    // the new value already sits in start_/end_ (params() binds the field
+    // pointers) and re-previewing simply picks it up. We re-cut the CURRENT line
+    // from the activation baseline via updatePreview() — the same
+    // non-cumulative kernel the drag path uses.
+    //
+    // FAST DECISION: `fast_` gates the LIVE DRAG recompute (onMouseMotion), so
+    // dense meshes don't re-cut on every motion event. A panel edit is a single
+    // DELIBERATE action, not a drag, so it re-previews REGARDLESS of `fast_` —
+    // the user expects the value they just typed to take effect at once. `fast`
+    // itself is NOT a cut-affecting param, so editing it is a no-op here (falls
+    // through the switch's default) and never spuriously toggles geometry.
+    override void onParamChanged(string pname) {
+        switch (pname) {
+            // The line endpoints + every plane/cut option. Anything else
+            // (notably `fast`) is intentionally excluded — no live rebuild.
+            case "startX": case "startY": case "startZ":
+            case "endX":   case "endY":   case "endZ":
+            case "split":  case "caps":   case "gap":   case "gapSide":
+            case "axis":   case "vectorX": case "vectorY": case "vectorZ":
+            case "infinite": case "snap": case "snapAngle":
+                break;
+            default:
+                return;
+        }
+        // Guard: only re-preview a slice that ALREADY has a live cut on the
+        // mesh, while the tool is active and NOT mid-drag (during a drag the
+        // motion path owns the preview and this edit would fight it).
+        //
+        // `previewLive_` is the authoritative "a slice currently sits on the
+        // mesh" signal: an interactive drag (even in `fast` mode, which
+        // materialises the cut on mouse-up — onMouseButtonUp → updatePreview)
+        // sets it true, and updatePreview() clears it whenever the line misses
+        // every face. We deliberately do NOT also fire on the looser
+        // `start_ != end_` "a line is placed" test: the HEADLESS apply path
+        // (fixtures / HTTP tool.doApply) ACTIVATES the tool with the idle
+        // default line already non-degenerate and then configures params via
+        // tool.attr BEFORE doApply — under a `start_ != end_` guard each of
+        // those config writes would leave a preview cut on the mesh that
+        // applyHeadless (which never restores the baseline) would then cut a
+        // SECOND time (double slice). Gating on `previewLive_` keeps the
+        // headless path a single clean cut while still re-previewing every
+        // interactive panel edit (a real drawn slice always has previewLive_).
+        if (!active || dragPart_ != DragNone) return;
+        if (!previewLive_) return;
+        updatePreview();
+    }
 
     // -------------------------------------------------------------------
     // Headless apply (tool.doApply / HTTP). Builds the plane from the current
