@@ -263,24 +263,27 @@ private:
     // kernel's `split` flag; composes with select/quad/ngon (the absorb/grid
     // neighbours attach to the connected side).
     bool    sliceSplit_    = false;
-    // Cap Sections (`caps`, task 0252): only meaningful when Split is ON. When ON
-    // (the reference default), each section Split opens is CLOSED with a strip of
-    // cap quads bridging the lo boundary loop to its coincident hi loop, so the
-    // split boundaries are capped (a closed ring caps to boundary-edge count 0)
-    // rather than left as open holes. When OFF, Split leaves the open boundaries
-    // (0251's result). Threads into the kernel's `caps` flag; the cap quads are
-    // degenerate (zero area) until Gap (0253) separates the coincident lo/hi verts
-    // — the TOPOLOGY is built now so Gap only relocates verts. Default TRUE, but a
-    // no-op whenever Split is off, so it never perturbs the default (unsplit) cut.
+    // Cap Sections (`caps`, task 0252; geometry LIVE-corrected task 0261): only
+    // meaningful when Split is ON. When ON (the reference default), each SECTION
+    // Split opens is sealed with ONE cap polygon that fills that section's own
+    // boundary loop in the loop's plane — the two split shells stay DISCONNECTED,
+    // each closed into its own solid (boundary-edge count 0). When OFF, Split leaves
+    // the open boundaries (0251's result). Threads into the kernel's `caps` flag.
+    // The caps are full-area quads (in the loop plane); Gap (0253) then pulls the lo
+    // cap from the hi cap along the rail, opening a real band between them. Default
+    // TRUE, but a no-op whenever Split is off, so it never perturbs the default
+    // (unsplit) cut. (The pre-0261 model wrongly bridged lo↔hi with a coplanar quad
+    // band that hid the cut on flat faces — see the kernel comment.)
     bool    sliceCaps_     = true;
     // Gap (`gap`, task 0253, distance): only meaningful when Split is ON. `0` (the
     // factory default — the reference's live ~54.2 mm is a sticky seeded pref, not
     // a fresh default) keeps the two split boundary loops coincident, byte-for-byte
     // with 0251/0252. Non-zero opens a gap of that width between them: the kernel
     // pushes each `[lo,hi]` seam pair apart by `gap` (±gap/2, symmetric about the
-    // split line) along the rail/cut direction, so any Cap Sections quads become
-    // real (non-degenerate) walls. Positions only — no topology change. Threads
-    // into the kernel's `gap` argument; a no-op whenever Split is off.
+    // split line) along the rail/cut direction (LIVE-confirmed correct, task 0261),
+    // pulling the two shells' caps apart to open a real visible band. Positions only
+    // — no topology change. Threads into the kernel's `gap` argument; a no-op
+    // whenever Split is off.
     float   gap_           = 0.0f;
     // Preserve Curvature (`curvature`, task 0254): OFF (default) places each new
     // loop vertex at the LINEAR interpolation on the rail chord (byte-for-byte the

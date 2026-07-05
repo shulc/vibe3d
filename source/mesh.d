@@ -7703,29 +7703,32 @@ struct Mesh {
     ///   output is byte-identical to before.
     ///
     /// `caps` (optional, default false) — the Loop Slice "Cap Sections" guard
-    ///   (task 0252). Only meaningful when `split` is on (a no-op otherwise). When
-    ///   on, each section opened by Split is CLOSED with a strip of cap quads that
-    ///   bridge the lo boundary loop to its coincident hi boundary loop: for every
-    ///   lo cut edge `(u,v)` (a boundary edge whose two ends are both duplicated lo
-    ///   midpoints) one quad `[v, u, hi(u), hi(v)]` is emitted, joining the lo edge
-    ///   to the twin hi edge `(hi(u), hi(v))`. Around a CLOSED ring the strip is a
-    ///   ring of quads whose side seams pair up between adjacent caps, so both
-    ///   boundary loops vanish (boundary-edge count drops to 0) and the two split
-    ///   shells re-join into one closed manifold; around an OPEN ring the two end
-    ///   caps leave the section's end seams open. The cap quads are DEGENERATE
-    ///   (zero area) while the seam pairs are coincident (`gap`==0) — Gap (0253)
-    ///   then just moves `hi` off `lo` to give them area. The topology is built
-    ///   here so 0253 only relocates verts. Cap faces add NO new vertices and are
-    ///   appended to `newFaceIndices` (they are new polys, so Select-New selects
-    ///   them). `split` off (or no rail duplicated) ⇒ no caps, byte-for-byte.
+    ///   (task 0252; geometry corrected by LIVE reference capture, task 0261).
+    ///   Only meaningful when `split` is on (a no-op otherwise). When on, each
+    ///   section opened by Split is SEALED with a SINGLE cap polygon that fills that
+    ///   section's OWN boundary loop, in the loop's own plane — NOT a strip of quads
+    ///   bridging the lo loop to the hi loop. Both split shells are capped
+    ///   independently: the lo (`midsVa`) shell's boundary loop becomes one cap
+    ///   face, the hi (`midsVb`) shell's boundary loop another. Each shell's
+    ///   boundary is the cycle of face-incidence-1 edges whose two ends are both in
+    ///   that shell's midpoint set; the cycle is emitted REVERSED (opposing the
+    ///   shell's side faces) so it seals. This closes each boundary loop
+    ///   (boundary-edge count drops to 0) yet leaves the two shells DISCONNECTED
+    ///   (two independent closed solids), so a `gap` opens a REAL visible band
+    ///   between them (bridging quads would fill it coplanar with the side faces —
+    ///   an invisible cut, the pre-0261 bug). The cap faces add NO new vertices and
+    ///   NO new edges (every cap edge is an existing shell boundary edge); they are
+    ///   appended to `newFaceIndices` (new polys, so Select-New selects them).
+    ///   `split` off (or no rail duplicated) ⇒ no caps, byte-for-byte.
     ///
     /// `splitPairsOut` (optional) — when non-null AND `split` is on, receives one
     ///   `[loVert, hiVert]` pair per duplicated rail midpoint: `loVert` sits on
     ///   the lo boundary loop, `hiVert` its coincident duplicate on the hi loop.
     ///   This is the seam data Cap Sections (0252) / Gap (0253) consume: Gap moves
-    ///   each pair's two verts apart along the cut normal; Cap (built in-kernel via
-    ///   `caps`) bridges the lo/hi loops using these pairs. Empty when `split` is
-    ///   off or no rail was duplicated.
+    ///   each pair's two verts apart along the rail direction; Cap (built in-kernel
+    ///   via `caps`) reads the pairs to identify each shell's boundary-loop vert set
+    ///   (lo vs hi) so it fills each loop with one cap. Empty when `split` is off or
+    ///   no rail was duplicated.
     ///
     /// `gap` (task 0253, distance) — only meaningful when `split` is on. `0` (the
     ///   default) keeps every `[lo, hi]` seam pair COINCIDENT, so the geometry is
@@ -8175,42 +8178,71 @@ struct Mesh {
             }
         }
 
-        // Cap Sections (task 0252): with Split on, close each opened section by
-        // bridging its lo boundary loop to the coincident hi loop. Every rail
-        // midpoint duplicated by `railMids` produced a `[lo, hi]` seam pair, so a
-        // "lo cut edge" is any boundary edge whose BOTH ends are lo mids (`u,v` in
-        // `loToHi`); the twin hi edge is `(hi(u), hi(v))`. We emit one quad per lo
-        // cut edge, wound REVERSED to the face that owns the edge so the manifold
-        // stays consistent. Interior lo–lo edges (shared by two sub-faces, e.g.
-        // the middle cut of a multi-position split) have face-incidence 2 and are
-        // skipped — only the section BOUNDARY (incidence 1) is capped. Zero-area
-        // now (lo/hi coincident); Gap (0253) later separates them.
+        // Cap Sections (task 0252, geometry corrected by LIVE reference capture
+        // task 0261): with Split on, seal each opened SECTION with a SINGLE cap
+        // polygon that fills that section's own boundary loop — NOT a strip of
+        // quads bridging the lo loop to the hi loop. The reference (captured on the
+        // unit cube belt: split+caps ⇒ +2 faces, one per shell, each a flat n-gon
+        // in the loop's plane) leaves the two split shells DISCONNECTED and closes
+        // each into an independent solid, so a Gap opens a REAL visible band
+        // between them. The old bridging caps instead filled that band coplanar
+        // with the side faces — a geometrically invisible cut on flat surfaces.
+        //
+        // Each split shell's boundary loop is the ring of face-incidence-1 edges
+        // whose BOTH endpoints belong to that shell's midpoint set (lo = `midsVa`,
+        // hi = `midsVb`). We chain those directed boundary edges into ordered
+        // cycles and emit each cycle REVERSED (so the cap opposes the shell's side
+        // faces and seals it). Interior lo–lo / hi–hi edges (shared by two
+        // sub-faces of a multi-position split) have incidence 2 and are skipped.
+        // The cap faces add NO new edges (every cap edge is an existing boundary
+        // edge) and NO new verts; Gap (0253) later separates the lo cap from the
+        // hi cap along the rail, opening the band.
         if (split && caps && splitSeams.length > 0) {
-            uint[uint] loToHi;
-            foreach (pr; splitSeams) loToHi[pr[0]] = pr[1];
-            // Tally lo–lo edge face-incidence, keeping one directed representative
-            // (its sole owning face's direction) so the cap can oppose it.
-            uint[ulong]   loCount;
-            uint[2][ulong] loDir;
-            foreach (ref f; newFaces)
-                foreach (k; 0 .. f.length) {
-                    uint u = f[k], v = f[(k + 1) % f.length];
-                    if (u in loToHi && v in loToHi) {
-                        ulong kk = edgeKey(u, v);
-                        if (kk !in loCount) loDir[kk] = cast(uint[2])[u, v];
-                        loCount[kk]++;
+            bool[uint] loSet, hiSet;
+            foreach (pr; splitSeams) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
+
+            void capBoundaryLoops(ref bool[uint] set) {
+                // Directed boundary edges (face-incidence 1) with both ends in
+                // `set`; keep one directed representative per undirected edge (its
+                // sole owning face's orientation).
+                uint[ulong]    cnt;
+                uint[2][ulong] dir;
+                foreach (ref f; newFaces)
+                    foreach (k; 0 .. f.length) {
+                        uint u = f[k], v = f[(k + 1) % f.length];
+                        if (u in set && v in set) {
+                            ulong kk = edgeKey(u, v);
+                            if (kk !in cnt) dir[kk] = cast(uint[2])[u, v];
+                            cnt[kk]++;
+                        }
+                    }
+                // Chain the incidence-1 boundary edges into ordered cycles
+                // (next[u] = v). Deterministic: sort the cycle start candidates.
+                uint[uint] next;
+                foreach (kk, c; cnt) if (c == 1) { auto e = dir[kk]; next[e[0]] = e[1]; }
+                import std.algorithm : sort;
+                uint[] starts;
+                foreach (u, nxt; next) starts ~= u;
+                starts.sort();
+                bool[uint] used;
+                foreach (s; starts) {
+                    if (s in used) continue;
+                    uint[] cyc; uint cur = s;
+                    while (cur !in used) {
+                        used[cur] = true; cyc ~= cur;
+                        auto nx = cur in next;
+                        if (nx is null) break;
+                        cur = *nx;
+                    }
+                    if (cyc.length >= 3) {
+                        reverseInPlace(cyc);   // oppose the shell's side faces → seal
+                        newFaces ~= cyc;
+                        newFaceIndices ~= cast(uint)(newFaces.length - 1);
                     }
                 }
-            // Deterministic order (AA iteration is unordered): sort boundary keys.
-            import std.algorithm : sort;
-            ulong[] boundaryKeys;
-            foreach (kk, cnt; loCount) if (cnt == 1) boundaryKeys ~= kk;
-            boundaryKeys.sort();
-            foreach (kk; boundaryKeys) {
-                uint u = loDir[kk][0], v = loDir[kk][1];
-                newFaces ~= [v, u, loToHi[u], loToHi[v]];
-                newFaceIndices ~= cast(uint)(newFaces.length - 1);
             }
+            capBoundaryLoops(loSet);
+            capBoundaryLoops(hiSet);
         }
 
         // Gap (task 0253): open a gap of width `gap` between the two split
@@ -15186,14 +15218,16 @@ unittest {
     assert(pairs2.length == 0, "split off: no seam pairs emitted");
 }
 
-// insertEdgeLoopsMulti — Cap Sections guard (task 0252, depends on Split/0251).
-// Same unit cube + equatorial seed (0,1); the ring cuts a belt around the 4 side
-// faces (4 rails → 4 duplicated lo/hi pairs under Split). Split ON + caps OFF is
-// exactly 0251's result: 8 boundary edges, 2 disconnected shells. Split ON +
-// caps ON bridges each lo cut edge to its coincident hi twin with one cap quad,
-// so the 4-quad cap ring closes BOTH boundary loops (boundary edges 8→0) and
-// re-joins the two shells into one closed manifold (+4 faces, +4 seam-side
-// edges, NO new verts). caps is a no-op when Split is off (byte-for-byte).
+// insertEdgeLoopsMulti — Cap Sections guard (task 0252, geometry corrected by the
+// LIVE reference capture in task 0261). Same unit cube + equatorial seed (0,1); the
+// ring cuts a belt around the 4 side faces (4 rails → 4 duplicated lo/hi pairs under
+// Split). Split ON + caps OFF is exactly 0251's result: 8 boundary edges, 2
+// disconnected shells. Split ON + caps ON seals EACH shell's boundary loop with ONE
+// cap polygon (the reference-captured behaviour: the cube belt yields +2 faces, one
+// per shell — NOT the pre-0261 ring of 4 bridging quads). Each cap closes its loop
+// (boundary edges 8→0) but the two shells stay DISCONNECTED (each becomes an
+// independent closed solid): +2 faces, NO new edges (cap edges reuse the shell
+// boundary edges), NO new verts. caps is a no-op when Split is off (byte-for-byte).
 unittest {
     static size_t boundaryEdgeCount(ref Mesh m) {
         size_t n = 0;
@@ -15240,15 +15274,15 @@ unittest {
     assert(capped.insertEdgeLoopsMulti([eiC], [0.5f], nfCap, null, false, false, /*split*/true, /*caps*/true),
            "split-on caps-on insert must succeed");
     assert(capped.vertices.length == openV,     "caps on: adds NO new vertices");
-    assert(capped.faces.length    == openF + 4, "caps on: +4 cap quads (one per lo cut edge)");
-    assert(capped.edges.length    == openE + 4, "caps on: +4 seam-side edges (cut edges reused)");
+    assert(capped.faces.length    == openF + 2, "caps on: +2 cap polys (one per shell loop)");
+    assert(capped.edges.length    == openE,     "caps on: cap edges reuse the boundary edges (no new edges)");
     assert(boundaryEdgeCount(capped) == 0, "caps on: both boundary loops closed (0 boundary edges)");
-    assert(componentCount(capped) == 1, "caps on: the cap band re-joins the two shells");
-    // Euler characteristic of the resulting closed genus-0 manifold: V-E+F = 2.
+    assert(componentCount(capped) == 2, "caps on: caps seal each shell — two shells stay disconnected");
+    // Two closed genus-0 shells → V-E+F = 2 per shell = 4 total.
     assert(cast(long)capped.vertices.length - cast(long)capped.edges.length
-           + cast(long)capped.faces.length == 2, "caps on: closed manifold, V-E+F = 2");
-    // The 4 cap quads are reported as new polys (Select-New selects them).
-    assert(nfCap.length == nfOpen.length + 4, "caps on: 4 extra new faces vs caps-off");
+           + cast(long)capped.faces.length == 4, "caps on: two closed manifolds, V-E+F = 4");
+    // The 2 cap polys are reported as new polys (Select-New selects them).
+    assert(nfCap.length == nfOpen.length + 2, "caps on: 2 extra new faces vs caps-off");
 
     // caps is a no-op when Split is off (byte-for-byte the connected loop).
     Mesh nosplit = makeCube();
@@ -15260,26 +15294,22 @@ unittest {
     assert(nosplit.faces.length == openF, "caps no-op with Split off: no cap faces added");
 }
 
-// insertEdgeLoopsMulti — Gap guard (task 0253, depends on Split/0251 + Caps/0252).
-// Same unit cube + equatorial seed (0,1); Split ON duplicates each rail midpoint
-// into a coincident lo/hi pair and Caps ON bridges them with (initially zero-area)
-// cap quads. Gap pushes each seam pair apart by `gap` (±gap/2, symmetric) along the
-// rail/cut direction. gap=0 leaves the pairs COINCIDENT (byte-for-byte 0251/0252);
-// gap=G separates every [lo,hi] pair by EXACTLY G and gives the cap quads real area.
+// insertEdgeLoopsMulti — Gap guard (task 0253; direction confirmed by the LIVE
+// reference capture in task 0261). Same unit cube + equatorial seed (0,1); Split ON
+// duplicates each rail midpoint into a coincident lo/hi pair and Caps ON seals each
+// shell's loop with one cap polygon. Gap pushes each seam pair apart by `gap`
+// (±gap/2, symmetric) ALONG THE RAIL — the reference does exactly this: the two
+// shells separate along the loop rail (±Y on the cube), opening a real visible band
+// between the two caps. gap=0 leaves the pairs COINCIDENT (byte-for-byte 0251/0252);
+// gap=G separates every [lo,hi] pair by EXACTLY G and pulls the two caps G apart.
 // Topology is identical to the gap=0 caps-on case either way (Gap only moves verts).
 unittest {
     import std.math : abs, sqrt;
-    static double faceArea(ref Mesh m, uint fi) {
-        // Newell's method: |area vector| for a planar polygon.
+    static Vec3 faceCentroid(ref Mesh m, uint fi) {
         auto f = m.faces[fi];
-        Vec3 n = Vec3(0, 0, 0);
-        foreach (k; 0 .. f.length) {
-            Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
-            n.x += (a.y - b.y) * (a.z + b.z);
-            n.y += (a.z - b.z) * (a.x + b.x);
-            n.z += (a.x - b.x) * (a.y + b.y);
-        }
-        return 0.5 * sqrt(cast(double)(n.x*n.x + n.y*n.y + n.z*n.z));
+        Vec3 c = Vec3(0, 0, 0);
+        foreach (vi; f) c = c + m.vertices[vi];
+        return c * (1.0f / cast(float)f.length);
     }
 
     enum float G = 0.2f;
@@ -15316,13 +15346,18 @@ unittest {
         float d = sqrt((a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y) + (a.z-b.z)*(a.z-b.z));
         assert(abs(d - G) < 1e-5f, "gap>0: seam lo/hi separated by exactly G");
     }
-    // The 4 cap quads (the last 4 created faces) now have real, non-zero area;
-    // at gap=0 they are degenerate (zero area).
-    assert(nfG.length >= 4, "gap>0: cap faces reported as new polys");
-    foreach (fi; nfG[$ - 4 .. $]) {
-        assert(faceArea(z, fi) < 1e-9, "gap=0: cap quad is degenerate (zero area)");
-        assert(faceArea(g, fi) > 1e-6, "gap>0: cap quad gained real (non-zero) area");
-    }
+    // The two cap polys (the last 2 created faces) are full-area quads in the
+    // loop's plane in BOTH cases (unlike the pre-0261 zero-area bridging quads).
+    // At gap=0 the two caps are COINCIDENT (same centroid); at gap=G they are pulled
+    // exactly G apart along the rail — the real visible band the reference opens.
+    assert(nfG.length >= 2, "gap>0: cap faces reported as new polys");
+    uint capA = nfG[$ - 2], capB = nfG[$ - 1];
+    Vec3 zc0 = faceCentroid(z, capA), zc1 = faceCentroid(z, capB);
+    float dZero = (zc0 - zc1).length;
+    assert(dZero < 1e-6f, "gap=0: the two shell caps are coincident");
+    Vec3 gc0 = faceCentroid(g, capA), gc1 = faceCentroid(g, capB);
+    float dGap = (gc0 - gc1).length;
+    assert(abs(dGap - G) < 1e-5f, "gap>0: the two shell caps pulled exactly G apart");
 }
 
 // insertEdgeLoopsMulti — Preserve Curvature guard (task 0254). A CURVED open strip
