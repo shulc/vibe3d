@@ -493,6 +493,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "depth": 2.0, "reversex": true } }`.
         if ("reversex" in ls && ls["reversex"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool reversex 1", ctx);
+        // Optional Reverse Inset (task 0258): flip the profile's inset/displacement
+        // sign (h → -h), so the profile presses OUT of the surface instead of into
+        // it. `{ "loop_slice": { ..., "profile": "vee", "depth": 2.0,
+        // "reversey": true } }`.
+        if ("reversey" in ls && ls["reversey"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool reversey 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

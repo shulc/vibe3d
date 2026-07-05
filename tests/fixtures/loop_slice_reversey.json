@@ -1,0 +1,54 @@
+{
+  "name": "loop_slice_reversey",
+  "description": "Loop Slice Reverse Inset (task 0258: reversey). Reuses the 0256 profile mesh (a FLAT open strip of 3 quads in a row along X, 1 quad wide in Z, all at y=0). Verts (col i, row j) at (x=i, y=0, z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,0,0) 3=(1,0,1) 4=(2,0,0) 5=(2,0,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]; Q1 normal faceNormal([2,4,5,3])=(0,-1,0)=-Y. The seed edge (1,0,0)-(2,0,0)=(2,4) gives a 1-face open ring cutting Q1's two long rails (x=1..2). The Vee profile is a symmetric tent (samples t=[0.25,0.5,0.75] h=[0.5,1.0,0.5]): apex 1.0 at the centre. With Inset depth=2 pressed along the face normal -Y, the three inserted loops (x=1+t=1.25,1.5,1.75) get y = -h*depth. reversey OFF: heights [0.5,1.0,0.5] -> y=[-1,-2,-1] (the Vee INSETS into the surface, dipping to y=-2 at the apex). reversey ON flips the inset sign (h -> -h): y=[+1,+2,+1] (the Vee now BULGES out of the surface, rising to y=+2 at the apex). The two cases share IDENTICAL topology (14 verts / 19 edges / 6 faces: Q1 -> 4 sub-quads via 3 loops, 6 new rail midpoints) and differ ONLY in the SIGN of the normal displacement — reversey mirrors the displacement across the surface. The OFF case is byte-for-byte the un-reversed Vee profile cut (the 0256 mechanism with reverseY_ identity, = the 0257 reversex-OFF baseline).",
+  "source": "Analytic self-golden (reference-independent). reversey (Reverse Inset, bool, default false) is LIVE-captured (toolcards/mesh.loopSlice spec.json, task 0244 live probe: 'Reverse inset of profile -- reverses the Inset direction. Live observed: off (greyed until a Profile is loaded)'). The DERIVED mapping reversey -> (height := -height) is the canonical realization of 'reverse the Inset direction': the Inset is the profile's normal-direction displacement scale, so reversing it flips the displacement to the other side of the surface. As with 0245-0257 the loop-slice gesture needs a human VNC drive and the profile preset LIBRARY is closed-source / not headlessly capturable (see 0256), so the specific Vee curve is a vibe3d-DEFINED stand-in (LoopSliceTool.profileSamples) and the exact reversey geometry was NOT live-recaptured. Flagged honestly. The OFF/ON sign-flip invariant is asserted here; it holds for any built-in profile with positive height.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "vee_reversey_off",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+              [2,0,0],[2,0,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[2,0,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "profile": "vee", "depth": 2.0 } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 14, "edges": 19, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+        [2,0,0],[2,0,1],[3,0,0],[3,0,1],
+        [1.25,-1,0],[1.5,-2,0],[1.75,-1,0],
+        [1.25,-1,1],[1.5,-2,1],[1.75,-1,1]
+      ]
+    },
+    {
+      "name": "vee_reversey_on",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+              [2,0,0],[2,0,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[2,0,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "profile": "vee", "depth": 2.0, "reversey": true } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 14, "edges": 19, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+        [2,0,0],[2,0,1],[3,0,0],[3,0,1],
+        [1.25,1,0],[1.5,2,0],[1.75,1,0],
+        [1.25,1,1],[1.5,2,1],[1.75,1,1]
+      ]
+    }
+  ]
+}
