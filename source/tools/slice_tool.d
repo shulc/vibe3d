@@ -18,7 +18,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
-import handler : BoxHandler, ToolHandles, gizmoSize, drawWorldSegment;
+import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
 
 // The interactive Slice commit reuses the generic before/after snapshot edit
@@ -70,24 +70,32 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
 //     Shift+drag to reset/redraw a fresh line; RMB to cancel a gesture.
 //   • LIVE PREVIEW: while dragging, the resulting cut is previewed on the real
 //     mesh WITHOUT committing — non-cumulative (each update restores the
-//     pre-gesture baseline then re-cuts, via `sliceFromBaseline`), mirroring
-//     LoopSliceTool's mutate/revert armed preview. Commit happens on drop.
+//     ACTIVATION baseline then re-cuts, via `sliceFromBaseline`), mirroring
+//     LoopSliceTool's mutate/revert armed preview. The slice stays LIVE for the
+//     whole tool session; nothing is baked on mouse-up.
 //   • `fast` (bool, default off): the preview gate. OFF ⇒ the cut recomputes
 //     live on every motion. ON ⇒ the cut is DEFERRED to mouse-up (only the
 //     line/handles move during the drag — no live cut on dense meshes). Both
-//     paths commit the identical final geometry (`sliceFromBaseline` is the
-//     one commit kernel).
+//     paths materialise the identical final geometry (`sliceFromBaseline` is
+//     the one cut kernel).
 //
 // Deferred to later tasks: post-tool selection (S2), axis/vector (S3),
 // infinite (S4), angle snap (S5), split/caps/gap reusing the Loop Slice
 // machinery (S7–S9). NONE of those options are implemented here. Params:
 // `startX/Y/Z`, `endX/Y/Z`, `fast`.
 //
-// Undo model: `before_` is captured at gesture start (the pre-cut baseline).
-// The live preview mutates the mesh but always reverts to `before_` before the
-// next update and before the commit, so the commit is a single clean cut and
-// records ONE MeshBevelEdit(before, after) history entry per committed slice.
-// A gesture that touches no face reverts to baseline and records nothing.
+// Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
+// `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
+// per gesture. Every endpoint/line drag re-cuts NON-CUMULATIVELY from that one
+// baseline (restore baseline → `cutByPlane` once), so the mesh always shows
+// EXACTLY ONE slice at the current line — dragging endpoints refines the SAME
+// slice, it never spawns another. The cut is baked into ONE
+// MeshBevelEdit(before, after) history entry when the tool is DEACTIVATED /
+// dropped (see `deactivate` → `commitCurrentSlice`), never on mouse-up. A
+// session whose final line touches no face (or was never drawn) commits
+// nothing. `armedKey_` guards the deferred commit against a mesh swapped out
+// from under us (scene reset / layer switch) between the last preview and the
+// drop — a mismatch drops the preview instead of baking a bogus entry.
 // ---------------------------------------------------------------------------
 final class SliceTool : Tool {
 private:
@@ -122,17 +130,27 @@ private:
     enum DragEnd   = 1;    // the End endpoint handle
     enum DragLine  = 2;    // the whole line body (translate)
 
-    // Session state.
+    // Session state. `before_` is the session baseline captured ONCE at
+    // activation (task 0278); `previewLive_` is true whenever a real cut sits
+    // on the mesh (the thing `deactivate` commits). `armedKey_` stamps the
+    // mesh identity+version we last left the preview at, so the deferred
+    // commit can detect an external mesh swap and drop rather than corrupt it.
     bool     active;
     int      dragPart_ = DragNone;
     bool     previewLive_;       // a preview cut currently sits on the mesh
-    MeshSnapshot before_;        // pre-cut baseline captured at gesture start
+    MeshSnapshot before_;        // session baseline captured at activation
     bool     haveBefore_;
+    MeshCacheKey armedKey_;      // mesh identity+version guard for the deferred commit
     Viewport cachedVp;
 
     // Line-body translate bookkeeping: the endpoints + the work-plane anchor at
     // the moment the drag began, so motion translates by (hit - anchor).
     Vec3 dragStart0_, dragEnd0_, dragAnchor_;
+
+    // The line endpoints as they stood at the START of the current gesture, so
+    // RMB-cancel can revert this drag (only) and re-preview, leaving the
+    // session baseline untouched.
+    Vec3 gStart0_, gEnd0_;
 
     // Endpoint handle visuals (lazily built inside a live GL context, since
     // BoxHandler uploads a VAO). Purely for drawing + hover highlight; the
@@ -141,9 +159,17 @@ private:
     BoxHandler  startH_, endH_;
     ToolHandles toolHandles_;
 
-    // Screen-pixel radius within which a click grabs an endpoint handle, and
-    // the band within which a click on the line body grabs the whole line.
-    enum float HANDLE_PICK_PX = 14.0f;
+    // Endpoint handle visual size + grab radius (task 0278). The reference
+    // Slice draws small cyan endpoint squares ~10 px across (0277 handler
+    // capture), so the visible half-extent is HANDLE_HALF_PX ≈ 5 px (the old
+    // `gizmoSize()*0.5` was ~45 px half — a ~90 px square, far too big). The
+    // grab radius is tied to the visual: HANDLE_PICK_PX covers the whole
+    // square (its 5·√2 ≈ 7 px corner) plus a small margin, so a click on the
+    // visible square reliably grabs the endpoint. A hit-test SMALLER than the
+    // visual was part of why endpoint drags "missed" and fell through to
+    // drawing a fresh line.
+    enum float HANDLE_HALF_PX = 5.0f;    // visible endpoint square half-extent (~10 px square)
+    enum float HANDLE_PICK_PX = 9.0f;    // grab radius — matched to (slightly > ) the visual
     enum float LINE_PICK_PX   = 8.0f;
 
     // Gizmo palette (codebase handle colours — NOT reference colours): endpoint
@@ -206,23 +232,35 @@ public:
         return root;
     }
 
-    override void activate()   { active = true;  resetSession(); }
-    override void deactivate() {
-        // Drop any uncommitted live preview back to the baseline on tool-drop
-        // (a gesture is normally down..up within a frame window, so this is
-        // defence-in-depth for an interrupted drag).
-        if (active && previewLive_ && before_.filled) {
-            before_.restore(*mesh);
-            refreshDisplay(mesh, gpu, vc, ec, fc);
-        }
-        active = false;
-        resetSession();
+    override void activate() {
+        active = true;
+        dropPreview();
+        // Snapshot the SESSION baseline once, now, at tool activation. Every
+        // drag re-cuts non-cumulatively from this (never per-gesture), and the
+        // deferred commit records before_ → the final cut as ONE undo entry.
+        before_     = MeshSnapshot.capture(*mesh);
+        haveBefore_ = true;
+        armedKey_.stamp(*mesh);
     }
 
-    private void resetSession() {
+    override void deactivate() {
+        // Bake the live slice into ONE undo entry on tool-drop (task 0278) —
+        // this is the ONLY commit point (never mouse-up). If no cut is live
+        // (off-mesh / never-drawn line, or a headless applyHeadless already
+        // ran its own ToolDoApplyCommand-wrapped cut), leave the mesh exactly
+        // as it is and record nothing.
+        if (active) commitCurrentSlice();
+        active = false;
+        dropPreview();
+    }
+
+    // Clear per-session preview/drag state WITHOUT touching the mesh or
+    // history — the safe teardown for a mesh swapped out from under us.
+    private void dropPreview() {
         dragPart_    = DragNone;
         previewLive_ = false;
         haveBefore_  = false;
+        armedKey_.invalidate();
     }
 
     // No standing preview persists across frames outside a drag, so there is
@@ -261,6 +299,11 @@ public:
         if (mods & KMOD_ALT) return false;   // reserved for camera nav (orbit/pan/zoom)
         bool shift = (mods & KMOD_SHIFT) != 0;
 
+        // Latch the line as it stands NOW so RMB can cancel just this gesture
+        // (the session baseline is never per-gesture — see the class comment).
+        gStart0_ = start_;
+        gEnd0_   = end_;
+
         // Middle-click relocates the whole line to the cursor: translate so the
         // line midpoint lands on the work-plane hit, then drag it as a line
         // translate.
@@ -272,7 +315,7 @@ public:
             start_ = start_ + delta;
             end_   = end_   + delta;
             beginLineDrag(hit);
-            beginGesture();
+            kickPreview();
             return true;
         }
 
@@ -286,7 +329,7 @@ public:
             start_ = hit;
             end_   = hit;
             dragPart_ = DragEnd;
-            beginGesture();
+            kickPreview();
             return true;
         }
 
@@ -307,7 +350,7 @@ public:
             end_   = hit;
             dragPart_ = DragEnd;   // drag the End of the new line
         }
-        beginGesture();
+        kickPreview();
         return true;
     }
 
@@ -335,7 +378,12 @@ public:
         if (!active || dragPart_ == DragNone) return false;
         if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         dragPart_ = DragNone;
-        commitSlice();
+        // Mouse-up does NOT commit (task 0278) — the slice stays LIVE for the
+        // rest of the session; the single undo entry is baked at tool-drop.
+        // Materialise the final cut here so `fast` mode (which suppresses the
+        // live cut during the drag) shows/holds the result, and so the
+        // non-fast path lands exactly on the release line.
+        updatePreview();
         return true;
     }
 
@@ -351,9 +399,12 @@ public:
             endH_        = new BoxHandler(end_,   HANDLE_COLOR);
             toolHandles_ = new ToolHandles();
         }
-        // Screen-constant handle size, re-positioned on the live endpoints.
-        startH_.pos = start_; startH_.size = gizmoSize(start_, vp) * 0.5f;
-        endH_.pos   = end_;   endH_.size   = gizmoSize(end_,   vp) * 0.5f;
+        // Screen-constant handle size (~10 px cyan square, reference-matched),
+        // re-positioned on the live endpoints. gizmoSize()'s half-extent maps
+        // to getGizmoPixels() px, so scale it to HANDLE_HALF_PX px.
+        immutable float handleScale = HANDLE_HALF_PX / getGizmoPixels();
+        startH_.pos = start_; startH_.size = gizmoSize(start_, vp, handleScale);
+        endH_.pos   = end_;   endH_.size   = gizmoSize(end_,   vp, handleScale);
 
         // The Start→End line, drawn over the mesh (depth-test off, like the
         // other gizmos) so it stays visible against the surface being cut.
@@ -383,12 +434,11 @@ public:
     }
 
 private:
-    // Snapshot the pre-cut baseline for this gesture's single undo entry.
-    void beginGesture() {
-        before_      = MeshSnapshot.capture(*mesh);
-        haveBefore_  = true;
-        previewLive_ = false;
-        if (!fast_) updatePreview();   // show the cut immediately (unless deferred)
+    // Kick the live preview at the start of a gesture (unless `fast` defers the
+    // cut to mouse-up). Does NOT snapshot — the session baseline was captured
+    // once at activation.
+    void kickPreview() {
+        if (!fast_) updatePreview();
     }
 
     // Latch the line-translate reference state from the current endpoints.
@@ -399,46 +449,48 @@ private:
         dragAnchor_ = anchor;
     }
 
-    // Refresh the non-cumulative preview: restore the baseline, re-cut with the
-    // current line, and push to the GPU. Leaves the mesh AT the baseline (no
-    // preview flag) when the line misses every face, so an off-mesh drag never
-    // shows a stale cut.
+    // Refresh the non-cumulative preview: restore the SESSION baseline, re-cut
+    // with the current line, stamp the mesh guard, and push to the GPU. Leaves
+    // the mesh AT the baseline (previewLive_ = false) when the line misses
+    // every face, so an off-mesh drag never shows a stale cut — and the
+    // deferred commit then records nothing.
     void updatePreview() {
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_, cachedWorkplaneNormal());
         previewLive_ = nSplit > 0;
+        // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
+        // mutationVersion): the guard now reflects the mesh state WE produced,
+        // so deactivate() can tell whether anything external has since touched
+        // it (mirrors LoopSliceTool.rebuildCut).
+        armedKey_.stamp(*mesh);
         refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 
-    // Cancel: revert any preview to the baseline and end the gesture with no
-    // history entry.
+    // RMB cancel: revert ONLY the current gesture (restore the line to where it
+    // stood when this drag began) and re-preview from the session baseline. The
+    // session stays alive — the baseline is not dropped.
     void cancelGesture() {
-        if (haveBefore_ && before_.filled) {
-            before_.restore(*mesh);
-            refreshDisplay(mesh, gpu, vc, ec, fc);
-        }
-        resetSession();
+        dragPart_ = DragNone;
+        start_    = gStart0_;
+        end_      = gEnd0_;
+        updatePreview();
     }
 
-    // Commit the current line as one cut: revert any live preview to the
-    // baseline, re-cut once from that clean state (so `fast` on/off commit the
-    // identical geometry), and record a single MeshBevelEdit(before, after) —
-    // but only if the cut actually split a face (an off-mesh line reverts to
-    // baseline and records nothing).
-    void commitSlice() {
-        if (!haveBefore_) return;
-        scope(exit) resetSession();
-
-        size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_, cachedWorkplaneNormal());
-        refreshDisplay(mesh, gpu, vc, ec, fc);
-        if (nSplit == 0) return;   // missed every face — mesh reverted, no entry
-
-        if (history !is null && factory !is null && before_.filled) {
-            auto cmd  = factory();
-            auto post = MeshSnapshot.capture(*mesh);
-            cmd.setSnapshots(before_, post, "Slice");
-            history.record(cmd);
-        }
+    // Bake the live slice into ONE undo entry (called from deactivate). The
+    // mesh already holds the non-cumulative preview cut for the current line
+    // (mutate/revert keeps exactly one cut on it), so this just records
+    // before_ → the current mesh. No-ops when nothing is live to commit
+    // (off-mesh / never-drawn line, or a headless applyHeadless path), and
+    // drops silently if the mesh was swapped out from under us since the last
+    // preview (armedKey_ mismatch) rather than baking a bogus entry.
+    void commitCurrentSlice() {
+        if (!previewLive_ || !haveBefore_ || !before_.filled) return;
+        if (!armedKey_.matches(*mesh)) return;   // mesh swapped since last preview — drop
+        if (history is null || factory is null) return;
+        auto cmd  = factory();
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(before_, post, "Slice");
+        history.record(cmd);
     }
 
     // The work-plane normal the interactive path builds the cut plane from.
@@ -526,7 +578,8 @@ unittest {
         assert(live.vertices.length == 12, "preview must not accumulate verts");
         assert(live.faces.length == 10,    "preview must not accumulate faces");
     }
-    // Commit at the final line (revert baseline + cut once, as commitSlice does).
+    // Commit at the final line (revert baseline + cut once — the same
+    // non-cumulative kernel the deferred deactivate-commit records).
     size_t nCommit = sliceFromBaseline(live, baseline, start, endPositions[$-1], wpN);
     assert(nCommit > 0);
     assert(live.vertices.length == 12 && live.faces.length == 10);

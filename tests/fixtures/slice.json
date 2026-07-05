@@ -1,6 +1,6 @@
 {
   "name": "slice",
-  "description": "Slice tool (mesh.sliceTool, task 0266 S0) topology: cube (8v/6f) cut by the plane through the drawn Start->End line PERPENDICULAR to the work plane (headless work-plane normal = default world XZ, +Y). A mid-plane cut yields 12v/10f (all-quad): one index-shared crossing vertex per straddled edge + a chord-split of each crossed face. Analytic self-golden (Mesh.cutByPlane is connectivity-correct by construction, task 0108).",
+  "description": "Slice tool (mesh.sliceTool, task 0266 S0; lifecycle revised task 0278) topology: cube (8v/6f) cut by the plane through the drawn Start->End line PERPENDICULAR to the work plane (headless work-plane normal = default world XZ, +Y). A mid-plane cut yields 12v/10f (all-quad): one index-shared crossing vertex per straddled edge + a chord-split of each crossed face. The committed geometry for a single line is unchanged by the task-0278 baseline-on-activate + bake-on-deactivate lifecycle (one history entry per session; the headless doApply path is a single cut either way). Analytic self-golden (Mesh.cutByPlane is connectivity-correct by construction, task 0108).",
   "source": "Analytic. Cube +/-0.5; plane law = math.planeFromLineAndWorkplane(start, end, +Y). Case midX: line along Z -> plane normal ||X through origin (X=0). Case midZ: line along X -> plane normal ||Z through origin (Z=0). New verts are edge midpoints (t=0.5).",
   "tolerance": 0.0001,
   "cases": [

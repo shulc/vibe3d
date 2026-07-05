@@ -4,6 +4,10 @@
 // deferred to mouse-up) — and asserts both commit the identical 12v/10f
 // geometry. Verifies the S1 `fast` flag is a pure preview gate that never
 // perturbs the committed result. Analytic self-golden (no external engine).
+//
+// The committed geometry is unchanged by the task-0278 lifecycle revision
+// (baseline-on-activate + bake-on-deactivate); the interactive session
+// invariant is covered by tests/test_slice_session.d.
 
 import fixture_helpers;
 

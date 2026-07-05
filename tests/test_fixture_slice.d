@@ -6,6 +6,12 @@
 // the camera-eye plane mesh.screenSlice uses. Analytic self-golden — no
 // external reference engine at test time (Mesh.cutByPlane is connectivity-
 // correct by construction).
+//
+// The committed geometry is unchanged by the task-0278 lifecycle revision
+// (baseline-on-activate + bake-on-deactivate): the headless doApply path this
+// harness drives is a single cut committed as one history entry per session.
+// The interactive "two endpoint drags = one slice, undo count == 1" invariant
+// is covered by tests/test_slice_session.d.
 
 import fixture_helpers;
 
