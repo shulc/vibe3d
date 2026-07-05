@@ -1524,6 +1524,13 @@ void main(string[] args) {
     scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, fbW, fbH);
 
+    // Translucent-fill program (flat u_color at u_alpha) — backs
+    // handler.drawWorldQuad, used by the Slice tool's cut-plane overlay. No
+    // screen-size dependency, so it needs no per-resize re-init.
+    GLuint fillProgram = createProgram(vertexShaderSrc, fillFragSrc);
+    scope(exit) glDeleteProgram(fillProgram);
+    initFillProgram(fillProgram);
+
     CheckerShader checkerShader = new CheckerShader();
     GridShader gridShader = new GridShader();
 

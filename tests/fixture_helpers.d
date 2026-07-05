@@ -578,10 +578,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr mesh.sliceTool endX %g", en[0]), ctx);
         cmd(format("tool.attr mesh.sliceTool endY %g", en[1]), ctx);
         cmd(format("tool.attr mesh.sliceTool endZ %g", en[2]), ctx);
-        // Optional axis constraint (S3): `"axis": "free|x|y|z|custom"` locks the
-        // cut-plane normal to a world axis (x/y/z), the custom `"vector"`
-        // [x,y,z], or the drawn line ⟂ work plane (free = default). `vector` is
-        // only consulted when axis == custom.
+        // Optional axis OVERRIDE (S3; owner-revised 0284): `"axis": "x|y|z|custom"`
+        // LOCKS the cut-plane normal to a world axis (x/y/z) or the custom
+        // `"vector"` [x,y,z], independent of the drawn line. There is no "free"
+        // value — OMITTING `axis` leaves the default drag plane (drawn line ⟂
+        // work plane). `vector` is only consulted when axis == custom.
         if ("axis" in sl)
             cmd(format("tool.attr mesh.sliceTool axis %s", sl["axis"].str), ctx);
         if ("vector" in sl) {

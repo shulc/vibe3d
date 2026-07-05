@@ -897,34 +897,46 @@ bool planeFromLineAndWorkplane(Vec3 start, Vec3 end, Vec3 workplaneNormal,
     return true;
 }
 
-// planeForSlice — the interactive Slice tool's cut-plane law with the
-// `axis` / custom-`vector` constraint (task 0269, S3). The plane ALWAYS passes
-// through `start` (p = start); `axisMode` selects the NORMAL:
-//   0 = Free    — normal ⟂ the drawn line AND ⟂ the work plane
-//                 (= planeFromLineAndWorkplane; the base/default behavior).
-//   1 = X, 2 = Y, 3 = Z — normal locked to that WORLD axis, regardless of the
-//                 drawn line's orientation (the line only fixes the through-point).
-//   4 = Custom  — normal = normalize(vector).
-// Returns false (p, n left undefined for the Free/Custom failure cases — p is
-// still set to start) when the mode has no well-defined plane: a degenerate /
-// workplane-parallel line in Free, or a zero-length `vector` in Custom. The
-// world-axis modes are always valid (a unit axis is never degenerate).
+// planeForSlice — the interactive Slice tool's cut-plane law (task 0269, S3;
+// owner-revised task 0284). The `axis` is an EXTRUSION DIRECTION, NOT the normal:
+// the slice plane is the drawn Start→End line EXTRUDED along the axis direction,
+// so it ALWAYS contains the line (both endpoints satisfy (X - start)·n == 0).
+//   n = normalize(cross(end - start, axisDir))   (n ⟂ line, n ⟂ axisDir)
+//   p = start                                     (any point on the line)
+// This mirrors the drag construction exactly (drag = extrude along the work-plane
+// normal), so every axis mode yields a plane CONTAINING both drawn points. The
+// `axisMode` selects `axisDir`:
+//   0 = Free/drag — axisDir = workplaneNormal (= planeFromLineAndWorkplane; the
+//                   base/default behavior).
+//   1 = X, 2 = Y, 3 = Z — axisDir = that WORLD axis.
+//   4 = Custom          — axisDir = vector.
+// Returns false (p, n undefined) when the mode has no well-defined plane: a
+// zero-length `vector` in Custom, or — the degenerate guard — a line that is
+// (near-)parallel to `axisDir` so cross ≈ 0 (the caller keeps the previous plane
+// rather than building a garbage one). A degenerate / zero-length line likewise
+// yields false through the shared construction.
 bool planeForSlice(Vec3 start, Vec3 end, Vec3 workplaneNormal,
                    int axisMode, Vec3 vector, out Vec3 p, out Vec3 n,
                    float eps = 1e-6f)
 {
-    p = start;
+    Vec3 axisDir;
     switch (axisMode) {
-        case 1: n = Vec3(1, 0, 0); return true;   // X
-        case 2: n = Vec3(0, 1, 0); return true;   // Y
-        case 3: n = Vec3(0, 0, 1); return true;   // Z
+        case 1: axisDir = Vec3(1, 0, 0); break;   // X
+        case 2: axisDir = Vec3(0, 1, 0); break;   // Y
+        case 3: axisDir = Vec3(0, 0, 1); break;   // Z
         case 4:                                    // Custom
-            if (vector.length < eps) return false;
-            n = normalize(vector);
-            return true;
-        default:                                   // 0 = Free
-            return planeFromLineAndWorkplane(start, end, workplaneNormal, p, n, eps);
+            if (vector.length < eps) { p = start; return false; }
+            axisDir = vector;
+            break;
+        default:                                   // 0 = Free/drag
+            axisDir = workplaneNormal;
+            break;
     }
+    // Extrude the drawn line along axisDir. planeFromLineAndWorkplane builds the
+    // identical plane (n = normalize(cross(end-start, axisDir)), p = start) and
+    // carries the degenerate guards: false for a zero-length line OR a line
+    // parallel to axisDir (cross ≈ 0).
+    return planeFromLineAndWorkplane(start, end, axisDir, p, n, eps);
 }
 
 unittest { // planeForSlice: Free (mode 0) == planeFromLineAndWorkplane
@@ -938,37 +950,45 @@ unittest { // planeForSlice: Free (mode 0) == planeFromLineAndWorkplane
            "Free mode must reproduce the drawn-line ⟂ work-plane normal");
 }
 
-unittest { // planeForSlice: X/Y/Z lock the normal to the WORLD axis regardless of line
+unittest { // planeForSlice: X/Y/Z extrude the line along the axis ⇒ plane CONTAINS both endpoints
     Vec3 p, n;
-    // A slanted line whose Free plane would NOT be X-normal: axis=X overrides it.
-    assert(planeForSlice(Vec3(0, 0, -1), Vec3(0.3f, 0, 1), Vec3(0, 1, 0),
-                         1, Vec3(0, 0, 0), p, n));
-    assert(isClose(n.x, 1.0f) && isClose(n.y, 0) && isClose(n.z, 0),
-           "axis=X ⇒ world-X normal");
+    // axis=X: the plane is the drawn line extruded along world-X. It need NOT be
+    // X-normal; the invariant is that BOTH endpoints lie in it (n ⟂ line).
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0.3f, 0, 1);
+    assert(planeForSlice(s, e, Vec3(0, 1, 0), 1, Vec3(0, 0, 0), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f), "unit normal");
     assert(p.x == 0 && p.z == -1, "plane through Start");
-    assert(planeForSlice(Vec3(0, 0, 0), Vec3(1, 0.4f, 0), Vec3(0, 1, 0),
-                         3, Vec3(0, 0, 0), p, n));
-    assert(isClose(n.x, 0) && isClose(n.y, 0) && isClose(n.z, 1.0f),
-           "axis=Z ⇒ world-Z normal");
+    assert(isClose(dot(s - p, n), 0, 1e-5f, 1e-5f), "Start lies in the plane");
+    assert(isClose(dot(e - p, n), 0, 1e-5f, 1e-5f), "End lies in the plane");
+    assert(isClose(dot(n, Vec3(1, 0, 0)), 0, 1e-5f, 1e-5f), "n ⟂ the extrusion axis X");
+    // axis=Z on a slanted line: plane still contains both endpoints.
+    Vec3 s2 = Vec3(0, 0, 0), e2 = Vec3(1, 0.4f, 0);
+    assert(planeForSlice(s2, e2, Vec3(0, 1, 0), 3, Vec3(0, 0, 0), p, n));
+    assert(isClose(dot(s2 - p, n), 0, 1e-5f, 1e-5f), "Start in plane");
+    assert(isClose(dot(e2 - p, n), 0, 1e-5f, 1e-5f), "End in plane");
+    assert(isClose(dot(n, Vec3(0, 0, 1)), 0, 1e-5f, 1e-5f), "n ⟂ the extrusion axis Z");
 }
 
-unittest { // planeForSlice: Custom uses normalize(vector); zero vector → false
+unittest { // planeForSlice: Custom extrudes along normalize(vector); zero vector / degenerate → false
     Vec3 p, n;
-    // Magnitude-2 X vector ⇒ unit X normal (proves normalization).
-    assert(planeForSlice(Vec3(0, 0, -1), Vec3(0.3f, 0, 1), Vec3(0, 1, 0),
-                         4, Vec3(2, 0, 0), p, n));
-    assert(isClose(n.length, 1.0f, 1e-4f) && isClose(n.x, 1.0f),
-           "custom vector (2,0,0) ⇒ unit X normal");
-    // A diagonal custom normal.
-    assert(planeForSlice(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
-                         4, Vec3(0, 3, 4), p, n));
-    assert(isClose(n.length, 1.0f, 1e-4f));
-    assert(isClose(n.y, 0.6f, 1e-4f) && isClose(n.z, 0.8f, 1e-4f),
-           "custom (0,3,4) ⇒ (0,0.6,0.8)");
+    // Custom vector (2,0,0): extrude a Z-line along X. Plane contains both ends.
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0.3f, 0, 1);
+    assert(planeForSlice(s, e, Vec3(0, 1, 0), 4, Vec3(2, 0, 0), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f), "unit normal");
+    assert(isClose(dot(s - p, n), 0, 1e-5f, 1e-5f), "Start in plane");
+    assert(isClose(dot(e - p, n), 0, 1e-5f, 1e-5f), "End in plane");
+    assert(isClose(dot(n, Vec3(1, 0, 0)), 0, 1e-5f, 1e-5f), "n ⟂ the custom axis (2,0,0)");
     // Zero custom vector ⇒ no plane.
     assert(!planeForSlice(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
                           4, Vec3(0, 0, 0), p, n),
            "zero custom vector must be degenerate");
+    // DEGENERATE GUARD: a line PARALLEL to the extrusion axis ⇒ cross ≈ 0 ⇒ false.
+    assert(!planeForSlice(Vec3(-1, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                          1, Vec3(0, 0, 0), p, n),
+           "line ∥ axis X (extrusion axis) has no unique plane");
+    assert(!planeForSlice(Vec3(0, 0, 0), Vec3(0, 0, 2), Vec3(0, 1, 0),
+                          4, Vec3(0, 0, 5), p, n),
+           "line ∥ custom axis has no unique plane");
 }
 
 unittest { // planeFromLineAndWorkplane: horizontal front-view drag → axis-aligned (Y-normal) cut

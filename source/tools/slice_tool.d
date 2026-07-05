@@ -18,7 +18,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
-import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
+import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
 
 // The interactive Slice commit reuses the generic before/after snapshot edit
@@ -27,32 +27,63 @@ import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, Workplan
 alias SliceEditFactory = MeshBevelEdit delegate();
 
 // ---------------------------------------------------------------------------
-// SliceAxis (task 0269, S3) — the plane-orientation constraint. `Free` is the
-// factory default: the plane is built from the drawn line ⟂ the work plane
-// (the S0 base behavior). `X`/`Y`/`Z` lock the plane normal to a WORLD axis
-// (the drawn line then only fixes the through-point); `Custom` uses the
-// user-supplied `vector` direction as the normal.
+// SliceAxis (task 0269, S3; owner-revised task 0284) — the OVERRIDE that sets the
+// cut plane's EXTRUSION DIRECTION to a world axis (`X`/`Y`/`Z`) or the user-supplied
+// `vector` (`Custom`). The `axis` is NOT the normal: the slice plane is the drawn
+// line EXTRUDED along the axis direction (n = normalize(cross(lineDir, axisDir))),
+// so it ALWAYS contains BOTH drawn points — the axis just swaps the extrusion
+// direction for a world axis / custom vector. There is NO `Free` value: the
+// reference Slice's Axis control offers only {X, Y, Z, Custom} (owner-confirmed).
+// The DEFAULT plane orientation is NOT an enum value at all — it is the FROZEN
+// drag-defined plane (the drawn line extruded along the work-plane normal captured
+// once at the gesture that drew the line; see `frozenNormal_` / `axisLocked_`). The
+// override is engaged only once the user writes the `axis` attribute (`axisLocked_`
+// — set in onParamChanged, cleared on tool activation and on a fresh line redraw),
+// so a plain drag with no axis change reproduces the drawn-line plane exactly (the
+// S0 `slice.json` golden).
 //
-// DEFAULT DECISION: the reference live-capture reads `axis = y`, but its own
-// spec flags that value as "likely sticky/prefs-seeded, NOT a guaranteed fresh
-// factory default", and the tool plan states the base behavior is the free
-// drawn-line plane. A `Y` factory default would lock every cut to a world-Y
-// (horizontal) normal, contradicting the drawn-line semantics AND the S0
-// golden (a Z-line must give an X-normal cut, not a Y-normal one). The
-// reference-faithful, self-consistent reading is therefore `Free` as the
-// factory default (drawn line ⟂ work plane), with `X`/`Y`/`Z`/`Custom` as the
-// explicit locked overrides. This keeps the S0 `slice.json` golden green with
-// no axis change while `axis=x/y/z` lock the normal to the world axis exactly
-// as the reference's Axis control does.
-enum SliceAxis : int { Free = 0, X = 1, Y = 2, Z = 3, Custom = 4 }
+// The integer VALUES stay 1..4 (unchanged from the S3 enum) so the pure
+// math.planeForSlice law is untouched: it still reads 1=X, 2=Y, 3=Z, 4=Custom,
+// and its internal `default` (mode 0) is the "extrude along the work plane normal"
+// construction the tool passes when NO override is locked. Mode 0 is therefore
+// the runtime "no override" wire value; it is simply not offered as a
+// user-selectable SliceAxis.
+enum SliceAxis : int { X = 1, Y = 2, Z = 3, Custom = 4 }
 
-static immutable IntEnumEntry[5] sliceAxisTable = [
-    IntEnumEntry(cast(int)SliceAxis.Free,   "free",   "Free (drawn line)"),
+// The planeForSlice `axisMode` the tool passes when NO axis override is locked:
+// the "drawn line ⟂ (frozen) work plane" construction (planeForSlice's default).
+enum int SLICE_AXIS_DRAG = 0;
+
+static immutable IntEnumEntry[4] sliceAxisTable = [
     IntEnumEntry(cast(int)SliceAxis.X,      "x",      "X"),
     IntEnumEntry(cast(int)SliceAxis.Y,      "y",      "Y"),
     IntEnumEntry(cast(int)SliceAxis.Z,      "z",      "Z"),
     IntEnumEntry(cast(int)SliceAxis.Custom, "custom", "Custom"),
 ];
+
+// classifyPlaneAxis (owner fix 1, task 0284; owner-revised for the extrusion-
+// direction model) — map a drag plane's EXTRUSION DIRECTION (the frozen work-plane
+// normal the line was extruded along) to the SliceAxis that reproduces the SAME
+// plane, so the Tool-Properties dropdown reflects it. Since the axis is the
+// EXTRUSION direction (not the cut normal), classifying this direction and feeding
+// it back through planeForSlice's cross(lineDir, axisDir) rebuilds the identical
+// plane. If the (unit) direction is aligned with a world axis to within `tol`
+// (|dir·axis| ≥ tol, sign-agnostic — the extrusion sign does not change the cut),
+// it classifies to that axis (X/Y/Z), for which planeForSlice uses the same world
+// axis ⇒ the same plane. Otherwise it classifies to Custom and hands back
+// `vector` = normalize(dir); planeForSlice's Custom mode then extrudes along
+// EXACTLY that direction, so the cut is byte-identical. `vector` is always set to
+// normalize(dir) (only consulted by the caller for the Custom result). Pure —
+// unit-tested without a GL context.
+SliceAxis classifyPlaneAxis(Vec3 dir, out Vec3 vector, float tol = 0.999f) {
+    import std.math : fabs;
+    Vec3 nn = normalize(dir);
+    vector = nn;
+    if (fabs(nn.x) >= tol) return SliceAxis.X;
+    if (fabs(nn.y) >= tol) return SliceAxis.Y;
+    if (fabs(nn.z) >= tol) return SliceAxis.Z;
+    return SliceAxis.Custom;
+}
 
 // ---------------------------------------------------------------------------
 // SliceGapSide (task 0275, S9) — the reference "Offset Side": where the Gap
@@ -85,7 +116,7 @@ static immutable IntEnumEntry[3] sliceGapSideTable = [
 // unit-testable under `dub test`.
 size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          Vec3 start, Vec3 end, Vec3 wpNormal,
-                         int axisMode = cast(int)SliceAxis.Free,
+                         int axisMode = SLICE_AXIS_DRAG,
                          Vec3 vector = Vec3(0, 1, 0),
                          bool infinite = false,
                          bool split = false,
@@ -150,6 +181,170 @@ uint[] sliceRestrictFaces(ref Mesh mesh) {
 }
 
 // ---------------------------------------------------------------------------
+// Cut-plane overlay geometry (task 0284). Pure world-space helpers for the
+// translucent quad SliceTool.draw() lays IN the cut plane — factored out of the
+// GL draw so they are unit-testable without a context. The quad ALWAYS lies in
+// the plane (through `p`, normal `n`): its two axes are the IN-PLANE line
+// direction and its in-plane perpendicular, so every corner satisfies
+// dot(corner - p, n) == 0.
+// ---------------------------------------------------------------------------
+
+// The quad's in-plane orthonormal basis. `dir` = the component of the drawn
+// line (end-start) that lies IN the plane, normalized — this equals
+// normalize(end-start) whenever the segment lies in the plane (always so in the
+// no-override drag mode, and whenever the locked/custom normal is ⟂ the line,
+// e.g. a Z-line with axis=X). `perp` = normalize(cross(n, dir)), across
+// the line. Returns false when the line is degenerate or runs parallel to `n`
+// (no well-defined in-plane direction) so the caller can skip the overlay.
+bool sliceOverlayBasis(Vec3 start, Vec3 end, Vec3 n, out Vec3 dir, out Vec3 perp,
+                       float eps = 1e-6f)
+{
+    Vec3 nn  = normalize(n);
+    Vec3 seg = end - start;
+    Vec3 inPlane = seg - nn * dot(seg, nn);     // drop the out-of-plane part
+    if (inPlane.length < eps) return false;      // line ⟂ plane / zero-length
+    dir  = normalize(inPlane);
+    Vec3 pv = cross(nn, dir);
+    if (pv.length < eps) return false;
+    perp = normalize(pv);
+    return true;
+}
+
+// The four world-space corners (CCW in the dir→perp frame) of the overlay
+// rectangle, anchored at the in-plane point `p`. The extents are measured from
+// `p`: [aMin,aMax] along `dir`, [bMin,bMax] along `perp`. All four corners lie
+// in the plane through `p` spanned by dir/perp (both ⟂ the normal).
+Vec3[4] sliceOverlayQuad(Vec3 p, Vec3 dir, Vec3 perp,
+                         float aMin, float aMax, float bMin, float bMax)
+{
+    return [
+        p + dir * aMin + perp * bMin,
+        p + dir * aMax + perp * bMin,
+        p + dir * aMax + perp * bMax,
+        p + dir * aMin + perp * bMax,
+    ];
+}
+
+// Size the overlay so it (a) spans EXACTLY the Start→End segment along the line
+// (never past the endpoint handles — task 0284 owner fix 1), and (b) covers the
+// active mesh's projection ACROSS the line AND biases that cross span markedly
+// LARGER than the along span (owner fix 2) so the plane reads as a plane
+// extending AWAY from the handles, not a thin ribbon between them. BOUNDED.
+// Extents are along `dir` / across `perp`, measured from `p`.
+//
+// KEY (owner fix 1): the ALONG-`dir` extent is the drawn segment ONLY — no mesh
+// union, no along-line pad — so the translucent plane starts at one handle and
+// ends at the other, never extending across the viewport as a guide.
+// KEY (owner fix 2): `perp` is the NO-HANDLE axis (the handles sit at the line's
+// two ends, along `dir`), so the CROSS-`perp` extent is deliberately biased
+// larger: it unions the mesh, then guarantees a half-span of a full along-extent
+// on each side (⇒ cross span ≥ 2× along) plus a generous overhang, netting a
+// cross span ≥ 3× along > along. `p` is the plane through-point (= start).
+void sliceOverlayExtent(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
+                        Vec3 start, Vec3 end,
+                        out float aMin, out float aMax,
+                        out float bMin, out float bMax)
+{
+    import std.algorithm : min, max;
+    // Along the line: bound EXACTLY to the drawn segment (start↔end).
+    float a0 = dot(start - p, dir), a1 = dot(end - p, dir);
+    aMin = min(a0, a1); aMax = max(a0, a1);
+    // Across the line: seed with the segment, then union the mesh projection so
+    // the plane spans the depth of the region being cut.
+    float b0 = dot(start - p, perp), b1 = dot(end - p, perp);
+    bMin = min(b0, b1); bMax = max(b0, b1);
+    foreach (v; m.vertices) {
+        float b = dot(v - p, perp);
+        bMin = min(bMin, b); bMax = max(bMax, b);
+    }
+    float along = max(1e-3f, aMax - aMin);
+    // PERPENDICULAR-to-line (`perp`) is the NO-HANDLE axis (owner fix 2, 0284):
+    // bias the quad markedly LARGER across the line than along it, so the plane
+    // reads as extending AWAY from the endpoint handles (which sit along `dir`),
+    // not as a thin ribbon strung between them. Guarantee a half-span of a FULL
+    // along-extent on each side (⇒ cross span ≥ 2× along, even on a flat/empty
+    // mesh) plus a generous 0.5× along overhang past the mesh — net cross span
+    // ≥ 3× along > along, always. The ALONG-`dir` extent is untouched (flush with
+    // the drawn segment).
+    float minHalf = 1.0f * along;
+    bMax = max(bMax,  minHalf);
+    bMin = min(bMin, -minHalf);
+    // Generous cross-line overhang (owner fix 2 widened it from 0.1× to 0.5×
+    // along) — NOT along the line, which stays flush with the endpoint handles.
+    float pad = 0.5f * along;
+    bMin -= pad; bMax += pad;
+}
+
+// ---------------------------------------------------------------------------
+// DEGENERATE-plane overlay basis + extent (task 0284; owner-revised for the
+// extrusion-direction model). Under the extrusion model EVERY axis-locked plane
+// CONTAINS the drawn line (n ⟂ line by construction), so the line-derived basis
+// above applies to X/Y/Z/Custom too — the draw() path uses it for both drag and
+// locked modes. These two helpers are the FALLBACK for the ONE case the line-based
+// basis cannot handle: the TRUE degenerate where the drawn line is (near-)parallel
+// to the extrusion axis (cross ≈ 0), where planeForSlice itself returns false and
+// no line-derived in-plane direction exists. Then the basis comes from the NORMAL
+// itself (a deterministic in-plane perpendicular pair, independent of the line) and
+// the extent COVERS THE ACTIVE MESH in that plane, so the overlay stays a valid
+// in-plane rectangle. The normal (drag or locked) always yields a line-based basis
+// otherwise, so this path is rarely reached.
+// ---------------------------------------------------------------------------
+
+// A STABLE in-plane orthonormal basis derived from the normal `n` alone — a
+// canonical/deterministic perpendicular pair, NOT the drawn line. `dir` =
+// normalize(cross(n, worldUp)); when `n ∥ worldUp` (no well-defined cross) it
+// falls back to cross(n, worldX). `perp` = cross(n, dir). Both are unit and ⟂ n
+// (and ⟂ each other), so every quad corner lies in the plane. Returns false only
+// for a zero-length normal (never for a valid unit axis / custom vector).
+bool sliceOverlayBasisLocked(Vec3 n, out Vec3 dir, out Vec3 perp, float eps = 1e-6f)
+{
+    Vec3 nn = normalize(n);
+    if (nn.length < eps) return false;
+    Vec3 pv = cross(nn, Vec3(0, 1, 0));          // worldUp
+    if (pv.length < eps) pv = cross(nn, Vec3(1, 0, 0));   // n ∥ worldUp → fall back to worldX
+    if (pv.length < eps) return false;
+    dir  = normalize(pv);
+    perp = normalize(cross(nn, dir));
+    return true;
+}
+
+// Size the LOCKED overlay to COVER THE ACTIVE MESH in the plane: union the mesh
+// vertices' projections onto (dir, perp) anchored at `p` (the plane through-
+// point = start_), plus a min-band (so a flat/empty mesh still shows a real
+// rectangle) and a ~10% overhang on every edge (MODO-like). Extents are measured
+// from `p` along `dir` / across `perp`. Unlike the unlocked extent the drawn
+// line does NOT bound the quad here (the line no longer lies in the plane).
+void sliceOverlayExtentLocked(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
+                              out float aMin, out float aMax,
+                              out float bMin, out float bMax)
+{
+    import std.algorithm : min, max;
+    aMin = aMax = bMin = bMax = 0.0f;
+    bool any = false;
+    foreach (v; m.vertices) {
+        float a = dot(v - p, dir), b = dot(v - p, perp);
+        if (!any) { aMin = aMax = a; bMin = bMax = b; any = true; }
+        else {
+            aMin = min(aMin, a); aMax = max(aMax, a);
+            bMin = min(bMin, b); bMax = max(bMax, b);
+        }
+    }
+    // Reference length for the pad + min-band: the larger mesh span (or a small
+    // floor for a flat/empty mesh), so the overhang and non-degeneracy guard
+    // scale with the region being cut.
+    float refLen = max(max(aMax - aMin, bMax - bMin), 1e-3f);
+    float pad    = 0.1f * refLen;
+    aMin -= pad; aMax += pad;
+    bMin -= pad; bMax += pad;
+    // Guarantee a visible, non-degenerate rectangle even for a flat/empty mesh
+    // (all verts project to one line along dir or perp): open the collapsed axis
+    // to at least half the reference length on each side.
+    float half = 0.5f * refLen;
+    if (aMax - aMin < 1e-3f) { aMax += half; aMin -= half; }
+    if (bMax - bMin < 1e-3f) { bMax += half; bMin -= half; }
+}
+
+// ---------------------------------------------------------------------------
 // SliceTool — interactive plane/line slice (factory id `mesh.sliceTool`).
 //
 // Draws a Start→End line and cuts the mesh with the plane through that line
@@ -180,11 +375,12 @@ uint[] sliceRestrictFaces(ref Mesh mesh) {
 //     paths materialise the identical final geometry (`sliceFromBaseline` is
 //     the one cut kernel).
 //
-// S3 (task 0269) adds the `axis` (Free/X/Y/Z/Custom) + `vectorX/Y/Z` plane
-// constraint: Free = the drawn-line ⟂ work-plane plane (default); X/Y/Z lock
-// the normal to a world axis; Custom uses the `vector` normal. The plane law
-// lives in the unit-tested math.planeForSlice helper; the Vector gang is greyed
-// unless axis == Custom (paramEnabled).
+// S3 (task 0269; owner-revised 0284) adds the `axis` (X/Y/Z/Custom) OVERRIDE +
+// `vectorX/Y/Z`: with NO override the plane is the drawn line ⟂ the FROZEN work
+// plane (the default — see frozenNormal_/axisLocked_); X/Y/Z lock the normal to
+// a world axis; Custom uses the `vector` normal. The plane law lives in the
+// unit-tested math.planeForSlice helper (mode 0 = the no-override drag plane);
+// the Vector gang is greyed unless axis == Custom (paramEnabled).
 //
 // S4 (task 0270) adds `infinite` (bool): OFF (the reference factory default)
 // CLIPS the cut to the drawn Start→End span — only faces under the line get
@@ -258,12 +454,50 @@ private:
     // (not reset on activate) — matches the reference's sticky tool options.
     bool fast_ = false;
 
-    // Slice axis constraint (S3). `axis_` selects how the cut-plane normal is
-    // built (see SliceAxis); `vector_` is the Custom normal, meaningful only
-    // when axis_ == Custom (the panel greys it otherwise — see paramEnabled).
-    // Default Free = the S0 drawn-line ⟂ work-plane plane (see SliceAxis doc).
-    SliceAxis axis_   = SliceAxis.Free;
+    // Slice axis OVERRIDE (S3; owner-revised 0284). `axis_` names the world axis
+    // (X/Y/Z) or Custom-vector the cut plane's EXTRUSION DIRECTION locks to (the
+    // line is extruded along it ⇒ n = cross(lineDir, axisDir); the plane always
+    // contains the line); `vector_` is the Custom extrusion direction, meaningful
+    // only when axis_ == Custom (the panel greys it
+    // otherwise — see paramEnabled). The override is active ONLY while
+    // `axisLocked_` is set (see below). Its default VALUE is X, but that value is
+    // ignored until the user engages the lock — the default plane orientation is
+    // the frozen drag plane, NOT any axis (see SliceAxis doc).
+    SliceAxis axis_   = SliceAxis.X;
     Vec3      vector_ = Vec3(0, 1, 0);
+
+    // Axis-override engagement (owner fix 4, task 0284). FALSE = no override: the
+    // cut plane uses the FROZEN drag normal (drawn line ⟂ frozen work plane),
+    // reproducing the S0 drawn-line plane. TRUE = the `axis_` override is locked
+    // (world X/Y/Z or Custom vector), independent of the drawn line. Set in
+    // onParamChanged whenever the `axis` attribute is written (panel dropdown or
+    // headless tool.attr); reset to FALSE on activation and on a fresh line
+    // redraw (Shift+drag / new line), which are the paths back to the drag plane.
+    bool axisLocked_ = false;
+
+    // Pending axis classification (owner fix 1, task 0284). Set when a FRESH line
+    // is started (beginFreshLinePlane) and consumed at that gesture's mouse-UP,
+    // where the drawn line's direction is finally known: the drag-mode plane
+    // normal is classified to a concrete Axis (X/Y/Z if aligned, else Custom) so
+    // the Tool-Properties dropdown reflects the drawn plane. Deferred to mouse-UP
+    // because at the fresh-line DOWN the line is still degenerate (start==end, no
+    // direction, no plane). Endpoint-refine / line-translate / relocate gestures
+    // do NOT set it — they preserve the axis the draw established (reclassifying
+    // them would clobber a locked axis with a stale line-derived one).
+    bool pendingAxisClassify_ = false;
+
+    // Frozen cut-plane normal (owner fix 3, task 0284). The work-plane normal is
+    // captured ONCE, at the gesture that DRAWS the line (fresh line / relocate /
+    // the first endpoint or line-body drag of the session), and reused for BOTH
+    // the cut (updatePreview / sliceFromBaseline) AND the overlay draw. This
+    // decouples the slice plane from the live camera: orbiting after the line is
+    // drawn leaves the plane (and its overlay) exactly in place, so the drawn cut
+    // and the committed cut never diverge. Only a fresh Shift+drag / redraw / a
+    // new tool session re-captures it. `p` (the through-point = start_) stays
+    // live so the plane still follows the LINE's position under handle drags —
+    // it is only the ORIENTATION that freezes.
+    Vec3 frozenNormal_;
+    bool haveFrozen_;
 
     // Infinite (S4, task 0270). OFF (the reference factory default) CLIPS the
     // cut to the drawn Start→End span — only faces under the line get cut. ON
@@ -331,8 +565,9 @@ private:
     //
     // DEFAULT DECISION: the reference live-capture reads snap=ON but its own spec
     // flags that value "may be sticky from seeded prefs, NOT a guaranteed fresh
-    // factory default" (same caveat as the `axis`=Y reading, which this file
-    // already resolved to Free). A snap=ON factory default would silently rotate
+    // factory default" (same caveat as the `axis` reading, which this file
+    // resolves to the no-override drag plane default). A snap=ON factory default
+    // would silently rotate
     // EVERY existing slice golden's line to a 45° multiple (e.g. the slice_axis
     // 81°→90° line), so ON is neither self-consistent with the drawn-line
     // semantics nor golden-safe. The reference-faithful, goldens-green reading is
@@ -418,6 +653,13 @@ private:
     enum Vec3 HANDLE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
     enum Vec3 LINE_COLOR   = Vec3(0.90f, 0.92f, 0.98f);
 
+    // Cut-plane overlay (task 0284): a subtle translucent fill in the same blue
+    // family as the endpoint handles (vibe3d gizmo palette — NOT reference
+    // colours), at a low alpha so the mesh, cut preview, and handles all read
+    // through it.
+    enum Vec3  PLANE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
+    enum float PLANE_ALPHA = 0.18f;
+
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
          VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -477,10 +719,12 @@ public:
             // Angle (S5): the snap step in degrees. Greyed while Angle Snap is
             // off (paramEnabled). Default 45° per the reference spec.
             Param.float_("snapAngle", "Angle", &snapAngle_, 45.0f),
-            // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
-            // normal) / Custom (vector normal). Default Free — see SliceAxis.
+            // Axis (S3; owner-revised 0284): X / Y / Z (world-axis normal) /
+            // Custom (vector normal) OVERRIDE. No Free value — the default plane
+            // is the frozen drag plane (axisLocked_ false); writing this attr
+            // engages the override. Default VALUE X (ignored until locked).
             Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
-                           cast(int)SliceAxis.Free),
+                           cast(int)SliceAxis.X),
             // Custom normal — greyed unless Axis == Custom (paramEnabled).
             Param.float_("vectorX", "Vector X", &vector_.x, 0.0f),
             Param.float_("vectorY", "Vector Y", &vector_.y, 1.0f),
@@ -549,6 +793,10 @@ public:
         // valid across previews because each restores the baseline face indexing.
         restrictFaces_ = sliceRestrictFaces(*mesh);
         armedKey_.stamp(*mesh);
+        // Owner fix 4 (0284): a fresh tool session DEFAULTS to the drag plane
+        // (no axis override), whatever the sticky `axis_` value shows. The user
+        // re-engages the override by writing the `axis` attr (onParamChanged).
+        axisLocked_ = false;
     }
 
     override void deactivate() {
@@ -570,6 +818,8 @@ public:
         haveBefore_     = false;
         haveRaw_        = false;
         snapTempInvert_ = false;
+        haveFrozen_     = false;   // owner fix 3 (0284): re-capture on the next gesture
+        pendingAxisClassify_ = false;   // owner fix 1 (0284): no draw in flight to classify
         armedKey_.invalidate();
     }
 
@@ -605,6 +855,13 @@ public:
             default:
                 return;
         }
+        // Owner fix 4 (0284): writing the `axis` attribute ENGAGES the axis
+        // override (world X/Y/Z or Custom vector). This runs BEFORE the
+        // re-preview guards below so the lock latches even when no live cut yet
+        // sits on the mesh (the headless fixture path: activate → tool.attr axis
+        // <x|z|custom> → tool.doApply, where previewLive_ is false). Until this
+        // fires the plane uses the frozen drag normal (SLICE_AXIS_DRAG).
+        if (pname == "axis") axisLocked_ = true;
         // Guard: only re-preview a slice that ALREADY has a live cut on the
         // mesh, while the tool is active and NOT mid-drag (during a drag the
         // motion path owns the preview and this edit would fight it).
@@ -646,9 +903,13 @@ public:
         Vec3 sStart = start_, sEnd = end_;
         if (snap_)
             sEnd = snapLineEndpointToAngle(sStart, sEnd, wf.axis1, wf.axis2, snapAngle_);
+        // Owner fixes 3 + 4 (0284): use the FROZEN drag normal when the tool
+        // captured one (interactive session), else the deterministic headless
+        // work-plane normal; and pass the axis OVERRIDE mode only when locked
+        // (SLICE_AXIS_DRAG = the drawn-line ⟂ work-plane plane otherwise).
+        Vec3 nrm = haveFrozen_ ? frozenNormal_ : wf.normal;
         Vec3 p, n;
-        if (!planeForSlice(sStart, sEnd, wf.normal,
-                           cast(int)axis_, vector_, p, n))
+        if (!planeForSlice(sStart, sEnd, nrm, effectiveAxisMode(), vector_, p, n))
             return false;
         // Restrict the cut to the current polygon selection (task 0279): the
         // reference Slice cuts ONLY the selected polygons, the whole layer when
@@ -706,6 +967,9 @@ public:
             Vec3 delta = hit - mid;
             start_ = start_ + delta;
             end_   = end_   + delta;
+            // Relocate is a translate — keep the existing frozen plane
+            // orientation (capture one if this is the first gesture).
+            ensureFrozenNormal();
             beginLineDrag(hit);
             kickPreview();
             return true;
@@ -715,11 +979,14 @@ public:
 
         if (shift) {
             // Shift+drag resets/redraws: start a fresh line from the cursor
-            // regardless of what the click landed near.
+            // regardless of what the click landed near — a fresh line RE-CAPTURES
+            // the plane orientation from the current work plane and returns to the
+            // drag plane (clears any axis override — owner fixes 3 + 4, 0284).
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
             start_ = hit;
             end_   = hit;
+            beginFreshLinePlane();
             dragPart_ = DragEnd;
             kickPreview();
             return true;
@@ -730,16 +997,21 @@ public:
         // begin a fresh line from the work-plane hit under the cursor.
         int grabbed = pickHandle(cast(float)e.x, cast(float)e.y);
         if (grabbed >= 0) {
+            // Endpoint drag refines the EXISTING line — keep the frozen plane
+            // (capture one if this is the first gesture of the session).
+            ensureFrozenNormal();
             dragPart_ = grabbed;
         } else if (pickLineBody(cast(float)e.x, cast(float)e.y)) {
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
+            ensureFrozenNormal();   // line-body drag is a translate — keep the plane
             beginLineDrag(hit);
         } else {
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
             start_ = hit;
             end_   = hit;
+            beginFreshLinePlane();   // fresh line → re-capture normal, drop override
             dragPart_ = DragEnd;   // drag the End of the new line
         }
         kickPreview();
@@ -781,6 +1053,14 @@ public:
         // live cut during the drag) shows/holds the result, and so the
         // non-fast path lands exactly on the release line.
         updatePreview();
+        // Owner fix 1 (0284): a fresh line is now drawn OUT — its direction is
+        // known, so classify the drawn plane's normal to a concrete Axis and lock
+        // it (the panel then reflects the drawn plane). The classified axis
+        // reproduces the SAME plane, so this never moves the just-cut geometry.
+        if (pendingAxisClassify_) {
+            pendingAxisClassify_ = false;
+            classifyDrawnPlaneAxis();
+        }
         return true;
     }
 
@@ -819,6 +1099,68 @@ public:
         immutable float handleScale = HANDLE_HALF_PX / getGizmoPixels();
         startH_.pos = start_; startH_.size = gizmoSize(start_, vp, handleScale);
         endH_.pos   = end_;   endH_.size   = gizmoSize(end_,   vp, handleScale);
+
+        // Translucent CUT-PLANE overlay (task 0284): a rectangle lying IN the
+        // cut plane, spanning EXACTLY the drawn line along it (owner fix 1 — never
+        // past the endpoint handles) and extending across it to cover the region
+        // being cut (MODO-like). Built from the SAME plane the cut uses: the
+        // FROZEN drag normal + the axis-override mode (owner fixes 3 + 4), so it
+        // tracks drags / panel edits AND stays put under camera orbit — exactly
+        // where the committed cut is. Drawn FIRST (before the line + handles) so
+        // those stay visible on top.
+        //
+        // DEPTH (owner fix 2): the plane is depth-TESTED so the mesh occludes the
+        // part behind it and the plane visibly CUTS THROUGH the geometry (not a
+        // float-on-top overlay). Depth WRITES are off (translucent — it must not
+        // occlude the line/mesh behind it) and back-face culling is disabled so
+        // the plane shows from either side. Alpha-blended (the grid alpha
+        // precedent, app.d). drawWorldQuad's caller-owns-state contract means we
+        // set + restore GL_BLEND / depth mask / cull here.
+        {
+            Vec3 pp, nn;
+            if (planeForSlice(start_, end_, effectiveNormal(),
+                              effectiveAxisMode(), vector_, pp, nn)) {
+                // Branch on the GEOMETRY, not the lock flag (owner fixes 1 + 2,
+                // 0284; extrusion-direction model). Under the extrusion model the
+                // drawn line LIES IN the cut plane for EVERY axis mode (n ⟂ line by
+                // construction: drag, X/Y/Z, and Custom all extrude the line) — so
+                // the LINE-based basis applies throughout: along-`dir` bounded to
+                // the drawn segment, across-`perp` biased LARGER to read past the
+                // handles (owner fix 2). The only exception is the TRUE degenerate
+                // where the line runs (near-)parallel to the extrusion axis (cross
+                // ≈ 0, planeForSlice already returned false so we do not get here) —
+                // any residual near-degenerate case falls back to the NORMAL-derived,
+                // mesh-covering basis so the quad is still a valid in-plane rect.
+                Vec3 dir, perp;
+                bool haveBasis;
+                float aMin, aMax, bMin, bMax;
+                if (sliceOverlayBasis(start_, end_, nn, dir, perp)) {
+                    haveBasis = true;
+                    sliceOverlayExtent(*mesh, pp, dir, perp, start_, end_,
+                                       aMin, aMax, bMin, bMax);
+                } else if (sliceOverlayBasisLocked(nn, dir, perp)) {
+                    haveBasis = true;
+                    sliceOverlayExtentLocked(*mesh, pp, dir, perp,
+                                             aMin, aMax, bMin, bMax);
+                } else {
+                    haveBasis = false;
+                }
+                if (haveBasis) {
+                    Vec3[4] quad = sliceOverlayQuad(pp, dir, perp,
+                                                    aMin, aMax, bMin, bMax);
+                    GLboolean wasCull = glIsEnabled(GL_CULL_FACE);
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glEnable(GL_DEPTH_TEST);   // mesh occludes the plane behind it
+                    glDepthMask(GL_FALSE);     // ...but the translucent plane writes no depth
+                    glDisable(GL_CULL_FACE);   // show the plane from both sides
+                    drawWorldQuad(quad, vp, PLANE_COLOR, PLANE_ALPHA, shader.program);
+                    glDepthMask(GL_TRUE);
+                    glDisable(GL_BLEND);
+                    if (wasCull) glEnable(GL_CULL_FACE);
+                }
+            }
+        }
 
         // The Start→End line, drawn over the mesh (depth-test off, like the
         // other gizmos) so it stays visible against the surface being cut.
@@ -870,8 +1212,11 @@ private:
     // deferred commit then records nothing.
     void updatePreview() {
         if (!haveBefore_) return;
+        // Owner fixes 3 + 4 (0284): cut with the FROZEN drag normal + the
+        // axis-override mode (SLICE_AXIS_DRAG when no override is locked), so the
+        // preview matches the overlay AND does not shift under camera orbit.
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
-                                          cachedWorkplaneNormal(), cast(int)axis_, vector_,
+                                          effectiveNormal(), effectiveAxisMode(), vector_,
                                           infinite_, split_, caps_, restrictFaces_,
                                           gap_, cast(int)gapSide_);
         previewLive_ = nSplit > 0;
@@ -917,6 +1262,67 @@ private:
     Vec3 cachedWorkplaneNormal() {
         if (cachedVp.width > 0) return pickWorkplaneFrame(cachedVp).normal;
         return currentWorkplaneFrame().normal;
+    }
+
+    // --- Frozen cut-plane orientation (owner fixes 3 + 4, task 0284) ---------
+
+    // Capture the work-plane normal NOW and freeze it for the rest of the line's
+    // life. Called at the gesture that DRAWS/relocates the line, so subsequent
+    // camera orbits leave the plane orientation untouched.
+    void captureFrozenNormal() {
+        frozenNormal_ = cachedWorkplaneNormal();
+        haveFrozen_   = true;
+    }
+
+    // Capture a frozen normal only if none is held yet (endpoint / line-body /
+    // relocate gestures reuse the plane the line was drawn with).
+    void ensureFrozenNormal() { if (!haveFrozen_) captureFrozenNormal(); }
+
+    // A fresh line (Shift+drag / new line) re-captures the plane orientation and
+    // returns to the drag plane, dropping any axis override. Owner fix 1 (0284):
+    // arm the axis classification — once this fresh line is drawn OUT (mouse-up),
+    // its plane normal is classified to a concrete Axis so the panel reflects it.
+    void beginFreshLinePlane() {
+        axisLocked_ = false;
+        pendingAxisClassify_ = true;
+        captureFrozenNormal();
+    }
+
+    // Owner fix 1 (0284; owner-revised for the extrusion-direction model). Classify
+    // the DRAWN plane's EXTRUSION direction to a concrete Axis so the panel reflects
+    // it. The drag plane is the line extruded along the FROZEN work-plane normal
+    // (effectiveNormal()) — so THAT extrusion direction, not the cut normal, is what
+    // planeForSlice's axis modes consume. Classify it to the aligned world axis
+    // (|dir·axis| ≥ tol ⇒ X/Y/Z) or Custom (vector_ = the extrusion direction).
+    // Either reproduces the SAME plane byte-identically: planeForSlice(classifiedAxis)
+    // = cross(lineDir, axisDir) = the original drag normal (Custom's vector IS the
+    // extrusion dir). So the drawn cut is unchanged; only the displayed param + the
+    // subsequent re-orientation model change. No-op for a degenerate line (a click
+    // with no drag ⇒ no plane ⇒ nothing to reflect).
+    void classifyDrawnPlaneAxis() {
+        Vec3 pp, nn;
+        if (!planeForSlice(start_, end_, effectiveNormal(),
+                           SLICE_AXIS_DRAG, vector_, pp, nn))
+            return;
+        Vec3 ext = effectiveNormal();   // the frozen extrusion direction (work-plane normal)
+        Vec3 v;
+        SliceAxis a = classifyPlaneAxis(ext, v);
+        axis_ = a;
+        if (a == SliceAxis.Custom) vector_ = v;
+        axisLocked_ = true;
+    }
+
+    // The cut-plane normal the interactive cut + overlay both use: the FROZEN
+    // drag normal once a gesture has drawn the line, else the live work-plane
+    // normal (before the first drag of the session).
+    Vec3 effectiveNormal() {
+        return haveFrozen_ ? frozenNormal_ : cachedWorkplaneNormal();
+    }
+
+    // The planeForSlice `axisMode`: the axis OVERRIDE (X/Y/Z/Custom) only while
+    // locked, else SLICE_AXIS_DRAG (the drawn line ⟂ frozen work plane).
+    int effectiveAxisMode() const {
+        return axisLocked_ ? cast(int)axis_ : SLICE_AXIS_DRAG;
     }
 
     // The work-plane in-plane basis for the angle-snap projection (same frame
@@ -1034,7 +1440,7 @@ unittest {
 
     foreach (ep; endPositions) {
         size_t n = sliceFromBaseline(live, baseline, start, ep, wpN,
-                                     cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
+                                     SLICE_AXIS_DRAG, Vec3(0, 1, 0), INF);
         assert(n > 0, "each mid-plane preview must split faces");
         // NON-CUMULATIVE: always the single-cut topology, never accumulated.
         assert(live.vertices.length == 12, "preview must not accumulate verts");
@@ -1043,7 +1449,7 @@ unittest {
     // Commit at the final line (revert baseline + cut once — the same
     // non-cumulative kernel the deferred deactivate-commit records).
     size_t nCommit = sliceFromBaseline(live, baseline, start, endPositions[$-1], wpN,
-                                       cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
+                                       SLICE_AXIS_DRAG, Vec3(0, 1, 0), INF);
     assert(nCommit > 0);
     assert(live.vertices.length == 12 && live.faces.length == 10);
 
@@ -1051,7 +1457,7 @@ unittest {
     Mesh fast = makeCube();
     auto fastBaseline = MeshSnapshot.capture(fast);
     size_t nFast = sliceFromBaseline(fast, fastBaseline, start, endPositions[$-1], wpN,
-                                     cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
+                                     SLICE_AXIS_DRAG, Vec3(0, 1, 0), INF);
     assert(nFast == nCommit);
     assert(fast.vertices.length == live.vertices.length);
     assert(fast.faces.length    == live.faces.length);
@@ -1073,4 +1479,423 @@ unittest {
     assert(nClip < 4, "clipped short line must split fewer faces than infinite (4)");
     assert(clip.vertices.length < 12,
            "clipped short line adds fewer crossing verts than the full belt");
+}
+
+// ---------------------------------------------------------------------------
+// Cut-plane overlay geometry (task 0284). Proves, WITHOUT a GL context, that
+// the translucent quad SliceTool.draw() renders:
+//   1. lies IN the cut plane — every corner satisfies dot(corner - p, n) ≈ 0;
+//   2. CONTAINS the Start→End segment (both endpoints project inside the
+//      corner extents);
+//   3. TRACKS the live state — changing `axis` (⇒ a different plane normal) and
+//      moving an endpoint move the corners and keep them in the NEW plane.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    // Assert all four corners lie in the plane (p, n) and contain the segment.
+    static void checkQuad(Vec3 start, Vec3 end, Vec3 wpN, int axis, Vec3 vector) {
+        Vec3 p, n;
+        assert(planeForSlice(start, end, wpN, axis, vector, p, n),
+               "test lines are chosen so the plane is well-defined");
+        Vec3 dir, perp;
+        assert(sliceOverlayBasis(start, end, n, dir, perp),
+               "in-plane line ⇒ a valid overlay basis");
+
+        // In-plane basis: both axes ⟂ the normal.
+        assert(abs(dot(dir,  n)) < 1e-5f, "dir must be in-plane");
+        assert(abs(dot(perp, n)) < 1e-5f, "perp must be in-plane");
+        assert(abs(dot(dir, perp)) < 1e-5f, "dir ⟂ perp");
+
+        // Size to a unit cube (the region being cut) + the segment.
+        Mesh cube = makeCube();
+        float aMin, aMax, bMin, bMax;
+        sliceOverlayExtent(cube, p, dir, perp, start, end, aMin, aMax, bMin, bMax);
+        Vec3[4] q = sliceOverlayQuad(p, dir, perp, aMin, aMax, bMin, bMax);
+
+        // (1) every corner lies in the cut plane.
+        foreach (c; q)
+            assert(abs(dot(c - p, n)) < 1e-4f,
+                   "quad corner must lie in the cut plane");
+
+        // (2) the quad contains the segment: start/end project inside [aMin,aMax]
+        //     along dir and [bMin,bMax] across perp.
+        foreach (pt; [start, end]) {
+            float a = dot(pt - p, dir), b = dot(pt - p, perp);
+            assert(a >= aMin - 1e-4f && a <= aMax + 1e-4f, "segment within along-extent");
+            assert(b >= bMin - 1e-4f && b <= bMax + 1e-4f, "segment within cross-extent");
+        }
+        // The extents are non-degenerate (a real rectangle).
+        assert(aMax - aMin > 1e-3f && bMax - bMin > 1e-3f);
+    }
+
+    // Drag plane (no override): a Z-line ⇒ an X-normal plane; corners in-plane,
+    // contain line.
+    checkQuad(Vec3(0, 0, -1), Vec3(0, 0, 1), Vec3(0, 1, 0),
+              SLICE_AXIS_DRAG, Vec3(0, 1, 0));
+
+    // OWNER FIX 1 (0284): the overlay spans EXACTLY the segment along the line —
+    // its along-`dir` extent never runs past the endpoint handles, no matter how
+    // large the mesh is. A short Z-line on the unit cube must keep aMin/aMax at
+    // the segment's own projection (here [0, 1]), NOT stretched to the cube's
+    // ±0.5 along the line (which the pre-fix mesh-union extent would have done).
+    {
+        Vec3 s = Vec3(0, 0, -0.5f), e = Vec3(0, 0, 0.5f);   // a Z-line, length 1
+        Vec3 p, n, dir, perp;
+        assert(planeForSlice(s, e, Vec3(0,1,0), SLICE_AXIS_DRAG, Vec3(0,1,0), p, n));
+        assert(sliceOverlayBasis(s, e, n, dir, perp));
+        Mesh cube = makeCube();
+        float aMin, aMax, bMin, bMax;
+        sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+        // Along the line: exactly the segment [0, 1] (p == start, dir == +Z).
+        assert(abs(aMin - 0.0f) < 1e-5f, "along-min flush with the Start handle");
+        assert(abs(aMax - 1.0f) < 1e-5f, "along-max flush with the End handle (no overhang)");
+        // Across the line the plane DOES cover the cube (≥ its ±0.5 depth) so the
+        // cut reads through the geometry (owner fix 2 shows it, this sizes it).
+        assert(bMax >= 0.5f - 1e-5f && bMin <= -0.5f + 1e-5f,
+               "cross-line extent must still span the mesh depth");
+    }
+
+    // TRACKING — axis change (extrusion-direction model): the SAME X-line extruded
+    // along Z vs along Y gives DIFFERENT planes, and the drawn line lies IN both.
+    {
+        Vec3 s = Vec3(-0.5f, 0, 0), e = Vec3(0.5f, 0, 0);  // an X-line
+        // axis=Z ⇒ extrude the X-line along Z ⇒ Y-normal plane (n = cross(X,Z)).
+        // The X-line still lies IN it (n ⟂ line by construction).
+        Vec3 pZ, nZ, dirZ, perpZ;
+        assert(planeForSlice(s, e, Vec3(0,1,0), cast(int)SliceAxis.Z, Vec3(0,1,0), pZ, nZ));
+        assert(abs(dot(s - pZ, nZ)) < 1e-5f && abs(dot(e - pZ, nZ)) < 1e-5f,
+               "both endpoints lie in the axis=Z plane");
+        assert(sliceOverlayBasis(s, e, nZ, dirZ, perpZ));
+        checkQuad(s, e, Vec3(0, 1, 0), cast(int)SliceAxis.Z, Vec3(0, 1, 0));
+        // axis=Y ⇒ extrude along Y ⇒ Z-normal plane; the X-line still lies in it,
+        // but the plane (and hence perp) differs from axis=Z — the overlay tracked it.
+        Vec3 pY, nY, dirY, perpY;
+        assert(planeForSlice(s, e, Vec3(0,1,0), cast(int)SliceAxis.Y, Vec3(0,1,0), pY, nY));
+        assert(abs(dot(s - pY, nY)) < 1e-5f && abs(dot(e - pY, nY)) < 1e-5f,
+               "both endpoints lie in the axis=Y plane");
+        assert(sliceOverlayBasis(s, e, nY, dirY, perpY));
+        assert(abs(dot(nZ, nY)) < 1.0f - 1e-4f,
+               "a different extrusion axis yields a different plane normal");
+        checkQuad(s, e, Vec3(0, 1, 0), cast(int)SliceAxis.Y, Vec3(0, 1, 0));
+    }
+
+    // TRACKING — endpoint move: extending End along the line grows the along-
+    // extent (the quad spans the longer segment). Anchor p = start.
+    {
+        Vec3 s = Vec3(0, 0, -0.5f);
+        Mesh cube = makeCube();
+        Vec3 pS, nS, dir, perp;
+        assert(planeForSlice(s, Vec3(0,0,0.5f), Vec3(0,1,0),
+                             SLICE_AXIS_DRAG, Vec3(0,1,0), pS, nS));
+        assert(sliceOverlayBasis(s, Vec3(0,0,0.5f), nS, dir, perp));
+        float a0min, a0max, b0min, b0max;
+        sliceOverlayExtent(cube, pS, dir, perp, s, Vec3(0,0,0.5f), a0min, a0max, b0min, b0max);
+        float a1min, a1max, b1min, b1max;
+        sliceOverlayExtent(cube, pS, dir, perp, s, Vec3(0,0,3.0f), a1min, a1max, b1min, b1max);
+        assert(a1max > a0max + 1e-4f,
+               "moving End further out must grow the overlay's along-extent");
+    }
+
+    // Degenerate: a line parallel to the plane normal has no in-plane direction.
+    {
+        Vec3 dir, perp;
+        assert(!sliceOverlayBasis(Vec3(0,0,0), Vec3(0,1,0), Vec3(0,1,0), dir, perp),
+               "a line ∥ the normal yields no overlay basis");
+    }
+
+    // OWNER BUG FIX (0284): when the axis is LOCKED to a world axis, the cut
+    // plane's normal is that axis and the plane NO LONGER contains the drawn
+    // line. The unlocked line-based basis then goes thin/degenerate when the
+    // normal runs near-parallel to the line — so the locked path must derive its
+    // basis from the NORMAL (not the line) and cover the mesh. Verify for
+    // axis = X / Y / Z, each with a line drawn ALONG that same axis (i.e. the
+    // line is PARALLEL to the locked normal — the worst case the unlocked basis
+    // cannot handle): a valid, non-degenerate, mesh-spanning, in-plane quad.
+    static void checkLocked(Vec3 n, Vec3 start, Vec3 end) {
+        import std.math : abs;
+        // The unlocked basis is degenerate for this line (∥ the normal)...
+        Vec3 ud, up;
+        assert(!sliceOverlayBasis(start, end, n, ud, up),
+               "line ∥ locked normal ⇒ no unlocked (line-based) basis");
+        // ...but the locked (normal-derived) basis is well-defined.
+        Vec3 dir, perp;
+        assert(sliceOverlayBasisLocked(n, dir, perp),
+               "a valid unit normal always yields a locked basis");
+        Vec3 nn = normalize(n);
+        assert(abs(dot(dir,  nn)) < 1e-5f, "locked dir must be in-plane");
+        assert(abs(dot(perp, nn)) < 1e-5f, "locked perp must be in-plane");
+        assert(abs(dot(dir, perp)) < 1e-5f, "locked dir ⟂ perp");
+        assert(abs(dir.length  - 1.0f) < 1e-5f, "locked dir is unit");
+        assert(abs(perp.length - 1.0f) < 1e-5f, "locked perp is unit");
+
+        // Extent covers the unit cube (the region being cut), anchored at p = start.
+        Mesh cube = makeCube();
+        Vec3 p = start;   // planeForSlice always sets p = start
+        float aMin, aMax, bMin, bMax;
+        sliceOverlayExtentLocked(cube, p, dir, perp, aMin, aMax, bMin, bMax);
+        Vec3[4] q = sliceOverlayQuad(p, dir, perp, aMin, aMax, bMin, bMax);
+
+        // (1) every corner lies in the cut plane.
+        foreach (c; q)
+            assert(abs(dot(c - p, nn)) < 1e-4f, "locked quad corner in the cut plane");
+        // (2) the quad SPANS the mesh (not collapsed to the line): the unit cube
+        //     measures 1.0 across each in-plane axis, so both extents clear ~0.9.
+        assert(aMax - aMin > 0.9f, "locked quad spans the mesh along dir");
+        assert(bMax - bMin > 0.9f, "locked quad spans the mesh along perp");
+    }
+    checkLocked(Vec3(1, 0, 0), Vec3(-0.5f, 0, 0), Vec3(0.5f, 0, 0));   // axis X, X-line
+    checkLocked(Vec3(0, 1, 0), Vec3(0, -0.5f, 0), Vec3(0, 0.5f, 0));   // axis Y, Y-line
+    checkLocked(Vec3(0, 0, 1), Vec3(0, 0, -0.5f), Vec3(0, 0, 0.5f));   // axis Z, Z-line
+
+    // The UNLOCKED path is unchanged: an in-plane line still bounds the along-
+    // extent to the drawn segment (never mesh-spanning along the line).
+    {
+        Vec3 s = Vec3(0, 0, -0.5f), e = Vec3(0, 0, 0.5f);   // a Z-line
+        Vec3 p, n, dir, perp;
+        assert(planeForSlice(s, e, Vec3(0,1,0), SLICE_AXIS_DRAG, Vec3(0,1,0), p, n));
+        assert(sliceOverlayBasis(s, e, n, dir, perp));
+        Mesh cube = makeCube();
+        float aMin, aMax, bMin, bMax;
+        sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+        assert(abs(aMin - 0.0f) < 1e-5f && abs(aMax - 1.0f) < 1e-5f,
+               "unlocked along-extent stays flush with the drawn segment");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OWNER FIX 3 (0284) — FROZEN cut-plane normal. Both the cut (sliceFromBaseline)
+// and the overlay (draw) build their plane from the tool's effectiveNormal(),
+// which is the normal FROZEN at the gesture that drew the line. This proves,
+// analytically, that once frozen the plane is decoupled from the work-plane
+// normal: feeding a DIFFERENT (post-orbit) work-plane normal does NOT move the
+// plane, while the tool keeps using the frozen one — so the drawn cut and the
+// committed cut cannot diverge under camera orbit. (Guarding against the OLD
+// bug where draw()/updatePreview recomputed cachedWorkplaneNormal() live.)
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    // A Z-line; the drag normal captured at gesture start is +Y (world-XZ work
+    // plane). After the user orbits, the LIVE work-plane normal would tilt.
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0, 0, 1);
+    Vec3 frozenN  = Vec3(0, 1, 0);
+    Vec3 orbitedN = normalize(Vec3(0.35f, 1.0f, 0.25f));   // camera moved
+
+    // The plane the cut/overlay use is fully determined by the PASSED normal.
+    Vec3 pFrozen, nFrozen;
+    assert(planeForSlice(s, e, frozenN, SLICE_AXIS_DRAG, Vec3(0,1,0), pFrozen, nFrozen));
+
+    // If the tool (wrongly) used the LIVE normal after an orbit, the plane would
+    // move: prove the live normal yields a DIFFERENT plane normal.
+    Vec3 pLive, nLive;
+    assert(planeForSlice(s, e, orbitedN, SLICE_AXIS_DRAG, Vec3(0,1,0), pLive, nLive));
+    assert(abs(dot(nFrozen, nLive)) < 1.0f - 1e-3f,
+           "a changed work-plane normal WOULD move the drag plane (so freezing matters)");
+
+    // The tool keeps passing the FROZEN normal, so the plane is unchanged after
+    // the orbit — identical normal, identical through-point.
+    Vec3 pStill, nStill;
+    assert(planeForSlice(s, e, frozenN, SLICE_AXIS_DRAG, Vec3(0,1,0), pStill, nStill));
+    assert(abs(nStill.x - nFrozen.x) < 1e-6f &&
+           abs(nStill.y - nFrozen.y) < 1e-6f &&
+           abs(nStill.z - nFrozen.z) < 1e-6f,
+           "frozen normal ⇒ the cut/overlay plane stays put across camera orbit");
+
+    // And the ACTUAL cut geometry is frozen too: cutting the cube with the frozen
+    // normal is byte-for-byte identical regardless of the later live normal,
+    // while the live normal would have produced a measurably different cut.
+    Mesh a = makeCube(); auto ba = MeshSnapshot.capture(a);
+    Mesh b = makeCube(); auto bb = MeshSnapshot.capture(b);
+    Mesh c = makeCube(); auto bc = MeshSnapshot.capture(c);
+    // `a`, `b`: cut with the FROZEN normal (the tool's behavior before + after orbit).
+    sliceFromBaseline(a, ba, s, e, frozenN,  SLICE_AXIS_DRAG, Vec3(0,1,0), true);
+    sliceFromBaseline(b, bb, s, e, frozenN,  SLICE_AXIS_DRAG, Vec3(0,1,0), true);
+    // `c`: cut with the ORBITED normal (what the buggy live path would have done).
+    sliceFromBaseline(c, bc, s, e, orbitedN, SLICE_AXIS_DRAG, Vec3(0,1,0), true);
+    assert(a.vertices.length == b.vertices.length);
+    bool frozenStable = true, liveDiffers = false;
+    foreach (i; 0 .. a.vertices.length) {
+        if (abs(a.vertices[i].x - b.vertices[i].x) > 1e-6f ||
+            abs(a.vertices[i].y - b.vertices[i].y) > 1e-6f ||
+            abs(a.vertices[i].z - b.vertices[i].z) > 1e-6f) frozenStable = false;
+    }
+    if (c.vertices.length == a.vertices.length) {
+        foreach (i; 0 .. a.vertices.length)
+            if (abs(a.vertices[i].x - c.vertices[i].x) > 1e-4f ||
+                abs(a.vertices[i].y - c.vertices[i].y) > 1e-4f ||
+                abs(a.vertices[i].z - c.vertices[i].z) > 1e-4f) liveDiffers = true;
+    } else liveDiffers = true;
+    assert(frozenStable, "frozen-normal cut is identical before/after orbit");
+    assert(liveDiffers,  "the live-normal cut WOULD differ — so the freeze is load-bearing");
+}
+
+// ---------------------------------------------------------------------------
+// OWNER FIX 4 (0284; extrusion-direction model) — the axis model has NO `Free`.
+// SliceAxis offers only the {X, Y, Z, Custom} OVERRIDE; "no override" is the
+// runtime SLICE_AXIS_DRAG mode (the frozen drag plane), which is the DEFAULT. This
+// asserts the enum/table shape, that SLICE_AXIS_DRAG reproduces the drawn-line
+// plane, and that every override mode extrudes the line along its axis so the
+// plane CONTAINS BOTH endpoints (n ⟂ line) — the core owner-bug invariant.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    // No `Free` member survives, and the values are the unchanged 1..4.
+    static assert(!__traits(hasMember, SliceAxis, "Free"),
+                  "SliceAxis must not expose a Free value (owner fix 4)");
+    static assert(cast(int)SliceAxis.X == 1 && cast(int)SliceAxis.Y == 2 &&
+                  cast(int)SliceAxis.Z == 3 && cast(int)SliceAxis.Custom == 4);
+    static assert(SLICE_AXIS_DRAG == 0, "the no-override wire mode is 0 (planeForSlice default)");
+
+    // The user-selectable table is exactly {x, y, z, custom} — no "free" tag.
+    assert(sliceAxisTable.length == 4);
+    foreach (entry; sliceAxisTable)
+        assert(entry.wireTag != "free", "no 'free' entry in the Axis dropdown");
+    assert(sliceAxisTable[0].wireTag == "x" && sliceAxisTable[1].wireTag == "y" &&
+           sliceAxisTable[2].wireTag == "z" && sliceAxisTable[3].wireTag == "custom");
+
+    // DEFAULT = the frozen drag plane: mode SLICE_AXIS_DRAG reproduces the
+    // drawn-line ⟂ work-plane plane exactly (== planeFromLineAndWorkplane).
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0.3f, 0, 1), wpN = Vec3(0, 1, 0);
+    Vec3 pD, nD, pR, nR;
+    assert(planeForSlice(s, e, wpN, SLICE_AXIS_DRAG, Vec3(0,1,0), pD, nD));
+    assert(planeFromLineAndWorkplane(s, e, wpN, pR, nR));
+    assert(abs(nD.x - nR.x) < 1e-6f && abs(nD.y - nR.y) < 1e-6f && abs(nD.z - nR.z) < 1e-6f,
+           "the no-override default is the drawn-line drag plane");
+
+    // OVERRIDE X/Y/Z/Custom: the line is EXTRUDED along the axis, so the plane
+    // CONTAINS BOTH drawn endpoints (n ⟂ line) and n ⟂ the extrusion axis. This is
+    // the owner-bug invariant: the axis-locked plane still passes through both
+    // points, unlike the old normal=world-axis model (which passed through Start
+    // only). Verify for each axis with the slanted line above.
+    Vec3 p, n;
+    static void checkExtrude(Vec3 s, Vec3 e, int mode, Vec3 axisDir, Vec3 vec) {
+        Vec3 pp, nn;
+        assert(planeForSlice(s, e, Vec3(0,1,0), mode, vec, pp, nn),
+               "a line not parallel to the axis has a well-defined plane");
+        assert(abs(nn.length - 1.0f) < 1e-5f, "unit normal");
+        assert(abs(dot(s - pp, nn)) < 1e-5f, "Start lies in the extruded plane");
+        assert(abs(dot(e - pp, nn)) < 1e-5f, "End lies in the extruded plane");
+        assert(abs(dot(nn, normalize(axisDir))) < 1e-5f, "n ⟂ the extrusion axis");
+    }
+    checkExtrude(s, e, cast(int)SliceAxis.X, Vec3(1,0,0), Vec3(0,1,0));
+    checkExtrude(s, e, cast(int)SliceAxis.Y, Vec3(0,1,0), Vec3(0,1,0));
+    checkExtrude(s, e, cast(int)SliceAxis.Z, Vec3(0,0,1), Vec3(0,1,0));
+    checkExtrude(s, e, cast(int)SliceAxis.Custom, Vec3(2,0,0), Vec3(2,0,0));
+
+    // The override plane can DIFFER from the drag-plane normal for this line
+    // (axis=Z vs. the drag plane) — proving lock ≠ default.
+    assert(planeForSlice(s, e, wpN, cast(int)SliceAxis.Z, Vec3(0,1,0), p, n));
+    assert(abs(dot(n, nD)) < 1.0f - 1e-4f,
+           "an axis override yields a different plane than the drag default");
+
+    // DEGENERATE GUARD: a line drawn ALONG the extrusion axis has no unique plane.
+    assert(!planeForSlice(Vec3(-1,0,0), Vec3(1,0,0), wpN,
+                          cast(int)SliceAxis.X, Vec3(0,1,0), p, n),
+           "line ∥ extrusion axis X ⇒ planeForSlice returns false");
+}
+
+// ---------------------------------------------------------------------------
+// OWNER FIX 1 (0284; extrusion-direction model) — the drag plane's EXTRUSION
+// DIRECTION classifies to a concrete Axis so the Tool-Properties dropdown reflects
+// the drawn cut. Proves, WITHOUT a GL context: (a) an axis-aligned extrusion dir →
+// X/Y/Z; (b) a slanted extrusion dir → Custom with vector == the direction; (c) the
+// classification ROUND-TRIPS the plane (drag plane → classify the extrusion dir →
+// planeForSlice(classifiedAxis) reproduces the SAME plane); (d) the cut is
+// BYTE-IDENTICAL whether cut in drag mode (SLICE_AXIS_DRAG) or via the classified
+// axis — so reflecting the panel never moves the geometry.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    // Each world axis (both signs) classifies to its axis — the extrusion dir is
+    // the frozen work-plane normal, classified sign-agnostically (|dir·axis| ≥ tol).
+    {
+        Vec3 v;
+        assert(classifyPlaneAxis(Vec3( 1,0,0), v) == SliceAxis.X);
+        assert(classifyPlaneAxis(Vec3(-1,0,0), v) == SliceAxis.X);
+        assert(classifyPlaneAxis(Vec3(0, 1,0), v) == SliceAxis.Y);
+        assert(classifyPlaneAxis(Vec3(0,-1,0), v) == SliceAxis.Y);
+        assert(classifyPlaneAxis(Vec3(0,0, 1), v) == SliceAxis.Z);
+        assert(classifyPlaneAxis(Vec3(0,0,-1), v) == SliceAxis.Z);
+    }
+    // (a) The default +Y work plane (the headless drag extrusion direction)
+    //     classifies to axis Y.
+    {
+        Vec3 v;
+        assert(classifyPlaneAxis(Vec3(0,1,0), v) == SliceAxis.Y,
+               "the +Y work-plane extrusion direction classifies to axis Y");
+    }
+    // (b) A slanted extrusion direction ⇒ Custom, vector == normalize(direction).
+    {
+        Vec3 d = normalize(Vec3(0.3f, 1.0f, 0.0f));   // off every world axis
+        Vec3 v;
+        assert(classifyPlaneAxis(d, v) == SliceAxis.Custom,
+               "an off-axis extrusion direction classifies to Custom");
+        assert(abs(v.x - d.x) < 1e-6f && abs(v.y - d.y) < 1e-6f && abs(v.z - d.z) < 1e-6f,
+               "Custom vector == the extrusion direction");
+    }
+
+    // (c) ROUND-TRIP + (d) BYTE-IDENTICAL cut: build the drag plane, classify its
+    //     extrusion direction (the work-plane normal), rebuild via the classified
+    //     axis, and assert BOTH the plane (n, p) and the resulting cube cut match.
+    static void assertRoundTrip(Vec3 s, Vec3 e, Vec3 wpN) {
+        // Drag plane (extrude the line along wpN).
+        Vec3 pD, nD;
+        assert(planeForSlice(s, e, wpN, SLICE_AXIS_DRAG, Vec3(0,1,0), pD, nD));
+        // Classify the EXTRUSION direction (the work-plane normal), NOT the cut normal.
+        Vec3 v;
+        SliceAxis a = classifyPlaneAxis(wpN, v);
+        // Rebuild via the classified axis and assert the SAME plane.
+        Vec3 pC, nC;
+        assert(planeForSlice(s, e, wpN, cast(int)a, v, pC, nC));
+        assert(abs(nC.x - nD.x) < 1e-5f && abs(nC.y - nD.y) < 1e-5f && abs(nC.z - nD.z) < 1e-5f,
+               "classified-axis plane normal == the drag plane normal");
+        assert(abs(pC.x - pD.x) < 1e-6f && abs(pC.y - pD.y) < 1e-6f && abs(pC.z - pD.z) < 1e-6f,
+               "classified-axis through-point == the drag through-point");
+        // ...and the actual cube cut is byte-identical either way.
+        Mesh md = makeCube(); auto bd = MeshSnapshot.capture(md);
+        sliceFromBaseline(md, bd, s, e, wpN, SLICE_AXIS_DRAG, Vec3(0,1,0), true);
+        Mesh mc = makeCube(); auto bc = MeshSnapshot.capture(mc);
+        sliceFromBaseline(mc, bc, s, e, wpN, cast(int)a, v, true);
+        assert(md.vertices.length == mc.vertices.length,
+               "classified-axis cut has the same vert count as the drag-mode cut");
+        foreach (i; 0 .. md.vertices.length)
+            assert(abs(md.vertices[i].x - mc.vertices[i].x) < 1e-6f &&
+                   abs(md.vertices[i].y - mc.vertices[i].y) < 1e-6f &&
+                   abs(md.vertices[i].z - mc.vertices[i].z) < 1e-6f,
+                   "classified-axis cut is byte-identical to the drag-mode cut");
+    }
+    // Axis-aligned extrusion direction (+Y work plane ⇒ axis Y).
+    assertRoundTrip(Vec3(0,0,-1), Vec3(0,0,1), Vec3(0,1,0));
+    // Slanted extrusion direction ⇒ Custom; the Custom vector rebuilds it exactly.
+    assertRoundTrip(Vec3(0,0,-1), Vec3(0,0,1), normalize(Vec3(0.4f, 1.0f, 0.0f)));
+}
+
+// ---------------------------------------------------------------------------
+// OWNER FIX 2 (0284) — the overlay is a RECTANGLE biased LARGER across the line
+// (the no-handle `perp` axis) than along it (the handle axis). For an in-plane
+// line the perpendicular extent is STRICTLY greater than the along extent, while
+// the along extent still equals the drawn segment exactly.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+    Vec3 s = Vec3(0,0,-0.5f), e = Vec3(0,0,0.5f);   // a unit Z-line (length 1)
+    Vec3 p, n, dir, perp;
+    assert(planeForSlice(s, e, Vec3(0,1,0), SLICE_AXIS_DRAG, Vec3(0,1,0), p, n));
+    assert(sliceOverlayBasis(s, e, n, dir, perp));
+    Mesh cube = makeCube();
+    float aMin, aMax, bMin, bMax;
+    sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+    float along = aMax - aMin, across = bMax - bMin;
+    // ALONG-line = the drawn segment exactly ([0,1]) — handles at its ends.
+    assert(abs(aMin - 0.0f) < 1e-5f && abs(aMax - 1.0f) < 1e-5f,
+           "along-line extent stays flush with the drawn segment");
+    // PERPENDICULAR (no-handle) is STRICTLY larger — the plane extends past the
+    // handles rather than reading as a thin square between them.
+    assert(across > along + 1e-4f,
+           "perpendicular-to-line extent must be strictly greater than along-line");
+    // ...and still spans the mesh depth (±0.5) with room to spare.
+    assert(bMax >= 0.5f && bMin <= -0.5f, "cross extent still spans the mesh");
 }

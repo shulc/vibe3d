@@ -119,6 +119,18 @@ private struct ThickLineState {
 private ThickLineState g_thickLine;
 
 // ---------------------------------------------------------------------------
+// Translucent-fill shader state — set once from app.d via initFillProgram()
+// (mirrors initThickLineProgram). Backs drawWorldQuad, which alpha-blends a
+// solid overlay polygon (the Slice tool's cut-plane preview). Its own program
+// so the opaque gizmo/mesh draws stay untouched.
+// ---------------------------------------------------------------------------
+private struct FillState {
+    GLuint prog;
+    GLint  locModel, locView, locProj, locColor, locAlpha;
+}
+private FillState g_fill;
+
+// ---------------------------------------------------------------------------
 // Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.
 // Change via setGizmoPixels() at runtime. The unit is screen pixels (the
 // target on-screen length of the main gizmo arm) and the result is
@@ -370,6 +382,67 @@ void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
     localFrame(fwd, right, up);
     auto model = modelMatrix(right, up, fwd, Vec3(1, 1, len), a);
     drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width, restoreProgram);
+}
+
+// Register the translucent-fill program (compiled in app.d from
+// shader.fillFragSrc), mirroring initThickLineProgram. Backs drawWorldQuad.
+void initFillProgram(GLuint prog) {
+    g_fill.prog     = prog;
+    g_fill.locModel = glGetUniformLocation(prog, "u_model");
+    g_fill.locView  = glGetUniformLocation(prog, "u_view");
+    g_fill.locProj  = glGetUniformLocation(prog, "u_proj");
+    g_fill.locColor = glGetUniformLocation(prog, "u_color");
+    g_fill.locAlpha = glGetUniformLocation(prog, "u_alpha");
+}
+
+// Lazily-built dynamic VAO for drawWorldQuad's 4 world-space corners.
+private GLuint g_quadVao, g_quadVbo;
+private bool   g_quadReady;
+
+/// Draw a solid, alpha-blended quad through the four world-space `corners`
+/// (CCW, as a triangle fan) using the fill program, then restore
+/// `restoreProgram`. The CALLER owns the GL_BLEND / depth-test state (this
+/// only swaps the program + VAO), matching how drawWorldSegment leaves blend
+/// to its caller. Corners are uploaded to a small dynamic VBO each call (12
+/// floats) so a live-updating overlay needs no per-frame VAO rebuild.
+void drawWorldQuad(Vec3[4] corners, const ref Viewport vp,
+                   Vec3 color, float alpha, GLuint restoreProgram)
+{
+    version(unittest) {
+        // No GL context under -unittest; the corner geometry is exercised by
+        // the pure sliceOverlay* helpers instead.
+    } else {
+        if (!g_quadReady) {
+            glGenVertexArrays(1, &g_quadVao);
+            glGenBuffers(1, &g_quadVbo);
+            glBindVertexArray(g_quadVao);
+            glBindBuffer(GL_ARRAY_BUFFER, g_quadVbo);
+            glBufferData(GL_ARRAY_BUFFER, 12 * float.sizeof, null, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+            g_quadReady = true;
+        }
+        float[12] data = [
+            corners[0].x, corners[0].y, corners[0].z,
+            corners[1].x, corners[1].y, corners[1].z,
+            corners[2].x, corners[2].y, corners[2].z,
+            corners[3].x, corners[3].y, corners[3].z,
+        ];
+        glBindBuffer(GL_ARRAY_BUFFER, g_quadVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, data.sizeof, data.ptr);
+
+        glUseProgram(g_fill.prog);
+        glUniformMatrix4fv(g_fill.locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(g_fill.locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(g_fill.locProj,  1, GL_FALSE, vp.proj.ptr);
+        glUniform3f(g_fill.locColor, color.x, color.y, color.z);
+        glUniform1f(g_fill.locAlpha, alpha);
+        glBindVertexArray(g_quadVao);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        glBindVertexArray(0);
+        glUseProgram(restoreProgram);
+    }
 }
 
 // ---------------------------------------------------------------------------

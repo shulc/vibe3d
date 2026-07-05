@@ -32,6 +32,21 @@ immutable string fragmentShaderSrc = q{
     }
 };
 
+// Flat translucent-fill fragment shader — a solid `u_color` at a per-draw
+// `u_alpha`. Used by handler.drawWorldQuad for alpha-blended overlay polygons
+// (the Slice tool's cut-plane preview). Kept as its OWN program so the opaque
+// `fragmentShaderSrc` gizmo/mesh draws are untouched (no shared `u_alpha`
+// uniform to seed, no risk of an unset uniform blanking other draws).
+immutable string fillFragSrc = q{
+    #version 330 core
+    uniform vec3  u_color;
+    uniform float u_alpha;
+    out vec4 fragColor;
+    void main() {
+        fragColor = vec4(u_color, u_alpha);
+    }
+};
+
 // Lit shaders — Blinn-Phong with flat per-face normals.
 //
 // Material Groups (MG3): a 64-slot std140 UBO carries per-mesh surface
