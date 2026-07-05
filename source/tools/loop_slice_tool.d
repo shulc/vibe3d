@@ -311,15 +311,15 @@ private:
     // profile's along-cut sample fractions REPLACE the Count/Position placement and
     // its heights drive the kernel's per-loop normal displacement (`kernelFeed`).
     //
-    // 0257/0258/0259 HOOKS — declared here, applied in `kernelFeed`, and currently
-    // always identity (no param exposes them yet; those tasks add the Param + set
-    // the field, a two-line change each):
+    // Profile MODIFIERS (all real params now; default off = byte-for-byte the 0256
+    // profile cut):
     //   • reverseX_ (0257 "Reverse Direction"): mirror the profile along the cut,
-    //     t → 1-t (re-sorted), so the curve is evaluated end-to-start.
-    //   • reverseY_ (0258 "Reverse Inset"): negate the height, h → -h, flipping the
-    //     inset to the other side of the surface.
-    //   • aspect_ (0259 "Keep Aspect"): auto-derive the effective depth from the
-    //     profile's aspect ratio instead of the user `depth_` (see `effectiveDepth`).
+    //     t → 1-t (re-sorted in `kernelFeed`), so the curve is evaluated end-to-start.
+    //   • reverseY_ (0258 "Reverse Inset"): negate the height, h → -h (in `kernelFeed`),
+    //     flipping the inset to the other side of the surface.
+    //   • aspect_ (0259 "Keep Aspect"): auto-derive the effective Inset from the cut's
+    //     world span so the normalized profile keeps its own aspect ratio, instead of
+    //     the user `depth_` (applied in `effectiveDepth`).
     LoopProfile profile_ = LoopProfile.Flat;
     float       depth_   = 0.0f;
     bool        reverseX_ = false;   // 0257 hook
@@ -439,6 +439,7 @@ public:
         root["depth"]       = JSONValue(depth_);             // Inset (task 0256)
         root["reversex"]    = JSONValue(reverseX_);          // Reverse Direction (task 0257)
         root["reversey"]    = JSONValue(reverseY_);          // Reverse Inset (task 0258)
+        root["aspect"]      = JSONValue(aspect_);            // Keep Aspect (task 0259)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -522,6 +523,14 @@ public:
             // un-reversed profile. Like Inset/Reverse Direction, it only bites once a
             // non-flat Profile is chosen, so it is greyed while Flat (paramEnabled).
             Param.bool_("reversey", "Reverse Inset", &reverseY_, false),
+            // Keep Aspect (task 0259): when ON, the Inset is auto-derived from the
+            // cut's world span so the normalized profile keeps its own height:width
+            // proportions (effectiveDepth = cut span) instead of using the manual
+            // Inset. Default OFF = byte-for-byte the raw `depth_` (0256–0258). Like
+            // the other profile modifiers it is a no-op with no profile loaded, so it
+            // is greyed while Flat (paramEnabled). While ON, the manual Inset row is
+            // greyed too (it no longer drives the cut). See `effectiveDepth`.
+            Param.bool_("aspect", "Keep Aspect", &aspect_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -672,7 +681,10 @@ public:
         // Inset (depth) only bites once a non-flat Profile is chosen (Flat passes
         // no heights to the kernel, so depth is a no-op) — grey it while Flat, the
         // way the reference greys the profile sub-controls until a Profile loads.
-        if (name == "depth") return profile_ != LoopProfile.Flat;
+        // Keep Aspect (0259) auto-derives the Inset, so the manual value no longer
+        // drives the cut while aspect is ON — grey it there too (the reference
+        // "automatically sets the Inset value from the profile's aspect ratio").
+        if (name == "depth") return profile_ != LoopProfile.Flat && !aspect_;
         // Reverse Direction (task 0257) mirrors the profile samples, so it is a
         // no-op with no profile loaded — grey it while Flat, like Inset (the
         // reference greys it "until a Profile is loaded", spec.json 0244).
@@ -681,6 +693,10 @@ public:
         // profile loaded (Flat passes no heights), so grey it while Flat, same as
         // Inset/Reverse Direction (the reference greys it "until a Profile is loaded").
         if (name == "reversey") return profile_ != LoopProfile.Flat;
+        // Keep Aspect (task 0259) auto-derives the Inset from the profile's aspect
+        // ratio — a no-op with no profile loaded (Flat passes no heights), so grey
+        // it while Flat, same as Inset/Reverse Direction/Reverse Inset.
+        if (name == "aspect") return profile_ != LoopProfile.Flat;
         return true;
     }
 
@@ -718,6 +734,7 @@ public:
         if (pname == "depth")   { if (armed_) rebuildCut(); return; }   // task 0256 (Inset)
         if (pname == "reversex") { if (armed_) rebuildCut(); return; }   // task 0257 (Reverse Direction)
         if (pname == "reversey") { if (armed_) rebuildCut(); return; }   // task 0258 (Reverse Inset)
+        if (pname == "aspect")   { if (armed_) rebuildCut(); return; }   // task 0259 (Keep Aspect)
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -829,7 +846,7 @@ public:
                                             restrictFor(selectedFaceIndices()), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
                                             curvature_, curveTension_,
-                                            heights, effectiveDepth());
+                                            heights, effectiveDepth(seedEdgeSpan(seeds)));
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -1111,12 +1128,45 @@ private:
         return copy;
     }
 
-    // The effective Inset (task 0256 / 0259 hook). With `aspect_` off (always,
-    // today) this is just the user `depth_`. Task 0259 ("Keep Aspect") will derive
-    // the depth from the profile's aspect ratio when `aspect_` is set — the flip is
-    // localized HERE so 0259 only adds the derivation branch + the param.
-    float effectiveDepth() const {
-        // 0259 HOOK: `if (aspect_) return <depth from profile aspect ratio>;`
+    // The world-space span of the cut for the given seed set: the world length
+    // of the FIRST seed edge (the p-rail the profile is pressed across). This is
+    // the "cut width" the aspect rule scales against. `seeds[0]` must index a
+    // valid edge in the CURRENT mesh (true at every call site: the headless path
+    // reads the live selection; `rebuildCut` restores `before_` first, so
+    // `seeds_[0]` indexes the baseline edge array). Falls back to `1.0` for an
+    // empty/out-of-range seed set (a defensive proxy — never hit in practice).
+    float seedEdgeSpan(const(uint)[] seeds) const {
+        if (seeds.length > 0 && seeds[0] < mesh.edges.length) {
+            auto e = mesh.edges[seeds[0]];
+            return (mesh.vertices[e[1]] - mesh.vertices[e[0]]).length();
+        }
+        return 1.0f;
+    }
+
+    // The effective Inset (task 0256 / 0259 "Keep Aspect"). With `aspect_` off
+    // (the default — see reinitSession) this is just the user `depth_`, so every
+    // 0256–0258 cut is byte-for-byte unchanged.
+    //
+    // 0259 — Keep Aspect (aspect_): when ON (and a non-flat Profile is loaded) the
+    // Inset is AUTO-DERIVED from the cut's world span instead of the manual
+    // `depth_`, so the normalized profile keeps its own height:width proportions.
+    // The profile is a UNIT-normalized curve: X = along-cut fraction (0..1), Y =
+    // height (0..1). Pressing it into the cut maps 1 unit of X onto `cutSpan`
+    // world units along the rail; to KEEP ASPECT the Y (inset) axis must use the
+    // SAME world-units-per-normalized-unit factor — i.e. scale isotropically. So
+    // `effectiveDepth = cutSpan × 1.0 = cutSpan`. (Aspect-preservation is exactly
+    // isotropic scaling: setting world_height/world_width = normalized_height/
+    // normalized_width solves to depth = cutSpan regardless of the specific curve,
+    // so the built-in profile shape doesn't enter the factor.)
+    //
+    // DERIVED, not captured: the loop-slice gesture is human-VNC-only and the
+    // reference profile preset library is closed source (see the 0256 note), so
+    // the exact reference formula behind "automatically sets the Inset value from
+    // the profile's aspect ratio" was NOT recorded. `effectiveDepth = cutSpan` is
+    // the canonical aspect-preserving construction — no exact-match claim.
+    float effectiveDepth(float cutSpan) const {
+        if (aspect_ && profile_ != LoopProfile.Flat)
+            return cutSpan;
         return depth_;
     }
 
@@ -1171,7 +1221,7 @@ private:
                                             restrictFor(armedSelFaces_), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
                                             curvature_, curveTension_,
-                                            heights, effectiveDepth());
+                                            heights, effectiveDepth(seedEdgeSpan(seeds_)));
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

@@ -499,6 +499,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "reversey": true } }`.
         if ("reversey" in ls && ls["reversey"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool reversey 1", ctx);
+        // Optional Keep Aspect (task 0259): auto-derive the Inset from the cut's
+        // world span so the normalized profile keeps its aspect ratio, instead of
+        // the manual depth. `{ "loop_slice": { ..., "profile": "vee", "aspect":
+        // true } }`.
+        if ("aspect" in ls && ls["aspect"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool aspect 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

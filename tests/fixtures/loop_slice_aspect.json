@@ -1,0 +1,54 @@
+{
+  "name": "loop_slice_aspect",
+  "description": "Loop Slice Keep Aspect (task 0259: aspect). Cage = a FLAT open strip of 3 quads in a row along X, 1 quad wide in Z, all at y=0 (planar), but the MIDDLE quad is 3 units wide so the cut span is distinct from the Inset. Verts (col i, row j): 0=(0,0,0) 1=(0,0,1) 2=(1,0,0) 3=(1,0,1) 4=(4,0,0) 5=(4,0,1) 6=(5,0,0) 7=(5,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]; Q1 normal faceNormal([2,4,5,3])=(0,-1,0)=-Y. The seed edge (1,0,0)-(4,0,0)=(2,4) gives a 1-face open ring cutting Q1's two long rails (x=1..4), so the world CUT SPAN = |(4,0,0)-(1,0,0)| = 3. The Vee profile (tent, samples t=[0.25,0.5,0.75] h=[0.5,1.0,0.5]) inserts 3 loops at x = 1 + t*3 = 1.75,2.5,3.25 and displaces each along -Y by h*effectiveDepth. aspect OFF (default): effectiveDepth = raw depth = 2, so y = -h*2 = [-1,-2,-1] (this is byte-for-byte the 0256/0258 raw-depth cut). aspect ON: effectiveDepth = cut span = 3 (isotropic scaling keeps the profile's height:width proportions), so y = -h*3 = [-1.5,-3,-1.5]. Topology IDENTICAL in both cases (14 verts / 19 edges / 6 faces: Q1 -> 4 sub-quads via 3 loops, 6 new rail midpoints) — Keep Aspect relocates the new verts only.",
+  "source": "Analytic self-golden (reference-independent). Keep Aspect (aspect, bool, spec.json default true) is LIVE-captured (toolcards/mesh.loopSlice spec.json, task 0244 live probe: 'Keep aspect of profile -- automatically sets the Inset value from the profile's aspect ratio', greyed/conditionally-enabled with a Profile). The DERIVED rule aspect -> effectiveDepth = cut span (the world length of the seed rail the profile is pressed across) is the canonical aspect-preserving construction: the profile is a unit-normalized curve (X along-cut 0..1, Y height 0..1), and preserving its aspect ratio means scaling Y by the SAME world-units-per-normalized-unit factor as X, i.e. isotropic scaling (solving world_height/world_width = normalized_height/normalized_width yields depth = cut span independent of the specific curve). The loop-slice gesture needs a human VNC drive and the profile preset LIBRARY is closed-source / not headlessly capturable (see 0256), so the exact reference formula was NOT recorded and the Vee curve is a vibe3d-DEFINED stand-in (LoopSliceTool.profileSamples). No exact-match claim. vibe3d ships aspect DEFAULT OFF (a documented deviation from the reference default true) so the whole default tool state and every prior 0256-0258 profile cut stay byte-for-byte; the OFF/ON contrast is asserted here.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "vee_aspect_off",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+              [4,0,0],[4,0,1],[5,0,0],[5,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[4,0,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "profile": "vee", "depth": 2.0 } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 14, "edges": 19, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+        [4,0,0],[4,0,1],[5,0,0],[5,0,1],
+        [1.75,-1,0],[2.5,-2,0],[3.25,-1,0],
+        [1.75,-1,1],[2.5,-2,1],[3.25,-1,1]
+      ]
+    },
+    {
+      "name": "vee_aspect_on",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+              [4,0,0],[4,0,1],[5,0,0],[5,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[4,0,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "profile": "vee", "depth": 2.0, "aspect": true } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 14, "edges": 19, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+        [4,0,0],[4,0,1],[5,0,0],[5,0,1],
+        [1.75,-1.5,0],[2.5,-3,0],[3.25,-1.5,0],
+        [1.75,-1.5,1],[2.5,-3,1],[3.25,-1.5,1]
+      ]
+    }
+  ]
+}
