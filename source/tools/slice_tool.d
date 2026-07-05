@@ -20,6 +20,10 @@ import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
+// Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
+// 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
+// uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
+import tools.move : chooseConstraintAxis;
 
 // The interactive Slice commit reuses the generic before/after snapshot edit
 // command (the same MeshBevelEdit the mirror / tack / primitive tools reuse for
@@ -311,7 +315,7 @@ bool sliceOverlayBasisLocked(Vec3 n, out Vec3 dir, out Vec3 perp, float eps = 1e
 // Size the LOCKED overlay to COVER THE ACTIVE MESH in the plane: union the mesh
 // vertices' projections onto (dir, perp) anchored at `p` (the plane through-
 // point = start_), plus a min-band (so a flat/empty mesh still shows a real
-// rectangle) and a ~10% overhang on every edge (MODO-like). Extents are measured
+// rectangle) and a ~10% overhang on every edge. Extents are measured
 // from `p` along `dir` / across `perp`. Unlike the unlocked extent the drawn
 // line does NOT bound the quad here (the line no longer lies in the plane).
 void sliceOverlayExtentLocked(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
@@ -607,6 +611,29 @@ private:
     // commit can detect an external mesh swap and drop rather than corrupt it.
     bool     active;
     int      dragPart_ = DragNone;
+
+    // Task 0286 — reference-faithful interactive input model. `hasLine_` gates ALL
+    // drawing AND the first/second-drag dispatch: at bare tool activation NOTHING
+    // is shown (no overlay, no line, no handles) and no line exists — the viewport
+    // stays clean until the FIRST LMB drag lays a line. Set true the instant that
+    // first fresh line begins (so it renders as it is drawn); reset to false on
+    // activation / teardown (dropPreview).
+    bool     hasLine_;
+    // True for the duration of a DRAW gesture — the first LMB drag that lays a
+    // fresh line (or a Shift+drag redraw) — as opposed to a whole-line TRANSLATE
+    // (DragLine). Distinguishes the two so a held Ctrl locks the line DIRECTION on
+    // a draw but the TRANSLATION axis on a move (owner observations 4 vs 5).
+    bool     drawGesture_;
+    // Ctrl axis-constraint (task 0286), reusing MoveTool.chooseConstraintAxis.
+    // `ctrlPending_` = Ctrl was held at gesture start but the locked axis is not
+    // yet resolved — we WAIT for enough initial movement (the MoveTool wait-gate)
+    // so the drag direction is unambiguous. `ctrlAxis_` = the resolved world axis
+    // (0=X / 1=Y / 2=Z), -1 while unresolved or no lock. `ctrlStartM*_` = the
+    // pixel the gesture began at (the movement origin the axis is chosen from).
+    bool     ctrlPending_;
+    int      ctrlAxis_ = -1;
+    int      ctrlStartMX_, ctrlStartMY_;
+
     bool     previewLive_;       // a preview cut currently sits on the mesh
     MeshSnapshot before_;        // session baseline captured at activation
     bool     haveBefore_;
@@ -760,6 +787,10 @@ public:
     override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
         root["tool"]   = JSONValue("slice");
+        // Task 0286: whether a line has been drawn yet (false at bare activation —
+        // nothing is shown / cut until the first drag). Lets a headless test assert
+        // the clean-until-first-drag invariant without a screenshot.
+        root["lineDrawn"] = JSONValue(hasLine_);
         root["startX"] = JSONValue(start_.x);
         root["startY"] = JSONValue(start_.y);
         root["startZ"] = JSONValue(start_.z);
@@ -820,6 +851,12 @@ public:
         snapTempInvert_ = false;
         haveFrozen_     = false;   // owner fix 3 (0284): re-capture on the next gesture
         pendingAxisClassify_ = false;   // owner fix 1 (0284): no draw in flight to classify
+        // Task 0286: a fresh session (activate → dropPreview) starts with NO line
+        // and no in-flight Ctrl lock, so the viewport is clean until the first drag.
+        hasLine_        = false;
+        drawGesture_    = false;
+        ctrlPending_    = false;
+        ctrlAxis_       = -1;
         armedKey_.invalidate();
     }
 
@@ -951,6 +988,7 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         if (mods & KMOD_ALT) return false;   // reserved for camera nav (orbit/pan/zoom)
         bool shift = (mods & KMOD_SHIFT) != 0;
+        bool ctrl  = (mods & KMOD_CTRL)  != 0;   // task 0286: axis-constrain the gesture
 
         // Latch the line as it stands NOW so RMB can cancel just this gesture
         // (the session baseline is never per-gesture — see the class comment).
@@ -971,6 +1009,8 @@ public:
             // orientation (capture one if this is the first gesture).
             ensureFrozenNormal();
             beginLineDrag(hit);
+            hasLine_     = true;   // a line now exists (task 0286)
+            drawGesture_ = false;  // relocate is a translate, not a draw
             kickPreview();
             return true;
         }
@@ -987,32 +1027,45 @@ public:
             start_ = hit;
             end_   = hit;
             beginFreshLinePlane();
-            dragPart_ = DragEnd;
+            dragPart_    = DragEnd;
+            hasLine_     = true;    // the redraw lays a line (task 0286)
+            drawGesture_ = true;    // Shift+drag DRAWS — Ctrl locks the direction
+            armCtrl(ctrl, e.x, e.y);
             kickPreview();
             return true;
         }
 
-        // Plain LMB: grab an endpoint handle if the click is near its
-        // projection; else grab the line body if the click is on it; else
-        // begin a fresh line from the work-plane hit under the cursor.
-        int grabbed = pickHandle(cast(float)e.x, cast(float)e.y);
+        // Plain LMB — task 0286 input model:
+        //   • No line yet → FIRST drag: down = Start, the drag defines the End
+        //     (draws a fresh line). Ctrl locks the drawn DIRECTION to a world axis.
+        //   • Line exists + click ON an endpoint handle → refine that endpoint
+        //     (kept as a bonus gesture; the primary second-drag is a translate).
+        //   • Line exists + click elsewhere → SECOND drag: translate the WHOLE
+        //     line (both points). Ctrl locks the TRANSLATION to a world axis
+        //     (the same single-axis constraint MoveTool applies).
+        int grabbed = hasLine_ ? pickHandle(cast(float)e.x, cast(float)e.y) : -1;
         if (grabbed >= 0) {
-            // Endpoint drag refines the EXISTING line — keep the frozen plane
-            // (capture one if this is the first gesture of the session).
+            // Endpoint drag refines the EXISTING line — keep the frozen plane.
             ensureFrozenNormal();
-            dragPart_ = grabbed;
-        } else if (pickLineBody(cast(float)e.x, cast(float)e.y)) {
-            Vec3 hit;
-            if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
-            ensureFrozenNormal();   // line-body drag is a translate — keep the plane
-            beginLineDrag(hit);
-        } else {
+            dragPart_    = grabbed;
+            drawGesture_ = false;
+        } else if (!hasLine_) {
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
             start_ = hit;
             end_   = hit;
             beginFreshLinePlane();   // fresh line → re-capture normal, drop override
-            dragPart_ = DragEnd;   // drag the End of the new line
+            dragPart_    = DragEnd;   // the drag defines the End of the new line
+            hasLine_     = true;
+            drawGesture_ = true;
+            armCtrl(ctrl, e.x, e.y);   // Ctrl on the FIRST drag → axis-locked line
+        } else {
+            Vec3 hit;
+            if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
+            ensureFrozenNormal();   // whole-line translate — keep the frozen plane
+            beginLineDrag(hit);
+            drawGesture_ = false;
+            armCtrl(ctrl, e.x, e.y);   // Ctrl on the SECOND drag → axis-locked move
         }
         kickPreview();
         return true;
@@ -1020,23 +1073,56 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart_ == DragNone) return false;
+
+        // Ctrl axis-lock (task 0286): once the drag has moved far enough for a
+        // clear direction (the MoveTool wait-gate), resolve the locked world axis
+        // via the shared chooseConstraintAxis. Until then, swallow the motion.
+        if (ctrlPending_) {
+            int tdx = e.x - ctrlStartMX_, tdy = e.y - ctrlStartMY_;
+            if (tdx * tdx + tdy * tdy < 25) return true;
+            ctrlAxis_    = resolveCtrlAxis(tdx, tdy);
+            ctrlPending_ = false;
+        }
+
         Vec3 hit;
         if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return true;
 
-        // Record the RAW (unsnapped) endpoints for this motion, then let Angle
-        // Snap (S5) derive the actual start_/end_ from them. Keeping the raw pair
-        // lets the X-key toggle re-snap mid-drag without a fresh mouse move.
-        final switch (dragPart_) {
-            case DragStart: rawStart_ = hit;    rawEnd_ = end_;  break;
-            case DragEnd:   rawStart_ = start_; rawEnd_ = hit;   break;
-            case DragLine:
-                Vec3 delta = hit - dragAnchor_;
-                rawStart_ = dragStart0_ + delta;
-                rawEnd_   = dragEnd0_   + delta;
-                break;
+        bool ctrlLocked = ctrlAxis_ >= 0;
+        if (ctrlLocked && drawGesture_ && dragPart_ == DragEnd) {
+            // FIRST drag under Ctrl: draw the line ALONG the locked world axis —
+            // the End slides only along that axis from the fixed Start. Angle Snap
+            // is bypassed (the two constraints are mutually-exclusive gestures).
+            Vec3 ax = worldAxisVec(ctrlAxis_);
+            rawStart_ = start_;                       // Start fixed
+            rawEnd_   = start_ + ax * dot(hit - start_, ax);
+            end_      = rawEnd_;
+            haveRaw_  = true;
+        } else if (ctrlLocked && dragPart_ == DragLine) {
+            // SECOND drag under Ctrl: translate BOTH points along the locked axis
+            // (the same single-axis constraint MoveTool applies to a free move).
+            Vec3 ax    = worldAxisVec(ctrlAxis_);
+            Vec3 delta = ax * dot(hit - dragAnchor_, ax);
+            rawStart_ = dragStart0_ + delta;
+            rawEnd_   = dragEnd0_   + delta;
+            start_    = rawStart_;
+            end_      = rawEnd_;
+            haveRaw_  = true;
+        } else {
+            // Unconstrained: record the RAW (unsnapped) endpoints, then let Angle
+            // Snap (S5) derive the actual start_/end_. Keeping the raw pair lets
+            // the X-key toggle re-snap mid-drag without a fresh mouse move.
+            final switch (dragPart_) {
+                case DragStart: rawStart_ = hit;    rawEnd_ = end_;  break;
+                case DragEnd:   rawStart_ = start_; rawEnd_ = hit;   break;
+                case DragLine:
+                    Vec3 delta = hit - dragAnchor_;
+                    rawStart_ = dragStart0_ + delta;
+                    rawEnd_   = dragEnd0_   + delta;
+                    break;
+            }
+            haveRaw_ = true;
+            applyAngleSnapFromRaw();
         }
-        haveRaw_ = true;
-        applyAngleSnapFromRaw();
 
         // Live preview unless `fast` defers the cut to mouse-up.
         if (!fast_) updatePreview();
@@ -1047,6 +1133,10 @@ public:
         if (!active || dragPart_ == DragNone) return false;
         if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         dragPart_ = DragNone;
+        // Task 0286: the Ctrl lock is per-gesture — clear it so the next gesture
+        // re-decides (a following non-Ctrl drag is unconstrained).
+        ctrlPending_ = false;
+        ctrlAxis_    = -1;
         // Mouse-up does NOT commit (task 0278) — the slice stays LIVE for the
         // rest of the session; the single undo entry is baked at tool-drop.
         // Materialise the final cut here so `fast` mode (which suppresses the
@@ -1086,6 +1176,11 @@ public:
         // event handlers.
         if (!visualOnly) cachedVp = vp;
         if (!active) return;
+        // Task 0286: NOTHING is shown at bare activation — no overlay, no line, no
+        // endpoint handles — until the FIRST LMB drag has laid a line. (cachedVp is
+        // cached ABOVE this gate so the event handlers still have a viewport for
+        // their ray casts before the first draw.)
+        if (!hasLine_) return;
 
         // Lazily build the endpoint handle geometry (needs a live GL context).
         if (startH_ is null) {
@@ -1103,7 +1198,7 @@ public:
         // Translucent CUT-PLANE overlay (task 0284): a rectangle lying IN the
         // cut plane, spanning EXACTLY the drawn line along it (owner fix 1 — never
         // past the endpoint handles) and extending across it to cover the region
-        // being cut (MODO-like). Built from the SAME plane the cut uses: the
+        // being cut. Built from the SAME plane the cut uses: the
         // FROZEN drag normal + the axis-override mode (owner fixes 3 + 4), so it
         // tracks drags / panel edits AND stays put under camera orbit — exactly
         // where the committed cut is. Drawn FIRST (before the line + handles) so
@@ -1205,6 +1300,43 @@ private:
         dragAnchor_ = anchor;
     }
 
+    // --- Ctrl axis-constraint (task 0286), reusing MoveTool.chooseConstraintAxis -
+
+    // Arm the per-gesture Ctrl lock: when `ctrl` is held, the locked axis is
+    // resolved LAZILY on the first sufficient movement (onMouseMotion), from the
+    // pixel the gesture began at. A no-Ctrl gesture clears any prior lock.
+    void armCtrl(bool ctrl, int mx, int my) {
+        ctrlPending_ = ctrl;
+        ctrlAxis_    = -1;
+        ctrlStartMX_ = mx;
+        ctrlStartMY_ = my;
+    }
+
+    // Resolve the dominant world axis for the Ctrl lock from the drag's pixel
+    // delta, via the SAME selector MoveTool's Ctrl lock uses (chooseConstraintAxis
+    // — screen-projected world axis best aligned with the mouse movement). The
+    // gesture center is the fixed Start for a draw (the line pivots about it) or
+    // the line midpoint for a translate; axis-end probes sit one unit along each
+    // world axis from that center so their screen directions are well-defined.
+    int resolveCtrlAxis(int tdx, int tdy) {
+        if (cachedVp.width <= 0) return -1;
+        Vec3 camBack = Vec3(cachedVp.view[2], cachedVp.view[6], cachedVp.view[10]);
+        Vec3 center  = drawGesture_ ? start_ : (start_ + end_) * 0.5f;
+        Vec3 ex = center + Vec3(1, 0, 0);
+        Vec3 ey = center + Vec3(0, 1, 0);
+        Vec3 ez = center + Vec3(0, 0, 1);
+        return chooseConstraintAxis(camBack,
+            Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
+            ex, ey, ez, center, cachedVp, tdx, tdy);
+    }
+
+    // The world axis vector for a resolved Ctrl-lock index (0=X / 1=Y / 2=Z).
+    static Vec3 worldAxisVec(int a) {
+        if (a == 0) return Vec3(1, 0, 0);
+        if (a == 1) return Vec3(0, 1, 0);
+        return Vec3(0, 0, 1);
+    }
+
     // Refresh the non-cumulative preview: restore the SESSION baseline, re-cut
     // with the current line, stamp the mesh guard, and push to the GPU. Leaves
     // the mesh AT the baseline (previewLive_ = false) when the line misses
@@ -1232,7 +1364,9 @@ private:
     // stood when this drag began) and re-preview from the session baseline. The
     // session stays alive — the baseline is not dropped.
     void cancelGesture() {
-        dragPart_ = DragNone;
+        dragPart_    = DragNone;
+        ctrlPending_ = false;   // task 0286: cancel drops any in-flight Ctrl lock
+        ctrlAxis_    = -1;
         start_    = gStart0_;
         end_      = gEnd0_;
         updatePreview();
