@@ -65,6 +65,7 @@ import tools.poly_bevel : PolyBevelTool;
 import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.loop_slice_tool : LoopSliceTool;
+import tools.slice_tool : SliceTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
 import tools.tack : TackTool;
@@ -2881,6 +2882,18 @@ void main(string[] args) {
         auto t = new LoopSliceTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, loopSliceEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Slice (plane/line) — interactive Start→End line cut with a plane
+    // PERPENDICULAR to the work plane (mesh.sliceTool, task 0266 S0). Reuses
+    // Mesh.cutByPlane; one MeshSnapshot undo entry per committed slice
+    // (reuses the generic bevelEditFactory snapshot command, labelled "Slice").
+    // Distinct from the camera-plane one-shot mesh.screenSlice command.
+    reg.toolFactories["mesh.sliceTool"] = () {
+        auto t = new SliceTool(() => &mesh(), &gpu, &editMode, litShader,
+                               &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 

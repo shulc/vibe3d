@@ -869,6 +869,78 @@ unittest { // cameraPlaneFromScreenLine: degenerate short line → false, no NaN
            "sub-pixel line must be degenerate");
 }
 
+// Build the cutting plane through the drawn Start→End line, PERPENDICULAR to
+// the work plane. This is the SliceTool's plane law (mesh.sliceTool, S0) and a
+// deliberate divergence from cameraPlaneFromScreenLine above: instead of the
+// camera-eye plane, the cut plane contains the line direction AND has its
+// normal lying IN the work plane, so a horizontal drag in a front view yields a
+// clean axis-aligned cut regardless of camera pitch.
+//
+//   n = normalize(cross(end - start, workplaneNormal))   (n ⟂ line, n ⟂ wpN)
+//   p = start                                            (any point on the line)
+//
+// Two planes are perpendicular iff their normals are perpendicular; n ⟂ wpN
+// makes the cut plane ⟂ the work plane, and n ⟂ (end-start) makes it contain
+// the drawn line. `workplaneNormal` need not be unit — only its direction is
+// used. Returns false (p, n left undefined) when the line is degenerate
+// (start ≈ end) or the line is parallel to the work-plane normal (cross ≈ 0,
+// no unique plane).
+bool planeFromLineAndWorkplane(Vec3 start, Vec3 end, Vec3 workplaneNormal,
+                               out Vec3 p, out Vec3 n, float eps = 1e-6f)
+{
+    Vec3 dir = end - start;
+    if (dot(dir, dir) < eps * eps) return false;
+    Vec3 nRaw = cross(dir, workplaneNormal);
+    if (nRaw.length < eps) return false;
+    p = start;
+    n = normalize(nRaw);
+    return true;
+}
+
+unittest { // planeFromLineAndWorkplane: horizontal front-view drag → axis-aligned (Y-normal) cut
+    Vec3 p, n;
+    // Front view: work plane = XY, normal = +Z. A horizontal line (dir = +X)
+    // must produce a horizontal cut plane (normal ∥ Y), independent of pitch.
+    bool ok = planeFromLineAndWorkplane(Vec3(-1, 0, 0), Vec3(1, 0, 0),
+                                        Vec3(0, 0, 1), p, n);
+    assert(ok, "expected a valid plane for a horizontal line");
+    assert(isClose(n.length, 1.0f, 1e-4f), "normal must be unit length");
+    assert(isClose(n.y * n.y, 1.0f, 1e-4f), "normal must be parallel to world Y");
+    assert(isClose(n.x, 0, 1e-4f, 1e-4f), "normal X must be zero");
+    assert(isClose(n.z, 0, 1e-4f, 1e-4f), "normal Z must be zero");
+    // Plane contains the line: n ⟂ (end-start) and n ⟂ workplane normal.
+    assert(isClose(dot(n, Vec3(1, 0, 0) - Vec3(-1, 0, 0)), 0, 1e-4f, 1e-4f),
+           "normal must be perpendicular to the line direction");
+    assert(isClose(dot(n, Vec3(0, 0, 1)), 0, 1e-4f, 1e-4f),
+           "normal must be perpendicular to the work-plane normal");
+}
+
+unittest { // planeFromLineAndWorkplane: default XZ work plane (normal +Y) → line along Z gives X=0 plane
+    Vec3 p, n;
+    // Default construction plane (world XZ, normal +Y). A line drawn along Z
+    // through the origin yields a plane with normal ∥ X passing through start —
+    // exactly the mid-cube cut the S0 golden fixture drives.
+    bool ok = planeFromLineAndWorkplane(Vec3(0, 0, -1), Vec3(0, 0, 1),
+                                        Vec3(0, 1, 0), p, n);
+    assert(ok, "expected a valid plane");
+    assert(isClose(n.x * n.x, 1.0f, 1e-4f), "normal must be parallel to world X");
+    assert(isClose(n.y, 0, 1e-4f, 1e-4f), "normal Y must be zero");
+    assert(isClose(n.z, 0, 1e-4f, 1e-4f), "normal Z must be zero");
+    assert(p.x == 0 && p.z == -1, "plane point must equal start");
+}
+
+unittest { // planeFromLineAndWorkplane: degenerate line / line ∥ workplane normal → false, no NaN
+    Vec3 p, n;
+    // Zero-length line.
+    assert(!planeFromLineAndWorkplane(Vec3(1, 2, 3), Vec3(1, 2, 3),
+                                      Vec3(0, 1, 0), p, n),
+           "zero-length line must be degenerate");
+    // Line parallel to the work-plane normal (cross ≈ 0): no unique plane.
+    assert(!planeFromLineAndWorkplane(Vec3(0, -1, 0), Vec3(0, 1, 0),
+                                      Vec3(0, 1, 0), p, n),
+           "line parallel to workplane normal must be degenerate");
+}
+
 // Closest point on segment [a, b] to ray (origin O, unit direction D).
 // Standard parameterisation: P(t) = a + t·(b-a), Q(s) = O + s·D.
 // Minimises |P(t) - Q(s)|² over (s, t); t is then clamped to [0, 1]

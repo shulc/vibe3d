@@ -520,6 +520,24 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         }
         cmd("tool.doApply", ctx);
         cmd("tool.set mesh.loopSliceTool off", ctx);
+    } else if ("slice" in step) {
+        // Slice tool (mesh.sliceTool, task 0266 S0) — a plane/line cut whose
+        // plane passes through the Start→End line PERPENDICULAR to the work
+        // plane (headless work-plane normal = default world XZ ⇒ +Y). Topology
+        // op (adds crossing verts / chord-splits faces via Mesh.cutByPlane).
+        //   { "slice": { "start": [x,y,z], "end": [x,y,z] } }
+        auto sl = step["slice"];
+        auto s  = jvec3(sl["start"]);
+        auto en = jvec3(sl["end"]);
+        cmd("tool.set mesh.sliceTool on", ctx);
+        cmd(format("tool.attr mesh.sliceTool startX %g", s[0]), ctx);
+        cmd(format("tool.attr mesh.sliceTool startY %g", s[1]), ctx);
+        cmd(format("tool.attr mesh.sliceTool startZ %g", s[2]), ctx);
+        cmd(format("tool.attr mesh.sliceTool endX %g", en[0]), ctx);
+        cmd(format("tool.attr mesh.sliceTool endY %g", en[1]), ctx);
+        cmd(format("tool.attr mesh.sliceTool endZ %g", en[2]), ctx);
+        cmd("tool.doApply", ctx);
+        cmd("tool.set mesh.sliceTool off", ctx);
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
