@@ -81,6 +81,29 @@ JSONValue getToolState() { return parseJSON(cast(string) get(baseUrl ~ "/api/too
 
 void settle() { Thread.sleep(150.msecs); }
 
+// Poll the undo history until it holds at least `target` entries — i.e. the
+// interactive click's Tack commit has actually LANDED — or a generous timeout
+// elapses. `playAndWait` returns once /api/play-events/status reports
+// "finished", and in --test the click is dispatched SYNCHRONOUSLY (the commit
+// runs inside the same event-player tick that flips the player idle), so the
+// entry is already recorded by then — but the status flag and the history are
+// read on the HTTP thread, and under -j8 CPU starvation the just-recorded
+// entry's cross-thread visibility can lag the status flip by a frame. A fixed
+// `settle()` sleep is a guess at how long that lag is; polling the
+// authoritative undo count closes the window deterministically regardless of
+// load. It still fails loudly if the commit never lands (a genuine regression),
+// so it cannot mask a real bug — unlike simply widening the geometry tolerance.
+void waitForUndoCount(size_t target) {
+    size_t last;
+    foreach (_; 0 .. 200) {
+        last = getHistory()["undo"].array.length;
+        if (last >= target) return;
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "interactive commit never registered: expected >= "
+        ~ target.to!string ~ " undo entries, got " ~ last.to!string);
+}
+
 string tackHeadlessCmd(int targetFace, double[3] point) {
     return format(
         `{"id":"mesh.tack","params":{"targetFace":%d,"targetPoint":[%.17g,%.17g,%.17g]}}`,
@@ -248,9 +271,13 @@ unittest {
         "previewActive should be true while hovering a valid target: "
         ~ stateHover.toString);
 
+    // Capture the undo depth BEFORE the click so we can wait for the click's
+    // Tack commit to actually land (deterministic, load-independent) instead of
+    // reading geometry after a blind sleep that -j8 starvation can outrun.
+    size_t undoBeforeClick = getHistory()["undo"].array.length;
     playAndWait(clickLog(cam.vpX, cam.vpY, cam.width, cam.height,
                         cast(int) sx, cast(int) sy));
-    settle();
+    waitForUndoCount(undoBeforeClick + 1);
 
     toolOff("mesh.tack");
     auto interactive = verticesOf(getModel());
@@ -299,9 +326,10 @@ unittest {
                             cast(int) sx, cast(int) sy));
         settle();
     }
+    size_t undoBeforeClick = getHistory()["undo"].array.length;
     playAndWait(clickLog(cam.vpX, cam.vpY, cam.width, cam.height,
                         cast(int) sx, cast(int) sy));
-    settle();
+    waitForUndoCount(undoBeforeClick + 1);
     toolOff("mesh.tack");
 
     auto committed = verticesOf(getModel());
