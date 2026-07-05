@@ -201,7 +201,16 @@ private:
     // — composes with select/quad/ngon/split/caps/gap (the split duplicate + gap
     // displacement apply on top of the curved base position). Threads into the
     // kernel's `curvature` flag; `curveTension_` scales the bulge (1.0 = full
-    // standard Catmull-Rom) and is the hook task 0255 ("Tension") will drive.
+    // standard Catmull-Rom).
+    //
+    // Tension (`tension`, task 0255): `curveTension_` is the backing field of the
+    // "Tension" param — the strength of Preserve Curvature. It is a fraction whose
+    // UI display is a percent (1.0 = 100% = full spline bulge; 0.0 = 0% = the flat
+    // linear chord, i.e. curvature disabled). The range is UNBOUNDED (matching the
+    // reference, which has no min/max): negative pulls the new verts to the inside
+    // of the chord and >1 overshoots further out. Only meaningful while `curvature_`
+    // is ON — the kernel ignores `curveTension_` when `curvature` is off — so the
+    // param is greyed (see paramEnabled) unless Preserve Curvature is enabled.
     bool    curvature_     = false;
     float   curveTension_  = 1.0f;
 
@@ -313,6 +322,7 @@ public:
         root["caps"]        = JSONValue(sliceCaps_);        // Cap Sections (task 0252)
         root["gap"]         = JSONValue(gap_);              // Gap (task 0253)
         root["curvature"]   = JSONValue(curvature_);        // Preserve Curvature (task 0254)
+        root["tension"]     = JSONValue(curveTension_);      // Tension (task 0255)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -371,6 +381,11 @@ public:
             Param.bool_("caps", "Cap Sections", &sliceCaps_, true),
             Param.float_("gap", "Gap", &gap_, 0.0f),
             Param.bool_("curvature", "Preserve Curvature", &curvature_, false),
+            // Tension (task 0255): strength of Preserve Curvature. Fraction (UI
+            // percent): 1.0 = 100% = full spline bulge, 0.0 = flat chord. No
+            // min/max — the reference range is unbounded (negative insets inward,
+            // >1 overshoots outward). Greyed unless `curvature` is on (paramEnabled).
+            Param.float_("tension", "Tension", &curveTension_, 1.0f),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -507,6 +522,15 @@ public:
         armedKey_.invalidate();
     }
 
+    // Tension (task 0255) is only meaningful while Preserve Curvature is on — the
+    // kernel ignores `curveTension_` when `curvature` is off. Grey the row (the
+    // reference greys "Tension" until "Preserve Curvature" is enabled). All other
+    // params stay enabled.
+    override bool paramEnabled(string name) const {
+        if (name == "tension") return curvature_;
+        return true;
+    }
+
     override void onParamChanged(string pname) {
         // HUD geometry only — never touches the cut.
         if (pname == "length" || pname == "sliderX" || pname == "sliderY") return;
@@ -536,6 +560,7 @@ public:
         if (pname == "caps")   { if (armed_) rebuildCut(); return; }
         if (pname == "gap")    { if (armed_) rebuildCut(); return; }
         if (pname == "curvature") { if (armed_) rebuildCut(); return; }
+        if (pname == "tension") { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }

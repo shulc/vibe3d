@@ -15312,6 +15312,32 @@ unittest {
     assert(hasV(on, Vec3(1.5f, 1.125f, 1)), "on: rail (3,5) midpoint bulged off the chord to y=1.125");
     assert(!hasV(on, Vec3(1.5f, 1.0f, 0)), "on: chord midpoint replaced by the bulged spline point");
 
+    // Tension (task 0255) scales the bulge: result = lerp + tension·(spline − lerp).
+    // At tension=1.0 the bulge is the full 1.125 (above); at tension=0.5 it is
+    // halfway between the flat chord (1.0) and the full spline (1.125) ⇒ y=1.0625;
+    // at tension=0.0 it collapses to the linear chord (y=1.0) — byte-for-byte the
+    // curvature-OFF placement even though `curvature` is ON.
+    Mesh half = makeArcStrip(1.0f, 1.0f);
+    uint eiHalf = half.edgeIndex(2, 4);
+    uint[] nfHalf;
+    assert(half.insertEdgeLoopsMulti([eiHalf], [0.5f], nfHalf, null, false, false,
+                                     false, false, null, 0.0f, /*curvature*/true,
+                                     /*curveTension*/0.5f),
+           "curvature-on tension=0.5 insert must succeed");
+    assert(hasV(half, Vec3(1.5f, 1.0625f, 0)), "tension=0.5: rail (2,4) midpoint at the half bulge (y=1.0625)");
+    assert(hasV(half, Vec3(1.5f, 1.0625f, 1)), "tension=0.5: rail (3,5) midpoint at the half bulge (y=1.0625)");
+
+    Mesh zero = makeArcStrip(1.0f, 1.0f);
+    uint eiZero = zero.edgeIndex(2, 4);
+    uint[] nfZero;
+    assert(zero.insertEdgeLoopsMulti([eiZero], [0.5f], nfZero, null, false, false,
+                                     false, false, null, 0.0f, /*curvature*/true,
+                                     /*curveTension*/0.0f),
+           "curvature-on tension=0.0 insert must succeed");
+    assert(hasV(zero, Vec3(1.5f, 1.0f, 0)) && hasV(zero, Vec3(1.5f, 1.0f, 1)),
+           "tension=0.0: curvature ON collapses to the linear chord (y=1.0)");
+    assert(!hasV(zero, Vec3(1.5f, 1.125f, 0)), "tension=0.0: no bulge");
+
     // curvature ON on a FLAT cage (all heights 0) — the four spline points are
     // collinear, so the spline equals the linear chord: no-op vs off.
     Mesh flat = makeArcStrip(0.0f, 0.0f);

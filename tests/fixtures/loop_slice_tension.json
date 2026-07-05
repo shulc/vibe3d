@@ -1,0 +1,96 @@
+{
+  "name": "loop_slice_tension",
+  "description": "Loop Slice 'Tension' option (task 0255) — the strength control for 'Preserve Curvature' (task 0254). Same CURVED open strip as loop_slice_curvature.json: 3 quads in a row along X, 1 quad wide in Z, column heights h=[0,1,1,0] so the two long boundary edges arc up and back down. Verts (col i, row j) at (x=i, y=h[i], z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,1,0) 3=(1,1,1) 4=(2,1,0) 5=(2,1,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]. Seed = the middle quad's top long edge (1,1,0)-(2,1,0), a 1-face open ring cutting Q1's two long rails (2,4) and (3,5) at t=0.5. With Preserve Curvature ON, each new vert = lerp + tension*(catmullRom - lerp): the linear chord midpoint is y=1.0 and the full Catmull-Rom spline point is y=1.125, so Tension scales the bulge between them. tension=1.0 (100%, default) → y=1.125 (full bulge, byte-for-byte the 0254 curvature-on result); tension=0.5 (50%) → y=1.0625 (half bulge); tension=0.0 (0%) → y=1.0 (flat chord, byte-for-byte the linear curvature-off result even though curvature is ON). Topology is IDENTICAL in every case (10 verts / 13 edges / 4 faces) — Tension only relocates the two new verts along the rail-normal bulge. x/z unchanged.",
+  "source": "Analytic self-golden. The reference `tension` (Tension) attribute is a float PERCENT, default 100% (full spline), 0% = disabled/linear, gated on Preserve Curvature (toolcards/mesh.loopSlice spec.json, task 0244 live probe: type=float default 1.0, 'Tension of the curvature (percent). Strength of Preserve Curvature: 100% = spline-like, 0% = disabled ...'; range unbounded). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the mapping is DERIVED from the captured attribute + 0254's spline construction: the wire value is a fraction whose UI display is percent (1.0 = 100%), mapping directly to 0254's `curveTension` factor (result = lerp + curveTension*(catmullRom - lerp)). Flagged honestly.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "tension_100_full_bulge",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true, "tension": 1.0 } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.125,0],[1.5,1.125,1]
+      ]
+    },
+    {
+      "name": "tension_default_matches_100",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.125,0],[1.5,1.125,1]
+      ]
+    },
+    {
+      "name": "tension_50_half_bulge",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true, "tension": 0.5 } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.0625,0],[1.5,1.0625,1]
+      ]
+    },
+    {
+      "name": "tension_0_flat_chord",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true, "tension": 0.0 } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.0,0],[1.5,1.0,1]
+      ]
+    }
+  ]
+}

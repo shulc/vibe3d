@@ -472,6 +472,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "curvature": true } }`.
         if ("curvature" in ls && ls["curvature"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool curvature 1", ctx);
+        // Optional Tension (task 0255): strength of Preserve Curvature — a fraction
+        // (UI percent) scaling the spline bulge (1.0 = full, 0.0 = flat chord,
+        // unbounded). Only meaningful with `curvature` on. `{ "loop_slice": { ...,
+        // "curvature": true, "tension": 0.5 } }`.
+        if ("tension" in ls)
+            cmd(format("tool.attr mesh.loopSliceTool tension %g", asDouble(ls["tension"])), ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;
