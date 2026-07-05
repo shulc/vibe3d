@@ -1,0 +1,79 @@
+# Tool Properties form for the Slice tool (mesh.sliceTool).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/loopslice.yaml
+# and config/forms/transform.yaml): each value control binds to a command line
+# carrying exactly one `?` — reading queries the tool's params(), writing
+# executes the command with `?` filled in. Loaded at startup by source/forms.d
+# (loadForms), auto-discovered from config/forms/*.yaml (source/app.d), and
+# strict-validated against the Slice tool's params() (validateForms) — a
+# misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set.
+#
+# Every attr below is one of mesh.sliceTool.params() (grep params() in
+# source/tools/slice_tool.d for the authoritative names/types). The rows with a
+# dependency are auto-greyed by the renderer via the tool's paramEnabled()
+# (forms_render.d wraps a disabled param in ImGui.BeginDisabled) — no inline
+# gating is needed here:
+#   * Cap Sections / Gap / Offset Side enabled only while Split is on
+#   * Angle (snapAngle) enabled only while Angle Snap is on
+#   * Vector X/Y/Z enabled only while Axis = Custom
+#
+# Layout mirrors the reference Slice panel: the Start / End line-endpoint gangs,
+# Fast Slice, the Angle-Snap pair, a labelled Split sub-box, Infinite, then the
+# Axis selector plus its Custom-vector gang.
+
+forms:
+  - id: slice.main
+    label: Slice
+    showLabel: false
+    whenTool:
+      - mesh.sliceTool
+    category: toolprops/main
+    ordinal: 150.55
+    rows:
+      # ---- Start / End: the two endpoints of the slice line (world space) ----
+      - group: Start
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool startX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool startY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool startZ ?", label: Z }
+
+      - group: End
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool endX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool endY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool endZ ?", label: Z }
+
+      # ---- Fast Slice: defer the cut to mouse release on dense meshes ----
+      - { control: "tool.attr mesh.sliceTool fast ?", label: "Fast Slice" }
+
+      # ---- Angle snapping: snap the line to a multiple of Angle ----
+      - { control: "tool.attr mesh.sliceTool snap ?",      label: "Angle Snap" }
+      - { control: "tool.attr mesh.sliceTool snapAngle ?", label: Angle }
+
+      # ---- Split: separate the surface into two sections, optionally capped ----
+      - group: Split
+        style: block
+        rows:
+          - { control: "tool.attr mesh.sliceTool split ?",   label: Split }
+          - { control: "tool.attr mesh.sliceTool caps ?",    label: "Cap Sections" }
+          - { control: "tool.attr mesh.sliceTool gap ?",     label: Gap }
+          - { control: "tool.attr mesh.sliceTool gapSide ?", label: "Offset Side" }
+
+      # ---- Infinite: extend the line so the plane cuts the whole mesh ----
+      - { control: "tool.attr mesh.sliceTool infinite ?", label: Infinite }
+
+      # ---- Axis + Custom vector: the plane's out-of-line direction ----
+      - { control: "tool.attr mesh.sliceTool axis ?", label: Axis }
+
+      - group: Vector
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool vectorX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool vectorY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool vectorZ ?", label: Z }
