@@ -9807,6 +9807,130 @@ struct Mesh {
     }
 
     // -----------------------------------------------------------------------
+    // cutByPlaneClipped — like cutByPlane, but the cut is CLIPPED to a drawn
+    // segment's extent instead of extending across the whole mesh. Only faces
+    // whose plane-crossing chord lies within the [segStart, segEnd] band
+    // (measured by projection ALONG the segment direction) are split; geometry
+    // outside the drawn span is left whole.
+    //
+    // This is the interactive Slice tool's `infinite = off` path (mesh.slice-
+    // Tool): "only the region under the drawn Start→End line gets cut", vs
+    // cutByPlane's whole-mesh infinite plane (`infinite = on`, the current
+    // behavior). On a mesh whose cross-section fits WITHIN the drawn line the
+    // two agree (every crossing is in-band); they diverge only when the line is
+    // shorter than the mesh, where clipped cuts just the spanned faces.
+    //
+    // Extent rule (in-band ⟺ normalized projection s = dot(q−segStart, seg) /
+    // |seg|² ∈ [−eps, 1+eps], seg = segEnd−segStart): a straddle crossing is
+    // subdivided ONLY when in-band, and a face is chord-split ONLY when it ends
+    // up with exactly two cut vertices (both its crossings in-band). A face
+    // sitting on the extent BOUNDARY (one crossing in, one out) keeps the single
+    // shared crossing vertex spliced onto its edge and stays whole — it becomes
+    // an n-gon (colinear vertex, shared with the split neighbour, so the cut
+    // stays watertight with NO T-junction), mirroring how the cut simply "stops"
+    // partway. On-plane vertices count as cut vertices only when in-band.
+    //
+    // A degenerate (zero-length) segment returns 0 — there is no direction to
+    // clip along; the infinite case must call cutByPlane. Shares insertEdgePoint
+    // + rebuildFacesWithChordSplits with cutByPlane, so the produced topology
+    // (index-share crossing verts, chord split) is identical for the in-band
+    // faces. Pure data (no GPU / GL), unit-testable under `dub test`.
+    // -----------------------------------------------------------------------
+    size_t cutByPlaneClipped(Vec3 p, Vec3 n, Vec3 segStart, Vec3 segEnd,
+                             float eps = 1e-5f) {
+        if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
+            return 0;
+        Vec3 seg = Vec3(segEnd.x - segStart.x, segEnd.y - segStart.y,
+                        segEnd.z - segStart.z);
+        float segLen2 = seg.x * seg.x + seg.y * seg.y + seg.z * seg.z;
+        if (segLen2 < eps * eps) return 0;
+
+        // Signed distances: d[v] = dot(n, v - p).
+        float[] dv;
+        dv.length = vertices.length;
+        bool[] onPlane;
+        onPlane.length = vertices.length;
+        foreach (vi; 0 .. vertices.length) {
+            Vec3 v = vertices[vi];
+            dv[vi] = n.x * (v.x - p.x) + n.y * (v.y - p.y) + n.z * (v.z - p.z);
+            onPlane[vi] = (dv[vi] >= -eps && dv[vi] <= eps);
+        }
+
+        // In-band test on a world point q: normalized projection along the
+        // segment in [0,1] (with an eps slack at each end).
+        bool inBand(Vec3 q) {
+            float s = ((q.x - segStart.x) * seg.x + (q.y - segStart.y) * seg.y
+                     + (q.z - segStart.z) * seg.z) / segLen2;
+            return s >= -eps && s <= 1.0f + eps;
+        }
+        // Crossing point of the straddling edge a→b at t = da / (da - db).
+        Vec3 crossPoint(uint a, uint b) {
+            float da = dv[a], db = dv[b];
+            float t = da / (da - db);
+            Vec3 va = vertices[a], vb = vertices[b];
+            return Vec3(va.x + t * (vb.x - va.x),
+                        va.y + t * (vb.y - va.y),
+                        va.z + t * (vb.z - va.z));
+        }
+
+        // Pre-check with in-band filtering (mirrors cutByPlane's early-out so a
+        // clean miss never mutates the mesh / leaves stray crossing vertices).
+        {
+            bool anyWillSplit = false;
+            foreach (fi; 0 .. faces.length) {
+                auto face = faces[fi];
+                size_t insertsBefore = 0;
+                size_t[] hitPos;
+                foreach (k; 0 .. face.length) {
+                    uint a = face[k];
+                    uint b = face[(k + 1) % face.length];
+                    if (onPlane[a] && inBand(vertices[a]))
+                        hitPos ~= k + insertsBefore;
+                    if (!onPlane[a] && !onPlane[b]) {
+                        float da = dv[a], db = dv[b];
+                        if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
+                            if (inBand(crossPoint(a, b))) {
+                                insertsBefore++;
+                                hitPos ~= k + insertsBefore;
+                            }
+                        }
+                    }
+                }
+                if (hitPos.length != 2) continue;
+                size_t i = hitPos[0], j = hitPos[1];
+                size_t newLen = face.length + insertsBefore;
+                bool adj = (j == i + 1) || (i == 0 && j == newLen - 1);
+                if (!adj) { anyWillSplit = true; break; }
+            }
+            if (!anyWillSplit) return 0;
+        }
+
+        // Cut verts: in-band on-plane verts start marked; in-band straddle edges
+        // each get one new crossing vertex. Out-of-band crossings are skipped so
+        // the cut never extends beyond the drawn span.
+        bool[] isCutVert;
+        isCutVert.length = vertices.length;
+        foreach (vi; 0 .. vertices.length)
+            isCutVert[vi] = onPlane[vi] && inBand(vertices[vi]);
+
+        size_t origEdgeCount = edges.length;
+        foreach (ei; 0 .. origEdgeCount) {
+            uint a = edges[ei][0], b = edges[ei][1];
+            if (a >= dv.length || b >= dv.length) continue;
+            if (onPlane[a] || onPlane[b]) continue; // endpoint on-plane: skip new vert
+            float da = dv[a], db = dv[b];
+            if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
+            if (!inBand(crossPoint(a, b))) continue;                   // CLIP to drawn span
+
+            insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
+        }
+
+        // Split every face that has exactly two cut verts (all-true mask = the
+        // fully in-band faces); boundary faces keep their lone hanging vertex.
+        return rebuildFacesWithChordSplits([], isCutVert);
+    }
+
+    // -----------------------------------------------------------------------
     // insertEdgePoint — factored from cutByPlane Pass-1.
     //
     // Adds a lerp vertex at parameter t along edge ei (t ∈ [0,1]: 0 = edges[ei][0],
@@ -16069,6 +16193,63 @@ unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 
     foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after cut");
     // No degenerate faces.
     foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-faces");
+}
+
+unittest { // cutByPlaneClipped: a full-span segment agrees with cutByPlane (infinite)
+    // The cube's cross-section fits within the drawn line (Z from -1 to 1, cube
+    // spans ±0.5), so the clip is a no-op — every crossing is in-band and the
+    // clipped cut reproduces the whole-belt topology exactly (12v/10f).
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    // Plane x=0 (normal X); segment along Z spanning the cube.
+    size_t nSplit = m.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                        Vec3(0, 0, -1), Vec3(0, 0, 1));
+    assert(nSplit == 4, "full-span clip == infinite: 4 side faces split");
+    assert(m.faces.length == 10, "full-span clip: 6 → 10 faces");
+    assert(m.vertices.length == 12, "full-span clip: 8 + 4 crossing verts");
+}
+
+unittest { // cutByPlaneClipped: a short segment cuts ONLY the spanned faces
+    // Two disjoint co-planar quad strips (left x∈[-3,-1], right x∈[1,3]) in the
+    // y=0 plane, each 2 quads. The plane z=0 (normal Z) straddles all 4 quads;
+    // the drawn segment [(-4,0,0)→(0,0,0)] spans ONLY the left strip (its x∈
+    // [-3,-1] crossings are in-band; the right strip's x∈[1,3] are out-of-band).
+    static Mesh twoStrips() {
+        Mesh m;
+        m.vertices = [
+            // left strip: bottom row z=-0.5, top row z=+0.5
+            Vec3(-3, 0, -0.5f), Vec3(-2, 0, -0.5f), Vec3(-1, 0, -0.5f),
+            Vec3(-3, 0,  0.5f), Vec3(-2, 0,  0.5f), Vec3(-1, 0,  0.5f),
+            // right strip
+            Vec3( 1, 0, -0.5f), Vec3( 2, 0, -0.5f), Vec3( 3, 0, -0.5f),
+            Vec3( 1, 0,  0.5f), Vec3( 2, 0,  0.5f), Vec3( 3, 0,  0.5f),
+        ];
+        m.addFace([0u, 1u, 4u, 3u]);   m.addFace([1u, 2u, 5u, 4u]);   // left
+        m.addFace([6u, 7u, 10u, 9u]);  m.addFace([7u, 8u, 11u, 10u]); // right
+        m.buildLoops();
+        m.resetSelection();
+        return m;
+    }
+
+    // infinite plane (cutByPlane) cuts ALL 4 quads: +6 crossing verts, 4 → 8 faces.
+    Mesh inf = twoStrips();
+    size_t nInf = inf.cutByPlane(Vec3(0, 0, 0), Vec3(0, 0, 1));
+    assert(nInf == 4, "infinite: all 4 quads split");
+    assert(inf.vertices.length == 18 && inf.faces.length == 8,
+           "infinite: 12+6 verts / 4→8 faces");
+
+    // clipped to the left strip: only the 2 left quads split (+3 verts, 4 → 6).
+    Mesh clip = twoStrips();
+    size_t nClip = clip.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(0, 0, 1),
+                                          Vec3(-4, 0, 0), Vec3(0, 0, 0));
+    assert(nClip == 2, "clipped: only the 2 in-band (left) quads split");
+    assert(clip.vertices.length == 15, "clipped: 12 + 3 left crossing verts");
+    assert(clip.faces.length == 6, "clipped: 2 split (×2) + 2 whole = 6");
+    // The right strip is untouched — no crossing vertex at x>0, z≈0.
+    foreach (v; clip.vertices)
+        assert(!(v.x > 0.5f && v.z > -0.4f && v.z < 0.4f),
+               "clipped: right strip must have no z≈0 crossing vertex");
 }
 
 // ---------------------------------------------------------------------------

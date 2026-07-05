@@ -69,13 +69,20 @@ static immutable IntEnumEntry[5] sliceAxisTable = [
 size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          Vec3 start, Vec3 end, Vec3 wpNormal,
                          int axisMode = cast(int)SliceAxis.Free,
-                         Vec3 vector = Vec3(0, 1, 0))
+                         Vec3 vector = Vec3(0, 1, 0),
+                         bool infinite = false)
 {
     if (baseline.filled) baseline.restore(mesh);
     Vec3 p, n;
     if (!planeForSlice(start, end, wpNormal, axisMode, vector, p, n))
         return 0;
-    return mesh.cutByPlane(p, n);
+    // `infinite` (task 0270): ON extends the line indefinitely, so the plane
+    // slices the WHOLE mesh (Mesh.cutByPlane — the S0 behavior). OFF (the
+    // reference factory default) CLIPS the cut to the drawn Start→End span, so
+    // only faces under the drawn line are cut (Mesh.cutByPlaneClipped). On a
+    // mesh whose cross-section fits within the line the two agree.
+    if (infinite) return mesh.cutByPlane(p, n);
+    return mesh.cutByPlaneClipped(p, n, start, end);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,9 +122,15 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
 // lives in the unit-tested math.planeForSlice helper; the Vector gang is greyed
 // unless axis == Custom (paramEnabled).
 //
-// Deferred to later tasks: infinite (S4), angle snap (S5), split/caps/gap
-// reusing the Loop Slice machinery (S7–S9). Params: `startX/Y/Z`, `endX/Y/Z`,
-// `fast`, `axis`, `vectorX/Y/Z`.
+// S4 (task 0270) adds `infinite` (bool): OFF (the reference factory default)
+// CLIPS the cut to the drawn Start→End span — only faces under the line get
+// cut (Mesh.cutByPlaneClipped); ON extends the line indefinitely so the plane
+// slices the whole mesh (Mesh.cutByPlane, the S0 behavior). It threads through
+// the preview + commit (sliceFromBaseline) and applyHeadless.
+//
+// Deferred to later tasks: angle snap (S5), split/caps/gap reusing the Loop
+// Slice machinery (S7–S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`,
+// `infinite`, `axis`, `vectorX/Y/Z`.
 //
 // Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
 // `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
@@ -165,6 +178,20 @@ private:
     // Default Free = the S0 drawn-line ⟂ work-plane plane (see SliceAxis doc).
     SliceAxis axis_   = SliceAxis.Free;
     Vec3      vector_ = Vec3(0, 1, 0);
+
+    // Infinite (S4, task 0270). OFF (the reference factory default) CLIPS the
+    // cut to the drawn Start→End span — only faces under the line get cut. ON
+    // extends the line indefinitely so the plane slices the whole mesh (the S0
+    // behavior). Threaded into sliceFromBaseline (preview + commit) and
+    // applyHeadless. Sticky (not reset on activate), like the other tool
+    // options. DEFAULT DECISION: the reference live-capture reads infinite=off
+    // as a GUARANTEED factory default (spec.json "default": false, authoritative
+    // from cmdhelptools.cfg — unlike the sticky-flagged axis/snap values). The
+    // S0/S3/session goldens all draw lines that span the cube's cross-section,
+    // so every crossing stays in-band and the clipped default reproduces them
+    // unchanged; the infinite/clipped divergence only shows on a line shorter
+    // than the mesh (see test_fixture_slice_infinite).
+    bool infinite_ = false;
 
     // Which part of the gizmo this gesture drags.
     enum DragNone  = -1;
@@ -254,6 +281,9 @@ public:
             Param.float_("endY",   "End Y",   &end_.y,    0.0f),
             Param.float_("endZ",   "End Z",   &end_.z,    0.0f),
             Param.bool_( "fast",   "Fast Slice", &fast_,  false),
+            // Infinite (S4): OFF clips the cut to the drawn line's span (the
+            // reference factory default); ON slices the whole mesh (S0).
+            Param.bool_( "infinite", "Infinite", &infinite_, false),
             // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
             // normal) / Custom (vector normal). Default Free — see SliceAxis.
             Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
@@ -288,6 +318,7 @@ public:
         root["endY"]   = JSONValue(end_.y);
         root["endZ"]   = JSONValue(end_.z);
         root["fast"]   = JSONValue(fast_);
+        root["infinite"] = JSONValue(infinite_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);
         root["vectorY"] = JSONValue(vector_.y);
@@ -345,7 +376,10 @@ public:
         if (!planeForSlice(start_, end_, currentWorkplaneFrame().normal,
                            cast(int)axis_, vector_, p, n))
             return false;
-        if (mesh.cutByPlane(p, n) == 0) return false;
+        // infinite ⇒ whole-mesh plane cut; else clip to the drawn Start→End span.
+        size_t nSplit = infinite_ ? mesh.cutByPlane(p, n)
+                                   : mesh.cutByPlaneClipped(p, n, start_, end_);
+        if (nSplit == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -521,7 +555,8 @@ private:
     void updatePreview() {
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
-                                          cachedWorkplaneNormal(), cast(int)axis_, vector_);
+                                          cachedWorkplaneNormal(), cast(int)axis_, vector_,
+                                          infinite_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,
@@ -618,6 +653,11 @@ private:
 //   2. The `fast`-deferred commit (one call at the final line) yields the
 //      identical geometry to the live-preview path (N previews then a final
 //      commit-position call).
+// Runs on the `infinite` path (infinite=true): these positions vary the line
+// LENGTH, and the point here is length-INDEPENDENT non-accumulation, so the
+// whole-mesh plane cut is the right invariant. The clipped-default divergence
+// (line length changes what is cut) is covered by cutByPlaneClipped's mesh.d
+// unittests + test_fixture_slice_infinite.
 // ---------------------------------------------------------------------------
 unittest {
     import std.math : abs;
@@ -630,6 +670,7 @@ unittest {
     ];
     Vec3 start = Vec3(0, 0, -1);
     Vec3 wpN   = Vec3(0, 1, 0);   // default world-XZ work plane normal
+    enum bool INF = true;         // whole-mesh plane — length-independent cut
 
     // --- Path A: live preview drag, then commit at the final line ---
     Mesh live = makeCube();
@@ -637,7 +678,8 @@ unittest {
     assert(live.vertices.length == 8 && live.faces.length == 6);
 
     foreach (ep; endPositions) {
-        size_t n = sliceFromBaseline(live, baseline, start, ep, wpN);
+        size_t n = sliceFromBaseline(live, baseline, start, ep, wpN,
+                                     cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
         assert(n > 0, "each mid-plane preview must split faces");
         // NON-CUMULATIVE: always the single-cut topology, never accumulated.
         assert(live.vertices.length == 12, "preview must not accumulate verts");
@@ -645,14 +687,16 @@ unittest {
     }
     // Commit at the final line (revert baseline + cut once — the same
     // non-cumulative kernel the deferred deactivate-commit records).
-    size_t nCommit = sliceFromBaseline(live, baseline, start, endPositions[$-1], wpN);
+    size_t nCommit = sliceFromBaseline(live, baseline, start, endPositions[$-1], wpN,
+                                       cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
     assert(nCommit > 0);
     assert(live.vertices.length == 12 && live.faces.length == 10);
 
     // --- Path B: fast — no live preview, a single deferred commit ---
     Mesh fast = makeCube();
     auto fastBaseline = MeshSnapshot.capture(fast);
-    size_t nFast = sliceFromBaseline(fast, fastBaseline, start, endPositions[$-1], wpN);
+    size_t nFast = sliceFromBaseline(fast, fastBaseline, start, endPositions[$-1], wpN,
+                                     cast(int)SliceAxis.Free, Vec3(0, 1, 0), INF);
     assert(nFast == nCommit);
     assert(fast.vertices.length == live.vertices.length);
     assert(fast.faces.length    == live.faces.length);
@@ -664,4 +708,14 @@ unittest {
         assert(abs(live.vertices[i].y - fast.vertices[i].y) < 1e-6f);
         assert(abs(live.vertices[i].z - fast.vertices[i].z) < 1e-6f);
     }
+
+    // --- Clip default: the SAME short line (end z=0.4) cuts LESS than infinite.
+    // Its far crossing (z=+0.5) projects past the drawn span, so only the near
+    // (z=−0.5) side splits — a countable proof the default clips.
+    Mesh clip = makeCube();
+    auto clipBase = MeshSnapshot.capture(clip);
+    size_t nClip = sliceFromBaseline(clip, clipBase, start, Vec3(0, 0, 0.4f), wpN);
+    assert(nClip < 4, "clipped short line must split fewer faces than infinite (4)");
+    assert(clip.vertices.length < 12,
+           "clipped short line adds fewer crossing verts than the full belt");
 }

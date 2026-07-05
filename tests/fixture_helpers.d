@@ -537,6 +537,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         if ("fast" in sl)
             cmd(format("tool.attr mesh.sliceTool fast %d",
                        sl["fast"].type == JSONType.true_ ? 1 : 0), ctx);
+        // Optional `"infinite": true/false` (S4): OFF (default) clips the cut to
+        // the drawn Start→End span; ON slices the whole mesh (the S0 behavior).
+        if ("infinite" in sl)
+            cmd(format("tool.attr mesh.sliceTool infinite %d",
+                       sl["infinite"].type == JSONType.true_ ? 1 : 0), ctx);
         cmd(format("tool.attr mesh.sliceTool startX %g", s[0]), ctx);
         cmd(format("tool.attr mesh.sliceTool startY %g", s[1]), ctx);
         cmd(format("tool.attr mesh.sliceTool startZ %g", s[2]), ctx);

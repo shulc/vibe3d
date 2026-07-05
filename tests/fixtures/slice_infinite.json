@@ -1,0 +1,65 @@
+{
+  "name": "slice_infinite",
+  "description": "Slice tool (mesh.sliceTool, task 0270 S4) `infinite` bool. The SAME drawn line is cut with infinite ON vs OFF on a mesh WIDER than the line, so the two visibly differ. Mesh: two disjoint co-planar quad strips in the y=0 plane — LEFT x in [-3,-1] (2 quads), RIGHT x in [1,3] (2 quads). The cut plane is z=0 (normal +Z, from a line along X perpendicular to the +Y work plane). The drawn line is Start(-4,0,0)->End(0,0,0): it spans ONLY the left strip (left crossings x=-3,-2,-1 fall within the segment's projected band; right crossings x=1,2,3 fall past End). infinite=ON extends the line indefinitely, so the plane slices the WHOLE mesh: all 4 quads split, +6 crossing verts (x=-3,-2,-1,1,2,3 at z=0), 12v/4f -> 18v/8f. infinite=OFF (the reference factory default) CLIPS the cut to the drawn span, so ONLY the left strip is cut: 2 quads split, +3 crossing verts (x=-3,-2,-1), 12v/4f -> 15v/6f; the right strip is untouched. Analytic self-golden (Mesh.cutByPlane / cutByPlaneClipped are connectivity-correct by construction, task 0108); the on/off boundary rule is a documented vibe3d divergence (the reference default is authoritatively OFF/clipped per the tool's own attribute description, but its exact per-face boundary behavior is uncapturable on the cube kit — see toolcards findings).",
+  "source": "Analytic. Two 2-quad strips (y=0, z=+/-0.5). Cut plane z=0 (normal +Z). New crossing verts sit at (x,0,0) — the z-midpoint (t=0.5) of each x-const strip edge. Line Start(-4,0,0)->End(0,0,0): band s = dot(q-Start, End-Start)/|End-Start|^2 in [0,1] admits x in [-4,0] (left strip in, right strip out).",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "infinite_on_cuts_whole_mesh",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [-3,0,-0.5],[-2,0,-0.5],[-1,0,-0.5],
+              [-3,0,0.5],[-2,0,0.5],[-1,0,0.5],
+              [1,0,-0.5],[2,0,-0.5],[3,0,-0.5],
+              [1,0,0.5],[2,0,0.5],[3,0,0.5]
+            ],
+            "faces": [ [0,1,4,3], [1,2,5,4], [6,7,10,9], [7,8,11,10] ]
+        } }
+      ],
+      "op": [ { "slice": { "start": [-4,0,0], "end": [0,0,0], "infinite": true } } ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "expected_after":  { "verts": 18, "faces": 8 },
+      "expected_vertices": [
+        [-3,0,-0.5],[-2,0,-0.5],[-1,0,-0.5],
+        [-3,0,0.5],[-2,0,0.5],[-1,0,0.5],
+        [1,0,-0.5],[2,0,-0.5],[3,0,-0.5],
+        [1,0,0.5],[2,0,0.5],[3,0,0.5],
+        [-3,0,0],[-2,0,0],[-1,0,0],[1,0,0],[2,0,0],[3,0,0]
+      ],
+      "lerp_checks": [
+        { "a": [-2,0,-0.5], "b": [-2,0,0.5], "t": 0.5, "point": [-2,0,0] },
+        { "a": [2,0,-0.5],  "b": [2,0,0.5],  "t": 0.5, "point": [2,0,0] }
+      ]
+    },
+    {
+      "name": "infinite_off_clips_to_drawn_span",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [-3,0,-0.5],[-2,0,-0.5],[-1,0,-0.5],
+              [-3,0,0.5],[-2,0,0.5],[-1,0,0.5],
+              [1,0,-0.5],[2,0,-0.5],[3,0,-0.5],
+              [1,0,0.5],[2,0,0.5],[3,0,0.5]
+            ],
+            "faces": [ [0,1,4,3], [1,2,5,4], [6,7,10,9], [7,8,11,10] ]
+        } }
+      ],
+      "op": [ { "slice": { "start": [-4,0,0], "end": [0,0,0], "infinite": false } } ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "expected_after":  { "verts": 15, "faces": 6 },
+      "expected_vertices": [
+        [-3,0,-0.5],[-2,0,-0.5],[-1,0,-0.5],
+        [-3,0,0.5],[-2,0,0.5],[-1,0,0.5],
+        [1,0,-0.5],[2,0,-0.5],[3,0,-0.5],
+        [1,0,0.5],[2,0,0.5],[3,0,0.5],
+        [-3,0,0],[-2,0,0],[-1,0,0]
+      ],
+      "lerp_checks": [
+        { "a": [-2,0,-0.5], "b": [-2,0,0.5], "t": 0.5, "point": [-2,0,0] }
+      ]
+    }
+  ]
+}
