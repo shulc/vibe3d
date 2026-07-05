@@ -1,0 +1,34 @@
+{
+  "name": "slice_caps",
+  "description": "Slice tool 'Cap Sections' option (mesh.sliceTool, task 0274 S8). A cube (8v/6f) cut by the plane through the drawn Start->End line perpendicular to the work plane (headless work-plane normal = default world XZ, +Y). The line runs along Z through the origin, so the plane normal is ||X through X=0 (== the S0 slice.json midX golden). Split is ON in both cases here (S7): each of the 4 crossing verts at x=0 is DUPLICATED into a coincident lo/hi pair, so the single connected cut loop becomes TWO distinct boundary edge-loops and the cube splits into two disconnected sections along the cut (16v/24e/10f, 8 boundary edges). With Cap Sections OFF the two boundary loops are left OPEN (== the slice_split split_on result: 16v/24e/10f). With Cap Sections ON each shell's 4-edge boundary loop is filled by ONE cap polygon (a quad through that loop's 4 verts, in the loop's plane): 16v/24e/12f -- the two caps add NO new edges (each cap edge reuses an existing shell boundary edge) and NO new verts, so expected_vertices is identical to the OFF case. Both boundary loops are closed (0 boundary edges) but the two shells stay DISCONNECTED, each cap sealing its own shell into an independent closed solid (2 components; Euler V-E+F = 16-24+12 = 4 = 2 per shell). This MIRRORS the loop_slice_caps golden (split+caps on the cube belt => +2 faces, one flat cap per shell): both the Slice split-caps path and the Loop Slice Cap Sections path share the same Mesh.capShellCycles helper, so they produce byte-identical cap topology. The stronger topological proof (boundary-edge count, component count) lives in the source/mesh.d cutByPlaneEx kernel unittest.",
+  "source": "Analytic. Cube +/-0.5; plane law = math.planeForSlice(start, end, +Y). Line along Z -> plane normal ||X through origin (X=0). Split ON duplicates each crossing vert into a coincident copy (verts 12-15 coincide with 8-11); Cap Sections ON then seals each shell's boundary loop with one polygon (no new verts/edges). Cap geometry law is connectivity-correct by construction (Mesh.capShellCycles, shared with Loop Slice Cap Sections, task 0274), no reference-app numeric parity needed.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "caps_off_open_boundaries",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": false } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "caps_on_closed_sections",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": true } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    }
+  ]
+}

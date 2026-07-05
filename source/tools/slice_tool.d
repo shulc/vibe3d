@@ -72,6 +72,7 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          Vec3 vector = Vec3(0, 1, 0),
                          bool infinite = false,
                          bool split = false,
+                         bool caps = false,
                          const uint[] restrictFaces = null)
 {
     if (baseline.filled) baseline.restore(mesh);
@@ -89,6 +90,10 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // SAME plane cut through Mesh.cutByPlaneEx, which duplicates the cut loop
     // into two coincident boundary loops (the Loop Slice lo/hi seam model),
     // splitting the surface into two disconnected sections along the cut.
+    // `caps` (task S8): with `split` on, seal each split section's boundary loop
+    // with one cap polygon (Mesh.cutByPlaneEx forwards it to splitAlongCutLoop →
+    // capShellCycles, the SAME cap geometry as Loop Slice Cap Sections). A no-op
+    // when `split` is off (the non-split kernels never duplicate a loop).
     // `restrictFaces` (task 0279): when non-empty, the cut is confined to those
     // faces — the reference Slice cuts ONLY the selected polygons (the whole
     // layer when nothing is selected, i.e. an empty set here). Threaded into
@@ -103,7 +108,7 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     }
     Mesh.PlaneCutLoops loops;
     return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
-                             /*split*/true, loops, 1e-5f, restrictFaces);
+                             /*split*/true, caps, loops, 1e-5f, restrictFaces);
 }
 
 // The face set the cut is restricted to = the current POLYGON selection. Empty
@@ -171,9 +176,17 @@ uint[] sliceRestrictFaces(ref Mesh mesh) {
 // It threads through the preview + commit (sliceFromBaseline) and applyHeadless.
 // The seam-pair data it produces is what Cap Sections (S8) / Gap (S9) build on.
 //
-// Deferred to later tasks: angle snap (S5), caps/gap reusing the Loop Slice
-// machinery (S8–S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`, `infinite`,
-// `split`, `axis`, `vectorX/Y/Z`.
+// S8 (task 0274) adds `caps` (Cap Sections, bool, default ON, dep Split): with
+// `split` on, each split section's boundary loop is sealed by one cap polygon in
+// the loop plane — the SAME geometry as Loop Slice Cap Sections (the shared
+// Mesh.capShellCycles helper, via cutByPlaneEx → splitAlongCutLoop). A no-op
+// while `split` is off (greyed by paramEnabled); the seam-pair data survives for
+// Gap (S9). Threads through the preview + commit (sliceFromBaseline) and
+// applyHeadless.
+//
+// Deferred to later tasks: angle snap (S5), gap reusing the Loop Slice machinery
+// (S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`, `infinite`, `split`, `caps`,
+// `axis`, `vectorX/Y/Z`.
 //
 // Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
 // `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
@@ -245,6 +258,21 @@ private:
     // activate), like the other tool options. The seam-pair data it produces is
     // the foundation the later Cap Sections (S8) / Gap (S9) options act on.
     bool split_ = false;
+
+    // Cap Sections (S8, task 0274; default ON per the reference spec — spec.json
+    // "caps" default true, dep Split). A no-op while `split_` is off (the
+    // non-split cut never duplicates a loop, so there is no open boundary to
+    // cap); the panel greys it out then (paramEnabled). With `split_` on, each
+    // split section's boundary loop is sealed by one cap polygon — the SAME
+    // geometry as Loop Slice Cap Sections (Mesh.capShellCycles). Threads through
+    // the preview + commit (sliceFromBaseline) and applyHeadless. Sticky (not
+    // reset on activate), like the other tool options. DEFAULT DECISION: the
+    // reference live-capture reads caps=on but flags it "may be sticky"; the
+    // spec's authoritative default is ON and the vibe3d Loop Slice Cap Sections
+    // default is likewise ON, so ON is the self-consistent reference-faithful
+    // default. It changes nothing while Split is off (the S0/S4/S7 goldens, all
+    // Split-off, stay byte-for-byte).
+    bool caps_ = true;
 
     // Which part of the gizmo this gesture drags.
     enum DragNone  = -1;
@@ -345,6 +373,10 @@ public:
             // Split (S7): OFF connected single cut (default); ON duplicates the
             // cut loop into two disconnected boundary loops.
             Param.bool_( "split",  "Split", &split_, false),
+            // Cap Sections (S8): with Split on, seal each split section's
+            // boundary loop with a cap polygon. Default ON; greyed while Split
+            // off (paramEnabled) — a no-op there.
+            Param.bool_( "caps",   "Cap Sections", &caps_, true),
             // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
             // normal) / Custom (vector normal). Default Free — see SliceAxis.
             Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
@@ -362,6 +394,10 @@ public:
     override bool paramEnabled(string name) const {
         if (name == "vectorX" || name == "vectorY" || name == "vectorZ")
             return axis_ == SliceAxis.Custom;
+        // Cap Sections (S8) only acts once Split has duplicated the loop — grey
+        // it while Split is off (it is a no-op there), mirroring the reference.
+        if (name == "caps")
+            return split_;
         return true;
     }
 
@@ -381,6 +417,7 @@ public:
         root["fast"]   = JSONValue(fast_);
         root["infinite"] = JSONValue(infinite_);
         root["split"]  = JSONValue(split_);
+        root["caps"]   = JSONValue(caps_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);
         root["vectorY"] = JSONValue(vector_.y);
@@ -447,12 +484,13 @@ public:
         uint[] restrict = sliceRestrictFaces(*mesh);
         // infinite ⇒ whole-mesh plane cut; else clip to the drawn Start→End span.
         // split ⇒ route the same cut through cutByPlaneEx so the loop is
-        // duplicated into two disconnected boundary loops (S7).
+        // duplicated into two disconnected boundary loops (S7); caps ⇒ seal each
+        // section with a cap polygon (S8, forwarded to splitAlongCutLoop).
         size_t nSplit;
         if (split_) {
             Mesh.PlaneCutLoops loops;
             nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, start_, end_,
-                                       /*split*/true, loops, 1e-5f, restrict);
+                                       /*split*/true, caps_, loops, 1e-5f, restrict);
         } else if (restrict.length > 0) {
             nSplit = infinite_ ? mesh.cutByPlaneRestricted(p, n, restrict)
                                : mesh.cutByPlaneClipped(p, n, start_, end_, 1e-5f, restrict);
@@ -637,7 +675,7 @@ private:
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
                                           cachedWorkplaneNormal(), cast(int)axis_, vector_,
-                                          infinite_, split_, restrictFaces_);
+                                          infinite_, split_, caps_, restrictFaces_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,

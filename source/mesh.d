@@ -8231,44 +8231,15 @@ struct Mesh {
             bool[uint] loSet, hiSet;
             foreach (pr; splitSeams) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
 
+            // Chain each shell's incidence-1 boundary edges into reversed cap
+            // polygons via the shared `capShellCycles` helper (same geometry the
+            // Slice split-caps path uses — task 0274). Interior lo–lo / hi–hi
+            // edges (incidence 2) are skipped; each cap reuses existing boundary
+            // verts (no new verts/edges).
             void capBoundaryLoops(ref bool[uint] set) {
-                // Directed boundary edges (face-incidence 1) with both ends in
-                // `set`; keep one directed representative per undirected edge (its
-                // sole owning face's orientation).
-                uint[ulong]    cnt;
-                uint[2][ulong] dir;
-                foreach (ref f; newFaces)
-                    foreach (k; 0 .. f.length) {
-                        uint u = f[k], v = f[(k + 1) % f.length];
-                        if (u in set && v in set) {
-                            ulong kk = edgeKey(u, v);
-                            if (kk !in cnt) dir[kk] = cast(uint[2])[u, v];
-                            cnt[kk]++;
-                        }
-                    }
-                // Chain the incidence-1 boundary edges into ordered cycles
-                // (next[u] = v). Deterministic: sort the cycle start candidates.
-                uint[uint] next;
-                foreach (kk, c; cnt) if (c == 1) { auto e = dir[kk]; next[e[0]] = e[1]; }
-                import std.algorithm : sort;
-                uint[] starts;
-                foreach (u, nxt; next) starts ~= u;
-                starts.sort();
-                bool[uint] used;
-                foreach (s; starts) {
-                    if (s in used) continue;
-                    uint[] cyc; uint cur = s;
-                    while (cur !in used) {
-                        used[cur] = true; cyc ~= cur;
-                        auto nx = cur in next;
-                        if (nx is null) break;
-                        cur = *nx;
-                    }
-                    if (cyc.length >= 3) {
-                        reverseInPlace(cyc);   // oppose the shell's side faces → seal
-                        newFaces ~= cyc;
-                        newFaceIndices ~= cast(uint)(newFaces.length - 1);
-                    }
+                foreach (cyc; capShellCycles(newFaces, set)) {
+                    newFaces ~= cyc;
+                    newFaceIndices ~= cast(uint)(newFaces.length - 1);
                 }
             }
             capBoundaryLoops(loSet);
@@ -9971,7 +9942,7 @@ struct Mesh {
     // of faces split (0 = no cut; `result` left empty). Caller owns snapshot/undo.
     // -----------------------------------------------------------------------
     size_t cutByPlaneEx(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
-                        bool split, out PlaneCutLoops result, float eps = 1e-5f,
+                        bool split, bool caps, out PlaneCutLoops result, float eps = 1e-5f,
                         const uint[] restrictFaces = null) {
         bool[] isCutVert;
         size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd,
@@ -9980,8 +9951,10 @@ struct Mesh {
         // Order the crossing verts into ring(s) from the connected cut BEFORE the
         // split duplicates them (the split rebuilds edges under us).
         result.loops = extractCutLoops(isCutVert);
+        // `caps` (S8) is only meaningful WITH `split` — it seals each duplicated
+        // boundary loop with a cap polygon (see splitAlongCutLoop / capShellCycles).
         if (split)
-            splitAlongCutLoop(isCutVert, p, n, result.seamPairs, eps);
+            splitAlongCutLoop(isCutVert, p, n, caps, result.seamPairs, eps);
         return nSplit;
     }
 
@@ -10045,7 +10018,7 @@ struct Mesh {
     // duplicated crossing vertex — the data S8 (caps) / S9 (gap) act on.
     // -----------------------------------------------------------------------
     private void splitAlongCutLoop(const bool[] isCutVert, Vec3 planeP, Vec3 planeN,
-                                   out uint[2][] seamPairs, float eps) {
+                                   bool caps, out uint[2][] seamPairs, float eps) {
         bool cut(uint v) { return v < isCutVert.length && isCutVert[v]; }
         uint[uint] dupOf;
         uint getDup(uint vi) {
@@ -10076,11 +10049,76 @@ struct Mesh {
             }
         }
         if (seamPairs.length == 0) return;   // nothing duplicated — no-op
+        // Cap Sections (S8, task 0274): seal each opened section with ONE cap
+        // polygon that fills that section's own boundary loop — the SAME geometry
+        // as the Loop Slice Cap Sections option (shared `capShellCycles`, task
+        // 0252/0261): the positive shell's boundary is the `lo` originals, the
+        // negative shell's the `hi` duplicates. Each shell's boundary loop is
+        // filled by one polygon (reversed to oppose that shell's side faces),
+        // adding NO verts and NO edges (every cap edge reuses an existing shell
+        // boundary edge). `caps` is only meaningful once `split` duplicated the
+        // loop; the two shells stay disconnected so a Gap (S9) opens a real band.
+        if (caps) {
+            bool[uint] loSet, hiSet;
+            foreach (pr; seamPairs) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
+            foreach (cyc; capShellCycles(faces, loSet)) faces ~= cyc;
+            foreach (cyc; capShellCycles(faces, hiSet)) faces ~= cyc;
+        }
         rebuildEdges();
         clearEdgeSelectionResize();
         buildLoops();
         syncSelection();
         commitChange(MeshEditScope.Geometry);
+    }
+
+    // -----------------------------------------------------------------------
+    // capShellCycles — the shared Cap Sections boundary-loop geometry (Loop
+    // Slice task 0252/0261 + Slice S8 task 0274). Given a face list and the
+    // vertex `set` of ONE split shell, collect that shell's boundary edges
+    // (face-incidence 1, both endpoints in `set`), chain them into ordered
+    // cycles, and return each cycle REVERSED so a cap face opposes the shell's
+    // side faces and seals it. Interior lo–lo / hi–hi edges (incidence 2, shared
+    // by two sub-faces of a multi-position split) are skipped. Adds no verts /
+    // no edges — every returned polygon reuses existing boundary verts. Pure
+    // read of `faceList`; both the Loop Slice caps path (insertEdgeLoopsMulti,
+    // fed its local `newFaces`) and the Slice split-caps path (splitAlongCutLoop,
+    // fed `faces`) call it, so the two produce byte-identical cap topology.
+    // -----------------------------------------------------------------------
+    static uint[][] capShellCycles(const(uint[])[] faceList, const bool[uint] set) {
+        import std.algorithm : sort, reverse;
+        uint[ulong]    cnt;
+        uint[2][ulong] dir;
+        foreach (ref f; faceList)
+            foreach (k; 0 .. f.length) {
+                uint u = f[k], v = f[(k + 1) % f.length];
+                if (u in set && v in set) {
+                    ulong kk = edgeKey(u, v);
+                    if (kk !in cnt) dir[kk] = cast(uint[2])[u, v];
+                    cnt[kk]++;
+                }
+            }
+        uint[uint] next;
+        foreach (kk, c; cnt) if (c == 1) { auto e = dir[kk]; next[e[0]] = e[1]; }
+        uint[] starts;
+        foreach (u, nxt; next) starts ~= u;
+        starts.sort();
+        bool[uint] used;
+        uint[][] cycles;
+        foreach (s; starts) {
+            if (s in used) continue;
+            uint[] cyc; uint cur = s;
+            while (cur !in used) {
+                used[cur] = true; cyc ~= cur;
+                auto nx = cur in next;
+                if (nx is null) break;
+                cur = *nx;
+            }
+            if (cyc.length >= 3) {
+                reverse(cyc);   // oppose the shell's side faces → seal
+                cycles ~= cyc;
+            }
+        }
+        return cycles;
     }
 
     // -----------------------------------------------------------------------
@@ -16513,7 +16551,7 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     Mesh.PlaneCutLoops offR;
     size_t nOff = off.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
                                    /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                                   /*split*/false, offR);
+                                   /*split*/false, /*caps*/false, offR);
     assert(nOff == 4, "split off: 4 side faces split by the mid-plane cut");
     immutable offV = off.vertices.length, offE = off.edges.length, offF = off.faces.length;
     assert(offV == 12 && offF == 10, "split off: 12v/10f connected cut");
@@ -16531,7 +16569,7 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     Mesh.PlaneCutLoops onR;
     size_t nOn = on.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
                                  /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                                 /*split*/true, onR);
+                                 /*split*/true, /*caps*/false, onR);
     assert(nOn == 4, "split on: same 4 side faces split");
     assert(on.vertices.length == offV + 4, "split on: 4 crossing verts duplicated");
     assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
@@ -16551,6 +16589,26 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     bool[] refd = new bool[](on.vertices.length);
     foreach (face; on.faces) foreach (vi; face) refd[vi] = true;
     foreach (i, r; refd) assert(r, "split on: vertex " ~ i.to!string ~ " orphaned");
+
+    // Split ON + Cap Sections ON (S8, task 0274) — each of the two boundary loops
+    // is sealed by ONE cap polygon (the shared capShellCycles geometry, same as
+    // Loop Slice Cap Sections). +2 faces, NO new verts, NO new edges (each cap
+    // edge reuses an existing shell boundary edge); both loops close (0 boundary
+    // edges) yet the two shells stay DISCONNECTED (each cap seals its own shell).
+    Mesh cap = makeCube();
+    cap.buildLoops();
+    cap.resetSelection();
+    Mesh.PlaneCutLoops capR;
+    size_t nCap = cap.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                   /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                   /*split*/true, /*caps*/true, capR);
+    assert(nCap == 4, "split+caps: same 4 side faces split");
+    assert(cap.vertices.length == on.vertices.length, "caps add no verts");
+    assert(cap.edges.length    == on.edges.length,    "caps add no edges (reuse boundary edges)");
+    assert(cap.faces.length    == on.faces.length + 2, "caps add exactly 2 faces (one per shell)");
+    assert(boundaryEdgeCount(cap) == 0, "split+caps: both boundary loops sealed");
+    assert(componentCount(cap) == 2, "split+caps: two shells stay disconnected");
+    assert(capR.seamPairs.length == 4, "split+caps: still 4 seam pairs for Gap (S9)");
 }
 
 // ---------------------------------------------------------------------------
