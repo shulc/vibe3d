@@ -478,6 +478,15 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "curvature": true, "tension": 0.5 } }`.
         if ("tension" in ls)
             cmd(format("tool.attr mesh.loopSliceTool tension %g", asDouble(ls["tension"])), ctx);
+        // Optional 1D profile cutter (task 0256): `profile` names a built-in profile
+        // curve (flat/round/vee/step) whose along-cut samples REPLACE the placement,
+        // and `depth` is the Inset (normal displacement scale). A non-flat profile
+        // presses its cross-section into each slice. `{ "loop_slice": { ...,
+        // "profile": "vee", "depth": 2.0 } }`.
+        if ("profile" in ls)
+            cmd(format("tool.attr mesh.loopSliceTool profile %s", ls["profile"].str), ctx);
+        if ("depth" in ls)
+            cmd(format("tool.attr mesh.loopSliceTool depth %g", asDouble(ls["depth"])), ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

@@ -7759,6 +7759,32 @@ struct Mesh {
     ///   (identical to `curvature` off), and it may exceed 1 / go negative. On a
     ///   FLAT (locally collinear) cage the four points are collinear so the spline
     ///   equals the chord — `curvature` on is then a no-op there.
+    ///
+    /// - `profileHeights` / `profileDepth` (1D profile cutter, task 0256): when
+    ///   `profileHeights` is null (default) every inserted loop lies ON the surface
+    ///   (byte-for-byte the flat behaviour above). When non-null it MUST be parallel
+    ///   to `positions` (one height per loop, height normalized 0..1) — the caller
+    ///   drives an arbitrary 1D profile by choosing `positions` = the profile's
+    ///   along-cut sample fractions and `profileHeights` = the profile's height at
+    ///   each. After all faces/verts are built, EACH inserted loop `i` is displaced
+    ///   OFF the surface along the local surface normal by `profileHeights[i] *
+    ///   profileDepth`, so the sequence of loops presses the profile's cross-section
+    ///   into the surface ("Inset" = `profileDepth`). The surface normal per rail is
+    ///   the average of the rail edge's incident face normals in the ORIGINAL mesh
+    ///   (a single consistent value per physical rail, so a rail shared by two ring
+    ///   faces is displaced ONCE, watertight). Both the connected (`midsVa`) and the
+    ///   Split-duplicated (`midsVb`) copies of a rail midpoint receive the SAME
+    ///   normal displacement, so profile composes with Split/Gap (Gap then separates
+    ///   the pair ALONG the rail, orthogonal to the profile normal). Grid-interior
+    ///   verts of a rare two-ring crossing are NOT displaced (documented limitation;
+    ///   profiles are a single-ring cutter). `profileDepth == 0` (the reference's
+    ///   default Inset) leaves every loop on the surface even for a non-flat profile.
+    ///   The built-in profile CURVES themselves are vibe3d-defined stand-ins (the
+    ///   reference profile preset library is closed-source and not headlessly
+    ///   capturable); only the MECHANISM (sample→loop→normal-inset) is
+    ///   reference-faithful. See `LoopSliceTool.profileSamples` (source/tools/
+    ///   loop_slice_tool.d) for the built-in set and the reversex/reversey/aspect
+    ///   hook points (tasks 0257/0258/0259).
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
@@ -7769,7 +7795,9 @@ struct Mesh {
                               uint[2][]* splitPairsOut = null,
                               float gap = 0.0f,
                               bool curvature = false,
-                              float curveTension = 1.0f) {
+                              float curveTension = 1.0f,
+                              const(float)[] profileHeights = null,
+                              float profileDepth = 0.0f) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7828,15 +7856,38 @@ struct Mesh {
         // Split option requests the toward-`vb` side; stays null otherwise so no
         // orphan verts appear for rails a split face never references on its hi
         // side (grid / absorb rails).
-        struct Rail { uint va; uint[] midsVa; uint[] midsVb; }
+        // `normal` (task 0256 profile cutter): the surface normal along which this
+        // rail's loop midpoints are displaced by the 1D profile. Computed once per
+        // rail (see below) ONLY when profile displacement is requested; a benign
+        // default (+Y) otherwise so the flat path pays nothing.
+        struct Rail { uint va; uint[] midsVa; uint[] midsVb; Vec3 normal = Vec3(0,1,0); }
         Rail[]      rails;
         uint[ulong] railByKey;
         uint[2][]   splitSeams;   // [loVert, hiVert] per duplicated midpoint (0251)
         Vec3[]      splitSeamDirs; // unit lo→hi rail (cut) direction per seam (0253 Gap)
+        // Profile cutter (task 0256): displace each inserted loop off the surface
+        // by `profileHeights[i] * profileDepth` along the rail's surface normal.
+        // Only active when the caller supplies a per-loop height array.
+        immutable bool profileOn = profileHeights !is null;
 
         static void reverseInPlace(uint[] a) {
             size_t i = 0, j = a.length - 1;
             while (i < j) { uint t = a[i]; a[i] = a[j]; a[j] = t; ++i; --j; }
+        }
+
+        // Surface normal at a rail edge (task 0256): the average of the incident
+        // face normals of edge va→vb in the ORIGINAL mesh (faces/loops are still
+        // untouched during the emit phase — only `newFaces` is being built, and
+        // addVertex merely appends). One consistent value per physical rail keyed
+        // to the edge, so a rail shared by two ring faces is displaced ONCE and the
+        // cut stays watertight. Falls back to +Y on a degenerate/missing edge.
+        Vec3 railNormal(uint va, uint vb) {
+            uint ei = edgeIndex(va, vb);
+            if (ei == ~0u) return Vec3(0, 1, 0);
+            Vec3 sum = Vec3(0, 0, 0);
+            foreach (fi; facesAroundEdge(ei)) sum = sum + faceNormal(fi);
+            float len = sqrt(dot(sum, sum));
+            return len > 1e-6f ? sum * (1.0f / len) : Vec3(0, 1, 0);
         }
 
         uint[] getMids(uint va, uint vb) {
@@ -7866,7 +7917,8 @@ struct Mesh {
                     mids ~= addVertex(va3 + (vb3 - va3) * t);
             }
             railByKey[k] = cast(uint)rails.length;
-            rails ~= Rail(va, mids, null);
+            Vec3 nrm = profileOn ? railNormal(va, vb) : Vec3(0, 1, 0);
+            rails ~= Rail(va, mids, null, nrm);
             return mids;
         }
 
@@ -8176,6 +8228,31 @@ struct Mesh {
                 Vec3 d = splitSeamDirs[i];
                 vertices[pr[0]] = vertices[pr[0]] - d * half;   // lo → toward va
                 vertices[pr[1]] = vertices[pr[1]] + d * half;   // hi → toward vb
+            }
+        }
+
+        // 1D profile cutter (task 0256): press the profile's cross-section into the
+        // surface by displacing each inserted loop `i` along its rail's surface
+        // normal by `profileHeights[i] * profileDepth`. Positions only — topology is
+        // UNCHANGED (the loops were already inserted at the profile's along-cut
+        // sample fractions via `positions`). Both the connected (`midsVa`) and the
+        // Split hi-duplicate (`midsVb`) copies of a midpoint move by the SAME normal
+        // offset, so profile composes with Split (Gap then separates the pair along
+        // the rail, orthogonal to this normal). A rail is displaced ONCE regardless
+        // of how many faces reference it (the cache is per physical rail), keeping
+        // the cut watertight. `profileHeights is null` OR `profileDepth == 0` leaves
+        // every loop on the surface, byte-for-byte with the flat path. Grid-interior
+        // verts of a two-ring crossing are intentionally NOT displaced (profiles are
+        // a single-ring cutter — documented limitation).
+        if (profileOn && profileDepth != 0.0f) {
+            foreach (ref r; rails) {
+                foreach (i; 0 .. r.midsVa.length) {
+                    if (i >= profileHeights.length) break;
+                    Vec3 disp = r.normal * (profileHeights[i] * profileDepth);
+                    vertices[r.midsVa[i]] = vertices[r.midsVa[i]] + disp;
+                    if (r.midsVb !is null && i < r.midsVb.length)
+                        vertices[r.midsVb[i]] = vertices[r.midsVb[i]] + disp;
+                }
             }
         }
 
@@ -15348,6 +15425,89 @@ unittest {
            "curvature-on flat-cage insert must succeed");
     assert(hasV(flat, Vec3(1.5f, 0, 0)) && hasV(flat, Vec3(1.5f, 0, 1)),
            "flat cage: curvature ON leaves the midpoints on the (straight) chord");
+}
+
+// insertEdgeLoopsMulti — 1D profile cutter (task 0256). A FLAT strip of 3 quads
+// in the XZ plane (all normal +Y); seed = the middle quad's rail edge (2,4).
+// Feeding a Vee profile (3 loops at along-cut fractions t=[0.25,0.5,0.75] with
+// normalized heights h=[0.5,1.0,0.5]) and Inset depth D presses a V into the
+// surface: each rail midpoint at fraction t is lifted along +Y by h·D. With
+// profileHeights=null (flat, default) the same 3 positions stay ON the surface
+// (byte-for-byte the multi-loop flat cut). With depth=0 a non-flat profile is
+// ALSO a no-op (loops stay on the surface). Topology is identical in every case
+// (3 loops ⇒ same vert/edge/face counts) — profile relocates verts only.
+unittest {
+    import std.math : abs;
+    static bool hasV(const Mesh m, Vec3 p, float eps = 1e-4f) {
+        foreach (v; m.vertices)
+            if (abs(v.x-p.x) < eps && abs(v.y-p.y) < eps && abs(v.z-p.z) < eps)
+                return true;
+        return false;
+    }
+    static Mesh makeFlatStrip() {
+        // Columns x=0..3, rows z=0/1, all y=0 (planar, normal +Y).
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(0,0,1),
+            Vec3(1,0,0), Vec3(1,0,1),
+            Vec3(2,0,0), Vec3(2,0,1),
+            Vec3(3,0,0), Vec3(3,0,1),
+        ];
+        m.addFace([0u,2u,3u,1u]);   // Q0
+        m.addFace([2u,4u,5u,3u]);   // Q1 — the cut face
+        m.addFace([4u,6u,7u,5u]);   // Q2
+        m.rebuildEdges();
+        m.buildLoops();
+        return m;
+    }
+    immutable float[] posV = [0.25f, 0.5f, 0.75f];   // along-cut sample fractions
+    immutable float[] hV   = [0.5f, 1.0f, 0.5f];     // Vee heights (normalized)
+
+    // Baseline: same 3 loops, NO profile (flat) — every loop on the surface (y=0).
+    Mesh flat = makeFlatStrip();
+    uint eiF = flat.edgeIndex(2, 4);
+    assert(eiF != ~0u, "seed edge (2,4) must exist");
+    uint[] nfF;
+    assert(flat.insertEdgeLoopsMulti([eiF], posV, nfF, null, false, false,
+                                     false, false, null, 0.0f, false, 1.0f,
+                                     /*profileHeights*/null, /*depth*/0.0f),
+           "flat profile (null heights) insert must succeed");
+    immutable fV = flat.vertices.length, fE = flat.edges.length, fF = flat.faces.length;
+    // Q1's rail (2,4) runs x=1→2 at z=0; three loops at x=1.25/1.5/1.75, all y=0.
+    assert(hasV(flat, Vec3(1.25f, 0, 0)) && hasV(flat, Vec3(1.5f, 0, 0)) && hasV(flat, Vec3(1.75f, 0, 0)),
+           "flat: 3 loops sit on the surface (y=0)");
+
+    // Vee profile, depth D=2. Q1's geometric normal is -Y (the strip is wound so
+    // faceNormal([2,4,5,3]) = (0,-1,0)), so heights [0.5,1,0.5]·D press the loops
+    // DOWN by y = [-1,-2,-1] along that surface normal. The MECHANISM uses the true
+    // per-rail normal — the sign follows the winding, not an assumed "up".
+    Mesh vee = makeFlatStrip();
+    uint eiV = vee.edgeIndex(2, 4);
+    uint[] nfV;
+    assert(vee.insertEdgeLoopsMulti([eiV], posV, nfV, null, false, false,
+                                    false, false, null, 0.0f, false, 1.0f,
+                                    /*profileHeights*/hV, /*depth*/2.0f),
+           "vee profile insert must succeed");
+    // Topology IDENTICAL to the flat baseline (profile relocates verts only).
+    assert(vee.vertices.length == fV && vee.edges.length == fE && vee.faces.length == fF,
+           "vee: topology identical to the flat baseline (positions only)");
+    // Rail (2,4) at z=0: x=1.25→y=-1, x=1.5→y=-2 (the vee apex), x=1.75→y=-1.
+    assert(hasV(vee, Vec3(1.25f, -1.0f, 0)), "vee: t=0.25 loop inset h·D = 0.5·2 = 1 (along -Y normal)");
+    assert(hasV(vee, Vec3(1.5f,  -2.0f, 0)), "vee: t=0.50 apex inset h·D = 1.0·2 = 2");
+    assert(hasV(vee, Vec3(1.75f, -1.0f, 0)), "vee: t=0.75 loop inset h·D = 0.5·2 = 1");
+    assert(hasV(vee, Vec3(1.25f, -1.0f, 1)), "vee: the z=1 rail (3,5) insets identically");
+    assert(!hasV(vee, Vec3(1.5f, 0, 0)), "vee: the apex loop is no longer on the surface");
+
+    // depth=0 with a non-flat profile is a no-op (loops stay on the surface).
+    Mesh d0 = makeFlatStrip();
+    uint eiD = d0.edgeIndex(2, 4);
+    uint[] nfD;
+    assert(d0.insertEdgeLoopsMulti([eiD], posV, nfD, null, false, false,
+                                   false, false, null, 0.0f, false, 1.0f,
+                                   /*profileHeights*/hV, /*depth*/0.0f),
+           "depth=0 profile insert must succeed");
+    assert(hasV(d0, Vec3(1.5f, 0, 0)) && !hasV(d0, Vec3(1.5f, -2.0f, 0)),
+           "depth=0: non-flat profile leaves every loop on the surface");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit

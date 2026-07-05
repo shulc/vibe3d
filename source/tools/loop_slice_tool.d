@@ -44,6 +44,95 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// 1D profile cutter (task 0256) — the profile DATA MODEL + built-in registry.
+//
+// The reference Loop Slice can load an arbitrary 1D profile curve (a "router
+// bit" cross-section) from a profile preset browser and press it into
+// each slice, scaled by `depth` (the "Inset"). A profile is a normalized 2D
+// curve: X = position ALONG the cut (0..1, mapped to the loop's along-rail
+// fraction), Y = HEIGHT (0..1, mapped to the normal-direction inset). Sampling
+// the curve yields MULTIPLE loops; loop `i` is inserted at the sample's `t` and
+// displaced off the surface by `height·depth` (see `Mesh.insertEdgeLoopsMulti`
+// `profileHeights`/`profileDepth`).
+//
+// SCOPE / HONESTY: the reference's profile preset LIBRARY is closed
+// source and its curves cannot be captured headlessly (the loop-slice gesture is
+// human-VNC-only and Profile sits behind the `>>` overflow whose popover does not
+// composite). So the MECHANISM here is reference-faithful, but the specific
+// built-in curves below are vibe3d-DEFINED stand-ins — NOT a claim of exact
+// preset match. `Flat` is the default and, being a null-profile sentinel, is
+// byte-for-byte the prior single-/multi-loop flat behaviour.
+enum LoopProfile { Flat, Round, Vee, Step }
+
+immutable IntEnumEntry[4] loopProfileTable = [
+    IntEnumEntry(cast(int)LoopProfile.Flat,  "flat",  "Flat (none)"),
+    IntEnumEntry(cast(int)LoopProfile.Round, "round", "Round"),
+    IntEnumEntry(cast(int)LoopProfile.Vee,   "vee",   "Vee"),
+    IntEnumEntry(cast(int)LoopProfile.Step,  "step",  "Step"),
+];
+
+/// One normalized profile sample: `t` = along-cut fraction (0..1), `height` =
+/// normal-direction inset (0..1, scaled by `depth` at cut time).
+struct ProfileSample { float t; float height; }
+
+/// The built-in profile curves (vibe3d-defined stand-ins — see the note above).
+/// `Flat` returns an empty array (the null-profile sentinel: the caller then uses
+/// its own Count/Position placement and passes NO heights to the kernel, so the
+/// cut is byte-for-byte the flat behaviour). Every non-flat sample has `t` in
+/// (0,1) so it clamps cleanly to the kernel's open-interval position range.
+ProfileSample[] profileSamples(LoopProfile p) {
+    final switch (p) {
+        case LoopProfile.Flat:
+            return null;
+        case LoopProfile.Round:
+            // Half-round: a semicircle bump, height = sqrt(1-(2t-1)^2). Sampled at
+            // 5 interior fractions (peak 1.0 at the centre, symmetric).
+            return [
+                ProfileSample(0.1f, 0.6f),
+                ProfileSample(0.3f, 0.9165151f),   // sqrt(1-0.16)
+                ProfileSample(0.5f, 1.0f),
+                ProfileSample(0.7f, 0.9165151f),
+                ProfileSample(0.9f, 0.6f),
+            ];
+        case LoopProfile.Vee:
+            // V-notch tent, height = 1-|2t-1| (apex 1.0 at centre). 3 samples.
+            return [
+                ProfileSample(0.25f, 0.5f),
+                ProfileSample(0.5f,  1.0f),
+                ProfileSample(0.75f, 0.5f),
+            ];
+        case LoopProfile.Step:
+            // Rising step / plateau: flat (h=0) on the near half, raised (h=1) on
+            // the far half, with a near-vertical wall at the centre.
+            return [
+                ProfileSample(0.25f, 0.0f),
+                ProfileSample(0.49f, 0.0f),
+                ProfileSample(0.51f, 1.0f),
+                ProfileSample(0.75f, 1.0f),
+            ];
+    }
+}
+
+unittest {
+    // Flat is the null-profile sentinel (empty); every non-flat profile has t in
+    // (0,1) and at least one positive height (so depth>0 actually cuts).
+    assert(profileSamples(LoopProfile.Flat).length == 0);
+    foreach (p; [LoopProfile.Round, LoopProfile.Vee, LoopProfile.Step]) {
+        auto s = profileSamples(p);
+        assert(s.length >= 2, "a non-flat profile needs multiple loops");
+        bool anyH = false;
+        foreach (smp; s) {
+            assert(smp.t > 0.0f && smp.t < 1.0f, "sample t must be in (0,1)");
+            if (smp.height > 0.0f) anyH = true;
+        }
+        assert(anyH, "a non-flat profile must have some positive height");
+    }
+    // Vee apex is the centre sample at full height.
+    auto vee = profileSamples(LoopProfile.Vee);
+    assert(vee[1].t == 0.5f && vee[1].height == 1.0f);
+}
+
+// ---------------------------------------------------------------------------
 // LoopSliceTool — interactive Loop Slice / edge-loop cut (factory id
 // `mesh.loopSliceTool`). Coexists with the one-shot `mesh.loopSlice` /
 // `mesh.addLoop` commands (source/commands/mesh/loop_slice.d) — those stay
@@ -214,6 +303,29 @@ private:
     bool    curvature_     = false;
     float   curveTension_  = 1.0f;
 
+    // 1D profile cutter (task 0256). `profile_` selects a built-in profile curve
+    // (Flat = default = null-profile = byte-for-byte the flat cut); `depth_` is the
+    // reference "Inset" — the scale applied to the profile's normalized height when
+    // it is pressed along the surface normal (default 0 per spec.json, so a non-flat
+    // profile with the default Inset still lands flat). When `profile_ != Flat` the
+    // profile's along-cut sample fractions REPLACE the Count/Position placement and
+    // its heights drive the kernel's per-loop normal displacement (`kernelFeed`).
+    //
+    // 0257/0258/0259 HOOKS — declared here, applied in `kernelFeed`, and currently
+    // always identity (no param exposes them yet; those tasks add the Param + set
+    // the field, a two-line change each):
+    //   • reverseX_ (0257 "Reverse Direction"): mirror the profile along the cut,
+    //     t → 1-t (re-sorted), so the curve is evaluated end-to-start.
+    //   • reverseY_ (0258 "Reverse Inset"): negate the height, h → -h, flipping the
+    //     inset to the other side of the surface.
+    //   • aspect_ (0259 "Keep Aspect"): auto-derive the effective depth from the
+    //     profile's aspect ratio instead of the user `depth_` (see `effectiveDepth`).
+    LoopProfile profile_ = LoopProfile.Flat;
+    float       depth_   = 0.0f;
+    bool        reverseX_ = false;   // 0257 hook
+    bool        reverseY_ = false;   // 0258 hook
+    bool        aspect_   = false;   // 0259 hook
+
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
     // the active viewport cell's top-left corner. Pure display geometry:
@@ -323,6 +435,8 @@ public:
         root["gap"]         = JSONValue(gap_);              // Gap (task 0253)
         root["curvature"]   = JSONValue(curvature_);        // Preserve Curvature (task 0254)
         root["tension"]     = JSONValue(curveTension_);      // Tension (task 0255)
+        root["profile"]     = JSONValue(wireTagForValue(loopProfileTable, cast(int)profile_)); // Profile (task 0256)
+        root["depth"]       = JSONValue(depth_);             // Inset (task 0256)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -386,6 +500,13 @@ public:
             // min/max — the reference range is unbounded (negative insets inward,
             // >1 overshoots outward). Greyed unless `curvature` is on (paramEnabled).
             Param.float_("tension", "Tension", &curveTension_, 1.0f),
+            // 1D profile cutter (task 0256): `Profile` selects a built-in profile
+            // curve (Flat = default, byte-for-byte the flat cut); `depth` is the
+            // reference "Inset" (default 0 per spec.json — a non-flat profile still
+            // lands flat until Inset is raised). See the field + registry comments.
+            Param.intEnum_("profile", "Profile", cast(int*)&profile_,
+                           loopProfileTable, cast(int)LoopProfile.Flat),
+            Param.float_("depth", "Inset", &depth_, 0.0f),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -445,6 +566,11 @@ public:
         gap_            = 0.0f;   // factory default 0 (coincident) — no-op unless Split
         curvature_      = false;  // linear placement (byte-for-byte prior behaviour)
         curveTension_   = 1.0f;   // full Catmull-Rom bulge (0255 "Tension" scales this)
+        profile_        = LoopProfile.Flat;   // null-profile (byte-for-byte flat cut)
+        depth_          = 0.0f;   // Inset — reference default 0 (no displacement)
+        reverseX_       = false;  // 0257 hook
+        reverseY_       = false;  // 0258 hook
+        aspect_         = false;  // 0259 hook
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -528,6 +654,10 @@ public:
     // params stay enabled.
     override bool paramEnabled(string name) const {
         if (name == "tension") return curvature_;
+        // Inset (depth) only bites once a non-flat Profile is chosen (Flat passes
+        // no heights to the kernel, so depth is a no-op) — grey it while Flat, the
+        // way the reference greys the profile sub-controls until a Profile loads.
+        if (name == "depth") return profile_ != LoopProfile.Flat;
         return true;
     }
 
@@ -561,6 +691,8 @@ public:
         if (pname == "gap")    { if (armed_) rebuildCut(); return; }
         if (pname == "curvature") { if (armed_) rebuildCut(); return; }
         if (pname == "tension") { if (armed_) rebuildCut(); return; }
+        if (pname == "profile") { if (armed_) rebuildCut(); return; }   // task 0256
+        if (pname == "depth")   { if (armed_) rebuildCut(); return; }   // task 0256 (Inset)
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -666,10 +798,13 @@ public:
         if (seeds.length == 0) return false;
 
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
+        float[] pos, heights;
+        kernelFeed(pos, heights);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds, pos, newFaceIndices,
                                             restrictFor(selectedFaceIndices()), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
-                                            curvature_, curveTension_);
+                                            curvature_, curveTension_,
+                                            heights, effectiveDepth());
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -951,6 +1086,45 @@ private:
         return copy;
     }
 
+    // The effective Inset (task 0256 / 0259 hook). With `aspect_` off (always,
+    // today) this is just the user `depth_`. Task 0259 ("Keep Aspect") will derive
+    // the depth from the profile's aspect ratio when `aspect_` is set — the flip is
+    // localized HERE so 0259 only adds the derivation branch + the param.
+    float effectiveDepth() const {
+        // 0259 HOOK: `if (aspect_) return <depth from profile aspect ratio>;`
+        return depth_;
+    }
+
+    // The kernel feed for the profile cutter (task 0256). Flat profile ⇒ the
+    // existing sorted Count/Position placement with NO heights (kernel stays
+    // byte-for-byte flat). A non-flat profile REPLACES the placement with the
+    // profile's own along-cut sample fractions and returns the parallel per-loop
+    // heights (normalized 0..1); the kernel then insets loop `i` by
+    // `heights[i]·effectiveDepth`. Positions + heights are sorted TOGETHER by `t`
+    // (the kernel builds each ring's sub-quad chain in position order), so the
+    // reverseX hook (t → 1-t) re-sorts cleanly. `heights` is null for Flat.
+    void kernelFeed(out float[] pos, out float[] heights) const {
+        if (profile_ == LoopProfile.Flat) {
+            pos = kernelPositions();
+            heights = null;
+            return;
+        }
+        ProfileSample[] s = profileSamples(profile_).dup;
+        foreach (ref smp; s) {
+            // 0257 HOOK — Reverse Direction: mirror along the cut.
+            if (reverseX_) smp.t = 1.0f - smp.t;
+            // 0258 HOOK — Reverse Inset: flip the inset to the other surface side.
+            if (reverseY_) smp.height = -smp.height;
+            // Clamp t into the kernel's open (0,1) interval.
+            if      (smp.t < 0.001f) smp.t = 0.001f;
+            else if (smp.t > 0.999f) smp.t = 0.999f;
+        }
+        sort!((a, b) => a.t < b.t)(s);
+        pos = new float[](s.length);
+        heights = new float[](s.length);
+        foreach (i, smp; s) { pos[i] = smp.t; heights[i] = smp.height; }
+    }
+
     // The mutate/revert preview: restore the idle baseline, then reapply the
     // cut from the ORIGINAL seeds_ (valid again immediately after the
     // restore — insertEdgeLoopsMulti rebuilds `edges`/`faces` from scratch
@@ -966,10 +1140,13 @@ private:
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         before_.restore(*mesh);
         uint[] newFaceIndices;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
+        float[] pos, heights;
+        kernelFeed(pos, heights);
+        bool ok = mesh.insertEdgeLoopsMulti(seeds_, pos, newFaceIndices,
                                             restrictFor(armedSelFaces_), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
-                                            curvature_, curveTension_);
+                                            curvature_, curveTension_,
+                                            heights, effectiveDepth());
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
