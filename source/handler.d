@@ -344,6 +344,34 @@ void drawThickLinesExt(GLuint vao, int vertCount, GLenum mode,
     drawThickLines(vao, vertCount, mode, model, vp, color, lineWidth, restoreProgram);
 }
 
+// Lazily-built unit-segment VAO ([0,0,0]→[0,0,1]) shared by tools that draw a
+// single world-space line via the thick-line program (e.g. the Slice tool's
+// Start→End line). Built on first use inside a live GL context (skipped under
+// -unittest, where buildVao3f returns 0 and glDrawArrays is a no-op).
+private GLuint g_segVao, g_segVbo;
+private bool   g_segReady;
+
+/// Draw a thick world-space line from `a` to `b` using the shared thick-line
+/// program (screen-constant pixel `width`), then restore `restoreProgram`.
+/// Maps the unit segment onto a→b with the same model-matrix trick Arrow's
+/// shaft uses, so no per-frame VBO churn is needed.
+void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
+                      Vec3 color, float width, GLuint restoreProgram)
+{
+    if (!g_segReady) {
+        g_segVao = buildVao3f([0f,0f,0f,  0f,0f,1f], g_segVbo);
+        g_segReady = true;
+    }
+    Vec3 dir = b - a;
+    float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+    if (len < 1e-6f) return;
+    Vec3 fwd = dir / len;
+    Vec3 right, up;
+    localFrame(fwd, right, up);
+    auto model = modelMatrix(right, up, fwd, Vec3(1, 1, len), a);
+    drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width, restoreProgram);
+}
+
 // ---------------------------------------------------------------------------
 // Handler — base class for interactive 3-D overlays (gizmos, manipulators…)
 // ---------------------------------------------------------------------------

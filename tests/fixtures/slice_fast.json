@@ -1,0 +1,32 @@
+{
+  "name": "slice_fast",
+  "description": "Slice tool (mesh.sliceTool) S1 `fast` preview-gate parity: the SAME mid-plane cube cut driven with fast=false (live preview during drag) and fast=true (cut deferred to mouse-up) must commit the IDENTICAL geometry (12v/10f, one index-shared crossing vertex per straddled edge). Both cases assert the same frozen golden, proving the committed geometry is fast-independent through the HTTP command path. Analytic self-golden (Mesh.cutByPlane is connectivity-correct by construction).",
+  "source": "Analytic. Cube +/-0.5; line along Z through origin -> plane normal ||X (X=0); new verts are edge midpoints (t=0.5). Same golden as slice.json case midX.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "midX_fast_off",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "fast": false } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "midX_fast_on",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "fast": true } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    }
+  ]
+}

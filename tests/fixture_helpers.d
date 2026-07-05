@@ -526,10 +526,17 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // plane (headless work-plane normal = default world XZ ⇒ +Y). Topology
         // op (adds crossing verts / chord-splits faces via Mesh.cutByPlane).
         //   { "slice": { "start": [x,y,z], "end": [x,y,z] } }
+        // Optional `"fast": true/false` sets the S1 preview gate before the
+        // commit. The committed geometry is fast-independent (the headless
+        // commit is a single cut either way), so a fixture can pin both.
+        //   { "slice": { "start": [...], "end": [...], "fast": true } }
         auto sl = step["slice"];
         auto s  = jvec3(sl["start"]);
         auto en = jvec3(sl["end"]);
         cmd("tool.set mesh.sliceTool on", ctx);
+        if ("fast" in sl)
+            cmd(format("tool.attr mesh.sliceTool fast %d",
+                       sl["fast"].type == JSONType.true_ ? 1 : 0), ctx);
         cmd(format("tool.attr mesh.sliceTool startX %g", s[0]), ctx);
         cmd(format("tool.attr mesh.sliceTool startY %g", s[1]), ctx);
         cmd(format("tool.attr mesh.sliceTool startZ %g", s[2]), ctx);
