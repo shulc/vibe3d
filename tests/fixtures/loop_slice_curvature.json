@@ -1,0 +1,74 @@
+{
+  "name": "loop_slice_curvature",
+  "description": "Loop Slice 'Preserve Curvature' option (task 0254). Cage = a CURVED open strip of 3 quads in a row along X, 1 quad wide in Z, whose column heights follow a symmetric bump h=[0,1,1,0] so the two long (X-direction) boundary edges arc up and back down. Verts (col i, row j) at (x=i, y=h[i], z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,1,0) 3=(1,1,1) 4=(2,1,0) 5=(2,1,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]. The seed edge is the top-row long edge of the MIDDLE quad, (1,1,0)-(2,1,0) = a boundary edge of Q1 only, so collectEdgeRing gives a 1-face open ring cutting Q1's two long rails (2,4) at y=1 and (3,5) at y=1 — both curved (their cage neighbours continue down to y=0 on each side). The cut inserts one loop vertex per rail at t=0.5. OFF (default, linear): each new vert sits on the straight chord midpoint, y=1.0 exactly. ON (Preserve Curvature): each new vert is placed on the uniform Catmull-Rom spline through the four cage points P0=(0,0,0)/(0,0,1), P1=va, P2=vb, P3=(3,0,0)/(3,0,1); at t=0.5 the spline overshoots the flat chord and BULGES to y=1.125 (measurably off the chord, toward where the smooth surface would round), x/z unchanged. Topology is IDENTICAL either way (10 verts / 13 edges / 4 faces) — curvature only relocates the two new verts. The flat_cage case (heights all 0) proves ON is a no-op on a locally-straight cage: the four spline points are collinear so the spline equals the chord, byte-for-byte with linear.",
+  "source": "Analytic self-golden. The 'Preserve Curvature' rule is DERIVED from the live-captured reference `curvature` attribute (toolcards/mesh.loopSlice spec.json, task 0244 live probe: type=boolean default false, 'Preserve curvature of the loop -- position new vertices along a curve through the edges to maintain surface continuity; enables the Tension control'). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the ON curve geometry is NOT independently re-captured live. Implementation choice (documented, canonical): the curve is a UNIFORM CATMULL-ROM (Cardinal) spline through the rail's two cage-neighbour continuation points on each side (found by best-aligned edge continuation), the standard curvature-preserving construction; the new vert = lerp + tension*(catmullRom-lerp) with tension defaulting to 1.0 (full standard 0.5-tangent Catmull-Rom) — the tension factor is the hook task 0255 ('Tension') scales. Flagged honestly.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "curvature_off_linear",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": false } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.0,0],[1.5,1.0,1]
+      ]
+    },
+    {
+      "name": "curvature_on_bulges",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+              [2,1,0],[2,1,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,1,0],[2,1,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,1,0],[1,1,1],
+        [2,1,0],[2,1,1],[3,0,0],[3,0,1],
+        [1.5,1.125,0],[1.5,1.125,1]
+      ]
+    },
+    {
+      "name": "curvature_on_flat_cage_noop",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+              [2,0,0],[2,0,1],[3,0,0],[3,0,1]
+            ],
+            "faces": [ [0,2,3,1], [2,4,5,3], [4,6,7,5] ]
+        } },
+        { "select": { "mode": "edges", "coords": [ [[1,0,0],[2,0,0]] ] } }
+      ],
+      "op": [ { "loop_slice": { "positions": [0.5], "curvature": true } } ],
+      "expected_before": { "verts": 8, "edges": 10, "faces": 3 },
+      "expected_after":  { "verts": 10, "edges": 13, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[0,0,1],[1,0,0],[1,0,1],
+        [2,0,0],[2,0,1],[3,0,0],[3,0,1],
+        [1.5,0,0],[1.5,0,1]
+      ]
+    }
+  ]
+}

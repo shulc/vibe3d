@@ -7357,6 +7357,56 @@ struct Mesh {
         return cast(int)((cast(uint)entryJ + n / 2) % n);
     }
 
+    /// Preserve-Curvature spline point (task 0254). Places a new loop vertex on
+    /// the segment `p1→p2` at parameter `t`, curved to follow the surrounding cage
+    /// via a UNIFORM CATMULL-ROM (Cardinal) spline through the four points
+    /// `p0, p1, p2, p3` (`p0`/`p3` = the cage vertices continuing the rail past
+    /// `p1`/`p2`). Standard Catmull-Rom tangents `m1 = ½(p2−p0)`, `m2 = ½(p3−p1)`
+    /// (the "0.5" is the canonical Catmull-Rom tangent scale). The return blends
+    /// the spline against the plain chord by `tension`:
+    ///   `result = lerp(p1,p2,t) + tension · (catmullRom − lerp)`
+    /// so `tension = 1` is the full spline, `tension = 0` is exactly the linear
+    /// chord (byte-for-byte the non-curvature path), and intermediate / >1 /
+    /// negative values scale the bulge (the hook task 0255 "Tension" drives). When
+    /// `p0,p1,p2,p3` are collinear the spline coincides with the chord for every
+    /// `tension`, so a flat cage is unaffected.
+    private static Vec3 curvatureSplinePoint(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3,
+                                             float t, float tension) {
+        Vec3  lin = p1 + (p2 - p1) * t;
+        if (tension == 0.0f) return lin;               // exact linear (no float drift)
+        Vec3  m1  = (p2 - p0) * 0.5f;                  // tangent at p1
+        Vec3  m2  = (p3 - p1) * 0.5f;                  // tangent at p2
+        float t2  = t * t, t3 = t2 * t;
+        Vec3  crom = p1 * (2.0f*t3 - 3.0f*t2 + 1.0f)
+                   + m1 * (t3 - 2.0f*t2 + t)
+                   + p2 * (-2.0f*t3 + 3.0f*t2)
+                   + m2 * (t3 - t2);
+        return lin + (crom - lin) * tension;
+    }
+
+    /// The cage vertex position that continues the rail edge past `pivot`, on the
+    /// side AWAY from `other` — the Catmull-Rom end control point for Preserve
+    /// Curvature (task 0254). Among `pivot`'s edge-neighbours (excluding `other`),
+    /// picks the one whose direction from `pivot` best continues the rail direction
+    /// (`pivot` moving away from `other`). When no forward-ish neighbour exists
+    /// (a boundary or a sharp corner — nothing continues the rail), returns the
+    /// reflection `2·pivot − other`; that choice makes the Catmull-Rom tangent at
+    /// that end equal the chord, so the spline degrades gracefully to linear where
+    /// the surface simply stops (and to exactly linear when BOTH ends reflect).
+    private Vec3 railContinuation(uint pivot, uint other) const {
+        Vec3  dir  = normalize(vertices[pivot] - vertices[other]);
+        float best = 0.0f;                 // require a genuinely forward neighbour
+        uint  bestV = uint.max;
+        foreach (nb; verticesAroundVertex(pivot)) {
+            if (nb == other) continue;
+            Vec3  d  = normalize(vertices[nb] - vertices[pivot]);
+            float al = dot(d, dir);
+            if (al > best) { best = al; bestV = nb; }
+        }
+        if (bestV != uint.max) return vertices[bestV];
+        return vertices[pivot] * 2.0f - vertices[other];   // reflect ⇒ linear tangent
+    }
+
     /// Walk one side of the ring from startFace, following the exit edge of each
     /// quad until: the exit key equals seedKey (closed — sets closed=true), a
     /// boundary is hit, the face is not a quad, or a face is revisited.
@@ -7694,6 +7744,21 @@ struct Mesh {
     ///   canonical `va` corner varies), and any cap quads built by `caps` gain real
     ///   area (they were zero-area walls while lo/hi coincided). Topology is
     ///   UNCHANGED — Gap only relocates the duplicated verts.
+    ///
+    /// - `curvature` (Preserve Curvature, task 0254): when false (default) each
+    ///   new loop vertex sits at the LINEAR interpolation `lerp(va, vb, t)` on the
+    ///   rail chord (byte-for-byte unchanged). When true the vertex is instead
+    ///   placed on a uniform Catmull-Rom (Cardinal) spline that follows the cage's
+    ///   curvature ALONG the rail, so a cut across a curved cage keeps the rounded
+    ///   profile instead of flattening onto the chord. The spline runs through four
+    ///   points — `P0, va, vb, P3` — where `P0`/`P3` are the neighbouring cage
+    ///   vertices continuing the rail past `va`/`vb` (found geometrically by
+    ///   `railContinuation`); the result is `lerp + curveTension·(catmullRom −
+    ///   lerp)`, so `curveTension` (task 0255 "Tension") scales the curvature
+    ///   contribution: 1.0 (default) = full standard Catmull-Rom, 0.0 = linear
+    ///   (identical to `curvature` off), and it may exceed 1 / go negative. On a
+    ///   FLAT (locally collinear) cage the four points are collinear so the spline
+    ///   equals the chord — `curvature` on is then a no-op there.
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
@@ -7702,7 +7767,9 @@ struct Mesh {
                               bool split = false,
                               bool caps = false,
                               uint[2][]* splitPairsOut = null,
-                              float gap = 0.0f) {
+                              float gap = 0.0f,
+                              bool curvature = false,
+                              float curveTension = 1.0f) {
         newFaceIndices = [];
         if (seeds.length == 0 || positions.length == 0) return false;
 
@@ -7783,8 +7850,21 @@ struct Mesh {
             }
             uint[] mids;
             Vec3 va3 = vertices[va], vb3 = vertices[vb];
-            foreach (float t; positions)
-                mids ~= addVertex(va3 + (vb3 - va3) * t);
+            if (curvature) {
+                // Preserve Curvature (task 0254): place each midpoint on the
+                // Catmull-Rom spline through the rail's cage neighbours instead of
+                // the straight chord. `p0`/`p3` continue the rail past va/vb; they
+                // are read from the ORIGINAL topology (verticesAroundVertex is valid
+                // here — addVertex only appends, never rebuilds the loops) and
+                // captured as VALUES so subsequent addVertex reallocations are safe.
+                Vec3 p0 = railContinuation(va, vb);
+                Vec3 p3 = railContinuation(vb, va);
+                foreach (float t; positions)
+                    mids ~= addVertex(curvatureSplinePoint(p0, va3, vb3, p3, t, curveTension));
+            } else {
+                foreach (float t; positions)
+                    mids ~= addVertex(va3 + (vb3 - va3) * t);
+            }
             railByKey[k] = cast(uint)rails.length;
             rails ~= Rail(va, mids, null);
             return mids;
@@ -15166,6 +15246,82 @@ unittest {
         assert(faceArea(z, fi) < 1e-9, "gap=0: cap quad is degenerate (zero area)");
         assert(faceArea(g, fi) > 1e-6, "gap>0: cap quad gained real (non-zero) area");
     }
+}
+
+// insertEdgeLoopsMulti — Preserve Curvature guard (task 0254). A CURVED open strip
+// of 3 quads whose column heights arc h=[0,1,1,0]; seed = the middle quad's top
+// long edge (2,4), giving a 1-face open ring that cuts Q1's two long rails (both at
+// y=1, but curved — their cage neighbours drop to y=0 on each side). With curvature
+// OFF (default) each new loop vert is the LINEAR chord midpoint (y=1.0 exactly).
+// With curvature ON it is placed on the uniform Catmull-Rom spline through the four
+// cage points P0=(0,0,*),va,vb,P3=(3,0,*): at t=0.5 the spline bulges the flat chord
+// UP to y=1.125 (x/z unchanged) — measurably off the chord. Topology is identical
+// either way (Curvature relocates the new verts only). A FLAT strip (heights all 0)
+// proves ON is a no-op there: the four spline points are collinear ⇒ spline == chord.
+unittest {
+    import std.math : abs;
+    static bool hasV(const Mesh m, Vec3 p, float eps = 1e-4f) {
+        foreach (v; m.vertices)
+            if (abs(v.x-p.x) < eps && abs(v.y-p.y) < eps && abs(v.z-p.z) < eps)
+                return true;
+        return false;
+    }
+    static Mesh makeArcStrip(float h1, float h2) {
+        // Columns at x=0..3, rows z=0/1, column heights [0, h1, h2, 0].
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0),  Vec3(0,0,1),
+            Vec3(1,h1,0), Vec3(1,h1,1),
+            Vec3(2,h2,0), Vec3(2,h2,1),
+            Vec3(3,0,0),  Vec3(3,0,1),
+        ];
+        m.addFace([0u,2u,3u,1u]);   // Q0 (cols 0-1)
+        m.addFace([2u,4u,5u,3u]);   // Q1 (cols 1-2) — the cut face
+        m.addFace([4u,6u,7u,5u]);   // Q2 (cols 2-3)
+        m.rebuildEdges();
+        m.buildLoops();
+        return m;
+    }
+
+    // curvature OFF (default) — linear chord midpoints at y=1.0.
+    Mesh off = makeArcStrip(1.0f, 1.0f);
+    uint eiOff = off.edgeIndex(2, 4);
+    assert(eiOff != ~0u, "seed edge (2,4) must exist");
+    uint[] nfOff;
+    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, false,
+                                    false, false, null, 0.0f, /*curvature*/false),
+           "curvature-off insert must succeed");
+    assert(off.vertices.length == 10, "off: 8 + 2 midpoints = 10 verts");
+    assert(off.edges.length    == 13, "off: 13 edges");
+    assert(off.faces.length    == 4,  "off: Q0 + Q1×2 + Q2 = 4 faces");
+    assert(hasV(off, Vec3(1.5f, 1.0f, 0)), "off: rail (2,4) midpoint on the flat chord (y=1)");
+    assert(hasV(off, Vec3(1.5f, 1.0f, 1)), "off: rail (3,5) midpoint on the flat chord (y=1)");
+    assert(!hasV(off, Vec3(1.5f, 1.125f, 0)), "off: no bulged vert (linear placement)");
+
+    // curvature ON — Catmull-Rom spline bulges the midpoints to y=1.125.
+    Mesh on = makeArcStrip(1.0f, 1.0f);
+    uint eiOn = on.edgeIndex(2, 4);
+    uint[] nfOn;
+    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false,
+                                   false, false, null, 0.0f, /*curvature*/true),
+           "curvature-on insert must succeed");
+    // Topology IDENTICAL to the off case (curvature relocates verts only).
+    assert(on.vertices.length == 10 && on.edges.length == 13 && on.faces.length == 4,
+           "on: topology identical to curvature-off (positions only)");
+    assert(hasV(on, Vec3(1.5f, 1.125f, 0)), "on: rail (2,4) midpoint bulged off the chord to y=1.125");
+    assert(hasV(on, Vec3(1.5f, 1.125f, 1)), "on: rail (3,5) midpoint bulged off the chord to y=1.125");
+    assert(!hasV(on, Vec3(1.5f, 1.0f, 0)), "on: chord midpoint replaced by the bulged spline point");
+
+    // curvature ON on a FLAT cage (all heights 0) — the four spline points are
+    // collinear, so the spline equals the linear chord: no-op vs off.
+    Mesh flat = makeArcStrip(0.0f, 0.0f);
+    uint eiFlat = flat.edgeIndex(2, 4);
+    uint[] nfFlat;
+    assert(flat.insertEdgeLoopsMulti([eiFlat], [0.5f], nfFlat, null, false, false,
+                                     false, false, null, 0.0f, /*curvature*/true),
+           "curvature-on flat-cage insert must succeed");
+    assert(hasV(flat, Vec3(1.5f, 0, 0)) && hasV(flat, Vec3(1.5f, 0, 1)),
+           "flat cage: curvature ON leaves the midpoints on the (straight) chord");
 }
 
 // (d) Grid equivalence oracle (task 0239 owner objection #2): a plain unit

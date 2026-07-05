@@ -193,6 +193,17 @@ private:
     // real (non-degenerate) walls. Positions only — no topology change. Threads
     // into the kernel's `gap` argument; a no-op whenever Split is off.
     float   gap_           = 0.0f;
+    // Preserve Curvature (`curvature`, task 0254): OFF (default) places each new
+    // loop vertex at the LINEAR interpolation on the rail chord (byte-for-byte the
+    // prior behaviour). ON places it on a Catmull-Rom spline through the rail's
+    // neighbouring cage vertices, so a cut across a CURVED cage keeps the surface's
+    // rounded profile (bulges off the chord) instead of flattening. Positions only
+    // — composes with select/quad/ngon/split/caps/gap (the split duplicate + gap
+    // displacement apply on top of the curved base position). Threads into the
+    // kernel's `curvature` flag; `curveTension_` scales the bulge (1.0 = full
+    // standard Catmull-Rom) and is the hook task 0255 ("Tension") will drive.
+    bool    curvature_     = false;
+    float   curveTension_  = 1.0f;
 
     // Task 0232: Loop Slice Slider HUD geometry — screen-pixel width
     // (`length_`) and offset (`sliderX_`/`sliderY_`) of the track drawn in
@@ -301,6 +312,7 @@ public:
         root["split"]       = JSONValue(sliceSplit_);       // Split (task 0251)
         root["caps"]        = JSONValue(sliceCaps_);        // Cap Sections (task 0252)
         root["gap"]         = JSONValue(gap_);              // Gap (task 0253)
+        root["curvature"]   = JSONValue(curvature_);        // Preserve Curvature (task 0254)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -358,6 +370,7 @@ public:
             Param.bool_("split", "Split", &sliceSplit_, false),
             Param.bool_("caps", "Cap Sections", &sliceCaps_, true),
             Param.float_("gap", "Gap", &gap_, 0.0f),
+            Param.bool_("curvature", "Preserve Curvature", &curvature_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -415,6 +428,8 @@ public:
         sliceSplit_     = false;
         sliceCaps_      = true;   // reference default ON; no-op while Split is off
         gap_            = 0.0f;   // factory default 0 (coincident) — no-op unless Split
+        curvature_      = false;  // linear placement (byte-for-byte prior behaviour)
+        curveTension_   = 1.0f;   // full Catmull-Rom bulge (0255 "Tension" scales this)
         armedSelFaces_  = [];
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
@@ -520,6 +535,7 @@ public:
         if (pname == "split")  { if (armed_) rebuildCut(); return; }
         if (pname == "caps")   { if (armed_) rebuildCut(); return; }
         if (pname == "gap")    { if (armed_) rebuildCut(); return; }
+        if (pname == "curvature") { if (armed_) rebuildCut(); return; }
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
@@ -627,7 +643,8 @@ public:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, kernelPositions(), newFaceIndices,
                                             restrictFor(selectedFaceIndices()), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_);
+                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
+                                            curvature_, curveTension_);
         if (!ok) return false;
         if (selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -926,7 +943,8 @@ private:
         uint[] newFaceIndices;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, kernelPositions(), newFaceIndices,
                                             restrictFor(armedSelFaces_), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_);
+                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
+                                            curvature_, curveTension_);
         built_ = ok;
         if (ok && selectNew_)
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

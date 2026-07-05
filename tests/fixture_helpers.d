@@ -466,6 +466,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // quads gain real area. `{ "loop_slice": { ..., "split": true, "gap": G } }`.
         if ("gap" in ls)
             cmd(format("tool.attr mesh.loopSliceTool gap %g", asDouble(ls["gap"])), ctx);
+        // Optional Preserve Curvature (task 0254): place the new loop verts on a
+        // Catmull-Rom spline through the rail's cage neighbours (bulging to follow
+        // a curved cage) instead of the straight chord. `{ "loop_slice": { ...,
+        // "curvature": true } }`.
+        if ("curvature" in ls && ls["curvature"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool curvature 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;
