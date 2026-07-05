@@ -9738,8 +9738,33 @@ struct Mesh {
     /// Returns the number of faces actually split; 0 = no effective cut.
     /// Caller owns snapshot/undo — this method does NOT capture a snapshot.
     size_t cutByPlane(Vec3 p, Vec3 n, float eps = 1e-5f) {
+        bool[] cv;
+        return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0), cv, eps);
+    }
+
+    // -----------------------------------------------------------------------
+    // planeCutCore — the shared cut body behind cutByPlane / cutByPlaneClipped
+    // (and cutByPlaneEx). When `clipped` is false this is byte-for-byte the
+    // original cutByPlane (the `bandOk*` predicates collapse to `true`); when
+    // `clipped` is true it is byte-for-byte the original cutByPlaneClipped (the
+    // in-band filter gates on the drawn [segStart,segEnd] span). Fills
+    // `isCutVertOut` with the per-vertex cut mask AFTER the split so callers that
+    // need the cut loop (cutByPlaneEx / S7 split) can walk it; returns the number
+    // of faces split (0 = no effective cut, mesh untouched).
+    // -----------------------------------------------------------------------
+    private size_t planeCutCore(Vec3 p, Vec3 n, bool clipped,
+                                Vec3 segStart, Vec3 segEnd,
+                                out bool[] isCutVertOut, float eps) {
+        isCutVertOut = null;
         if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
             return 0;
+
+        // Segment (clipped only): a degenerate span has no direction to clip
+        // along, so it cuts nothing — the infinite case never reaches here.
+        Vec3 seg = Vec3(segEnd.x - segStart.x, segEnd.y - segStart.y,
+                        segEnd.z - segStart.z);
+        float segLen2 = seg.x * seg.x + seg.y * seg.y + seg.z * seg.z;
+        if (clipped && segLen2 < eps * eps) return 0;
 
         // Signed distances: d[v] = dot(n, v - p)
         float[] dv;
@@ -9751,6 +9776,25 @@ struct Mesh {
             dv[vi] = n.x * (v.x - p.x) + n.y * (v.y - p.y) + n.z * (v.z - p.z);
             onPlane[vi] = (dv[vi] >= -eps && dv[vi] <= eps);
         }
+
+        // In-band predicates. With `clipped` off they are constant `true`, so the
+        // whole body reduces to the infinite cut with no numeric change (and the
+        // segLen2 division is never reached via short-circuit).
+        bool inBand(Vec3 q) {
+            float s = ((q.x - segStart.x) * seg.x + (q.y - segStart.y) * seg.y
+                     + (q.z - segStart.z) * seg.z) / segLen2;
+            return s >= -eps && s <= 1.0f + eps;
+        }
+        Vec3 crossPoint(uint a, uint b) {
+            float da = dv[a], db = dv[b];
+            float t = da / (da - db);
+            Vec3 va = vertices[a], vb = vertices[b];
+            return Vec3(va.x + t * (vb.x - va.x),
+                        va.y + t * (vb.y - va.y),
+                        va.z + t * (vb.z - va.z));
+        }
+        bool bandOkVert(uint a)          { return !clipped || inBand(vertices[a]); }
+        bool bandOkCross(uint a, uint b) { return !clipped || inBand(crossPoint(a, b)); }
 
         // Pre-check: determine whether any face will actually be split.
         // Avoids touching the mesh (no addVertex calls) when the plane misses.
@@ -9764,14 +9808,16 @@ struct Mesh {
                 foreach (k; 0 .. face.length) {
                     uint a = face[k];
                     uint b = face[(k + 1) % face.length];
-                    if (onPlane[a])
+                    if (onPlane[a] && bandOkVert(a))
                         hitPos ~= k + insertsBefore;
                     if (!onPlane[a] && !onPlane[b]) {
                         float da = dv[a], db = dv[b];
                         if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
-                            // straddle — new vert inserted after position k
-                            insertsBefore++;
-                            hitPos ~= k + insertsBefore;
+                            if (bandOkCross(a, b)) {
+                                // straddle — new vert inserted after position k
+                                insertsBefore++;
+                                hitPos ~= k + insertsBefore;
+                            }
                         }
                     }
                 }
@@ -9789,7 +9835,7 @@ struct Mesh {
         bool[] isCutVert;
         isCutVert.length = vertices.length;
         foreach (vi; 0 .. vertices.length)
-            isCutVert[vi] = onPlane[vi];
+            isCutVert[vi] = onPlane[vi] && bandOkVert(cast(uint)vi);
 
         size_t origEdgeCount = edges.length;
         foreach (ei; 0 .. origEdgeCount) {
@@ -9798,12 +9844,15 @@ struct Mesh {
             if (onPlane[a] || onPlane[b]) continue; // endpoint on-plane: skip new vert
             float da = dv[a], db = dv[b];
             if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
+            if (!bandOkCross(a, b)) continue;                          // CLIP to drawn span
 
             insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
         }
 
         // Pass 2 + finalize: split all eligible faces (all-true mask = empty).
-        return rebuildFacesWithChordSplits([], isCutVert);
+        size_t nSplit = rebuildFacesWithChordSplits([], isCutVert);
+        isCutVertOut = isCutVert;
+        return nSplit;
     }
 
     // -----------------------------------------------------------------------
@@ -9838,96 +9887,145 @@ struct Mesh {
     // -----------------------------------------------------------------------
     size_t cutByPlaneClipped(Vec3 p, Vec3 n, Vec3 segStart, Vec3 segEnd,
                              float eps = 1e-5f) {
-        if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
-            return 0;
-        Vec3 seg = Vec3(segEnd.x - segStart.x, segEnd.y - segStart.y,
-                        segEnd.z - segStart.z);
-        float segLen2 = seg.x * seg.x + seg.y * seg.y + seg.z * seg.z;
-        if (segLen2 < eps * eps) return 0;
+        bool[] cv;
+        return planeCutCore(p, n, /*clipped*/true, segStart, segEnd, cv, eps);
+    }
 
-        // Signed distances: d[v] = dot(n, v - p).
-        float[] dv;
-        dv.length = vertices.length;
-        bool[] onPlane;
-        onPlane.length = vertices.length;
-        foreach (vi; 0 .. vertices.length) {
-            Vec3 v = vertices[vi];
-            dv[vi] = n.x * (v.x - p.x) + n.y * (v.y - p.y) + n.z * (v.z - p.z);
-            onPlane[vi] = (dv[vi] >= -eps && dv[vi] <= eps);
-        }
+    // -----------------------------------------------------------------------
+    // PlaneCutLoops — the ORDERED cut result the interactive Slice tool consumes
+    // for its Split / Cap / Gap options (tasks S7–S9). `loops` is the crossing-
+    // vertex ring(s) in connected order (a closed ring for a full mid-plane cut;
+    // an open chain for a clipped cut that stops partway). `seamPairs` is the
+    // `[lo, hi]` duplicate list produced by the Split option — the SAME shape as
+    // the Loop Slice split machinery emits (insertEdgeLoopsMulti's splitPairsOut),
+    // so S8 (caps) / S9 (gap) can drive the two sides off it exactly as they do
+    // for an edge-ring loop. Empty `seamPairs` ⇒ Split was off (connected cut).
+    // -----------------------------------------------------------------------
+    struct PlaneCutLoops {
+        uint[][]  loops;      // ordered crossing-vertex ring(s) / chain(s)
+        uint[2][] seamPairs;  // [lo, hi] per duplicated cut vertex (Split only)
+    }
 
-        // In-band test on a world point q: normalized projection along the
-        // segment in [0,1] (with an eps slack at each end).
-        bool inBand(Vec3 q) {
-            float s = ((q.x - segStart.x) * seg.x + (q.y - segStart.y) * seg.y
-                     + (q.z - segStart.z) * seg.z) / segLen2;
-            return s >= -eps && s <= 1.0f + eps;
-        }
-        // Crossing point of the straddling edge a→b at t = da / (da - db).
-        Vec3 crossPoint(uint a, uint b) {
-            float da = dv[a], db = dv[b];
-            float t = da / (da - db);
-            Vec3 va = vertices[a], vb = vertices[b];
-            return Vec3(va.x + t * (vb.x - va.x),
-                        va.y + t * (vb.y - va.y),
-                        va.z + t * (vb.z - va.z));
-        }
-
-        // Pre-check with in-band filtering (mirrors cutByPlane's early-out so a
-        // clean miss never mutates the mesh / leaves stray crossing vertices).
-        {
-            bool anyWillSplit = false;
-            foreach (fi; 0 .. faces.length) {
-                auto face = faces[fi];
-                size_t insertsBefore = 0;
-                size_t[] hitPos;
-                foreach (k; 0 .. face.length) {
-                    uint a = face[k];
-                    uint b = face[(k + 1) % face.length];
-                    if (onPlane[a] && inBand(vertices[a]))
-                        hitPos ~= k + insertsBefore;
-                    if (!onPlane[a] && !onPlane[b]) {
-                        float da = dv[a], db = dv[b];
-                        if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
-                            if (inBand(crossPoint(a, b))) {
-                                insertsBefore++;
-                                hitPos ~= k + insertsBefore;
-                            }
-                        }
-                    }
-                }
-                if (hitPos.length != 2) continue;
-                size_t i = hitPos[0], j = hitPos[1];
-                size_t newLen = face.length + insertsBefore;
-                bool adj = (j == i + 1) || (i == 0 && j == newLen - 1);
-                if (!adj) { anyWillSplit = true; break; }
-            }
-            if (!anyWillSplit) return 0;
-        }
-
-        // Cut verts: in-band on-plane verts start marked; in-band straddle edges
-        // each get one new crossing vertex. Out-of-band crossings are skipped so
-        // the cut never extends beyond the drawn span.
+    // -----------------------------------------------------------------------
+    // cutByPlaneEx — cutByPlane / cutByPlaneClipped PLUS the ordered cut loop and
+    // (optionally) the Split duplication. `clipped` selects the infinite vs
+    // drawn-span kernel exactly as the two public wrappers do; with `split` off
+    // this is byte-for-byte the corresponding wrapper (it only ALSO walks out the
+    // ordered loop into `result.loops`). With `split` on the connected cut loop
+    // is DUPLICATED into two coincident boundary loops via `splitAlongCutLoop`
+    // (the same lo/hi seam-pair model as the Loop Slice `split` option), opening
+    // the surface into two disconnected sections along the cut. Returns the number
+    // of faces split (0 = no cut; `result` left empty). Caller owns snapshot/undo.
+    // -----------------------------------------------------------------------
+    size_t cutByPlaneEx(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
+                        bool split, out PlaneCutLoops result, float eps = 1e-5f) {
         bool[] isCutVert;
-        isCutVert.length = vertices.length;
-        foreach (vi; 0 .. vertices.length)
-            isCutVert[vi] = onPlane[vi] && inBand(vertices[vi]);
+        size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd, isCutVert, eps);
+        if (nSplit == 0) return 0;
+        // Order the crossing verts into ring(s) from the connected cut BEFORE the
+        // split duplicates them (the split rebuilds edges under us).
+        result.loops = extractCutLoops(isCutVert);
+        if (split)
+            splitAlongCutLoop(isCutVert, p, n, result.seamPairs, eps);
+        return nSplit;
+    }
 
-        size_t origEdgeCount = edges.length;
-        foreach (ei; 0 .. origEdgeCount) {
-            uint a = edges[ei][0], b = edges[ei][1];
-            if (a >= dv.length || b >= dv.length) continue;
-            if (onPlane[a] || onPlane[b]) continue; // endpoint on-plane: skip new vert
-            float da = dv[a], db = dv[b];
-            if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
-            if (!inBand(crossPoint(a, b))) continue;                   // CLIP to drawn span
-
-            insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
+    // -----------------------------------------------------------------------
+    // extractCutLoops — walk the crossing verts of a completed plane cut into
+    // ordered ring(s). A "chord edge" of the cut is an edge whose BOTH endpoints
+    // are cut verts (the chord each split face contributes); those edges chain
+    // the crossing verts into a closed ring (full cut) or an open path (clipped
+    // cut that stops partway). Degree-1 endpoints (open chains) are emitted first,
+    // then any remaining closed cycles. Pure read of edges/isCutVert.
+    // -----------------------------------------------------------------------
+    private uint[][] extractCutLoops(const bool[] isCutVert) {
+        import std.algorithm : sort;
+        bool cut(uint v) { return v < isCutVert.length && isCutVert[v]; }
+        uint[][uint] adj;
+        foreach (e; edges) {
+            uint a = e[0], b = e[1];
+            if (cut(a) && cut(b)) { adj[a] ~= b; adj[b] ~= a; }
         }
+        bool[uint] visited;
+        uint[][] loops;
+        void walk(uint s) {
+            if (s in visited) return;
+            uint[] chain;
+            uint cur = s, prev = ~0u;
+            while (true) {
+                chain ~= cur;
+                visited[cur] = true;
+                uint next = ~0u;
+                foreach (w; adj[cur])
+                    if (w != prev && (w !in visited)) { next = w; break; }
+                if (next == ~0u) break;
+                prev = cur;
+                cur  = next;
+            }
+            if (chain.length > 0) loops ~= chain;
+        }
+        // Deterministic order: open-chain endpoints (degree 1) first, then the
+        // rest (closed cycles), each started at its lowest-index vertex.
+        uint[] ends, all;
+        foreach (v, nb; adj) { all ~= v; if (nb.length == 1) ends ~= v; }
+        sort(ends);
+        sort(all);
+        foreach (v; ends) walk(v);
+        foreach (v; all)  walk(v);
+        return loops;
+    }
 
-        // Split every face that has exactly two cut verts (all-true mask = the
-        // fully in-band faces); boundary faces keep their lone hanging vertex.
-        return rebuildFacesWithChordSplits([], isCutVert);
+    // -----------------------------------------------------------------------
+    // splitAlongCutLoop — the Slice `split` option (S7). Given a completed plane
+    // cut (isCutVert marks the crossing verts) it DUPLICATES each crossing vertex
+    // into a coincident lo/hi pair and re-points every face on the plane's
+    // NEGATIVE side at the duplicate, so the single connected cut becomes two
+    // disconnected boundary loops — the identical lo/hi seam-pair model the Loop
+    // Slice `split` option uses (insertEdgeLoopsMulti's railMids/splitSeams), just
+    // fed a plane-cut loop instead of an edge-ring loop. Duplicates are made
+    // LAZILY (only when a negative-side face actually references a crossing vert)
+    // so no orphan verts appear; a face whose non-cut verts STRADDLE the plane (a
+    // boundary "cut stops here" face in the clipped-open case) is left stitched so
+    // the two sides stay joined there. `seamPairs` receives one [lo, hi] entry per
+    // duplicated crossing vertex — the data S8 (caps) / S9 (gap) act on.
+    // -----------------------------------------------------------------------
+    private void splitAlongCutLoop(const bool[] isCutVert, Vec3 planeP, Vec3 planeN,
+                                   out uint[2][] seamPairs, float eps) {
+        bool cut(uint v) { return v < isCutVert.length && isCutVert[v]; }
+        uint[uint] dupOf;
+        uint getDup(uint vi) {
+            if (auto d = vi in dupOf) return *d;
+            uint nv = addVertex(vertices[vi]);
+            dupOf[vi] = nv;
+            seamPairs ~= cast(uint[2])[vi, nv];
+            return nv;
+        }
+        foreach (fi; 0 .. faces.length) {
+            int pos = 0, neg = 0;
+            foreach (v; faces[fi]) {
+                if (cut(v)) continue;
+                float d = planeN.x * (vertices[v].x - planeP.x)
+                        + planeN.y * (vertices[v].y - planeP.y)
+                        + planeN.z * (vertices[v].z - planeP.z);
+                if      (d >  eps) ++pos;
+                else if (d < -eps) ++neg;
+            }
+            // Remap only faces wholly on the negative side (pos == 0); a
+            // straddling boundary face keeps the shared originals (stays stitched).
+            if (neg > 0 && pos == 0) {
+                auto f = faces[fi].dup;
+                bool changed = false;
+                foreach (ref v; f)
+                    if (cut(v)) { v = getDup(v); changed = true; }
+                if (changed) faces[fi] = f;
+            }
+        }
+        if (seamPairs.length == 0) return;   // nothing duplicated — no-op
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        buildLoops();
+        syncSelection();
+        commitChange(MeshEditScope.Geometry);
     }
 
     // -----------------------------------------------------------------------
@@ -16250,6 +16348,89 @@ unittest { // cutByPlaneClipped: a short segment cuts ONLY the spanned faces
     foreach (v; clip.vertices)
         assert(!(v.x > 0.5f && v.z > -0.4f && v.z < 0.4f),
                "clipped: right strip must have no z≈0 crossing vertex");
+}
+
+unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
+    // Loop Slice lo/hi seam-pair split model. A cube mid-plane cut (x=0) with
+    // split OFF is the connected cut (byte-for-byte cutByPlane: closed shell, 0
+    // boundary edges, 1 component); with split ON each of the 4 crossing verts is
+    // DUPLICATED into a coincident lo/hi pair, so the single loop becomes TWO
+    // boundary loops → +4 verts, +4 edges, SAME faces, 8 boundary edges, 2
+    // disconnected shells — the identical topological signature as the Loop Slice
+    // split guard (see the insertEdgeLoopsMulti Split unittest).
+    import std.math : abs;
+    static size_t boundaryEdgeCount(ref Mesh m) {
+        size_t n = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            size_t nf = 0;
+            foreach (fi; m.facesAroundEdge(cast(uint)ei)) ++nf;
+            if (nf == 1) ++n;
+        }
+        return n;
+    }
+    static size_t componentCount(ref Mesh m) {
+        auto nf = m.faces.length;
+        if (nf == 0) return 0;
+        auto parent = new size_t[](nf);
+        foreach (i; 0 .. nf) parent[i] = i;
+        size_t find(size_t x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void uni(size_t a, size_t b) { parent[find(a)] = find(b); }
+        uint[][uint] vFaces;
+        foreach (fi, f; m.faces) foreach (v; f) vFaces[v] ~= cast(uint)fi;
+        foreach (v, fs; vFaces) foreach (k; 1 .. fs.length) uni(fs[0], fs[k]);
+        bool[size_t] roots;
+        foreach (i; 0 .. nf) roots[find(i)] = true;
+        return roots.length;
+    }
+
+    // Split OFF — connected cut, closed manifold cube (byte-for-byte cutByPlane).
+    Mesh off = makeCube();
+    off.buildLoops();
+    off.resetSelection();
+    Mesh.PlaneCutLoops offR;
+    size_t nOff = off.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                   /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                   /*split*/false, offR);
+    assert(nOff == 4, "split off: 4 side faces split by the mid-plane cut");
+    immutable offV = off.vertices.length, offE = off.edges.length, offF = off.faces.length;
+    assert(offV == 12 && offF == 10, "split off: 12v/10f connected cut");
+    assert(boundaryEdgeCount(off) == 0, "split off: closed cube, no boundary edges");
+    assert(componentCount(off) == 1, "split off: one connected shell");
+    assert(offR.seamPairs.length == 0, "split off: no seam pairs");
+    // The ordered loop is the 4 crossing verts as one closed ring.
+    assert(offR.loops.length == 1 && offR.loops[0].length == 4,
+           "split off: one 4-vertex crossing ring");
+
+    // Split ON — each crossing vert duplicated → two disconnected boundary loops.
+    Mesh on = makeCube();
+    on.buildLoops();
+    on.resetSelection();
+    Mesh.PlaneCutLoops onR;
+    size_t nOn = on.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                 /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                 /*split*/true, onR);
+    assert(nOn == 4, "split on: same 4 side faces split");
+    assert(on.vertices.length == offV + 4, "split on: 4 crossing verts duplicated");
+    assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
+    assert(on.faces.length    == offF,     "split on: splitting duplicates verts, not faces");
+    assert(boundaryEdgeCount(on) == 8, "split on: two 4-edge boundary loops (8 boundary edges)");
+    assert(componentCount(on) == 2, "split on: two disconnected shells");
+    // Seam pairs: one coincident [lo,hi] per crossing vert (same shape as Loop Slice).
+    assert(onR.seamPairs.length == 4, "split on: 4 seam pairs (one per crossing vert)");
+    foreach (pr; onR.seamPairs) {
+        assert(pr[0] != pr[1], "seam lo/hi must be distinct verts");
+        Vec3 a = on.vertices[pr[0]], b = on.vertices[pr[1]];
+        assert(abs(a.x - b.x) < 1e-6f && abs(a.y - b.y) < 1e-6f && abs(a.z - b.z) < 1e-6f,
+               "seam lo/hi coincide (zero gap — Gap/S9 moves them apart later)");
+    }
+    // No orphan vertices after the split.
+    import std.conv : to;
+    bool[] refd = new bool[](on.vertices.length);
+    foreach (face; on.faces) foreach (vi; face) refd[vi] = true;
+    foreach (i, r; refd) assert(r, "split on: vertex " ~ i.to!string ~ " orphaned");
 }
 
 // ---------------------------------------------------------------------------

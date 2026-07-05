@@ -1,0 +1,45 @@
+{
+  "name": "slice_split",
+  "description": "Slice tool 'Split' option (mesh.sliceTool, task 0273 S7). A cube (8v/6f) cut by the plane through the drawn Start->End line perpendicular to the work plane (headless work-plane normal = default world XZ, +Y). The line runs along Z through the origin, so the plane normal is ||X through X=0 (case midX of the S0 slice.json golden). With Split OFF (default) the cut is the S0 connected cut: 12v/10f, one closed shell (the 4 crossing verts at x=0 are SHARED between the +x and -x sub-faces). With Split ON each of the 4 crossing verts is DUPLICATED into a coincident lo/hi pair, so the single connected cut loop becomes TWO distinct boundary edge-loops and the cube splits into two disconnected sections along the cut: 16v/24e/10f (the 4 extra verts sit exactly on top of the 4 crossing verts; the 4 interior loop edges become 8 boundary edges — proof the two sides are disconnected along the cut). Faces stay 10 because splitting duplicates verts, not faces. Reuses the Loop Slice lo/hi seam-pair split machinery (Mesh.cutByPlaneEx -> splitAlongCutLoop) fed the plane-cut loop instead of an edge-ring loop; mirrors the loop_slice_split golden's assertions. The stronger topological proof (boundary-edge count, component count, coincident seam pairs) lives in the source/mesh.d cutByPlaneEx kernel unittest.",
+  "source": "Analytic. Cube +/-0.5; plane law = math.planeForSlice(start, end, +Y). Line along Z -> plane normal ||X through origin (X=0). New crossing verts are edge midpoints (t=0.5); Split ON duplicates each into a coincident copy (verts 12-15 coincide with 8-11). Split geometry law is connectivity-correct by construction (Mesh.cutByPlaneEx, task 0273), no reference-app numeric parity needed.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "split_off",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": false } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 12, "edges": 20, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5, -0.5, -0.5], "b": [0.5, -0.5, -0.5], "t": 0.5, "point": [0, -0.5, -0.5] },
+        { "a": [-0.5, 0.5, -0.5], "b": [0.5, 0.5, -0.5], "t": 0.5, "point": [0, 0.5, -0.5] },
+        { "a": [-0.5, -0.5, 0.5], "b": [0.5, -0.5, 0.5], "t": 0.5, "point": [0, -0.5, 0.5] },
+        { "a": [-0.5, 0.5, 0.5], "b": [0.5, 0.5, 0.5], "t": 0.5, "point": [0, 0.5, 0.5] }
+      ]
+    },
+    {
+      "name": "split_on",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5, -0.5, -0.5], "b": [0.5, -0.5, -0.5], "t": 0.5, "point": [0, -0.5, -0.5] },
+        { "a": [-0.5, 0.5, -0.5], "b": [0.5, 0.5, -0.5], "t": 0.5, "point": [0, 0.5, -0.5] },
+        { "a": [-0.5, -0.5, 0.5], "b": [0.5, -0.5, 0.5], "t": 0.5, "point": [0, -0.5, 0.5] },
+        { "a": [-0.5, 0.5, 0.5], "b": [0.5, 0.5, 0.5], "t": 0.5, "point": [0, 0.5, 0.5] }
+      ]
+    }
+  ]
+}

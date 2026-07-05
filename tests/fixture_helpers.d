@@ -542,6 +542,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         if ("infinite" in sl)
             cmd(format("tool.attr mesh.sliceTool infinite %d",
                        sl["infinite"].type == JSONType.true_ ? 1 : 0), ctx);
+        // Optional `"split": true/false` (S7): OFF (default) is the connected
+        // single cut; ON duplicates the plane-cut loop into two disconnected
+        // boundary loops (the surface splits into two sections along the cut).
+        if ("split" in sl)
+            cmd(format("tool.attr mesh.sliceTool split %d",
+                       sl["split"].type == JSONType.true_ ? 1 : 0), ctx);
         cmd(format("tool.attr mesh.sliceTool startX %g", s[0]), ctx);
         cmd(format("tool.attr mesh.sliceTool startY %g", s[1]), ctx);
         cmd(format("tool.attr mesh.sliceTool startZ %g", s[2]), ctx);

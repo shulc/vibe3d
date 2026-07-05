@@ -70,7 +70,8 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          Vec3 start, Vec3 end, Vec3 wpNormal,
                          int axisMode = cast(int)SliceAxis.Free,
                          Vec3 vector = Vec3(0, 1, 0),
-                         bool infinite = false)
+                         bool infinite = false,
+                         bool split = false)
 {
     if (baseline.filled) baseline.restore(mesh);
     Vec3 p, n;
@@ -81,8 +82,19 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // reference factory default) CLIPS the cut to the drawn Start→End span, so
     // only faces under the drawn line are cut (Mesh.cutByPlaneClipped). On a
     // mesh whose cross-section fits within the line the two agree.
-    if (infinite) return mesh.cutByPlane(p, n);
-    return mesh.cutByPlaneClipped(p, n, start, end);
+    //
+    // `split` (task S7): OFF is the connected single cut above — byte-for-byte
+    // the S0/S4 path (the non-split kernel is called directly). ON routes the
+    // SAME plane cut through Mesh.cutByPlaneEx, which duplicates the cut loop
+    // into two coincident boundary loops (the Loop Slice lo/hi seam model),
+    // splitting the surface into two disconnected sections along the cut.
+    if (!split) {
+        if (infinite) return mesh.cutByPlane(p, n);
+        return mesh.cutByPlaneClipped(p, n, start, end);
+    }
+    Mesh.PlaneCutLoops loops;
+    return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
+                             /*split*/true, loops);
 }
 
 // ---------------------------------------------------------------------------
@@ -128,9 +140,16 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
 // slices the whole mesh (Mesh.cutByPlane, the S0 behavior). It threads through
 // the preview + commit (sliceFromBaseline) and applyHeadless.
 //
-// Deferred to later tasks: angle snap (S5), split/caps/gap reusing the Loop
-// Slice machinery (S7–S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`,
-// `infinite`, `axis`, `vectorX/Y/Z`.
+// S7 (task 0273) adds `split` (bool, default off): OFF is the S0 connected cut;
+// ON duplicates the plane-cut loop into two coincident boundary loops so the
+// surface splits into two disconnected sections along the cut, reusing the Loop
+// Slice lo/hi seam-pair split machinery (Mesh.cutByPlaneEx → splitAlongCutLoop).
+// It threads through the preview + commit (sliceFromBaseline) and applyHeadless.
+// The seam-pair data it produces is what Cap Sections (S8) / Gap (S9) build on.
+//
+// Deferred to later tasks: angle snap (S5), caps/gap reusing the Loop Slice
+// machinery (S8–S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`, `infinite`,
+// `split`, `axis`, `vectorX/Y/Z`.
 //
 // Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
 // `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
@@ -192,6 +211,16 @@ private:
     // unchanged; the infinite/clipped divergence only shows on a line shorter
     // than the mesh (see test_fixture_slice_infinite).
     bool infinite_ = false;
+
+    // Split (S7, task 0273; default OFF per the reference spec). OFF is the S0
+    // connected cut (byte-for-byte). ON duplicates the plane-cut loop into two
+    // coincident boundary loops — the surface splits into two disconnected
+    // sections along the cut, reusing the Loop Slice lo/hi seam-pair machinery
+    // (Mesh.cutByPlaneEx → splitAlongCutLoop). Threads through the preview +
+    // commit (sliceFromBaseline) and applyHeadless. Sticky (not reset on
+    // activate), like the other tool options. The seam-pair data it produces is
+    // the foundation the later Cap Sections (S8) / Gap (S9) options act on.
+    bool split_ = false;
 
     // Which part of the gizmo this gesture drags.
     enum DragNone  = -1;
@@ -284,6 +313,9 @@ public:
             // Infinite (S4): OFF clips the cut to the drawn line's span (the
             // reference factory default); ON slices the whole mesh (S0).
             Param.bool_( "infinite", "Infinite", &infinite_, false),
+            // Split (S7): OFF connected single cut (default); ON duplicates the
+            // cut loop into two disconnected boundary loops.
+            Param.bool_( "split",  "Split", &split_, false),
             // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
             // normal) / Custom (vector normal). Default Free — see SliceAxis.
             Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
@@ -319,6 +351,7 @@ public:
         root["endZ"]   = JSONValue(end_.z);
         root["fast"]   = JSONValue(fast_);
         root["infinite"] = JSONValue(infinite_);
+        root["split"]  = JSONValue(split_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);
         root["vectorY"] = JSONValue(vector_.y);
@@ -377,8 +410,17 @@ public:
                            cast(int)axis_, vector_, p, n))
             return false;
         // infinite ⇒ whole-mesh plane cut; else clip to the drawn Start→End span.
-        size_t nSplit = infinite_ ? mesh.cutByPlane(p, n)
-                                   : mesh.cutByPlaneClipped(p, n, start_, end_);
+        // split ⇒ route the same cut through cutByPlaneEx so the loop is
+        // duplicated into two disconnected boundary loops (S7).
+        size_t nSplit;
+        if (split_) {
+            Mesh.PlaneCutLoops loops;
+            nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, start_, end_,
+                                       /*split*/true, loops);
+        } else {
+            nSplit = infinite_ ? mesh.cutByPlane(p, n)
+                               : mesh.cutByPlaneClipped(p, n, start_, end_);
+        }
         if (nSplit == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -556,7 +598,7 @@ private:
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
                                           cachedWorkplaneNormal(), cast(int)axis_, vector_,
-                                          infinite_);
+                                          infinite_, split_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,
