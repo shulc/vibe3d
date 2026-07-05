@@ -1,0 +1,73 @@
+# Tool Properties form for the Loop Slice tool (mesh.loopSliceTool).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/transform.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms), auto-discovered from
+# config/forms/*.yaml (source/app.d), and strict-validated against the Loop
+# Slice tool's params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set.
+#
+# Every attr below is one of mesh.loopSliceTool.params() (grep params() in
+# source/tools/loop_slice_tool.d for the authoritative names/types). The rows
+# marked with a profile/curvature dependency are auto-greyed by the renderer
+# via the tool's paramEnabled() (forms_render.d wraps a disabled param in
+# ImGui.BeginDisabled) — no inline gating is needed here:
+#   * tension  enabled only while Preserve Curvature is on
+#   * Inset (depth), Reverse Direction, Reverse Inset, Keep Aspect enabled only
+#     while a non-flat Profile is chosen (and Inset also greys under Keep Aspect)
+#
+# Layout mirrors the reference Loop Slice panel: the main slice controls first
+# (Count / Position / Edit / Mode), then labelled sub-boxes for Split, Topology,
+# Preserve Curvature, and Profile.
+
+forms:
+  - id: loopslice.main
+    label: Loop Slice
+    showLabel: false
+    whenTool:
+      - mesh.loopSliceTool
+    category: toolprops/main
+    ordinal: 150.50
+    rows:
+      # ---- Main slice controls ----
+      - { control: "tool.attr mesh.loopSliceTool count ?",    label: Count }
+      - { control: "tool.attr mesh.loopSliceTool position ?", label: Position }
+      - { control: "tool.attr mesh.loopSliceTool edit ?",     label: Edit }
+      - { control: "tool.attr mesh.loopSliceTool mode ?",     label: Mode }
+
+      # ---- Split: split into separate sections, optionally capped, with a gap ----
+      - group: Split
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool split ?", label: Split }
+          - { control: "tool.attr mesh.loopSliceTool caps ?",  label: "Cap Sections" }
+          - { control: "tool.attr mesh.loopSliceTool gap ?",   label: Gap }
+
+      # ---- Topology: which polygons the cut touches + how it keeps quads ----
+      - group: Topology
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool select ?", label: "Slice Selected" }
+          - { control: "tool.attr mesh.loopSliceTool quad ?",   label: "Keep Quads" }
+          - { control: "tool.attr mesh.loopSliceTool ngon ?",   label: "Slice N-gon" }
+
+      # ---- Curvature: bulge the cut along the surface curvature ----
+      - group: Curvature
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool curvature ?", label: "Preserve Curvature" }
+          - { control: "tool.attr mesh.loopSliceTool tension ?",   label: Tension }
+
+      # ---- Profile: 1D profile cutter + its inset / mirror modifiers ----
+      - group: Profile
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool profile ?",  label: Profile }
+          - { control: "tool.attr mesh.loopSliceTool depth ?",    label: Inset }
+          - { control: "tool.attr mesh.loopSliceTool reversex ?", label: "Reverse Direction" }
+          - { control: "tool.attr mesh.loopSliceTool reversey ?", label: "Reverse Inset" }
+          - { control: "tool.attr mesh.loopSliceTool aspect ?",   label: "Keep Aspect" }
