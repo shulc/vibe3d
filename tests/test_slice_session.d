@@ -51,6 +51,11 @@ long undoCount()         { return parseJSON(cast(string) get(BASE ~ "/api/histor
 size_t vertCount() { return getModel()["vertices"].array.length; }
 size_t faceCount() { return getModel()["faces"].array.length; }
 
+JSONValue getSelection() { return parseJSON(cast(string) get(BASE ~ "/api/selection")); }
+// Number of currently-selected elements of the given kind
+// ("selectedVertices" / "selectedEdges" / "selectedFaces").
+size_t selCount(string key) { return getSelection()[key].array.length; }
+
 void settle() { Thread.sleep(dur!"msecs"(180)); }   // post-playback drain guard
 
 // Screen pixel for a world point on the active viewport.
@@ -152,4 +157,107 @@ unittest {
     assert(vertCount() == 8 && faceCount() == 6,
            "one undo must restore the pristine 8v/6f cube");
     assert(undoCount() == baseUndo, "undo must return to the pre-session count");
+}
+
+// ---------------------------------------------------------------------------
+// Activate Slice, draw ONE clean mid-plane cut through the origin, and drop the
+// tool (bakes the single undo entry). Camera-agnostic — reconstructs the same
+// most-facing construction plane the tool picks and lays the line on it, so the
+// cut always crosses the cube in a 4-edge belt (8v/6f → 12v/10f). Mirrors
+// "drag 1" of the session test above; used by the post-tool-selection tests.
+void sliceOnceMidPlane() {
+    cmd("tool.set mesh.sliceTool on");
+    settle();
+
+    auto cam = fetchCamera(BASE);
+    auto vp  = viewportFromCamera(cam);
+
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    float ax = fabs(camBack.x), ay = fabs(camBack.y), az = fabs(camBack.z);
+    Vec3 ax2;   // in-plane axis to lay the line along
+    if (ax >= ay && ax >= az)       ax2 = Vec3(0,0,1);
+    else if (ay >= ax && ay >= az)  ax2 = Vec3(0,0,1);
+    else                            ax2 = Vec3(0,1,0);
+
+    Vec3 A1 = ax2 * (-0.6f), B1 = ax2 * (0.6f);
+    int a1x, a1y, b1x, b1y;
+    scr(A1, vp, a1x, a1y);
+    scr(B1, vp, b1x, b1y);
+    playAndWait(buildDragLog(vp.x, vp.y, vp.width, vp.height, a1x, a1y, b1x, b1y, 20, 0), BASE);
+    settle();
+
+    cmd("tool.set mesh.sliceTool off");
+    settle();
+}
+
+// ---------------------------------------------------------------------------
+// S2 — post-tool selection: Slice does NOT auto-select the new geometry (unlike
+// Loop Slice's `selectNew`). With NOTHING pre-selected, the committed cut leaves
+// the selection EMPTY — the incoming (empty) selection is preserved verbatim.
+// The cut kernel (Mesh.cutByPlane → rebuildFacesWithChordSplits) clears face /
+// edge selection and adds the new crossing verts UNSELECTED; nothing in the
+// slice path or the baked MeshBevelEdit re-selects. Reference capture: "with
+// nothing pre-selected, 0 polygons selected after the cut".
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    assert(vertCount() == 8 && faceCount() == 6, "fresh cube must be 8v/6f");
+    // A fresh cube starts with an EMPTY selection — the precondition for the
+    // nothing-in ⇒ nothing-out invariant.
+    assert(selCount("selectedVertices") == 0 &&
+           selCount("selectedEdges")    == 0 &&
+           selCount("selectedFaces")    == 0,
+           "fresh cube must have an empty selection before the slice");
+    immutable long baseUndo = undoCount();
+
+    sliceOnceMidPlane();
+
+    // The cut actually happened (one baked undo entry, 12v/10f) — so the
+    // selection assertions below are meaningful, not a no-op.
+    assert(vertCount() == 12 && faceCount() == 10,
+           format("slice must have cut the cube (12v/10f), got %dv/%df",
+                  vertCount(), faceCount()));
+    assert(undoCount() == baseUndo + 1,
+           "tool-drop must bake exactly one undo entry for the cut");
+
+    // The hard S2 requirement: NOTHING is auto-selected. Slice preserves the
+    // (empty) incoming selection — no new polygon / edge / vertex is selected.
+    assert(selCount("selectedVertices") == 0, "Slice must not auto-select vertices");
+    assert(selCount("selectedEdges")    == 0, "Slice must not auto-select edges");
+    assert(selCount("selectedFaces")    == 0, "Slice must not auto-select polygons");
+}
+
+// ---------------------------------------------------------------------------
+// S2 (soft) — a pre-existing VERTEX selection survives the slice unchanged. The
+// original cube verts keep their indices (crossing verts are only APPENDED), so
+// the incoming selection {0,1} is still exactly {0,1} after the committed cut —
+// no new (cut) vertex is auto-added. This confirms "leaves the incoming
+// selection unchanged" in the non-empty case too, for the selection kind the
+// cut does not clear.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    // Pre-select two original cube vertices BEFORE activating the tool, so the
+    // session baseline is captured WITH this selection.
+    cmd("select.element vertex set 0 1");
+    settle();
+    assert(selCount("selectedVertices") == 2, "pre-selection of 2 verts must take");
+
+    sliceOnceMidPlane();
+
+    assert(vertCount() == 12 && faceCount() == 10,
+           format("slice must have cut the cube (12v/10f), got %dv/%df",
+                  vertCount(), faceCount()));
+
+    // The incoming vertex selection is preserved verbatim: verts 0 & 1 stay
+    // selected and no cut vertex is auto-selected (count stays 2).
+    auto sv = getSelection()["selectedVertices"].array;
+    assert(sv.length == 2,
+           format("incoming 2-vertex selection must survive the cut, got %d", sv.length));
+    bool has0 = false, has1 = false;
+    foreach (j; sv) {
+        if (j.integer == 0) has0 = true;
+        if (j.integer == 1) has1 = true;
+    }
+    assert(has0 && has1, "verts 0 and 1 must remain selected after the cut");
 }
