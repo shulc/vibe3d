@@ -9739,7 +9739,21 @@ struct Mesh {
     /// Caller owns snapshot/undo — this method does NOT capture a snapshot.
     size_t cutByPlane(Vec3 p, Vec3 n, float eps = 1e-5f) {
         bool[] cv;
-        return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0), cv, eps);
+        return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                            /*restrictFaces*/null, cv, eps);
+    }
+
+    // Same as cutByPlane, but RESTRICTED to a face set (`restrictFaces`). Only
+    // faces in the set are chord-split, and crossing verts are inserted only on
+    // THEIR edges (a shared edge with an unselected neighbour still gets the
+    // vert, which the neighbour absorbs as an n-gon so the cut stays watertight)
+    // — the interactive Slice tool's "cut only the selected polygons" behavior
+    // (mirrors Loop Slice's Slice Selected). An empty/null set ⇒ whole-mesh cut.
+    size_t cutByPlaneRestricted(Vec3 p, Vec3 n, const uint[] restrictFaces,
+                                float eps = 1e-5f) {
+        bool[] cv;
+        return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                            restrictFaces, cv, eps);
     }
 
     // -----------------------------------------------------------------------
@@ -9754,10 +9768,42 @@ struct Mesh {
     // -----------------------------------------------------------------------
     private size_t planeCutCore(Vec3 p, Vec3 n, bool clipped,
                                 Vec3 segStart, Vec3 segEnd,
+                                const uint[] restrictFaces,
                                 out bool[] isCutVertOut, float eps) {
         isCutVertOut = null;
         if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
             return 0;
+
+        // Selection restriction (task 0279): when `restrictFaces` is non-empty,
+        // the cut is confined to those faces — the reference Slice cuts ONLY the
+        // selected polygons, terminating watertight at the selection border. We
+        // mark the restricted faces plus, for each, its winding vertices + edges
+        // so Pass-1 inserts a crossing vertex ONLY on an edge that belongs to a
+        // restricted face (a shared border edge still gets it, and the
+        // unselected neighbour absorbs the vertex as an n-gon), Pass-2 splits
+        // ONLY restricted faces, and an on-plane vertex counts as a cut vertex
+        // only when it belongs to a restricted face. Empty ⇒ whole-mesh cut,
+        // byte-for-byte the original (the `restricted` guard collapses out).
+        bool restricted = restrictFaces.length > 0;
+        bool[] faceInRestrict, vertInRestrict, edgeInRestrict;
+        if (restricted) {
+            faceInRestrict.length = faces.length;
+            vertInRestrict.length = vertices.length;
+            edgeInRestrict.length = edges.length;
+            foreach (rf; restrictFaces) {
+                if (rf >= faces.length) continue;
+                faceInRestrict[rf] = true;
+                auto face = faces[rf];
+                foreach (k; 0 .. face.length) {
+                    uint a = face[k], b = face[(k + 1) % face.length];
+                    if (a < vertInRestrict.length) vertInRestrict[a] = true;
+                    if (b < vertInRestrict.length) vertInRestrict[b] = true;
+                    uint ei = edgeIndexOfVerts(a, b);
+                    if (ei != ~0u && ei < edgeInRestrict.length)
+                        edgeInRestrict[ei] = true;
+                }
+            }
+        }
 
         // Segment (clipped only): a degenerate span has no direction to clip
         // along, so it cuts nothing — the infinite case never reaches here.
@@ -9802,6 +9848,7 @@ struct Mesh {
         {
             bool anyWillSplit = false;
             foreach (fi; 0 .. faces.length) {
+                if (restricted && !faceInRestrict[fi]) continue; // only restricted faces split
                 auto face = faces[fi];
                 size_t insertsBefore = 0; // cumulative insertions tracking winding shifts
                 size_t[] hitPos;
@@ -9835,12 +9882,14 @@ struct Mesh {
         bool[] isCutVert;
         isCutVert.length = vertices.length;
         foreach (vi; 0 .. vertices.length)
-            isCutVert[vi] = onPlane[vi] && bandOkVert(cast(uint)vi);
+            isCutVert[vi] = onPlane[vi] && bandOkVert(cast(uint)vi)
+                          && (!restricted || vertInRestrict[vi]);
 
         size_t origEdgeCount = edges.length;
         foreach (ei; 0 .. origEdgeCount) {
             uint a = edges[ei][0], b = edges[ei][1];
             if (a >= dv.length || b >= dv.length) continue;
+            if (restricted && !edgeInRestrict[ei]) continue; // outside the selection region
             if (onPlane[a] || onPlane[b]) continue; // endpoint on-plane: skip new vert
             float da = dv[a], db = dv[b];
             if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
@@ -9849,8 +9898,11 @@ struct Mesh {
             insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
         }
 
-        // Pass 2 + finalize: split all eligible faces (all-true mask = empty).
-        size_t nSplit = rebuildFacesWithChordSplits([], isCutVert);
+        // Pass 2 + finalize: split eligible faces (empty mask = all faces; a
+        // restricted cut splits ONLY the selected faces — unselected neighbours
+        // that received a shared crossing vertex are copied whole as n-gons).
+        size_t nSplit = rebuildFacesWithChordSplits(
+            restricted ? faceInRestrict : [], isCutVert);
         isCutVertOut = isCutVert;
         return nSplit;
     }
@@ -9886,9 +9938,10 @@ struct Mesh {
     // faces. Pure data (no GPU / GL), unit-testable under `dub test`.
     // -----------------------------------------------------------------------
     size_t cutByPlaneClipped(Vec3 p, Vec3 n, Vec3 segStart, Vec3 segEnd,
-                             float eps = 1e-5f) {
+                             float eps = 1e-5f, const uint[] restrictFaces = null) {
         bool[] cv;
-        return planeCutCore(p, n, /*clipped*/true, segStart, segEnd, cv, eps);
+        return planeCutCore(p, n, /*clipped*/true, segStart, segEnd,
+                            restrictFaces, cv, eps);
     }
 
     // -----------------------------------------------------------------------
@@ -9918,9 +9971,11 @@ struct Mesh {
     // of faces split (0 = no cut; `result` left empty). Caller owns snapshot/undo.
     // -----------------------------------------------------------------------
     size_t cutByPlaneEx(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
-                        bool split, out PlaneCutLoops result, float eps = 1e-5f) {
+                        bool split, out PlaneCutLoops result, float eps = 1e-5f,
+                        const uint[] restrictFaces = null) {
         bool[] isCutVert;
-        size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd, isCutVert, eps);
+        size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd,
+                                     restrictFaces, isCutVert, eps);
         if (nSplit == 0) return 0;
         // Order the crossing verts into ring(s) from the connected cut BEFORE the
         // split duplicates them (the split rebuilds edges under us).
@@ -16291,6 +16346,71 @@ unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 
     foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after cut");
     // No degenerate faces.
     foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-faces");
+}
+
+unittest { // cutByPlaneRestricted (task 0279): cut confined to the selected faces
+    import std.math : abs;
+    // The Slice tool cuts ONLY the selected polygons. An x=0 plane (normal +X)
+    // crosses the cube's 4 X-spanning faces; restricting to the two Z-facing
+    // faces (front z=-0.5, back z=+0.5) must split ONLY those two — 12v/8f — with
+    // the two unselected crossed neighbours (top/bottom) absorbing their shared
+    // crossing vertex as a watertight n-gon. Reference-captured: 12v/8f (task
+    // 0279).
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    uint[] restrict;
+    foreach (fi; 0 .. m.faces.length) {
+        bool allFront = true, allBack = true;
+        foreach (vi; m.faces[fi]) {
+            if (m.vertices[vi].z > -0.49f) allFront = false;
+            if (m.vertices[vi].z <  0.49f) allBack  = false;
+        }
+        if (allFront || allBack) restrict ~= cast(uint)fi;
+    }
+    assert(restrict.length == 2, "cube has exactly two Z-facing faces");
+    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+    assert(nSplit == 2, "only the 2 selected faces split");
+    assert(m.faces.length == 8, "6 → 8 (each selected face → 2; neighbours stay whole)");
+    assert(m.vertices.length == 12, "4 crossing verts at the selected faces' spanning edges");
+    // Watertight: no orphan verts, no degenerate faces.
+    bool[] refd = new bool[](m.vertices.length);
+    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+    foreach (r; refd) assert(r, "no orphan vertex after a restricted cut");
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-face");
+}
+
+unittest { // cutByPlaneRestricted: 1 selected face → only it splits (10v/7f)
+    import std.math : abs;
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    uint[] restrict;
+    foreach (fi; 0 .. m.faces.length) {
+        bool allFront = true;
+        foreach (vi; m.faces[fi]) if (m.vertices[vi].z > -0.49f) allFront = false;
+        if (allFront) restrict ~= cast(uint)fi;
+    }
+    assert(restrict.length == 1, "exactly one front (z=-0.5) face");
+    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+    assert(nSplit == 1, "only the front face splits");
+    assert(m.faces.length == 7, "6 → 7");
+    assert(m.vertices.length == 10, "only 2 crossing verts on the front face's spanning edges");
+    // The whole-cut-only crossing verts on the UNSELECTED back face (0, ±0.5, +0.5)
+    // must be ABSENT — proof the cut stopped at the selection.
+    foreach (v; m.vertices)
+        assert(!(abs(v.x) < 1e-4f && abs(v.z - 0.5f) < 1e-4f),
+               "no crossing vertex may land on the unselected back face");
+}
+
+unittest { // cutByPlaneRestricted: empty/null set == whole cut, byte-for-byte
+    auto a = makeCube(); a.buildLoops(); a.resetSelection();
+    auto b = makeCube(); b.buildLoops(); b.resetSelection();
+    size_t na = a.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), null);
+    size_t nb = b.cutByPlane(Vec3(0, 0, 0), Vec3(1, 0, 0));
+    assert(na == nb, "empty restrict set cuts identically to the whole cut");
+    assert(a.faces.length == b.faces.length && a.faces.length == 10);
+    assert(a.vertices.length == b.vertices.length && a.vertices.length == 12);
 }
 
 unittest { // cutByPlaneClipped: a full-span segment agrees with cutByPlane (infinite)

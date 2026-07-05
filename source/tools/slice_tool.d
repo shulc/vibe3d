@@ -71,7 +71,8 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          int axisMode = cast(int)SliceAxis.Free,
                          Vec3 vector = Vec3(0, 1, 0),
                          bool infinite = false,
-                         bool split = false)
+                         bool split = false,
+                         const uint[] restrictFaces = null)
 {
     if (baseline.filled) baseline.restore(mesh);
     Vec3 p, n;
@@ -88,13 +89,36 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // SAME plane cut through Mesh.cutByPlaneEx, which duplicates the cut loop
     // into two coincident boundary loops (the Loop Slice lo/hi seam model),
     // splitting the surface into two disconnected sections along the cut.
+    // `restrictFaces` (task 0279): when non-empty, the cut is confined to those
+    // faces — the reference Slice cuts ONLY the selected polygons (the whole
+    // layer when nothing is selected, i.e. an empty set here). Threaded into
+    // every cut variant so the preview, the commit, and applyHeadless all
+    // restrict identically.
     if (!split) {
-        if (infinite) return mesh.cutByPlane(p, n);
-        return mesh.cutByPlaneClipped(p, n, start, end);
+        if (infinite)
+            return restrictFaces.length > 0
+                 ? mesh.cutByPlaneRestricted(p, n, restrictFaces)
+                 : mesh.cutByPlane(p, n);
+        return mesh.cutByPlaneClipped(p, n, start, end, 1e-5f, restrictFaces);
     }
     Mesh.PlaneCutLoops loops;
     return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
-                             /*split*/true, loops);
+                             /*split*/true, loops, 1e-5f, restrictFaces);
+}
+
+// The face set the cut is restricted to = the current POLYGON selection. Empty
+// (null) when no polygon is selected ⇒ whole-mesh cut. This mirrors the
+// reference Slice, which cuts ONLY the selected polygons and the whole layer
+// when nothing is selected (task 0279 capture: 2 of 6 faces selected → only
+// those 2 split, unselected crossed neighbours absorb the cut verts as n-gons;
+// nothing / all selected → whole cut). Keyed on the polygon selection like Loop
+// Slice's Slice Selected; a pure vertex/edge selection does not restrict.
+uint[] sliceRestrictFaces(ref Mesh mesh) {
+    if (mesh.countSelectedFaces() == 0) return null;
+    uint[] r;
+    foreach (fi; 0 .. mesh.faces.length)
+        if (mesh.isFaceSelected(fi)) r ~= cast(uint)fi;
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +262,11 @@ private:
     bool     previewLive_;       // a preview cut currently sits on the mesh
     MeshSnapshot before_;        // session baseline captured at activation
     bool     haveBefore_;
+    // The polygon-selection face set the cut is restricted to (task 0279),
+    // snapshotted ONCE at activation. Every non-cumulative preview restores the
+    // baseline (reverting face indices), so these activation-time indices stay
+    // valid across the whole session. Empty ⇒ whole-mesh cut.
+    uint[]   restrictFaces_;
     MeshCacheKey armedKey_;      // mesh identity+version guard for the deferred commit
     Viewport cachedVp;
 
@@ -367,6 +396,9 @@ public:
         // deferred commit records before_ → the final cut as ONE undo entry.
         before_     = MeshSnapshot.capture(*mesh);
         haveBefore_ = true;
+        // Freeze the restrict set (current polygon selection) for the session —
+        // valid across previews because each restores the baseline face indexing.
+        restrictFaces_ = sliceRestrictFaces(*mesh);
         armedKey_.stamp(*mesh);
     }
 
@@ -409,6 +441,10 @@ public:
         if (!planeForSlice(start_, end_, currentWorkplaneFrame().normal,
                            cast(int)axis_, vector_, p, n))
             return false;
+        // Restrict the cut to the current polygon selection (task 0279): the
+        // reference Slice cuts ONLY the selected polygons, the whole layer when
+        // nothing is selected (empty set ⇒ whole cut).
+        uint[] restrict = sliceRestrictFaces(*mesh);
         // infinite ⇒ whole-mesh plane cut; else clip to the drawn Start→End span.
         // split ⇒ route the same cut through cutByPlaneEx so the loop is
         // duplicated into two disconnected boundary loops (S7).
@@ -416,7 +452,10 @@ public:
         if (split_) {
             Mesh.PlaneCutLoops loops;
             nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, start_, end_,
-                                       /*split*/true, loops);
+                                       /*split*/true, loops, 1e-5f, restrict);
+        } else if (restrict.length > 0) {
+            nSplit = infinite_ ? mesh.cutByPlaneRestricted(p, n, restrict)
+                               : mesh.cutByPlaneClipped(p, n, start_, end_, 1e-5f, restrict);
         } else {
             nSplit = infinite_ ? mesh.cutByPlane(p, n)
                                : mesh.cutByPlaneClipped(p, n, start_, end_);
@@ -598,7 +637,7 @@ private:
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
                                           cachedWorkplaneNormal(), cast(int)axis_, vector_,
-                                          infinite_, split_);
+                                          infinite_, split_, restrictFaces_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,
