@@ -55,6 +55,23 @@ static immutable IntEnumEntry[5] sliceAxisTable = [
 ];
 
 // ---------------------------------------------------------------------------
+// SliceGapSide (task 0275, S9) — the reference "Offset Side": where the Gap
+// band sits relative to the cut plane. The integer VALUES are the wire contract
+// the kernel (Mesh.cutByPlaneEx → splitAlongCutLoop) reads directly, so keep
+// them 0/1/2 in lockstep with the switch there.
+//   Center   — symmetric: both shells recede ±gap/2 from the plane.
+//   Positive — the +n-side shell takes the full gap along +n; the other stays.
+//   Negative — the −n-side shell takes the full gap along −n; the other stays.
+// (Total shell separation is always exactly `gap` for all three.)
+enum SliceGapSide : int { Center = 0, Positive = 1, Negative = 2 }
+
+static immutable IntEnumEntry[3] sliceGapSideTable = [
+    IntEnumEntry(cast(int)SliceGapSide.Center,   "center",   "Center"),
+    IntEnumEntry(cast(int)SliceGapSide.Positive, "positive", "Positive"),
+    IntEnumEntry(cast(int)SliceGapSide.Negative, "negative", "Negative"),
+];
+
+// ---------------------------------------------------------------------------
 // sliceFromBaseline — the shared cut kernel wrapper (the single point that
 // turns a Start→End line into a plane cut). RESTORES `baseline` onto `mesh`
 // FIRST, then cuts with the plane through the line perpendicular to
@@ -73,7 +90,9 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          bool infinite = false,
                          bool split = false,
                          bool caps = false,
-                         const uint[] restrictFaces = null)
+                         const uint[] restrictFaces = null,
+                         float gap = 0.0f,
+                         int gapSide = cast(int)SliceGapSide.Center)
 {
     if (baseline.filled) baseline.restore(mesh);
     Vec3 p, n;
@@ -106,9 +125,13 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                  : mesh.cutByPlane(p, n);
         return mesh.cutByPlaneClipped(p, n, start, end, 1e-5f, restrictFaces);
     }
+    // `gap`/`gapSide` (S9): with split on, separate the two boundary loops along
+    // the cut-plane normal `n` by `gap`, offset per `gapSide` (Mesh.cutByPlaneEx
+    // → splitAlongCutLoop). gap=0 leaves the pairs coincident (byte-for-byte S7/S8).
     Mesh.PlaneCutLoops loops;
     return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
-                             /*split*/true, caps, loops, 1e-5f, restrictFaces);
+                             /*split*/true, caps, loops, 1e-5f, restrictFaces,
+                             gap, gapSide);
 }
 
 // The face set the cut is restricted to = the current POLYGON selection. Empty
@@ -184,9 +207,16 @@ uint[] sliceRestrictFaces(ref Mesh mesh) {
 // Gap (S9). Threads through the preview + commit (sliceFromBaseline) and
 // applyHeadless.
 //
-// Deferred to later tasks: angle snap (S5), gap reusing the Loop Slice machinery
-// (S9). Params: `startX/Y/Z`, `endX/Y/Z`, `fast`, `infinite`, `split`, `caps`,
-// `axis`, `vectorX/Y/Z`.
+// S9 (task 0275) adds `gap` (distance, default 0, dep Split) + `gapSide` (Offset
+// Side: center/positive/negative, default center). With `split` on and `gap != 0`
+// the two split boundary loops are pushed APART by `gap` along the CUT-PLANE
+// NORMAL `n` (the flat-cut analogue of the Loop Slice rail-direction gap),
+// offset per `gapSide`; with `caps` on the caps become real walls (nonzero
+// area). gap=0 is byte-for-byte S7/S8. Threads through sliceFromBaseline
+// (preview + commit) and applyHeadless. This completes the Slice program (S0–S9).
+//
+// Params: `startX/Y/Z`, `endX/Y/Z`, `fast`, `snap`, `snapAngle`, `split`,
+// `caps`, `gap`, `gapSide`, `infinite`, `axis`, `vectorX/Y/Z`.
 //
 // Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
 // `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
@@ -273,6 +303,22 @@ private:
     // default. It changes nothing while Split is off (the S0/S4/S7 goldens, all
     // Split-off, stay byte-for-byte).
     bool caps_ = true;
+
+    // Gap + Offset Side (S9, task 0275; gap default 0, gapSide default Center).
+    // Only meaningful with `split_` on (the panel greys both while Split is off —
+    // paramEnabled). `gap_ == 0` (default) leaves the two duplicated boundary
+    // loops COINCIDENT, byte-for-byte the S7/S8 result. Non-zero pushes the two
+    // split shells APART along the CUT-PLANE NORMAL `n` by exactly `gap_`,
+    // opening a real band (a thickened cut); `gapSide_` biases which shell moves
+    // (Center = symmetric ±gap/2; Positive/Negative = one shell takes the full
+    // gap). KEY DIVERGENCE from the Loop Slice gap: that one displaces along the
+    // on-surface RAIL (perpendicular to the edge loop); a FLAT plane cut has no
+    // rail, so the two shells separate along the plane normal instead — the
+    // natural "open the cut" direction. Threaded into sliceFromBaseline (preview
+    // + commit) and applyHeadless. Sticky (not reset on activate). With `caps_`
+    // on the cap polygons gain real (nonzero) area — the band becomes solid walls.
+    float        gap_     = 0.0f;
+    SliceGapSide gapSide_ = SliceGapSide.Center;
 
     // Angle Snap (S5, task 0271). When ON, the drawn line's ANGLE in the work
     // plane is quantized to the nearest multiple of `snapAngle_` before the cut
@@ -416,6 +462,14 @@ public:
             // boundary loop with a cap polygon. Default ON; greyed while Split
             // off (paramEnabled) — a no-op there.
             Param.bool_( "caps",   "Cap Sections", &caps_, true),
+            // Gap (S9): with Split on, open a band of this width between the two
+            // split shells (along the cut-plane normal). Default 0 (coincident);
+            // greyed while Split off (paramEnabled).
+            Param.float_("gap",    "Gap", &gap_, 0.0f),
+            // Offset Side (S9): where the Gap band sits vs the plane
+            // (center/positive/negative). Greyed while Split off (paramEnabled).
+            Param.intEnum_("gapSide", "Offset Side", cast(int*)&gapSide_,
+                           sliceGapSideTable[], cast(int)SliceGapSide.Center),
             // Angle Snap (S5): OFF (goldens-green factory default — see field
             // doc) draws the raw line; ON quantizes the line's work-plane angle
             // to the nearest `snapAngle` multiple before the plane is built.
@@ -444,6 +498,10 @@ public:
         // it while Split is off (it is a no-op there), mirroring the reference.
         if (name == "caps")
             return split_;
+        // Gap + Offset Side (S9) only act once Split has duplicated the loop —
+        // grey them while Split is off (a no-op there), mirroring the reference.
+        if (name == "gap" || name == "gapSide")
+            return split_;
         // Angle (snapAngle) only matters when Angle Snap is on — grey it while
         // snap is off (a no-op there), mirroring the reference.
         if (name == "snapAngle")
@@ -468,6 +526,8 @@ public:
         root["infinite"] = JSONValue(infinite_);
         root["split"]  = JSONValue(split_);
         root["caps"]   = JSONValue(caps_);
+        root["gap"]     = JSONValue(gap_);
+        root["gapSide"] = JSONValue(wireTagForValue(sliceGapSideTable[], cast(int)gapSide_));
         root["snap"]      = JSONValue(snap_);
         root["snapAngle"] = JSONValue(snapAngle_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
@@ -550,9 +610,12 @@ public:
         // section with a cap polygon (S8, forwarded to splitAlongCutLoop).
         size_t nSplit;
         if (split_) {
+            // gap/gapSide (S9): separate the two split shells along the plane
+            // normal by gap_, offset per gapSide_ (no-op at gap_ == 0).
             Mesh.PlaneCutLoops loops;
             nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
-                                       /*split*/true, caps_, loops, 1e-5f, restrict);
+                                       /*split*/true, caps_, loops, 1e-5f, restrict,
+                                       gap_, cast(int)gapSide_);
         } else if (restrict.length > 0) {
             nSplit = infinite_ ? mesh.cutByPlaneRestricted(p, n, restrict)
                                : mesh.cutByPlaneClipped(p, n, sStart, sEnd, 1e-5f, restrict);
@@ -759,7 +822,8 @@ private:
         if (!haveBefore_) return;
         size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
                                           cachedWorkplaneNormal(), cast(int)axis_, vector_,
-                                          infinite_, split_, caps_, restrictFaces_);
+                                          infinite_, split_, caps_, restrictFaces_,
+                                          gap_, cast(int)gapSide_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,

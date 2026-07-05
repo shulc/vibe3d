@@ -554,6 +554,14 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         if ("caps" in sl)
             cmd(format("tool.attr mesh.sliceTool caps %d",
                        sl["caps"].type == JSONType.true_ ? 1 : 0), ctx);
+        // Optional Gap / Offset Side (S9, task 0275): with Split on, push the two
+        // split boundary loops apart by `gap` along the cut-plane normal, offset
+        // by `gapSide` (center/positive/negative). Default gap 0 (coincident) —
+        // unset leaves the S7/S8 result byte-for-byte.
+        if ("gap" in sl)
+            cmd(format("tool.attr mesh.sliceTool gap %g", asDouble(sl["gap"])), ctx);
+        if ("gapSide" in sl)
+            cmd(format("tool.attr mesh.sliceTool gapSide %s", sl["gapSide"].str), ctx);
         // Optional Angle Snap (S5): `"snap": true` quantizes the line's
         // work-plane angle to the nearest `"snapAngle"` (degrees, default 45)
         // multiple before the plane is built. Default OFF, so unset = the raw

@@ -1,0 +1,60 @@
+{
+  "name": "slice_gap",
+  "description": "Slice tool 'Gap' + 'Offset Side' options (mesh.sliceTool, task 0275 S9). A cube (8v/6f) cut by the plane through the drawn Start->End line perpendicular to the work plane (headless work-plane normal = default world XZ, +Y). The line runs along Z through the origin, so the cut-plane normal n = normalize(cross(end-start, +Y)) = -X (through X=0), the == S0 slice.json midX cut. Split is ON in every case (S7): each of the 4 crossing verts at x=0 is DUPLICATED into a lo/hi pair, splitting the cube into two disconnected shells along the cut (16v/24e). Cap Sections is ON (S8): each shell's boundary loop is sealed by one cap polygon (16v/24e/12f, no new verts/edges). GAP (S9) then pushes the two shells APART along the plane normal n by exactly `gap`, offset per `gapSide` -- POSITIONS ONLY (topology identical to the gap=0 caps-on case: 16v/24e/12f throughout), so the caps gain real (nonzero) area, becoming solid walls of the opened band. WHICH SHELL IS WHICH: `lo` (the ORIGINAL crossing verts 8-11) is kept by the +n-side faces, so it is the +n shell (here +n = -X => the x<0 shell); `hi` (the DUPLICATES 12-15) is the -n shell (x>0). Opening the shells apart moves lo toward +n (-X) and hi toward -n (+X). OFFSET SIDE (total shell separation is always exactly `gap`): center = symmetric (lo +n*gap/2, hi -n*gap/2); positive = the +n shell (lo) takes the FULL gap along +n, hi stays on the plane; negative = the -n shell (hi) takes the FULL gap along -n, lo stays on the plane. gap=0 leaves every pair coincident (byte-for-byte S7/S8). KEY DIVERGENCE from the Loop Slice gap, which pushes seam pairs along the on-surface RAIL (perpendicular to the edge loop): a FLAT plane cut has no rail, so the two shells separate along the plane normal instead. The kernel-level topology + exact separation proof lives in the source/mesh.d cutByPlaneEx S9 unittest.",
+  "source": "Analytic. Cube +/-0.5; plane law = math.planeForSlice(start, end, +Y). Line along Z -> n = -X through X=0. Split ON duplicates each crossing vert (dups 12-15 pair with originals 8-11 in order); Cap Sections ON seals each shell; Gap ON displaces lo/hi along n. gap = 0.2 here: center -> lo x=-0.1 / hi x=+0.1; positive -> lo x=-0.2 / hi x=0; negative -> lo x=0 / hi x=+0.2. y,z unchanged (displacement is purely along the plane normal). Gap geometry law is a pure position pass by construction (Mesh.splitAlongCutLoop, task 0275), no reference-app numeric parity needed.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "gap_zero_coincident",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": true, "gap": 0.0, "gapSide": "center" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_center_symmetric",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": true, "gap": 0.2, "gapSide": "center" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.1, -0.5, -0.5], [-0.1, 0.5, -0.5], [-0.1, -0.5, 0.5], [-0.1, 0.5, 0.5],
+        [0.1, -0.5, -0.5], [0.1, 0.5, -0.5], [0.1, -0.5, 0.5], [0.1, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_positive_one_sided",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": true, "gap": 0.2, "gapSide": "positive" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.2, -0.5, -0.5], [-0.2, 0.5, -0.5], [-0.2, -0.5, 0.5], [-0.2, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_negative_one_sided",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "split": true, "caps": true, "gap": 0.2, "gapSide": "negative" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "edges": 24, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5],
+        [0.2, -0.5, -0.5], [0.2, 0.5, -0.5], [0.2, -0.5, 0.5], [0.2, 0.5, 0.5]
+      ]
+    }
+  ]
+}

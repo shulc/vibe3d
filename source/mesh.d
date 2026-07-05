@@ -9941,9 +9941,17 @@ struct Mesh {
     // the surface into two disconnected sections along the cut. Returns the number
     // of faces split (0 = no cut; `result` left empty). Caller owns snapshot/undo.
     // -----------------------------------------------------------------------
+    // `gap` (S9, task 0275, distance) + `gapSide` (Offset Side: 0=center,
+    // 1=positive, 2=negative) — only meaningful WITH `split`. `gap == 0` (the
+    // default) leaves the two duplicated boundary loops COINCIDENT, byte-for-byte
+    // the S7/S8 result. Non-zero pushes the two split shells APART along the CUT-
+    // PLANE NORMAL `n` (the natural "thicken a flat cut" direction, unlike Loop
+    // Slice which pushes along the on-surface rail), opening a real band; see
+    // splitAlongCutLoop for the sign policy. Positions only — no topology change.
     size_t cutByPlaneEx(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
                         bool split, bool caps, out PlaneCutLoops result, float eps = 1e-5f,
-                        const uint[] restrictFaces = null) {
+                        const uint[] restrictFaces = null,
+                        float gap = 0.0f, int gapSide = 0) {
         bool[] isCutVert;
         size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd,
                                      restrictFaces, isCutVert, eps);
@@ -9953,8 +9961,9 @@ struct Mesh {
         result.loops = extractCutLoops(isCutVert);
         // `caps` (S8) is only meaningful WITH `split` — it seals each duplicated
         // boundary loop with a cap polygon (see splitAlongCutLoop / capShellCycles).
+        // `gap`/`gapSide` (S9) then separate the two shells along `n`.
         if (split)
-            splitAlongCutLoop(isCutVert, p, n, caps, result.seamPairs, eps);
+            splitAlongCutLoop(isCutVert, p, n, caps, result.seamPairs, eps, gap, gapSide);
         return nSplit;
     }
 
@@ -10018,7 +10027,8 @@ struct Mesh {
     // duplicated crossing vertex — the data S8 (caps) / S9 (gap) act on.
     // -----------------------------------------------------------------------
     private void splitAlongCutLoop(const bool[] isCutVert, Vec3 planeP, Vec3 planeN,
-                                   bool caps, out uint[2][] seamPairs, float eps) {
+                                   bool caps, out uint[2][] seamPairs, float eps,
+                                   float gap = 0.0f, int gapSide = 0) {
         bool cut(uint v) { return v < isCutVert.length && isCutVert[v]; }
         uint[uint] dupOf;
         uint getDup(uint vi) {
@@ -10049,6 +10059,39 @@ struct Mesh {
             }
         }
         if (seamPairs.length == 0) return;   // nothing duplicated — no-op
+        // Gap / Offset Side (S9, task 0275): open a band of width `gap` between
+        // the two split shells by pushing each coincident [lo,hi] seam pair apart
+        // ALONG THE CUT-PLANE NORMAL `planeN` (unit). This differs from the Loop
+        // Slice gap, which pushes along the on-surface RAIL: for a FLAT plane cut
+        // the two shells naturally separate along `n` (thickening the cut).
+        //
+        // WHICH SHELL IS WHICH: `lo` (pr[0], the ORIGINAL crossing vert) is kept
+        // by faces wholly on the plane's POSITIVE side (n·(v−p) > 0); `hi` (pr[1],
+        // the DUPLICATE) is referenced by the NEGATIVE-side faces (the remap above).
+        // So lo belongs to the +n shell, hi to the −n shell. Opening them apart
+        // moves lo toward +n and hi toward −n.
+        //
+        // OFFSET SIDE sign policy (total separation is always exactly `gap`):
+        //   center   (0): symmetric — lo += n·gap/2, hi −= n·gap/2.
+        //   positive (1): the +n-side shell (lo) takes the FULL gap along +n; the
+        //                 −n-side shell (hi) stays on the plane.
+        //   negative (2): the −n-side shell (hi) takes the FULL gap along −n; the
+        //                 +n-side shell (lo) stays on the plane.
+        // `gap == 0` leaves every pair coincident (byte-for-byte S7/S8). Positions
+        // only — no topology change; any `caps` quads gain real (nonzero) area.
+        // Each seam vert is unique to one pair, so no vert is displaced twice.
+        if (gap != 0.0f) {
+            float loAmt, hiAmt;
+            switch (gapSide) {
+                case 1:  loAmt = gap;        hiAmt = 0.0f;       break;  // positive
+                case 2:  loAmt = 0.0f;       hiAmt = gap;        break;  // negative
+                default: loAmt = gap * 0.5f; hiAmt = gap * 0.5f; break;  // center
+            }
+            foreach (pr; seamPairs) {
+                vertices[pr[0]] = vertices[pr[0]] + planeN * loAmt;   // lo → +n shell
+                vertices[pr[1]] = vertices[pr[1]] - planeN * hiAmt;   // hi → −n shell
+            }
+        }
         // Cap Sections (S8, task 0274): seal each opened section with ONE cap
         // polygon that fills that section's own boundary loop — the SAME geometry
         // as the Loop Slice Cap Sections option (shared `capShellCycles`, task
@@ -16609,6 +16652,50 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     assert(boundaryEdgeCount(cap) == 0, "split+caps: both boundary loops sealed");
     assert(componentCount(cap) == 2, "split+caps: two shells stay disconnected");
     assert(capR.seamPairs.length == 4, "split+caps: still 4 seam pairs for Gap (S9)");
+}
+
+unittest { // cutByPlaneEx: Slice `gap` + `gapSide` (S9, task 0275) — the two
+    // split shells separate ALONG THE PLANE NORMAL by exactly `gap`, offset per
+    // gapSide. Mid-plane cut of a cube with n = +X through X=0: lo (originals) is
+    // the +n (x>0) shell, hi (dups) the −n (x<0) shell.
+    import std.math : abs;
+    enum float G = 0.4f;
+    Vec3 P = Vec3(0, 0, 0), N = Vec3(1, 0, 0);
+
+    // gap=0 baseline: 4 coincident pairs (byte-for-byte S7/S8) — proven above.
+
+    // center (0): symmetric — lo at x=+G/2, hi at x=−G/2, separation = G.
+    Mesh c = makeCube(); c.buildLoops(); c.resetSelection();
+    Mesh.PlaneCutLoops cR;
+    c.cutByPlaneEx(P, N, false, P, P, /*split*/true, /*caps*/true, cR,
+                   1e-5f, null, /*gap*/G, /*gapSide*/0);
+    assert(cR.seamPairs.length == 4);
+    foreach (pr; cR.seamPairs) {
+        Vec3 lo = c.vertices[pr[0]], hi = c.vertices[pr[1]];
+        assert(abs(lo.x - (+G * 0.5f)) < 1e-6f, "center: lo shell at +gap/2");
+        assert(abs(hi.x - (-G * 0.5f)) < 1e-6f, "center: hi shell at −gap/2");
+        assert(abs((lo.x - hi.x) - G) < 1e-6f, "center: shells separated by exactly gap");
+        assert(abs(lo.y - hi.y) < 1e-6f && abs(lo.z - hi.z) < 1e-6f,
+               "gap displaces ONLY along the plane normal");
+    }
+
+    // positive (1): +n shell (lo) takes the full gap along +n; hi stays on plane.
+    Mesh pMesh = makeCube(); pMesh.buildLoops(); pMesh.resetSelection();
+    Mesh.PlaneCutLoops pR;
+    pMesh.cutByPlaneEx(P, N, false, P, P, true, true, pR, 1e-5f, null, G, 1);
+    foreach (pr; pR.seamPairs) {
+        assert(abs(pMesh.vertices[pr[0]].x - G)    < 1e-6f, "positive: lo at +gap");
+        assert(abs(pMesh.vertices[pr[1]].x - 0.0f) < 1e-6f, "positive: hi stays on plane");
+    }
+
+    // negative (2): −n shell (hi) takes the full gap along −n; lo stays on plane.
+    Mesh nMesh = makeCube(); nMesh.buildLoops(); nMesh.resetSelection();
+    Mesh.PlaneCutLoops nR;
+    nMesh.cutByPlaneEx(P, N, false, P, P, true, true, nR, 1e-5f, null, G, 2);
+    foreach (pr; nR.seamPairs) {
+        assert(abs(nMesh.vertices[pr[0]].x - 0.0f) < 1e-6f, "negative: lo stays on plane");
+        assert(abs(nMesh.vertices[pr[1]].x - (-G)) < 1e-6f, "negative: hi at −gap");
+    }
 }
 
 // ---------------------------------------------------------------------------
