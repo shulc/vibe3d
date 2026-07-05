@@ -4,6 +4,8 @@ import bindbc.sdl;
 import bindbc.opengl;
 import std.json : JSONValue;
 import std.math : sqrt, sin, cos, PI;
+import ImGui = d_imgui;
+import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 
 import tool;
 import mesh;
@@ -154,11 +156,42 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // every cut variant so the preview, the commit, and applyHeadless all
     // restrict identically.
     if (!split) {
-        if (infinite)
-            return restrictFaces.length > 0
-                 ? mesh.cutByPlaneRestricted(p, n, restrictFaces)
-                 : mesh.cutByPlane(p, n);
-        return mesh.cutByPlaneClipped(p, n, start, end, 1e-5f, restrictFaces);
+        // A single connected plane cut through point `pp`, honoring infinite vs
+        // clipped + restrictFaces (the S0/S4 path). Nested so the Gap-without-
+        // split path can fire it twice for the two parallel cuts.
+        size_t cutAt(Vec3 pp) {
+            if (infinite)
+                return restrictFaces.length > 0
+                     ? mesh.cutByPlaneRestricted(pp, n, restrictFaces)
+                     : mesh.cutByPlane(pp, n);
+            return mesh.cutByPlaneClipped(pp, n, start, end, 1e-5f, restrictFaces);
+        }
+        // Gap WITHOUT Split (task 0288). The reference Slice's `gap` works even
+        // with Split OFF: it opens the single cut into TWO PARALLEL cuts `gap`
+        // apart along the plane normal (offset per `gapSide`), leaving the strip
+        // between them as COPLANAR band faces — the mesh stays CONNECTED (a
+        // channel notched into the surface), NOT the disconnected two-shell Split.
+        // Captured on a cube (axis-aligned cut, center): 12v/10f → 16v/14f with
+        // the two loops at ±gap/2 (the captured reference geometry, task 0288).
+        // Reproduced EXACTLY by two sequential parallel plane cuts through
+        // p + n·loAmt and p − n·hiAmt (loAmt/hiAmt from `gapSide`, summing to
+        // `gap` — the SAME sign policy as the Split gap kernel: center gap/2·gap/2,
+        // positive gap·0, negative 0·gap). `gap == 0` collapses both planes onto
+        // `p`, so the second cut is a no-op and this stays byte-for-byte the single
+        // connected cut. Only the axis-aligned center case is reference-captured;
+        // positive/negative + sheared cuts are analytic extensions.
+        if (gap != 0.0f) {
+            float loAmt, hiAmt;
+            switch (gapSide) {
+                case cast(int)SliceGapSide.Positive: loAmt = gap;        hiAmt = 0.0f;       break;
+                case cast(int)SliceGapSide.Negative: loAmt = 0.0f;       hiAmt = gap;        break;
+                default:                              loAmt = gap * 0.5f; hiAmt = gap * 0.5f; break;
+            }
+            size_t nCut = cutAt(p + n * loAmt);
+            nCut       += cutAt(p - n * hiAmt);
+            return nCut;
+        }
+        return cutAt(p);
     }
     // `gap`/`gapSide` (S9): with split on, separate the two boundary loops along
     // the cut-plane normal `n` by `gap`, offset per `gapSide` (Mesh.cutByPlaneEx
@@ -412,7 +445,8 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 //     rendered through the shared gizmo palette + hover arbiter (ToolHandles).
 //   • GESTURES: drag an endpoint to move it; drag the line body to translate
 //     the whole line; middle-click to relocate the line to the cursor;
-//     Shift+drag to reset/redraw a fresh line; RMB to cancel a gesture.
+//     Shift+drag to reset/redraw a fresh line; RMB CANCELS an in-flight LMB
+//     gesture, else RMB drags the `gap` (task 0288, dashed-circle + value HUD).
 //   • LIVE PREVIEW: while dragging, the resulting cut is previewed on the real
 //     mesh WITHOUT committing — non-cumulative (each update restores the
 //     ACTIVATION baseline then re-cuts, via `sliceFromBaseline`), mirroring
@@ -602,6 +636,21 @@ private:
     // on the cap polygons gain real (nonzero) area — the band becomes solid walls.
     float        gap_     = 0.0f;
     SliceGapSide gapSide_ = SliceGapSide.Center;
+
+    // RMB gap-adjust drag (task 0288). The reference exposes `gap` as an RMB
+    // click+drag gizmo with a dashed-circle + value HUD. RMB with NO active LMB
+    // gesture begins a gap drag: the horizontal travel maps px→gap. `gapDrag_` is
+    // the live flag; `gapDragStartGap_`/`gapDragStartM*_` latch the gap + mouse
+    // pixel it began at so the delta is ABSOLUTE (no per-frame accumulation drift,
+    // like the transform rings). Since gap now applies WITHOUT Split (opens a
+    // channel), the drag re-previews live.
+    bool  gapDrag_;
+    float gapDragStartGap_;
+    int   gapDragStartMX_, gapDragStartMY_;
+    // Screen px → world gap scale for the RMB drag (~200 px ≈ 1 world unit). The
+    // dashed HUD circle's pixel radius is gap_/GAP_DRAG_PX_TO_WORLD (+ a floor),
+    // so the ring grows in lockstep with the cursor's horizontal travel.
+    enum float GAP_DRAG_PX_TO_WORLD = 0.005f;
 
     // Angle Snap (S5, task 0271). When ON, the drawn line's ANGLE in the work
     // plane is quantized to the nearest multiple of `snapAngle_` before the cut
@@ -805,12 +854,13 @@ public:
             // boundary loop with a cap polygon. Default ON; greyed while Split
             // off (paramEnabled) — a no-op there.
             Param.bool_( "caps",   "Cap Sections", &caps_, true),
-            // Gap (S9): with Split on, open a band of this width between the two
-            // split shells (along the cut-plane normal). Default 0 (coincident);
-            // greyed while Split off (paramEnabled).
+            // Gap (S9 / task 0288): open a band of this width at the cut. With
+            // Split ON the two shells separate (0290); with Split OFF it opens a
+            // connected channel (two parallel cuts, task 0288). Default 0. NOT
+            // greyed by Split (applies either way); also driven by an RMB drag.
             Param.float_("gap",    "Gap", &gap_, 0.0f),
             // Offset Side (S9): where the Gap band sits vs the plane
-            // (center/positive/negative). Greyed while Split off (paramEnabled).
+            // (center/positive/negative). Applies with Split on or off (task 0288).
             Param.intEnum_("gapSide", "Offset Side", cast(int*)&gapSide_,
                            sliceGapSideTable[], cast(int)SliceGapSide.Center),
             // Angle Snap (S5): OFF (goldens-green factory default — see field
@@ -843,10 +893,11 @@ public:
         // it while Split is off (it is a no-op there), mirroring the reference.
         if (name == "caps")
             return split_;
-        // Gap + Offset Side (S9) only act once Split has duplicated the loop —
-        // grey them while Split is off (a no-op there), mirroring the reference.
-        if (name == "gap" || name == "gapSide")
-            return split_;
+        // Gap + Offset Side (S9 / task 0288): ALWAYS enabled. Gap now applies
+        // WITHOUT Split too — with Split off it opens a connected channel (two
+        // parallel cuts), with Split on it separates the two shells (0290). So
+        // both rows stay live regardless of Split (the captured reference is not
+        // split-gated for gap; task 0288).
         // Angle (snapAngle) only matters when Angle Snap is on — grey it while
         // snap is off (a no-op there), mirroring the reference.
         if (name == "snapAngle")
@@ -877,6 +928,9 @@ public:
         root["caps"]   = JSONValue(caps_);
         root["gap"]     = JSONValue(gap_);
         root["gapSide"] = JSONValue(wireTagForValue(sliceGapSideTable[], cast(int)gapSide_));
+        // Task 0288: whether an RMB gap-adjust drag is currently live (lets a
+        // headless test observe the gap gizmo state without a screenshot).
+        root["gapDragging"] = JSONValue(gapDrag_);
         root["snap"]      = JSONValue(snap_);
         root["snapAngle"] = JSONValue(snapAngle_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
@@ -941,6 +995,7 @@ public:
         drawGesture_    = false;
         ctrlPending_    = false;
         ctrlAxis_       = -1;
+        gapDrag_        = false;   // task 0288: no RMB gap drag in flight
         armedKey_.invalidate();
     }
 
@@ -1048,12 +1103,32 @@ public:
             nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
                                        /*split*/true, caps_, loops, 1e-5f, restrict,
                                        gap_, cast(int)gapSide_);
-        } else if (restrict.length > 0) {
-            nSplit = infinite_ ? mesh.cutByPlaneRestricted(p, n, restrict)
-                               : mesh.cutByPlaneClipped(p, n, sStart, sEnd, 1e-5f, restrict);
         } else {
-            nSplit = infinite_ ? mesh.cutByPlane(p, n)
-                               : mesh.cutByPlaneClipped(p, n, sStart, sEnd);
+            // A single connected plane cut through `pp` (infinite/clipped +
+            // restrict). Nested so the Gap-without-split path fires it twice.
+            // MUST stay in lockstep with sliceFromBaseline's non-split branch.
+            size_t cutAt(Vec3 pp) {
+                if (restrict.length > 0)
+                    return infinite_ ? mesh.cutByPlaneRestricted(pp, n, restrict)
+                                     : mesh.cutByPlaneClipped(pp, n, sStart, sEnd, 1e-5f, restrict);
+                return infinite_ ? mesh.cutByPlane(pp, n)
+                                 : mesh.cutByPlaneClipped(pp, n, sStart, sEnd);
+            }
+            // Gap WITHOUT Split (task 0288): two parallel cuts `gap` apart open a
+            // CONNECTED channel — the captured reference geometry (see
+            // sliceFromBaseline; task 0288). gap_ == 0 ⇒ one cut (byte-for-byte
+            // the S0/S4 path).
+            if (gap_ != 0.0f) {
+                float loAmt, hiAmt;
+                switch (cast(int)gapSide_) {
+                    case cast(int)SliceGapSide.Positive: loAmt = gap_;        hiAmt = 0.0f;        break;
+                    case cast(int)SliceGapSide.Negative: loAmt = 0.0f;        hiAmt = gap_;        break;
+                    default:                              loAmt = gap_ * 0.5f; hiAmt = gap_ * 0.5f; break;
+                }
+                nSplit = cutAt(p + n * loAmt) + cutAt(p - n * hiAmt);
+            } else {
+                nSplit = cutAt(p);
+            }
         }
         if (nSplit == 0) return false;
         gpu.upload(*mesh);
@@ -1063,9 +1138,14 @@ public:
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
 
-        // RMB cancels an in-flight gesture (revert to baseline, no undo entry).
+        // RMB: with an LMB gesture IN FLIGHT → cancel it (revert to baseline, no
+        // undo entry). Otherwise (task 0288) RMB begins a GAP-adjust drag — drag
+        // left/right to change `gap`, with a dashed-circle + value HUD (draw()).
+        // Needs a drawn line to gap around; falls through (returns false) when no
+        // line exists yet so the app's RMB paths still work at bare activation.
         if (e.button == SDL_BUTTON_RIGHT) {
             if (dragPart_ != DragNone) { cancelGesture(); return true; }
+            if (hasLine_) { beginGapDrag(e.x, e.y); return true; }
             return false;
         }
 
@@ -1161,7 +1241,21 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (!active || dragPart_ == DragNone) return false;
+        if (!active) return false;
+
+        // RMB gap-adjust drag (task 0288): the horizontal travel from the grab
+        // pixel maps to an ABSOLUTE gap. gap now applies even without Split (it
+        // opens a channel), so re-preview live unless `fast` defers the cut. This
+        // runs BEFORE the dragPart_ gate — the gap drag owns no line handle.
+        if (gapDrag_) {
+            float g = gapDragStartGap_ + (e.x - gapDragStartMX_) * GAP_DRAG_PX_TO_WORLD;
+            if (g < 0.0f) g = 0.0f;   // gap is a non-negative distance
+            gap_ = g;
+            if (!fast_) updatePreview();
+            return true;
+        }
+
+        if (dragPart_ == DragNone) return false;
 
         // Custom-axis rotate ring (task 0287): tilt the Custom vector — and thus
         // the cut plane — about the drawn line. The endpoints DO NOT move (this
@@ -1235,7 +1329,16 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || dragPart_ == DragNone) return false;
+        if (!active) return false;
+        // End an RMB gap-adjust drag (task 0288): materialise the final gap into
+        // the preview so it holds after release. Handled before the dragPart_ gate
+        // (the gap drag owns no line handle).
+        if (gapDrag_ && e.button == SDL_BUTTON_RIGHT) {
+            gapDrag_ = false;
+            updatePreview();
+            return true;
+        }
+        if (dragPart_ == DragNone) return false;
         if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         dragPart_ = DragNone;
         // Task 0286: the Ctrl lock is per-gesture — clear it so the next gesture
@@ -1409,6 +1512,10 @@ public:
         if (showRing) rotRing_.draw(shader, vp);
         startH_.draw(shader, vp);
         endH_.draw(shader, vp);
+
+        // RMB gap-adjust dashed-circle + value HUD (task 0288), only while an RMB
+        // gap drag is live. Screen-space overlay drawn last, on top of everything.
+        if (gapDrag_) drawGapHud(vp);
     }
 
 private:
@@ -1425,6 +1532,42 @@ private:
         dragStart0_ = start_;
         dragEnd0_   = end_;
         dragAnchor_ = anchor;
+    }
+
+    // Start an RMB gap-adjust drag (task 0288): latch the current gap + the mouse
+    // pixel so onMouseMotion computes an ABSOLUTE gap from the horizontal travel.
+    void beginGapDrag(int mx, int my) {
+        gapDrag_         = true;
+        gapDragStartGap_ = gap_;
+        gapDragStartMX_  = mx;
+        gapDragStartMY_  = my;
+    }
+
+    // RMB gap-adjust HUD (task 0288): a DASHED CIRCLE whose pixel radius grows
+    // with `gap` (via the SAME px↔world scale the drag uses, so the ring tracks
+    // the cursor's horizontal travel) + the gap VALUE as text, centred at the
+    // projected line midpoint. Drawn in SCREEN space through the ImGui foreground
+    // draw list (a UI affordance, not baked geometry — the reference draws the
+    // same dashed ring + value while RMB-dragging gap). The dash is N short arc
+    // segments with every other one skipped (GL-core has no line stipple).
+    void drawGapHud(const ref Viewport vp) {
+        Vec3 mid = (start_ + end_) * 0.5f;
+        float cx, cy, ndcZ;
+        if (!projectToWindowFull(mid, vp, cx, cy, ndcZ)) return;
+        ImDrawList* dl = ImGui.GetForegroundDrawList();
+        float rPx = 8.0f + gap_ / GAP_DRAG_PX_TO_WORLD;   // floor + grows with gap
+        enum int N = 48;
+        immutable uint ringCol = IM_COL32(90, 220, 220, 230);   // teal (gizmo-ring family)
+        for (int i = 0; i < N; i += 2) {
+            float a0 = (2.0f * PI) * i       / N;
+            float a1 = (2.0f * PI) * (i + 1) / N;
+            dl.AddLine(ImVec2(cx + cos(a0) * rPx, cy + sin(a0) * rPx),
+                       ImVec2(cx + cos(a1) * rPx, cy + sin(a1) * rPx), ringCol, 1.5f);
+        }
+        import std.format : format;
+        string label = format("gap %.3f", gap_);
+        dl.AddText(ImVec2(cx + rPx + 6.0f, cy - 8.0f),
+                   IM_COL32(255, 255, 255, 235), label);
     }
 
     // --- Ctrl axis-constraint (task 0286), reusing MoveTool.chooseConstraintAxis -

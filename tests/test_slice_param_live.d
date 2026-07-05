@@ -139,11 +139,20 @@ unittest {
            format("panel `gap 0.3` must move the split shells immediately " ~
                   "(sumAbsCoord %.4f -> %.4f)", sumBefore, sumAfter));
 
-    // ---- Turn split back OFF via panel → back to the connected cut ----
+    // ---- Turn split back OFF via panel ----
+    // Gap now applies WITHOUT Split (task 0288): with gap 0.3 still set, `split 0`
+    // does NOT return to the single connected cut — it opens a CONNECTED CHANNEL
+    // (two parallel cuts gap apart, the captured reference behavior), 16v/14f.
     cmd("tool.attr mesh.sliceTool split 0");
     settle();
+    assert(vertCount() == 16 && faceCount() == 14,
+           format("panel `split 0` with gap>0 opens a channel (16v/14f), got %dv/%df",
+                  vertCount(), faceCount()));
+    // Clearing the gap restores the single connected 12v/10f cut.
+    cmd("tool.attr mesh.sliceTool gap 0");
+    settle();
     assert(vertCount() == 12 && faceCount() == 10,
-           format("panel `split 0` must restore the connected 12v/10f cut, got %dv/%df",
+           format("clearing gap must restore the connected 12v/10f cut, got %dv/%df",
                   vertCount(), faceCount()));
 
     cmd("tool.set mesh.sliceTool off");

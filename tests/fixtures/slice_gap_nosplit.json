@@ -1,0 +1,59 @@
+{
+  "name": "slice_gap_nosplit",
+  "description": "Slice tool 'Gap' WITHOUT the Split option (mesh.sliceTool, task 0288). The owner observed that the reference Slice's Gap works even when Split is OFF. Captured headless on a cube (task 0288, Gap without Split): gap>0 with split=off does NOT separate the surface into two disconnected shells (that is the Split behavior) and does NOT do nothing -- it opens the single cut into TWO PARALLEL cuts `gap` apart, leaving the coplanar strip between them as band faces, so the mesh stays a single CONNECTED solid (a channel notched at the cut). A cube cut this way goes 8v/6f -> 16v/14f with the two loops at +/-gap/2 (center). vibe3d reproduces it EXACTLY by two sequential parallel plane cuts through p + n*loAmt and p - n*hiAmt (loAmt/hiAmt per gapSide, summing to gap, same sign policy as the Split gap kernel). Headless work-plane normal = +Y, line along Z through the origin -> cut-plane normal n = normalize(cross(end-start,+Y)) = -X (the x=0 plane). infinite=true = whole-mesh cut. gap=0 stays the single connected cut (12v/10f, byte-for-byte the S0 path). center -> loops x=-0.1 / x=+0.1; positive -> loops x=-0.2 / x=0; negative -> loops x=0 / x=+0.2. y,z untouched (offset is purely along the plane normal). Only the axis-aligned center case is reference-captured; positive/negative are analytic extensions of the same offset law.",
+  "source": "Analytic + headless reference capture (16v/14f, loops at x=+/-0.1). Cube +/-0.5; plane law = math.planeForSlice(start,end,+Y). Line along Z -> n = -X through x=0. Two parallel cuts at p + n*loAmt / p - n*hiAmt.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "gap_zero_single_cut",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "infinite": true, "split": false, "gap": 0.0, "gapSide": "center" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, -0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_center_channel",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "infinite": true, "split": false, "gap": 0.2, "gapSide": "center" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "faces": 14 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.1, -0.5, -0.5], [-0.1, -0.5, 0.5], [-0.1, 0.5, -0.5], [-0.1, 0.5, 0.5],
+        [0.1, -0.5, -0.5], [0.1, -0.5, 0.5], [0.1, 0.5, -0.5], [0.1, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_positive_channel",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "infinite": true, "split": false, "gap": 0.2, "gapSide": "positive" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "faces": 14 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.2, -0.5, -0.5], [-0.2, -0.5, 0.5], [-0.2, 0.5, -0.5], [-0.2, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, -0.5], [0, 0.5, 0.5]
+      ]
+    },
+    {
+      "name": "gap_negative_channel",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0, 0, 1], "infinite": true, "split": false, "gap": 0.2, "gapSide": "negative" } } ],
+      "expected_before": { "verts": 8, "edges": 12, "faces": 6 },
+      "expected_after":  { "verts": 16, "faces": 14 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, -0.5], [0, 0.5, 0.5],
+        [0.2, -0.5, -0.5], [0.2, -0.5, 0.5], [0.2, 0.5, -0.5], [0.2, 0.5, 0.5]
+      ]
+    }
+  ]
+}

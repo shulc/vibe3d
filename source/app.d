@@ -6051,6 +6051,16 @@ void main(string[] args) {
                 // Ray-parallel-to-camera-back is the only failure
                 // mode (degenerate camera state); fall through.
             }
+            // Give the ACTIVE tool first crack at RMB (task 0288). A tool may bind
+            // RMB to its own gesture — Slice uses RMB as the gap-adjust drag
+            // (dashed-circle + value HUD), and the live-edit tools cancel on RMB.
+            // The falloff RMB handlers above kept their priority; if no tool
+            // consumes the click, fall through to the RMB lasso select as before
+            // (lasso runs with NO active tool, so it is unaffected).
+            if (activeTool) {
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                if (activeTool.onMouseButtonDown(btn, vts)) return;
+            }
             rmbDragging = true;
             rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
             // RMB lasso mutates selection on mouseUp; snapshot now.
@@ -6195,6 +6205,13 @@ void main(string[] args) {
             if (screenFalloffRMBUp())  return;
             if (radialFalloffRMBUp())  return;
             if (elementFalloffRMBUp()) return;
+            // Active tool RMB gesture end (task 0288): if a tool owns this RMB
+            // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
+            // false), let it finish its gesture (Slice bakes the final gap here).
+            if (activeTool && !rmbDragging) {
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                if (activeTool.onMouseButtonUp(btn, vts)) return;
+            }
             if (rmbPath.length >= 3) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
