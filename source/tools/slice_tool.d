@@ -274,6 +274,45 @@ private:
     // Split-off, stay byte-for-byte).
     bool caps_ = true;
 
+    // Angle Snap (S5, task 0271). When ON, the drawn line's ANGLE in the work
+    // plane is quantized to the nearest multiple of `snapAngle_` before the cut
+    // plane is built, so an endpoint drag snaps the line to clean angles
+    // (0°/45°/90°/… for the default 45°). `snapAngle_` is greyed while `snap_`
+    // is off (paramEnabled). Threaded through the interactive drag (onMouseMotion
+    // / applyAngleSnapFromRaw) AND the headless apply (applyHeadless) via the pure
+    // math.snapLineEndpointToAngle helper, so the snapped line is identical either
+    // way. Sticky (not reset on activate), like the other tool options.
+    //
+    // DEFAULT DECISION: the reference live-capture reads snap=ON but its own spec
+    // flags that value "may be sticky from seeded prefs, NOT a guaranteed fresh
+    // factory default" (same caveat as the `axis`=Y reading, which this file
+    // already resolved to Free). A snap=ON factory default would silently rotate
+    // EVERY existing slice golden's line to a 45° multiple (e.g. the slice_axis
+    // 81°→90° line), so ON is neither self-consistent with the drawn-line
+    // semantics nor golden-safe. The reference-faithful, goldens-green reading is
+    // therefore snap=OFF as the factory default; the S5 golden turns it ON
+    // explicitly. `snapAngle_` = 45° matches the spec's authoritative default.
+    //
+    // CAPTURE CAVEAT (task 0279): the reference `snap` attribute raises a MODAL
+    // dialog that blocks the command port, so its geometry can't be captured
+    // headlessly. This is a straightforward ANALYTIC feature (quantize the line
+    // angle in the work plane) and is verified analytically (unit tests +
+    // slice_snap.json golden) — no reference capture is attempted through the modal.
+    bool  snap_      = false;
+    float snapAngle_ = 45.0f;
+
+    // X-key TEMPORARY snap toggle (S5): while X is held, the effective snap state
+    // is INVERTED (the reference's "press X in-viewport to temporarily toggle
+    // snapping"). Set on X-down, cleared on X-up (onKeyDown/onKeyUp). The
+    // effective state = snap_ ^ snapTempInvert_.
+    bool snapTempInvert_ = false;
+
+    // The RAW (unsnapped) drag endpoints from the last motion, so the X toggle
+    // can re-derive the snapped line mid-drag WITHOUT a fresh mouse move (the
+    // snap is otherwise lossy — start_/end_ already hold the snapped result).
+    Vec3 rawStart_, rawEnd_;
+    bool haveRaw_;
+
     // Which part of the gizmo this gesture drags.
     enum DragNone  = -1;
     enum DragStart = 0;    // the Start endpoint handle
@@ -377,6 +416,13 @@ public:
             // boundary loop with a cap polygon. Default ON; greyed while Split
             // off (paramEnabled) — a no-op there.
             Param.bool_( "caps",   "Cap Sections", &caps_, true),
+            // Angle Snap (S5): OFF (goldens-green factory default — see field
+            // doc) draws the raw line; ON quantizes the line's work-plane angle
+            // to the nearest `snapAngle` multiple before the plane is built.
+            Param.bool_( "snap",   "Angle Snap", &snap_, false),
+            // Angle (S5): the snap step in degrees. Greyed while Angle Snap is
+            // off (paramEnabled). Default 45° per the reference spec.
+            Param.float_("snapAngle", "Angle", &snapAngle_, 45.0f),
             // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
             // normal) / Custom (vector normal). Default Free — see SliceAxis.
             Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
@@ -398,6 +444,10 @@ public:
         // it while Split is off (it is a no-op there), mirroring the reference.
         if (name == "caps")
             return split_;
+        // Angle (snapAngle) only matters when Angle Snap is on — grey it while
+        // snap is off (a no-op there), mirroring the reference.
+        if (name == "snapAngle")
+            return snap_;
         return true;
     }
 
@@ -418,6 +468,8 @@ public:
         root["infinite"] = JSONValue(infinite_);
         root["split"]  = JSONValue(split_);
         root["caps"]   = JSONValue(caps_);
+        root["snap"]      = JSONValue(snap_);
+        root["snapAngle"] = JSONValue(snapAngle_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);
         root["vectorY"] = JSONValue(vector_.y);
@@ -453,9 +505,11 @@ public:
     // Clear per-session preview/drag state WITHOUT touching the mesh or
     // history — the safe teardown for a mesh swapped out from under us.
     private void dropPreview() {
-        dragPart_    = DragNone;
-        previewLive_ = false;
-        haveBefore_  = false;
+        dragPart_       = DragNone;
+        previewLive_    = false;
+        haveBefore_     = false;
+        haveRaw_        = false;
+        snapTempInvert_ = false;
         armedKey_.invalidate();
     }
 
@@ -474,8 +528,16 @@ public:
     // headless never leaves a preview on the mesh), byte-for-byte the S0 path.
     // -------------------------------------------------------------------
     override bool applyHeadless() {
+        // Angle Snap (S5): quantize the line's work-plane angle before the plane
+        // (and the clip span) is built. Headless has no drag context, so the
+        // snap pivots about Start and rotates End — the deterministic convention.
+        // A local copy leaves the driven start_/end_ params untouched.
+        WorkplaneFrame wf = currentWorkplaneFrame();
+        Vec3 sStart = start_, sEnd = end_;
+        if (snap_)
+            sEnd = snapLineEndpointToAngle(sStart, sEnd, wf.axis1, wf.axis2, snapAngle_);
         Vec3 p, n;
-        if (!planeForSlice(start_, end_, currentWorkplaneFrame().normal,
+        if (!planeForSlice(sStart, sEnd, wf.normal,
                            cast(int)axis_, vector_, p, n))
             return false;
         // Restrict the cut to the current polygon selection (task 0279): the
@@ -489,14 +551,14 @@ public:
         size_t nSplit;
         if (split_) {
             Mesh.PlaneCutLoops loops;
-            nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, start_, end_,
+            nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
                                        /*split*/true, caps_, loops, 1e-5f, restrict);
         } else if (restrict.length > 0) {
             nSplit = infinite_ ? mesh.cutByPlaneRestricted(p, n, restrict)
-                               : mesh.cutByPlaneClipped(p, n, start_, end_, 1e-5f, restrict);
+                               : mesh.cutByPlaneClipped(p, n, sStart, sEnd, 1e-5f, restrict);
         } else {
             nSplit = infinite_ ? mesh.cutByPlane(p, n)
-                               : mesh.cutByPlaneClipped(p, n, start_, end_);
+                               : mesh.cutByPlaneClipped(p, n, sStart, sEnd);
         }
         if (nSplit == 0) return false;
         gpu.upload(*mesh);
@@ -576,15 +638,20 @@ public:
         Vec3 hit;
         if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return true;
 
+        // Record the RAW (unsnapped) endpoints for this motion, then let Angle
+        // Snap (S5) derive the actual start_/end_ from them. Keeping the raw pair
+        // lets the X-key toggle re-snap mid-drag without a fresh mouse move.
         final switch (dragPart_) {
-            case DragStart: start_ = hit; break;
-            case DragEnd:   end_   = hit; break;
+            case DragStart: rawStart_ = hit;    rawEnd_ = end_;  break;
+            case DragEnd:   rawStart_ = start_; rawEnd_ = hit;   break;
             case DragLine:
                 Vec3 delta = hit - dragAnchor_;
-                start_ = dragStart0_ + delta;
-                end_   = dragEnd0_   + delta;
+                rawStart_ = dragStart0_ + delta;
+                rawEnd_   = dragEnd0_   + delta;
                 break;
         }
+        haveRaw_ = true;
+        applyAngleSnapFromRaw();
 
         // Live preview unless `fast` defers the cut to mouse-up.
         if (!fast_) updatePreview();
@@ -601,6 +668,23 @@ public:
         // live cut during the drag) shows/holds the result, and so the
         // non-fast path lands exactly on the release line.
         updatePreview();
+        return true;
+    }
+
+    // X-key TEMPORARY snap toggle (S5): while X is held the effective snap state
+    // is inverted (reference: "press X in-viewport to temporarily toggle
+    // snapping"). Consumes X so the global snap.toggle does not also fire while
+    // the Slice tool is active. Re-derives the line from the raw endpoints and
+    // re-previews so the flip is visible immediately, without a fresh mouse move.
+    override bool onKeyDown(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
+        if (!active || e.keysym.sym != SDLK_x) return false;
+        if (!e.repeat && !snapTempInvert_) { snapTempInvert_ = true; retrySnapPreview(); }
+        return true;
+    }
+
+    override bool onKeyUp(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
+        if (!active || e.keysym.sym != SDLK_x) return false;
+        if (snapTempInvert_) { snapTempInvert_ = false; retrySnapPreview(); }
         return true;
     }
 
@@ -719,6 +803,44 @@ private:
     Vec3 cachedWorkplaneNormal() {
         if (cachedVp.width > 0) return pickWorkplaneFrame(cachedVp).normal;
         return currentWorkplaneFrame().normal;
+    }
+
+    // The work-plane in-plane basis for the angle-snap projection (same frame
+    // source as cachedWorkplaneNormal).
+    void cachedWorkplaneAxes(out Vec3 a1, out Vec3 a2) {
+        WorkplaneFrame wf = cachedVp.width > 0 ? pickWorkplaneFrame(cachedVp)
+                                               : currentWorkplaneFrame();
+        a1 = wf.axis1;
+        a2 = wf.axis2;
+    }
+
+    // Effective Angle Snap state: the sticky `snap_` param XOR the momentary
+    // X-key inversion.
+    bool effectiveSnap() const { return snap_ ^ snapTempInvert_; }
+
+    // Derive start_/end_ from the RAW drag endpoints, applying Angle Snap (S5)
+    // when effective. A line-body drag (DragLine) is a pure translation — the
+    // angle is unchanged, so it never snaps. The dragged endpoint rotates about
+    // the fixed one so the line keeps its length and lands on a clean angle.
+    void applyAngleSnapFromRaw() {
+        start_ = rawStart_;
+        end_   = rawEnd_;
+        if (!effectiveSnap() || dragPart_ == DragLine) return;
+        Vec3 a1, a2;
+        cachedWorkplaneAxes(a1, a2);
+        if (dragPart_ == DragStart)
+            start_ = snapLineEndpointToAngle(rawEnd_, rawStart_, a1, a2, snapAngle_);
+        else   // DragEnd (and the fresh-line / shift-redraw paths, all DragEnd)
+            end_   = snapLineEndpointToAngle(rawStart_, rawEnd_, a1, a2, snapAngle_);
+    }
+
+    // Re-apply Angle Snap after an X-key flip and refresh the preview, so the
+    // toggle is visible mid-drag without needing a fresh mouse move. No-op when
+    // no raw drag is in flight (nothing to re-snap).
+    void retrySnapPreview() {
+        if (!haveRaw_ || dragPart_ == DragNone) return;
+        applyAngleSnapFromRaw();
+        if (!fast_) updatePreview();
     }
 
     // Intersect the cursor ray with the current work plane; the dragged

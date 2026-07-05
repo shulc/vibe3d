@@ -1,6 +1,6 @@
 module math;
 
-import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2;
+import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2, round;
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -1001,6 +1001,91 @@ unittest { // planeFromLineAndWorkplane: default XZ work plane (normal +Y) → l
     assert(isClose(n.y, 0, 1e-4f, 1e-4f), "normal Y must be zero");
     assert(isClose(n.z, 0, 1e-4f, 1e-4f), "normal Z must be zero");
     assert(p.x == 0 && p.z == -1, "plane point must equal start");
+}
+
+// ---------------------------------------------------------------------------
+// Angle Snap (Slice tool, S5) — quantize a drawn line's in-work-plane angle to
+// the nearest multiple of a step, so an endpoint drag lands on clean angles
+// (0°, 45°, 90°, … for a 45° step). Pure + unit-tested; the SliceTool's
+// interactive drag and its headless apply both route through these so the
+// snapped line is identical either way.
+// ---------------------------------------------------------------------------
+
+/// Quantize `angleDeg` to the nearest multiple of `stepDeg` (both in degrees).
+/// `stepDeg <= 0` disables snapping and returns `angleDeg` unchanged (a guard
+/// against a zero/negative Angle param). Half-steps round away from zero
+/// (std.math.round), so with a 45° step 22.5° → 45°, −22.5° → −45°.
+float snapAngleToMultiple(float angleDeg, float stepDeg) {
+    if (stepDeg <= 0) return angleDeg;
+    return cast(float)(round(angleDeg / stepDeg) * stepDeg);
+}
+
+/// Snap the line `anchor → moving` so its direction — projected into the
+/// orthonormal work-plane basis (`axis1`, `axis2`) — lands on the nearest
+/// multiple of `stepDeg`. The line LENGTH is preserved; only the direction
+/// rotates. Returns the new `moving` endpoint. Degenerate inputs return
+/// `moving` unchanged: `stepDeg <= 0` (snap off), a zero-length line, or a line
+/// perpendicular to the work plane (no defined in-plane angle). The rebuilt
+/// endpoint always lies in the work plane through `anchor` — the interactive
+/// Slice keeps its line in the work plane, so that is the identity there.
+Vec3 snapLineEndpointToAngle(Vec3 anchor, Vec3 moving, Vec3 axis1, Vec3 axis2,
+                             float stepDeg) {
+    if (stepDeg <= 0) return moving;
+    Vec3 dir = moving - anchor;
+    float len = dir.length;
+    if (len < 1e-9f) return moving;
+    float u = dot(dir, axis1);
+    float v = dot(dir, axis2);
+    if (u * u + v * v < 1e-18f) return moving;   // line ⟂ plane: no in-plane angle
+    float ang     = atan2(v, u) * 180.0f / cast(float)PI;
+    float snapped = snapAngleToMultiple(ang, stepDeg) * cast(float)PI / 180.0f;
+    Vec3 nd = axis1 * cos(snapped) + axis2 * sin(snapped);
+    return anchor + nd * len;
+}
+
+unittest { // snapAngleToMultiple: nearest 45° multiple + tie / negative / step-guard
+    assert(isClose(snapAngleToMultiple(30, 45), 45, 1e-4f), "30 → 45");
+    assert(isClose(snapAngleToMultiple(20, 45),  0, 1e-4f), "20 → 0");
+    assert(isClose(snapAngleToMultiple(22.4f, 45),  0, 1e-4f), "22.4 → 0");
+    assert(isClose(snapAngleToMultiple(22.6f, 45), 45, 1e-4f), "22.6 → 45");
+    assert(isClose(snapAngleToMultiple(60, 45), 45, 1e-4f), "60 → 45");
+    assert(isClose(snapAngleToMultiple(70, 45), 90, 1e-4f), "70 → 90");
+    assert(isClose(snapAngleToMultiple(-30, 45), -45, 1e-4f), "-30 → -45");
+    // A 90° step keeps only axis-aligned angles.
+    assert(isClose(snapAngleToMultiple(50, 90), 90, 1e-4f), "50 → 90 (step 90)");
+    assert(isClose(snapAngleToMultiple(40, 90),  0, 1e-4f), "40 → 0 (step 90)");
+    // step <= 0 is the disabled guard: angle passes through untouched.
+    assert(isClose(snapAngleToMultiple(37.5f, 0), 37.5f, 1e-4f), "step 0 → identity");
+}
+
+unittest { // snapLineEndpointToAngle: rotates the line to the snapped angle, keeps length
+    // Work plane = world XZ: axis1 = +X, axis2 = +Z (angle measured from +X).
+    Vec3 a1 = Vec3(1, 0, 0), a2 = Vec3(0, 0, 1);
+    // A line at 30° in XZ, length 2. Snap to 45° → direction (cos45, 0, sin45),
+    // same length. anchor at origin.
+    Vec3 anchor = Vec3(0, 0, 0);
+    float c30 = cos(30.0f * cast(float)PI / 180.0f);
+    float s30 = sin(30.0f * cast(float)PI / 180.0f);
+    Vec3 moving = anchor + Vec3(c30, 0, s30) * 2.0f;
+    Vec3 snapped = snapLineEndpointToAngle(anchor, moving, a1, a2, 45);
+    float inv = 1.0f / sqrt(2.0f);
+    assert(isClose(snapped.x, 2.0f * inv, 1e-4f), "snapped X = 2·cos45");
+    assert(isClose(snapped.y, 0, 1e-4f, 1e-4f),   "stays in plane");
+    assert(isClose(snapped.z, 2.0f * inv, 1e-4f), "snapped Z = 2·sin45");
+    // Length preserved.
+    assert(isClose((snapped - anchor).length, 2.0f, 1e-4f), "length preserved");
+    // A ~19° line snaps to 0° → pure +X direction (the clean axis-aligned case
+    // the S5 golden fixture drives). anchor at (-1,0,0), raw end (1,0,0.7).
+    Vec3 an2 = Vec3(-1, 0, 0), mv2 = Vec3(1, 0, 0.7f);
+    Vec3 sn2 = snapLineEndpointToAngle(an2, mv2, a1, a2, 45);
+    float len2 = (mv2 - an2).length;
+    assert(isClose(sn2.z, 0, 1e-4f, 1e-4f), "19° → 0° snaps to Z of anchor (z=0)");
+    assert(isClose(sn2.x, -1.0f + len2, 1e-4f), "moves purely along +X");
+    // snap off (step 0): endpoint unchanged.
+    Vec3 off = snapLineEndpointToAngle(an2, mv2, a1, a2, 0);
+    assert(isClose(off.x, 1, 1e-5f) && isClose(off.z, 0.7f, 1e-5f), "step 0 → raw");
+    // Degenerate: zero-length line returns moving unchanged.
+    assert(snapLineEndpointToAngle(anchor, anchor, a1, a2, 45) == anchor);
 }
 
 unittest { // planeFromLineAndWorkplane: degenerate line / line ∥ workplane normal → false, no NaN

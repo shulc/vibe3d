@@ -554,6 +554,16 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         if ("caps" in sl)
             cmd(format("tool.attr mesh.sliceTool caps %d",
                        sl["caps"].type == JSONType.true_ ? 1 : 0), ctx);
+        // Optional Angle Snap (S5): `"snap": true` quantizes the line's
+        // work-plane angle to the nearest `"snapAngle"` (degrees, default 45)
+        // multiple before the plane is built. Default OFF, so unset = the raw
+        // line (every pre-S5 golden stays green).
+        if ("snap" in sl)
+            cmd(format("tool.attr mesh.sliceTool snap %d",
+                       sl["snap"].type == JSONType.true_ ? 1 : 0), ctx);
+        if ("snapAngle" in sl)
+            cmd(format("tool.attr mesh.sliceTool snapAngle %g",
+                       asDouble(sl["snapAngle"])), ctx);
         cmd(format("tool.attr mesh.sliceTool startX %g", s[0]), ctx);
         cmd(format("tool.attr mesh.sliceTool startY %g", s[1]), ctx);
         cmd(format("tool.attr mesh.sliceTool startZ %g", s[2]), ctx);
