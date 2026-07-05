@@ -9852,6 +9852,65 @@ struct Mesh {
             if (!anyWillSplit) return 0;
         }
 
+        // Clipped-only terminus detection (task 0289). A drawn segment that
+        // ENTERS a polygon through a boundary edge but STOPS inside it (the far
+        // boundary crossing lies BEYOND the segment's end) leaves the plane∩poly
+        // chord clipped at a band boundary. The reference inserts an interior
+        // vertex at that clip point + a SLIT edge back to the entry crossing
+        // (keyhole winding, face NOT split). Computed here on the ORIGINAL
+        // windings (before Pass-1 splices crossing verts) and spliced in after
+        // Pass-1, once the entry crossing vertex exists. Empty for the infinite
+        // cut (clipped == false), so that path is byte-for-byte unchanged.
+        struct TermRec { size_t faceIdx; Vec3 point; }
+        TermRec[] termini;
+        if (clipped) {
+            foreach (fi; 0 .. faces.length) {
+                if (restricted && !faceInRestrict[fi]) continue;
+                auto face = faces[fi];
+                // Gather the face's plane-straddle boundary crossings with their
+                // segment param s. An on-plane winding vertex makes the chord
+                // ambiguous (v1: skip such faces).
+                bool hasOnPlane = false;
+                Vec3[2] cxPt;
+                float[2] cxS;
+                size_t nCx = 0;
+                foreach (k; 0 .. face.length) {
+                    uint a = face[k], b = face[(k + 1) % face.length];
+                    if (onPlane[a]) { hasOnPlane = true; break; }
+                    float da = dv[a], db = dv[b];
+                    if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
+                        if (nCx >= 2) { nCx = 3; break; }   // >2 crossings: not a simple chord
+                        Vec3 q = crossPoint(a, b);
+                        cxPt[nCx] = q;
+                        cxS[nCx] = ((q.x - segStart.x) * seg.x
+                                  + (q.y - segStart.y) * seg.y
+                                  + (q.z - segStart.z) * seg.z) / segLen2;
+                        nCx++;
+                    }
+                }
+                if (hasOnPlane || nCx != 2) continue;       // need a clean 2-crossing chord
+                // Order the two crossings by s (s0 <= s1).
+                size_t lo = (cxS[0] <= cxS[1]) ? 0 : 1, hi = 1 - lo;
+                float s0 = cxS[lo], s1 = cxS[hi];
+                // Terminus only when EXACTLY one crossing is in band [0,1] and the
+                // other is out on the opposite side (chord clipped at a band edge).
+                float clip;
+                bool isTerm = false;
+                if (s0 >= -eps && s0 <= 1.0f + eps && s1 > 1.0f + eps) {
+                    clip = 1.0f; isTerm = true;             // clip high, terminus at s=1
+                } else if (s1 >= -eps && s1 <= 1.0f + eps && s0 < -eps) {
+                    clip = 0.0f; isTerm = true;             // clip low, terminus at s=0
+                }
+                if (!isTerm) continue;
+                // Interpolate the chord to the clip param (strictly inside the poly).
+                float f = (clip - s0) / (s1 - s0);
+                Vec3 A = cxPt[lo], Bp = cxPt[hi];
+                termini ~= TermRec(fi, Vec3(A.x + f * (Bp.x - A.x),
+                                            A.y + f * (Bp.y - A.y),
+                                            A.z + f * (Bp.z - A.z)));
+            }
+        }
+
         // Pass 1 — edge subdivide: for each straddling edge insert one crossing
         // vertex into every incident face winding (T-junction prevention).
         bool[] isCutVert;
@@ -9888,11 +9947,46 @@ struct Mesh {
             edgeDirOf[vi] = normalize(vertices[posEnd] - vertices[negEnd]);
         }
 
+        // Splice each terminus keyhole (task 0289): add the interior vertex T at
+        // the clip point and connect it to the entry crossing B (the face's lone
+        // in-band cut vert) as [.., B, T, B, ..]. T is NOT marked a cut vert, so
+        // the face still carries a single cut vert and is copied whole by Pass-2;
+        // it is also excluded from the split mask so the doubled B never triggers
+        // a chord split.
+        bool[] termFace;
+        if (termini.length) {
+            termFace.length = faces.length;
+            foreach (rec; termini) {
+                if (rec.faceIdx >= faces.length) continue;
+                auto face = faces[rec.faceIdx];
+                // Locate the lone in-band cut vertex B in this winding.
+                size_t bk = size_t.max;
+                foreach (k; 0 .. face.length)
+                    if (face[k] < isCutVert.length && isCutVert[face[k]]) { bk = k; break; }
+                if (bk == size_t.max) continue;             // no entry crossing — skip
+                uint bVert = face[bk];
+                uint tVert = addVertex(rec.point);
+                if (isCutVert.length < vertices.length)
+                    isCutVert.length = vertices.length;     // grow; T stays non-cut (false)
+                faces[rec.faceIdx] = face[0 .. bk + 1] ~ [tVert, bVert] ~ face[bk + 1 .. $];
+                termFace[rec.faceIdx] = true;
+            }
+        }
+
         // Pass 2 + finalize: split eligible faces (empty mask = all faces; a
         // restricted cut splits ONLY the selected faces — unselected neighbours
-        // that received a shared crossing vertex are copied whole as n-gons).
-        size_t nSplit = rebuildFacesWithChordSplits(
-            restricted ? faceInRestrict : [], isCutVert);
+        // that received a shared crossing vertex are copied whole as n-gons). When
+        // termini exist, pass an explicit all-eligible-except-terminus mask so the
+        // keyhole faces are copied whole (byte-for-byte unchanged when none exist).
+        bool[] effMask;
+        if (termini.length) {
+            effMask.length = faces.length;
+            foreach (fi; 0 .. faces.length)
+                effMask[fi] = (!restricted || faceInRestrict[fi]) && !termFace[fi];
+        } else if (restricted) {
+            effMask = faceInRestrict;
+        }
+        size_t nSplit = rebuildFacesWithChordSplits(effMask, isCutVert);
         isCutVertOut = isCutVert;
         // Materialise the per-vertex edge-direction map into a dense array indexed
         // by vertex (zero where no straddled edge was recorded).
@@ -16590,6 +16684,69 @@ unittest { // cutByPlaneClipped: a short segment cuts ONLY the spanned faces
     foreach (v; clip.vertices)
         assert(!(v.x > 0.5f && v.z > -0.4f && v.z < 0.4f),
                "clipped: right strip must have no z≈0 crossing vertex");
+}
+
+unittest { // cutByPlaneClipped: segment terminating INSIDE a face — interior
+    // vertex + slit edge to the entry boundary (task 0289, reference-captured).
+    //
+    // Plane y=0 (normal +Y); drawn segment (-0.9,0,0)→(0,0,0) enters the back
+    // (z=-0.5) and front (z=+0.5) faces through their x=-0.5 edge but STOPS at
+    // x=0 (interior). The reference (captured single-interior-point case):
+    //   • the LEFT face (both crossings in band) splits cleanly along its chord;
+    //   • back & front get a KEYHOLE — an interior terminus vertex at the clip
+    //     point (0,0,∓0.5), connected by a slit edge back to the entry crossing
+    //     (-0.5,0,∓0.5), spliced as [.., B, T, B, ..] in ONE unsplit face.
+    // Result: 8+4 verts, 6+1 faces (only the left clean split adds a face).
+    import std.math : abs;
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    assert(m.vertices.length == 8 && m.faces.length == 6);
+
+    size_t nSplit = m.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(0, 1, 0),
+                                        Vec3(-0.9f, 0, 0), Vec3(0, 0, 0));
+    assert(nSplit >= 1, "the in-band left face must still split cleanly");
+
+    int findVert(float x, float y, float z) {
+        foreach (i, v; m.vertices)
+            if (abs(v.x - x) < 1e-4f && abs(v.y - y) < 1e-4f && abs(v.z - z) < 1e-4f)
+                return cast(int) i;
+        return -1;
+    }
+    int tBack  = findVert(0, 0, -0.5f);   // interior terminus (segment-end clip)
+    int tFront = findVert(0, 0,  0.5f);
+    int bBack  = findVert(-0.5f, 0, -0.5f); // entry crossing on the x=-0.5 edge
+    int bFront = findVert(-0.5f, 0,  0.5f);
+    assert(tBack  >= 0 && tFront >= 0, "interior terminus vertices missing");
+    assert(bBack  >= 0 && bFront >= 0, "entry boundary crossings missing");
+
+    bool hasEdge(int a, int b) {
+        foreach (e; m.edges)
+            if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return true;
+        return false;
+    }
+    assert(hasEdge(tBack, bBack),   "slit edge interior→boundary (back) missing");
+    assert(hasEdge(tFront, bFront), "slit edge interior→boundary (front) missing");
+
+    // Keyhole: the terminus is flanked on BOTH sides by its entry crossing in a
+    // SINGLE (unsplit) face — never split into two along a degenerate B..B chord.
+    bool keyhole(int t, int b) {
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            foreach (k; 0 .. f.length)
+                if (f[k] == t) {
+                    uint prev = f[(k + f.length - 1) % f.length];
+                    uint next = f[(k + 1) % f.length];
+                    if (prev == b && next == b) return true;
+                }
+        }
+        return false;
+    }
+    assert(keyhole(tBack, bBack),   "back keyhole winding [..,B,T,B,..] missing");
+    assert(keyhole(tFront, bFront), "front keyhole winding [..,B,T,B,..] missing");
+
+    assert(m.vertices.length == 12, "8 + 2 entry + 2 terminus verts");
+    assert(m.faces.length == 7, "only the left clean split adds a face (6 → 7)");
 }
 
 unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the

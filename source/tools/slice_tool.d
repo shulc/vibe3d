@@ -1953,13 +1953,16 @@ unittest {
 
     // --- Clip default: the SAME short line (end z=0.4) cuts LESS than infinite.
     // Its far crossing (z=+0.5) projects past the drawn span, so only the near
-    // (z=−0.5) side splits — a countable proof the default clips.
+    // (z=−0.5) side splits cleanly — a countable proof the default clips. The
+    // line ENDS inside the top & bottom faces (z=0.4 < 0.5), so those receive a
+    // keyhole interior vertex (task 0289) instead of a clean split; the clip thus
+    // still splits FEWER faces than the infinite belt (7 vs 10 total faces).
     Mesh clip = makeCube();
     auto clipBase = MeshSnapshot.capture(clip);
     size_t nClip = sliceFromBaseline(clip, clipBase, start, Vec3(0, 0, 0.4f), wpN);
     assert(nClip < 4, "clipped short line must split fewer faces than infinite (4)");
-    assert(clip.vertices.length < 12,
-           "clipped short line adds fewer crossing verts than the full belt");
+    assert(clip.faces.length < 10,
+           "clipped short line splits fewer faces than the full belt (infinite=10)");
 }
 
 // ---------------------------------------------------------------------------
