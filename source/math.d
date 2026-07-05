@@ -897,6 +897,80 @@ bool planeFromLineAndWorkplane(Vec3 start, Vec3 end, Vec3 workplaneNormal,
     return true;
 }
 
+// planeForSlice — the interactive Slice tool's cut-plane law with the
+// `axis` / custom-`vector` constraint (task 0269, S3). The plane ALWAYS passes
+// through `start` (p = start); `axisMode` selects the NORMAL:
+//   0 = Free    — normal ⟂ the drawn line AND ⟂ the work plane
+//                 (= planeFromLineAndWorkplane; the base/default behavior).
+//   1 = X, 2 = Y, 3 = Z — normal locked to that WORLD axis, regardless of the
+//                 drawn line's orientation (the line only fixes the through-point).
+//   4 = Custom  — normal = normalize(vector).
+// Returns false (p, n left undefined for the Free/Custom failure cases — p is
+// still set to start) when the mode has no well-defined plane: a degenerate /
+// workplane-parallel line in Free, or a zero-length `vector` in Custom. The
+// world-axis modes are always valid (a unit axis is never degenerate).
+bool planeForSlice(Vec3 start, Vec3 end, Vec3 workplaneNormal,
+                   int axisMode, Vec3 vector, out Vec3 p, out Vec3 n,
+                   float eps = 1e-6f)
+{
+    p = start;
+    switch (axisMode) {
+        case 1: n = Vec3(1, 0, 0); return true;   // X
+        case 2: n = Vec3(0, 1, 0); return true;   // Y
+        case 3: n = Vec3(0, 0, 1); return true;   // Z
+        case 4:                                    // Custom
+            if (vector.length < eps) return false;
+            n = normalize(vector);
+            return true;
+        default:                                   // 0 = Free
+            return planeFromLineAndWorkplane(start, end, workplaneNormal, p, n, eps);
+    }
+}
+
+unittest { // planeForSlice: Free (mode 0) == planeFromLineAndWorkplane
+    Vec3 p0, n0, p1, n1;
+    bool okFree = planeForSlice(Vec3(0, 0, -1), Vec3(0, 0, 1), Vec3(0, 1, 0),
+                                0, Vec3(0, 1, 0), p0, n0);
+    bool okRef  = planeFromLineAndWorkplane(Vec3(0, 0, -1), Vec3(0, 0, 1),
+                                            Vec3(0, 1, 0), p1, n1);
+    assert(okFree && okRef);
+    assert(isClose(n0.x, n1.x) && isClose(n0.y, n1.y) && isClose(n0.z, n1.z),
+           "Free mode must reproduce the drawn-line ⟂ work-plane normal");
+}
+
+unittest { // planeForSlice: X/Y/Z lock the normal to the WORLD axis regardless of line
+    Vec3 p, n;
+    // A slanted line whose Free plane would NOT be X-normal: axis=X overrides it.
+    assert(planeForSlice(Vec3(0, 0, -1), Vec3(0.3f, 0, 1), Vec3(0, 1, 0),
+                         1, Vec3(0, 0, 0), p, n));
+    assert(isClose(n.x, 1.0f) && isClose(n.y, 0) && isClose(n.z, 0),
+           "axis=X ⇒ world-X normal");
+    assert(p.x == 0 && p.z == -1, "plane through Start");
+    assert(planeForSlice(Vec3(0, 0, 0), Vec3(1, 0.4f, 0), Vec3(0, 1, 0),
+                         3, Vec3(0, 0, 0), p, n));
+    assert(isClose(n.x, 0) && isClose(n.y, 0) && isClose(n.z, 1.0f),
+           "axis=Z ⇒ world-Z normal");
+}
+
+unittest { // planeForSlice: Custom uses normalize(vector); zero vector → false
+    Vec3 p, n;
+    // Magnitude-2 X vector ⇒ unit X normal (proves normalization).
+    assert(planeForSlice(Vec3(0, 0, -1), Vec3(0.3f, 0, 1), Vec3(0, 1, 0),
+                         4, Vec3(2, 0, 0), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f) && isClose(n.x, 1.0f),
+           "custom vector (2,0,0) ⇒ unit X normal");
+    // A diagonal custom normal.
+    assert(planeForSlice(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                         4, Vec3(0, 3, 4), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f));
+    assert(isClose(n.y, 0.6f, 1e-4f) && isClose(n.z, 0.8f, 1e-4f),
+           "custom (0,3,4) ⇒ (0,0.6,0.8)");
+    // Zero custom vector ⇒ no plane.
+    assert(!planeForSlice(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                          4, Vec3(0, 0, 0), p, n),
+           "zero custom vector must be degenerate");
+}
+
 unittest { // planeFromLineAndWorkplane: horizontal front-view drag → axis-aligned (Y-normal) cut
     Vec3 p, n;
     // Front view: work plane = XY, normal = +Z. A horizontal line (dir = +X)

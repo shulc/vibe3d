@@ -9,7 +9,7 @@ import tool;
 import mesh;
 import math;
 import editmode : EditMode;
-import params : Param;
+import params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
@@ -27,6 +27,34 @@ import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, Workplan
 alias SliceEditFactory = MeshBevelEdit delegate();
 
 // ---------------------------------------------------------------------------
+// SliceAxis (task 0269, S3) — the plane-orientation constraint. `Free` is the
+// factory default: the plane is built from the drawn line ⟂ the work plane
+// (the S0 base behavior). `X`/`Y`/`Z` lock the plane normal to a WORLD axis
+// (the drawn line then only fixes the through-point); `Custom` uses the
+// user-supplied `vector` direction as the normal.
+//
+// DEFAULT DECISION: the reference live-capture reads `axis = y`, but its own
+// spec flags that value as "likely sticky/prefs-seeded, NOT a guaranteed fresh
+// factory default", and the tool plan states the base behavior is the free
+// drawn-line plane. A `Y` factory default would lock every cut to a world-Y
+// (horizontal) normal, contradicting the drawn-line semantics AND the S0
+// golden (a Z-line must give an X-normal cut, not a Y-normal one). The
+// reference-faithful, self-consistent reading is therefore `Free` as the
+// factory default (drawn line ⟂ work plane), with `X`/`Y`/`Z`/`Custom` as the
+// explicit locked overrides. This keeps the S0 `slice.json` golden green with
+// no axis change while `axis=x/y/z` lock the normal to the world axis exactly
+// as the reference's Axis control does.
+enum SliceAxis : int { Free = 0, X = 1, Y = 2, Z = 3, Custom = 4 }
+
+static immutable IntEnumEntry[5] sliceAxisTable = [
+    IntEnumEntry(cast(int)SliceAxis.Free,   "free",   "Free (drawn line)"),
+    IntEnumEntry(cast(int)SliceAxis.X,      "x",      "X"),
+    IntEnumEntry(cast(int)SliceAxis.Y,      "y",      "Y"),
+    IntEnumEntry(cast(int)SliceAxis.Z,      "z",      "Z"),
+    IntEnumEntry(cast(int)SliceAxis.Custom, "custom", "Custom"),
+];
+
+// ---------------------------------------------------------------------------
 // sliceFromBaseline — the shared cut kernel wrapper (the single point that
 // turns a Start→End line into a plane cut). RESTORES `baseline` onto `mesh`
 // FIRST, then cuts with the plane through the line perpendicular to
@@ -39,11 +67,13 @@ alias SliceEditFactory = MeshBevelEdit delegate();
 // here, so they can never diverge in result. Pure data (no GPU / GL) so it is
 // unit-testable under `dub test`.
 size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
-                         Vec3 start, Vec3 end, Vec3 wpNormal)
+                         Vec3 start, Vec3 end, Vec3 wpNormal,
+                         int axisMode = cast(int)SliceAxis.Free,
+                         Vec3 vector = Vec3(0, 1, 0))
 {
     if (baseline.filled) baseline.restore(mesh);
     Vec3 p, n;
-    if (!planeFromLineAndWorkplane(start, end, wpNormal, p, n))
+    if (!planeForSlice(start, end, wpNormal, axisMode, vector, p, n))
         return 0;
     return mesh.cutByPlane(p, n);
 }
@@ -79,10 +109,15 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
 //     paths materialise the identical final geometry (`sliceFromBaseline` is
 //     the one cut kernel).
 //
-// Deferred to later tasks: post-tool selection (S2), axis/vector (S3),
-// infinite (S4), angle snap (S5), split/caps/gap reusing the Loop Slice
-// machinery (S7–S9). NONE of those options are implemented here. Params:
-// `startX/Y/Z`, `endX/Y/Z`, `fast`.
+// S3 (task 0269) adds the `axis` (Free/X/Y/Z/Custom) + `vectorX/Y/Z` plane
+// constraint: Free = the drawn-line ⟂ work-plane plane (default); X/Y/Z lock
+// the normal to a world axis; Custom uses the `vector` normal. The plane law
+// lives in the unit-tested math.planeForSlice helper; the Vector gang is greyed
+// unless axis == Custom (paramEnabled).
+//
+// Deferred to later tasks: infinite (S4), angle snap (S5), split/caps/gap
+// reusing the Loop Slice machinery (S7–S9). Params: `startX/Y/Z`, `endX/Y/Z`,
+// `fast`, `axis`, `vectorX/Y/Z`.
 //
 // Undo model (task 0278 — mirrors LoopSliceTool's arm-then-commit lifecycle):
 // `before_` is the ACTIVATION baseline, snapshotted ONCE in `activate()` — NOT
@@ -123,6 +158,13 @@ private:
     // cut live during the drag; ON ⇒ defer the cut to mouse-up. Sticky param
     // (not reset on activate) — matches the reference's sticky tool options.
     bool fast_ = false;
+
+    // Slice axis constraint (S3). `axis_` selects how the cut-plane normal is
+    // built (see SliceAxis); `vector_` is the Custom normal, meaningful only
+    // when axis_ == Custom (the panel greys it otherwise — see paramEnabled).
+    // Default Free = the S0 drawn-line ⟂ work-plane plane (see SliceAxis doc).
+    SliceAxis axis_   = SliceAxis.Free;
+    Vec3      vector_ = Vec3(0, 1, 0);
 
     // Which part of the gizmo this gesture drags.
     enum DragNone  = -1;
@@ -212,7 +254,24 @@ public:
             Param.float_("endY",   "End Y",   &end_.y,    0.0f),
             Param.float_("endZ",   "End Z",   &end_.z,    0.0f),
             Param.bool_( "fast",   "Fast Slice", &fast_,  false),
+            // Axis (S3): Free (drawn line ⟂ work plane) / X / Y / Z (world-axis
+            // normal) / Custom (vector normal). Default Free — see SliceAxis.
+            Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
+                           cast(int)SliceAxis.Free),
+            // Custom normal — greyed unless Axis == Custom (paramEnabled).
+            Param.float_("vectorX", "Vector X", &vector_.x, 0.0f),
+            Param.float_("vectorY", "Vector Y", &vector_.y, 1.0f),
+            Param.float_("vectorZ", "Vector Z", &vector_.z, 0.0f),
         ];
+    }
+
+    // Grey the Vector gang unless a Custom axis is active — the custom normal is
+    // only consulted when axis_ == Custom (reference: the Vector X/Y/Z rows are
+    // enabled only for Axis = Custom).
+    override bool paramEnabled(string name) const {
+        if (name == "vectorX" || name == "vectorY" || name == "vectorZ")
+            return axis_ == SliceAxis.Custom;
+        return true;
     }
 
     // Test-introspection (GET /api/tool/state): echo the line + `fast` + a
@@ -229,6 +288,10 @@ public:
         root["endY"]   = JSONValue(end_.y);
         root["endZ"]   = JSONValue(end_.z);
         root["fast"]   = JSONValue(fast_);
+        root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
+        root["vectorX"] = JSONValue(vector_.x);
+        root["vectorY"] = JSONValue(vector_.y);
+        root["vectorZ"] = JSONValue(vector_.z);
         return root;
     }
 
@@ -279,7 +342,8 @@ public:
     // -------------------------------------------------------------------
     override bool applyHeadless() {
         Vec3 p, n;
-        if (!planeFromLineAndWorkplane(start_, end_, currentWorkplaneFrame().normal, p, n))
+        if (!planeForSlice(start_, end_, currentWorkplaneFrame().normal,
+                           cast(int)axis_, vector_, p, n))
             return false;
         if (mesh.cutByPlane(p, n) == 0) return false;
         gpu.upload(*mesh);
@@ -456,7 +520,8 @@ private:
     // deferred commit then records nothing.
     void updatePreview() {
         if (!haveBefore_) return;
-        size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_, cachedWorkplaneNormal());
+        size_t nSplit = sliceFromBaseline(*mesh, before_, start_, end_,
+                                          cachedWorkplaneNormal(), cast(int)axis_, vector_);
         previewLive_ = nSplit > 0;
         // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
         // mutationVersion): the guard now reflects the mesh state WE produced,

@@ -1,0 +1,60 @@
+{
+  "name": "slice_axis",
+  "description": "Slice tool (mesh.sliceTool, task 0269 S3) axis/vector constraint. Each case draws a SLANTED Start->End line whose default (Free) plane would be tilted, then locks the cut-plane normal to a world axis (x/y/z) or a custom vector. The lock makes the cut plane pass through Start with the constrained normal, INDEPENDENT of the drawn line orientation. axis=x + start.x=0 -> X=0 mid-cut = the S0 midX topology (12v/10f all-quad). axis=z + start.z=0 -> Z=0 mid-cut = the S0 midZ topology. axis=custom vector=(2,0,0) -> normalize -> world-X normal -> X=0 cut (proves the custom normal is normalized). Analytic self-golden (Mesh.cutByPlane connectivity-correct by construction; plane law = math.planeForSlice).",
+  "source": "Analytic. Cube +/-0.5; plane law = math.planeForSlice(start, end, +Y, axisMode, vector). axis=x -> n=(1,0,0) through start (X=start.x); axis=z -> n=(0,0,1) through start (Z=start.z); custom (2,0,0) -> normalize=(1,0,0). New verts are edge midpoints (t=0.5) on the axis-perpendicular mid-plane.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "axis_x_overrides_line",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0.3, 0, 1], "axis": "x" } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5, -0.5, -0.5], "b": [0.5, -0.5, -0.5], "t": 0.5, "point": [0, -0.5, -0.5] },
+        { "a": [-0.5, 0.5, -0.5], "b": [0.5, 0.5, -0.5], "t": 0.5, "point": [0, 0.5, -0.5] },
+        { "a": [-0.5, -0.5, 0.5], "b": [0.5, -0.5, 0.5], "t": 0.5, "point": [0, -0.5, 0.5] },
+        { "a": [-0.5, 0.5, 0.5], "b": [0.5, 0.5, 0.5], "t": 0.5, "point": [0, 0.5, 0.5] }
+      ]
+    },
+    {
+      "name": "axis_z_overrides_line",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [-1, 0, 0], "end": [1, 0.4, 0], "axis": "z" } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.5, -0.5, 0], [0.5, -0.5, 0], [-0.5, 0.5, 0], [0.5, 0.5, 0]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5, -0.5, -0.5], "b": [-0.5, -0.5, 0.5], "t": 0.5, "point": [-0.5, -0.5, 0] },
+        { "a": [0.5, -0.5, -0.5], "b": [0.5, -0.5, 0.5], "t": 0.5, "point": [0.5, -0.5, 0] },
+        { "a": [-0.5, 0.5, -0.5], "b": [-0.5, 0.5, 0.5], "t": 0.5, "point": [-0.5, 0.5, 0] },
+        { "a": [0.5, 0.5, -0.5], "b": [0.5, 0.5, 0.5], "t": 0.5, "point": [0.5, 0.5, 0] }
+      ]
+    },
+    {
+      "name": "custom_vector_normalized",
+      "input": [ { "reset": true } ],
+      "op": [ { "slice": { "start": [0, 0, -1], "end": [0.3, 0, 1], "axis": "custom", "vector": [2, 0, 0] } } ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0, -0.5, -0.5], [0, 0.5, -0.5], [0, -0.5, 0.5], [0, 0.5, 0.5]
+      ],
+      "lerp_checks": [
+        { "a": [-0.5, -0.5, -0.5], "b": [0.5, -0.5, -0.5], "t": 0.5, "point": [0, -0.5, -0.5] },
+        { "a": [-0.5, 0.5, 0.5], "b": [0.5, 0.5, 0.5], "t": 0.5, "point": [0, 0.5, 0.5] }
+      ]
+    }
+  ]
+}
