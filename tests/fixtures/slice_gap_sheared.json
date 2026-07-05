@@ -1,0 +1,216 @@
+{
+  "name": "slice_gap_sheared",
+  "description": "Slice tool Gap on a SHEARED (non-axis-aligned) cube (mesh.sliceTool, task 0290 DIRECTION fix). The sheared cube's top face is displaced +X so the plane-crossed edges (top/bottom face edges 0-3, 1-2, 5-6, 4-7) are OBLIQUE to the cut-plane normal. Line in xy (-0.285,-0.168)->(0.969,0.225) extruded along Z (axis=z), infinite ON (whole-mesh cut), split ON + caps ON + gap 0.175 center. The cut duplicates each of the 4 crossing verts into a lo/hi pair (16v/24e/12f) and gap separates each pair ALONG ITS ORIGINAL CROSSED EDGE, not along the plane normal, so both halves of every split edge stay COLLINEAR with the original edge (the reference behavior; the pre-0290 normal push BENT them 0.0673 off the line). PROOF: for each original crossed edge A-B, cross(lo-A, B-A) and cross(hi-A, B-A) are ~0 and the lo-hi separation measured along the edge is exactly 0.175. The collinearity + separation assertions live in the source/mesh.d cutByPlaneEx sheared-cube unittest; here the frozen post-op vertices pin the exact geometry.",
+  "source": "Analytic self-golden captured from vibe3d after the 0290 along-edge fix. Reference rule (gap separates the [lo,hi] pair ALONG the crossed edge, keeping the split edge collinear) confirmed on MODO's own knife split+caps+gap capture toolcards/poly.knife/capture/slice_split_caps_gap.json, where the split-edge verts sit EXACTLY on the original cube edges (perp offset 0.000000) even though the plane normal is oblique to those edges.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "gap_center_collinear",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "load-mesh",
+          "body": {
+            "vertices": [
+              [
+                -0.5,
+                -0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                -0.5,
+                -0.5
+              ],
+              [
+                1.146581,
+                0.5,
+                -0.5
+              ],
+              [
+                0.146581,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                -0.5,
+                0.5
+              ],
+              [
+                0.5,
+                -0.5,
+                0.5
+              ],
+              [
+                1.146581,
+                0.5,
+                0.5
+              ],
+              [
+                0.146581,
+                0.5,
+                0.5
+              ]
+            ],
+            "faces": [
+              [
+                0,
+                3,
+                2,
+                1
+              ],
+              [
+                4,
+                5,
+                6,
+                7
+              ],
+              [
+                0,
+                4,
+                7,
+                3
+              ],
+              [
+                1,
+                2,
+                6,
+                5
+              ],
+              [
+                3,
+                7,
+                6,
+                2
+              ],
+              [
+                0,
+                1,
+                5,
+                4
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "slice": {
+            "start": [
+              -0.285,
+              -0.168,
+              0
+            ],
+            "end": [
+              0.969,
+              0.225,
+              0
+            ],
+            "axis": "z",
+            "infinite": true,
+            "split": true,
+            "caps": true,
+            "gap": 0.175,
+            "gapSide": "center"
+          }
+        }
+      ],
+      "expected_before": {
+        "verts": 8,
+        "edges": 12,
+        "faces": 6
+      },
+      "expected_after": {
+        "verts": 16,
+        "edges": 24,
+        "faces": 12
+      },
+      "expected_vertices": [
+        [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        [
+          0.5,
+          -0.5,
+          -0.5
+        ],
+        [
+          1.146581,
+          0.5,
+          -0.5
+        ],
+        [
+          0.146581,
+          0.5,
+          -0.5
+        ],
+        [
+          -0.5,
+          -0.5,
+          0.5
+        ],
+        [
+          0.5,
+          -0.5,
+          0.5
+        ],
+        [
+          1.146581,
+          0.5,
+          0.5
+        ],
+        [
+          0.146581,
+          0.5,
+          0.5
+        ],
+        [
+          -0.33293,
+          -0.24161,
+          -0.5
+        ],
+        [
+          0.921203,
+          0.151432,
+          -0.5
+        ],
+        [
+          0.921203,
+          0.151432,
+          0.5
+        ],
+        [
+          -0.33293,
+          -0.24161,
+          0.5
+        ],
+        [
+          -0.237911,
+          -0.094653,
+          -0.5
+        ],
+        [
+          1.016223,
+          0.298389,
+          -0.5
+        ],
+        [
+          1.016223,
+          0.298389,
+          0.5
+        ],
+        [
+          -0.237911,
+          -0.094653,
+          0.5
+        ]
+      ]
+    }
+  ]
+}

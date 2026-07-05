@@ -9710,8 +9710,9 @@ struct Mesh {
     /// Caller owns snapshot/undo — this method does NOT capture a snapshot.
     size_t cutByPlane(Vec3 p, Vec3 n, float eps = 1e-5f) {
         bool[] cv;
+        Vec3[] ed;
         return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                            /*restrictFaces*/null, cv, eps);
+                            /*restrictFaces*/null, cv, eps, ed);
     }
 
     // Same as cutByPlane, but RESTRICTED to a face set (`restrictFaces`). Only
@@ -9723,8 +9724,9 @@ struct Mesh {
     size_t cutByPlaneRestricted(Vec3 p, Vec3 n, const uint[] restrictFaces,
                                 float eps = 1e-5f) {
         bool[] cv;
+        Vec3[] ed;
         return planeCutCore(p, n, /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                            restrictFaces, cv, eps);
+                            restrictFaces, cv, eps, ed);
     }
 
     // -----------------------------------------------------------------------
@@ -9740,8 +9742,10 @@ struct Mesh {
     private size_t planeCutCore(Vec3 p, Vec3 n, bool clipped,
                                 Vec3 segStart, Vec3 segEnd,
                                 const uint[] restrictFaces,
-                                out bool[] isCutVertOut, float eps) {
+                                out bool[] isCutVertOut, float eps,
+                                out Vec3[] cutEdgeDirOut) {
         isCutVertOut = null;
+        cutEdgeDirOut = null;
         if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
             return 0;
 
@@ -9856,6 +9860,16 @@ struct Mesh {
             isCutVert[vi] = onPlane[vi] && bandOkVert(cast(uint)vi)
                           && (!restricted || vertInRestrict[vi]);
 
+        // Per-cut-vertex CROSSED-EDGE direction (task 0290). For every vertex the
+        // cut inserts on a straddling edge [a,b], record the UNIT direction of
+        // that original edge, ORIENTED toward the plane's POSITIVE-side endpoint
+        // (the one with dv > 0, the same side the plane normal `n` points to). The
+        // Slice `gap` pass (splitAlongCutLoop) separates each [lo,hi] seam pair
+        // ALONG this edge direction instead of along the plane normal, so both
+        // half-edges of a split edge stay COLLINEAR with the original edge. On-plane
+        // original cut verts have no single crossed edge — their entry stays zero,
+        // which the gap pass reads as "fall back to the plane normal".
+        Vec3[uint] edgeDirOf;
         size_t origEdgeCount = edges.length;
         foreach (ei; 0 .. origEdgeCount) {
             uint a = edges[ei][0], b = edges[ei][1];
@@ -9866,7 +9880,12 @@ struct Mesh {
             if (!((da > 0 && db < 0) || (da < 0 && db > 0))) continue; // same side
             if (!bandOkCross(a, b)) continue;                          // CLIP to drawn span
 
-            insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
+            uint vi = insertEdgePoint(cast(uint)ei, da / (da - db), isCutVert);
+            // Unit edge direction toward the +n-side endpoint (positive dv). `da`
+            // and `db` are opposite-signed here (straddle), so exactly one is > 0.
+            uint posEnd = (da > 0) ? a : b;
+            uint negEnd = (da > 0) ? b : a;
+            edgeDirOf[vi] = normalize(vertices[posEnd] - vertices[negEnd]);
         }
 
         // Pass 2 + finalize: split eligible faces (empty mask = all faces; a
@@ -9875,6 +9894,11 @@ struct Mesh {
         size_t nSplit = rebuildFacesWithChordSplits(
             restricted ? faceInRestrict : [], isCutVert);
         isCutVertOut = isCutVert;
+        // Materialise the per-vertex edge-direction map into a dense array indexed
+        // by vertex (zero where no straddled edge was recorded).
+        cutEdgeDirOut.length = vertices.length;
+        foreach (vi, dir; edgeDirOf)
+            if (vi < cutEdgeDirOut.length) cutEdgeDirOut[vi] = dir;
         return nSplit;
     }
 
@@ -9911,8 +9935,9 @@ struct Mesh {
     size_t cutByPlaneClipped(Vec3 p, Vec3 n, Vec3 segStart, Vec3 segEnd,
                              float eps = 1e-5f, const uint[] restrictFaces = null) {
         bool[] cv;
+        Vec3[] ed;
         return planeCutCore(p, n, /*clipped*/true, segStart, segEnd,
-                            restrictFaces, cv, eps);
+                            restrictFaces, cv, eps, ed);
     }
 
     // -----------------------------------------------------------------------
@@ -9944,17 +9969,19 @@ struct Mesh {
     // `gap` (S9, task 0275, distance) + `gapSide` (Offset Side: 0=center,
     // 1=positive, 2=negative) — only meaningful WITH `split`. `gap == 0` (the
     // default) leaves the two duplicated boundary loops COINCIDENT, byte-for-byte
-    // the S7/S8 result. Non-zero pushes the two split shells APART along the CUT-
-    // PLANE NORMAL `n` (the natural "thicken a flat cut" direction, unlike Loop
-    // Slice which pushes along the on-surface rail), opening a real band; see
-    // splitAlongCutLoop for the sign policy. Positions only — no topology change.
+    // the S7/S8 result. Non-zero pushes the two split shells APART along each cut
+    // vertex's ORIGINAL CROSSED EDGE (task 0290) so both halves of a split edge
+    // stay collinear with the original — equal to the plane normal for an axis-
+    // aligned cut, differing only on an oblique/sheared one; see splitAlongCutLoop
+    // for the sign policy. Positions only — no topology change.
     size_t cutByPlaneEx(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
                         bool split, bool caps, out PlaneCutLoops result, float eps = 1e-5f,
                         const uint[] restrictFaces = null,
                         float gap = 0.0f, int gapSide = 0) {
         bool[] isCutVert;
+        Vec3[] cutEdgeDir;
         size_t nSplit = planeCutCore(p, n, clipped, segStart, segEnd,
-                                     restrictFaces, isCutVert, eps);
+                                     restrictFaces, isCutVert, eps, cutEdgeDir);
         if (nSplit == 0) return 0;
         // Order the crossing verts into ring(s) from the connected cut BEFORE the
         // split duplicates them (the split rebuilds edges under us).
@@ -9963,7 +9990,8 @@ struct Mesh {
         // boundary loop with a cap polygon (see splitAlongCutLoop / capShellCycles).
         // `gap`/`gapSide` (S9) then separate the two shells along `n`.
         if (split)
-            splitAlongCutLoop(isCutVert, p, n, caps, result.seamPairs, eps, gap, gapSide);
+            splitAlongCutLoop(isCutVert, p, n, caps, result.seamPairs, eps,
+                              gap, gapSide, cutEdgeDir);
         return nSplit;
     }
 
@@ -10028,7 +10056,8 @@ struct Mesh {
     // -----------------------------------------------------------------------
     private void splitAlongCutLoop(const bool[] isCutVert, Vec3 planeP, Vec3 planeN,
                                    bool caps, out uint[2][] seamPairs, float eps,
-                                   float gap = 0.0f, int gapSide = 0) {
+                                   float gap = 0.0f, int gapSide = 0,
+                                   const Vec3[] cutEdgeDir = null) {
         bool cut(uint v) { return v < isCutVert.length && isCutVert[v]; }
         uint[uint] dupOf;
         uint getDup(uint vi) {
@@ -10059,24 +10088,32 @@ struct Mesh {
             }
         }
         if (seamPairs.length == 0) return;   // nothing duplicated — no-op
-        // Gap / Offset Side (S9, task 0275): open a band of width `gap` between
-        // the two split shells by pushing each coincident [lo,hi] seam pair apart
-        // ALONG THE CUT-PLANE NORMAL `planeN` (unit). This differs from the Loop
-        // Slice gap, which pushes along the on-surface RAIL: for a FLAT plane cut
-        // the two shells naturally separate along `n` (thickening the cut).
+        // Gap / Offset Side (S9, task 0275; DIRECTION fix task 0290): open a band of
+        // width `gap` between the two split shells by pushing each coincident
+        // [lo,hi] seam pair apart ALONG THE ORIGINAL CROSSED EDGE (`cutEdgeDir`,
+        // per cut vertex, unit, oriented toward the plane's +n side), NOT along the
+        // plane normal. A cut vertex sits on a specific original edge; separating
+        // the pair along that edge's own line keeps BOTH half-edges of a split edge
+        // COLLINEAR with the original (the reference behavior — the split edge does
+        // not bend). For an AXIS-ALIGNED cube whose crossed edges are parallel to
+        // `n` (e.g. the slice_gap golden: line ‖Z ⇒ n = −X, crossed edges ‖X) the
+        // edge direction EQUALS ±n, so this is byte-for-byte the old normal push;
+        // it only differs on a SHEARED / oblique cut where edge ≠ normal.
         //
         // WHICH SHELL IS WHICH: `lo` (pr[0], the ORIGINAL crossing vert) is kept
         // by faces wholly on the plane's POSITIVE side (n·(v−p) > 0); `hi` (pr[1],
         // the DUPLICATE) is referenced by the NEGATIVE-side faces (the remap above).
-        // So lo belongs to the +n shell, hi to the −n shell. Opening them apart
-        // moves lo toward +n and hi toward −n.
+        // So lo belongs to the +n shell, hi to the −n shell. `cutEdgeDir` points
+        // toward the edge's +n-side endpoint, so `lo += dir·loAmt` slides lo toward
+        // its own (+n) endpoint and `hi −= dir·hiAmt` slides hi toward the −n one —
+        // separating them by exactly `gap` measured ALONG the edge.
         //
-        // OFFSET SIDE sign policy (total separation is always exactly `gap`):
-        //   center   (0): symmetric — lo += n·gap/2, hi −= n·gap/2.
-        //   positive (1): the +n-side shell (lo) takes the FULL gap along +n; the
-        //                 −n-side shell (hi) stays on the plane.
-        //   negative (2): the −n-side shell (hi) takes the FULL gap along −n; the
-        //                 +n-side shell (lo) stays on the plane.
+        // OFFSET SIDE sign policy (total separation along the edge is always `gap`):
+        //   center   (0): symmetric — lo += dir·gap/2, hi −= dir·gap/2.
+        //   positive (1): the +n-side shell (lo) takes the FULL gap; hi stays put.
+        //   negative (2): the −n-side shell (hi) takes the FULL gap; lo stays put.
+        // On-plane original cut verts (no straddled edge) have a zero `cutEdgeDir`
+        // entry ⇒ fall back to the plane normal `planeN` for that pair.
         // `gap == 0` leaves every pair coincident (byte-for-byte S7/S8). Positions
         // only — no topology change; any `caps` quads gain real (nonzero) area.
         // Each seam vert is unique to one pair, so no vert is displaced twice.
@@ -10088,8 +10125,12 @@ struct Mesh {
                 default: loAmt = gap * 0.5f; hiAmt = gap * 0.5f; break;  // center
             }
             foreach (pr; seamPairs) {
-                vertices[pr[0]] = vertices[pr[0]] + planeN * loAmt;   // lo → +n shell
-                vertices[pr[1]] = vertices[pr[1]] - planeN * hiAmt;   // hi → −n shell
+                // Separation direction = the ORIGINAL crossed edge (toward +n side);
+                // fall back to the plane normal for on-plane cut verts (zero dir).
+                Vec3 dir = (pr[0] < cutEdgeDir.length) ? cutEdgeDir[pr[0]] : Vec3(0, 0, 0);
+                if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f) dir = planeN;
+                vertices[pr[0]] = vertices[pr[0]] + dir * loAmt;   // lo → toward +n endpoint
+                vertices[pr[1]] = vertices[pr[1]] - dir * hiAmt;   // hi → toward −n endpoint
             }
         }
         // Cap Sections (S8, task 0274): seal each opened section with ONE cap
@@ -16695,6 +16736,70 @@ unittest { // cutByPlaneEx: Slice `gap` + `gapSide` (S9, task 0275) — the two
     foreach (pr; nR.seamPairs) {
         assert(abs(nMesh.vertices[pr[0]].x - 0.0f) < 1e-6f, "negative: lo stays on plane");
         assert(abs(nMesh.vertices[pr[1]].x - (-G)) < 1e-6f, "negative: hi at −gap");
+    }
+}
+
+unittest { // cutByPlaneEx: Slice `gap` on a SHEARED cube — split edges stay
+    // COLLINEAR (task 0290). On an OBLIQUE cut the crossed edge is NOT parallel to
+    // the plane normal, so pushing the [lo,hi] pair along the normal would BEND the
+    // split edge (the pre-0290 bug). The reference separates each pair ALONG THE
+    // ORIGINAL EDGE, so both halves stay on the edge's line. Assert exactly that:
+    // every seam pair is collinear with one original crossed edge, separated by the
+    // gap measured along the edge.
+    import std.math : abs, sqrt;
+    // Sheared cube: top face displaced +X (repro from the task file).
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,     -0.5f, -0.5f), Vec3( 0.5f,     -0.5f, -0.5f),
+        Vec3( 1.146581f,  0.5f, -0.5f), Vec3( 0.146581f, 0.5f, -0.5f),
+        Vec3(-0.5f,     -0.5f,  0.5f), Vec3( 0.5f,     -0.5f,  0.5f),
+        Vec3( 1.146581f,  0.5f,  0.5f), Vec3( 0.146581f, 0.5f,  0.5f),
+    ];
+    m.addFace([0u,3u,2u,1u]); m.addFace([4u,5u,6u,7u]);
+    m.addFace([0u,4u,7u,3u]); m.addFace([1u,2u,6u,5u]);
+    m.addFace([3u,7u,6u,2u]); m.addFace([0u,1u,5u,4u]);
+    m.buildLoops(); m.resetSelection();
+
+    // Slice line in xy extruded along Z (axis=z): n = normalize(cross(end-start, +Z)).
+    Vec3 s = Vec3(-0.285f, -0.168f, 0.0f), e = Vec3(0.969f, 0.225f, 0.0f);
+    Vec3 N = normalize(cross(e - s, Vec3(0, 0, 1)));  // ≈ (0.2991, -0.9542, 0)
+    Vec3 P = s;
+    enum float G = 0.175f;
+
+    // Original crossed edges (top/bottom face edges the vertical plane cuts).
+    static immutable uint[2][4] crossed = [[0,3],[1,2],[5,6],[4,7]];
+
+    Mesh.PlaneCutLoops R;
+    // infinite (clipped=false) so the whole cross-section is cut (owner's 16v result).
+    size_t nS = m.cutByPlaneEx(P, N, /*clipped*/false, P, P,
+                               /*split*/true, /*caps*/true, R, 1e-5f, null,
+                               /*gap*/G, /*gapSide*/0);
+    assert(nS > 0, "sheared cube: the oblique plane must cut faces");
+    assert(R.seamPairs.length == 4, "sheared cube: 4 crossing verts duplicated");
+
+    foreach (pr; R.seamPairs) {
+        Vec3 lo = m.vertices[pr[0]], hi = m.vertices[pr[1]];
+        // Find the original edge this pair sits on (the one both endpoints are
+        // collinear with) and assert perpendicular offset ≈ 0 for BOTH.
+        bool matched = false;
+        foreach (ce; crossed) {
+            Vec3 A = m.vertices[ce[0]], B = m.vertices[ce[1]];
+            Vec3 dir = B - A;
+            float len = dir.length;
+            float perpLo = cross(lo - A, dir).length / len;
+            float perpHi = cross(hi - A, dir).length / len;
+            if (perpLo < 1e-4f && perpHi < 1e-4f) {
+                matched = true;
+                // Separation measured along the edge == gap (both halves on the line).
+                float sep = sqrt((lo.x-hi.x)*(lo.x-hi.x) + (lo.y-hi.y)*(lo.y-hi.y)
+                               + (lo.z-hi.z)*(lo.z-hi.z));
+                assert(abs(sep - G) < 1e-4f,
+                       "sheared: split-edge pair separated by exactly gap along the edge");
+                break;
+            }
+        }
+        assert(matched, "sheared: both halves of every split edge stay COLLINEAR "
+                        ~ "with the original edge (not bent along the plane normal)");
     }
 }
 
