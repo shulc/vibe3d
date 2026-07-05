@@ -237,13 +237,14 @@ private:
     // border (boundary neighbours absorb the terminating midpoints). When OFF
     // (default) the whole ring around the mesh is cut, byte-for-byte as before.
     bool    sliceSelected_ = false;
-    // Keep Quads (`quad`, task 0249): the quad ring already only splits quads
-    // (so every NEW sub-face is a quad regardless), but where the ring
-    // terminates against a NON-QUAD face the default leaves that face uncut (a
-    // T-junction on the terminating rail). When ON, the non-quad neighbour
-    // ABSORBS the terminating midpoint into its boundary (n-gon), keeping the
-    // cut watertight AND all-quad. OFF (default) is the whole-ring behaviour
-    // byte-for-byte. Composes with `select` (both use the same absorb pass).
+    // Keep Quads (`quad`, task 0249; watertight-by-default change): now a
+    // GEOMETRIC NO-OP, retained only for panel/attribute parity. The absorb it
+    // used to gate — where the ring terminates against a NON-QUAD face, the
+    // neighbour absorbs the terminating midpoint into its boundary (n-gon) so the
+    // cut stays watertight AND all-quad — now happens BY DEFAULT for every
+    // terminating ring in `Mesh.insertEdgeLoopsMulti` (the reference default is
+    // watertight there; Keep Quads on == off on every capturable mesh). Still
+    // threaded to the kernel, which ignores it.
     bool    keepQuads_     = false;
     // Slice N-gon (`ngon`, task 0250): the quad ring stops at any non-quad face
     // by default. When ON, the ring is allowed to CONTINUE THROUGH a face with

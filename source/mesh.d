@@ -7645,33 +7645,28 @@ struct Mesh {
     ///   unlisted, uncut neighbour) are still midpoint-split, and the unlisted
     ///   neighbour ABSORBS those midpoints into its own boundary (becoming an
     ///   n-gon) — the "respecting corners" termination at the selection edge.
-    ///   Passing `null` (the default) reproduces the whole-ring behaviour
-    ///   BYTE-FOR-BYTE (same single-pass face-index emission order); the
-    ///   restrict path is a separate two-pass branch that never runs for the
-    ///   default call. `newFaceIndices` still reports only the sub-quads the
+    ///   Passing `null` (the default) removes the restriction (whole ring). The
+    ///   absorb happens through the SAME two-pass branch as the default open-ring
+    ///   path (`twoPass`, below); a CLOSED belt ring with no restriction takes the
+    ///   byte-for-byte single-pass path instead. `newFaceIndices` still reports only the sub-quads the
     ///   slice CREATED (the absorbed n-gon neighbours are modified originals,
     ///   not new, so they are excluded — matching the Select-New-Polygons law).
     ///
     /// `keepQuads` (optional, default false) — the Loop Slice "Keep Quads"
-    ///   guard. The quad ring already propagates ONLY through quads and
-    ///   terminates at any non-quad face (`collectEdgeRing`/`walkRingSide`), so
-    ///   every sub-face the slice CREATES is a quad regardless of this flag.
-    ///   What it governs is the TERMINATION at a non-quad boundary. With
-    ///   `keepQuads=false` (the default, byte-for-byte whole-ring behaviour)
-    ///   the non-quad face where the ring stops is re-emitted UNCUT — the
-    ///   terminating rail is midpoint-split on the quad side only, leaving a
-    ///   T-junction against the untouched non-quad. With `keepQuads=true` the
-    ///   non-quad neighbour ABSORBS that terminating midpoint into its own
-    ///   boundary (becoming an n-gon), so the cut stays watertight AND every
-    ///   newly created sub-face is a quad — the "keep quads" guarantee. This
-    ///   reuses the SAME two-pass split/absorb machinery as `restrictFaces`
-    ///   (they compose: a restricted keep-quads cut absorbs at both the
-    ///   selection border and the non-quad border). Like the restrict path,
-    ///   `newFaceIndices` reports only the created sub-quads (an absorbed
-    ///   non-quad neighbour is a modified original, excluded). On an all-quad
-    ///   mesh no non-quad exists to absorb, so `keepQuads` produces geometry
-    ///   IDENTICAL to the default (only the face-emission ORDER differs — the
-    ///   two-pass path emits all split faces before the untouched ones).
+    ///   guard. As of the watertight-by-default change this is a GEOMETRIC
+    ///   NO-OP and is retained only for panel/attribute parity. The behaviour it
+    ///   used to gate — ABSORBING the terminating midpoint at a non-quad boundary
+    ///   into that neighbour (turning it into an n-gon) so the cut stays watertight
+    ///   AND every newly created sub-face is a quad — now happens BY DEFAULT for
+    ///   every open (terminating) ring, because the reference's default keeps the
+    ///   cut watertight there (Keep Quads on == off on every capturable mesh). The
+    ///   quad ring already propagates ONLY through quads and terminates at any
+    ///   non-quad face (`collectEdgeRing`/`walkRingSide`), so every sub-face the
+    ///   slice CREATES is a quad regardless of this flag. Passing `keepQuads=true`
+    ///   therefore produces geometry IDENTICAL to `keepQuads=false`; the absorb
+    ///   machinery it once triggered is now the default open-ring path (see
+    ///   `twoPass`). `newFaceIndices` still reports only the created sub-quads (an
+    ///   absorbed non-quad neighbour is a modified original, excluded).
     ///
     /// `ngon` (optional, default false) — the Loop Slice "Slice N-gon" guard
     ///   (task 0250). Off (default) the ring terminates at ANY non-quad face
@@ -7825,6 +7820,14 @@ struct Mesh {
         import std.algorithm : sort;
         EdgeRingEntry[][] rings;
         bool[immutable(uint)[]] seenRingKey;
+        // `anyOpenRing` — set when at least one KEPT ring is OPEN (it TERMINATES
+        // at a non-quad / mesh-boundary face rather than wrapping back on itself).
+        // An open ring has terminating rails shared with a non-ring neighbour, so
+        // its cut must ABSORB the terminating midpoint into that neighbour to stay
+        // watertight (the reference default). A CLOSED belt ring has no terminating
+        // face, so it never needs the absorb pass and keeps the byte-for-byte
+        // single-pass emission (see `twoPass` below).
+        bool anyOpenRing = false;
         foreach (seed; seeds) {
             if (seed >= edges.length) continue;
             bool closed;
@@ -7839,6 +7842,7 @@ struct Mesh {
             if (key in seenRingKey) continue;   // same ring as an earlier seed
             seenRingKey[key] = true;
             rings ~= ring;
+            if (!closed) anyOpenRing = true;    // terminating ring → absorb pass
         }
         if (rings.length == 0) return false;
 
@@ -8161,10 +8165,19 @@ struct Mesh {
         }
 
         // Two passes are needed whenever some non-split face must ABSORB a
-        // terminating midpoint: the Slice-Selected restriction (absorb at the
-        // selection border) OR Keep-Quads (absorb at the non-quad border where
-        // the quad ring stops). Neither on ⇒ the byte-for-byte whole-ring path.
-        immutable bool twoPass = restricting || keepQuads;
+        // terminating midpoint. This is now the DEFAULT for any OPEN (terminating)
+        // ring: when the ring stops at a non-quad face or a mesh boundary the
+        // neighbour absorbs the terminating midpoint into its own boundary (an
+        // n-gon), so the cut stays WATERTIGHT with no T-junction — the reference's
+        // default behaviour. The Slice-Selected restriction (`restricting`) also
+        // needs it (absorb at the selection border, even for a closed belt ring).
+        // A CLOSED all-quad belt ring (the common full-ring cut) has NO terminating
+        // face — `anyOpenRing` is false and it is not restricting — so it takes the
+        // byte-for-byte single-pass whole-ring path below, unchanged. `keepQuads`
+        // (Keep Quads) is now a GEOMETRIC NO-OP: the terminating absorb it used to
+        // gate happens by default, matching the reference (Keep Quads on == off on
+        // every capturable mesh); the param is kept only for panel parity.
+        immutable bool twoPass = restricting || anyOpenRing;
         if (!twoPass) {
             // Whole-ring path — UNCHANGED (byte-for-byte): one pass in face
             // index order, dup non-ring faces, split ring faces.
@@ -15031,14 +15044,14 @@ unittest {
            "restricted newFaceIndices = 4 sliced sub-quads (2 faces × 2 each)");
 }
 
-// insertEdgeLoopsMulti — Keep Quads guard (task 0249). A planar strip of two
-// quads Q0=[0,1,4,3], Q1=[1,2,5,4] capped by a triangle T=[2,6,5]. The seed
-// edge (1,4) makes the quad ring walk {Q0,Q1} and TERMINATE at the non-quad T.
-// Both ON and OFF land the SAME 10 verts / 5 faces (3 midpoints at 0.5). The
-// difference is the termination against T: OFF leaves T uncut (a T-junction —
-// the full edge (2,5) survives beside its two halves), ON makes T absorb the
-// terminating midpoint (becomes the quad [2,6,5,mid]; the full edge (2,5) is
-// gone). Countable proof: 15 edges OFF vs 14 edges ON.
+// insertEdgeLoopsMulti — Keep Quads is a NO-OP under watertight-by-default. A
+// planar strip of two quads Q0=[0,1,4,3], Q1=[1,2,5,4] capped by a triangle
+// T=[2,6,5]. The seed edge (1,4) makes the quad ring walk {Q0,Q1} and TERMINATE
+// at the non-quad T — an OPEN ring. Since the default now absorbs the terminating
+// midpoint at that non-quad neighbour, BOTH Keep Quads OFF and ON produce the
+// SAME watertight all-quad result (10 verts / 5 faces / 14 edges; T absorbs the
+// midpoint → the quad [2,6,5,mid]; the full edge (2,5) is gone). This matches the
+// reference (Keep Quads on == off). `quad` is retained only for panel parity.
 unittest {
     static Mesh makeStrip() {
         Mesh m;
@@ -15055,7 +15068,8 @@ unittest {
         return m;
     }
 
-    // Keep Quads OFF (default) — T re-emitted uncut → T-junction on edge (2,5).
+    // Keep Quads OFF (default) — the open ring absorbs the terminating midpoint
+    // by default → T becomes the quad [2,6,5,mid], watertight, no T-junction.
     Mesh off = makeStrip();
     uint eiOff = off.edgeIndex(1, 4);
     assert(eiOff != ~0u, "seed edge (1,4) must exist");
@@ -15063,27 +15077,27 @@ unittest {
     assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, /*keepQuads*/false),
            "keep-quads-off insert must succeed");
     assert(off.vertices.length == 10, "off: 7 + 3 midpoints = 10 verts");
-    assert(off.faces.length == 5,     "off: Q0×2 + Q1×2 + T = 5 faces");
-    assert(off.edges.length == 15,    "off: 15 edges (T-junction full edge (2,5) survives)");
-    // The un-absorbed full seed-exit edge (v2..v5) is still present (T uncut).
-    assert(off.edgeIndex(2, 5) != ~0u,
-           "off: full exit edge (2,5) survives (non-quad T left uncut → T-junction)");
+    assert(off.faces.length == 5,     "off: Q0×2 + Q1×2 + T(now quad) = 5 faces");
+    assert(off.edges.length == 14,    "off: 14 edges (default absorbs the midpoint — watertight)");
+    // The full seed-exit edge (v2..v5) is GONE — T absorbed the midpoint by default.
+    assert(off.edgeIndex(2, 5) == ~0u,
+           "off: full exit edge (2,5) removed (non-quad T absorbed the midpoint by default)");
 
-    // Keep Quads ON — T absorbs the midpoint → all-quad, watertight, one fewer edge.
+    // Keep Quads ON — geometric no-op: identical watertight result.
     Mesh on = makeStrip();
     uint eiOn = on.edgeIndex(1, 4);
     uint[] nfOn;
     assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, /*keepQuads*/true),
            "keep-quads-on insert must succeed");
     assert(on.vertices.length == 10, "on: identical vertex set (10 verts)");
-    assert(on.faces.length == 5,     "on: same 5 faces (T is now a quad)");
-    assert(on.edges.length == 14,    "on: 14 edges (T absorbed the midpoint — no T-junction)");
-    // The full exit edge (2,5) is GONE — T now references (2,mid) and (mid,5).
+    assert(on.faces.length == 5,     "on: same 5 faces (T is a quad)");
+    assert(on.edges.length == 14,    "on: 14 edges (no-op — same as OFF)");
+    // The full exit edge (2,5) is GONE — T references (2,mid) and (mid,5).
     assert(on.edgeIndex(2, 5) == ~0u,
-           "on: full exit edge (2,5) removed (non-quad T absorbed the midpoint)");
+           "on: full exit edge (2,5) removed (identical to OFF)");
     // Both created only the 4 sub-quads of Q0+Q1; the absorbed T is excluded.
     assert(nfOn.length == 4,  "on: newFaceIndices = 4 created sub-quads (T excluded)");
-    assert(nfOff.length == 4, "off: newFaceIndices = 4 created sub-quads");
+    assert(nfOff.length == 4, "off: newFaceIndices = 4 created sub-quads (T excluded)");
 }
 
 // insertEdgeLoopsMulti — Slice N-gon guard (task 0250). A planar horizontal
@@ -15094,7 +15108,9 @@ unittest {
 // are sliced (H, Q2 untouched; the exit rail leaves a T-junction against H).
 // With ngon ON the ring CROSSES the hexagon (chord between its two vertical-edge
 // midpoints) and reaches Q2 → {Q0,Q1,H,Q2} all sliced. Countable proof: OFF =
-// 15 verts / 21 edges / 6 faces; ON = 17 verts / 24 edges / 8 faces.
+// 15 verts / 20 edges / 6 faces (watertight-by-default: the terminating midpoint
+// is absorbed into the hexagon → 7-gon, no T-junction); ON = 17 verts / 24 edges
+// / 8 faces.
 unittest {
     import std.math : abs;
     static bool hasV(const Mesh m, Vec3 p, float eps = 1e-4f) {
@@ -15119,7 +15135,8 @@ unittest {
         return m;
     }
 
-    // ngon OFF (default) — ring terminates at the hexagon; only Q0,Q1 sliced.
+    // ngon OFF (default) — ring terminates at the hexagon; only Q0,Q1 sliced, but
+    // the hexagon ABSORBS the terminating midpoint by default (7-gon, watertight).
     Mesh off = makeStrip();
     uint eiOff = off.edgeIndex(1, 6);
     assert(eiOff != ~0u, "seed edge (1,6) must exist");
@@ -15127,14 +15144,15 @@ unittest {
     assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, /*ngon*/false),
            "ngon-off insert must succeed");
     assert(off.vertices.length == 15, "off: 12 + 3 midpoints = 15 verts");
-    assert(off.edges.length    == 21, "off: 21 edges (T-junction at uncut hexagon)");
-    assert(off.faces.length    == 6,  "off: Q0×2 + Q1×2 + H + Q2 = 6 faces");
-    // The hexagon + Q2 rails were never reached — no midpoints there.
+    assert(off.edges.length    == 20, "off: 20 edges (hexagon absorbs the terminating midpoint — watertight)");
+    assert(off.faces.length    == 6,  "off: Q0×2 + Q1×2 + H(7-gon) + Q2 = 6 faces");
+    // The hexagon + Q2 rails were never traversed — no midpoints there.
     assert(!hasV(off, Vec3(3,0.5f,0)), "off: hexagon exit rail NOT cut");
     assert(!hasV(off, Vec3(4,0.5f,0)), "off: Q2 rail NOT cut (ring stopped at hexagon)");
-    // The exit edge into the hexagon survives full (uncut hexagon → T-junction).
-    assert(off.edgeIndex(2, 7) != ~0u, "off: full edge (2,7) survives (hexagon uncut)");
-    assert(nfOff.length == 4, "off: 4 created sub-quads (Q0+Q1)");
+    // The exit edge into the hexagon is GONE — the hexagon absorbed the midpoint
+    // (its boundary edge (2,7) split into (2,mid),(mid,7)), so the cut is watertight.
+    assert(off.edgeIndex(2, 7) == ~0u, "off: full edge (2,7) removed (hexagon absorbed the midpoint)");
+    assert(nfOff.length == 4, "off: 4 created sub-quads (Q0+Q1); absorbed hexagon excluded");
 
     // ngon ON — ring crosses the hexagon and reaches Q2; all four faces sliced.
     Mesh on = makeStrip();

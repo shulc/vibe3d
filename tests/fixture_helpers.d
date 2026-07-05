@@ -437,10 +437,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         // "select": true } }`.
         if ("select" in ls && ls["select"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool select 1", ctx);
-        // Optional Keep Quads (task 0249): where the quad ring terminates at a
-        // non-quad face, that neighbour absorbs the terminating midpoint (n-gon)
-        // so the cut stays watertight + all-quad. `{ "loop_slice": { ...,
-        // "quad": true } }`.
+        // Optional Keep Quads (task 0249; watertight-by-default 0265): now a
+        // geometric NO-OP — where the quad ring terminates at a non-quad face,
+        // that neighbour absorbs the terminating midpoint (n-gon) so the cut stays
+        // watertight + all-quad BY DEFAULT. `quad` is retained for panel parity
+        // only. `{ "loop_slice": { ..., "quad": true } }`.
         if ("quad" in ls && ls["quad"].type == JSONType.true_)
             cmd("tool.attr mesh.loopSliceTool quad 1", ctx);
         // Optional Slice N-gon (task 0250): let the ring continue THROUGH a
