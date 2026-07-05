@@ -7357,25 +7357,42 @@ struct Mesh {
         return cast(int)((cast(uint)entryJ + n / 2) % n);
     }
 
-    /// Preserve-Curvature spline point (task 0254). Places a new loop vertex on
-    /// the segment `p1→p2` at parameter `t`, curved to follow the surrounding cage
-    /// via a UNIFORM CATMULL-ROM (Cardinal) spline through the four points
-    /// `p0, p1, p2, p3` (`p0`/`p3` = the cage vertices continuing the rail past
-    /// `p1`/`p2`). Standard Catmull-Rom tangents `m1 = ½(p2−p0)`, `m2 = ½(p3−p1)`
-    /// (the "0.5" is the canonical Catmull-Rom tangent scale). The return blends
-    /// the spline against the plain chord by `tension`:
+    /// Preserve-Curvature spline point (task 0254; curve LIVE-corrected task 0263).
+    /// Places a new loop vertex on the segment `p1→p2` at parameter `t`, curved to
+    /// follow the surrounding cage via a NON-UNIFORM (chord-weighted) Catmull-Rom
+    /// spline through the four points `p0, p1, p2, p3` (`p0`/`p3` = the cage
+    /// vertices continuing the rail past `p1`/`p2`). The return blends the spline
+    /// against the plain chord by `tension`:
     ///   `result = lerp(p1,p2,t) + tension · (catmullRom − lerp)`
     /// so `tension = 1` is the full spline, `tension = 0` is exactly the linear
     /// chord (byte-for-byte the non-curvature path), and intermediate / >1 /
     /// negative values scale the bulge (the hook task 0255 "Tension" drives). When
     /// `p0,p1,p2,p3` are collinear the spline coincides with the chord for every
     /// `tension`, so a flat cage is unaffected.
+    ///
+    /// Tangents (task 0263): the reference does NOT use the classic uniform scale
+    /// `½(p2−p0)`. Live capture of the reference Preserve Curvature (headless
+    /// command-port arm + interactive commit — see toolcards/mesh.loopSlice/capture)
+    /// pins each endpoint's tangent to the uniform Catmull-Rom secant RESCALED by
+    /// the fraction the CUT edge length `|p1p2|` contributes to that endpoint's two
+    /// incident cage-edge lengths:
+    ///   `m1 = (p2−p0) · |p1p2|/(|p0p1|+|p1p2|)`,  `m2 = (p3−p1) · |p1p2|/(|p2p3|+|p1p2|)`.
+    /// (The classic `½` is the special case of three equal-length cage edges.)
+    /// Verified bit-exact on two discriminating cages: heights [0,1,1,0] give
+    /// y = 1 + (√2−1)/4 = 1.1035534 (uniform gave 1.125); heights [0,2,2,0] give
+    /// y = 2.1545086 (uniform gave 2.25). A collinear (flat) cage still yields the
+    /// chord for every tension.
     private static Vec3 curvatureSplinePoint(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3,
                                              float t, float tension) {
         Vec3  lin = p1 + (p2 - p1) * t;
         if (tension == 0.0f) return lin;               // exact linear (no float drift)
-        Vec3  m1  = (p2 - p0) * 0.5f;                  // tangent at p1
-        Vec3  m2  = (p3 - p1) * 0.5f;                  // tangent at p2
+        float L01 = (p1 - p0).length();
+        float L12 = (p2 - p1).length();
+        float L23 = (p3 - p2).length();
+        float w1  = (L01 + L12) > 1e-8f ? L12 / (L01 + L12) : 0.5f;
+        float w2  = (L23 + L12) > 1e-8f ? L12 / (L23 + L12) : 0.5f;
+        Vec3  m1  = (p2 - p0) * w1;                    // chord-weighted tangent at p1
+        Vec3  m2  = (p3 - p1) * w2;                    // chord-weighted tangent at p2
         float t2  = t * t, t3 = t2 * t;
         Vec3  crom = p1 * (2.0f*t3 - 3.0f*t2 + 1.0f)
                    + m1 * (t3 - 2.0f*t2 + t)
@@ -15365,9 +15382,10 @@ unittest {
 // long edge (2,4), giving a 1-face open ring that cuts Q1's two long rails (both at
 // y=1, but curved — their cage neighbours drop to y=0 on each side). With curvature
 // OFF (default) each new loop vert is the LINEAR chord midpoint (y=1.0 exactly).
-// With curvature ON it is placed on the uniform Catmull-Rom spline through the four
-// cage points P0=(0,0,*),va,vb,P3=(3,0,*): at t=0.5 the spline bulges the flat chord
-// UP to y=1.125 (x/z unchanged) — measurably off the chord. Topology is identical
+// With curvature ON it is placed on the chord-weighted Catmull-Rom spline through the
+// four cage points P0=(0,0,*),va,vb,P3=(3,0,*): at t=0.5 the spline bulges the flat
+// chord UP to y=1+(√2−1)/4=1.1035534 (LIVE-corrected, task 0263; x/z unchanged) —
+// measurably off the chord. Topology is identical
 // either way (Curvature relocates the new verts only). A FLAT strip (heights all 0)
 // proves ON is a no-op there: the four spline points are collinear ⇒ spline == chord.
 unittest {
@@ -15408,9 +15426,10 @@ unittest {
     assert(off.faces.length    == 4,  "off: Q0 + Q1×2 + Q2 = 4 faces");
     assert(hasV(off, Vec3(1.5f, 1.0f, 0)), "off: rail (2,4) midpoint on the flat chord (y=1)");
     assert(hasV(off, Vec3(1.5f, 1.0f, 1)), "off: rail (3,5) midpoint on the flat chord (y=1)");
-    assert(!hasV(off, Vec3(1.5f, 1.125f, 0)), "off: no bulged vert (linear placement)");
+    assert(!hasV(off, Vec3(1.5f, 1.1035534f, 0)), "off: no bulged vert (linear placement)");
 
-    // curvature ON — Catmull-Rom spline bulges the midpoints to y=1.125.
+    // curvature ON — chord-weighted Catmull-Rom spline bulges the midpoints to
+    // y=1+(√2−1)/4=1.1035534 (LIVE-captured reference value, task 0263).
     Mesh on = makeArcStrip(1.0f, 1.0f);
     uint eiOn = on.edgeIndex(2, 4);
     uint[] nfOn;
@@ -15420,14 +15439,14 @@ unittest {
     // Topology IDENTICAL to the off case (curvature relocates verts only).
     assert(on.vertices.length == 10 && on.edges.length == 13 && on.faces.length == 4,
            "on: topology identical to curvature-off (positions only)");
-    assert(hasV(on, Vec3(1.5f, 1.125f, 0)), "on: rail (2,4) midpoint bulged off the chord to y=1.125");
-    assert(hasV(on, Vec3(1.5f, 1.125f, 1)), "on: rail (3,5) midpoint bulged off the chord to y=1.125");
+    assert(hasV(on, Vec3(1.5f, 1.1035534f, 0)), "on: rail (2,4) midpoint bulged off the chord to y=1.1035534");
+    assert(hasV(on, Vec3(1.5f, 1.1035534f, 1)), "on: rail (3,5) midpoint bulged off the chord to y=1.1035534");
     assert(!hasV(on, Vec3(1.5f, 1.0f, 0)), "on: chord midpoint replaced by the bulged spline point");
 
     // Tension (task 0255) scales the bulge: result = lerp + tension·(spline − lerp).
-    // At tension=1.0 the bulge is the full 1.125 (above); at tension=0.5 it is
-    // halfway between the flat chord (1.0) and the full spline (1.125) ⇒ y=1.0625;
-    // at tension=0.0 it collapses to the linear chord (y=1.0) — byte-for-byte the
+    // At tension=1.0 the bulge is the full 1.1035534 (above); at tension=0.5 it is
+    // halfway between the flat chord (1.0) and the full spline ⇒ y=1.0517767; at
+    // tension=0.0 it collapses to the linear chord (y=1.0) — byte-for-byte the
     // curvature-OFF placement even though `curvature` is ON.
     Mesh half = makeArcStrip(1.0f, 1.0f);
     uint eiHalf = half.edgeIndex(2, 4);
@@ -15436,8 +15455,8 @@ unittest {
                                      false, false, null, 0.0f, /*curvature*/true,
                                      /*curveTension*/0.5f),
            "curvature-on tension=0.5 insert must succeed");
-    assert(hasV(half, Vec3(1.5f, 1.0625f, 0)), "tension=0.5: rail (2,4) midpoint at the half bulge (y=1.0625)");
-    assert(hasV(half, Vec3(1.5f, 1.0625f, 1)), "tension=0.5: rail (3,5) midpoint at the half bulge (y=1.0625)");
+    assert(hasV(half, Vec3(1.5f, 1.0517767f, 0)), "tension=0.5: rail (2,4) midpoint at the half bulge (y=1.0517767)");
+    assert(hasV(half, Vec3(1.5f, 1.0517767f, 1)), "tension=0.5: rail (3,5) midpoint at the half bulge (y=1.0517767)");
 
     Mesh zero = makeArcStrip(1.0f, 1.0f);
     uint eiZero = zero.edgeIndex(2, 4);
@@ -15448,7 +15467,7 @@ unittest {
            "curvature-on tension=0.0 insert must succeed");
     assert(hasV(zero, Vec3(1.5f, 1.0f, 0)) && hasV(zero, Vec3(1.5f, 1.0f, 1)),
            "tension=0.0: curvature ON collapses to the linear chord (y=1.0)");
-    assert(!hasV(zero, Vec3(1.5f, 1.125f, 0)), "tension=0.0: no bulge");
+    assert(!hasV(zero, Vec3(1.5f, 1.1035534f, 0)), "tension=0.0: no bulge");
 
     // curvature ON on a FLAT cage (all heights 0) — the four spline points are
     // collinear, so the spline equals the linear chord: no-op vs off.
