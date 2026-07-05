@@ -3,7 +3,7 @@ module tools.slice_tool;
 import bindbc.sdl;
 import bindbc.opengl;
 import std.json : JSONValue;
-import std.math : sqrt;
+import std.math : sqrt, sin, cos, PI;
 
 import tool;
 import mesh;
@@ -18,7 +18,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
-import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
+import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
 // Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
@@ -349,6 +349,51 @@ void sliceOverlayExtentLocked(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
 }
 
 // ---------------------------------------------------------------------------
+// Custom-axis rotate gizmo math (task 0287). PURE, unit-testable without a GL
+// context. When axis == Custom the cut plane's EXTRUSION direction is `vector`
+// and its normal is normalize(cross(lineDir, vector)) (planeForSlice's Custom
+// mode). ROTATING THE PLANE ABOUT THE DRAWN LINE is therefore rotating `vector`
+// about the (unit) line direction: because the line direction IS the rotation
+// axis, R(cross(lineDir, vector)) == cross(lineDir, R(vector)), so tilting
+// `vector` by θ tilts the plane normal by the SAME θ about the line — while BOTH
+// endpoints stay in the plane (cross(lineDir, ·) is always ⟂ lineDir, so the line
+// remains contained). The two drawn points never move; only the tilt changes.
+// ---------------------------------------------------------------------------
+
+// Rodrigues rotation of a DIRECTION vector `v` about a unit `axis` by `angle`
+// (radians), pivot at the origin (direction only — no translation). Preserves
+// |v|. This is the whole rotate-gizmo kernel: new vector = rotate the frozen
+// gesture-start vector about the line by the drag angle.
+Vec3 rotateVectorAboutAxis(Vec3 v, Vec3 axis, float angle) {
+    Vec3 a = normalize(axis);
+    float c = cos(angle), s = sin(angle);
+    return v * c + cross(a, v) * s + a * (dot(a, v) * (1.0f - c));
+}
+
+// Signed angle (radians, in [-π, π]) FROM `from` TO `to` measured about the unit
+// `axis` (right-handed): atan2((from×to)·axis, from·to). `from`/`to` need not be
+// unit. Used to turn the gizmo's grab-direction-vs-cursor-direction into a
+// rotation sense about the line.
+float signedAngleAboutAxis(Vec3 from, Vec3 to, Vec3 axis) {
+    import std.math : atan2;
+    Vec3 a = normalize(axis);
+    return atan2(dot(cross(from, to), a), dot(from, to));
+}
+
+// A deterministic orthonormal pair spanning the plane ⟂ `axis` (the plane the
+// rotate ring lies in). `right` = normalize(cross(axis, worldUp)) with a worldX
+// fallback when axis ∥ worldUp; `up` = cross(axis, right). Basis choice does not
+// affect the ring (a full circle is basis-independent) nor the rotate angle
+// (measured from a world grab direction), only the ring's point parameterization.
+void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
+    Vec3 a = normalize(axis);
+    Vec3 r = cross(a, Vec3(0, 1, 0));
+    if (r.length < 1e-6f) r = cross(a, Vec3(1, 0, 0));
+    right = normalize(r);
+    up    = normalize(cross(a, right));
+}
+
+// ---------------------------------------------------------------------------
 // SliceTool — interactive plane/line slice (factory id `mesh.sliceTool`).
 //
 // Draws a Start→End line and cuts the mesh with the plane through that line
@@ -599,10 +644,11 @@ private:
     bool haveRaw_;
 
     // Which part of the gizmo this gesture drags.
-    enum DragNone  = -1;
-    enum DragStart = 0;    // the Start endpoint handle
-    enum DragEnd   = 1;    // the End endpoint handle
-    enum DragLine  = 2;    // the whole line body (translate)
+    enum DragNone   = -1;
+    enum DragStart  = 0;    // the Start endpoint handle
+    enum DragEnd    = 1;    // the End endpoint handle
+    enum DragLine   = 2;    // the whole line body (translate)
+    enum DragRotate = 3;    // the custom-axis rotate ring (tilt the plane about the line)
 
     // Session state. `before_` is the session baseline captured ONCE at
     // activation (task 0278); `previewLive_` is true whenever a real cut sits
@@ -651,14 +697,32 @@ private:
 
     // The line endpoints as they stood at the START of the current gesture, so
     // RMB-cancel can revert this drag (only) and re-preview, leaving the
-    // session baseline untouched.
-    Vec3 gStart0_, gEnd0_;
+    // session baseline untouched. `gVector0_` latches the Custom vector too, so
+    // RMB-cancel of a rotate gesture restores the pre-drag tilt.
+    Vec3 gStart0_, gEnd0_, gVector0_;
+
+    // Rotate-gesture (DragRotate, task 0287) frozen reference: the line axis
+    // (rotation axis), the ring centre, the in-plane grab direction, and the
+    // Custom vector — all latched at gesture start. Each motion recomputes
+    // vector_ = rotate(rotVector0_ about rotAxis0_) by the SIGNED angle from
+    // rotRefDir0_ to the live cursor direction, so the drag is ABSOLUTE (measured
+    // from the frozen grab, no per-frame accumulation) — robust across the
+    // ray/plane grazing frame the same way the transform ring's absolute angle is.
+    Vec3 rotAxis0_, rotCenter0_, rotRefDir0_, rotVector0_;
 
     // Endpoint handle visuals (lazily built inside a live GL context, since
     // BoxHandler uploads a VAO). Purely for drawing + hover highlight; the
     // actual grab hit-test is the projection-based `pickHandle` (no GL needed,
     // so the event path works even before the first draw).
     BoxHandler  startH_, endH_;
+    // Custom-axis rotate gizmo (task 0287): a ring around the Start→End line
+    // (its plane ⟂ the line), shown ONLY when axis_ == Custom. Reuses handler.d's
+    // FullCircleHandler — the SAME ring hit-test/draw the transform RotateHandler's
+    // view-ring uses — so it hover-highlights through the shared ToolHandles
+    // arbiter exactly like the endpoint squares. Lazily built in a live GL context
+    // (draw()), like startH_/endH_; the grab hit-test (`pickRotateRing`) is pure
+    // projection so the event path works before the first draw.
+    FullCircleHandler rotRing_;
     ToolHandles toolHandles_;
 
     // Endpoint handle visual size + grab radius (task 0278). The reference
@@ -674,11 +738,21 @@ private:
     enum float HANDLE_PICK_PX = 9.0f;    // grab radius — matched to (slightly > ) the visual
     enum float LINE_PICK_PX   = 8.0f;
 
+    // Custom-axis rotate ring (task 0287): screen-constant radius (px) + grab
+    // tolerance. The ring reads clearly larger than the ~10 px endpoint squares
+    // (and sits at the line MIDPOINT, away from the endpoints) so it never
+    // competes with them for a click.
+    enum float RING_RADIUS_PX = 46.0f;
+    enum float RING_PICK_PX   = 8.0f;
+
     // Gizmo palette (codebase handle colours — NOT reference colours): endpoint
     // handles in the blue used by Create-tool handles, the line in a light
     // neutral. Rollover/selected tints come from handler.handleStateColor.
     enum Vec3 HANDLE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
     enum Vec3 LINE_COLOR   = Vec3(0.90f, 0.92f, 0.98f);
+    // Rotate-ring colour: a light teal in the vibe3d gizmo palette (NOT a
+    // reference colour), distinct from the endpoint blue so the two read apart.
+    enum Vec3 RING_COLOR   = Vec3(0.35f, 0.85f, 0.85f);
 
     // Cut-plane overlay (task 0284): a subtle translucent fill in the same blue
     // family as the endpoint handles (vibe3d gizmo palette — NOT reference
@@ -810,6 +884,16 @@ public:
         root["vectorY"] = JSONValue(vector_.y);
         root["vectorZ"] = JSONValue(vector_.z);
         return root;
+    }
+
+    // Test-introspection (GET /api/tool/handles, task 0234): the registered
+    // handle parts (DragStart=0, DragEnd=1, and — ONLY for axis == Custom — the
+    // rotate ring DragRotate=3), so a headless test can assert the ring is
+    // Custom-only without a screenshot. Reflects the last draw()'s registration;
+    // null before the first draw / when no handles exist.
+    override JSONValue toolHandlesJson() const {
+        if (toolHandles_ is null) return JSONValue(null);
+        return toolHandles_.toJson(cachedVp);
     }
 
     override void activate() {
@@ -992,8 +1076,9 @@ public:
 
         // Latch the line as it stands NOW so RMB can cancel just this gesture
         // (the session baseline is never per-gesture — see the class comment).
-        gStart0_ = start_;
-        gEnd0_   = end_;
+        gStart0_  = start_;
+        gEnd0_    = end_;
+        gVector0_ = vector_;   // task 0287: rotate-gesture RMB-cancel restores the tilt
 
         // Middle-click relocates the whole line to the cursor: translate so the
         // line midpoint lands on the work-plane hit, then drag it as a line
@@ -1049,6 +1134,10 @@ public:
             ensureFrozenNormal();
             dragPart_    = grabbed;
             drawGesture_ = false;
+        } else if (hasLine_ && axis_ == SliceAxis.Custom &&
+                   beginRotateIfRingHit(cast(float)e.x, cast(float)e.y)) {
+            // Custom-axis rotate ring grabbed (task 0287): beginRotateIfRingHit
+            // latched the DragRotate gesture — nothing else to set up here.
         } else if (!hasLine_) {
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
@@ -1073,6 +1162,22 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart_ == DragNone) return false;
+
+        // Custom-axis rotate ring (task 0287): tilt the Custom vector — and thus
+        // the cut plane — about the drawn line. The endpoints DO NOT move (this
+        // gesture never touches start_/end_). Absolute angle from the frozen grab.
+        if (dragPart_ == DragRotate) {
+            Vec3 hit;
+            if (ringPlaneHit(cast(float)e.x, cast(float)e.y, rotCenter0_, rotAxis0_, hit)) {
+                Vec3 cur = hit - rotCenter0_;           // in the ring plane ⟂ axis
+                if (cur.length > 1e-6f) {
+                    float ang = signedAngleAboutAxis(rotRefDir0_, cur, rotAxis0_);
+                    vector_ = rotateVectorAboutAxis(rotVector0_, rotAxis0_, ang);
+                    if (!fast_) updatePreview();
+                }
+            }
+            return true;
+        }
 
         // Ctrl axis-lock (task 0286): once the drag has moved far enough for a
         // clear direction (the MoveTool wait-gate), resolve the locked world axis
@@ -1186,6 +1291,10 @@ public:
         if (startH_ is null) {
             startH_      = new BoxHandler(start_, HANDLE_COLOR);
             endH_        = new BoxHandler(end_,   HANDLE_COLOR);
+            // Rotate ring (task 0287) — placeholder geometry; re-positioned each
+            // frame below when axis_ == Custom.
+            rotRing_     = new FullCircleHandler(Vec3(0, 0, 0), Vec3(0, 0, 1), 1.0f, RING_COLOR);
+            rotRing_.lineWidth = 2.5f;
             toolHandles_ = new ToolHandles();
         }
         // Screen-constant handle size (~10 px cyan square, reference-matched),
@@ -1267,19 +1376,37 @@ public:
         drawWorldSegment(start_, end_, vp, LINE_COLOR, 2.5f, shader.program);
         glEnable(GL_DEPTH_TEST);
 
+        // Custom-axis rotate gizmo (task 0287): position the ring around the
+        // Start→End line — centred at the line midpoint, its plane ⟂ the line
+        // (normal = the line direction), a screen-constant radius. Shown ONLY for
+        // axis_ == Custom and a non-degenerate line; dragging it tilts the plane
+        // about the line (the endpoints stay). The overlay + cut above already
+        // follow `vector_` via effectiveNormal()/planeForSlice.
+        Vec3 seg      = end_ - start_;
+        bool showRing = axis_ == SliceAxis.Custom && seg.length > 1e-6f;
+        if (showRing) {
+            Vec3 center     = (start_ + end_) * 0.5f;
+            rotRing_.center = center;
+            rotRing_.normal = normalize(seg);
+            rotRing_.radius = ringRadiusWorld(center, vp);
+        }
+
         // Hover / capture highlight through the single-source arbiter: the
-        // dragged endpoint stays hot for the whole gesture; otherwise the
-        // hovered endpoint lights up.
+        // dragged handle stays hot for the whole gesture; otherwise the hovered
+        // handle lights up. The ring joins the same pool when Custom is active.
         toolHandles_.begin();
         toolHandles_.add(startH_, DragStart);
         toolHandles_.add(endH_,   DragEnd);
-        if      (dragPart_ == DragStart) toolHandles_.setHaul(DragStart);
-        else if (dragPart_ == DragEnd)   toolHandles_.setHaul(DragEnd);
-        else                             toolHandles_.setHaul(-1);
+        if (showRing) toolHandles_.add(rotRing_, DragRotate);
+        if      (dragPart_ == DragStart)  toolHandles_.setHaul(DragStart);
+        else if (dragPart_ == DragEnd)    toolHandles_.setHaul(DragEnd);
+        else if (dragPart_ == DragRotate) toolHandles_.setHaul(DragRotate);
+        else                              toolHandles_.setHaul(-1);
         int mx, my;
         queryMouse(mx, my);
         toolHandles_.update(mx, my, vp);
 
+        if (showRing) rotRing_.draw(shader, vp);
         startH_.draw(shader, vp);
         endH_.draw(shader, vp);
     }
@@ -1369,6 +1496,7 @@ private:
         ctrlAxis_    = -1;
         start_    = gStart0_;
         end_      = gEnd0_;
+        vector_   = gVector0_;   // task 0287: restore the pre-drag Custom tilt
         updatePreview();
     }
 
@@ -1536,6 +1664,82 @@ private:
         float t;
         float d = closestOnSegment2D(sx, sy, ax, ay, bx, by, t);
         return d <= LINE_PICK_PX;
+    }
+
+    // --- Custom-axis rotate ring (task 0287) -------------------------------
+
+    // World radius that projects to RING_RADIUS_PX px at `center` — screen-
+    // constant, the SAME gizmoSize mapping the endpoint squares use (scale =
+    // RING_RADIUS_PX / getGizmoPixels()).
+    float ringRadiusWorld(Vec3 center, const ref Viewport vp) {
+        return gizmoSize(center, vp, RING_RADIUS_PX / getGizmoPixels());
+    }
+
+    // Intersect the cursor ray with the ROTATE RING's plane (through `center`,
+    // normal = `axis` = the line direction), giving the world grab point the
+    // rotate angle is measured from. False when no viewport is cached or the ray
+    // runs parallel to the plane (edge-on ring).
+    bool ringPlaneHit(float sx, float sy, Vec3 center, Vec3 axis, out Vec3 hit) {
+        if (cachedVp.width <= 0) return false;
+        Vec3 origin, dir;
+        screenPointToRay(sx, sy, cachedVp, origin, dir);
+        return rayPlaneIntersect(origin, dir, center, axis, hit);
+    }
+
+    // True if the cursor is within RING_PICK_PX of the rotate ring's screen
+    // projection. PURE projection (no GL object needed) so the event path works
+    // before the first draw — mirrors pickHandle / FullCircleHandler.aiScreenDistance.
+    // Only meaningful for a Custom axis with a non-degenerate line.
+    bool pickRotateRing(float sx, float sy) {
+        if (cachedVp.width <= 0 || axis_ != SliceAxis.Custom) return false;
+        Vec3 seg = end_ - start_;
+        if (seg.length < 1e-6f) return false;
+        Vec3 axis   = normalize(seg);
+        Vec3 center = (start_ + end_) * 0.5f;
+        float radius = ringRadiusWorld(center, cachedVp);
+        if (radius <= 0.0f) return false;
+        Vec3 right, up;
+        sliceRingPlaneBasis(axis, right, up);
+        enum int SEGS = 48;
+        float best = float.infinity;
+        float prevX = 0, prevY = 0; bool prevValid = false;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = cast(float)i * 2.0f * PI / SEGS;
+            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
+            float wx, wy, wz;
+            bool ok = projectToWindowFull(w, cachedVp, wx, wy, wz);
+            if (prevValid && ok) {
+                float t;
+                float d = closestOnSegment2D(sx, sy, prevX, prevY, wx, wy, t);
+                if (d < best) best = d;
+            }
+            prevValid = ok; prevX = wx; prevY = wy;
+        }
+        return best <= RING_PICK_PX;
+    }
+
+    // Start a rotate gesture if the cursor grabbed the ring: latch the rotation
+    // axis (the line), the ring centre, the in-plane grab direction, and the
+    // Custom vector, all frozen for the drag. False (no gesture) if the ring
+    // wasn't hit or the grab point is degenerate.
+    bool beginRotateIfRingHit(float sx, float sy) {
+        if (!pickRotateRing(sx, sy)) return false;
+        Vec3 seg = end_ - start_;
+        if (seg.length < 1e-6f) return false;
+        Vec3 axis   = normalize(seg);
+        Vec3 center = (start_ + end_) * 0.5f;
+        Vec3 hit;
+        if (!ringPlaneHit(sx, sy, center, axis, hit)) return false;
+        Vec3 grab = hit - center;              // in the ring plane ⟂ axis
+        if (grab.length < 1e-6f) return false;
+        ensureFrozenNormal();                  // keep the frozen extrusion basis
+        dragPart_    = DragRotate;
+        drawGesture_ = false;
+        rotAxis0_    = axis;
+        rotCenter0_  = center;
+        rotRefDir0_  = normalize(grab);
+        rotVector0_  = vector_;
+        return true;
     }
 }
 
@@ -2032,4 +2236,84 @@ unittest {
            "perpendicular-to-line extent must be strictly greater than along-line");
     // ...and still spans the mesh depth (±0.5) with room to spare.
     assert(bMax >= 0.5f && bMin <= -0.5f, "cross extent still spans the mesh");
+}
+
+// ---------------------------------------------------------------------------
+// CUSTOM-AXIS ROTATE GIZMO (task 0287) — the rotate-math kernel + the geometric
+// invariants the ring drag must uphold: rotating the Custom `vector` about the
+// drawn line by θ tilts the cut-plane normal by the SAME θ about the line, while
+// BOTH endpoints stay in the plane and the line stays contained (n ⟂ line). The
+// two drawn points never move. Pure — no GL context.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs, fabs, PI, cos, sin;
+
+    // (a) Rodrigues basics: +Y about +X by +90° → +Z (right-handed).
+    {
+        Vec3 r = rotateVectorAboutAxis(Vec3(0,1,0), Vec3(1,0,0), cast(float)(PI/2));
+        assert(fabs(r.x) < 1e-5f && fabs(r.y) < 1e-5f && fabs(r.z - 1.0f) < 1e-5f,
+               "rotate +Y about +X by +90° = +Z");
+    }
+    // (a2) The axis component of a vector is preserved; length is preserved.
+    {
+        Vec3 v = Vec3(0.3f, 1.0f, 0.4f);
+        Vec3 axis = normalize(Vec3(0.2f, 0.1f, 1.0f));
+        Vec3 r = rotateVectorAboutAxis(v, axis, 0.7f);
+        assert(fabs(r.length - v.length) < 1e-5f, "rotation preserves |v|");
+        assert(fabs(dot(r, axis) - dot(v, axis)) < 1e-5f, "axis component preserved");
+    }
+    // (b) signedAngleAboutAxis round-trips against a known rotation.
+    {
+        Vec3 axis = normalize(Vec3(0.1f, 0.2f, 1.0f));
+        Vec3 from = Vec3(1, 0, 0);
+        // Make `from` ⟂ axis so the in-plane angle is exactly the applied one.
+        from = normalize(from - axis * dot(from, axis));
+        float theta = 0.6f;
+        Vec3 to = rotateVectorAboutAxis(from, axis, theta);
+        assert(fabs(signedAngleAboutAxis(from, to, axis) - theta) < 1e-5f,
+               "signed angle recovers the applied rotation");
+        assert(fabs(signedAngleAboutAxis(to, from, axis) + theta) < 1e-5f,
+               "signed angle is antisymmetric");
+    }
+
+    // (c) THE LOAD-BEARING INVARIANT. A drawn line (start,end), a Custom vector
+    //     not parallel to it, and the extrusion model normal = cross(lineDir,vec).
+    //     Rotating `vec` about lineDir by θ must rotate the NORMAL by θ about
+    //     lineDir, keep both endpoints in the plane, and keep n ⟂ line — for a
+    //     sweep of angles — and planeForSlice(Custom, vec') must agree.
+    static void checkTilt(Vec3 start, Vec3 end, Vec3 vec0, float theta) {
+        Vec3 lineDir = normalize(end - start);
+        // Baseline plane from the frozen vector.
+        Vec3 p0, n0;
+        assert(planeForSlice(start, end, Vec3(0,1,0), cast(int)SliceAxis.Custom, vec0, p0, n0),
+               "baseline Custom plane is well-defined (vec not ∥ line)");
+        // Tilt the vector about the line, exactly what the gizmo drag does.
+        Vec3 vec1 = rotateVectorAboutAxis(vec0, lineDir, theta);
+        Vec3 p1, n1;
+        assert(planeForSlice(start, end, Vec3(0,1,0), cast(int)SliceAxis.Custom, vec1, p1, n1),
+               "tilted Custom plane is well-defined");
+        // n ⟂ line, and BOTH endpoints lie in the tilted plane (the line stays).
+        assert(fabs(dot(n1, lineDir)) < 1e-5f, "tilted normal ⟂ the line");
+        assert(fabs(dot(start - p1, n1)) < 1e-5f, "Start stays in the tilted plane");
+        assert(fabs(dot(end   - p1, n1)) < 1e-5f, "End stays in the tilted plane");
+        // The through-point p is start for both (the endpoints never move).
+        assert(fabs((p1 - p0).length) < 1e-6f, "through-point (= Start) unchanged");
+        // The NORMAL rotated by EXACTLY θ about the line: signed angle n0→n1 = θ
+        // (both n0, n1 are ⟂ lineDir, so the in-plane signed angle is exact).
+        float measured = signedAngleAboutAxis(n0, n1, lineDir);
+        // Compare on the circle (fold to (-π,π]); a straight diff handles the
+        // moderate angles swept here.
+        assert(fabs(measured - theta) < 1e-4f,
+               "plane normal tilts by exactly the applied angle about the line");
+    }
+    // A slanted line + an oblique Custom vector, swept across several angles.
+    Vec3 s = Vec3(-0.7f, -0.4f, 0.3f), e = Vec3(0.7f, 0.4f, -0.3f);
+    Vec3 vec0 = Vec3(0.3f, 1.0f, 0.4f);
+    foreach (k; 0 .. 7) {
+        float theta = -0.9f + 0.3f * k;   // −0.9 … +0.9 rad
+        checkTilt(s, e, vec0, theta);
+    }
+    // An axis-aligned line too (X-line, vector with a Y/Z tilt).
+    checkTilt(Vec3(-1,0,0), Vec3(1,0,0), Vec3(0, 1, 0.5f), 0.5f);
+    checkTilt(Vec3(-1,0,0), Vec3(1,0,0), Vec3(0, 1, 0.5f), -0.8f);
 }
