@@ -487,6 +487,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
             cmd(format("tool.attr mesh.loopSliceTool profile %s", ls["profile"].str), ctx);
         if ("depth" in ls)
             cmd(format("tool.attr mesh.loopSliceTool depth %g", asDouble(ls["depth"])), ctx);
+        // Optional Reverse Direction (task 0257): mirror the 1D profile along the
+        // cut (t → 1-t, re-sorted), so an asymmetric profile (e.g. Step) cuts in
+        // the mirrored orientation. `{ "loop_slice": { ..., "profile": "step",
+        // "depth": 2.0, "reversex": true } }`.
+        if ("reversex" in ls && ls["reversex"].type == JSONType.true_)
+            cmd("tool.attr mesh.loopSliceTool reversex 1", ctx);
         if ("positions" in ls) {
             cmd("tool.attr mesh.loopSliceTool mode free", ctx);
             auto ps = ls["positions"].array;

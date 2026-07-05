@@ -437,6 +437,7 @@ public:
         root["tension"]     = JSONValue(curveTension_);      // Tension (task 0255)
         root["profile"]     = JSONValue(wireTagForValue(loopProfileTable, cast(int)profile_)); // Profile (task 0256)
         root["depth"]       = JSONValue(depth_);             // Inset (task 0256)
+        root["reversex"]    = JSONValue(reverseX_);          // Reverse Direction (task 0257)
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
@@ -507,6 +508,13 @@ public:
             Param.intEnum_("profile", "Profile", cast(int*)&profile_,
                            loopProfileTable, cast(int)LoopProfile.Flat),
             Param.float_("depth", "Inset", &depth_, 0.0f),
+            // Reverse Direction (task 0257): mirror the 1D profile along the cut
+            // (t → 1-t, re-sorted in `kernelFeed`), so an asymmetric profile
+            // (e.g. Step) cuts in the mirrored orientation. Default OFF =
+            // byte-for-byte the un-reversed profile. Only bites once a non-flat
+            // Profile is chosen (Flat passes no samples), so it is greyed while
+            // Flat — same gating as Inset (see paramEnabled).
+            Param.bool_("reversex", "Reverse Direction", &reverseX_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
@@ -658,6 +666,10 @@ public:
         // no heights to the kernel, so depth is a no-op) — grey it while Flat, the
         // way the reference greys the profile sub-controls until a Profile loads.
         if (name == "depth") return profile_ != LoopProfile.Flat;
+        // Reverse Direction (task 0257) mirrors the profile samples, so it is a
+        // no-op with no profile loaded — grey it while Flat, like Inset (the
+        // reference greys it "until a Profile is loaded", spec.json 0244).
+        if (name == "reversex") return profile_ != LoopProfile.Flat;
         return true;
     }
 
@@ -693,6 +705,7 @@ public:
         if (pname == "tension") { if (armed_) rebuildCut(); return; }
         if (pname == "profile") { if (armed_) rebuildCut(); return; }   // task 0256
         if (pname == "depth")   { if (armed_) rebuildCut(); return; }   // task 0256 (Inset)
+        if (pname == "reversex") { if (armed_) rebuildCut(); return; }   // task 0257 (Reverse Direction)
         if (pname == "insertAt") { addSlice(insertAt_); return; }
         if (pname == "removeCurrent") {
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
