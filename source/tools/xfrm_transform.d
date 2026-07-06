@@ -996,10 +996,14 @@ public:
         // "uniformScale" row instead (forms engine shows only non-hidden params).
         // The reverse applies in non-uniform mode: uniformScale is hidden so it
         // never appears for the standard scale/TransformScale presets.
-        auto pSX = Param.float_("SX", "Scale X", &run.s.x, 1.0f);
-        auto pSY = Param.float_("SY", "Scale Y", &run.s.y, 1.0f);
-        auto pSZ = Param.float_("SZ", "Scale Z", &run.s.z, 1.0f);
-        auto pUS = Param.float_("uniformScale", "Scale",   &uniformVal, 1.0f);
+        // SX/SY/SZ/uniformScale + TX/TY/TZ/RX/RY/RZ below are per-gesture
+        // transform run-state (run.t / headlessRotate / run.s) — reset each
+        // session (MODO AUTORESET), not a remembered setting. Excluded from
+        // sticky-tool-defaults capture via .transient().
+        auto pSX = Param.float_("SX", "Scale X", &run.s.x, 1.0f).transient();
+        auto pSY = Param.float_("SY", "Scale Y", &run.s.y, 1.0f).transient();
+        auto pSZ = Param.float_("SZ", "Scale Z", &run.s.z, 1.0f).transient();
+        auto pUS = Param.float_("uniformScale", "Scale",   &uniformVal, 1.0f).transient();
         if (uniform) { pSX = pSX.hidden(); pSY = pSY.hidden(); pSZ = pSZ.hidden(); }
         else         { pUS = pUS.hidden(); }
         return [
@@ -1014,12 +1018,12 @@ public:
                          &handlePresentation,
                          [["compact", "Compact"], ["full", "Full"]],
                          "compact").hidden(),
-            Param.float_("TX", "Translate X", &run.t.x, 0.0f),
-            Param.float_("TY", "Translate Y", &run.t.y, 0.0f),
-            Param.float_("TZ", "Translate Z", &run.t.z, 0.0f),
-            Param.float_("RX", "Rotate X",    &headlessRotate.x,    0.0f).angle(),
-            Param.float_("RY", "Rotate Y",    &headlessRotate.y,    0.0f).angle(),
-            Param.float_("RZ", "Rotate Z",    &headlessRotate.z,    0.0f).angle(),
+            Param.float_("TX", "Translate X", &run.t.x, 0.0f).transient(),
+            Param.float_("TY", "Translate Y", &run.t.y, 0.0f).transient(),
+            Param.float_("TZ", "Translate Z", &run.t.z, 0.0f).transient(),
+            Param.float_("RX", "Rotate X",    &headlessRotate.x,    0.0f).angle().transient(),
+            Param.float_("RY", "Rotate Y",    &headlessRotate.y,    0.0f).angle().transient(),
+            Param.float_("RZ", "Rotate Z",    &headlessRotate.z,    0.0f).angle().transient(),
             // Rotate-only fold blend selector (consumed in applyFold). "linear"
             // (MatrixLerp, default) keeps the reference-correct unified fold; "arc"
             // (PolarQuat) scales the rotation angle by the falloff weight, R(w*theta),

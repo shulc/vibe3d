@@ -485,15 +485,20 @@ public:
 
     override Param[] params() {
         return [
+            // position/current/insertAt/removeCurrent: per-gesture current-
+            // slice proxies and one-shot add/remove triggers, not remembered
+            // settings — excluded from sticky-tool-defaults capture via
+            // .transient(). (length/sliderX/sliderY stay settings — the
+            // on-screen slider geometry is deliberately remembered.)
             Param.float_("position", "Position", &positionProxy_, 0.5f)
-                 .min(0.001f).max(0.999f),
+                 .min(0.001f).max(0.999f).transient(),
             Param.int_("count", "Count", &count_, 1).min(1),
-            Param.int_("current", "Current", &current_, 0).min(0),
+            Param.int_("current", "Current", &current_, 0).min(0).transient(),
             Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
             Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Uniform),
             Param.float_("insertAt", "Insert At", &insertAt_, 0.5f)
-                 .min(0.001f).max(0.999f),
-            Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false),
+                 .min(0.001f).max(0.999f).transient(),
+            Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false).transient(),
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
             Param.bool_("select", "Slice Selected", &sliceSelected_, false),
             Param.bool_("quad", "Keep Quads", &keepQuads_, false),

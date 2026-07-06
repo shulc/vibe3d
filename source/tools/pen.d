@@ -180,11 +180,15 @@ public:
             Param.intEnum_("type", "Type", &params_.type,
                 [IntEnumEntry(0, "polygons", "Polygons")],
                 0),
+            // currentPoint/posX/Y/Z: per-gesture point-edit proxies
+            // (onParamChanged mutates vertices_[currentPoint] while
+            // Drawing) — not a remembered setting. Excluded from
+            // sticky-tool-defaults capture via .transient().
             Param.int_("currentPoint", "Current Point", &params_.currentPoint, -1)
-                .min(-1).max(1024),
-            Param.float_("posX", "Position X", &params_.posX, 0.0f),
-            Param.float_("posY", "Position Y", &params_.posY, 0.0f),
-            Param.float_("posZ", "Position Z", &params_.posZ, 0.0f),
+                .min(-1).max(1024).transient(),
+            Param.float_("posX", "Position X", &params_.posX, 0.0f).transient(),
+            Param.float_("posY", "Position Y", &params_.posY, 0.0f).transient(),
+            Param.float_("posZ", "Position Z", &params_.posZ, 0.0f).transient(),
             Param.bool_("flip", "Flip Polygon", &params_.flip, false),
             Param.bool_("makeQuads", "Make Quads", &params_.makeQuads, false),
         ];

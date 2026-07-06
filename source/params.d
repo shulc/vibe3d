@@ -152,19 +152,30 @@ unittest {
 // ParamFlags — bitfield of per-parameter arg attributes.
 //
 // Each bit toggles one behaviour in a real consumer:
-//   Hidden   — the generic UI renderers (PropertyPanel, ArgsDialog) skip the
-//              row entirely. The schema entry stays so the headless HTTP/JSON
-//              injector and argstring serialisation still see it.
-//   ReadOnly — the generic UI renderers draw the widget disabled (greyed,
-//              non-interactive) via the same BeginDisabled/EndDisabled path
-//              already used for cross-field graying. Headless paths ignore it.
+//   Hidden    — the generic UI renderers (PropertyPanel, ArgsDialog) skip the
+//               row entirely. The schema entry stays so the headless HTTP/JSON
+//               injector and argstring serialisation still see it.
+//   ReadOnly  — the generic UI renderers draw the widget disabled (greyed,
+//               non-interactive) via the same BeginDisabled/EndDisabled path
+//               already used for cross-field graying. Headless paths ignore it.
+//   Transient — the param is drawn gesture geometry or a momentary
+//               action-trigger (e.g. a slice tool's Start/End line, a
+//               transform tool's per-gesture run-state deltas, a pen point
+//               edit proxy, a loop-slice insert/remove trigger) rather than a
+//               remembered *setting*. Consulted by exactly one consumer —
+//               `isStickyCapturable` below, which the sticky-tool-defaults
+//               capture filter uses — so it does not affect UI rendering,
+//               `isUserSet`, `paramToJson`, or `injectParamsInto`: a
+//               transient param still renders and still round-trips through
+//               `tool.attr`; it is only excluded from the sticky store.
 //
-// Set with the chainable .hidden() / .readonly() setters.
+// Set with the chainable .hidden() / .readonly() / .transient() setters.
 // ---------------------------------------------------------------------------
 enum ParamFlags : uint {
-    None     = 0,
-    Hidden   = 1 << 0,
-    ReadOnly = 1 << 1,
+    None      = 0,
+    Hidden    = 1 << 0,
+    ReadOnly  = 1 << 1,
+    Transient = 1 << 2,
 }
 
 struct Param {
@@ -183,8 +194,9 @@ struct Param {
     // `hidden_` field and stay distinct from the no-arg chainable setters
     // `hidden()` / `readonly()` declared further down (which set the bit and
     // return the Param for literal chaining).
-    bool hidden_()   const { return (flags & ParamFlags.Hidden)   != 0; }
-    bool readonly_() const { return (flags & ParamFlags.ReadOnly) != 0; }
+    bool hidden_()    const { return (flags & ParamFlags.Hidden)    != 0; }
+    bool readonly_()  const { return (flags & ParamFlags.ReadOnly)  != 0; }
+    bool transient_() const { return (flags & ParamFlags.Transient) != 0; }
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -353,8 +365,9 @@ struct Param {
     // Flag setters — set the bit and return by value for literal chaining,
     // matching the hint-setter style above. Read the bits via the const
     // `hidden` / `readonly` accessors declared near the top of the struct.
-    Param hidden()   { flags |= ParamFlags.Hidden;   return this; }
-    Param readonly() { flags |= ParamFlags.ReadOnly; return this; }
+    Param hidden()    { flags |= ParamFlags.Hidden;    return this; }
+    Param readonly()  { flags |= ParamFlags.ReadOnly;  return this; }
+    Param transient() { flags |= ParamFlags.Transient; return this; }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +376,54 @@ struct Param {
 // to decide which params to emit; default-equal params are omitted
 // (value-set semantics).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// isStickyCapturable — single-sourced rule for the sticky-tool-defaults
+// capture filter (app.d `captureStickyToolDefaults`): which params are
+// eligible to be snapshotted into `g_prefs.toolDefaults` on a clean tool
+// drop. Array kinds don't round-trip through the string<->param path
+// (stringifyParam/parseInto return ""/false for them); read-only params are
+// derived display, not user settings; transient params are drawn gesture
+// geometry / momentary action-triggers (see `ParamFlags.Transient` above),
+// not remembered settings.
+// ---------------------------------------------------------------------------
+
+bool isStickyCapturable(const ref Param p)
+{
+    return p.kind != Param.Kind.IntArray
+        && p.kind != Param.Kind.Vec3Array
+        && !p.readonly_
+        && !p.transient_;
+}
+
+unittest {
+    // isStickyCapturable — plain float capturable; readonly/transient/array
+    // kinds excluded, independently and in combination.
+    float f = 0.0f;
+    auto plain = Param.float_("dist", "Distance", &f, 0.0f);
+    assert(isStickyCapturable(plain));
+
+    auto ro = Param.float_("dist", "Distance", &f, 0.0f).readonly();
+    assert(!isStickyCapturable(ro));
+
+    auto tr = Param.float_("dist", "Distance", &f, 0.0f).transient();
+    assert(!isStickyCapturable(tr));
+
+    uint[] arr;
+    auto ia = Param.intArray_("indices", "Indices", &arr);
+    assert(!isStickyCapturable(ia));
+
+    Vec3[] varr;
+    auto va = Param.vec3Array_("verts", "Verts", &varr);
+    assert(!isStickyCapturable(va));
+
+    // hidden() alone does not exclude — only readonly/transient/array do.
+    auto hid = Param.float_("dist", "Distance", &f, 0.0f).hidden();
+    assert(isStickyCapturable(hid));
+
+    auto both = Param.float_("dist", "Distance", &f, 0.0f).readonly().transient();
+    assert(!isStickyCapturable(both));
+}
 
 bool isUserSet(const ref Param p)
 {

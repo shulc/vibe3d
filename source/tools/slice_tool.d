@@ -881,12 +881,15 @@ public:
 
     override Param[] params() {
         return [
-            Param.float_("startX", "Start X", &start_.x, -1.0f),
-            Param.float_("startY", "Start Y", &start_.y,  0.0f),
-            Param.float_("startZ", "Start Z", &start_.z,  0.0f),
-            Param.float_("endX",   "End X",   &end_.x,    1.0f),
-            Param.float_("endY",   "End Y",   &end_.y,    0.0f),
-            Param.float_("endZ",   "End Z",   &end_.z,    0.0f),
+            // Start/End: the drawn cut line — per-gesture geometry, not a
+            // remembered setting (MODO AUTORESET-equivalent). Excluded from
+            // sticky-tool-defaults capture via .transient().
+            Param.float_("startX", "Start X", &start_.x, -1.0f).transient(),
+            Param.float_("startY", "Start Y", &start_.y,  0.0f).transient(),
+            Param.float_("startZ", "Start Z", &start_.z,  0.0f).transient(),
+            Param.float_("endX",   "End X",   &end_.x,    1.0f).transient(),
+            Param.float_("endY",   "End Y",   &end_.y,    0.0f).transient(),
+            Param.float_("endZ",   "End Z",   &end_.z,    0.0f).transient(),
             Param.bool_( "fast",   "Fast Slice", &fast_,  false),
             // Infinite (S4): OFF clips the cut to the drawn line's span (the
             // reference factory default); ON slices the whole mesh (S0).
