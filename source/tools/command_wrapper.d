@@ -201,9 +201,31 @@ abstract class CommandWrapperTool : Tool {
     private void reinitSession() {
         if (meshPtr is null) return;
         baseline = meshPtr.vertices.dup;
-        dirty    = false;
+        dirty       = false;
+        paramsDirty = false;   // a restore-fired onParamChanged (sticky-tool-
+                                // defaults restore runs BEFORE activate()) must
+                                // not survive into the first evaluate() as a
+                                // whole-mesh deform against an empty selection.
         refireDriving_   = false;
         refireCommitted_ = false;
+        // Seed the falloff-change baseline to the CURRENT global pipe state.
+        // `lastAppliedFalloffs` starts empty (`[]`) on every freshly
+        // constructed instance (first activation OR reactivation — it is
+        // per-instance bookkeeping, never restored), while a persistent WGHT
+        // stage normally exists in the pipe from app init onward (even when
+        // inactive), so `currentFalloffConfigs()` is almost never also empty.
+        // Left un-seeded, evaluate()'s `falloffChanged` compare sees a bogus
+        // mismatch on the FIRST post-activation evaluate() call regardless of
+        // `paramsDirty` — a second, independent path to the same "deform on
+        // activation" hazard the `paramsDirty` fix above guards against. On a
+        // tool with no legacy schema panel (a Forms-driven tool — see
+        // config/forms/*.yaml) this is unreachable (evaluate() only runs
+        // there as a side effect of an actual `tool.attr` write, which would
+        // trigger a re-apply anyway); on a tool without a form (e.g.
+        // edge.slide) `property_panel.d`'s `drawProvider` calls `evaluate()`
+        // unconditionally every drawn frame, so it is otherwise directly
+        // reachable with zero user action.
+        lastAppliedFalloffs = currentFalloffConfigs();
     }
 
     override void deactivate() {
