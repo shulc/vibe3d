@@ -109,6 +109,40 @@ static immutable IntEnumEntry[3] sliceGapSideTable = [
 ];
 
 // ---------------------------------------------------------------------------
+// sliceSplitGap (task 0291) — the ONE shared helper for Split + Caps + Gap,
+// called identically from BOTH split-gap call sites (`sliceFromBaseline` below
+// and `SliceTool.applyHeadless`) so they cannot drift. Routes through
+// `Mesh.cutByPlaneSplitGap` — TWO REAL parallel plane cuts at
+// `center ± offset·n` with the slab between them deleted, so every seam sits
+// on a real edge∩plane intersection and each remaining shell's cap is always
+// planar + simple. This replaces the single-cut + fixed along-edge slide
+// (`cutByPlaneEx`'s own gap block), which overshoots at a graze vertex on
+// dense/curved oblique geometry and produces a self-intersecting cap (the
+// reported bug; see doc/slice_gap_two_cut_plan.md).
+//
+// When the two cuts do NOT fully separate the mesh (`separated == false` — a
+// short clipped line that doesn't span the whole shape), silently dropping
+// the gap would be a REGRESSION versus today's slide (which does open a gap
+// for such partial cuts on simple meshes). Instead, roll the two cuts back
+// via the snapshot already taken and fall back to the legacy single-cut+gap
+// slide, preserving today's partial-cut behaviour exactly.
+// ---------------------------------------------------------------------------
+size_t sliceSplitGap(ref Mesh mesh, Vec3 p, Vec3 n, bool clipped, Vec3 s, Vec3 e,
+                     bool caps, float gap, int gapSide, const uint[] restrict) {
+    MeshSnapshot snap = MeshSnapshot.capture(mesh);
+    bool separated;
+    size_t nc = mesh.cutByPlaneSplitGap(p, n, clipped, s, e, caps, gap, gapSide,
+                                        separated, restrict);
+    if (separated) return nc;
+    // PARTIAL cut: the two planes did not disconnect the mesh ⇒ no band to
+    // remove ⇒ NO gap would open. Roll back and reproduce today's behaviour.
+    snap.restore(mesh);
+    Mesh.PlaneCutLoops loops;
+    return mesh.cutByPlaneEx(p, n, clipped, s, e, /*split*/true, caps, loops,
+                             1e-5f, restrict, gap, gapSide);
+}
+
+// ---------------------------------------------------------------------------
 // sliceFromBaseline — the shared cut kernel wrapper (the single point that
 // turns a Start→End line into a plane cut). RESTORES `baseline` onto `mesh`
 // FIRST, then cuts with the plane through the line perpendicular to
@@ -196,6 +230,16 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // `gap`/`gapSide` (S9): with split on, separate the two boundary loops along
     // the cut-plane normal `n` by `gap`, offset per `gapSide` (Mesh.cutByPlaneEx
     // → splitAlongCutLoop). gap=0 leaves the pairs coincident (byte-for-byte S7/S8).
+    //
+    // Task 0291: an UNRESTRICTED gap route through `sliceSplitGap` — TWO real
+    // parallel plane cuts + band delete — instead of the single-cut + fixed
+    // along-edge slide, which self-intersects its cap on dense/curved oblique
+    // cuts (see sliceSplitGap's doc comment). Restricted split-gap keeps the
+    // single-cut path unchanged (the two cuts would shift face indices between
+    // calls, making a second restrict stale — no reference/golden for it).
+    if (gap != 0.0f && restrictFaces.length == 0)
+        return sliceSplitGap(mesh, p, n, /*clipped*/!infinite, start, end,
+                             caps, gap, gapSide, restrictFaces);
     Mesh.PlaneCutLoops loops;
     return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
                              /*split*/true, caps, loops, 1e-5f, restrictFaces,
@@ -1099,10 +1143,20 @@ public:
         if (split_) {
             // gap/gapSide (S9): separate the two split shells along the plane
             // normal by gap_, offset per gapSide_ (no-op at gap_ == 0).
-            Mesh.PlaneCutLoops loops;
-            nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
-                                       /*split*/true, caps_, loops, 1e-5f, restrict,
-                                       gap_, cast(int)gapSide_);
+            //
+            // Task 0291: an UNRESTRICTED gap routes through `sliceSplitGap`
+            // (two real parallel plane cuts + band delete) instead of the
+            // single-cut + fixed along-edge slide — MUST stay in lockstep with
+            // sliceFromBaseline's split+gap branch (see its doc comment).
+            if (gap_ != 0.0f && restrict.length == 0) {
+                nSplit = sliceSplitGap(*mesh, p, n, /*clipped*/!infinite_, sStart, sEnd,
+                                       caps_, gap_, cast(int)gapSide_, restrict);
+            } else {
+                Mesh.PlaneCutLoops loops;
+                nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
+                                           /*split*/true, caps_, loops, 1e-5f, restrict,
+                                           gap_, cast(int)gapSide_);
+            }
         } else {
             // A single connected plane cut through `pp` (infinite/clipped +
             // restrict). Nested so the Gap-without-split path fires it twice.
@@ -1963,6 +2017,141 @@ unittest {
     assert(nClip < 4, "clipped short line must split fewer faces than infinite (4)");
     assert(clip.faces.length < 10,
            "clipped short line splits fewer faces than the full belt (infinite=10)");
+}
+
+// ---------------------------------------------------------------------------
+// sliceSplitGap unittests (task 0291) — the partial-cut fallback (objection 2)
+// and the caps==false routing note (DQ4).
+// ---------------------------------------------------------------------------
+unittest { // sliceSplitGap: a PARTIAL cut — one of the two offset planes never
+    // finds any geometry within the clip span — does NOT fully separate the
+    // mesh, so `cutByPlaneSplitGap` reports `separated == false`. Silently
+    // dropping the gap here would be a REGRESSION (today's slide DOES open one
+    // for the equivalent single center-plane cut), so `sliceSplitGap` must
+    // roll back both offset cuts and reproduce the legacy single-cut+slide
+    // (at the CENTER plane, not either offset) EXACTLY.
+    //
+    // Construction: a cube mid-plane cut (x=0, gap 0.4 center ⇒ offsets at
+    // x=+0.2 and x=-0.2), CLIPPED to a segment lying ALONG the cut normal
+    // itself (x from -0.25 to +0.1) rather than across it. `cutByPlaneClipped`
+    // only tests a crossing's projection onto the segment's OWN direction —
+    // it need not lie IN the cut plane — so this is a legal, if extreme,
+    // clip. Every crossing at x=+0.2 (the `+offset` plane) projects to
+    // s≈1.29 (past the segment's end) ⇒ OUT of band ⇒ that whole cut is a
+    // no-op; every crossing at x=-0.2 (the `-offset` plane) projects to
+    // s≈0.14 ⇒ IN band ⇒ that cut proceeds normally. With only ONE of the
+    // two boundary planes actually cutting anything, there is no bounded
+    // [-hiAmt,+loAmt] slab anywhere in the result — `deleteComponentsInSlab`
+    // finds nothing (both resulting shells extend to the cube's far corners,
+    // well past either offset), so `separated == false`. Crucially, the
+    // crossing at x=0 (the CENTER plane the legacy path actually cuts at)
+    // projects to s≈0.71 — IN band — so the legacy single-cut+slide at the
+    // center plane, using this SAME clip segment, still opens a real gap.
+    import std.math : abs;
+
+    Mesh viaHelper = makeCube();
+    viaHelper.buildLoops();
+    viaHelper.resetSelection();
+    Mesh viaLegacy = makeCube();
+    viaLegacy.buildLoops();
+    viaLegacy.resetSelection();
+
+    Vec3 P = Vec3(0, 0, 0), N = Vec3(1, 0, 0);
+    Vec3 segStart = Vec3(-0.25f, 0, 0), segEnd = Vec3(0.1f, 0, 0);
+    enum float G = 0.4f;
+
+    size_t nHelper = sliceSplitGap(viaHelper, P, N, /*clipped*/true, segStart, segEnd,
+                                   /*caps*/true, G, /*gapSide*/0, null);
+
+    Mesh.PlaneCutLoops loops;
+    size_t nLegacy = viaLegacy.cutByPlaneEx(P, N, /*clipped*/true, segStart, segEnd,
+                                            /*split*/true, /*caps*/true, loops,
+                                            1e-5f, null, G, 0);
+
+    assert(nHelper > 0, "the clipped segment must still cut some faces");
+    assert(nHelper == nLegacy,
+           "partial cut: the fallback must cut exactly as many faces as the legacy slide");
+    assert(viaHelper.vertices.length == viaLegacy.vertices.length,
+           "partial cut: fallback must reproduce the legacy slide's vertex count");
+    assert(viaHelper.faces.length == viaLegacy.faces.length,
+           "partial cut: fallback must reproduce the legacy slide's face count");
+    foreach (i; 0 .. viaHelper.vertices.length) {
+        Vec3 a = viaHelper.vertices[i], b = viaLegacy.vertices[i];
+        assert(abs(a.x - b.x) < 1e-6f && abs(a.y - b.y) < 1e-6f && abs(a.z - b.z) < 1e-6f,
+               "partial cut: fallback vertex must match the legacy slide exactly");
+    }
+    // Sanity: the fallback really opened a gap (grew past the pristine
+    // cube's 8 verts), it did not silently no-op.
+    assert(viaHelper.vertices.length > 8,
+           "partial cut: the fallback must still open a gap, not drop it");
+    // And it must NOT have taken the two-cut path silently: confirm the
+    // TWO-CUT attempt on an independent copy really does report
+    // separated==false for this exact scenario (the discriminator this test
+    // exercises), rather than the byte-parity above passing by coincidence.
+    {
+        Mesh probe = makeCube();
+        probe.buildLoops();
+        probe.resetSelection();
+        bool separated;
+        probe.cutByPlaneSplitGap(P, N, /*clipped*/true, segStart, segEnd,
+                                 /*caps*/true, G, /*gapSide*/0, separated, null);
+        assert(!separated,
+               "partial cut: the two offset cuts must NOT report separated==true "
+               ~ "(one plane's crossings project entirely out of the clip band)");
+    }
+}
+
+unittest { // sliceSplitGap: caps==false + split + gap routes to the two-cut
+    // path and still deletes the band (task 0291, DQ4) — the `gap != 0` gate
+    // ignores `caps`, so an uncapped split+gap is NOT silently forced through
+    // the legacy slide. A full mid-plane cut of a cube (gap 0.2 center,
+    // caps=false): the band is still a bounded connected component (4 side
+    // sub-quads forming a closed ring, no caps needed for DSU connectivity)
+    // and gets removed exactly as in the capped case; only the 2 cap FACES
+    // are absent, so each remaining shell's boundary loop is OPEN.
+    static size_t boundaryEdgeCount(ref Mesh m) {
+        size_t n = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            size_t nf = 0;
+            foreach (fi; m.facesAroundEdge(cast(uint)ei)) ++nf;
+            if (nf == 1) ++n;
+        }
+        return n;
+    }
+    static size_t componentCount(ref Mesh m) {
+        auto nf = m.faces.length;
+        if (nf == 0) return 0;
+        auto parent = new size_t[](nf);
+        foreach (i; 0 .. nf) parent[i] = i;
+        size_t find(size_t x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void uni(size_t a, size_t b) { parent[find(a)] = find(b); }
+        uint[][uint] vFaces;
+        foreach (fi, f; m.faces) foreach (v; f) vFaces[v] ~= cast(uint)fi;
+        foreach (v, fs; vFaces) foreach (k; 1 .. fs.length) uni(fs[0], fs[k]);
+        bool[size_t] roots;
+        foreach (i; 0 .. nf) roots[find(i)] = true;
+        return roots.length;
+    }
+
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+
+    Vec3 P = Vec3(0, 0, 0), N = Vec3(1, 0, 0);
+    enum float G = 0.2f;
+
+    size_t n = sliceSplitGap(m, P, N, /*clipped*/false, P, P,
+                            /*caps*/false, G, /*gapSide*/0, null);
+    assert(n > 0, "the mid-plane must cut faces");
+    assert(componentCount(m) == 2, "band removed: exactly 2 shells left, even uncapped");
+    assert(m.vertices.length == 16, "caps add no verts — same 16v as the capped case");
+    assert(m.faces.length == 10,
+           "caps==false: 2 shells x (4 side + 1 original), no cap faces (12-2)");
+    assert(boundaryEdgeCount(m) > 0,
+           "caps==false must leave each shell's boundary loop OPEN (not sealed)");
 }
 
 // ---------------------------------------------------------------------------
