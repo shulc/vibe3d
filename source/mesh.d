@@ -10090,6 +10090,132 @@ struct Mesh {
     }
 
     // -----------------------------------------------------------------------
+    // deleteComponentsInSlab (task 0291) — delete every connected component
+    // (faces linked by shared vertices, the same notion `connectedComponentVertices`
+    // uses, generalized here to walk every face rather than one island) whose
+    // ENTIRE signed-distance range to plane (p,n) lies within
+    // [loSigned − eps, hiSigned + eps]. Used by `cutByPlaneSplitGap` to remove
+    // the slab a pair of parallel plane cuts opens between two shells.
+    //
+    // Classification is per-COMPONENT, not per-face (risk 2, task file): a
+    // per-face `dv`-band mask would ALSO delete the kept shells' caps, which
+    // sit exactly on the slab's own boundary planes. A component's dv-range
+    // only collapses inside the slab when the WHOLE component (its cap AND
+    // every side face reaching it) never leaves the band — true for the band
+    // component alone; the shells above/below always reach past the slab on
+    // their far side (their own untouched geometry), so their range's other
+    // bound fails the containment test even though their near cap coincides
+    // with a slab boundary.
+    //
+    // Returns the number of faces removed (0 = no component was fully inside
+    // the slab — e.g. a partial cut that never fully separated the mesh).
+    // -----------------------------------------------------------------------
+    size_t deleteComponentsInSlab(Vec3 p, Vec3 n, float loSigned, float hiSigned, float eps) {
+        if (faces.length == 0) return 0;
+
+        int[] parent;
+        parent.length = vertices.length;
+        foreach (i; 0 .. vertices.length) parent[i] = cast(int)i;
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+        foreach (fi; 0 .. faces.length) {
+            const uint[] f = faces[fi];
+            if (f.length < 2) continue;
+            foreach (i; 1 .. f.length) {
+                if (f[0] >= vertices.length || f[i] >= vertices.length) continue;
+                unite(cast(int)f[0], cast(int)f[i]);
+            }
+        }
+
+        // Per-root signed-distance range over every vertex belonging to that
+        // component (vertices not referenced by any face just form their own
+        // singleton root and never influence a face's classification below).
+        float[int] rootMin, rootMax;
+        foreach (vi; 0 .. vertices.length) {
+            int r = findRoot(cast(int)vi);
+            float dv = n.x * (vertices[vi].x - p.x)
+                     + n.y * (vertices[vi].y - p.y)
+                     + n.z * (vertices[vi].z - p.z);
+            if (auto mn = r in rootMin) { if (dv < *mn) rootMin[r] = dv; } else rootMin[r] = dv;
+            if (auto mx = r in rootMax) { if (dv > *mx) rootMax[r] = dv; } else rootMax[r] = dv;
+        }
+
+        bool[] mask = new bool[](faces.length);
+        foreach (fi; 0 .. faces.length) {
+            if (faces[fi].length == 0) continue;
+            uint v0 = faces[fi][0];
+            if (v0 >= vertices.length) continue;
+            int r = findRoot(cast(int)v0);
+            if (rootMin[r] >= loSigned - eps && rootMax[r] <= hiSigned + eps)
+                mask[fi] = true;
+        }
+        return deleteFacesByMask(mask);
+    }
+
+    // -----------------------------------------------------------------------
+    // cutByPlaneSplitGap (task 0291) — Split + Caps + Gap via TWO REAL parallel
+    // plane cuts, replacing the single-cut + fixed along-edge slide
+    // (`splitAlongCutLoop`'s gap block) for the unrestricted whole-mesh case.
+    // The single-cut slide slides each seam vert a FIXED distance along its own
+    // crossed edge; on dense/curved geometry a graze vert (dv≈0 at the plane)
+    // overshoots past the edge's far endpoint for ANY gap>0, scattering the
+    // seam off the cut plane and producing a self-intersecting cap (the
+    // reported bug). Two REAL cuts cannot overshoot: each seam vert is placed
+    // by `planeCutCore` at the exact intersection of a REAL edge with a REAL
+    // plane — an edge that never reaches a plane is simply not crossed, no
+    // phantom vertex is ever produced.
+    //
+    // Steps (verified algorithm, doc/slice_gap_two_cut_plan.md):
+    //   1. Cut at `p + n·loAmt` (split+caps, gap=0) — splits the mesh into
+    //      {above +offset} and {below +offset}, each already capped there.
+    //   2. Cut at `p − n·hiAmt` (split+caps, gap=0) on the WHOLE mesh — only
+    //      {below +offset} straddles −offset; it re-splits into {band} (its
+    //      OTHER cap is cut 1's +offset cap, inherited whole since none of its
+    //      verts cross −offset) and {below −offset}, both now capped at
+    //      −offset. {above +offset} is untouched (never reaches −offset).
+    //   3. `deleteComponentsInSlab` removes the one component whose entire
+    //      dv-range sits inside `[−hiAmt, +loAmt]` — the band.
+    //
+    // `separated` is TRUE iff a band component was found and removed (the two
+    // cuts fully disconnected the mesh). FALSE means a PARTIAL cut (e.g. a
+    // short clipped line that doesn't span the whole shape) left the shells
+    // stitched together — `deleteComponentsInSlab` then finds nothing to
+    // remove. The CALLER (slice_tool.sliceSplitGap) must roll back and fall
+    // back to the legacy single-cut+slide in that case, so today's partial-cut
+    // gap behaviour is not silently dropped.
+    //
+    // `restrictFaces` is accepted for interface symmetry with `cutByPlaneEx`
+    // but is expected empty here: the two cuts shift face indices between
+    // calls, so a restrict set captured before cut 1 would be stale for cut 2.
+    // A restricted split-gap keeps its own single-cut path (the caller gates
+    // on `restrictFaces.length == 0` before routing here at all).
+    // -----------------------------------------------------------------------
+    size_t cutByPlaneSplitGap(Vec3 p, Vec3 n, bool clipped, Vec3 segStart, Vec3 segEnd,
+                              bool caps, float gap, int gapSide, out bool separated,
+                              const uint[] restrictFaces = null, float eps = 1e-5f) {
+        float loAmt, hiAmt;
+        switch (gapSide) {
+            case 1:  loAmt = gap;        hiAmt = 0.0f;       break;  // positive
+            case 2:  loAmt = 0.0f;       hiAmt = gap;        break;  // negative
+            default: loAmt = gap * 0.5f; hiAmt = gap * 0.5f; break;  // center
+        }
+        PlaneCutLoops r1, r2;
+        size_t n1 = cutByPlaneEx(p + n * loAmt, n, clipped, segStart, segEnd,
+                                 /*split*/true, caps, r1, eps, restrictFaces, 0.0f, 0);
+        size_t n2 = cutByPlaneEx(p - n * hiAmt, n, clipped, segStart, segEnd,
+                                 /*split*/true, caps, r2, eps, restrictFaces, 0.0f, 0);
+        size_t removed = deleteComponentsInSlab(p, n, -hiAmt, +loAmt, 1e-4f);
+        separated = (removed > 0);
+        return n1 + n2;
+    }
+
+    // -----------------------------------------------------------------------
     // extractCutLoops — walk the crossing verts of a completed plane cut into
     // ordered ring(s). A "chord edge" of the cut is an edge whose BOTH endpoints
     // are cut verts (the chord each split face contributes); those edges chain
@@ -16903,6 +17029,15 @@ unittest { // cutByPlaneEx: Slice `gap` on a SHEARED cube — split edges stay
     // ORIGINAL EDGE, so both halves stay on the edge's line. Assert exactly that:
     // every seam pair is collinear with one original crossed edge, separated by the
     // gap measured along the edge.
+    //
+    // NOTE (task 0291, DQ5 — KEEP option): this direct `cutByPlaneEx` call still
+    // produces the pre-0291 along-edge SLIDE — that is CORRECT here, because the
+    // UNRESTRICTED Slice split+caps+gap tool path no longer reaches this code at
+    // all (it routes through `cutByPlaneSplitGap`'s two REAL parallel cuts, whose
+    // seam sits at edge∩offset-plane instead). The slide survives only for (a)
+    // the restricted split-gap branch, (b) the partial-cut fallback in
+    // `slice_tool.sliceSplitGap`, and (c) this direct kernel call — same input,
+    // two valid answers depending on the code path that reaches it.
     import std.math : abs, sqrt;
     // Sheared cube: top face displaced +X (repro from the task file).
     Mesh m;
@@ -16957,6 +17092,240 @@ unittest { // cutByPlaneEx: Slice `gap` on a SHEARED cube — split edges stay
         }
         assert(matched, "sheared: both halves of every split edge stay COLLINEAR "
                         ~ "with the original edge (not bent along the plane normal)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// cutByPlaneSplitGap unittests (task 0291) — shared predicates + the two
+// kernel regression gates (Phase 1 axis-cube composition, Phase 3 CC×2
+// oblique sliver). See doc/slice_gap_two_cut_plan.md.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    import std.math : abs;
+
+    // Component count via the same DSU-over-shared-vertices idiom as the
+    // `boundaryEdgeCount`/`componentCount` locals in the cutByPlaneEx `split`
+    // unittest above — walks every face (not just one island).
+    private size_t sliceCapComponentCount(ref Mesh m) {
+        auto nf = m.faces.length;
+        if (nf == 0) return 0;
+        auto parent = new size_t[](nf);
+        foreach (i; 0 .. nf) parent[i] = i;
+        size_t find(size_t x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void uni(size_t a, size_t b) { parent[find(a)] = find(b); }
+        uint[][uint] vFaces;
+        foreach (fi, f; m.faces) foreach (v; f) vFaces[v] ~= cast(uint)fi;
+        foreach (v, fs; vFaces) foreach (k; 1 .. fs.length) uni(fs[0], fs[k]);
+        bool[size_t] roots;
+        foreach (i; 0 .. nf) roots[find(i)] = true;
+        return roots.length;
+    }
+
+    // A "cap" face (for these tests) is one whose EVERY corner lies on ONE of
+    // the two offset planes (`p + n*loAmt` or `p - n*hiAmt`), within `tol`. By
+    // construction (capShellCycles seals exactly the loSet/hiSet crossing
+    // verts) this is precise for both an axis-aligned cap (a quad, same
+    // corner count as a side face — so a degree heuristic would not
+    // discriminate it) and a curved oblique cap (a big N-gon).
+    private uint[] sliceCapFaces(ref Mesh m, Vec3 p, Vec3 n, float loAmt, float hiAmt,
+                                 float tol) {
+        uint[] caps;
+        foreach (fi, ref f; m.faces) {
+            if (f.length == 0) continue;
+            bool onLo = true, onHi = true;
+            foreach (vi; f) {
+                float dv = dot(n, m.vertices[vi] - p);
+                if (abs(dv - loAmt) >= tol) onLo = false;
+                if (abs(dv - (-hiAmt)) >= tol) onHi = false;
+            }
+            if (onLo || onHi) caps ~= cast(uint)fi;
+        }
+        return caps;
+    }
+
+    // Newell's method: a robust normal for a (possibly non-planar) polygon.
+    private Vec3 sliceCapNewellNormal(ref Mesh m, uint fi) {
+        Vec3 n = Vec3(0, 0, 0);
+        const uint[] f = m.faces[fi];
+        foreach (i; 0 .. f.length) {
+            Vec3 a = m.vertices[f[i]];
+            Vec3 b = m.vertices[f[(i + 1) % f.length]];
+            n.x += (a.y - b.y) * (a.z + b.z);
+            n.y += (a.z - b.z) * (a.x + b.x);
+            n.z += (a.x - b.x) * (a.y + b.y);
+        }
+        return normalize(n);
+    }
+
+    private Vec3 sliceCapCentroid(ref Mesh m, uint fi) {
+        Vec3 c = Vec3(0, 0, 0);
+        const uint[] f = m.faces[fi];
+        foreach (vi; f) c = c + m.vertices[vi];
+        return c * (1.0f / cast(float) f.length);
+    }
+
+    // Max distance of any corner to the face's own best-fit plane (Newell
+    // normal through the centroid). ~0 for a truly planar polygon — every
+    // corner of a two-cut cap sits on a REAL edge∩plane intersection, so this
+    // should be near machine precision on the fixed model.
+    private float sliceCapPlanarityDev(ref Mesh m, uint fi) {
+        Vec3 n = sliceCapNewellNormal(m, fi);
+        Vec3 c = sliceCapCentroid(m, fi);
+        float dev = 0.0f;
+        foreach (vi; m.faces[fi]) {
+            float d = abs(dot(n, m.vertices[vi] - c));
+            if (d > dev) dev = d;
+        }
+        return dev;
+    }
+
+    // O(k^2) count of non-adjacent edge-pair crossings of the polygon
+    // projected onto its own best-fit plane (an arbitrary in-plane basis ⟂ the
+    // Newell normal) — a self-intersecting ("bowtie") n-gon has >=1. This is
+    // exactly the sliver-cap symptom the task fixes (task file: 6
+    // self-intersections per cap on the pre-fix single-cut+slide).
+    private size_t sliceCapSelfX(ref Mesh m, uint fi) {
+        const uint[] f = m.faces[fi];
+        size_t k = f.length;
+        if (k < 4) return 0;
+        Vec3 n = sliceCapNewellNormal(m, fi);
+        Vec3 arbitrary = (abs(n.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+        Vec3 u = normalize(cross(n, arbitrary));
+        Vec3 v = cross(n, u);
+        auto pts = new double[2][](k);
+        foreach (i; 0 .. k) {
+            Vec3 p = m.vertices[f[i]];
+            pts[i] = [cast(double) dot(p, u), cast(double) dot(p, v)];
+        }
+        static bool segCross(double[2] a, double[2] b, double[2] c, double[2] d) {
+            double d1 = (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]);
+            double d2 = (b[0]-a[0])*(d[1]-a[1]) - (b[1]-a[1])*(d[0]-a[0]);
+            double d3 = (d[0]-c[0])*(a[1]-c[1]) - (d[1]-c[1])*(a[0]-c[0]);
+            double d4 = (d[0]-c[0])*(b[1]-c[1]) - (d[1]-c[1])*(b[0]-c[0]);
+            return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+        }
+        size_t crossings = 0;
+        foreach (i; 0 .. k) {
+            size_t i2 = (i + 1) % k;
+            foreach (j; i + 1 .. k) {
+                size_t j2 = (j + 1) % k;
+                // Skip adjacent (and identical) edges — they legitimately
+                // share an endpoint, which is not a crossing.
+                if (j == i || j2 == i || j == i2) continue;
+                if (segCross(pts[i], pts[i2], pts[j], pts[j2])) ++crossings;
+            }
+        }
+        return crossings;
+    }
+}
+
+unittest { // cutByPlaneSplitGap: axis-cube two-cut COMPOSITION gate (task 0291,
+    // Phase 1) — proves cut 2 correctly re-splits cut 1's shell BEFORE trusting
+    // the model on curved geometry (the crux, risk 1). Mid-plane cut (n=+X
+    // through x=0) of a plain cube, gap 0.2 center (offset ±0.1).
+    //
+    // PRIMARY (structural): the two cuts fully SEPARATE the mesh (separated
+    // == true, a band component was found and removed), leaving exactly 2
+    // disconnected capped shells — componentCount==2, 12 faces / 16 verts
+    // total (2 shells × [4 side quads + 1 original end face + 1 new cap]),
+    // exactly 2 cap faces, and every surviving vertex is either an untouched
+    // original corner (|dv| ≈ 0.5) or a seam vert exactly on ±0.1.
+    //
+    // SECONDARY (slab, with an eps margin so seam verts sitting exactly on
+    // ±0.1 don't trip it): no vertex remains strictly INSIDE the removed
+    // [-0.1,+0.1] band.
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+
+    Vec3 P = Vec3(0, 0, 0), N = Vec3(1, 0, 0);
+    enum float G   = 0.2f;
+    enum float OFF = G * 0.5f;   // 0.1
+
+    bool separated;
+    size_t n = m.cutByPlaneSplitGap(P, N, /*clipped*/false, P, P,
+                                    /*caps*/true, G, /*gapSide*/0, separated);
+    assert(n > 0, "the mid-plane must cut the 4 side faces (both cuts)");
+    assert(separated, "a full mid-plane cut must fully separate the mesh");
+
+    assert(sliceCapComponentCount(m) == 2, "band removed: exactly 2 shells left");
+    assert(m.faces.length    == 12, "2 shells x (4 side + 1 original + 1 cap)");
+    assert(m.vertices.length == 16, "2 shells x 8 verts (4 original + 4 cap-ring)");
+
+    auto caps = sliceCapFaces(m, P, N, OFF, OFF, 1e-4f);
+    assert(caps.length == 2, "exactly 2 cap faces (one per shell)");
+
+    // Every surviving vertex is either an untouched original corner (dv≈±0.5)
+    // or a seam vert exactly on one of the two offset planes (dv≈±0.1) — no
+    // vertex should exist at any OTHER distance.
+    foreach (v; m.vertices) {
+        float dv = dot(N, v - P);
+        bool isOriginalCorner = abs(abs(dv) - 0.5f) < 1e-4f;
+        bool isSeam           = abs(abs(dv) - OFF)  < 1e-4f;
+        assert(isOriginalCorner || isSeam,
+               "every surviving vertex must be an untouched original corner "
+               ~ "or a seam vert exactly on ±offset");
+    }
+
+    enum float EPS_S = 1e-4f;
+    foreach (v; m.vertices) {
+        float dv = dot(N, v - P);
+        assert(!(dv > -OFF + EPS_S && dv < OFF - EPS_S),
+               "band must be fully removed — no vertex left strictly inside the slab");
+    }
+}
+
+unittest { // cutByPlaneSplitGap: CC×2 OBLIQUE sliver regression (task 0291,
+    // Phase 3) — the reported bug: a single-cut + fixed along-edge slide grazes
+    // existing verts on dense/curved geometry (a sliver), scattering the seam
+    // off the cut plane and producing a self-intersecting cap (reference
+    // capture toolcards/poly.knife/capture/subdiv_gap/: owner case, gap 0.415
+    // center, TWO clean planar/simple caps). The two-cut model is
+    // overshoot-immune (every seam sits on a REAL edge∩plane intersection), so
+    // this is GREEN where the equivalent direct single-cut+slide call (the
+    // characterization proven at Phase 0) is RED.
+    //
+    // PRIMARY (structural, robust to vibe3d's OSD connectivity not being
+    // byte-identical to the reference's CC base — risk 5, so this does NOT
+    // assert the reference's exact 40-seam/2-cap COUNTS): separated==true;
+    // exactly 2 cap faces; each cap planarityDev≈0 AND selfX==0 (simple); the
+    // band component is gone (componentCount==2).
+    //
+    // SECONDARY (with an eps margin so seam/graze verts sitting exactly on
+    // ±offset don't trip it): no vertex remains strictly INSIDE the removed
+    // slab.
+    Mesh m = subdivideCube(2);
+    m.resetSelection();
+
+    Vec3 P = Vec3(0.0f, 0.4f, 0.61f);
+    Vec3 N = normalize(Vec3(0.0f, -0.85142f, 0.52448f));
+    enum float G   = 0.415f;
+    enum float OFF = G * 0.5f;   // 0.2075
+
+    bool separated;
+    size_t n = m.cutByPlaneSplitGap(P, N, /*clipped*/false, P, P,
+                                    /*caps*/true, G, /*gapSide*/0, separated);
+    assert(n > 0, "the oblique plane must cut faces");
+    assert(separated, "a full-span oblique cut must fully separate the mesh");
+    assert(sliceCapComponentCount(m) == 2, "band removed: exactly 2 shells left");
+
+    auto caps = sliceCapFaces(m, P, N, OFF, OFF, 1e-3f);
+    assert(caps.length == 2, "exactly 2 cap faces (one per shell)");
+    foreach (fi; caps) {
+        assert(sliceCapPlanarityDev(m, fi) < 1e-3f,
+               "two-cut cap must be planar (every corner is a real edge∩plane point)");
+        assert(sliceCapSelfX(m, fi) == 0,
+               "two-cut cap must be simple (no self-intersections) — the bug this fixes");
+    }
+
+    enum float EPS_S = 1e-4f;
+    foreach (v; m.vertices) {
+        float dv = dot(N, v - P);
+        assert(!(dv > -OFF + EPS_S && dv < OFF - EPS_S),
+               "band must be fully removed — no vertex left strictly inside the slab");
     }
 }
 
