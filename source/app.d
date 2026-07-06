@@ -2047,15 +2047,13 @@ void main(string[] args) {
         if (!prefsActive) return;
         if (activeTool is null || activeToolId.length == 0) return;
         import toolpipe.stage : stringifyParam;
-        import params : Param;
+        import params : isStickyCapturable;
         string[string] attrs;
         foreach (ref p; activeTool.params()) {
-            // Array kinds don't round-trip through the string<->param path
-            // (stringifyParam/parseInto return ""/false for them); read-only
-            // params are derived display, not user settings. Skip both.
-            if (p.kind == Param.Kind.IntArray || p.kind == Param.Kind.Vec3Array)
-                continue;
-            if (p.readonly_) continue;
+            // Array kinds, read-only, and transient (gesture geometry /
+            // momentary triggers) params are not remembered settings — see
+            // `isStickyCapturable`.
+            if (!isStickyCapturable(p)) continue;
             attrs[p.name] = stringifyParam(p);
         }
         if (attrs.length > 0) g_prefs.toolDefaults[activeToolId] = attrs;
@@ -2943,7 +2941,9 @@ void main(string[] args) {
         resetTransientPipeStages();
         // Per-id pre-activate hook — see activateToolById.
         if (auto hook = id in reg.preActivate) (*hook)();
+        import tool_presets : applyStickyToolDefaults;
         auto t = (*factory)();
+        applyStickyToolDefaults(t, id);
         setActiveTool(t);
         activeToolId = id;
     };
@@ -3836,7 +3836,10 @@ void main(string[] args) {
             // pipe-stage attrs here — kept out of the factory so
             // `cacheSupportedModes` doesn't apply them at startup).
             if (auto hook = id in reg.preActivate) (*hook)();
-            setActiveTool(reg.toolFactories[id]());
+            import tool_presets : applyStickyToolDefaults;
+            auto t = reg.toolFactories[id]();
+            applyStickyToolDefaults(t, id);
+            setActiveTool(t);
             activeToolId = id;
         }
     }
@@ -3861,6 +3864,29 @@ void main(string[] args) {
             setActiveTool(null);
         };
         history.recordToolLifecycle(lifecycleCmd);
+    };
+
+    // Wire the real `tool.reset` (Ctrl+D) delegate now that history,
+    // toolHost.activate, and reg are all in scope — same forward-reference
+    // pattern as lifecycleRecordHook above. Reset = throw away the
+    // in-progress edit and rebuild the named tool (default: the active one)
+    // at its DECLARED defaults (constructor + preset-YAML, empty sticky) —
+    // NOT commit the open edit. See doc/tool_settings_persist_plan.md Stage B.
+    toolHost.resetActiveTool = (string optId) {
+        string id = optId.length ? optId : activeToolId;
+        if (id.length == 0 || (id in reg.toolFactories) is null) return false;
+        // Discard any in-progress preview so reset THROWS the edit away
+        // rather than committing it (touches no history — cancel bodies are
+        // pure mesh restores). With `dirty` cleared, the rebuild's
+        // deactivate()->commitNow() below is a no-op even if suspend alone
+        // didn't also gate record().
+        if (activeTool !is null && activeTool.hasUncommittedEdit())
+            activeTool.cancelUncommittedEdit();
+        g_prefs.toolDefaults.remove(id);   // clear sticky (B step 1)
+        auto s = history.suspended();       // no spurious lifecycle/vertex-edit entry
+        toolHost.activate(id);              // rebuild -> constructor + YAML defaults,
+                                             // empty sticky = declared defaults (B step 2)
+        return true;
     };
 
     // Declared at outer scope so the main-loop UI (status-line `kind: script`

@@ -24,4 +24,12 @@ struct ToolHost {
 
     /// Deactivate the current tool (setActiveTool(null)).
     void   delegate()       deactivate;
+
+    /// Reset the named tool (empty string = the active tool) to its
+    /// DECLARED defaults (constructor + preset-YAML, empty sticky) and clear
+    /// its sticky entry. Discards any in-progress preview first (does not
+    /// commit it) and rebuilds under a history suspend, so reset emits no
+    /// undo entry. Returns whether a reset actually happened (false if the
+    /// tool id is unknown / nothing to reset).
+    bool   delegate(string) resetActiveTool;
 }

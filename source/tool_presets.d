@@ -7,8 +7,8 @@ import registry         : Registry;
 import tool             : Tool, ToolFlag;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage   : parseInto;
-import params : Param, injectParamsInto;
-import prefs  : g_prefs;
+import params : Param, ParamProvider, injectParamsInto;
+import prefs  : g_prefs, Prefs;
 
 // ---------------------------------------------------------------------------
 // Tool presets — declarative `<base tool> + <per-pipe-stage attrs>` bundles.
@@ -231,13 +231,21 @@ private void applyToolAttrs(Tool t, string[string] attrs, string presetId) {
 }
 
 // Apply the user's sticky tool-option defaults (persisted in prefs under this
-// preset id) onto a freshly built tool, AFTER the preset's YAML attrs — so a
-// sticky value overrides config/tool_presets.yaml (that is the point). Each
-// stored value is a wire string re-applied through the same parseInto path the
-// stage attr setter uses. Unknown attrs (a stale prefs entry naming a param the
-// tool no longer exposes) are skipped silently — never throws, so a stale
-// prefs file can't block tool activation. Inert when no sticky entry exists.
-private void applyStickyToolDefaults(Tool t, string presetId) {
+// tool/preset id) onto a freshly built tool, AFTER the constructor defaults
+// and any preset YAML attrs — so a sticky value overrides
+// config/tool_presets.yaml (that is the point). Each stored value is a wire
+// string re-applied through the same parseInto path the stage attr setter
+// uses. Unknown attrs (a stale prefs entry naming a param the tool no longer
+// exposes) are skipped silently — never throws, so a stale prefs file can't
+// block tool activation. Inert when no sticky entry exists.
+//
+// Public + typed on `ParamProvider` (not `Tool`) so it is unit-testable
+// against a tiny fake without a GL-heavy real Tool, and so it can be called
+// from the universal activation chokepoints (app.d `activateToolById` /
+// `toolHost.activate`) rather than only from the preset factory — this is
+// what makes last-used settings restore for EVERY tool (base/direct tools
+// included), not just preset-derived ones.
+void applyStickyToolDefaults(ParamProvider t, string presetId) {
     auto sticky = presetId in g_prefs.toolDefaults;
     if (sticky is null) return;
     auto schema = t.params();
@@ -248,6 +256,62 @@ private void applyStickyToolDefaults(Tool t, string presetId) {
                 break;
             }
     }
+}
+
+version (unittest) {
+    // Tiny ParamProvider fake — one float param — so the restore mechanism
+    // is testable without a GL-heavy real Tool. Records the names
+    // `onParamChanged` fired for, so the test can prove the restore path
+    // (not just the pointer write) actually ran.
+    private final class FakeStickyProvider : ParamProvider {
+        float width = 1.0f;
+        string[] changedNames;
+        Param[] params() { return [Param.float_("width", "Width", &width, 1.0f)]; }
+        bool paramEnabled(string name) const { return true; }
+        void onParamChanged(string name) { changedNames ~= name; }
+    }
+}
+
+unittest {
+    // applyStickyToolDefaults — restores a persisted sticky value onto a
+    // freshly built ParamProvider and fires onParamChanged for it. This is
+    // the mechanism base/direct tools now use (Stage A), not just preset-
+    // derived ones.
+    auto saved = g_prefs;
+    scope(exit) g_prefs = saved;
+    g_prefs = Prefs.init;
+
+    g_prefs.toolDefaults["fake"] = ["width": "0.25"];
+    auto fake = new FakeStickyProvider();
+    applyStickyToolDefaults(fake, "fake");
+    assert(fake.width == 0.25f);
+    assert(fake.changedNames == ["width"]);
+}
+
+unittest {
+    // No sticky entry for this id -> inert (no crash, no onParamChanged).
+    auto saved = g_prefs;
+    scope(exit) g_prefs = saved;
+    g_prefs = Prefs.init;
+
+    auto fake = new FakeStickyProvider();
+    applyStickyToolDefaults(fake, "fake");
+    assert(fake.width == 1.0f);
+    assert(fake.changedNames.length == 0);
+}
+
+unittest {
+    // A stale prefs entry naming a param the provider no longer exposes is
+    // skipped silently, never throws.
+    auto saved = g_prefs;
+    scope(exit) g_prefs = saved;
+    g_prefs = Prefs.init;
+
+    g_prefs.toolDefaults["fake"] = ["noSuchParam": "9"];
+    auto fake = new FakeStickyProvider();
+    applyStickyToolDefaults(fake, "fake");
+    assert(fake.width == 1.0f);
+    assert(fake.changedNames.length == 0);
 }
 
 /// Register every preset as a factory + preActivate hook in `reg`.
@@ -280,8 +344,12 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 t.presetFlags = presetCopy.flags;
                 if (presetCopy.toolAttrs.length > 0)
                     applyToolAttrs(t, presetCopy.toolAttrs, presetCopy.id);
-                // Sticky user defaults override the YAML attrs above.
-                applyStickyToolDefaults(t, presetCopy.id);
+                // Sticky user defaults are applied at the activation
+                // chokepoints (app.d `activateToolById` / `toolHost.activate`),
+                // not here — centralizing avoids a double-apply/double-
+                // onParamChanged for the two callers that DO activate
+                // (cacheSupportedModes / fv.toolAttrs build-and-discard a
+                // factory purely to enumerate params(), never activating).
                 return t;
             };
         }

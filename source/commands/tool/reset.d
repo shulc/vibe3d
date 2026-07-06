@@ -9,12 +9,13 @@ import commands.tool.host : ToolHost;
 // ---------------------------------------------------------------------------
 // ToolResetCommand — `tool.reset [<toolId>]`
 //
-// Resets the active tool's parameters to their defaults by calling
-// dialogInit() on the tool.  The base Tool.dialogInit() is a no-op;
-// concrete tools override it if they want an explicit reset.
-//
-// TODO (phase 4.4): respect optToolId — activate the named tool if it is not
-// already active before calling dialogInit().
+// Resets a tool (the active one, or the named `optToolId_`) to its DECLARED
+// defaults — constructor + preset-YAML, as if built with an empty sticky
+// entry — and clears its sticky-tool-defaults entry. Delegates the actual
+// work to `toolHost.resetActiveTool`, which discards any in-progress preview
+// first (never commits it) and rebuilds the tool under a history suspend
+// (no spurious undo entry). Non-undoable (SideEffect), matching the prior
+// no-op's flags.
 // ---------------------------------------------------------------------------
 class ToolResetCommand : Command {
     private ToolHost toolHost;
@@ -33,11 +34,7 @@ class ToolResetCommand : Command {
     void setToolId(string id) { optToolId_ = id; }
 
     override bool apply() {
-        auto t = toolHost.getActiveTool();
-        if (t is null) return false;
-        // TODO (4.4): if optToolId_ is set and != activeToolId, activate it first.
-        t.dialogInit();
-        return true;
+        return toolHost.resetActiveTool(optToolId_);
     }
 
     override bool revert() { return false; }
