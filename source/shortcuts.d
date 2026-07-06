@@ -16,6 +16,11 @@ struct Shortcut {
     bool shift;
     bool alt;
     bool gui;          // Cmd on macOS, Windows/Super elsewhere.
+    string args;       // Optional MODO-style argstring baked into the binding:
+                       // the text after the key spec ("D ccsds" → "ccsds").
+                       // A command with a non-empty schema then runs immediately
+                       // with these args injected instead of opening the dialog.
+                       // Not part of the canonical/display form (key spec only).
 
     // Canonical form used as hash key only: "alt+shift+a", "shift+up", etc.
     string toCanonical() const {
@@ -60,6 +65,11 @@ struct ShortcutTable {
     string[string] toolIdByCanon;
     string[string] commandIdByCanon;
     string[string] editModeByCanon;
+
+    // canon → baked argstring, for bindings that pin arguments (MODO-style
+    // `mesh.subdivide: "D ccsds"`). Absent for argless bindings; the dispatcher
+    // consults it only in the command branch to run-with-args, no dialog.
+    string[string] argsByCanon;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +79,19 @@ struct ShortcutTable {
 Shortcut parseShortcut(string s) {
     s = s.strip();
     if (s.length == 0) return Shortcut(0, false, false, false, false);
+
+    // A binding may carry a MODO-style argstring after the key spec:
+    //   "D ccsds"  →  key spec "D", args "ccsds"
+    // The key spec never contains whitespace (modifiers join with '+'), so the
+    // first whitespace run separates the key spec from its trailing arguments.
+    string args;
+    foreach (i, c; s) {
+        if (c == ' ' || c == '\t') {
+            args = s[i .. $].strip();
+            s    = s[0 .. i].strip();
+            break;
+        }
+    }
 
     string[] tokens;
     foreach (tok; s.split("+"))
@@ -90,7 +113,9 @@ Shortcut parseShortcut(string s) {
     }
 
     SDL_Keycode key = parseKeyToken(tokens[$ - 1], s);
-    return Shortcut(key, ctrl, shift, alt, gui);
+    auto sc = Shortcut(key, ctrl, shift, alt, gui);
+    sc.args = args;
+    return sc;
 }
 
 private SDL_Keycode parseKeyToken(string tok, string fullShortcut) {
@@ -228,8 +253,11 @@ ShortcutTable loadShortcuts(string path) {
             Shortcut sc = parseShortcut(raw);
             byId[id] = sc;
             string canon = sc.toCanonical();
-            if (canon.length > 0)
+            if (canon.length > 0) {
                 idByCanon[canon] = id;
+                if (sc.args.length > 0)
+                    tbl.argsByCanon[canon] = sc.args;
+            }
         }
     }
 

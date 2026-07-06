@@ -24,6 +24,25 @@ unittest {
     assert(canonFromEvent(SDLK_ESCAPE, cast(SDL_Keymod)0) == "escape");
 }
 
+// A binding may carry a MODO-style argstring after the key spec ("D ccsds").
+// The args ride on the Shortcut but never leak into the canonical/display key.
+unittest {
+    auto sc = parseShortcut("D ccsds");
+    assert(sc.args == "ccsds");
+    assert(sc.toCanonical() == "d");        // key spec only — args excluded
+    assert(sc.display() == "D");
+
+    // Argless bindings leave args empty.
+    assert(parseShortcut("Shift+A").args.length == 0);
+
+    // The loader exposes the argstring keyed by canonical form, so the
+    // dispatcher can run the command immediately with it (no args dialog).
+    auto neutral = loadShortcuts("config/shortcuts.yaml");
+    assert(neutral.commandIdByCanon["d"] == "mesh.subdivide");
+    assert(neutral.argsByCanon["d"] == "ccsds");
+    assert(("shift+a" in neutral.argsByCanon) is null);  // argless → absent
+}
+
 unittest {
     auto neutral = loadShortcuts("config/shortcuts.yaml");
     assert(neutral.byCommandId["file.quit"].toCanonical() == "ctrl+q");

@@ -1,8 +1,16 @@
 tools:
-  move:   W
-  rotate: E
-  scale:  R
-  xfrm.transform: Y
+  move:               W
+  rotate:             E
+  scale:              R
+  xfrm.transform:     Y
+  xfrm.elementMove:   T            # MODO: t
+  mesh.mirrorTool:    "Shift+V"    # MODO: shift-v (*.mirror)
+  mesh.loopSliceTool: "Alt+C"      # MODO: alt-c (poly.loopSlice)
+  mesh.sliceTool:     "Shift+C"    # MODO: shift-c (poly.knife)
+  edge.bevel:         B            # MODO: b (*.bevel)
+  poly.bevel:         "Shift+B"    # MODO: shift-b
+  poly.extrude:       "Shift+X"    # MODO: shift-x (*.extrude)
+  edge.extend:        Z            # MODO: z
   prim.cube: ""
 
 commands:
@@ -18,7 +26,16 @@ commands:
   select.drop:           Escape
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
-  mesh.subdivide:        "D"
+  mesh.subdivide:        "D ccsds"          # MODO: d (poly.subdivide ccsds) — applies immediately
+  mesh.subdivide_faceted: "Shift+D"         # MODO: shift-d (faceted)
+  mesh.triple:           "Shift+T"          # MODO: shift-t
+  mesh.flip:             F                  # MODO: f (poly.flip)
+  mesh.spinEdge:         V                  # MODO: v (edge.spinQuads)
+  mesh.setMaterial:      M                  # MODO: m (poly.setMaterial)
+  mesh.copy:             "Cmd+C"            # MODO: ctrl-c → Cmd on macOS
+  mesh.paste:            "Cmd+V"            # MODO: ctrl-v → Cmd on macOS
+  mesh.cut:              "Cmd+X"            # MODO: ctrl-x → Cmd on macOS
+  tool.reset:            "Cmd+D"            # MODO: ctrl-d → Cmd on macOS
   history.undo:          "Cmd+Z"
   history.redo:          "Cmd+Shift+Z"
   mesh.delete:           Backspace
