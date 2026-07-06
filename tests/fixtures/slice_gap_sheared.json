@@ -1,7 +1,7 @@
 {
   "name": "slice_gap_sheared",
-  "description": "Slice tool Gap on a SHEARED (non-axis-aligned) cube (mesh.sliceTool, task 0290 DIRECTION fix). The sheared cube's top face is displaced +X so the plane-crossed edges (top/bottom face edges 0-3, 1-2, 5-6, 4-7) are OBLIQUE to the cut-plane normal. Line in xy (-0.285,-0.168)->(0.969,0.225) extruded along Z (axis=z), infinite ON (whole-mesh cut), split ON + caps ON + gap 0.175 center. The cut duplicates each of the 4 crossing verts into a lo/hi pair (16v/24e/12f) and gap separates each pair ALONG ITS ORIGINAL CROSSED EDGE, not along the plane normal, so both halves of every split edge stay COLLINEAR with the original edge (the reference behavior; the pre-0290 normal push BENT them 0.0673 off the line). PROOF: for each original crossed edge A-B, cross(lo-A, B-A) and cross(hi-A, B-A) are ~0 and the lo-hi separation measured along the edge is exactly 0.175. The collinearity + separation assertions live in the source/mesh.d cutByPlaneEx sheared-cube unittest; here the frozen post-op vertices pin the exact geometry.",
-  "source": "Analytic self-golden captured from vibe3d after the 0290 along-edge fix. Reference rule (gap separates the [lo,hi] pair ALONG the crossed edge, keeping the split edge collinear) confirmed on MODO's own knife split+caps+gap capture toolcards/poly.knife/capture/slice_split_caps_gap.json, where the split-edge verts sit EXACTLY on the original cube edges (perp offset 0.000000) even though the plane normal is oblique to those edges.",
+  "description": "Slice tool Split+Caps+Gap on a SHEARED (non-axis-aligned) cube (mesh.sliceTool, task 0291 two-real-cut fix). The sheared cube's top face is displaced +X so the plane-crossed edges (top/bottom face edges 0-3, 1-2, 5-6, 4-7) are OBLIQUE to the cut-plane normal. Line in xy (-0.285,-0.168)->(0.969,0.225) extruded along Z (axis=z), infinite ON (whole-mesh cut), split ON + caps ON + gap 0.175 center. Task 0291 routes the unrestricted split+gap through TWO REAL parallel plane cuts at center +/- offset*n (offset=0.0875) instead of the task-0290 fixed along-edge slide (which overshoots at a graze vertex on dense/curved cuts): each of the 4 crossed edges now yields TWO seam verts, one per offset plane, placed at the exact edge INTERSECTION with that plane (edge ∩ plane), not a fixed slide distance along the edge. Counts are unchanged (16v/24e/12f) because the two-cut + band-delete model reproduces the SAME vertex SET as the prior slide on this simple (non-sliver) case -- only the seam VALUES move to the exact edge-plane intersection. PROOF: for each original crossed edge A-B, the seam sits at A + t*(B-A) where t solves dot(n, A + t*(B-A) - p) = +/-offset; the source/mesh.d cutByPlaneSplitGap kernel unittests assert the general two-cut composition (axis-cube) and the sliver-immune curved case separately -- here the frozen post-op vertices pin this fixture's exact re-derived geometry.",
+  "source": "Analytic re-derivation (task 0291): seam = edge ∩ (center +/- offset*n) plane, solved directly per crossed edge (t = (offset - dot(n,A-p)) / dot(n,B-A), seam = A + t*(B-A)), NOT by blessing vibe3d's own output. Plane normal n = normalize(cross(end-start, +Z)) and point p = start, matching planeForSlice/cutByPlaneSplitGap exactly. Confirmed each computed point is ON its source edge (cross(seam-A, B-A) ~ 0) and ON its offset plane (dot(n, seam-p) == +/-0.0875) before freezing. This is the reference model per MODO's own knife split+caps+gap capture (toolcards/poly.knife/capture/subdiv_gap/ANALYSIS.md): seam vert = edge INTERSECT (center +/- offset*n) plane, two parallel plane cuts, band between them removed.",
   "tolerance": 0.0001,
   "cases": [
     {
@@ -171,43 +171,43 @@
           0.5
         ],
         [
-          -0.33293,
-          -0.24161,
+          -0.359777,
+          -0.283131,
           -0.5
         ],
         [
-          0.921203,
-          0.151432,
+          -0.211064,
+          -0.053132,
           -0.5
         ],
         [
-          0.921203,
-          0.151432,
+          0.894357,
+          0.109911,
+          -0.5
+        ],
+        [
+          1.04307,
+          0.33991,
+          -0.5
+        ],
+        [
+          0.894357,
+          0.109911,
           0.5
         ],
         [
-          -0.33293,
-          -0.24161,
+          1.04307,
+          0.33991,
           0.5
         ],
         [
-          -0.237911,
-          -0.094653,
-          -0.5
-        ],
-        [
-          1.016223,
-          0.298389,
-          -0.5
-        ],
-        [
-          1.016223,
-          0.298389,
+          -0.359777,
+          -0.283131,
           0.5
         ],
         [
-          -0.237911,
-          -0.094653,
+          -0.211064,
+          -0.053132,
           0.5
         ]
       ]

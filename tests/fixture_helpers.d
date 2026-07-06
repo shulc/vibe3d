@@ -593,6 +593,23 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         }
         cmd("tool.doApply", ctx);
         cmd("tool.set mesh.sliceTool off", ctx);
+    } else if ("subdivide" in step) {
+        // mesh.subdivide (task 0291: builds a dense curved regression mesh —
+        // the Slice split+caps+gap sliver case only reproduces on subdivided
+        // geometry). `times` repeats the command (default 1); `mode` selects
+        // ccsds/flat/smooth (default ccsds, the command's own default — no
+        // explicit mode is sent unless the fixture overrides it, so the
+        // default argstring form `mesh.subdivide` is used).
+        //   { "subdivide": { "times": 2 } }
+        //   { "subdivide": { "times": 2, "mode": "flat" } }
+        auto sd = step["subdivide"];
+        long times = ("times" in sd) ? sd["times"].integer : 1;
+        foreach (_; 0 .. times) {
+            if ("mode" in sd)
+                cmd(format("mesh.subdivide mode:%s", sd["mode"].str), ctx);
+            else
+                cmd("mesh.subdivide", ctx);
+        }
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
