@@ -10433,11 +10433,31 @@ struct Mesh {
     // winding that contains the pair.  Grows isCutVert as needed and marks the
     // new vertex.  Returns the new vertex index.
     //
+    // Endpoint-reuse (F1, task 0295): when t lands within eps of either end,
+    // the corner vertex (edges[ei][0] or edges[ei][1]) is REUSED instead of
+    // inserting a coincident vertex — the corner is already present in every
+    // incident winding, so no splice is needed. isCutVert must still grow to
+    // cover it (BEFORE the mark — the reuse path skips addVertex, so
+    // isCutVert may still be shorter than vertices.length) so
+    // rebuildFacesWithChordSplits treats the corner as a chord endpoint.
+    //
     // Non-manifold edges (3+ incident faces) are out of scope for v1; the splice
     // scans all face windings and inserts into every face that contains the pair.
     // -----------------------------------------------------------------------
-    private uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert) {
+    private uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert, float eps = 1e-5f) {
         uint a = edges[ei][0], b = edges[ei][1];
+
+        if (t <= eps) {
+            if (isCutVert.length < vertices.length) isCutVert.length = vertices.length;
+            isCutVert[a] = true;
+            return a;
+        }
+        if (t >= 1.0f - eps) {
+            if (isCutVert.length < vertices.length) isCutVert.length = vertices.length;
+            isCutVert[b] = true;
+            return b;
+        }
+
         Vec3 vm = Vec3(
             vertices[a].x + t * (vertices[b].x - vertices[a].x),
             vertices[a].y + t * (vertices[b].y - vertices[a].y),
@@ -10615,8 +10635,36 @@ struct Mesh {
         return p ? *p : ~0u;
     }
 
+    // Public accessor over edgeIndexOfVerts (task 0295, F2) — the chain tool
+    // lives in a separate module and needs to re-resolve a destination edge
+    // by its stable vertex pair every frame (vertex pairs, unlike edge
+    // indices, survive an intervening edgeSlice's rebuildEdges()).
+    uint edgeIndexOf(uint a, uint b) {
+        return edgeIndexOfVerts(a, b);
+    }
+
     // -----------------------------------------------------------------------
-    // edgeSlice — cut a strip from edge edgeA to edge edgeB.
+    // EdgeSliceResult — edgeSliceEx's return value (task 0295, F2).
+    //
+    // cutVertA/cutVertB surface insertEdgePoint's already-computed return
+    // index for the first (edgeA/tA) and last (edgeB/tB) cut, so a caller
+    // chaining several edgeSliceEx calls into a strip-cut CHAIN can thread
+    // the EXACT shared vertex into the next segment's seed instead of
+    // scanning for a coincident world position (which fails outright for an
+    // F1 endpoint-reuse cut, whose index is < the pre-cut vertex count).
+    // ~0u means "no cut point inserted" (a guard-failure no-op).
+    // -----------------------------------------------------------------------
+    struct EdgeSliceResult {
+        size_t facesSplit = 0;
+        uint   cutVertA   = ~0u;
+        uint   cutVertB   = ~0u;
+    }
+
+    // -----------------------------------------------------------------------
+    // edgeSliceEx — cut a strip from edge edgeA to edge edgeB; edgeSlice's
+    // full engine, returning the cut-vertex indices alongside the face-split
+    // count (task 0295, F2). edgeSlice (below) is a back-compat wrapper —
+    // every existing caller keeps its byte-stable size_t-returning signature.
     //
     // Finds the shortest dual-graph path (BFS over face adjacency) from any face
     // incident to edgeA to any face incident to edgeB.  Inserts a cut point on
@@ -10628,34 +10676,166 @@ struct Mesh {
     // tA, tB: position along edgeA/edgeB measured from edges[][0] to edges[][1].
     // The internal endpoint ordering is opaque (dedup order); default 0.5 is
     // always safe and symmetric.  Non-0.5 values follow the stored edge order.
+    // t == 0 / t == 1 (task 0295, F1) is a valid endpoint cut: insertEdgePoint
+    // REUSES the corner vertex edges[e][0]/[1] instead of inserting a
+    // coincident one, so the chord connects to the existing corner — the
+    // closed-interval clamp below (unlike the pre-F1 open-interval clamp)
+    // deliberately allows this.
     //
     // splitPolygons (default true): when false, only the two cut points are
     // inserted (on edgeA at tA, on edgeB at tB) — no chord, no path faces
     // touched at all. Byte-identical to the pre-existing behaviour when true
     // (the default), so every existing caller is unaffected.
     //
-    // Returns the number of faces split; 0 = no-op (dead-end / same edge / OOB).
-    // With splitPolygons==false a successful two-point insert returns 2 (a
-    // nonzero success marker distinct from "no-op") rather than a face-split
-    // count, since no face is split in that mode.
+    // Returns facesSplit = the number of faces split; 0 = no-op (dead-end /
+    // same edge / OOB), in which case cutVertA/cutVertB stay ~0u. With
+    // splitPolygons==false a successful two-point insert sets facesSplit = 2
+    // (a NONZERO SUCCESS MARKER, not a literal inserted-vertex count — under
+    // F1 an endpoint insert reuses a corner and adds no vertex at all; if
+    // BOTH tA and tB resolve to endpoints the points-only cut is a
+    // geometric no-op yet still reports facesSplit = 2 with cutVertA/cutVertB
+    // set to the two reused corners) rather than a face-split count, since no
+    // face is split in that mode.
     // Caller owns snapshot/undo — this method does NOT capture a snapshot.
+    //
+    // Degenerate guard: if both cut points resolve to the SAME vertex (e.g.
+    // an F1 endpoint cut on each edge lands on a shared corner),
+    // rebuildFacesWithChordSplits sees hits.length == 1 (< 2) on the shared
+    // face, copies it whole, and facesSplit stays 0 — already safe, no new
+    // code needed.
     //
     // Non-manifold meshes (edges shared by 3+ faces) are out of scope for v1.
     // -----------------------------------------------------------------------
-    size_t edgeSlice(uint edgeA, uint edgeB,
+    // -----------------------------------------------------------------------
+    // findChordPath — pure (read-only) face-incidence + dual-graph BFS shared
+    // by edgeSliceEx (below) and edgeSliceReachable (task 0295, W1). Collects
+    // the faces incident to edgeA/edgeB, prefers a single shared face, and
+    // otherwise BFS's the face-adjacency dual graph for the shortest chord
+    // path. Touches no mesh state — safe to call speculatively (e.g. to test
+    // a candidate sub-edge's reachability) without a snapshot/restore
+    // round-trip. Returns false (pathFaces/interiorEdges left empty) for an
+    // out-of-range or identical edge pair, or when no path exists
+    // (disconnected / boundary blocks) — mirroring edgeSliceEx's own
+    // guard-failure no-op.
+    // -----------------------------------------------------------------------
+    private bool findChordPath(uint edgeA, uint edgeB,
+                                out uint[] pathFaces, out uint[] interiorEdges) const
+    {
+        if (edgeA >= edges.length || edgeB >= edges.length) return false;
+        if (edgeA == edgeB) return false;
+
+        // Collect faces incident to each edge (1-2 faces on a manifold mesh).
+        uint[] facesAArr, facesBArr;
+        foreach (f; facesAroundEdge(edgeA)) facesAArr ~= f;
+        foreach (f; facesAroundEdge(edgeB)) facesBArr ~= f;
+        if (facesAArr.length == 0) return false;
+
+        // Sort ascending for deterministic lowest-index preference.
+        import std.algorithm : sort;
+        sort(facesAArr);
+        sort(facesBArr);
+
+        // Fast-lookup set for facesB.
+        bool[uint] facesBSet;
+        foreach (f; facesBArr) facesBSet[f] = true;
+
+        // Case (a): edgeA and edgeB already share a face → single split.
+        uint sharedFace = ~0u;
+        foreach (f; facesAArr) {
+            if (f in facesBSet) { sharedFace = f; break; }
+        }
+
+        if (sharedFace != ~0u) {
+            pathFaces     = [sharedFace];
+            interiorEdges = [];
+            return true;
+        }
+
+        // Case (b): BFS over the face dual graph.
+        // Nodes = faces; arcs = shared edges between adjacent faces.
+        // Multi-source from facesAArr; terminate at the first face in facesBSet.
+        uint[]     queue;
+        bool[uint] visited;
+        uint[uint] parentFace;  // parentFace[g] = face we came from
+        uint[uint] parentEdge;  // parentEdge[g] = shared edge we crossed
+
+        foreach (f; facesAArr) {
+            visited[f] = true;
+            queue ~= f;
+        }
+
+        uint goal = ~0u;
+        while (queue.length > 0) {
+            uint f = queue[0];
+            queue = queue[1 .. $];
+
+            if (f in facesBSet) { goal = f; break; }
+
+            // Walk the face's half-edge ring; cross each twin to an unvisited neighbour.
+            uint startLi = (f < faceLoop.length) ? faceLoop[f] : ~0u;
+            if (startLi == ~0u) continue;
+            uint li = startLi;
+            do {
+                uint twin = loops[li].twin;
+                if (twin != ~0u) {
+                    uint g = loops[twin].face;
+                    if (!(g in visited)) {
+                        visited[g]    = true;
+                        parentFace[g] = f;
+                        parentEdge[g] = loopEdge[li];
+                        queue ~= g;
+                    }
+                }
+                li = loops[li].next;
+            } while (li != startLi);
+        }
+
+        if (goal == ~0u) return false; // no path (disconnected or boundary blocks)
+
+        // Reconstruct ordered face path by walking parentFace back to a root.
+        uint cur = goal;
+        while (cur in parentFace) {
+            interiorEdges = [parentEdge[cur]] ~ interiorEdges;
+            pathFaces     = [parentFace[cur]] ~ pathFaces;
+            cur = parentFace[cur];
+        }
+        pathFaces ~= [goal];
+        return true;
+    }
+
+    // Public, non-mutating reachability probe over the SAME dual-graph BFS
+    // edgeSliceEx uses internally (task 0295, W1). Added so a caller that
+    // only needs the boolean "is there a chord path from edgeA to edgeB" —
+    // e.g. EdgeSliceTool.pickSeedSubEdge probing several candidate sub-edges
+    // per chain segment — no longer has to snapshot/cut/restore the whole
+    // mesh per candidate just to read `facesSplit > 0` back out. `const`: no
+    // mutation, so it's safe to call from a hot per-frame preview rebuild.
+    bool edgeSliceReachable(uint edgeA, uint edgeB) const {
+        uint[] pathFaces, interiorEdges;
+        return findChordPath(edgeA, edgeB, pathFaces, interiorEdges);
+    }
+
+    EdgeSliceResult edgeSliceEx(uint edgeA, uint edgeB,
                      float tA = 0.5f, float tB = 0.5f,
                      bool splitPolygons = true, float eps = 1e-5f)
     {
+        EdgeSliceResult result;
         if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
-            return 0;
-        if (edgeA >= edges.length || edgeB >= edges.length) return 0;
-        if (edgeA == edgeB) return 0;
+            return result;
+        if (edgeA >= edges.length || edgeB >= edges.length) return result;
+        if (edgeA == edgeB) return result;
 
-        // Clamp t-params so cut points are always interior to the edge.
-        if (tA < eps)          tA = eps;
-        if (tA > 1.0f - eps)   tA = 1.0f - eps;
-        if (tB < eps)          tB = eps;
-        if (tB > 1.0f - eps)   tB = 1.0f - eps;
+        // Clamp t-params to the closed unit interval — t==0/1 (F1) is a
+        // valid endpoint cut now that insertEdgePoint reuses the corner
+        // instead of inserting a coincident vertex there; only genuinely
+        // out-of-range input needs clamping. This is a deliberate semantics
+        // change from the pre-F1 open-interval clamp — it also reaches the
+        // `mesh.edgeSlice` command (below): its default-t (0.5/0.5) callers
+        // never touch t==0/1, so they stay byte-identical.
+        if (tA < 0.0f) tA = 0.0f;
+        if (tA > 1.0f) tA = 1.0f;
+        if (tB < 0.0f) tB = 0.0f;
+        if (tB > 1.0f) tB = 1.0f;
 
         // Split-Polygons-OFF (points-only) branch: insert the two cut points
         // and run the SAME finalize tail rebuildFacesWithChordSplits would —
@@ -10668,95 +10848,25 @@ struct Mesh {
         if (!splitPolygons) {
             bool[] isCutVert;
             isCutVert.length = vertices.length;
-            insertEdgePoint(edgeA, tA, isCutVert);
-            insertEdgePoint(edgeB, tB, isCutVert);
+            result.cutVertA = insertEdgePoint(edgeA, tA, isCutVert, eps);
+            result.cutVertB = insertEdgePoint(edgeB, tB, isCutVert, eps);
             clearFaceSelectionResize();
             rebuildEdges();
             clearEdgeSelectionResize();
             buildLoops();
             syncSelection();
             commitChange(MeshEditScope.Geometry);
-            return 2;
+            result.facesSplit = 2;
+            return result;
         }
 
-        // Collect faces incident to each edge (1-2 faces on a manifold mesh).
-        uint[] facesAArr, facesBArr;
-        foreach (f; facesAroundEdge(edgeA)) facesAArr ~= f;
-        foreach (f; facesAroundEdge(edgeB)) facesBArr ~= f;
-        if (facesAArr.length == 0) return 0;
-
-        // Sort ascending for deterministic lowest-index preference.
-        import std.algorithm : sort;
-        sort(facesAArr);
-        sort(facesBArr);
-
-        // Fast-lookup set for facesB.
-        bool[uint] facesBSet;
-        foreach (f; facesBArr) facesBSet[f] = true;
-
+        // Face-incidence + dual-graph BFS factored out into findChordPath
+        // (task 0295, W1) — shared with the read-only edgeSliceReachable
+        // probe above. Same guard-failure no-op (return result unchanged,
+        // facesSplit stays 0) when no path exists.
         uint[] pathFaces;
         uint[] interiorEdges;
-
-        // Case (a): edgeA and edgeB already share a face → single split.
-        uint sharedFace = ~0u;
-        foreach (f; facesAArr) {
-            if (f in facesBSet) { sharedFace = f; break; }
-        }
-
-        if (sharedFace != ~0u) {
-            pathFaces     = [sharedFace];
-            interiorEdges = [];
-        } else {
-            // Case (b): BFS over the face dual graph.
-            // Nodes = faces; arcs = shared edges between adjacent faces.
-            // Multi-source from facesAArr; terminate at the first face in facesBSet.
-            uint[]     queue;
-            bool[uint] visited;
-            uint[uint] parentFace;  // parentFace[g] = face we came from
-            uint[uint] parentEdge;  // parentEdge[g] = shared edge we crossed
-
-            foreach (f; facesAArr) {
-                visited[f] = true;
-                queue ~= f;
-            }
-
-            uint goal = ~0u;
-            while (queue.length > 0) {
-                uint f = queue[0];
-                queue = queue[1 .. $];
-
-                if (f in facesBSet) { goal = f; break; }
-
-                // Walk the face's half-edge ring; cross each twin to an unvisited neighbour.
-                uint startLi = (f < faceLoop.length) ? faceLoop[f] : ~0u;
-                if (startLi == ~0u) continue;
-                uint li = startLi;
-                do {
-                    uint twin = loops[li].twin;
-                    if (twin != ~0u) {
-                        uint g = loops[twin].face;
-                        if (!(g in visited)) {
-                            visited[g]    = true;
-                            parentFace[g] = f;
-                            parentEdge[g] = loopEdge[li];
-                            queue ~= g;
-                        }
-                    }
-                    li = loops[li].next;
-                } while (li != startLi);
-            }
-
-            if (goal == ~0u) return 0; // no path (disconnected or boundary blocks)
-
-            // Reconstruct ordered face path by walking parentFace back to a root.
-            uint cur = goal;
-            while (cur in parentFace) {
-                interiorEdges = [parentEdge[cur]] ~ interiorEdges;
-                pathFaces     = [parentFace[cur]] ~ pathFaces;
-                cur = parentFace[cur];
-            }
-            pathFaces ~= [goal];
-        }
+        if (!findChordPath(edgeA, edgeB, pathFaces, interiorEdges)) return result;
 
         // Ordered cut-edge list: edgeA, interior..., edgeB.
         uint[] cutEdges = [edgeA] ~ interiorEdges ~ [edgeB];
@@ -10770,11 +10880,15 @@ struct Mesh {
 
         // --- Pass 1: insert cut points ---
         // Uses original edge indices; face windings are modified in-place but
-        // face count (faces.length) is stable across Pass-1.
+        // face count (faces.length) is stable across Pass-1. Capture the
+        // FIRST (edgeA/tA) and LAST (edgeB/tB) insert's returned vertex index.
         bool[] isCutVert;
         isCutVert.length = vertices.length;
-        foreach (i, ei; cutEdges)
-            insertEdgePoint(ei, cutT[i], isCutVert);
+        foreach (i, ei; cutEdges) {
+            uint vi = insertEdgePoint(ei, cutT[i], isCutVert, eps);
+            if (i == 0)                   result.cutVertA = vi;
+            if (i == cutEdges.length - 1) result.cutVertB = vi;
+        }
 
         // --- Pass 2: split only the path faces ---
         size_t origFaceCount = faces.length; // stable across Pass-1
@@ -10783,7 +10897,17 @@ struct Mesh {
         foreach (f; pathFaces)
             if (f < origFaceCount) splitMask[f] = true;
 
-        return rebuildFacesWithChordSplits(splitMask, isCutVert);
+        result.facesSplit = rebuildFacesWithChordSplits(splitMask, isCutVert);
+        return result;
+    }
+
+    // Back-compat wrapper — existing callers keep the byte-stable
+    // size_t-returning signature; edgeSliceEx (above) is the engine.
+    size_t edgeSlice(uint edgeA, uint edgeB,
+                     float tA = 0.5f, float tB = 0.5f,
+                     bool splitPolygons = true, float eps = 1e-5f)
+    {
+        return edgeSliceEx(edgeA, edgeB, tA, tB, splitPolygons, eps).facesSplit;
     }
 
     // -----------------------------------------------------------------------
@@ -17454,6 +17578,68 @@ unittest { // edgeSlice: single shared face (cube bottom) — 7 faces, 10 verts
     bool[] refd2 = new bool[](m.vertices.length);
     foreach (face; m.faces) foreach (vi; face) refd2[vi] = true;
     foreach (i, r; refd2) assert(r, "vertex " ~ i.to!string ~ " orphaned after single-face edgeSlice");
+}
+
+unittest { // edgeSlice: endpoint cut (t=0/1) reuses the corner, no new vertex — F1, task 0295
+    auto m = makeCube();
+    // Face 5 = [0,1,5,4] (bottom) — same face as the "single shared face"
+    // unittest above. Edge(0,1) and edge(4,5) are non-adjacent on it; their
+    // DIAGONAL corner combination is {0,5} (the other combination, {1,4}, is
+    // also a valid diagonal — {0,4}/{1,5} are the two ADJACENT/existing-edge
+    // pairs and would hit rebuildFacesWithChordSplits' adjacent-hit guard,
+    // i.e. a no-op). Read the stored edge direction to pick tA/tB so the cut
+    // lands on {0,5} regardless of edges[e][0]/[1]'s (opaque, dedup-order)
+    // storage direction.
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(4, 5);
+    assert(eA != ~0u, "edge(0,1) must exist on cube");
+    assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+    size_t origVerts = m.vertices.length;
+    size_t origEdges = m.edges.length;
+    size_t origFaces = m.faces.length;
+
+    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // lands on vertex 0
+    float tB = (m.edges[eB][0] == 5) ? 0.0f : 1.0f; // lands on vertex 5
+
+    size_t nSplit = m.edgeSlice(eA, eB, tA, tB, /*splitPolygons*/true);
+
+    assert(nSplit == 1, "single shared face chorded once");
+    assert(m.faces.length == origFaces + 1, "6 -> 7 faces (one chord split)");
+    assert(m.vertices.length == origVerts,
+        "endpoint cut reuses BOTH corners — vertex count UNCHANGED (the F1 discriminator)");
+    assert(m.edges.length == origEdges + 1,
+        "only the new chord is a new edge — neither named edge is itself split");
+
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after endpoint edgeSlice");
+
+    // No coincident-position duplicate vertices (the "insert-then-weld"
+    // approach this stage deliberately avoids would leave one here).
+    foreach (i; 0 .. m.vertices.length)
+        foreach (j; i + 1 .. m.vertices.length)
+            assert((m.vertices[i] - m.vertices[j]).length() > 1e-6f,
+                "endpoint cut must not create a coincident duplicate vertex");
+
+    // The chord connects the two REUSED corners (0, 5) directly.
+    assert(m.edgeIndexOfVerts(0, 5) != ~0u, "chord edge (0,5) must exist after endpoint cut");
+}
+
+unittest { // edgeSliceEx: mixed endpoint (t=0, reuse) + interior (t=0.5, new vert) — F1, task 0295
+    auto m = makeCube();
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(4, 5);
+    assert(eA != ~0u); assert(eB != ~0u);
+
+    size_t origVerts = m.vertices.length;
+    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
+
+    auto r = m.edgeSliceEx(eA, eB, tA, 0.5f, /*splitPolygons*/true);
+
+    assert(r.facesSplit == 1, "single shared face chorded once");
+    assert(m.vertices.length == origVerts + 1,
+        "one endpoint (reused) + one interior (new) => +1 vertex only");
+    assert(r.cutVertA == 0, "cutVertA must be the REUSED corner (vertex 0), not a fresh index");
+    assert(r.cutVertB == origVerts, "cutVertB must be the newly appended interior vertex");
 }
 
 unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0
