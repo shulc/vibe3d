@@ -47,25 +47,36 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 }
 
 // ---------------------------------------------------------------------------
-// EdgeSliceTool — interactive two-edge strip cut (factory id
-// `mesh.edgeSliceTool`), driving the EXISTING `Mesh.edgeSlice(edgeA, edgeB,
-// tA, tB, splitPolygons)` kernel unchanged. Coexists with the one-shot
-// `mesh.edgeSlice` command (source/commands/mesh/edge_slice.d) — untouched.
+// EdgeSliceTool — interactive N-cut chain (factory id `mesh.edgeSliceTool`),
+// driving the EXISTING `Mesh.edgeSliceEx(edgeA, edgeB, tA, tB, splitPolygons)`
+// kernel unchanged. Coexists with the one-shot `mesh.edgeSlice` command
+// (source/commands/mesh/edge_slice.d) — untouched.
 //
-// Gesture (mirrors LoopSliceTool's mutate/revert armed-preview model, adapted
-// to a two-edge phased latch): hover an edge (HoverEdges capability) → click
-// latches edge A (`tA` derived from the click's projection onto the edge,
-// kernel `[0]->[1]` order) → drag scrubs `tA` while the mouse is held → click
-// a second, different edge latches edge B (`tB`) and immediately materialises
-// a live preview cut on the real mesh (mutate/revert, non-cumulative) → the
-// preview STANDS across frames until Enter / tool-drop / a third click, which
-// commits the pair as ONE undo entry and re-seeds the click as a fresh edge A
-// (chainable two-edge cuts, each its own undo).
+// Gesture (task 0295, F2 — supersedes the two-edge-only v1 model): hover an
+// edge (HoverEdges capability) -> click LATCHES a chain point (edge + `t`
+// derived from the click's projection) -> drag scrubs that point's `t` while
+// the mouse is held -> click a second, DISTINCT edge latches a second point
+// and immediately materialises a live preview cut on the real mesh
+// (mutate/revert, non-cumulative) -> a THIRD+ click EXTENDS the chain (does
+// NOT commit-and-reseed — the v1 behaviour this replaces): each new point
+// slices a strip from the previous point's exact cut vertex to the new one,
+// via the SAME `Mesh.edgeSliceEx`. The whole chain stands as ONE uncommitted
+// preview across frames until Enter / tool-drop, which commits every latched
+// segment as ONE undo entry.
 //
-// Headless (`tool.set mesh.edgeSliceTool on; tool.attr ... edges [eA,eB]; ...;
-// tool.doApply`) reads `edgesParam_`/`tA_`/`tB_`/`split_` directly and NEVER
-// touches `armed_`/`scrubbing_`/session state — `ToolDoApplyCommand` wraps its
-// own snapshot pair around `applyHeadless()`.
+// F1 (task 0295): a click landing at t=0/1 (an edge endpoint) is a valid
+// cut — the kernel reuses the existing corner vertex instead of inserting a
+// coincident one (see `insertEdgePoint`, mesh.d). This is also the mechanism
+// that lets a chain segment continue exactly from the previous segment's
+// shared cut vertex (`pickSeedSubEdge` below).
+//
+// Headless (`tool.set mesh.edgeSliceTool on; tool.attr ... edges [e0,e1,...];
+// ...; tool.doApply`) reads `edgesParam_`/`tA_`/`tB_`/`split_` directly and
+// NEVER touches `armed_`/`scrubbing_`/session state — `ToolDoApplyCommand`
+// wraps its own snapshot pair around `applyHeadless()`. A deterministic
+// `chainArm` trigger param (picker-free) arms the SAME chain state a click
+// sequence would produce, without committing, so a synthetic Enter / tool-off
+// can exercise the real interactive commit path in a test.
 // ---------------------------------------------------------------------------
 final class EdgeSliceTool : Tool {
 public:
@@ -77,6 +88,23 @@ public:
     ];
 
     enum Phase { Idle, EdgeA, EdgeB }
+
+    // A latched chain click: the edge's endpoint VERTEX PAIR (stable across
+    // an intervening edgeSliceEx's rebuildEdges() — vertex indices only ever
+    // grow, mesh.d:10445) plus a click `t`. The live edge is re-resolved each
+    // bake via `Mesh.edgeIndexOf(v0, v1)`.
+    //
+    // S2: `t`'s meaning differs by producer — `tFromClick` (interactive
+    // latch/scrub path) already returns `effectiveT(raw)`, so `t` here is the
+    // EFFECTIVE value; `pointsFromEdgesParam` (headless `edges`-param path)
+    // stores the RAW panel value (`tA_`/`tB_`/0.5f interior) straight through,
+    // unconverted. Both `bakeChainFrom` and `chainPointPos` re-apply
+    // `effectiveT(p.t)` unconditionally, which is safe for the
+    // already-effective interactive case ONLY because `effectiveT` is
+    // idempotent (re-clamping/re-snapping/re-forcing-to-middle an already
+    // effective value reproduces it) — so the double application never
+    // changes the interactive path's result.
+    private struct ChainPoint { uint v0, v1; float t; }
 
 private:
     Mesh* delegate() meshSrc_;
@@ -99,37 +127,44 @@ private:
     float snap_   = 0.5f;
     Show  show_   = Show.Position;
 
-    // Headless "edges" param (IntArray) — kept in sync with edgeA_/edgeB_ by
-    // the interactive latch so the two paths converge on one kernel call.
+    // Headless "edges" param (IntArray) — the ordered chain edge list.
+    // Kept in sync with latchedPoints_ by the interactive latch so the two
+    // paths converge on the same kernel calls.
     uint[] edgesParam_;
 
-    // Latch state (per-gesture, reset by reinitSession/dropArmedPreview).
-    int   edgeA_ = -1;
-    int   edgeB_ = -1;
-    float tA_    = 0.5f;
-    float tB_    = 0.5f;
+    // Deterministic commit driver (task 0295, F2, objection 2 — picker-free
+    // test coverage of commitChain/deactivate-commit). Its VALUE is unused —
+    // writing it is purely a trigger; onParamChanged("chainArm") reads
+    // edgesParam_ fresh and arms the chain it describes without committing.
+    uint[] chainArm_;
+
+    // Confirmed chain points — advances ONLY at click-latch (or chainArm),
+    // clears ONLY at commit/cancel. NEVER mutated by preview rebuilds.
+    ChainPoint[]  latchedPoints_;
+    MeshSnapshot  chainBefore_;   // the ONE undo baseline for the whole chain
+
+    // Headless-only "first t" / "last t" (interior points default to 0.5 —
+    // a deliberate v1 surface limitation, see pointsFromEdgesParam). Also
+    // double as panel params for the LAST interactively-latched point's
+    // scrub display (see onMouseMotion).
+    float tA_ = 0.5f;
+    float tB_ = 0.5f;
     Phase phase_ = Phase.Idle;
 
-    // Latched edge rails, world space, in the KERNEL's `[0]->[1]` direction
-    // (mesh.edges[e][0..1]) — so the click->t projection and the drawn handle
-    // agree with where `Mesh.edgeSlice` actually cuts.
-    Vec3 railA0_, railA1_;
-    Vec3 railB0_, railB1_;
-
     // Session state (mirrors LoopSliceTool's Model B: arm-then-commit
-    // standing preview).
+    // standing preview), generalised from a single pair to an N-point chain.
     bool         active;
-    bool         armed_;       // a standing two-edge preview sits on the real mesh
-    bool         scrubbing_;   // a latched edge's `t` is being dragged
-    bool         built_;       // true once the last rebuildPreview() materialised a cut
+    bool         armed_;       // >=2 points latched -> a standing preview sits on the real mesh
+    bool         scrubbing_;   // the last latched point's `t` is being dragged
+    bool         built_;       // true once the last bake actually produced a cut
     int          dragPart_ = -1;
-    MeshSnapshot before_;      // idle baseline: mesh == before_ whenever !armed_
     MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / layer switch)
     Viewport     cachedVp;
 
-    // Cut-point handles (lazily built inside a live GL context).
-    BoxHandler  handleA_, handleB_;
-    ToolHandles toolHandles_;
+    // Cut-point handles (lazily built inside a live GL context) — one per
+    // latched point, plus one for the pending (hover-derived) point.
+    BoxHandler[] handles_;
+    ToolHandles  toolHandles_;
 
     enum float HANDLE_HALF_PX = 5.0f;
     enum Vec3  HANDLE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
@@ -167,6 +202,7 @@ public:
     override Param[] params() {
         return [
             Param.intArray_("edges", "Edges", &edgesParam_).transient(),
+            Param.intArray_("chainArm", "Chain Arm", &chainArm_).transient(),
             Param.float_("tA", "t on Edge A", &tA_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.float_("tB", "t on Edge B", &tB_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.bool_("split", "Split Polygons", &split_, true),
@@ -178,29 +214,45 @@ public:
 
     // Pure `t` law shared by BOTH the interactive scrub (tFromClick) and the
     // headless path (applyHeadless) so they never diverge: Split at Middle
-    // forces 0.5 first, then Snap Value quantizes, then clamp to the kernel's
-    // open interval.
+    // forces 0.5 first, then Snap Value quantizes, then clamp to the closed
+    // unit interval. task 0295 F1: the clamp is CLOSED ([0,1]) — t==0/1 is a
+    // valid endpoint cut (the kernel reuses the corner instead of inserting a
+    // coincident vertex there), so it no longer needs the open-interval
+    // buffer the pre-F1 tool used.
     public float effectiveT(float raw) const {
         float t = middle_ ? 0.5f : raw;
         if (snap_ > 0.0f) {
             float step = snap_ / 100.0f;
             t = round(t / step) * step;
         }
-        enum float eps = 1e-4f;
-        if (t < eps)        t = eps;
-        if (t > 1.0f - eps) t = 1.0f - eps;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
         return t;
     }
 
     // Test-introspection (GET /api/tool/state) — mirrors LoopSliceTool.toolStateJson.
+    // edgeA/tA report the FIRST latched point, edgeB/tB the LAST — so a
+    // replay test can assert chain growth (edgeB advances with every click;
+    // edgeA is stable since the chain's first point is never re-cut).
     public override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
         root["tool"]        = JSONValue("edgeSlice");
         root["hoveredEdge"] = JSONValue(g_hoveredEdge);
-        root["edgeA"]       = JSONValue(edgeA_);
-        root["edgeB"]       = JSONValue(edgeB_);
-        root["tA"]          = JSONValue(effectiveT(tA_));
-        root["tB"]          = JSONValue(effectiveT(tB_));
+
+        int   edgeAOut = -1, edgeBOut = -1;
+        float tAOut = 0.5f, tBOut = 0.5f;
+        if (latchedPoints_.length > 0) {
+            auto first = latchedPoints_[0];
+            auto last  = latchedPoints_[$ - 1];
+            edgeAOut = cast(int)mesh.edgeIndexOf(first.v0, first.v1);
+            edgeBOut = cast(int)mesh.edgeIndexOf(last.v0, last.v1);
+            tAOut    = effectiveT(first.t);
+            tBOut    = effectiveT(last.t);
+        }
+        root["edgeA"] = JSONValue(edgeAOut);
+        root["edgeB"] = JSONValue(edgeBOut);
+        root["tA"]    = JSONValue(tAOut);
+        root["tB"]    = JSONValue(tBOut);
         final switch (phase_) {
             case Phase.Idle:  root["phase"] = JSONValue("idle");  break;
             case Phase.EdgeA: root["phase"] = JSONValue("edgeA"); break;
@@ -212,10 +264,15 @@ public:
         root["middle"] = JSONValue(middle_);
         root["snap"]   = JSONValue(snap_);
         root["show"]   = JSONValue(wireTagForValue(showTable, cast(int)show_));
+        // Pure derivation (NOT a counter) — the number of BAKED segments the
+        // current latched chain describes.
+        root["chainSegments"] = JSONValue(
+            latchedPoints_.length >= 1 ? cast(long)(latchedPoints_.length - 1) : 0L);
         return root;
     }
 
-    // Test-introspection (GET /api/tool/handles) — parts 0 (edge A) / 1 (edge B).
+    // Test-introspection (GET /api/tool/handles) — one part per latched point
+    // plus the pending one (see draw()).
     override JSONValue toolHandlesJson() const {
         return toolHandles_ is null ? JSONValue(null) : toolHandles_.toJson(cachedVp);
     }
@@ -226,61 +283,57 @@ public:
     }
 
     private void reinitSession() {
-        armed_     = false;
-        scrubbing_ = false;
-        built_     = false;
-        phase_     = Phase.Idle;
-        edgeA_     = -1;
-        edgeB_     = -1;
-        tA_        = 0.5f;
-        tB_        = 0.5f;
-        edgesParam_ = [];
-        dragPart_  = -1;
+        armed_      = false;
+        scrubbing_  = false;
+        built_      = false;
+        phase_      = Phase.Idle;
+        latchedPoints_ = [];
+        edgesParam_    = [];
+        dragPart_   = -1;
         // split_/middle_/snap_/show_ deliberately NOT reset — sticky tool
         // options, matching Slice's other panel settings (Loop-Slice, unlike
         // Slice, DOES reset its own options in reinitSession — not the
         // analogue here).
         armedKey_.invalidate();
-        before_ = MeshSnapshot.capture(*mesh);
+        chainBefore_ = MeshSnapshot.init;
     }
 
     override void deactivate() {
-        // An armed+built standing preview is a deliberate placement — commit
-        // it on tool-drop, same as Loop Slice. An armed-but-unbuilt edge case
-        // cancels instead. Both self-guard against a mesh swapped out from
-        // under us via armedKey_ (see commitEdit/cancelLiveEdit) — but for the
-        // two KNOWN swap sites (scene.reset/file.new, active-layer switch)
-        // app.d calls dropArmedPreview() explicitly BEFORE this ever runs.
-        if (active && armed_) {
-            if (built_) commitEdit();
-            else        cancelLiveEdit();
+        // A chain of >=2 latched points is a deliberate placement — commit it
+        // on tool-drop, same as Loop Slice, REGARDLESS of whether a pending
+        // (unlatched) tip was being previewed. A lone latched point (or none)
+        // has nothing worth keeping, so it cancels instead.
+        if (active) {
+            if (latchedPoints_.length >= 2) commitChain();
+            else                            cancelLiveEdit();
         }
         active = false;
         dropArmedPreview();
         // Release the cut-point handles' GL objects (VAO+VBO each) — a fresh
         // tool instance is built per activation, so without this every
-        // activate->draw->deactivate cycle leaks 2 VAOs + 2 VBOs.
-        if (handleA_ !is null) { handleA_.destroy(); handleA_ = null; }
-        if (handleB_ !is null) { handleB_.destroy(); handleB_ = null; }
+        // activate->draw->deactivate cycle leaks a VAO+VBO per handle.
+        foreach (h; handles_) if (h !is null) h.destroy();
+        handles_ = [];
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && armed_;
+        return active && (armed_ || latchedPoints_.length > 0);
     }
 
     public override void cancelUncommittedEdit() {
         cancelLiveEdit();
     }
 
-    // A standing armed preview sits on the mesh across arbitrary frames, so a
-    // REDO reachable while armed must cancel it first (mirrors LoopSliceTool).
+    // A standing armed preview (or even a lone latched point) sits on the
+    // mesh across arbitrary frames, so a REDO reachable while any chain state
+    // is live must cancel it first (mirrors LoopSliceTool).
     public override bool cancelsOnRedo() const {
-        return active && armed_;
+        return active && (armed_ || latchedPoints_.length > 0);
     }
 
     public override void resyncSession() {
         if (!active) return;
-        if (armed_)  return;   // only commit/cancel may end an armed session
+        if (armed_ || latchedPoints_.length > 0) return;   // only commit/cancel may end a live chain
         reinitSession();
     }
 
@@ -290,15 +343,15 @@ public:
     /// under this tool (scene.reset / active-layer switch) — see the two
     /// swap-site call sites in app.d.
     public void dropArmedPreview() {
-        armed_      = false;
-        scrubbing_  = false;
-        built_      = false;
-        phase_      = Phase.Idle;
-        edgeA_      = -1;
-        edgeB_      = -1;
-        edgesParam_ = [];
-        dragPart_   = -1;
+        armed_         = false;
+        scrubbing_     = false;
+        built_         = false;
+        phase_         = Phase.Idle;
+        latchedPoints_ = [];
+        edgesParam_    = [];
+        dragPart_      = -1;
         armedKey_.invalidate();
+        chainBefore_   = MeshSnapshot.init;
     }
 
     override void evaluate() {}
@@ -309,7 +362,14 @@ public:
     // Snap Value, or editing tA/tB directly (rather than scrubbing the
     // handle), would silently wait for the next scrub to take effect.
     // `show` is display-only and never touches geometry.
+    //
+    // `chainArm` (task 0295, F2, objection 2) runs BEFORE the `!armed_` guard
+    // — it is the deterministic, picker-free chain driver: it arms the exact
+    // chain state a click sequence over edgesParam_ would produce, without
+    // committing, so a subsequent real Enter / tool-drop exercises the
+    // genuine commitChain()/deactivate() path.
     override void onParamChanged(string pname) {
+        if (pname == "chainArm") { armChain(); return; }
         if (!armed_) return;
         if (pname == "split" || pname == "middle" || pname == "snap"
             || pname == "tA" || pname == "tB")
@@ -318,14 +378,17 @@ public:
 
     // -------------------------------------------------------------------
     // Headless apply (tool.doApply). Reads edgesParam_/tA_/tB_/split_ ONLY —
-    // MUST NOT touch armed_/scrubbing_/phase_/session state; ToolDoApplyCommand
-    // wraps this with its own snapshot pair.
+    // MUST NOT touch armed_/scrubbing_/phase_/latchedPoints_/session state;
+    // ToolDoApplyCommand wraps this with its own snapshot pair. Accepts an
+    // N-edge chain (length >= 2) via the SAME bakeChainFrom engine the
+    // interactive path uses.
     // -------------------------------------------------------------------
     override bool applyHeadless() {
-        if (edgesParam_.length != 2) return false;
-        size_t nSplit = mesh.edgeSlice(edgesParam_[0], edgesParam_[1],
-                                       effectiveT(tA_), effectiveT(tB_), split_);
-        if (nSplit == 0) return false;
+        auto pts = pointsFromEdgesParam();
+        if (pts.length < 2) return false;
+        auto baseline = MeshSnapshot.capture(*mesh);
+        size_t n = bakeChainFrom(baseline, pts);
+        if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -338,55 +401,47 @@ public:
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         if (*editMode != EditMode.Edges)    return false;
 
-        final switch (phase_) {
-            case Phase.Idle: {
-                int h = g_hoveredEdge;
-                if (h < 0 || h >= cast(int)mesh.edges.length) return false;
-                latchEdgeA(h, cast(float)e.x, cast(float)e.y);
-                return true;
-            }
-            case Phase.EdgeA: {
-                int h = g_hoveredEdge;
-                if (h < 0 || h >= cast(int)mesh.edges.length || h == edgeA_) return false;
-                edgeB_  = h;
-                railB0_ = mesh.vertices[mesh.edges[edgeB_][0]];
-                railB1_ = mesh.vertices[mesh.edges[edgeB_][1]];
-                tB_     = tFromClick(railB0_, railB1_, cast(float)e.x, cast(float)e.y);
-                phase_      = Phase.EdgeB;
-                armed_      = true;
-                scrubbing_  = true;
-                dragPart_   = 1;
-                edgesParam_ = [cast(uint)edgeA_, cast(uint)edgeB_];
-                armedKey_.stamp(*mesh);
-                rebuildPreview();
-                return true;
-            }
-            case Phase.EdgeB: {
-                // Bake the current two-edge cut as one undo entry, then treat
-                // this click as a fresh Idle -> EdgeA on the hovered edge
-                // (chainable two-edge cuts, each its own undo).
-                if (built_) commitEdit(); else cancelLiveEdit();
-                int h = g_hoveredEdge;
-                if (h < 0 || h >= cast(int)mesh.edges.length) return true;
-                latchEdgeA(h, cast(float)e.x, cast(float)e.y);
-                return true;
-            }
+        int h = g_hoveredEdge;
+        if (h < 0 || h >= cast(int)mesh.edges.length) return false;
+
+        if (phase_ == Phase.Idle) {
+            latchFirstPoint(h, cast(float)e.x, cast(float)e.y);
+            return true;
         }
+
+        // EdgeA (1 point latched) or EdgeB (>=2 latched): a further click
+        // EXTENDS the chain (task 0295, F2) — it no longer commits+reseeds
+        // (the v1 behaviour this replaces). Reject a click on the SAME edge
+        // as the last latched point (no zero-length segment).
+        //
+        // S3: explicit uint comparison rather than `cast(int)lastEdge == h`
+        // — the old form only worked because edgeIndexOf's ~0u "not found"
+        // sentinel casts to -1, which can never coincide with `h` (already
+        // guarded non-negative above); that safety was implicit in the
+        // wraparound, not stated. Guard the sentinel by name instead.
+        uint lastEdge = mesh.edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
+        if (lastEdge != ~0u && lastEdge == cast(uint)h) return false;
+        appendPoint(h, cast(float)e.x, cast(float)e.y);
+        return true;
     }
 
+    // Only touches the mesh (via rebuildPreview) while ACTIVELY SCRUBBING an
+    // already-latched point AND armed_ (>=2 points, so a bake is meaningful).
+    // Mere hovering between clicks must NEVER mutate the mesh: the app's own
+    // picker (g_hoveredEdge) is re-evaluated against whatever the CURRENT
+    // mesh looks like, so a speculative hover-triggered cut would desync the
+    // NEXT click's captured vertex pair from chainBefore_'s indices (a
+    // restore-then-index-out-of-bounds hazard). The "live between click 1
+    // and click 2" preview is covered by draw()'s own non-mutating
+    // hover-derived pending point/line — no mesh write needed for that.
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (!active || !scrubbing_) return false;
-        final switch (phase_) {
-            case Phase.Idle:
-                return false;   // unreachable while scrubbing_
-            case Phase.EdgeA:
-                tA_ = tFromClick(railA0_, railA1_, cast(float)e.x, cast(float)e.y);
-                return true;
-            case Phase.EdgeB:
-                tB_ = tFromClick(railB0_, railB1_, cast(float)e.x, cast(float)e.y);
-                if (armed_) rebuildPreview();
-                return true;
-        }
+        if (!active || !scrubbing_ || latchedPoints_.length == 0) return false;
+        auto last = latchedPoints_[$ - 1];
+        latchedPoints_[$ - 1].t = tFromClick(
+            mesh.vertices[last.v0], mesh.vertices[last.v1],
+            cast(float)e.x, cast(float)e.y);
+        if (armed_) rebuildPreview();
+        return true;
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -394,17 +449,17 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         scrubbing_ = false;
         dragPart_  = -1;
-        // Model B: mouse-up never commits — the preview (once built) STAYS
-        // armed until Enter / tool-drop / a third click.
+        // Model B: mouse-up never commits — the preview (once built) STANDS
+        // until Enter / tool-drop / another click extends it.
         return true;
     }
 
     override bool onKeyDown(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
-        if (!active || !armed_) return false;
+        if (!active || latchedPoints_.length == 0) return false;
         switch (e.keysym.sym) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                commitEdit();
+                commitChain();
                 return true;
             case SDLK_ESCAPE:
                 cancelLiveEdit();
@@ -416,60 +471,145 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         if (!visualOnly) cachedVp = vp;
-        if (!active) return;
-        if (phase_ == Phase.Idle) return;
+        if (!active || latchedPoints_.length == 0) return;
 
-        if (handleA_ is null) {
-            handleA_     = new BoxHandler(railA0_, HANDLE_COLOR);
-            handleB_     = new BoxHandler(railB0_, HANDLE_COLOR);
-            toolHandles_ = new ToolHandles();
+        Vec3[] positions;
+        positions.length = latchedPoints_.length;
+        foreach (i, p; latchedPoints_) positions[i] = chainPointPos(p);
+
+        // The pending (hover-derived, not-yet-latched) point — previews the
+        // NEXT segment live (a strict superset of v1's "preview only after
+        // the 2nd click"; deliberate, topology unaffected).
+        bool  havePending = false;
+        Vec3  pendingPos;
+        float pendingT = 0.0f;
+        int h = g_hoveredEdge;
+        if (h >= 0 && h < cast(int)mesh.edges.length) {
+            uint lastEdge = mesh.edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
+            if (cast(int)lastEdge != h) {
+                Vec3 r0 = mesh.vertices[mesh.edges[h][0]];
+                Vec3 r1 = mesh.vertices[mesh.edges[h][1]];
+                int mx, my;
+                queryMouse(mx, my);
+                pendingT    = tFromClick(r0, r1, cast(float)mx, cast(float)my);
+                pendingPos  = lerpVec3(r0, r1, pendingT);
+                havePending = true;
+            }
         }
+
+        size_t total = positions.length + (havePending ? 1 : 0);
+        ensureHandleCount(total);
 
         immutable float handleScale = HANDLE_HALF_PX / getGizmoPixels();
-
-        float teA  = effectiveT(tA_);
-        Vec3  posA = lerpVec3(railA0_, railA1_, teA);
-        handleA_.pos  = posA;
-        handleA_.size = gizmoSize(posA, vp, handleScale);
-
-        bool haveB = phase_ == Phase.EdgeB;
-        float teB  = 0.0f;
-        Vec3  posB;
-        if (haveB) {
-            teB  = effectiveT(tB_);
-            posB = lerpVec3(railB0_, railB1_, teB);
-            handleB_.pos  = posB;
-            handleB_.size = gizmoSize(posB, vp, handleScale);
-        }
-
-        if (haveB)
-            drawWorldSegment(posA, posB, vp, CHORD_COLOR, 2.0f, shader.program);
-
         toolHandles_.begin();
-        toolHandles_.add(handleA_, 0);
-        if (haveB) toolHandles_.add(handleB_, 1);
+        foreach (i, pos; positions) {
+            handles_[i].pos  = pos;
+            handles_[i].size = gizmoSize(pos, vp, handleScale);
+            toolHandles_.add(handles_[i], cast(int)i);
+        }
+        if (havePending) {
+            handles_[$ - 1].pos  = pendingPos;
+            handles_[$ - 1].size = gizmoSize(pendingPos, vp, handleScale);
+            toolHandles_.add(handles_[$ - 1], cast(int)(total - 1));
+        }
         toolHandles_.setHaul(dragPart_);
         int mx, my;
         queryMouse(mx, my);
         toolHandles_.update(mx, my, vp);
 
-        handleA_.draw(shader, vp);
-        if (haveB) handleB_.draw(shader, vp);
+        // Chords between consecutive LATCHED points are already baked into
+        // the mesh (real edges — the normal edge-draw pass renders them); the
+        // PENDING chord is the only one that needs an explicit world-space
+        // line, since it isn't baked yet.
+        if (havePending)
+            drawWorldSegment(positions[$ - 1], pendingPos, vp, CHORD_COLOR, 2.0f, shader.program);
 
-        if (show_ == Show.Position)
-            drawHud(vp, haveB ? posB : posA, haveB ? teB : teA);
+        foreach (hd; handles_) hd.draw(shader, vp);
+
+        if (show_ == Show.Position) {
+            Vec3  anchor = havePending ? pendingPos : positions[$ - 1];
+            float t      = havePending ? pendingT   : effectiveT(latchedPoints_[$ - 1].t);
+            drawHud(vp, anchor, t);
+        }
     }
 
 private:
-    void latchEdgeA(int h, float sx, float sy) {
-        edgeA_  = h;
-        railA0_ = mesh.vertices[mesh.edges[edgeA_][0]];
-        railA1_ = mesh.vertices[mesh.edges[edgeA_][1]];
-        tA_     = tFromClick(railA0_, railA1_, sx, sy);
-        phase_      = Phase.EdgeA;
-        scrubbing_  = true;
-        dragPart_   = 0;
-        edgesParam_ = [cast(uint)edgeA_];
+    void latchFirstPoint(int h, float sx, float sy) {
+        chainBefore_ = MeshSnapshot.capture(*mesh);
+        ChainPoint p;
+        p.v0 = mesh.edges[h][0];
+        p.v1 = mesh.edges[h][1];
+        p.t  = tFromClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        latchedPoints_ = [p];
+        edgesParam_    = [cast(uint)h];
+        phase_     = Phase.EdgeA;
+        scrubbing_ = true;
+        dragPart_  = 0;
+        armedKey_.stamp(*mesh);
+        // No cut yet — armed_/built_ stay false until a second point latches.
+    }
+
+    void appendPoint(int h, float sx, float sy) {
+        ChainPoint p;
+        p.v0 = mesh.edges[h][0];
+        p.v1 = mesh.edges[h][1];
+        p.t  = tFromClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        latchedPoints_ ~= p;
+        edgesParam_    ~= cast(uint)h;
+        armed_     = true;
+        scrubbing_ = true;
+        dragPart_  = cast(int)(latchedPoints_.length - 1);
+        phase_     = Phase.EdgeB;
+        armedKey_.stamp(*mesh);
+        rebuildPreview();
+    }
+
+    // Deterministic chain driver (task 0295, F2, objection 2): reads
+    // edgesParam_ fresh and arms the chain it describes without committing,
+    // so a subsequent real onKeyDown/deactivate exercises the genuine
+    // commitChain() path in a picker-free test.
+    void armChain() {
+        auto pts = pointsFromEdgesParam();
+        if (pts.length < 2) return;
+        latchedPoints_ = pts;
+        chainBefore_   = MeshSnapshot.capture(*mesh);
+        size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
+        // Stamp AFTER baking — bakeChainFrom mutates the mesh (bumps
+        // mutationVersion), so stamping before it would leave armedKey_
+        // stale the instant this returns, and commitChain()'s
+        // armedKey_.matches() guard would then (wrongly) treat the just-armed
+        // chain as clobbered-from-under-us and drop it without recording.
+        armedKey_.stamp(*mesh);
+        armed_ = true;
+        built_ = n > 0;
+        phase_ = Phase.EdgeB;
+        // S1: bakeChainFrom just mutated the mesh — keep the GPU upload +
+        // screen-space caches in step (mirrors rebuildPreview/commitChain),
+        // so this stays consistent if ever exercised with a visible window.
+        refreshCaches();
+    }
+
+    // Build a ChainPoint[] from edgesParam_ against the CURRENT mesh — shared
+    // by applyHeadless (baseline == current mesh, nothing cut yet) and
+    // armChain (same precondition: the deterministic driver arms straight
+    // from the idle mesh). Interior points (neither first nor last) default
+    // to t=0.5, mirroring the kernel's own interior convention
+    // (mesh.d edgeSlice's cutT[i]=0.5 for interior path edges) — headless
+    // chains have no per-interior-t param (a deliberate v1 surface
+    // limitation; interactive interior points cut at their clicked t).
+    ChainPoint[] pointsFromEdgesParam() const {
+        ChainPoint[] pts;
+        if (edgesParam_.length < 2) return pts;
+        pts.length = edgesParam_.length;
+        foreach (i, ei; edgesParam_) {
+            if (ei >= mesh.edges.length) return null;
+            pts[i].v0 = mesh.edges[ei][0];
+            pts[i].v1 = mesh.edges[ei][1];
+            if (i == 0)                           pts[i].t = tA_;
+            else if (i == edgesParam_.length - 1)  pts[i].t = tB_;
+            else                                   pts[i].t = 0.5f;
+        }
+        return pts;
     }
 
     // Compose the two existing helpers exactly as LoopSliceTool's mesh-drag
@@ -486,6 +626,10 @@ private:
         return effectiveT(raw);
     }
 
+    Vec3 chainPointPos(ChainPoint p) const {
+        return lerpVec3(mesh.vertices[p.v0], mesh.vertices[p.v1], effectiveT(p.t));
+    }
+
     void drawHud(const ref Viewport vp, Vec3 anchor, float t) {
         float sx, sy, ndcZ;
         if (!projectToWindowFull(anchor, vp, sx, sy, ndcZ)) return;
@@ -494,44 +638,171 @@ private:
         dl.AddText(ImVec2(sx + 10.0f, sy - 8.0f), IM_COL32(255, 255, 255, 235), label);
     }
 
-    // The mutate/revert preview: restore the idle baseline, then reapply the
-    // cut from the latched edgeA_/edgeB_ (valid again immediately after the
-    // restore). Guarded by armedKey_: if the mesh underneath an armed preview
-    // was swapped/clobbered by something else since our last touch, drop the
-    // preview instead of restoring/cutting against the WRONG mesh.
-    void rebuildPreview() {
-        if (!before_.filled || edgeA_ < 0 || edgeB_ < 0) return;
-        if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
-        before_.restore(*mesh);
-        size_t n = mesh.edgeSlice(cast(uint)edgeA_, cast(uint)edgeB_,
-                                  effectiveT(tA_), effectiveT(tB_), split_);
-        built_ = n > 0;
-        armedKey_.stamp(*mesh);
-        refreshCaches();
+    void ensureHandleCount(size_t n) {
+        while (handles_.length < n)
+            handles_ ~= new BoxHandler(Vec3(0, 0, 0), HANDLE_COLOR);
+        while (handles_.length > n) {
+            handles_[$ - 1].destroy();
+            handles_.length = handles_.length - 1;
+        }
+        if (toolHandles_ is null) toolHandles_ = new ToolHandles();
     }
 
-    void commitEdit() {
-        if (history is null || factory is null || !before_.filled) return;
-        if (!armedKey_.matches(*mesh)) {
-            // The mesh underneath us was swapped/clobbered since our last
-            // touch — nothing safely ours to commit. Drop instead of
-            // fabricating a bogus undo entry against the wrong mesh.
+    // -------------------------------------------------------------------
+    // bakeChainFrom — the PURE per-frame re-bake (task 0295, F2, objection 1
+    // — the earlier draft's bakeSegment mutated chain counters on every
+    // onMouseMotion, corrupting the seed after the first frame). Restores
+    // `baseline`, walks the polyline ONCE re-cutting each segment via
+    // Mesh.edgeSliceEx, threading the kernel-returned cut vertex as the next
+    // segment's exact seed. Mutates NO tool/chain state — `latchedPoints_`
+    // only ever advances at click-latch/armChain and clears at commit/cancel.
+    //
+    // Returns the number of segments successfully baked (pts.length - 1 on
+    // full success; a smaller count if a later segment's destination edge
+    // doesn't resolve against `baseline` — see the linear-chain limit note
+    // on pointsFromEdgesParam/pickSeedSubEdge — or fails to reach).
+    // -------------------------------------------------------------------
+    size_t bakeChainFrom(ref MeshSnapshot baseline, const ChainPoint[] pts) {
+        if (pts.length < 2) { baseline.restore(*mesh); return 0; }
+        baseline.restore(*mesh);
+
+        uint seed = ~0u;   // no seed for segment 0 — origin resolves via pts[0]
+        foreach (k; 0 .. pts.length - 1) {
+            uint eB = mesh.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
+            if (eB == ~0u) return k;   // destination not a live baseline edge
+
+            Mesh.EdgeSliceResult r;
+            if (k == 0) {
+                uint eA = mesh.edgeIndexOf(pts[0].v0, pts[0].v1);
+                if (eA == ~0u) return k;
+                r = mesh.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
+            } else {
+                uint sub = pickSeedSubEdge(seed, eB);
+                if (sub == ~0u) return k;
+                float endT = (mesh.edges[sub][0] == seed) ? 0.0f : 1.0f;
+                r = mesh.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
+            }
+            // S4: this dead-end check is effectively inert whenever
+            // split_==false — edgeSliceEx's points-only branch (mesh.d)
+            // reports facesSplit=2 as a bare SUCCESS MARKER for any distinct,
+            // in-range edge pair (no face-path/connectivity requirement at
+            // all in that mode), so it can only ever be 0 or 2 here, never a
+            // real "dead end" signal. It only bites when split_==true.
+            if (r.facesSplit == 0) return k;
+            seed = r.cutVertB;   // NEXT segment's exact seed — no position scanning
+        }
+        return pts.length - 1;
+    }
+
+    // Continuation sub-edge choice (task 0295, F2, decision #2 — the
+    // residual ambiguity: `seed` is a shared endpoint of the (typically 2-3)
+    // live edges left after the previous segment's cut: the two half-edges
+    // of the just-split edge, plus that face's own new chord edge). Keep the
+    // one that reaches destEdge with a non-degenerate path; tie-break by
+    // proximity to destEdge's midpoint, then lowest edge index.
+    // `vibe3d-divergence`: the SDK is silent on which faces the reference
+    // chords here — the bar is a valid, duplicate-free chain (the measured
+    // seg-2 capture's shared-vertex reuse), not face-choice parity.
+    //
+    // W1 (perf): `reaches` used to be read back from a REAL
+    // `mesh.edgeSliceEx(sub, destEdge, ..., split_)` call wrapped in a
+    // `MeshSnapshot.capture`/`restore` probe — a whole-mesh dup+restore PER
+    // CANDIDATE, and `bakeChainFrom` calls this per chain segment on every
+    // `onMouseMotion`/`rebuildPreview`, so it was O(segments*candidates)
+    // whole-mesh copies per mouse-move. `Mesh.edgeSliceReachable` is the same
+    // face-incidence + dual-graph BFS `edgeSliceEx` runs internally, factored
+    // out read-only (mesh.d), so the probe is gone entirely. One subtlety
+    // preserved exactly: with Split Polygons OFF, `edgeSliceEx`'s
+    // points-only branch never consults face connectivity at all — it
+    // unconditionally succeeds (facesSplit=2) for any distinct, in-range
+    // edge pair — so `reaches` must mirror that unconditional success rather
+    // than running the BFS in that case (the BFS would wrongly reject
+    // candidates with no face-adjacency path that the points-only cut would
+    // have happily taken).
+    uint pickSeedSubEdge(uint seed, uint destEdge) {
+        uint[] candidates;
+        foreach (sub; mesh.edgesAroundVertex(seed)) candidates ~= sub;
+        if (candidates.length == 0) return ~0u;
+        if (destEdge >= mesh.edges.length) return candidates[0];
+
+        Vec3 destMid = lerpVec3(mesh.vertices[mesh.edges[destEdge][0]],
+                                 mesh.vertices[mesh.edges[destEdge][1]], 0.5f);
+
+        uint  best        = ~0u;
+        float bestDist     = float.infinity;
+        bool  bestReaches  = false;
+
+        foreach (sub; candidates) {
+            bool reaches;
+            if (sub == destEdge) reaches = false;            // same-edge no-op, any split_ setting
+            else if (!split_)    reaches = true;              // points-only: unconditional success
+            else                 reaches = mesh.edgeSliceReachable(sub, destEdge);
+
+            uint  other = mesh.edgeOtherVertex(sub, seed);
+            float dist  = (mesh.vertices[other] - destMid).length();
+
+            bool better = (best == ~0u)
+                || (reaches && !bestReaches)
+                || (reaches == bestReaches && dist < bestDist)
+                || (reaches == bestReaches && dist == bestDist && sub < best);
+            if (better) { best = sub; bestDist = dist; bestReaches = reaches; }
+        }
+        return best;
+    }
+
+    // The ONE-undo boundary (task 0295, F2, objection 2/3). Commits ONLY the
+    // LATCHED polyline — a pending (hover-derived, un-latched) tip is dropped
+    // (bakeChainFrom re-cuts from chainBefore_ using latchedPoints_ alone).
+    void commitChain() {
+        if (history is null || factory is null || !chainBefore_.filled) {
             dropArmedPreview();
             return;
         }
-        auto cmd  = factory();
+        if (latchedPoints_.length < 2) { cancelLiveEdit(); return; }
+        if (!armedKey_.matches(*mesh)) {
+            // The mesh underneath us was swapped/clobbered since our last
+            // touch — nothing safely ours to commit.
+            dropArmedPreview();
+            return;
+        }
+
+        bakeChainFrom(chainBefore_, latchedPoints_);
+        auto edit = factory();
         auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before_, post, "Edge Slice");
-        history.record(cmd);
-        // Re-arm: the just-committed state becomes the new idle baseline so
-        // the tool is ready for another cut (each cut its own undo entry).
-        before_ = post;
-        dropArmedPreview();
+        edit.setSnapshots(chainBefore_, post, "Edge Slice");
+        history.record(edit);   // EXACTLY ONE entry for the whole chain
+        dropArmedPreview();     // clears latchedPoints_/chainBefore_ — next
+                                 // chain recaptures chainBefore_ at its own
+                                 // first latch/armChain.
+        refreshCaches();
     }
 
     void cancelLiveEdit() {
-        if (armedKey_.matches(*mesh) && before_.filled) before_.restore(*mesh);
+        // Restores chainBefore_ — the WHOLE chain, never a per-segment
+        // baseline — so Esc/RMB/redo-cancel unwinds every baked segment.
+        if (armedKey_.matches(*mesh) && chainBefore_.filled) chainBefore_.restore(*mesh);
         dropArmedPreview();
+        refreshCaches();
+    }
+
+    // The mutate/revert preview: restore chainBefore_, then re-bake the
+    // WHOLE polyline (latched points + a hover-derived pending point) via
+    // bakeChainFrom. Guarded by armedKey_: if the mesh underneath an armed
+    // preview was swapped/clobbered by something else since our last touch,
+    // drop the preview instead of restoring/cutting against the WRONG mesh.
+    // Re-bakes ONLY the CONFIRMED latched chain — deliberately NOT the
+    // hover-derived pending tip (see onMouseMotion's comment): mutating the
+    // mesh from mere hovering would desync the app's picker (g_hoveredEdge)
+    // from chainBefore_'s vertex indices by the time the NEXT click actually
+    // latches, so the pending segment stays a draw()-only visual (no mesh
+    // write) until it is itself latched by a real click.
+    void rebuildPreview() {
+        if (!chainBefore_.filled || latchedPoints_.length == 0) return;
+        if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
+
+        size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
+        built_ = n > 0;
+        armedKey_.stamp(*mesh);
         refreshCaches();
     }
 
