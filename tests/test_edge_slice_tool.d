@@ -24,6 +24,29 @@
 //      identical reliance on hover state); the headless golden (test 1) is
 //      the authority.
 //
+// Task 0295 (Edge Slice v2 — F1 0%/100% endpoint cuts + F2 N-cut chain):
+//   9. F1 endpoint topology (splitPolygons ON): tA=0/tB=1 on the diagonal
+//      corners of the shared bottom face -> vertexCount UNCHANGED (8), the
+//      discriminator that endpoint-reuse (not a coincident insert) happened;
+//      faceCount 7, edgeCount 13, no duplicate-position verts, no orphans.
+//   10. F1 mixed endpoint + interior: tA=0 (reuse) / tB=0.5 (new mid vert) ->
+//      vertexCount +1 only, the new vert lands at edgeB's midpoint.
+//   11. F2 headless chain golden (geometry authority): a 3-edge linear chain
+//      {e0,e1,e2} across 3 faces via tool.doApply -> a cut vertex on each of
+//      e0/e1/e2, no duplicate-position verts (the shared-vertex-reuse proof —
+//      a re-cut would duplicate), ONE model-undo entry, undo restores 8v/6f.
+//   12. F2 `chainArm` + synthetic Enter (picker-free): arms the SAME 3-edge
+//      chain via the deterministic trigger param, asserts chainSegments==2,
+//      then drives a lone synthetic SDL_KEYDOWN RETURN -> exercises the REAL
+//      commitChain() -> ONE model-undo entry, phase idle, armed false, undo
+//      restores the base.
+//   13. F2 deactivate-commit (picker-free, objection 5): `chainArm` arms a
+//      chain without committing; `tool.set ... off` (deactivate) must commit
+//      the baked chain as ONE undo entry rather than discarding it.
+//   14. F2 mid-chain cancel (picker-free): `chainArm` arms a chain; a
+//      synthetic SDL_KEYDOWN ESCAPE must unwind the WHOLE chain back to the
+//      base mesh with NO undo entry recorded.
+//
 // tests/test_edge_slice.d (the one-shot mesh.edgeSlice command) is untouched
 // and stays green independently — this file only exercises the tool path.
 
@@ -146,6 +169,16 @@ void setEdges(uint a, uint b) {
 
 long undoModelDepth() {
     return getJson("/api/undo/status")["modelDepth"].integer;
+}
+
+// Pick t (0.0 or 1.0) so a t=0/1 cut on edge `e` lands on `wantVert` — the
+// kernel's endpoint reuse is keyed off edges[e][0]/[1], whose direction is an
+// opaque (dedup-order) implementation detail, so read it back from the model
+// rather than assuming it (mirrors the identical technique in the mesh.d
+// kernel unittest, source/mesh.d "endpoint cut reuses the corner").
+double endpointT(JSONValue m, uint e, int wantVert) {
+    int v0 = cast(int)m["edges"].array[e].array[0].integer;
+    return (v0 == wantVert) ? 0.0 : 1.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +503,271 @@ unittest {
     long depthAfter = undoModelDepth();
     assert(depthAfter == depthBefore + 1,
         "interactive commit must add exactly ONE model-undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 9. F1 endpoint topology (splitPolygons ON): tA=0 / tB=1 on the diagonal
+//    corners of the shared bottom face -> vertexCount UNCHANGED (8) — the
+//    discriminator that endpoint-reuse (not a coincident insert) happened.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint eA = edgeIndexByVerts(m0, 0, 1);
+    uint eB = edgeIndexByVerts(m0, 4, 5);
+    assert(eA != uint.max, "edge(0,1) must exist on cube");
+    assert(eB != uint.max, "edge(4,5) must exist on cube");
+
+    // Land on the diagonal {0,5} of face [0,1,5,4] (the other combination,
+    // {0,4}/{1,5}, is an EXISTING edge and would hit the adjacent-hit guard).
+    double tA = endpointT(m0, eA, 0);
+    double tB = endpointT(m0, eB, 5);
+
+    activateTool();
+    setEdges(eA, eB);
+    cmd(format("tool.attr mesh.edgeSliceTool tA %.3f", tA));
+    cmd(format("tool.attr mesh.edgeSliceTool tB %.3f", tB));
+    cmd("tool.attr mesh.edgeSliceTool split true");
+    cmd("tool.doApply");
+
+    auto m1 = model();
+    assert(vertCount(m1) == 8,
+        "endpoint cut on BOTH edges must not add a vertex (corners reused), got " ~
+        vertCount(m1).to!string);
+    assert(faceCount(m1) == 7,
+        "6 -> 7 faces (one chord split), got " ~ faceCount(m1).to!string);
+    assert(edgeCount(m1) == 13,
+        "12 -> 13 edges (only the new chord), got " ~ edgeCount(m1).to!string);
+    assert(duplicatePositionVerts(m1) == 0,
+        "endpoint reuse must not create a coincident duplicate vertex");
+    assert(orphanVerts(m1).length == 0, "no orphan vertices after endpoint cut");
+    foreach (f; m1["faces"].array)
+        assert(f.array.length >= 3, "no degenerate faces after endpoint cut");
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 10. F1 mixed endpoint + interior: tA=0 (reuse the corner) / tB=0.5 (new mid
+//     vertex on edgeB) -> vertexCount +1 only.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint eA = edgeIndexByVerts(m0, 0, 1);
+    uint eB = edgeIndexByVerts(m0, 4, 5);
+
+    double tA = endpointT(m0, eA, 0);
+
+    activateTool();
+    setEdges(eA, eB);
+    cmd(format("tool.attr mesh.edgeSliceTool tA %.3f", tA));
+    cmd("tool.attr mesh.edgeSliceTool tB 0.5");
+    cmd("tool.doApply");
+
+    auto m1 = model();
+    assert(vertCount(m1) == 9,
+        "one endpoint (reused) + one interior (new) => +1 vertex only, got " ~
+        vertCount(m1).to!string);
+    auto b0 = edgeEndpoint(m0, eB, 0), b1 = edgeEndpoint(m0, eB, 1);
+    auto midB = lerp3(b0, b1, 0.5);
+    assert(hasNewVertNear(m1, midB, 8),
+        "interior cut must land at edgeB's midpoint " ~ midB.to!string);
+    assert(duplicatePositionVerts(m1) == 0, "no duplicate vertex positions");
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 11. F2 headless chain golden (geometry authority): a 3-edge linear chain
+//     spanning 3 faces (edge(0,1) -> edge(1,2) -> edge(5,6), each face-pair
+//     sharing a face directly) via tool.doApply -> a cut vertex on each
+//     named edge, NO duplicate-position verts (the shared cut-vertex-reuse
+//     proof — a re-cut from a position scan would duplicate), ONE
+//     model-undo entry, undo restores 8v/6f.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+    assert(e0 != uint.max); assert(e1 != uint.max); assert(e2 != uint.max);
+    long depthBefore = undoModelDepth();
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool tA 0.5");
+    cmd("tool.attr mesh.edgeSliceTool tB 0.5");
+    cmd("tool.doApply");
+
+    auto m1 = model();
+    assert(vertCount(m1) == 11,
+        "3-edge chain: 8 base + 3 cut verts = 11, got " ~ vertCount(m1).to!string);
+    assert(faceCount(m1) == 8,
+        "6 base + 2 chord splits = 8, got " ~ faceCount(m1).to!string);
+    assert(duplicatePositionVerts(m1) == 0,
+        "shared cut-vertex reuse must not duplicate a vertex");
+    assert(orphanVerts(m1).length == 0, "no orphan vertices after chain cut");
+    foreach (f; m1["faces"].array)
+        assert(f.array.length >= 3, "no degenerate faces after chain cut");
+
+    auto e0a = edgeEndpoint(m0, e0, 0), e0b = edgeEndpoint(m0, e0, 1);
+    auto e1a = edgeEndpoint(m0, e1, 0), e1b = edgeEndpoint(m0, e1, 1);
+    auto e2a = edgeEndpoint(m0, e2, 0), e2b = edgeEndpoint(m0, e2, 1);
+    assert(hasNewVertNear(m1, lerp3(e0a, e0b, 0.5), 8), "no cut vertex on e0's midpoint");
+    assert(hasNewVertNear(m1, lerp3(e1a, e1b, 0.5), 8), "no cut vertex on e1's midpoint");
+    assert(hasNewVertNear(m1, lerp3(e2a, e2b, 0.5), 8), "no cut vertex on e2's midpoint");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore + 1,
+        "3-edge chain doApply must add exactly ONE model-undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    cmd("history.undo");
+    auto m2 = model();
+    assert(vertCount(m2) == 8, "undo must restore 8 verts");
+    assert(faceCount(m2) == 6, "undo must restore 6 faces");
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 12. F2 `chainArm` + synthetic Enter (picker-free, objection 2): arms the
+//     SAME 3-edge chain as test 11 via the deterministic trigger param
+//     (chainSegments == 2 before any commit), then a lone synthetic
+//     SDL_KEYDOWN RETURN (a key event needs no hover) drives the REAL
+//     commitChain() -> ONE model-undo entry, phase idle, armed false, undo
+//     restores the base. Exercises the interactive commit path that
+//     tool.doApply (test 11) does NOT cover.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    auto st0 = getJson("/api/tool/state");
+    assert(st0["chainSegments"].integer == 2,
+        "chainArm must arm a 2-segment (3-point) chain, got " ~
+        st0["chainSegments"].integer.to!string);
+    assert(st0["armed"].type == JSONType.true_, "chainArm must set armed_");
+
+    long depthBefore = undoModelDepth();
+
+    auto r = postCmd("/api/play-events",
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}`);
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    bool finished = false;
+    foreach (_; 0 .. 200) {
+        auto s = getJson("/api/play-events/status");
+        if (s["finished"].type == JSONType.true_) { finished = true; break; }
+        Thread.sleep(50.msecs);
+    }
+    assert(finished, "synthetic Enter replay did not finish within 10s");
+    Thread.sleep(150.msecs);
+
+    auto st1 = getJson("/api/tool/state");
+    assert(st1["phase"].str == "idle",
+        "commitChain must re-arm to idle phase, got " ~ st1["phase"].str);
+    assert(st1["armed"].type == JSONType.false_, "commitChain must clear armed_");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore + 1,
+        "commitChain must add exactly ONE model-undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    cmd("history.undo");
+    auto m1 = model();
+    assert(vertCount(m1) == 8, "undo must restore 8 verts");
+    assert(faceCount(m1) == 6, "undo must restore 6 faces");
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 13. F2 deactivate-commit (picker-free, objection 5): `chainArm` arms a
+//     chain WITHOUT committing; `tool.set ... off` (deactivate()) must commit
+//     the baked chain as ONE undo entry rather than discarding it — a >=2
+//     point chain commits on tool-drop regardless of any pending tip.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    long depthBefore = undoModelDepth();
+    deactivateTool();   // tool.set off -> deactivate() -> commitChain()
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore + 1,
+        "deactivate must commit the armed chain as exactly ONE undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    cmd("history.undo");
+    auto m1 = model();
+    assert(vertCount(m1) == 8, "undo must restore 8 verts");
+    assert(faceCount(m1) == 6, "undo must restore 6 faces");
+}
+
+// ---------------------------------------------------------------------------
+// 14. F2 mid-chain cancel (picker-free): `chainArm` arms a chain (baking it
+//     onto the live mesh, per the mutate/revert preview model); a synthetic
+//     SDL_KEYDOWN ESCAPE must unwind the WHOLE chain back to the base mesh
+//     with NO undo entry recorded.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    long depthBefore = undoModelDepth();
+    // Sanity: the chain IS baked (mutate/revert preview) on the live mesh.
+    assert(vertCount(model()) == 11,
+        "chainArm must bake the chain onto the live mesh before cancel");
+
+    auto r = postCmd("/api/play-events",
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":27,"scan":0,"mod":0,"repeat":0}`);
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    bool finished = false;
+    foreach (_; 0 .. 200) {
+        auto s = getJson("/api/play-events/status");
+        if (s["finished"].type == JSONType.true_) { finished = true; break; }
+        Thread.sleep(50.msecs);
+    }
+    assert(finished, "synthetic Escape replay did not finish within 10s");
+    Thread.sleep(150.msecs);
+
+    auto m1 = model();
+    assert(vertCount(m1) == 8, "Escape mid-chain must unwind the whole chain back to base");
+    assert(faceCount(m1) == 6, "Escape mid-chain must unwind the whole chain back to base");
+
+    auto st = getJson("/api/tool/state");
+    assert(st["armed"].type == JSONType.false_, "cancel must clear armed_");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore,
+        "cancel must NOT record any undo entry, went " ~
         depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
 
     deactivateTool();
