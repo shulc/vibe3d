@@ -66,6 +66,7 @@ import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.loop_slice_tool : LoopSliceTool;
 import tools.slice_tool : SliceTool;
+import tools.edge_slice_tool : EdgeSliceTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
 import tools.tack : TackTool;
@@ -2291,6 +2292,7 @@ void main(string[] args) {
         //    so it's safe regardless of the swap having already happened;
         //    it just needs to run before step 1's setActiveTool(null).
         if (auto lst = cast(LoopSliceTool) activeTool) lst.dropArmedPreview();
+        if (auto est = cast(EdgeSliceTool) activeTool) est.dropArmedPreview();
         // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
         setActiveTool(null);
         // 2. explicit coalesce barrier on the history.
@@ -2902,6 +2904,22 @@ void main(string[] args) {
         return cast(Tool)t;
     };
 
+    // Edge Slice — interactive two-edge strip cut (mesh.edgeSliceTool):
+    // hover an edge -> click latches edge A + tA -> drag scrubs tA -> click a
+    // second edge latches edge B + tB and previews the cut live -> commit on
+    // Enter / tool-drop / a third click. Reuses the EXISTING
+    // Mesh.edgeSlice(edgeA, edgeB, tA, tB, splitPolygons) kernel; one
+    // MeshBevelEdit undo entry per committed cut (reuses the generic
+    // bevelEditFactory snapshot command, labelled "Edge Slice"). The one-shot
+    // mesh.edgeSlice command stays registered below for headless/scripting.
+    // Gated to Edges mode.
+    reg.toolFactories["mesh.edgeSliceTool"] = () {
+        auto t = new EdgeSliceTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
     // Mesh Reduction — interactive + headless (ratio, preserveBoundary params).
     // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshReduceEdit.
     // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
@@ -3246,6 +3264,8 @@ void main(string[] args) {
                                      // it runs BEFORE setActiveTool(null).
                                      if (auto lst = cast(LoopSliceTool) activeTool)
                                          lst.dropArmedPreview();
+                                     if (auto est = cast(EdgeSliceTool) activeTool)
+                                         est.dropArmedPreview();
                                      setActiveTool(null);
                                      resetAllPipeStages();
                                      // A reset is a clean slate: force the

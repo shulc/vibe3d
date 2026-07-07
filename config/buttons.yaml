@@ -198,7 +198,7 @@ panels:
           - { label: Julienne,       action: { kind: command, id: mesh.julienne } }
           - { label: "Axis Slice",   action: { kind: command, id: mesh.axisSlice } }
           - { label: "Screen Slice", action: { kind: command, id: mesh.screenSlice } }
-          - { label: "Edge Slice",   action: { kind: command, id: mesh.edgeSlice } }
+          - { label: "Edge Slice",   action: { kind: tool, id: mesh.edgeSliceTool } }
       - title: Commands
         buttons:
           - { label: Subdivide,  action: { kind: command, id: mesh.subdivide } }
