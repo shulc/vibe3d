@@ -10629,13 +10629,22 @@ struct Mesh {
     // The internal endpoint ordering is opaque (dedup order); default 0.5 is
     // always safe and symmetric.  Non-0.5 values follow the stored edge order.
     //
+    // splitPolygons (default true): when false, only the two cut points are
+    // inserted (on edgeA at tA, on edgeB at tB) — no chord, no path faces
+    // touched at all. Byte-identical to the pre-existing behaviour when true
+    // (the default), so every existing caller is unaffected.
+    //
     // Returns the number of faces split; 0 = no-op (dead-end / same edge / OOB).
+    // With splitPolygons==false a successful two-point insert returns 2 (a
+    // nonzero success marker distinct from "no-op") rather than a face-split
+    // count, since no face is split in that mode.
     // Caller owns snapshot/undo — this method does NOT capture a snapshot.
     //
     // Non-manifold meshes (edges shared by 3+ faces) are out of scope for v1.
     // -----------------------------------------------------------------------
     size_t edgeSlice(uint edgeA, uint edgeB,
-                     float tA = 0.5f, float tB = 0.5f, float eps = 1e-5f)
+                     float tA = 0.5f, float tB = 0.5f,
+                     bool splitPolygons = true, float eps = 1e-5f)
     {
         if (vertices.length == 0 || faces.length == 0 || edges.length == 0)
             return 0;
@@ -10647,6 +10656,28 @@ struct Mesh {
         if (tA > 1.0f - eps)   tA = 1.0f - eps;
         if (tB < eps)          tB = eps;
         if (tB > 1.0f - eps)   tB = 1.0f - eps;
+
+        // Split-Polygons-OFF (points-only) branch: insert the two cut points
+        // and run the SAME finalize tail rebuildFacesWithChordSplits would —
+        // insertEdgePoint alone does NOT rebuild edges/edgeIndexMap/loops,
+        // sync selection, or commit (see its own doc comment; the public
+        // addEdgePoint wrapper has to call rebuildEdges()/buildLoops() itself
+        // for exactly that reason). Skipping this tail would leave edge
+        // picking wrong on the new edges, an unsynced selection, and stale
+        // version-keyed caches.
+        if (!splitPolygons) {
+            bool[] isCutVert;
+            isCutVert.length = vertices.length;
+            insertEdgePoint(edgeA, tA, isCutVert);
+            insertEdgePoint(edgeB, tB, isCutVert);
+            clearFaceSelectionResize();
+            rebuildEdges();
+            clearEdgeSelectionResize();
+            buildLoops();
+            syncSelection();
+            commitChange(MeshEditScope.Geometry);
+            return 2;
+        }
 
         // Collect faces incident to each edge (1-2 faces on a manifold mesh).
         uint[] facesAArr, facesBArr;
@@ -17443,6 +17474,37 @@ unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → ret
     assert(m.edgeSlice(e0, oob) == 0, "oob edgeB must return 0");
     assert(m.faces.length    == origFaces, "mesh unchanged after oob no-op");
     assert(m.vertices.length == origVerts, "mesh unchanged after oob no-op");
+}
+
+unittest { // edgeSlice: splitPolygons=false — points only, no chord, no face split
+    import std.conv : to;
+    auto m = makeCube();
+    // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it,
+    // but are NOT adjacent (mirrors the shared-face unittest above).
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(4, 5);
+    assert(eA != ~0u, "edge(0,1) must exist on cube");
+    assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+    size_t origEdges = m.edges.length;
+    assert(origEdges == 12, "cube starts with 12 edges");
+
+    size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/false);
+
+    assert(n == 2, "points-only branch returns 2 (nonzero success marker)");
+    assert(m.faces.length == 6, "face count UNCHANGED with splitPolygons=false");
+    assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
+    // The discriminator for the finalize bug: a missing rebuildEdges() would
+    // leave edges.length at 12 (the two new half-edges never registered) even
+    // though face==6 / verts==10 / no-orphans / no-degenerate all still pass.
+    assert(m.edges.length == 14,
+        "edge count must be 12 -> 14 (two non-shared edges each split once); got "
+        ~ m.edges.length.to!string);
+
+    bool[] refd = new bool[](m.vertices.length);
+    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+    foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " orphaned after points-only edgeSlice");
+    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after points-only edgeSlice");
 }
 
 unittest { // bridgeLoopsPaired: exact-correspondence quad emission
