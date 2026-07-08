@@ -170,15 +170,25 @@ class MeshTransform : Command, Operator {
                     }
                 break;
             case "rotate":
-                auto m = pivotRotationMatrix(pivot, axis, angle);
-                foreach (i; 0 .. mesh.vertices.length)
-                    if (vmask[i]) {
-                        auto v0 = Vec4(mesh.vertices[i].x,
-                                       mesh.vertices[i].y,
-                                       mesh.vertices[i].z, 1.0f);
-                        auto v1 = mulMV(m, v0);
-                        mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
-                    }
+                // pivotRotationMatrix requires a normalised axis (see its doc
+                // comment in math.d) — the caller (HTTP /api/transform) may
+                // pass any non-unit vector, which would otherwise bake a
+                // scale into the "rotation" (diagonal terms pick up
+                // axis-component^2). A near-zero axis has no well-defined
+                // direction at all, so treat it as a no-op rather than
+                // collapsing every touched vertex onto the pivot.
+                float axisLen = axis.length;
+                if (axisLen > 1e-6f) {
+                    auto m = pivotRotationMatrix(pivot, axis / axisLen, angle);
+                    foreach (i; 0 .. mesh.vertices.length)
+                        if (vmask[i]) {
+                            auto v0 = Vec4(mesh.vertices[i].x,
+                                           mesh.vertices[i].y,
+                                           mesh.vertices[i].z, 1.0f);
+                            auto v1 = mulMV(m, v0);
+                            mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
+                        }
+                }
                 break;
             case "scale":
                 auto m = pivotScaleMatrix(pivot, factor.x, factor.y, factor.z);

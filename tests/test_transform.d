@@ -159,6 +159,41 @@ unittest { // rotate of full back face by 90° around Z about origin
     assertVertex(3, -0.5, -0.5, -0.5, "v3 after Z-rot");
 }
 
+unittest { // non-unit axis is normalized, not baked in as a scale (task 0320)
+    // Same rotation as "rotate one vertex 90 around Y about origin" above,
+    // but axis:[2,0,0]... wait, axis must stay along Y for this case — use
+    // axis:[0,3,0] (3x the unit Y axis). Before the fix, the un-normalized
+    // axis squared its own component into the diagonal (ax*ax*t term),
+    // baking a spurious scale into the "rotation" and producing a wrong,
+    // axis-magnitude-dependent result instead of a pure 90 rotation.
+    resetCube();
+    setSelection("vertices", [1]);  // (+0.5, -0.5, -0.5)
+    import std.format : format;
+    runTransform(format(`{"kind":"rotate","axis":[0,3,0],"angle":%.10f,"pivot":[0,0,0]}`,
+        PI / 2));
+    assertVertex(1, -0.5, -0.5, -0.5, "rotate v1 90 around 3x-scaled Y axis");
+}
+
+unittest { // axis:[2,0,0] must match axis:[1,0,0] bit-for-bit-ish (task 0320)
+    resetCube();
+    setSelection("vertices", [0]);  // (-0.5, -0.5, -0.5)
+    import std.format : format;
+    // Rotate 90 around X about the origin with a non-unit axis vector.
+    // Reference repro from the bug report: expected x stays -0.5 (rotation
+    // about X doesn't move the X coordinate); before the fix this vertex
+    // collapsed toward the pivot instead (observed (-2.0, 1.0, -1.0)).
+    runTransform(format(`{"kind":"rotate","axis":[2,0,0],"angle":%.10f,"pivot":[0,0,0]}`,
+        PI / 2));
+    assertVertex(0, -0.5, 0.5, -0.5, "rotate v0 90 around axis:[2,0,0] normalizes to X");
+}
+
+unittest { // zero-length axis is a no-op, not a collapse onto the pivot (task 0320)
+    resetCube();
+    setSelection("vertices", [0]);  // (-0.5, -0.5, -0.5)
+    runTransform(`{"kind":"rotate","axis":[0,0,0],"angle":1.5707963,"pivot":[0,0,0]}`);
+    assertVertex(0, -0.5, -0.5, -0.5, "zero axis leaves v0 untouched");
+}
+
 // ---------------------------------------------------------------------------
 // scale
 // ---------------------------------------------------------------------------
