@@ -128,3 +128,92 @@ unittest { // negative dist ⇒ inward push (collapse direction)
             "negative push: expected r=" ~ expected.to!string ~ ", got " ~ r.to!string);
     }
 }
+
+bool noCoincidentVerts(double[3][] verts, double eps = 1e-6) {
+    foreach (i; 0 .. verts.length)
+        foreach (j; i + 1 .. verts.length) {
+            double dx = verts[i][0] - verts[j][0];
+            double dy = verts[i][1] - verts[j][1];
+            double dz = verts[i][2] - verts[j][2];
+            if (sqrt(dx*dx + dy*dy + dz*dz) < eps) return false;
+        }
+    return true;
+}
+
+double faceArea(double[3][] p) {
+    // Cross product magnitude / 2 for a triangle p[0],p[1],p[2].
+    double ux = p[1][0]-p[0][0], uy = p[1][1]-p[0][1], uz = p[1][2]-p[0][2];
+    double vx = p[2][0]-p[0][0], vy = p[2][1]-p[0][1], vz = p[2][2]-p[0][2];
+    double cx = uy*vz - uz*vy, cy = uz*vx - ux*vz, cz = ux*vy - uy*vx;
+    return 0.5 * sqrt(cx*cx + cy*cy + cz*cz);
+}
+
+unittest { // task 0319 — overshoot guard: a large negative dist used to
+           // collapse every vertex of an octahedron onto (0,0,0) (fuzz-
+           // found, status still "ok"). The push must now stop short of
+           // the collapse point instead of landing on/through it.
+    postJson("/api/reset?type=octahedron", "");
+    cmd("select.typeFrom polygon");
+    cmd("tool.set xfrm.push on");
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.attr xfrm.push dist -1");
+    cmd("tool.doApply");
+    auto verts = dumpVerts();
+    assert(noCoincidentVerts(verts),
+        "octahedron overshoot push produced coincident vertices");
+    foreach (v; verts) {
+        double r = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+        assert(r > 1e-6,
+            "octahedron overshoot push collapsed a vertex onto the origin, r=" ~ r.to!string);
+    }
+    auto faces = getJson("/api/model")["faces"].array;
+    foreach (f; faces) {
+        auto idx = f.array;
+        assert(idx.length >= 3, "degenerate face after overshoot push");
+        double[3][] p;
+        foreach (i; idx) p ~= verts[cast(size_t) i.integer];
+        assert(faceArea(p[0 .. 3]) > 1e-9,
+            "zero-area face after overshoot push");
+    }
+}
+
+unittest { // task 0319 — same overshoot guard on a plain cube, whose
+           // collapse point is the well-known half-space-diagonal
+           // (dist == -sqrt(3)/2 ≈ -0.866).
+    postJson("/api/reset", "");
+    cmd("select.typeFrom polygon");
+    cmd("tool.set xfrm.push on");
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.attr xfrm.push dist -1");
+    cmd("tool.doApply");
+    auto verts = dumpVerts();
+    assert(noCoincidentVerts(verts),
+        "cube overshoot push produced coincident vertices");
+    foreach (v; verts) {
+        double r = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+        assert(r > 1e-6,
+            "cube overshoot push collapsed a vertex onto the origin, r=" ~ r.to!string);
+        // Should land just short of the analytic collapse point, not past it.
+        assert(r < 0.001,
+            "cube overshoot push didn't clamp close to the collapse point, r=" ~ r.to!string);
+    }
+}
+
+unittest { // task 0319 — the guard must not clip ordinary (non-overshoot)
+           // pushes: a moderate negative dist, well inside the safe
+           // range, should move verts by exactly `dist` (unclamped).
+    postJson("/api/reset", "");
+    cmd("select.typeFrom polygon");
+    cmd("tool.set xfrm.push on");
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.attr xfrm.push dist -0.3");
+    cmd("tool.doApply");
+    auto verts = dumpVerts();
+    foreach (v; verts) {
+        double r = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+        double expected = 0.866025403784 - 0.3;
+        assert(approxEq(r, expected, 1e-3),
+            "moderate negative push should be unclamped: expected r="
+            ~ expected.to!string ~ ", got " ~ r.to!string);
+    }
+}
