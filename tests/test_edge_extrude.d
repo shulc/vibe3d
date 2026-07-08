@@ -53,6 +53,11 @@ void resetCube() {
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
+void resetOctahedron() {
+    auto resp = post("http://localhost:8080/api/reset?type=octahedron", "");
+    assert(parseJSON(resp)["status"].str == "ok", "/api/reset octahedron failed: " ~ resp);
+}
+
 void postCommand(string body) {
     auto resp = post("http://localhost:8080/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
@@ -136,6 +141,7 @@ V3 faceCentroid(JSONValue m, JSONValue faceArr) {
 double dot3(V3 a, V3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 V3 add3(V3 a, V3 b) { return V3(a.x+b.x, a.y+b.y, a.z+b.z); }
 V3 sub3(V3 a, V3 b) { return V3(a.x-b.x, a.y-b.y, a.z-b.z); }
+V3 cross3(V3 a, V3 b) { return V3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
 double len3(V3 a) { return sqrt(dot3(a, a)); }
 V3 norm3(V3 a) { auto l = len3(a); return l < 1e-9 ? V3(0,0,0) : V3(a.x/l, a.y/l, a.z/l); }
 
@@ -197,6 +203,32 @@ bool noCoincidentVerts(JSONValue m) {
     foreach (i; 0 .. n)
         foreach (j; i + 1 .. n)
             if (len3(sub3(vert(m, i), vert(m, j))) < 1e-4) return false;
+    return true;
+}
+
+// True if no face has a repeated corner index or a near-zero fan-triangulated
+// area (a collapsed / crushed polygon — the exact class of degeneracy the
+// far-vertex overshoot clamp can produce when it lands on an existing
+// vertex, task 0313).
+bool noDegenerateFaces(JSONValue m) {
+    foreach (f; m["faces"].array) {
+        auto idx = f.array;
+        if (idx.length < 3) return false;
+        bool[long] seen;
+        foreach (c; idx) {
+            long ci = c.integer;
+            if (ci in seen) return false;
+            seen[ci] = true;
+        }
+        V3 c0 = vert(m, cast(size_t)idx[0].integer);
+        V3 area = V3(0, 0, 0);
+        foreach (k; 1 .. idx.length - 1) {
+            V3 a = sub3(vert(m, cast(size_t)idx[k].integer), c0);
+            V3 b = sub3(vert(m, cast(size_t)idx[k + 1].integer), c0);
+            area = add3(area, cross3(a, b));
+        }
+        if (len3(area) * 0.5 < 1e-6) return false;
+    }
     return true;
 }
 
@@ -1131,9 +1163,18 @@ unittest {
 //     non-selected cube edges are length 1.0. With width=1.5 the top-face
 //     insets must clamp at the back-top edge (z = -0.5) and the front-face
 //     insets at the bottom-front edge (y = -0.5) — exactly on the back/bottom
-//     cube corners, NOT past them. Topology stays the same 12v/10f as the
-//     unclamped case; the clamped inset verts are KEPT as separate vertices
-//     coincident with the cube corners (the reference does NOT weld them away).
+//     cube corners, NOT past them.
+//
+//     Task 0313: the clamped landing COINCIDES with an existing cube corner,
+//     so it now REUSES that corner's vertex id instead of minting a separate
+//     coincident duplicate (the pre-fix behaviour this test used to pin —
+//     "the reference does NOT weld them away" — was the bug). Reusing the
+//     corner also collapses the left/right side faces (each has exactly one
+//     of the extruded edge's two free-end corners as a lone, non-neighbour
+//     corner) from a quad down to a triangle, since both of that corner's
+//     dissolved-into insets land on the SAME reused far corner. Net topology:
+//     the 2 dissolved free-end verts are replaced by 2 new ridge verts (same
+//     count, 8v), and the 2 side quads become triangles (8f, down from 10f).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -1151,15 +1192,18 @@ unittest {
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.1,"width":1.5}}`);
     auto m = getModel();
 
-    // Same topology as the unclamped free-end cube case.
-    assert(m["vertexCount"].integer == 12,
-        "clamp: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 10,
-        "clamp: expected 10 faces, got " ~ m["faceCount"].integer.to!string);
+    // Welded topology: 2 dissolved free-end verts ↔ 2 new ridge verts (8v);
+    // the 2 non-neighbour side faces each collapse from a quad to a triangle
+    // (8f, down from the unclamped case's 10f).
+    assert(m["vertexCount"].integer == 8,
+        "clamp: expected 8 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 8,
+        "clamp: expected 8 faces, got " ~ m["faceCount"].integer.to!string);
 
-    // The four clamped inset verts land EXACTLY on the far cube corners — not
-    // beyond. Top-face insets clamp at the back-top edge (z = -0.5); front-face
-    // insets clamp at the bottom-front edge (y = -0.5).
+    // The four clamped insets land EXACTLY on the far cube corners — not
+    // beyond — REUSING those corners (no new vertex minted there). Top-face
+    // insets clamp at the back-top edge (z = -0.5); front-face insets clamp
+    // at the bottom-front edge (y = -0.5).
     immutable V3[4] clamped = [
         V3( 0.5,  0.5, -0.5), V3(-0.5,  0.5, -0.5),   // top-face insets, z clamped
         V3( 0.5, -0.5,  0.5), V3(-0.5, -0.5,  0.5),   // front-face insets, y clamped
@@ -1179,15 +1223,16 @@ unittest {
         assert(vertAt(m, p) < 0,
             "clamp: inset OVERSHOT the far vertex (present at " ~ p.to!string ~ ")");
 
-    // The clamped inset verts are coincident with the cube corners but KEPT
-    // separate (the reference does NOT weld them) — so each far corner position
-    // is occupied by exactly TWO vertices (the surviving cube corner + 1 inset).
+    // Task 0313 regression: the clamped inset REUSES the far corner's own
+    // vertex id — exactly ONE vertex at each of those positions, never two
+    // (a coincident duplicate is the exact bug this task fixes).
     foreach (p; clamped)
-        assert(countAt(m, p) == 2,
-            "clamp: expected the clamped inset to stay separate (2 verts) at " ~
-            p.to!string ~ ", got " ~ countAt(m, p).to!string);
+        assert(countAt(m, p) == 1,
+            "clamp: expected the clamped inset to WELD onto the far corner " ~
+            "(1 vert) at " ~ p.to!string ~ ", got " ~ countAt(m, p).to!string);
 
-    // Hole-free, orientable, no orphans.
+    // No coincident duplicates anywhere, hole-free, orientable, no orphans.
+    assert(noCoincidentVerts(m), "clamp: coincident duplicate vertices present");
     assert(orphanVerts(m).length == 0,
         "clamp: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "clamp: result is not hole-free / has folded faces");
@@ -1289,4 +1334,44 @@ unittest {
         "loop10: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "loop10: result is not hole-free / has folded faces");
     assert(noCoincidentVerts(m), "loop10: coincident duplicate vertices present");
+}
+
+// ---------------------------------------------------------------------------
+// 15. TASK 0313 — far-vertex overshoot clamp on a valence-4 free end must WELD
+//     onto the existing far vertex, not mint a coincident duplicate. Fuzzer
+//     repro: octahedron edge 2 (the +Y↔+Z edge), extrude=0, width=2.5. Both
+//     endpoints are interior free ends of valence 4 (NOT the valence-3 cube
+//     case exercised by test 13) so this ALSO exercises the second clamp site
+//     — the along-rim-edge inset materialised for valence>3 free ends — on
+//     top of the per-face inset clamp. width=2.5 vastly overshoots every
+//     incident (unit-length, regular-octahedron) edge, so EVERY clamp in this
+//     op saturates; on this small a mesh two of the rewritten neighbour faces
+//     (triangles) end up with both non-fixed corners welding onto their
+//     shared third corner, fully collapsing — those faces must be dropped
+//     rather than survive as a repeated-corner/zero-area triangle.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetOctahedron();
+    auto before = getModel();
+
+    // Edge 2 connects the +Y and +Z axis verts (see source/mesh.d makeOctahedron).
+    int vy = vertAt(before, V3(0, 1, 0));
+    int vz = vertAt(before, V3(0, 0, 1));
+    assert(vy >= 0 && vz >= 0, "0313: octahedron +Y/+Z verts not found");
+    int ei = edgeIndex(before, vy, vz);
+    assert(ei >= 0, "0313: +Y..+Z edge not found");
+    postSelect("edges", [ei]);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":2.5}}`);
+    auto m = getModel();
+
+    // No coincident duplicates, no degenerate (repeated-corner / zero-area)
+    // faces, and an orientable, hole-free, non-folded surface — the exact
+    // three properties the fuzzer flagged (coincident_vertex,
+    // no_degenerate_faces, inconsistent_winding).
+    assert(noCoincidentVerts(m), "0313: coincident duplicate vertices present");
+    assert(noDegenerateFaces(m), "0313: degenerate (repeated-corner/zero-area) face present");
+    assert(isHoleFree(m), "0313: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(orphanVerts(m).length == 0, "0313: orphan verts: " ~ orphanVerts(m).to!string);
 }

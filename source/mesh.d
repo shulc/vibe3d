@@ -2557,13 +2557,32 @@ struct Mesh {
         //     has no well-defined far vertex along its direction) carry no cap and
         //     are left unclamped.
         float[ulong] insetClampLen;       // key = (v<<32)|fi → min face-aware far dist
+        // Task 0313: alongside the clamp LENGTH, remember WHICH existing vertex
+        //     sits at that far distance. When the clamp actually saturates, the
+        //     landing position is (up to fp rounding) exactly that vertex's own
+        //     position — materialisation reuses its id instead of minting a
+        //     coincident duplicate (see the weld pass below). A key that
+        //     receives a SECOND clamp contribution (two selected edges folding
+        //     their face-aware direction into the same shared corner) is marked
+        //     ambiguous: the accumulated direction is then a blend of two
+        //     distinct far vertices' directions, so the clamped landing is not
+        //     guaranteed to coincide with either one — that key keeps the
+        //     general (unwelded) addVertex path.
+        uint[ulong]  insetClampFarVert;   // key → vertex id at the min far dist
+        bool[ulong]  insetClampAmbiguous; // key → ≥2 clamp contributions folded in
         void accumInset(uint v, int fi, Vec3 d) {
             ulong k = (cast(ulong)v << 32) | cast(uint)fi;
             insetAccum.update(k, () => d, (ref Vec3 acc) { acc = acc + d; });
         }
-        void recordClamp(uint v, int fi, float len) {
+        void recordClamp(uint v, int fi, float len, uint farVert) {
             ulong k = (cast(ulong)v << 32) | cast(uint)fi;
-            insetClampLen.update(k, () => len, (ref float c) { if (len < c) c = len; });
+            if (auto p = k in insetClampLen) {
+                insetClampAmbiguous[k] = true;
+                if (len < *p) { *p = len; insetClampFarVert[k] = farVert; }
+            } else {
+                insetClampLen[k] = len;
+                insetClampFarVert[k] = farVert;
+            }
         }
         // In-plane inward direction at endpoint v of edge (va,vb) within face fi.
         Vec3 inwardDir(uint va, uint vb, int fi) {
@@ -2594,7 +2613,7 @@ struct Mesh {
         //     plane, folding the inset onto the side face — exactly what the
         //     reference does. Returns Vec3(0) if no distinct boundary edge is found
         //     (caller falls back to the perpendicular inwardDir).
-        Vec3 boundaryEdgeDir(uint v, uint other, int fi, out float farLen) {
+        Vec3 boundaryEdgeDir(uint v, uint other, int fi, out float farLen, out uint farVert) {
             farLen = 0;
             auto f = faces[fi];
             foreach (k; 0 .. f.length) {
@@ -2607,6 +2626,7 @@ struct Mesh {
                 Vec3 d = vertices[far] - vertices[v];
                 if (d.length < 1e-6f) return Vec3(0, 0, 0);
                 farLen = d.length;
+                farVert = far;
                 return normalize(d);
             }
             return Vec3(0, 0, 0);
@@ -2726,12 +2746,12 @@ struct Mesh {
                     }
                     // capMiter degenerate → fall through to perpendicular.
                 } else {
-                    float farLen;
-                    Vec3 d = boundaryEdgeDir(v, other, fi, farLen);
+                    float farLen; uint farVert;
+                    Vec3 d = boundaryEdgeDir(v, other, fi, farLen, farVert);
                     if (d.length >= 1e-6f) {
                         // Clamp the inset so it stops at (never passes) the far
                         // vertex of this incident non-selected edge.
-                        recordClamp(v, fi, farLen);
+                        recordClamp(v, fi, farLen, farVert);
                         if (sharedOnly)
                             sharedFaceAwareInset[(cast(ulong)v << 32) | cast(uint)fi] = true;
                         return d;
@@ -2758,7 +2778,48 @@ struct Mesh {
         //     side-weld inset) stay separate because their positions differ.
         uint[ulong] insetVert;            // (v<<32|fi) → vertex id
         uint[string] insetPosWeld;        // "v|qx|qy|qz" → vertex id (coincident weld)
+        import std.format : format;
+        string weldKeyOf(uint v, Vec3 p) {
+            return format("%u|%d|%d|%d", v,
+                cast(long)(p.x * 1e5f + (p.x >= 0 ? 0.5f : -0.5f)),
+                cast(long)(p.y * 1e5f + (p.y >= 0 ? 0.5f : -0.5f)),
+                cast(long)(p.z * 1e5f + (p.z >= 0 ? 0.5f : -0.5f)));
+        }
+        // Pass 1 (task 0313): far-vertex-clamp welds. When the face-aware clamp
+        //     above actually saturates (offset would otherwise overshoot) AND
+        //     exactly one contribution defined this corner's far vertex (no
+        //     shared-corner blend of two different far vertices), the clamped
+        //     landing is — up to fp rounding — EXACTLY that existing vertex's
+        //     position. Reuse its id directly instead of minting a coincident
+        //     duplicate (the prior bug: same position, new index → a
+        //     zero-area face + a winding flip once neighbouring faces are
+        //     rewound around it). Registered BEFORE pass 2 so a coincidental
+        //     unclamped inset that lands at the same quantised position welds
+        //     onto this id too, rather than racing to mint its own duplicate
+        //     (AA iteration order is unspecified).
+        bool[ulong] weldedToFar;
         foreach (k, acc; insetAccum) {
+            if (k in insetPosOverride) continue;     // cap-miter — absolute, no clamp
+            auto cap = k in insetClampLen;
+            if (cap is null) continue;
+            if (k in insetClampAmbiguous) continue;   // blended direction — no single target
+            float len = (acc * width).length;
+            if (len <= *cap || len <= 1e-9f) continue; // did not actually saturate
+            uint v = cast(uint)(k >> 32);
+            uint farVertId = insetClampFarVert[k];
+            Vec3 p = vertices[v] + normalize(acc) * (*cap);
+            insetVert[k] = farVertId;
+            insetPosWeld[weldKeyOf(v, p)] = farVertId;
+            weldedToFar[k] = true;
+        }
+        // Pass 2: the general accumulated-direction inset (unclamped, or
+        //     clamped-but-ambiguous, or cap-miter override), same
+        //     (endpoint, quantised position) weld as before so two selected
+        //     edges meeting at a shared corner that inset it in the SAME
+        //     direction collapse onto ONE vertex instead of emitting
+        //     coincident duplicates.
+        foreach (k, acc; insetAccum) {
+            if (k in weldedToFar) continue;
             uint v  = cast(uint)(k >> 32);
             // Each contributing selected edge insets this corner by `width` along
             //     its own unit inward dir; when several edges share (v,face) the
@@ -2777,11 +2838,7 @@ struct Mesh {
             //     offset of the cap polygon); it supersedes the direction-based
             //     offset entirely.
             Vec3 p = (k in insetPosOverride) ? insetPosOverride[k] : vertices[v] + off;
-            import std.format : format;
-            string wk = format("%u|%d|%d|%d", v,
-                cast(long)(p.x * 1e5f + (p.x >= 0 ? 0.5f : -0.5f)),
-                cast(long)(p.y * 1e5f + (p.y >= 0 ? 0.5f : -0.5f)),
-                cast(long)(p.z * 1e5f + (p.z >= 0 ? 0.5f : -0.5f)));
+            string wk = weldKeyOf(v, p);
             if (auto wp = wk in insetPosWeld) { insetVert[k] = *wp; continue; }
             uint nv = addVertex(p);
             insetPosWeld[wk] = nv;
@@ -3028,14 +3085,26 @@ struct Mesh {
                 //     direction has no well-defined far vertex along it, so (like
                 //     the perpendicular inwardDir path) it carries no cap.
                 float offLen = width;
+                bool weldToFar = false;
+                uint farVertId;
                 if (auto fp = v in alongFar) {
                     t = vertices[*fp] - vertices[v];
                     float farLen = t.length;
-                    if (width > farLen) offLen = farLen;   // land at most on far vert
+                    if (width > farLen) {
+                        // Task 0313: the clamp saturated — `alongFar[v]` is a
+                        // single, unambiguous far vertex (first-rim-edge-found,
+                        // never overwritten — see the population loop above), so
+                        // the landing coincides exactly with it. Reuse its id
+                        // instead of minting a coincident duplicate.
+                        offLen = farLen;
+                        weldToFar = true;
+                        farVertId = *fp;
+                    }
                 } else if (auto op = v in freeEndOther) {
                     t = vertices[v] - vertices[*op];   // fallback: extruded tangent
                 } else continue;
                 if (t.length < 1e-6f) continue;
+                if (weldToFar) { freeEndAlongVert[v] = farVertId; continue; }
                 t = normalize(t);
                 freeEndAlongVert[v] = addVertex(vertices[v] + t * offLen);
             }
@@ -3383,6 +3452,95 @@ struct Mesh {
                 auto rb = e.vb in ridgeVert;
                 if (ra is null || rb is null) continue;
                 ridgeEdgePos ~= [vertices[*ra], vertices[*rb]];
+            }
+        }
+
+        // --- Degenerate-face cleanup (task 0313). The far-vertex overshoot
+        //     clamps above now REUSE an existing vertex id when the clamped
+        //     landing coincides with it, instead of minting a coincident
+        //     duplicate. Reusing an id that is already one of a face's OTHER
+        //     corners (always true here: `far` is by construction the
+        //     immediate winding-order neighbour of the corner being replaced)
+        //     collapses that corner onto its neighbour, leaving an adjacent
+        //     repeated corner (a zero-length edge) in the rewritten face —
+        //     or, when BOTH of a triangle's non-fixed corners saturate onto
+        //     the SAME third corner (e.g. an extreme overshoot on a small
+        //     triangular neighbour face), the whole face collapses to a
+        //     single point. This pass runs once over every face — the
+        //     rewritten neighbour/side faces AND the freshly emitted
+        //     bridge/cap faces alike, since a bridge quad can equally
+        //     inherit a doubled corner from a saturated clamp (its two
+        //     inset corners are independently resolved and can coincide) —
+        //     collapsing any consecutive (cyclically-adjacent) duplicate
+        //     corners, and dropping any face that reduces to fewer than 3
+        //     distinct corners. Nothing downstream still depends on
+        //     original face indices/slots (the bridge/cap loop above was
+        //     the last reader of `e.fA`/`e.fB`; the ridge edges were just
+        //     captured BY POSITION), so faces can be safely removed here
+        //     with a full reindex. A well-formed extrude (no clamp ever
+        //     saturates, or saturates only onto a vertex that ISN'T already
+        //     a face-adjacent corner) never triggers a duplicate here, so
+        //     this pass is a no-op — byte-identical to the pre-fix output.
+        {
+            bool[] dropFace = new bool[](faces.length);
+            bool anyDrop = false;
+            foreach (fi; 0 .. faces.length) {
+                auto f = faces[fi];
+                if (f.length < 3) continue;   // pre-existing invalid face — not ours to fix
+                uint[] reduced;
+                reduced.reserve(f.length);
+                foreach (c; f)
+                    if (reduced.length == 0 || reduced[$ - 1] != c) reduced ~= c;
+                // Cyclic wrap: the first and last surviving corners may also
+                // coincide (e.g. a triangle collapsed to [a,a,a] reduces
+                // linearly to [a], already caught below; a quad collapsed to
+                // [a,b,b,a] reduces linearly to [a,b,a] — first==last too).
+                while (reduced.length > 1 && reduced[0] == reduced[$ - 1])
+                    reduced = reduced[0 .. $ - 1];
+                if (reduced.length != f.length) faces[fi] = reduced;
+                if (faces[fi].length < 3) { dropFace[fi] = true; anyDrop = true; }
+            }
+            if (anyDrop) {
+                uint[][] keptFaces;
+                bool[]   keptSubpatch;
+                int[]    keptOrder;
+                uint[]   keptMaterial;
+                uint[]   keptPart;
+                keptFaces.reserve(faces.length);
+                keptSubpatch.reserve(faces.length);
+                keptOrder.reserve(faces.length);
+                keptMaterial.reserve(faces.length);
+                keptPart.reserve(faces.length);
+                uint[]   droppedFaceIdx;
+                uint[][] droppedFaceLists;
+                uint[]   droppedFaceMat;
+                uint[]   droppedFacePart;
+                uint[]   droppedFaceSub;
+                foreach (fi, ref f; faces) {
+                    if (dropFace[fi]) {
+                        if (recExtrude) {
+                            droppedFaceIdx   ~= cast(uint)fi;
+                            droppedFaceLists ~= f.dup;
+                            droppedFaceMat   ~= (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+                            droppedFacePart  ~= (fi < facePart.length     ? facePart[fi]     : 0u);
+                            droppedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
+                        }
+                        continue;
+                    }
+                    keptFaces    ~= f;
+                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+                    keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+                    keptPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
+                }
+                if (recExtrude && droppedFaceIdx.length)
+                    editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
+                                                    droppedFaceMat, droppedFacePart, droppedFaceSub);
+                faces              = keptFaces;
+                setFaceSubpatchFrom(keptSubpatch);
+                faceSelectionOrder = keptOrder;
+                faceMaterial       = keptMaterial;
+                facePart           = keptPart;
             }
         }
 
