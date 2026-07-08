@@ -10322,6 +10322,32 @@ struct Mesh {
     }
 
     // -----------------------------------------------------------------------
+    // isConcaveFace (task 0310) — true iff polygon fi has at least one reflex
+    // (non-convex) vertex: a sign flip in cross(edgeIn, edgeOut)·n across the
+    // winding (n = faceNormal, Newell's method — tolerant of slightly
+    // non-planar n-gons). Triangles are always convex (fast return). Used by
+    // planeCutCore's terminus/keyhole guard below — the technique's "chord
+    // clipped at one band boundary" assumption doesn't reliably generalize
+    // once a concave polygon is involved (see that guard's comment).
+    // -----------------------------------------------------------------------
+    private bool isConcaveFace(uint fi) const {
+        const uint[] face = faces[fi];
+        if (face.length < 4) return false;
+        Vec3 n = faceNormal(fi);
+        bool sawPos = false, sawNeg = false;
+        immutable float eps = 1e-7f;
+        foreach (i; 0 .. face.length) {
+            Vec3 prev = vertices[face[(i + face.length - 1) % face.length]];
+            Vec3 cur  = vertices[face[i]];
+            Vec3 next = vertices[face[(i + 1) % face.length]];
+            float s = dot(cross(cur - prev, next - cur), n);
+            if (s >  eps) sawPos = true;
+            if (s < -eps) sawNeg = true;
+        }
+        return sawPos && sawNeg;
+    }
+
+    // -----------------------------------------------------------------------
     // planeCutCore — the shared cut body behind cutByPlane / cutByPlaneClipped
     // (and cutByPlaneEx). When `clipped` is false this is byte-for-byte the
     // original cutByPlane (the `bandOk*` predicates collapse to `true`); when
@@ -10453,6 +10479,37 @@ struct Mesh {
         // windings (before Pass-1 splices crossing verts) and spliced in after
         // Pass-1, once the entry crossing vertex exists. Empty for the infinite
         // cut (clipped == false), so that path is byte-for-byte unchanged.
+        //
+        // Concave guard (task 0310): the "exactly 2 boundary crossings ⇒ a
+        // single valid chord, clip whichever end sticks out of the band"
+        // assumption is convex-only. Near a concave (reflex) polygon it can
+        // misfire even when each individual face's own 2-crossing scan looks
+        // "simple": e.g. two faces sharing a crossing edge can each
+        // independently keyhole off the SAME entry vertex toward OPPOSITE
+        // band boundaries, leaving that vertex visited twice in one face's
+        // winding (repeated index — task 0310's fuzz-found corruption on a
+        // concave `lshape` cut). Precompute which edges border a concave
+        // face and decline a would-be terminus whenever either of its two
+        // crossing edges is one of them — the crossing vertex still gets
+        // spliced in by Pass-1 (the face is simply left un-keyholed/whole,
+        // or cleanly chord-split if its other crossing also lands in-band),
+        // never duplicated. A convex-only mesh (the original task 0289 cube)
+        // never sets any bit here — byte-for-byte unchanged.
+        bool[] edgeTouchesConcaveFace;
+        if (clipped) {
+            edgeTouchesConcaveFace.length = edges.length;
+            foreach (fi; 0 .. faces.length) {
+                if (!isConcaveFace(cast(uint)fi)) continue;
+                auto cface = faces[fi];
+                foreach (k; 0 .. cface.length) {
+                    uint a = cface[k], b = cface[(k + 1) % cface.length];
+                    uint cei = edgeIndexOfVerts(a, b);
+                    if (cei != ~0u && cei < edgeTouchesConcaveFace.length)
+                        edgeTouchesConcaveFace[cei] = true;
+                }
+            }
+        }
+
         struct TermRec { size_t faceIdx; Vec3 point; }
         TermRec[] termini;
         if (clipped) {
@@ -10460,11 +10517,13 @@ struct Mesh {
                 if (restricted && !faceInRestrict[fi]) continue;
                 auto face = faces[fi];
                 // Gather the face's plane-straddle boundary crossings with their
-                // segment param s. An on-plane winding vertex makes the chord
+                // segment param s (+ the crossed edge index, for the concave
+                // guard below). An on-plane winding vertex makes the chord
                 // ambiguous (v1: skip such faces).
                 bool hasOnPlane = false;
                 Vec3[2] cxPt;
                 float[2] cxS;
+                uint[2] cxEdge;
                 size_t nCx = 0;
                 foreach (k; 0 .. face.length) {
                     uint a = face[k], b = face[(k + 1) % face.length];
@@ -10477,6 +10536,7 @@ struct Mesh {
                         cxS[nCx] = ((q.x - segStart.x) * seg.x
                                   + (q.y - segStart.y) * seg.y
                                   + (q.z - segStart.z) * seg.z) / segLen2;
+                        cxEdge[nCx] = edgeIndexOfVerts(a, b);
                         nCx++;
                     }
                 }
@@ -10494,6 +10554,12 @@ struct Mesh {
                     clip = 0.0f; isTerm = true;             // clip low, terminus at s=0
                 }
                 if (!isTerm) continue;
+                // Concave guard (task 0310): decline if either crossing edge
+                // borders a concave face (see edgeTouchesConcaveFace above).
+                uint eLo = cxEdge[lo], eHi = cxEdge[hi];
+                if ((eLo != ~0u && eLo < edgeTouchesConcaveFace.length && edgeTouchesConcaveFace[eLo]) ||
+                    (eHi != ~0u && eHi < edgeTouchesConcaveFace.length && edgeTouchesConcaveFace[eHi]))
+                    continue;
                 // Interpolate the chord to the clip param (strictly inside the poly).
                 float f = (clip - s0) / (s1 - s0);
                 Vec3 A = cxPt[lo], Bp = cxPt[hi];
@@ -10739,14 +10805,28 @@ struct Mesh {
         }
 
         bool[] mask = new bool[](faces.length);
+        size_t nMasked = 0;
         foreach (fi; 0 .. faces.length) {
             if (faces[fi].length == 0) continue;
             uint v0 = faces[fi][0];
             if (v0 >= vertices.length) continue;
             int r = findRoot(cast(int)v0);
-            if (rootMin[r] >= loSigned - eps && rootMax[r] <= hiSigned + eps)
+            if (rootMin[r] >= loSigned - eps && rootMax[r] <= hiSigned + eps) {
                 mask[fi] = true;
+                nMasked++;
+            }
         }
+        // Empty-mesh guard (task 0309): a slab wide enough to swallow the
+        // WHOLE mesh (e.g. `gap` at or beyond the mesh's own extent along `n`,
+        // where neither parallel cut actually crosses any geometry — the mesh
+        // is then still ONE untouched component whose own bounding range
+        // trivially satisfies the containment test above) would otherwise
+        // delete every remaining face, silently emptying the document. Refuse
+        // — leave the mesh untouched and report 0 removed, so the caller
+        // (`cutByPlaneSplitGap`'s `separated` flag) sees "not separated" and
+        // falls back to the legacy single-cut+slide path exactly as it already
+        // does for a genuine partial (non-disconnecting) cut.
+        if (nMasked == faces.length) return 0;
         return deleteFacesByMask(mask);
     }
 
