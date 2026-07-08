@@ -4793,6 +4793,15 @@ struct Mesh {
     /// a closed cube) returns 0 BEFORE any geometry is emitted. This prevents a
     /// degenerate-normal silent translation when the whole mesh is selected.
     ///
+    /// Multi-island selections: selected faces are grouped into connected
+    /// components ("islands") via edge adjacency (two faces are in the same
+    /// island only if they share a full EDGE, not merely a vertex). Each
+    /// island gets its own inset/clone vertices, even at a corner shared with
+    /// another island (e.g. a diagonal/checkerboard face pair touching at one
+    /// vertex) — otherwise a single merged clone at that corner would have
+    /// its cap-side vertical edge walled by both islands at once, producing
+    /// an edge used by 4 faces (non-manifold; task 0312).
+    ///
     /// Phase 5 (delta-path undo) is deferred: the drop+compact step makes the
     /// append-only recordAddFaces revert insufficient, so only snapshot undo
     /// (MeshFaceExtrudeEdit) is wired for Phases 1-4.
@@ -4815,14 +4824,63 @@ struct Mesh {
         }
         immutable Vec3 regionNormal = normSum;
 
-        // Per-vertex offset table — FULLY built BEFORE the dedup clone loop.
-        // The clone loop visits each vid only once (on first sight), so any
-        // accumulation inside it would drop every face's contribution after
-        // the first for shared/ridge verts.  We pre-build here to guarantee
-        // the complete sum.
+        // Edge → (≤2 incident faces) adjacency, one pass.
+        auto edgeFaces = buildEdgeFaces();
+
+        // Connected-component ("island") id per selected face, via adjacency
+        // through a FULLY shared edge (both incident faces selected). Two
+        // selected faces that only touch at a single vertex (no shared edge
+        // — e.g. a diagonal/checkerboard pair) are DIFFERENT islands: each
+        // must get its own inset vertex at that shared corner. Without this,
+        // a single merged clone at the corner would have its cap-side
+        // vertical edge walled by BOTH islands at once — an edge used by 4
+        // faces (non-manifold). Fuzz-found: task 0312.
+        int[size_t] islandOf;
+        {
+            size_t[][size_t] adj;
+            foreach (key, fp; edgeFaces) {
+                if (fp[0] < 0 || fp[1] < 0) continue;
+                if (fp[0] >= cast(int)mask.length || fp[1] >= cast(int)mask.length) continue;
+                if (!mask[fp[0]] || !mask[fp[1]]) continue;
+                adj[cast(size_t)fp[0]] ~= cast(size_t)fp[1];
+                adj[cast(size_t)fp[1]] ~= cast(size_t)fp[0];
+            }
+            int nextIsland = 0;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                if (fi in islandOf) continue;
+                size_t[] stack = [fi];
+                islandOf[fi] = nextIsland;
+                while (stack.length) {
+                    size_t cur = stack[$ - 1];
+                    stack = stack[0 .. $ - 1];
+                    if (auto nbrs = cur in adj)
+                        foreach (nb; *nbrs)
+                            if (nb !in islandOf) {
+                                islandOf[nb] = nextIsland;
+                                stack ~= nb;
+                            }
+                }
+                ++nextIsland;
+            }
+        }
+        // Combined (island, vertex) key: an inset/clone vertex is scoped to
+        // one island, so the same original vertex shared by two islands
+        // (touching only at that corner) gets one clone PER island instead
+        // of one merged clone.
+        static ulong ivKey(int island, uint vid) {
+            return (cast(ulong)cast(uint)island << 32) | vid;
+        }
+
+        // Per-(island,vertex) offset table — FULLY built BEFORE the dedup
+        // clone loop. The clone loop visits each (island,vid) only once (on
+        // first sight), so any accumulation inside it would drop every
+        // face's contribution after the first for shared/ridge verts. We
+        // pre-build here to guarantee the complete sum.
         //
-        // Smooth (smooth=true): accumulate the unit normals of all selected
-        // incident faces for each vid, then normalize.  Fallback chain:
+        // Smooth (smooth=true): accumulate the unit normals of the selected
+        // incident faces IN THE SAME ISLAND for each (island,vid), then
+        // normalize. Fallback chain:
         //   avg-normal degenerate → regionNormal → Vec3(0,1,0).
         // vibe3d-divergence: UNIFORM weighting (each face's unit normal
         // contributes equally).  Area- or angle-weighted averaging would be a
@@ -4830,36 +4888,41 @@ struct Mesh {
         // divergence — the geometry-reference harness is absent from this
         // checkout so empirical capture is infeasible.
         //
-        // Rigid (smooth=false, default): every vid gets regionNormal*distance,
-        // byte-identical to the pre-refactor behaviour.
-        Vec3[uint] vertOffset;
+        // Rigid (smooth=false, default): every (island,vid) gets
+        // regionNormal*distance, byte-identical to the pre-refactor
+        // per-vertex behaviour (regionNormal is one global value shared by
+        // every island — only the CLONE identity is separated per island,
+        // not the offset direction).
+        Vec3[ulong] vertOffset;
         if (smooth) {
-            Vec3[uint] vNormSum;
+            Vec3[ulong] vNormSum;
             foreach (fi; 0 .. faces.length) {
                 if (!mask[fi]) continue;
                 Vec3 fn = faceNormal(cast(uint)fi);
+                int island = islandOf[fi];
                 foreach (vid; faces[fi]) {
-                    auto p = vid in vNormSum;
-                    if (p is null) vNormSum[vid] = fn;
+                    ulong k = ivKey(island, vid);
+                    auto p = k in vNormSum;
+                    if (p is null) vNormSum[k] = fn;
                     else          *p = *p + fn;
                 }
             }
-            foreach (vid, nsum; vNormSum) {
+            foreach (k, nsum; vNormSum) {
                 float nlen = sqrt(nsum.x*nsum.x + nsum.y*nsum.y + nsum.z*nsum.z);
                 Vec3 dir = (nlen > 1e-6f) ? nsum * (1.0f / nlen) : regionNormal;
-                vertOffset[vid] = dir * distance;
+                vertOffset[k] = dir * distance;
             }
         } else {
             foreach (fi; 0 .. faces.length) {
                 if (!mask[fi]) continue;
-                foreach (vid; faces[fi])
-                    if (vid !in vertOffset)
-                        vertOffset[vid] = regionNormal * distance;
+                int island = islandOf[fi];
+                foreach (vid; faces[fi]) {
+                    ulong k = ivKey(island, vid);
+                    if (k !in vertOffset)
+                        vertOffset[k] = regionNormal * distance;
+                }
             }
         }
-
-        // Edge → (≤2 incident faces) adjacency, one pass.
-        auto edgeFaces = buildEdgeFaces();
 
         // Boundary edges: exactly one incident face is selected.
         struct BEdge { uint va, vb; int selFi; }
@@ -4878,14 +4941,18 @@ struct Mesh {
         // translate the whole mesh.
         if (bEdges.length == 0) return 0;
 
-        // Clone each vertex used by a selected face (once per vertex).
-        // Offset comes from the pre-built vertOffset table, not computed here.
-        uint[uint] vertMap;
+        // Clone each (island,vertex) used by a selected face (once per
+        // island,vertex pair — see the ivKey comment above for why a corner
+        // shared between two islands needs two separate clones). Offset
+        // comes from the pre-built vertOffset table, not computed here.
+        uint[ulong] vertMap;
         foreach (fi; 0 .. faces.length) {
             if (!mask[fi]) continue;
+            int island = islandOf[fi];
             foreach (vid; faces[fi]) {
-                if (vid !in vertMap)
-                    vertMap[vid] = addVertex(vertices[vid] + vertOffset[vid]);
+                ulong k = ivKey(island, vid);
+                if (k !in vertMap)
+                    vertMap[k] = addVertex(vertices[vid] + vertOffset[k]);
             }
         }
 
@@ -4917,7 +4984,8 @@ struct Mesh {
             auto src = faces[fi];
             uint[] cloned;
             cloned.length = src.length;
-            foreach (k, vid; src) cloned[k] = vertMap[vid];
+            int island = islandOf[fi];
+            foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
             newFaces ~= cloned;
             newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
             newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
@@ -4931,7 +4999,8 @@ struct Mesh {
         // The wall must share the cap's top edge in the OPPOSITE direction.
         foreach (ref be; bEdges) {
             uint a = be.va, b = be.vb;
-            uint cloneA = vertMap[a], cloneB = vertMap[b];
+            int island = islandOf[be.selFi];
+            uint cloneA = vertMap[ivKey(island, a)], cloneB = vertMap[ivKey(island, b)];
             // Determine direction (a → b) in the original selected face.
             bool origAtoB = false;
             auto orig = faces[be.selFi];
@@ -5138,6 +5207,46 @@ struct Mesh {
                    abs(capC.z - exp.z) < 1e-4f,
                 "smooth flat single-face: cap centroid differs from rigid extrude");
         }
+    }
+
+    // Task 0312 (fuzz-found): a diagonal/checkerboard face pair that shares
+    // only a single vertex (no shared edge) must extrude as TWO independent
+    // islands, each with its own inset vertex at the shared corner. Before
+    // the fix, a single merged clone at that corner had its cap-side
+    // vertical edge walled by both islands at once — an edge used by 4
+    // faces. Assert the post-extrude mesh is edge-manifold (every undirected
+    // edge used by ≤2 faces), matching the HTTP repro:
+    //   /api/reset?type=grid&n=2; select polygons [1,2]; poly.extrude 1.0
+    unittest {
+        import std.conv : to;
+
+        auto m = makeGridPlane(2);
+        // 2x2 grid: faces 1 and 2 (row0/col1 and row1/col0) touch only at
+        // the shared center vertex — the diagonal/checkerboard pair.
+        bool[] mask; mask.length = m.faces.length; mask[] = false;
+        mask[1] = true;
+        mask[2] = true;
+        size_t n = m.extrudeFacesByMask(mask, 1.0f);
+        assert(n == 2, "diagonal pair: expected 2 faces extruded");
+
+        // Recount every undirected edge across ALL faces directly (NOT via
+        // buildEdgeFaces — its 2-slot [int;2] silently drops a 3rd/4th
+        // incident face instead of flagging it, so it can't witness this
+        // bug). A count > 2 anywhere means a non-manifold edge.
+        size_t[ulong] edgeUseCount;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeUseCount;
+                if (p is null) edgeUseCount[key] = 1;
+                else           ++(*p);
+            }
+        }
+        foreach (key, count; edgeUseCount)
+            assert(count <= 2,
+                "diagonal pair extrude: non-manifold edge used by " ~
+                count.to!string ~ " faces (task 0312 regression)");
     }
 
     private static ulong edgeKeyOrdered(uint a, uint b) {

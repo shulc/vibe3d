@@ -264,3 +264,54 @@ unittest { // UndoRedo
     postRedo();
     assert(getModel()["faces"].array.length == 10, "testUndoRedo: after redo");
 }
+
+// TEST 6 (task 0312, fuzz-found): diagonal/checkerboard face pair — faces 1
+// and 2 on a 2x2 grid touch ONLY at the shared center vertex (no shared
+// edge), so they are two DISJOINT islands. Before the fix, the inset kernel
+// keyed its clone-vertex map by vertex id alone, so the shared corner got
+// ONE merged clone whose cap-side vertical edge was then walled by BOTH
+// islands at once — a non-manifold edge used by 4 faces. Each island must
+// get its own clone at that corner.
+//
+// Grid n=2: 4 quads, 9 verts. Faces 1 ({1,2,5,4}) and 2 ({3,4,7,6}) share
+// only vertex 4. Each face is its own single-face island (no internal edge
+// between them), so each contributes a cap (1) + 4 walls (all 4 edges are
+// boundary, since the two selected faces share no edge). 2 unselected
+// originals remain. Expected: 12 faces; 9 orig + 8 clones (vertex 4 cloned
+// ONCE PER ISLAND) = 17 verts — 16 would mean the corner was wrongly merged
+// into a single shared clone (the regression).
+unittest { // DiagonalPairIslands
+    resetGrid(2);
+
+    auto before = getModel();
+    assert(before["faces"].array.length == 4, "BEFORE: expected 4 grid faces");
+    assert(before["vertices"].array.length == 9, "BEFORE: expected 9 grid verts");
+
+    postSelect("polygons", [1, 2]);
+    postCommand(`{"id":"poly.extrude","params":{"distance":0.4}}`);
+
+    auto after = getModel();
+    assert(after["faces"].array.length == 12,
+        "testDiagonalPairIslands: expected 12 faces, got " ~
+        after["faces"].array.length.to!string);
+    assert(after["vertices"].array.length == 17,
+        "testDiagonalPairIslands: expected 17 verts (9 orig + 8 clones — " ~
+        "the shared corner must be cloned ONCE PER ISLAND), got " ~
+        after["vertices"].array.length.to!string ~
+        " (16 would mean the corner was wrongly merged into one shared clone)");
+
+    // The core regression: the result must be edge-manifold. Before the fix
+    // this failed — the corner's vertical edge was shared by 4 wall quads
+    // (2 from each island) instead of ≤2.
+    assert(isHoleFree(after),
+        "testDiagonalPairIslands: non-manifold edge at the shared corner " ~
+        "(task 0312 regression — diagonal islands merged their inset vertex)");
+
+    // Undo restores 4/9.
+    postUndo();
+    auto undone = getModel();
+    assert(undone["faces"].array.length == 4,
+        "testDiagonalPairIslands: after undo expected 4 faces");
+    assert(undone["vertices"].array.length == 9,
+        "testDiagonalPairIslands: after undo expected 9 verts");
+}
