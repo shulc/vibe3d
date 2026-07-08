@@ -3011,7 +3011,21 @@ struct Mesh {
                 freeEndAlongVert[v] = addVertex(vertices[v] + t * offLen);
             }
         }
-        bool needsAlongAt(uint v) { return (v in needsAlong) !is null; }
+        // NOTE: gated on `freeEndAlongVert` (the MATERIALIZED map), not the
+        //     `needsAlong` intent map above. The materialization loop has bail-out
+        //     paths (`v` present in neither `alongFar` nor `freeEndOther`; or a
+        //     degenerate near-zero tangent — e.g. an overshoot `width` clamped
+        //     an unrelated inset vertex exactly onto `v`'s own position, via the
+        //     face-corner-rewrite ordering: the back-face scan above can read a
+        //     PRE-REWRITTEN face corner as an already-rewritten inset id from an
+        //     earlier neighbour-face pass, spuriously flagging `needsAlong[v]`)
+        //     that leave `needsAlong[v]` true with no corresponding
+        //     `freeEndAlongVert[v]` entry. Reading `freeEndAlongVert` directly
+        //     makes "no materialized along-vert" gracefully degrade to the
+        //     plain (valence-3-style) fallback at both call sites below instead
+        //     of a RangeError (task 0311). A genuine valence>3 free end whose
+        //     along-vert materialized successfully is unaffected.
+        bool needsAlongAt(uint v) { return (v in freeEndAlongVert) !is null; }
 
         // Rewrite each side face: any face containing a free-end vertex that is
         // NOT a neighbor face of that vertex. Replace the v corner with the two
