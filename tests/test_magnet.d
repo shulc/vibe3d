@@ -167,3 +167,57 @@ unittest {
     assert(r["status"].str == "error",
            "Empty sphere should return status:error, got: " ~ r.toString());
 }
+
+// ---------------------------------------------------------------------------
+// Test 5 — task 0318 fuzz regression: dist<=0 must NOT invert into
+// "affect the whole mesh".
+//
+// falloff.d's elementWeight() has a degenerate-radius fallback
+// (`pickedRadius <= 1e-9f` → weight=1.0 EVERYWHERE) meant for the
+// interactive tool-pipe drag before a real radius has been picked. Feeding
+// mesh.magnet's own explicit `dist` param a literal 0 (or negative) used to
+// hit that same fallback, so EVERY vertex snapped onto `target` instead of
+// nothing moving. Center at the origin with no cube vertex there — a
+// correctly-behaving zero/negative radius sphere contains no vertices, so
+// this must be status:error / no-op, exactly like the dist=0.001 case in
+// Test 4 above (dist=0.001 already passed; dist=0 and dist<0 are the
+// discontinuous/inverted cases the fuzzer found).
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+
+    auto rZero = cmd(`{"id":"mesh.magnet","target":[0,0,5],"center":[0,0,0],` ~
+                      `"strength":1.0,"dist":0,"anchor":-1}`);
+    assert(rZero["status"].str == "error",
+           "dist=0 should return status:error, got: " ~ rZero.toString());
+    // No vertex may have moved onto target — the bug snapped all 8 there.
+    auto mZero = getModel();
+    foreach (i; 0 .. 8) {
+        auto v = vert(mZero, i);
+        assert(abs(v.z - 5.0) > 1e-3,
+               "dist=0 must not tug vertex " ~ i.to!string ~ " onto target");
+    }
+
+    resetCube();
+    auto rNeg = cmd(`{"id":"mesh.magnet","target":[0,0,5],"center":[0,0,0],` ~
+                     `"strength":1.0,"dist":-1,"anchor":-1}`);
+    assert(rNeg["status"].str == "error",
+           "dist<0 should return status:error, got: " ~ rNeg.toString());
+    auto mNeg = getModel();
+    foreach (i; 0 .. 8) {
+        auto v = vert(mNeg, i);
+        assert(abs(v.z - 5.0) > 1e-3,
+               "dist<0 must not tug vertex " ~ i.to!string ~ " onto target");
+    }
+
+    // dist>0 must still behave locally exactly as before (regression guard
+    // on the fix itself): same fixture as Test 1, anchor lands on target,
+    // out-of-sphere verts stay put.
+    resetCube();
+    mustOk(cmd(`{"id":"mesh.magnet","target":[0.5,0.5,1.5],"center":[0.5,0.5,0.5],` ~
+               `"strength":1.0,"dist":1.2,"anchor":6}`), "mesh.magnet dist>0 after fix");
+    auto v6 = vert(getModel(), 6);
+    assert(abs(v6.z - 1.5) < 1e-4, "dist>0 anchor should still land on target");
+    auto v0 = vert(getModel(), 0);
+    assert(abs(v0.z - (-0.5)) < 1e-5, "dist>0 out-of-sphere vert should still be unmoved");
+}

@@ -99,6 +99,21 @@ public:
 private:
     bool applyKernel() {
         if (strength_ <= 0.0f) return false;
+        // `dist` is an EXPLICIT command param (a real spatial radius),
+        // not the interactive tool-pipe's "not yet picked" sentinel.
+        // falloff.d's elementWeight() has a degenerate-radius fallback
+        // (`pickedRadius <= 1e-9f` → return weight=1.0 EVERYWHERE) meant
+        // to keep an in-flight interactive drag from dividing by zero
+        // before ACEN/FalloffStage have placed a real radius — that
+        // fallback must stay in place for the tool-pipe (`hasFalloff_`)
+        // path. But feeding it dist<=0 straight from this command's own
+        // param inverted the meaning: instead of "no local effect", it
+        // became "affect the whole mesh" (task 0318 fuzz report). Reject
+        // it as invalid input instead, mirroring the strength_ guard
+        // above; a genuinely tiny-but-positive dist (e.g. 0.001) still
+        // falls through to the normal sphere math and correctly no-ops
+        // when nothing is within radius.
+        if (!hasFalloff_ && dist_ <= 1e-9f) return false;
 
         // Build moving set (same mask as mesh.jitter).
         bool[] vmask = new bool[](mesh.vertices.length);
