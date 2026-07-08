@@ -9234,6 +9234,20 @@ struct Mesh {
             if (makePolyVertexSetMatch_(f[], idx[])) return -1;
         }
 
+        // --- 5.5. manifold-safety guard: reject if any boundary edge of the
+        // new face is already shared by 2 existing faces — adding a 3rd
+        // would exceed the ≤2-faces-per-edge manifold invariant (e.g. a new
+        // face reusing an edge already shared by two faces of a closed
+        // solid). Fuzz-found: task 0316.
+        {
+            auto edgeFaces = buildEdgeFaces();
+            foreach (i; 0 .. idx.length) {
+                ulong key = edgeKeyOrdered(idx[i], idx[(i + 1) % idx.length]);
+                auto p = key in edgeFaces;
+                if (p !is null && (*p)[1] != -1) return -1;
+            }
+        }
+
         // --- 6. append face + rebuild ---
         addFace(idx);
         buildLoops();

@@ -183,6 +183,86 @@ unittest { // non-convex (concave) click order is accepted as-is
         "concave click order must not be reordered to convex hull");
 }
 
+// Count how many faces in a /api/model response use the (undirected) edge
+// (a,b) as a consecutive corner pair. Used to assert manifold-safety
+// (an edge must never be used by more than 2 faces).
+int edgeUseCount(JSONValue model, int a, int b) {
+    int count = 0;
+    foreach (f; model["faces"].array) {
+        auto corners = f.array;
+        foreach (i; 0 .. corners.length) {
+            int va = cast(int)corners[i].integer;
+            int vb = cast(int)corners[(i + 1) % corners.length].integer;
+            if ((va == a && vb == b) || (va == b && vb == a)) { ++count; break; }
+        }
+    }
+    return count;
+}
+
+unittest { // manifold-safety guard: reusing an already-saturated edge must
+           // reject, not push the edge to 3 faces (task 0316).
+    // Default cube: face 0 = [0,3,2,1], face 5 = [0,1,5,4] — both already
+    // share edge (0,1). Vertex 6 is the far corner of the top face.
+    resetCube();
+    postSelect("vertices", [0, 1, 6]);
+    auto m0 = getModel();
+    long fc0 = m0["faceCount"].integer;
+    long ec0 = m0["edgeCount"].integer;
+    assert(edgeUseCount(m0, 0, 1) == 2, "sanity: edge (0,1) starts at 2 faces");
+
+    postCommandRaw(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
+
+    auto m1 = getModel();
+    assert(m1["faceCount"].integer == fc0,
+        "reusing a saturated edge must reject (no new face), got " ~
+        m1["faceCount"].integer.to!string ~ " vs " ~ fc0.to!string);
+    assert(m1["edgeCount"].integer == ec0,
+        "reusing a saturated edge must reject (no new edges)");
+    assert(edgeUseCount(m1, 0, 1) == 2,
+        "edge (0,1) must remain manifold (exactly 2 faces) after the rejected makePolygon");
+}
+
+unittest { // manifold-safety guard: same repro on the other saturated edge
+           // documented in the bug report ([2,3,5]).
+    resetCube();
+    postSelect("vertices", [2, 3, 5]);
+    auto m0 = getModel();
+    long fc0 = m0["faceCount"].integer;
+
+    postCommandRaw(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
+
+    auto m1 = getModel();
+    assert(m1["faceCount"].integer == fc0,
+        "reusing a saturated edge must reject, got " ~
+        m1["faceCount"].integer.to!string ~ " vs " ~ fc0.to!string);
+}
+
+unittest { // legitimate makePolygon on OPEN boundary edges must still succeed:
+           // load a cube missing its top face (open boundary quad [4,5,6,7],
+           // each of whose 4 edges is currently used by exactly 1 face) and
+           // confirm makePolygon closes it back into a manifold cube.
+    postLoadMesh(`{"vertices":[[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],` ~
+                  `[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],` ~
+                  `"faces":[[0,3,2,1],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]}`);
+    auto m0 = getModel();
+    assert(m0["faceCount"].integer == 5, "fixture must start with 5 faces (open cube)");
+    assert(edgeUseCount(m0, 4, 5) == 1, "sanity: top-face edges start open (1 face)");
+    assert(edgeUseCount(m0, 6, 7) == 1, "sanity: top-face edges start open (1 face)");
+
+    postSelect("vertices", [4, 5, 6, 7]);
+    postCommand(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
+
+    auto m1 = getModel();
+    assert(m1["faceCount"].integer == 6,
+        "closing the open boundary must succeed, got " ~
+        m1["faceCount"].integer.to!string ~ " faces");
+    assert(m1["edgeCount"].integer == 12,
+        "closing an open boundary reuses all 4 existing edges, expected 12 total, got " ~
+        m1["edgeCount"].integer.to!string);
+    assert(edgeUseCount(m1, 4, 5) == 2, "top-face edges must now be manifold-closed (2 faces)");
+    assert(edgeUseCount(m1, 6, 7) == 2, "top-face edges must now be manifold-closed (2 faces)");
+}
+
 unittest { // undo restores original empty mesh
     loadFreeQuadVerts();
     postSelect("vertices", [0, 1, 2, 3]);
