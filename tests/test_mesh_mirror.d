@@ -13,6 +13,9 @@ import std.json;
 import std.conv : to;
 import std.math : abs;
 
+import mesh : Mesh;
+import math : Vec3;
+
 void main() {}
 
 // Helpers ------------------------------------------------------------------
@@ -21,6 +24,22 @@ void resetCube() {
     auto resp = post("http://localhost:8080/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
+}
+
+// `empty=true` clears the mesh entirely instead of seeding the default
+// cube — used with postLoadMesh to inject custom test geometry.
+void postReset(bool empty) {
+    string path = empty ? "http://localhost:8080/api/reset?empty=true"
+                         : "http://localhost:8080/api/reset";
+    auto resp = post(path, "");
+    assert(parseJSON(resp)["status"].str == "ok",
+        "/api/reset failed: " ~ resp);
+}
+
+void postLoadMesh(string body) {
+    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    assert(parseJSON(resp)["status"].str == "ok",
+        "/api/load-mesh failed: " ~ resp);
 }
 
 void postCommand(string body) {
@@ -68,6 +87,36 @@ bool clonedHasPosition(JSONValue m, size_t origLen, double[3] target) {
     return false;
 }
 
+// Every undirected edge must be shared by at most 2 faces for the mesh to
+// be manifold. Task 0306 bug A: a coplanar seam face survived the weld
+// dedup as a lone internal "membrane", so each of its 4 boundary edges
+// ended up shared by 3 faces instead of 2.
+void assertManifold(JSONValue m, string ctx) {
+    int[string] faceCountByEdge;
+    foreach (f; m["faces"].array) {
+        auto verts = f.array;
+        size_t n = verts.length;
+        foreach (i; 0 .. n) {
+            long a = verts[i].integer;
+            long b = verts[(i + 1) % n].integer;
+            string key = a < b ? (a.to!string ~ "," ~ b.to!string)
+                                : (b.to!string ~ "," ~ a.to!string);
+            faceCountByEdge[key] = faceCountByEdge.get(key, 0) + 1;
+        }
+    }
+    foreach (key, count; faceCountByEdge) {
+        assert(count <= 2, ctx ~ ": edge (" ~ key ~ ") used by "
+            ~ count.to!string ~ " faces — non-manifold");
+    }
+}
+
+// Task 0306's systemic gap: a weld/mirror op that cascades to an empty
+// document must not silently report success over 0v/0f.
+void assertNonEmpty(JSONValue m, string ctx) {
+    assert(m["vertexCount"].integer > 0, ctx ~ ": mesh has 0 vertices");
+    assert(m["faceCount"].integer > 0,   ctx ~ ": mesh has 0 faces");
+}
+
 // ---------------------------------------------------------------------------
 // Whole-mesh mirror, axis X, no weld — empty selection ⇒ act on all faces
 // ---------------------------------------------------------------------------
@@ -103,14 +152,22 @@ unittest { // mirror whole cube across plane x=1 (center=(1,0,0)): cloned
 }
 
 // ---------------------------------------------------------------------------
-// Whole-mesh mirror with weld — seam face is dropped via fingerprint dedup
+// Whole-mesh mirror with weld — the doubled seam face is dropped ENTIRELY
+// (both the coplanar original and its clone), leaving a manifold result.
+//
+// Task 0306 bug A: the +x face (v1,v2,v5,v6) lies ENTIRELY on the mirror
+// plane (center=[0.5,0,0]) — it doesn't move under reflection, so its
+// clone lands back on the exact same 4 verts: a degenerate internal
+// "membrane", not new geometry. The old fingerprint dedup dropped only
+// the clone and kept the original in place, leaving each of its 4
+// boundary edges shared by 3 faces (itself + the two genuine side faces
+// that already close the seam) — non-manifold. The fix drops BOTH
+// copies, so faceCount = 10, not 11.
 // ---------------------------------------------------------------------------
 
 unittest { // Cube reflected across plane x=0.5 with weld=0.001: verts on
            // the +x face (v1,v2,v5,v6) coincide with their clones and get
-           // welded. The doubled seam face (cube's right face + its
-           // mirrored copy) collapses to a single face via vert-set
-           // fingerprint dedup — so faceCount = 11, not 12.
+           // welded; the coplanar +x face and its clone are both dropped.
     resetCube();
 
     postCommand(`{"id":"mesh.mirror","params":{
@@ -118,17 +175,77 @@ unittest { // Cube reflected across plane x=0.5 with weld=0.001: verts on
     }}`);
 
     auto m = getModel();
+    assertNonEmpty(m, "mirror weld coplanar (X)");
     // 8 original verts kept. 4 cloned verts (mirror of v0,v3,v4,v7) at
     // x=1.5; the other 4 mirror verts collapse onto v1,v2,v5,v6 and are
     // compacted out.
     assert(m["vertexCount"].integer == 12,
         "verts: expected 12, got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 11,
-        "faces: expected 11, got "  ~ m["faceCount"].integer.to!string);
-    // Edge count: 12 original cube edges + 8 mirrored quad edges − 4
-    // shared seam edges = 20.
+    // 6 orig + 6 clones − 2 (BOTH copies of the coplanar +x face dropped).
+    assert(m["faceCount"].integer == 10,
+        "faces: expected 10 (both seam-face copies dropped), got "
+        ~ m["faceCount"].integer.to!string);
+    // Edge count: unaffected by dropping the coplanar face pair — its 4
+    // boundary edges are still needed by the 4 adjacent side faces (and
+    // their mirrored copies), just no longer ALSO claimed by the membrane.
     assert(m["edgeCount"].integer == 20,
         "edges: expected 20, got "  ~ m["edgeCount"].integer.to!string);
+    assertManifold(m, "mirror weld coplanar (X)");
+}
+
+unittest { // Same repro mirrored on Y instead of X (axis=Y,
+           // center=[0,0.5,0]) — the +y (top) face is the coplanar one
+           // this time. Regression for the bug report's second repro.
+    resetCube();
+
+    postCommand(`{"id":"mesh.mirror","params":{
+        "axis":"Y","center":[0,0.5,0],"weld":0.001,"flip_normals":true
+    }}`);
+
+    auto m = getModel();
+    assertNonEmpty(m, "mirror weld coplanar (Y)");
+    assert(m["vertexCount"].integer == 12,
+        "verts: expected 12, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "faces: expected 10, got "  ~ m["faceCount"].integer.to!string);
+    assert(m["edgeCount"].integer == 20,
+        "edges: expected 20, got "  ~ m["edgeCount"].integer.to!string);
+    assertManifold(m, "mirror weld coplanar (Y)");
+}
+
+// ---------------------------------------------------------------------------
+// A large weld threshold must stay LOCAL to the seam, never folding
+// together unrelated far-apart vertices across the whole mesh (task 0306
+// bug B), and must never silently collapse the mesh to nothing (the
+// empty-mesh guard, task 0306's systemic gap).
+// ---------------------------------------------------------------------------
+
+unittest { // weld=100 on a unit cube: under the old GLOBAL weld, every
+           // vertex pair is "coincident" at that threshold and the whole
+           // mesh collapsed to 0v/0e/0f while still reporting status:"ok".
+           // The fix never merges two PRE-EXISTING (pre-mirror) vertices
+           // with each other, regardless of `weld`'s magnitude — only
+           // pairs touching a freshly mirrored vertex are eligible — so
+           // the original 8 verts / 6 faces survive untouched (the newly
+           // mirrored geometry folds away into them instead of the whole
+           // document vanishing).
+    resetCube();
+
+    postCommand(`{"id":"mesh.mirror","params":{
+        "axis":"X","center":[0,0,0],"weld":100.0,"flip_normals":true
+    }}`);
+
+    auto m = getModel();
+    assertNonEmpty(m, "mirror weld=100 (bug B)");
+    assert(m["vertexCount"].integer == 8,
+        "verts: expected 8 (original cube preserved), got "
+        ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 6,
+        "faces: expected 6 (original cube preserved), got "
+        ~ m["faceCount"].integer.to!string);
+    assert(m["edgeCount"].integer == 12,
+        "edges: expected 12, got " ~ m["edgeCount"].integer.to!string);
+    assertManifold(m, "mirror weld=100 (bug B)");
 }
 
 // ---------------------------------------------------------------------------
@@ -283,4 +400,122 @@ unittest { // In Vertices mode, mesh.mirror with non-default plane mirrors
         ~ m["vertexCount"].integer.to!string);
     assert(m["faceCount"].integer == 12,
         "faces: expected 12, got " ~ m["faceCount"].integer.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Empty-collapse rollback path (HTTP smoke test) — a mirror op that
+// internally collapses to empty and rolls back must still leave the app in
+// a selectable, non-crashed state via the ordinary command surface.
+//
+// Repro: a scalene (non-symmetric) triangle lying entirely in the z=0
+// plane, mirrored about that SAME plane. Every face — the original and
+// its clone alike — is exactly on-plane, so the drop-both block (task
+// 0306 bug A) empties `faces` unconditionally, independent of `weld`'s
+// magnitude; `isEmpty()` fires and the un-welded pre-pass snapshot is
+// restored. A generous weld additionally guarantees the seam-vertex merge
+// (clone verts sit exactly atop their originals) runs the full
+// weld+compactUnreferenced path that truncates vertexSelectionOrder/
+// edgeSelectionOrder pre-fix (see the in-process test below for the actual
+// unguarded-index regression proof — `/api/select` → mesh.select always
+// calls `mesh.syncSelection()` first, which defensively re-grows any
+// truncated array and would mask the bug here).
+// ---------------------------------------------------------------------------
+
+unittest {
+    postReset(true);
+    postLoadMesh(`{
+        "vertices": [[0,0,0],[2,0,0],[0,1,0]],
+        "faces": [[0,1,2]]
+    }`);
+
+    postCommand(`{"id":"mesh.mirror","params":{
+        "axis":"Z","center":[0,0,0],"weld":10.0,"flip_normals":true
+    }}`);
+
+    auto m = getModel();
+    assertNonEmpty(m, "mirror empty-collapse rollback");
+    long n = m["vertexCount"].integer;
+    assert(n > 0, "rollback should have restored a non-empty mesh");
+    assertManifold(m, "mirror empty-collapse rollback");
+
+    int[] allVerts;
+    foreach (i; 0 .. n) allVerts ~= cast(int)i;
+    postSelect("vertices", allVerts);
+
+    auto sel = getSelection();
+    assert(sel["selectedVertices"].array.length == n,
+        "expected all " ~ n.to!string ~ " verts selected, got "
+        ~ sel["selectedVertices"].array.length.to!string);
+
+    long edgeCount = m["edgeCount"].integer;
+    assert(edgeCount > 0, "rollback should have restored edges too");
+    int[] allEdges;
+    foreach (i; 0 .. edgeCount) allEdges ~= cast(int)i;
+    postSelect("edges", allEdges);
+
+    auto sel2 = getSelection();
+    assert(sel2["selectedEdges"].array.length == edgeCount,
+        "expected all " ~ edgeCount.to!string ~ " edges selected, got "
+        ~ sel2["selectedEdges"].array.length.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Empty-collapse rollback path (in-process regression, no HTTP) — proves
+// the actual unguarded-index bug the HTTP smoke test above cannot reach.
+//
+// `/api/select` routes through `commands.mesh.select.MeshSelect`, whose
+// `apply()` calls `mesh.syncSelection()` BEFORE dispatching to
+// `selectVertex`/`selectEdge` — that defensively re-grows any parallel
+// array shorter than `vertices`/`edges`, silently papering over exactly
+// the length mismatch this test is about. The genuinely unguarded callers
+// are the interactive click-pick paths (source/symmetry_pick.d's
+// `symmetricSelectVertex`/`symmetricSelectEdge`, and app.d's direct mouse
+// picks) — they call `mesh.selectVertex`/`selectEdge` straight, no sync.
+// Exercising `Mesh`'s own API in-process (same pattern as
+// tests/test_edge_extrude_crash.d) reaches that real call site.
+//
+// Before the SHOULD-FIX: `vertexSelectionOrder`/`edgeSelectionOrder` were
+// missing from `mirrorFacesPlane`'s empty-mesh-guard snapshot/restore.
+// The collapse (compactUnreferenced, driven by the coincident-vertex weld
+// below) truncates both to length 0; the rollback then restores `vertices`
+// /`edges`/`faces` but NOT those two — leaving `vertices.length == N` with
+// `vertexSelectionOrder.length == 0`. The very next `selectVertex(idx)`
+// indexes `vertexSelectionOrder[idx]` unguarded (mesh.d, `selectVertex`)
+// and throws `core.exception.RangeError`, taking down the whole process
+// under the HTTP-driven suite (a crash there is only observable as a
+// dropped connection, not a normal assert failure) — hence testing this
+// in-process instead.
+// ---------------------------------------------------------------------------
+
+unittest {
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(2, 0, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0, 1, 2]);
+
+    bool[] mask = [true];
+    size_t n = m.mirrorFacesPlane(mask, Vec3(0, 0, 0), Vec3(0, 0, 1), 10.0f, true);
+    assert(n == 1, "expected the single face to be cloned");
+    assert(m.vertices.length > 0 && m.faces.length > 0,
+        "rollback should have restored a non-empty mesh");
+
+    // The regression: direct selectVertex/selectEdge calls (the real
+    // click-pick path, bypassing MeshSelect's syncSelection safety net)
+    // must not crash — proves vertexSelectionOrder/edgeSelectionOrder stay
+    // length-consistent with vertices/edges across the rollback.
+    foreach (i; 0 .. m.vertices.length)
+        m.selectVertex(cast(int)i);
+    foreach (i; 0 .. m.edges.length)
+        m.selectEdge(cast(int)i);
+
+    size_t selVerts = 0;
+    foreach (b; m.selectedVertices) if (b) ++selVerts;
+    assert(selVerts == m.vertices.length,
+        "expected every vertex selected, got " ~ selVerts.to!string);
+
+    size_t selEdges = 0;
+    foreach (b; m.selectedEdges) if (b) ++selEdges;
+    assert(selEdges == m.edges.length,
+        "expected every edge selected, got " ~ selEdges.to!string);
 }

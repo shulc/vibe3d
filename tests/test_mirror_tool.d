@@ -125,7 +125,11 @@ unittest { // No selection, no attr writes beyond center ⇒ mirrors the whole
 }
 
 // ---------------------------------------------------------------------------
-// 3. Merge on + distance — seam face dropped (mirrors test_mesh_mirror.d).
+// 3. Merge on + distance — the coplanar seam face is dropped ENTIRELY,
+// both copies (mirrors test_mesh_mirror.d's "Whole-mesh mirror with weld"
+// case — task 0306 bug A: the +x face lies exactly on the mirror plane at
+// center.x=0.5, so keeping either the original or its clone left a
+// non-manifold membrane; faceCount is 10, not 11).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -139,8 +143,8 @@ unittest {
     auto m = getModel();
     assert(m["vertexCount"].integer == 12,
         "verts: expected 12, got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 11,
-        "faces: expected 11, got " ~ m["faceCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "faces: expected 10, got " ~ m["faceCount"].integer.to!string);
 }
 
 // ---------------------------------------------------------------------------

@@ -638,6 +638,19 @@ struct Mesh {
         return idx;
     }
 
+    /// True once a weld/merge/reduce pass has left the mesh with no
+    /// vertices or no faces. The `weldVerticesByMask` family
+    /// (`weldVertexPair`, `reduce`, and `mirrorFacesPlane`'s weld pass) can
+    /// all cascade to this on an aggressive enough input/threshold and,
+    /// left unchecked, would report `status: ok` over a silently-emptied
+    /// document (task 0306). A pure query, not a rollback mechanism —
+    /// callers decide whether to revert to a pre-pass snapshot or fail
+    /// outright. `mirrorFacesPlane` is the first wired-up caller; task 0309
+    /// reuses this same predicate for EdgeSliceTool's guard.
+    bool isEmpty() const {
+        return vertices.length == 0 || faces.length == 0;
+    }
+
     /// Merge coincident vertices (within `epsSq` squared distance) by
     /// remapping each later-indexed coincident vert onto the lowest-indexed
     /// vert at that position. Face vertex references are rewritten;
@@ -1414,7 +1427,22 @@ struct Mesh {
         }
     }
 
-    size_t weldCoincidentVertices(double epsSq = 1e-12) {
+    /// `protectBelow`: vertex-index pairs where BOTH indices are strictly
+    /// less than this bound are never merged with each other, no matter how
+    /// large `epsSq` is. Default 0 disables the guard (every existing caller
+    /// gets the original all-pairs-eligible behavior unchanged). Callers
+    /// that append new (e.g. cloned) vertices after the pre-existing ones —
+    /// `mirrorFacesPlane`'s weld pass is the first user — pass the
+    /// pre-existing vertex count here so a large weld threshold can't fold
+    /// together two unrelated, pre-existing vertices that merely happen to
+    /// be within `epsSq` of each other (task 0306 bug B: a big `weld` was
+    /// welding the whole mesh globally instead of just the mirror seam).
+    /// Vertex pairs touching at least one newly-appended vertex remain fully
+    /// eligible, which is exactly the seam-pair semantics a mirror weld
+    /// needs (a clone landing back on ITS OWN or on some OTHER pre-existing
+    /// vertex is the legitimate case; two pre-existing vertices merging
+    /// with each other is not).
+    size_t weldCoincidentVertices(double epsSq = 1e-12, size_t protectBelow = 0) {
         if (vertices.length < 2) return 0;
         int[] remap;
         remap.length = vertices.length;
@@ -1423,6 +1451,7 @@ struct Mesh {
             if (remap[i] != cast(int)i) continue;
             foreach (j; i + 1 .. vertices.length) {
                 if (remap[j] != cast(int)j) continue;
+                if (i < protectBelow && j < protectBelow) continue;
                 Vec3 d = vertices[i] - vertices[j];
                 if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
                     remap[j] = cast(int)i;
@@ -4274,6 +4303,11 @@ struct Mesh {
         foreach (b; mask) if (b) ++toMirror;
         if (toMirror == 0) return 0;
 
+        // Vertex indices below this bound are PRE-EXISTING (captured before
+        // any clone is appended below) — see the weld pass's use of
+        // `weldCoincidentVertices`'s `protectBelow` param further down.
+        const size_t origVertexCount = vertices.length;
+
         // Clone each unique vert referenced by a masked face exactly once.
         uint[uint] vertMap;
         foreach (fi, ref f; faces) {
@@ -4360,8 +4394,130 @@ struct Mesh {
         // its winding-reversed mirror copy) so the user doesn't get a
         // z-fighting partition wall after Mirror+Merge.
         if (weld > 0.0f) {
+            // Empty-mesh guard (task 0306): snapshot everything this pass
+            // can touch BEFORE running it, so an aggressive weld/dedup that
+            // would collapse the WHOLE document can be rolled back to the
+            // un-welded (but valid, non-empty) mirror result instead of
+            // silently committing `status: ok` over an empty mesh. See
+            // `isEmpty()`. Includes vertexSelectionOrder/edgeSelectionOrder
+            // (SHOULD-FIX review of 0306): compactUnreferenced() and
+            // clearEdgeSelectionResize() truncate those two parallel arrays
+            // in lock-step with vertices/edges during the collapse, so
+            // omitting them here would leave a length mismatch after
+            // rollback (vertices.length == N but vertexSelectionOrder.length
+            // == 0) — the very next selectVertex()/selectEdge() indexes them
+            // unguarded and RangeErrors.
+            Vec3[]    rbVertices = vertices.dup;
+            uint[2][] rbEdges    = edges.dup;
+            uint[][]  rbFaces;
+            rbFaces.reserve(faces.length);
+            foreach (f; faces) rbFaces ~= f.dup;
+            uint[]    rbVertexMarks          = vertexMarks.dup;
+            uint[]    rbEdgeMarks            = edgeMarks.dup;
+            uint[]    rbFaceMarks            = faceMarks.dup;
+            int[]     rbVertexSelectionOrder = vertexSelectionOrder.dup;
+            int[]     rbEdgeSelectionOrder   = edgeSelectionOrder.dup;
+            int[]     rbFaceSelectionOrder   = faceSelectionOrder.dup;
+            uint[]    rbFaceMaterial         = faceMaterial.dup;
+            uint[]    rbFacePart             = facePart.dup;
+            MeshMap[] rbMeshMaps;
+            rbMeshMaps.reserve(meshMaps.length);
+            foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
+
+            // Bug A fix: a masked face whose vertices ALL lie (near-)exactly
+            // ON the mirror plane doesn't move under reflection — every one
+            // of its verts maps to itself (dot(v-center,normal) ≈ 0), so its
+            // "clone" is a winding-reversed exact duplicate at the SAME
+            // location: a degenerate internal membrane, not new geometry.
+            // Drop BOTH instances before the seam-fingerprint dedup below
+            // runs — keeping either one leaves every one of its boundary
+            // edges shared by 3 faces (itself + the two genuine side faces
+            // that already close the seam on their own). This is distinct
+            // from a face whose clone merely lands on a DIFFERENT face's
+            // vertex set (e.g. mirroring a whole symmetric object about its
+            // own center-plane, where e.g. left/right or top/bottom faces
+            // legitimately fold onto ONE surviving copy) — that case is
+            // still handled correctly by the ordinary fingerprint dedup
+            // just below, unmodified.
+            //
+            // Tolerance: `min(weld, onPlaneEpsMax)`, NOT `weld` directly.
+            // "Lies on the mirror plane" is a geometric-degeneracy test —
+            // unrelated to how large a gap the user wants the SEAM-MERGE
+            // pass (below) to fold. Using `weld` unclamped here misfires on
+            // a large `weld` (task 0306 bug B's weld=100 repro): every
+            // vertex of every face is trivially "within 100" of the plane,
+            // so EVERY masked face would be wrongly flagged as on-plane and
+            // dropped, before the seam weld even runs.
+            enum float onPlaneEpsMax = 1e-5f;
+            const float onPlaneEps = (weld < onPlaneEpsMax) ? weld : onPlaneEpsMax;
+            bool[] dropFace;
+            dropFace.length = faces.length;
+            bool anyOnPlaneDropped = false;
+            foreach (k, fi; toClone) {
+                bool onPlane = true;
+                foreach (vid; faces[fi]) {
+                    float d = dot(vertices[vid] - center, normal);
+                    if (d < 0.0f) d = -d;
+                    if (d > onPlaneEps) { onPlane = false; break; }
+                }
+                if (onPlane) {
+                    dropFace[fi]                 = true;
+                    dropFace[origFaceCount + k]  = true;
+                    anyOnPlaneDropped = true;
+                }
+            }
+            if (anyOnPlaneDropped) {
+                uint[][] keptFaces;
+                bool[]   keptSubpatch;
+                int[]    keptOrder;
+                bool[]   keptSelected;
+                uint[]   keptMaterial;
+                uint[]   keptPart;
+                keptFaces   .reserve(faces.length);
+                keptSubpatch.reserve(faces.length);
+                keptOrder   .reserve(faces.length);
+                keptSelected.reserve(faces.length);
+                keptMaterial.reserve(faces.length);
+                keptPart    .reserve(faces.length);
+                foreach (fi, ref f; faces) {
+                    if (dropFace[fi]) continue;
+                    keptFaces    ~= f;
+                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
+                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
+                }
+                faces              = keptFaces;
+                setFaceSubpatchFrom(keptSubpatch);
+                faceSelectionOrder = keptOrder;
+                setFacesSelectedFrom(keptSelected);
+                faceMaterial       = keptMaterial;
+                facePart           = keptPart;
+
+                // The dropped faces' own edges are otherwise left dangling
+                // (still recorded in `edges`, no longer referenced by any
+                // surviving face) whenever the weld pass below returns 0 —
+                // e.g. `weld` too small to actually merge the seam verts,
+                // or a caller reusing this on-plane-drop path in isolation.
+                // Re-derive `edges` from the surviving `faces` right away so
+                // the mesh is never left with phantom edges regardless of
+                // what the (possibly skipped) weld dedup below does.
+                // Deliberately NOT compactUnreferenced() here — that would
+                // shift vertex indices and invalidate `origVertexCount` as
+                // the `protectBelow` bound for the weld pass right below.
+                rebuildEdges();
+                clearEdgeSelectionResize();
+            }
+
             double epsSq = cast(double)weld * cast(double)weld;
-            if (weldCoincidentVertices(epsSq) > 0) {
+            // Bug B fix: `protectBelow=origVertexCount` keeps this weld
+            // LOCAL to the seam — two PRE-EXISTING (pre-mirror) vertices
+            // never merge with each other regardless of how large `weld`
+            // is; only pairs touching at least one freshly-cloned vertex
+            // are eligible. Without this, a large `weld` folds arbitrary
+            // far-apart original vertices together across the whole mesh.
+            if (weldCoincidentVertices(epsSq, origVertexCount) > 0) {
                 // Drop faces with identical vert sets. Linear scan over
                 // `faces`: cube-scale meshes don't justify a hash here.
                 import std.algorithm.sorting : sort;
@@ -4405,6 +4561,26 @@ struct Mesh {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
+            }
+
+            if (isEmpty()) {
+                // The weld/dedup pass emptied the whole document — not a
+                // legitimate "merge the seam" outcome, just a destructive
+                // collapse driven by a threshold too large for this mesh's
+                // scale. Roll back to the un-welded (but valid, non-empty)
+                // mirror clone rather than commit an empty mesh.
+                vertices             = rbVertices;
+                edges                = rbEdges;
+                faces                = rbFaces;
+                vertexMarks          = rbVertexMarks;
+                edgeMarks            = rbEdgeMarks;
+                faceMarks            = rbFaceMarks;
+                vertexSelectionOrder = rbVertexSelectionOrder;
+                edgeSelectionOrder   = rbEdgeSelectionOrder;
+                faceSelectionOrder   = rbFaceSelectionOrder;
+                faceMaterial         = rbFaceMaterial;
+                facePart             = rbFacePart;
+                meshMaps             = rbMeshMaps;
             }
         }
 
