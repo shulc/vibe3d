@@ -202,6 +202,55 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// V3b — duplicate `insertAt` (task 0308, fuzz-found). Free mode does not
+// enforce distinct slice fractions: `insertAt 0.5` on top of the fresh
+// tool's own default `positions_ == [0.5]` reaches the kernel as the
+// literal duplicate pair `[0.5, 0.5]`. Before the fix this corrupted the
+// mesh (16v/28e/14f — 4 coincident vertex pairs + 4 zero-area faces)
+// instead of collapsing to a clean single cut (12v/20e/10f, same as V4's
+// Count=1 baseline).
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto before = getModel();
+    int va = vertAt(before, V3(-0.5, -0.5, -0.5));
+    int vb = vertAt(before, V3( 0.5, -0.5, -0.5));
+    int ei = edgeIndex(before, va, vb);
+    postSelect("edges", [ei]);
+
+    cmd("tool.set mesh.loopSliceTool on");
+    cmd("tool.attr mesh.loopSliceTool mode free");
+    cmd("tool.attr mesh.loopSliceTool position 0.5");
+
+    auto st0 = getToolState();
+    assert(st0["count"].integer == 1 && st0["positions"].array.length == 1,
+        "V3b: fresh tool must start at count=1, position=0.5");
+
+    cmd("tool.attr mesh.loopSliceTool insertAt 0.5");   // duplicate cut position
+    auto st1 = getToolState();
+    assert(st1["count"].integer == 2, "V3b: Add must still grow count to 2");
+    assert(st1["positions"].array.length == 2, "V3b: Add must still grow positions[] to 2");
+    double p0 = st1["positions"].array[0].floating;
+    double p1 = st1["positions"].array[1].floating;
+    assert(abs(p0 - 0.5) < 1e-4 && abs(p1 - 0.5) < 1e-4,
+        "V3b: both slots must read back 0.5 (the duplicate-cut precondition)");
+
+    cmd("tool.doApply");
+    auto after = getModel();
+    // A duplicate cut position must collapse to the SAME clean single cut as
+    // Count=1 (V4's baseline below) — NOT the corrupted 16v/28e/14f.
+    assert(after["vertexCount"].integer == 12,
+        "V3b: duplicate cut position must yield a clean single cut (V=12), got "
+        ~ after["vertexCount"].integer.to!string);
+    assert(after["faceCount"].integer == 10,
+        "V3b: duplicate cut position must yield a clean single cut (F=10), got "
+        ~ after["faceCount"].integer.to!string);
+    assert(after["edgeCount"].integer == 20,
+        "V3b: duplicate cut position must yield a clean single cut (E=20), got "
+        ~ after["edgeCount"].integer.to!string);
+}
+
+// ---------------------------------------------------------------------------
 // V4 — M3 Edit=Remove: `removeCurrent` shrinks positions[]/count back down;
 // a no-op at Count==1 (owner-decision D7).
 // ---------------------------------------------------------------------------

@@ -8090,7 +8090,7 @@ struct Mesh {
     ///   reference-faithful. See `LoopSliceTool.profileSamples` (source/tools/
     ///   loop_slice_tool.d) for the built-in set and the reversex/reversey/aspect
     ///   hook points (tasks 0257/0258/0259).
-    bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positions,
+    bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positionsIn,
                               out uint[] newFaceIndices,
                               const(uint)[] restrictFaces = null,
                               bool keepQuads = false,
@@ -8101,10 +8101,45 @@ struct Mesh {
                               float gap = 0.0f,
                               bool curvature = false,
                               float curveTension = 1.0f,
-                              const(float)[] profileHeights = null,
+                              const(float)[] profileHeightsIn = null,
                               float profileDepth = 0.0f) {
         newFaceIndices = [];
-        if (seeds.length == 0 || positions.length == 0) return false;
+        if (seeds.length == 0 || positionsIn.length == 0) return false;
+
+        // Dedup coincident cut positions (task 0308, fuzz-found): Free mode's
+        // `insertAt`/`count` bookkeeping does not enforce distinct slice
+        // fractions (two `insertAt 0.5` calls, or a fresh `count`-grown slot
+        // that defaults to the same 0.5 as an existing one, both reach here
+        // unchanged). Every entry in `positions` independently spawns its own
+        // `addVertex` per rail in `getMids` below — two equal (or
+        // near-equal, within `posEps`) fractions therefore create TWO
+        // distinct vertex indices sitting at the SAME world position, and
+        // the sub-quad chain `emitSingleRingSplit`/`emitNgonRingSplit` builds
+        // between consecutive positions degenerates into a zero-area face
+        // for that pair. Collapse duplicates (keeping the FIRST occurrence,
+        // and its matching `profileHeights` entry so a profile-cutter caller
+        // stays parallel) BEFORE any ring/vertex work starts, so a duplicate
+        // cut position yields one clean cut — never coincident verts or
+        // zero-area faces. Mirrors the 0303 `edgeSliceEx` atomicity fix's
+        // "no-op must not corrupt the mesh" contract for this kernel's own
+        // failure mode (a degenerate INPUT rather than a Pass-1/Pass-2 split).
+        import std.math : abs;
+        float[] positions;
+        float[] profileHeightsBuf;
+        immutable float posEps = 1e-4f;
+        positions.reserve(positionsIn.length);
+        foreach (i, t; positionsIn) {
+            bool dup = false;
+            foreach (kept; positions) {
+                if (abs(kept - t) < posEps) { dup = true; break; }
+            }
+            if (dup) continue;
+            positions ~= t;
+            if (profileHeightsIn !is null && i < profileHeightsIn.length)
+                profileHeightsBuf ~= profileHeightsIn[i];
+        }
+        if (positions.length == 0) return false;   // defensive; unreachable (positionsIn non-empty)
+        const(float)[] profileHeights = (profileHeightsIn is null) ? null : profileHeightsBuf;
 
         // 1. Collect + dedup rings from the ORIGINAL (unmutated) mesh.
         import std.algorithm : sort;
@@ -16270,6 +16305,87 @@ unittest {
         assert(m.edges.length == single.edges.length,
                "dedup: 2 seeds on the same ring must produce the SAME edge count as 1 seed");
     }
+}
+
+// insertEdgeLoopsMulti — duplicate CUT POSITION dedup (task 0308, fuzz-found).
+//
+// Definitive repro: select edge 0, tool.set mesh.loopSliceTool, mode Free,
+// position 0.5, then insertAt 0.5 — Free mode does not enforce distinct
+// slice fractions, so `positions_` ends up `[0.5, 0.5]` (two IDENTICAL cut
+// fractions on the same seed ring) and reached the kernel unchanged.
+// `getMids` independently `addVertex`'d once PER entry in `positions`, so
+// each of the ring's 4 rails grew TWO coincident vertices (same world
+// position, distinct indices) instead of one, and the sub-quad chain built
+// a zero-area quad between each coincident pair — 16v/28e/14f instead of a
+// clean single cut's 12v/20e/10f (4 exact-coincident vertex pairs + 4
+// zero-area faces). This is a DIFFERENT failure mode than the 0303
+// `edgeSliceEx` atomicity bug (that one was a Pass-1/Pass-2 rollback gap on
+// a legitimate no-split outcome; this one is a degenerate INPUT — duplicate
+// cut fractions — that the kernel must dedup before creating any vertex).
+unittest {
+    Mesh dup = makeCube();
+    uint eiDup = dup.edgeIndex(0, 1);
+    assert(eiDup != ~0u, "seed edge 0-1 must exist on cube");
+    uint[] nfDup;
+    bool okDup = dup.insertEdgeLoopsMulti([eiDup], [0.5f, 0.5f], nfDup);
+    assert(okDup, "duplicate cut positions must still succeed (clean single cut)");
+
+    Mesh clean = makeCube();
+    uint eiClean = clean.edgeIndex(0, 1);
+    uint[] nfClean;
+    bool okClean = clean.insertEdgeLoopsMulti([eiClean], [0.5f], nfClean);
+    assert(okClean, "single-position reference insert must succeed");
+
+    assert(dup.vertices.length == clean.vertices.length,
+           "a duplicate cut position must NOT add extra (coincident) vertices");
+    assert(dup.faces.length == clean.faces.length,
+           "a duplicate cut position must NOT add extra (zero-area) faces");
+    assert(dup.edges.length == clean.edges.length,
+           "a duplicate cut position must NOT add extra edges");
+    assert(nfDup.length == nfClean.length,
+           "newFaceIndices must report the same sub-quad count as the deduped single cut");
+
+    // No two vertices may be exactly coincident (the concrete symptom: 4
+    // coincident vertex PAIRS at the 4 rail midpoints).
+    foreach (i; 0 .. dup.vertices.length)
+        foreach (j; i + 1 .. dup.vertices.length)
+            assert((dup.vertices[i] - dup.vertices[j]).length() > 1e-5f,
+                   "no two vertices may sit at the exact same world position");
+
+    // No zero-area faces (the concrete symptom: 4 degenerate quads spliced
+    // between each coincident vertex pair).
+    import std.conv : to;
+    foreach (fi, f; dup.faces) {
+        Vec3 centroid = Vec3(0, 0, 0);
+        foreach (vi; f) centroid = centroid + dup.vertices[vi];
+        centroid = centroid * (1.0f / f.length);
+        float area = 0.0f;
+        foreach (k; 0 .. f.length) {
+            Vec3 a = dup.vertices[f[k]] - centroid;
+            Vec3 b = dup.vertices[f[(k + 1) % f.length]] - centroid;
+            area += cross(a, b).length();
+        }
+        area *= 0.5f;
+        assert(area > 1e-6f, "face " ~ fi.to!string ~ " must not be zero-area");
+    }
+
+    // Euler characteristic must stay 2 (a closed watertight solid).
+    assert(cast(long)dup.vertices.length - cast(long)dup.edges.length
+           + cast(long)dup.faces.length == 2,
+           "Euler characteristic must stay 2 after a deduped single cut");
+
+    // count=N under Free mode: 3 slots defaulting to 0.5 (the mode-law
+    // no-op path noted in the task) must collapse the SAME way as an
+    // explicit [0.5, 0.5, 0.5].
+    Mesh triple = makeCube();
+    uint eiTriple = triple.edgeIndex(0, 1);
+    uint[] nfTriple;
+    bool okTriple = triple.insertEdgeLoopsMulti([eiTriple], [0.5f, 0.5f, 0.5f], nfTriple);
+    assert(okTriple, "triple-duplicate cut positions must still succeed");
+    assert(triple.vertices.length == clean.vertices.length
+           && triple.faces.length == clean.faces.length
+           && triple.edges.length == clean.edges.length,
+           "N-way duplicate cut positions must collapse to the SAME clean single cut");
 }
 
 // insertEdgeLoopsMulti — Slice Selected restriction (task 0248). Seed edge
