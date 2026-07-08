@@ -82,6 +82,31 @@ long[] equatorialEdgeIndices(const V3[] verts, const long[2][] edges,
     return out_;
 }
 
+/// Find the index of the vertex nearest to (x, y, z), or -1 if none is
+/// within `eps`. Used to locate cube corners by coordinate rather than
+/// hard-coding vertex indices that depend on the primitive generator's
+/// internal ordering.
+long findVertexNear(const V3[] verts, double x, double y, double z,
+                    double eps = 1e-3)
+{
+    foreach (long i, v; verts)
+        if (approxEq(v.x, x, eps) && approxEq(v.y, y, eps) && approxEq(v.z, z, eps))
+            return i;
+    return -1;
+}
+
+/// Find the edge index whose endpoints are exactly {a, b} (order-independent).
+long edgeIndexOf(const long[2][] edges, long a, long b) {
+    foreach (long ei, e; edges)
+        if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a))
+            return ei;
+    return -1;
+}
+
+double dist(V3 a, V3 b) {
+    return sqrt((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2);
+}
+
 /// Select the given edge indices in edge mode.
 void selectEdges(long[] indices) {
     cmd("select.typeFrom edge");
@@ -319,4 +344,59 @@ unittest { // no-op slide undo must not truncate the undo stack (0099 regression
             && approxEq(before[i].y, after[i].y)
             && approxEq(before[i].z, after[i].z),
             format("vert %d not restored after two undos (0099 stack-truncation regression)", i));
+}
+
+unittest { // task 0307 (fuzz-found): 3-of-4 quad edges selected must not
+    // collapse the mutual-rail vertex pair at an ordinary t
+    //
+    // Plain (non-segmented) cube, corner face at y=-0.5 with corners at
+    //   (-0.5,-0.5,-0.5), (0.5,-0.5,-0.5), (0.5,-0.5,0.5), (-0.5,-0.5,0.5)
+    // Select 3 of that quad's 4 edges, leaving the edge between the two
+    // "+z" corners unselected. Those two corners are then each other's
+    // ONLY rail candidate — the buggy kernel slid both toward each other's
+    // original position and they coincided exactly at t=0.5, degenerating
+    // that quad AND its neighbour across the shared edge.
+    reset();
+    cmd("select.typeFrom edge");
+
+    auto verts = dumpVerts();
+    long vA = findVertexNear(verts, -0.5, -0.5, -0.5);
+    long vB = findVertexNear(verts,  0.5, -0.5, -0.5);
+    long vC = findVertexNear(verts, -0.5, -0.5,  0.5);
+    long vD = findVertexNear(verts,  0.5, -0.5,  0.5);
+    assert(vA >= 0 && vB >= 0 && vC >= 0 && vD >= 0,
+        "expected 4 cube corners at y=-0.5 not found");
+
+    auto edges = dumpEdges();
+    long eAB = edgeIndexOf(edges, vA, vB);
+    long eBD = edgeIndexOf(edges, vB, vD);
+    long eAC = edgeIndexOf(edges, vA, vC);
+    long eCD = edgeIndexOf(edges, vC, vD);
+    assert(eAB >= 0 && eBD >= 0 && eAC >= 0 && eCD >= 0,
+        "expected all 4 quad edges to exist");
+
+    selectEdges([eAB, eBD, eAC]);   // 3 of 4; eCD (the mutual-rail edge) stays unselected
+    cmd("mesh.edge_slide t:0.5");
+
+    auto faces = getJson("/api/model")["faces"].array;
+    auto after = dumpVerts();
+
+    // Regression: the mutual-rail pair (C, D) must not coincide.
+    assert(dist(after[vC], after[vD]) > 0.05,
+        format("task 0307 regression: mutual-rail verts %d/%d collapsed "
+             ~ "(dist=%f)", vC, vD, dist(after[vC], after[vD])));
+
+    // No face may become degenerate: no two distinct vertex-index slots of
+    // any face may resolve to (near-)coincident positions post-slide.
+    foreach (fi, f; faces) {
+        auto idx = f.array;
+        foreach (ai; 0 .. idx.length)
+            foreach (bi; ai + 1 .. idx.length) {
+                auto va = after[cast(size_t) idx[ai].integer];
+                auto vb = after[cast(size_t) idx[bi].integer];
+                assert(dist(va, vb) > 1e-3,
+                    format("task 0307 regression: face %d has coincident "
+                         ~ "vertices after slide", fi));
+            }
+    }
 }

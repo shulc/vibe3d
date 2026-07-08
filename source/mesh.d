@@ -15707,7 +15707,11 @@ private int[] colorFacesForSlide(const ref Mesh m, const bool[] edgeMask)
 /// `sign(t)` chooses the side: face colour 1 when t > 0, colour 0 when
 /// t < 0.  t = ±1 places the vertex exactly on the rail neighbour (clamped).
 /// If no rail exists on the requested side the vertex is left unchanged
-/// (graceful degradation — no crash).
+/// (graceful degradation — no crash). A candidate rail neighbour that is
+/// itself an endpoint of a selected edge (i.e. also sliding this frame,
+/// e.g. 3 of a quad's 4 edges selected) is likewise treated as no-rail —
+/// otherwise the two mutually-railing vertices would walk toward each
+/// other's original position and coincide at t = ±0.5 (task 0307).
 ///
 /// Positional only: topology is unchanged.
 /// Precondition: m.buildLoops() has been called.
@@ -15763,6 +15767,18 @@ Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
             if (selEdge == ~0u || railEdge == ~0u) continue;
 
             uint nb = m.edgeOtherVertex(railEdge, uvi);
+            // Mutual-rail guard (task 0307): if the candidate rail neighbour
+            // is itself an endpoint of a selected edge, it is also sliding
+            // this frame rather than being a stable anchor. Using it would
+            // move both vertices toward each other's *original* (pre-slide)
+            // position — harmless at the documented t = ±1 (vi lands on a
+            // stationary neighbour there), but at an ordinary t (e.g. 3 of a
+            // quad's 4 edges selected, so the lone unselected edge's two
+            // endpoints rail off each other) the pair walks toward one
+            // another and coincides at t = ±0.5. Skip this face's candidate
+            // — same graceful "no rail on this side" degradation already
+            // used when a face offers no valid rail at all.
+            if (slidVert[nb]) continue;
             if (fc == 1) { if (railPos == ~0u) railPos = nb; }
             else         { if (railNeg == ~0u) railNeg = nb; }
         }
@@ -15909,6 +15925,50 @@ unittest { // loop consistency: all loop verts slide the same direction
         float dyN = posN[4 + i].y - m.vertices[4 + i].y;
         assert((dyP[i] > 0) != (dyN > 0),
                "t=+0.5 and t=-0.5 must slide in opposite Y directions");
+    }
+}
+
+unittest { // task 0307: 3-of-4 quad edges selected — mutual-rail must not collapse
+    import std.conv : to;
+    // Cube face [0,1,5,4] (y=-0.5 face): edges 0-1, 1-5, 5-4, 4-0.
+    // Select 3 of its 4 edges (0-1, 1-5, 4-0), leaving 4-5 unselected. Verts
+    // 4 and 5 are then each other's ONLY rail candidate on that face — the
+    // pre-fix kernel slid both toward each other's *original* position and
+    // they coincided exactly at t=0.5 (fuzz-found; fixed by the
+    // slidVert(nb) mutual-rail guard above).
+    Mesh m = makeCube();
+    bool[] mask = new bool[](m.edges.length);
+    foreach (pair; [[0u,1u],[1u,5u],[0u,4u]]) {
+        uint ei = m.edgeIndex(pair[0], pair[1]);
+        assert(ei != ~0u, "quad face-edge must exist");
+        mask[ei] = true;
+    }
+    uint eUnsel = m.edgeIndex(4, 5);
+    assert(eUnsel != ~0u && !mask[eUnsel],
+        "edge 4-5 must be the lone unselected edge of the quad");
+
+    auto pos = edgeSlidePositions(m, mask, 0.5f);
+
+    // Regression: verts 4 and 5 must NOT coincide.
+    float d45 = (pos[4] - pos[5]).length();
+    assert(d45 > 0.05f,
+        "task 0307 regression: mutual-rail verts 4/5 collapsed, dist=" ~ d45.to!string);
+
+    // Graceful degradation: this is the ONLY face touching 4/5 with a
+    // candidate rail, and that candidate is mutual — so both stay put
+    // rather than sliding onto (or past) one another.
+    assert((pos[4] - m.vertices[4]).length() < 1e-6f,
+        "vert 4 has no valid (non-mutual) rail — must stay unchanged");
+    assert((pos[5] - m.vertices[5]).length() < 1e-6f,
+        "vert 5 has no valid (non-mutual) rail — must stay unchanged");
+
+    // No face becomes degenerate: no two distinct vertices of any face
+    // coincide after the slide.
+    foreach (const f; m.faces) {
+        foreach (ai; 0 .. f.length)
+            foreach (bi; ai + 1 .. f.length)
+                assert((pos[f[ai]] - pos[f[bi]]).length() > 1e-4f,
+                    "task 0307 regression: face has coincident vertices after slide");
     }
 }
 // insertEdgeLoops — connectivity correctness (Risk 2: orientation)
