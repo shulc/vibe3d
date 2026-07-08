@@ -2831,6 +2831,15 @@ struct Mesh {
         //     onto this id too, rather than racing to mint its own duplicate
         //     (AA iteration order is unspecified).
         bool[ulong] weldedToFar;
+        // Perf nit: whether ANY far-vertex overshoot clamp (this pass or its
+        //     along-edge sibling further below) actually saturated. The
+        //     winding-consistency safety net (task 0317, below) exists solely
+        //     to reconcile faces whose local winding heuristic disagreed
+        //     because of a saturating clamp/weld; when this stays false (the
+        //     overwhelming common case — a batchless preview frame with a
+        //     modest width/extrude) that pass's O(F) edgeUsers build + BFS is
+        //     unconditionally a no-op and is skipped entirely (see gate below).
+        bool anyOvershootSaturated = false;
         foreach (k, acc; insetAccum) {
             if (k in insetPosOverride) continue;     // cap-miter — absolute, no clamp
             auto cap = k in insetClampLen;
@@ -2838,6 +2847,7 @@ struct Mesh {
             if (k in insetClampAmbiguous) continue;   // blended direction — no single target
             float len = (acc * width).length;
             if (len <= *cap || len <= 1e-9f) continue; // did not actually saturate
+            anyOvershootSaturated = true;
             uint v = cast(uint)(k >> 32);
             uint farVertId = insetClampFarVert[k];
             if (isFreeEnd(farVertId)) {
@@ -3141,6 +3151,7 @@ struct Mesh {
                         offLen = farLen;
                         weldToFar = true;
                         farVertId = *fp;
+                        anyOvershootSaturated = true;
                     }
                 } else if (auto op = v in freeEndOther) {
                     t = vertices[v] - vertices[*op];   // fallback: extruded tangent
@@ -3548,6 +3559,24 @@ struct Mesh {
         {
             bool[] dropFace = new bool[](faces.length);
             bool anyDrop = false;
+            // Tracker: a face whose consecutive-duplicate corners collapse here
+            // but that SURVIVES (still >=3 corners after collapsing) is mutated
+            // IN PLACE with no corresponding record — the drop path below records
+            // RemoveFaces, but a mere SHRINK was invisible to the edit-delta.
+            // Forward replay (redo) would then leave the face at its earlier,
+            // duplicate-corner shape (whatever an upstream ReshapeFaces/AddFaces
+            // entry last recorded), since nothing in the log ever re-applies the
+            // collapse. Record it as one more ReshapeFaces entry, keyed by the
+            // SAME pre-cleanup index space `droppedFaceIdx`/the nbr/side entries
+            // already use — before = the pre-collapse corner list, after = the
+            // collapsed one. A face that also ends up dropped needs no entry
+            // here (RemoveFaces^-1 only needs to preserve the slot; a face that
+            // survives to the tail of LIFO revert is always fully overwritten by
+            // an earlier ReshapeFaces^-1/AddFaces^-1 truncation regardless of
+            // this intermediate content).
+            uint[]   reduceReshapeIdx;
+            uint[][] reduceReshapeBefore;
+            uint[][] reduceReshapeAfter;
             foreach (fi; 0 .. faces.length) {
                 auto f = faces[fi];
                 if (f.length < 3) continue;   // pre-existing invalid face — not ours to fix
@@ -3561,9 +3590,18 @@ struct Mesh {
                 // [a,b,b,a] reduces linearly to [a,b,a] — first==last too).
                 while (reduced.length > 1 && reduced[0] == reduced[$ - 1])
                     reduced = reduced[0 .. $ - 1];
-                if (reduced.length != f.length) faces[fi] = reduced;
+                if (reduced.length != f.length) {
+                    if (recExtrude && reduced.length >= 3) {
+                        reduceReshapeIdx    ~= cast(uint)fi;
+                        reduceReshapeBefore ~= f.dup;
+                        reduceReshapeAfter  ~= reduced.dup;
+                    }
+                    faces[fi] = reduced;
+                }
                 if (faces[fi].length < 3) { dropFace[fi] = true; anyDrop = true; }
             }
+            if (recExtrude && reduceReshapeIdx.length)
+                editRecorder_.recordReshapeFaces(reduceReshapeIdx, reduceReshapeBefore, reduceReshapeAfter);
             if (anyDrop) {
                 uint[][] keptFaces;
                 bool[]   keptSubpatch;
@@ -3651,7 +3689,20 @@ struct Mesh {
         //     agrees (the overwhelming common case — no clamp ever saturates
         //     onto another dissolving vertex) finds every touched face
         //     already satisfying its neighbours, so nothing flips.
-        {
+        //
+        //     Perf nit: the whole pass (in particular the full-mesh
+        //     `edgeUsers` build, which is O(F) over every face in the mesh —
+        //     not just the ones this op touched) is gated on
+        //     `anyOvershootSaturated`. Every heuristic above already agrees
+        //     whenever no clamp/weld actually saturated (see the invariant
+        //     above), so this pass is PROVABLY a no-op in that case — safe to
+        //     skip outright rather than run it and discover nothing flips.
+        //     This is the common case for every batchless preview frame
+        //     (`rebuildPreview()` re-runs this kernel every frame of an
+        //     interactive drag with a modest width/extrude), so the gate
+        //     avoids doing O(F) work per frame for a result that never
+        //     changes anything.
+        if (anyOvershootSaturated) {
             bool[uint] windingCandidate;
             void addCandidate(size_t oldFi) {
                 if (oldFi >= faceRemap.length) return;
@@ -3741,11 +3792,35 @@ struct Mesh {
                 if (!addedRoot) break;
             }
 
+            // Tracker: this pass runs AFTER every recordReshapeFaces/recordAddFaces
+            // call above captured its own after-image, so a flip applied here is
+            // otherwise INVISIBLE to the edit-delta — redo (MeshEditDelta.apply,
+            // which replays faceListsAfter/faceLists verbatim) would silently
+            // restore the pre-flip (folded) winding even though undo (which
+            // restores the pre-op faces wholesale) is unaffected. Record exactly
+            // the faces this loop actually flips as one more ReshapeFaces entry,
+            // keyed by the POST-cleanup index `fi` — the same index space
+            // `removeFacesForward` reproduces on redo (it repacks kept faces in
+            // order, byte-identical to how `keptFaces` was built above), so this
+            // entry composes correctly after the cleanup pass's RemoveFaces entry
+            // on both forward replay and LIFO reverse. A call with an empty index
+            // list (the common no-flip case) is a guaranteed no-op inside
+            // recordReshapeFaces, so this adds nothing when nothing flipped.
+            uint[]   windReshapeIdx;
+            uint[][] windReshapeBefore;
+            uint[][] windReshapeAfter;
             foreach (fi, st; state) {
                 if (st != 1) continue;
                 auto r = faces[fi].dup;
                 foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
+                if (recExtrude) {
+                    windReshapeIdx    ~= fi;
+                    windReshapeBefore ~= r;
+                    windReshapeAfter  ~= faces[fi].dup;
+                }
             }
+            if (recExtrude && windReshapeIdx.length)
+                editRecorder_.recordReshapeFaces(windReshapeIdx, windReshapeBefore, windReshapeAfter);
         }
 
         // --- Rebuild edges + loops; size selection arrays explicitly. Then drop

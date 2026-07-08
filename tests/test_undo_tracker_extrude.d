@@ -396,3 +396,145 @@ unittest {
 
     cmd("undo.tracker.off");
 }
+
+// ===========================================================================
+// 6. TASK 0317 SHOULD-FIX — redo must reproduce the WINDING-CORRECTED mesh,
+//    not the pre-flip (folded) winding the tracker captured before the
+//    winding-consistency safety net ran.
+//
+//    mesh.d's extrudeEdgesByMask records recordReshapeFaces (neighbour/side
+//    rewrites) and recordAddFaces (bridge/cap tail) BEFORE the task-0317
+//    two-colouring winding pass runs. When that pass actually flips a face
+//    (a multi-edge overshoot that welds one free end's clamp onto another's),
+//    the flip was until now invisible to the edit-delta: MeshEditDelta.apply
+//    (redo) replays faceListsAfter/faceLists verbatim, silently restoring the
+//    PRE-flip (folded) winding even though undo — which restores the whole
+//    pre-op face list via the RemoveFaces/AddFaces/ReshapeFaces inverses —
+//    was unaffected. Fixed by recording one more ReshapeFaces entry for
+//    exactly the faces the winding pass flips, keyed in the same
+//    post-cleanup index space `removeFacesForward` reproduces on replay.
+//
+//    This exact repro ALSO tripped a second, previously-unknown instance of
+//    the identical class of bug in the degenerate-face cleanup pass just
+//    above the winding pass: a face whose consecutive duplicate corners
+//    collapse (e.g. an overshoot-welded [a,b,b,c,c] -> [a,b,c]) but that
+//    SURVIVES (>=3 corners after collapsing) was mutated in place with NO
+//    tracker record at all — redo left it at whatever duplicate-corner shape
+//    an earlier ReshapeFaces/AddFaces entry had recorded. Fixed the same way:
+//    one more ReshapeFaces entry for exactly the faces that collapse-but-
+//    survive, keyed in the SAME pre-cleanup index space the RemoveFaces
+//    entry already uses. Both fixes are required for this test to pass —
+//    the collapse-tracking gap surfaces first (as literal duplicate corners
+//    on redo, worse than a mere winding flip) and would otherwise mask the
+//    winding-flip fix entirely.
+//
+//    Repro: n=3 grid, center-quad opposite edges (5,6)+(9,10), extrude=0.2,
+//    width=3 — the EXACT multi-edge overshoot from test_edge_extrude.d's
+//    task 0317 one-shot regression (test 16), driven here through the
+//    INTERACTIVE tool + tracker commit path instead of the one-shot command
+//    (the one-shot/headless `tool.doApply` and `mesh.edge_extrude` paths are
+//    snapshot-backed, not delta-backed, so they can't exercise this bug).
+//    The off-handle free drag maps pixels to params at FREE_SCALE=0.01
+//    (source/tools/edge_extrude.d), so a (+300,-20) px delta from a zero
+//    baseline yields EXACTLY width=3.0, extrude=0.2 — no need to approximate.
+// ===========================================================================
+
+// Exact per-face WINDING comparison (order-sensitive) — unlike sameGeometry
+// above, which only checks vertex-SET membership and would miss a face whose
+// corners are the same set but in reversed (folded) order.
+bool facesExactMatch(JSONValue a, JSONValue b) {
+    auto fa = a["faces"].array;
+    auto fb = b["faces"].array;
+    if (fa.length != fb.length) return false;
+    foreach (i; 0 .. fa.length) {
+        auto ca = fa[i].array;
+        auto cb = fb[i].array;
+        if (ca.length != cb.length) return false;
+        foreach (k; 0 .. ca.length)
+            if (ca[k].integer != cb[k].integer) return false;
+    }
+    return true;
+}
+
+// Hole-free: no undirected edge shared by >2 faces, no directed half-edge
+// used twice (a fold / inconsistent winding). Index-only, no vertex positions
+// needed. (Duplicated from tests/test_edge_extrude.d — test binaries compile
+// standalone; see drag_helpers.d's header note on why the math is repeated.)
+bool isHoleFree(JSONValue m) {
+    int[ulong] undirected;
+    int[ulong] directed;
+    foreach (f; m["faces"].array) {
+        auto idx = f.array;
+        auto n = idx.length;
+        foreach (k; 0 .. n) {
+            ulong x = cast(ulong)idx[k].integer;
+            ulong y = cast(ulong)idx[(k + 1) % n].integer;
+            ulong lo = x < y ? x : y, hi = x < y ? y : x;
+            undirected[(lo << 32) | hi] += 1;
+            directed[(x << 32) | y] += 1;
+        }
+    }
+    foreach (_, c; undirected) if (c > 2) return false;
+    foreach (_, c; directed)   if (c > 1) return false;
+    return true;
+}
+
+unittest {
+    cmd("undo.tracker.on");
+    cmd("history.clear");
+
+    resetGrid(3);
+    auto pre = getModel();
+    assert(pre["vertexCount"].integer == 16, "0317 redo: expected 16-vert n=3 grid");
+    int e56  = edgeIndex(pre, 5, 6);
+    int e910 = edgeIndex(pre, 9, 10);
+    assert(e56 >= 0 && e910 >= 0, "0317 redo: center-quad opposite edges (5,6)/(9,10) not found");
+    postSelect("edges", [e56, e910]);
+
+    // Interactive commit through the TRACKED (delta) path: off-handle free
+    // drag with a TOTAL delta of (+300,-20) px == exactly (width=3.0,
+    // extrude=0.2) at FREE_SCALE=0.01 — the same overshoot task 0317's
+    // one-shot test drives, built here via the interactive tool + tracker
+    // instead. Click near the top-left viewport corner (far from the gizmo,
+    // which anchors at the selected edges' midpoint) so the click misses
+    // both handles and a blind PART_FREE 2-axis drag begins.
+    cmd("tool.set edge.extrude on");
+    auto cam = fetchCamera(BASE);
+    int x0 = cam.vpX + 40;
+    int y0 = cam.vpY + cam.height - 40;
+    int x1 = x0 + 300;   // +dx*0.01 = +3.0 width
+    int y1 = y0 - 20;    // -dy*0.01 = +0.2 extrude
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              x0, y0, x1, y1, 20);
+    playAndWait(log, BASE);
+    cmd("tool.set edge.extrude off");   // deactivate -> commitEdit (delta path)
+
+    auto post = getModel();
+    assert(post["vertexCount"].integer > pre["vertexCount"].integer,
+        "0317 redo: interactive commit built no geometry (drag did not reach the tool)");
+    assert(isHoleFree(post),
+        "0317 redo: post-extrude mesh is not hole-free (drag did not reproduce the "
+        ~ "0317 overshoot scenario, or the winding-consistency pass itself regressed)");
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "0317 redo: undo failed: " ~ u.toString);
+    assert(sameGeometry(getModel(), pre),
+        "0317 redo: post-undo geometry != pre-extrude grid");
+
+    auto r = postRedo();
+    assert(r["status"].str == "ok", "0317 redo: redo failed: " ~ r.toString);
+    auto redone = getModel();
+
+    // THE regression assertion: redo must reproduce `post` EXACTLY, including
+    // per-face corner ORDER. Pre-fix, MeshEditDelta.apply replayed the
+    // pre-flip (folded) faceListsAfter/faceLists the tracker captured before
+    // the winding-consistency pass ran, so a face the pass flipped would come
+    // back reversed here even though sameGeometry (vertex-SET only) would
+    // pass anyway.
+    assert(facesExactMatch(post, redone),
+        "0317 redo: redo restored FOLDED winding instead of the winding-corrected "
+        ~ "mesh (the flip was invisible to the recorded edit-delta)");
+    assert(isHoleFree(redone), "0317 redo: redone mesh is not hole-free");
+
+    cmd("undo.tracker.off");
+}
