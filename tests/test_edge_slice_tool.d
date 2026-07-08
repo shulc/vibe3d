@@ -47,6 +47,19 @@
 //      synthetic SDL_KEYDOWN ESCAPE must unwind the WHOLE chain back to the
 //      base mesh with NO undo entry recorded.
 //
+// Task 0303 (fuzz-found — doApply/commitChain corrupt the mesh on a failed
+// chain that reuses a shared corner):
+//   15. doApply: edge(0,1)@0.5 (interior) + edge(1,5)@endpoint-reuse of the
+//      SHARED corner (vertex 1) lands the two cut positions ADJACENT in the
+//      shared face's winding — a legitimate no-op (adjacent-hit guard).
+//      doApply must report failure ("did not apply") AND leave the mesh
+//      byte-identical to the base cube (no leaked vertex, edges[] not stale,
+//      Euler characteristic unchanged, no undo entry).
+//   16. Same failing chain via the interactive commitChain path (`chainArm` +
+//      synthetic Enter): a chain that bakes zero segments must cancel rather
+//      than record a no-op undo entry — mesh stays byte-identical, no undo
+//      entry, armed_ clears.
+//
 // tests/test_edge_slice.d (the one-shot mesh.edgeSlice command) is untouched
 // and stays green independently — this file only exercises the tool path.
 
@@ -55,6 +68,7 @@ import std.json;
 import std.conv : to;
 import std.format : format;
 import std.math : abs;
+import std.algorithm : canFind;
 import core.thread : Thread;
 import core.time : msecs;
 
@@ -769,6 +783,127 @@ unittest {
     assert(depthAfter == depthBefore,
         "cancel must NOT record any undo entry, went " ~
         depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 15. Task 0303 (fuzz-found, definitive minimal repro): a chain reusing a
+//     shared corner — edge(0,1)@0.5 (genuine interior insert) chained to
+//     edge(1,5)@endpoint-reuse of the SHARED corner (vertex 1, common to
+//     both edges). Both edges border face 5 ([0,1,5,4]); the interior cut
+//     vertex is spliced in immediately next to the reused corner in that
+//     face's winding, so the two cut positions are ADJACENT there —
+//     rebuildFacesWithChordSplits' adjacent-hit guard correctly refuses to
+//     split it (a legitimate no-op: the "chord" would just be the existing
+//     half-edge). doApply must report failure ("did not apply") AND leave
+//     the mesh byte-identical to the base cube.
+//
+//     Before the fix: Pass 1 (insertEdgePoint) had already spliced the new
+//     vertex into BOTH faces incident to edge(0,1) (faces 0 and 5) before
+//     Pass 2 detected the no-op, and that mutation was never rolled back —
+//     V 8->9 (vertex 8 leaked into faces 0 & 5), edges[] stale (still 12),
+//     Euler characteristic 9 - 12 + 6 = 3 (should stay 2).
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint eA = edgeIndexByVerts(m0, 0, 1);
+    uint eB = edgeIndexByVerts(m0, 1, 5);
+    assert(eA != uint.max, "edge(0,1) must exist on cube");
+    assert(eB != uint.max, "edge(1,5) must exist on cube");
+    long depthBefore = undoModelDepth();
+
+    double tB = endpointT(m0, eB, 1);   // land on the shared corner, vertex 1
+
+    activateTool();
+    setEdges(eA, eB);
+    cmd("tool.attr mesh.edgeSliceTool tA 0.5");
+    cmd(format("tool.attr mesh.edgeSliceTool tB %.3f", tB));
+
+    auto r = postCmd("/api/command", "tool.doApply");
+    assert(r["status"].str == "error",
+        "adjacent-hit no-op chain must report failure, got " ~ r.toString);
+    assert(r["message"].str.canFind("did not apply"),
+        "expected a \"did not apply\" failure message, got " ~ r["message"].str);
+
+    auto m1 = model();
+    assert(vertCount(m1) == vertCount(m0),
+        "failed doApply must not leave a leaked vertex, got " ~ vertCount(m1).to!string
+        ~ " (was " ~ vertCount(m0).to!string ~ ")");
+    assert(faceCount(m1) == faceCount(m0),
+        "failed doApply must not touch face count, got " ~ faceCount(m1).to!string);
+    assert(edgeCount(m1) == edgeCount(m0),
+        "failed doApply must not leave edges[] stale, got " ~ edgeCount(m1).to!string
+        ~ " (was " ~ edgeCount(m0).to!string ~ ")");
+    assert(vertCount(m1) - edgeCount(m1) + cast(long)faceCount(m1) == 2,
+        "Euler characteristic must stay 2 after a failed doApply");
+    assert(duplicatePositionVerts(m1) == 0, "no duplicate vertex positions after a failed doApply");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore,
+        "a failed doApply must not record any undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 16. Task 0303, interactive commitChain path: `chainArm` arms the SAME
+//     failing 2-edge chain as test 15 and a synthetic Enter drives the REAL
+//     commitChain() — since bakeChainFrom bakes ZERO segments, commitChain
+//     must cancel rather than record a no-op undo entry. Mesh stays
+//     byte-identical to the base cube; no undo entry; armed_ clears.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint eA = edgeIndexByVerts(m0, 0, 1);
+    uint eB = edgeIndexByVerts(m0, 1, 5);
+    double tB = endpointT(m0, eB, 1);
+
+    activateTool();
+    setEdges(eA, eB);
+    cmd("tool.attr mesh.edgeSliceTool tA 0.5");
+    cmd(format("tool.attr mesh.edgeSliceTool tB %.3f", tB));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    // Sanity: armChain bakes eagerly (mutate/revert preview), but this
+    // specific chain fails to bake ANY segment — `built_` must reflect that,
+    // and the live mesh must already read back unchanged (armChain's own
+    // bakeChainFrom no-ops cleanly, per the mesh.d fix).
+    auto st0 = getJson("/api/tool/state");
+    assert(st0["built"].type == JSONType.false_,
+        "armChain must report built=false when the chain fails to bake");
+    assert(vertCount(model()) == vertCount(m0),
+        "armChain must not leave a leaked vertex when the chain fails to bake");
+
+    long depthBefore = undoModelDepth();
+
+    auto r = postCmd("/api/play-events",
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}`);
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    bool finished = false;
+    foreach (_; 0 .. 200) {
+        auto s = getJson("/api/play-events/status");
+        if (s["finished"].type == JSONType.true_) { finished = true; break; }
+        Thread.sleep(50.msecs);
+    }
+    assert(finished, "synthetic Enter replay did not finish within 10s");
+    Thread.sleep(150.msecs);
+
+    auto m1 = model();
+    assert(vertCount(m1) == vertCount(m0), "failed commitChain must not leave a leaked vertex");
+    assert(faceCount(m1) == faceCount(m0), "failed commitChain must not touch face count");
+    assert(edgeCount(m1) == edgeCount(m0), "failed commitChain must not leave edges[] stale");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore,
+        "a chain that bakes zero segments must NOT record any undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    auto st1 = getJson("/api/tool/state");
+    assert(st1["armed"].type == JSONType.false_, "commitChain-as-cancel must clear armed_");
 
     deactivateTool();
 }

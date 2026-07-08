@@ -10882,6 +10882,23 @@ struct Mesh {
         // Uses original edge indices; face windings are modified in-place but
         // face count (faces.length) is stable across Pass-1. Capture the
         // FIRST (edgeA/tA) and LAST (edgeB/tB) insert's returned vertex index.
+        //
+        // task 0303 (fuzz-found): Pass 1 mutates `vertices`/`faces`
+        // UNCONDITIONALLY, before Pass 2 knows whether any face will actually
+        // split — e.g. a genuine interior insert on edgeA landing immediately
+        // adjacent (in the shared face's winding) to an F1 endpoint-reuse cut
+        // on edgeB trips rebuildFacesWithChordSplits' adjacent-hit guard, so
+        // Pass 2 legitimately splits nothing. Snapshot just enough to undo
+        // Pass 1 (vertex count + a shallow dup of the faces array — cheap,
+        // no vertices/edges/loops/selection touched) so that a Pass-2 no-op
+        // (facesSplit == 0) leaves the mesh's GEOMETRY byte-identical to entry
+        // (version counters still bump — as MeshSnapshot.restore also does —
+        // but a version-keyed cache re-derives identical data from identical
+        // geometry), matching the one-shot `mesh.edgeSlice` command's outer
+        // snapshot/restore.
+        size_t   vertsBeforePass1 = vertices.length;
+        uint[][] facesBeforePass1 = faces._store.dup;
+
         bool[] isCutVert;
         isCutVert.length = vertices.length;
         foreach (i, ei; cutEdges) {
@@ -10898,6 +10915,22 @@ struct Mesh {
             if (f < origFaceCount) splitMask[f] = true;
 
         result.facesSplit = rebuildFacesWithChordSplits(splitMask, isCutVert);
+        if (result.facesSplit == 0) {
+            // rebuildFacesWithChordSplits' own nSplit==0 branch returns
+            // early WITHOUT touching edges/loops/selection (see its doc
+            // comment), so those are still consistent with the PRE-Pass-1
+            // vertex count — restoring vertices/faces alone fully undoes
+            // Pass 1, no rebuildEdges()/buildLoops() call needed.
+            faces._store = facesBeforePass1;
+            vertices.length = vertsBeforePass1;
+            result.cutVertA = ~0u;
+            result.cutVertB = ~0u;
+            // NB: Pass 1's addVertex also fires editRecorder_.recordAddVert when
+            // a change-batch is open; this rollback does NOT un-record it. Safe
+            // today because no caller wraps edgeSliceEx in beginEditBatch (batch
+            // openers are delete/remove/edge_extrude/edge_extend). A future
+            // batched caller must add a matching un-record here.
+        }
         return result;
     }
 
@@ -17640,6 +17673,51 @@ unittest { // edgeSliceEx: mixed endpoint (t=0, reuse) + interior (t=0.5, new ve
         "one endpoint (reused) + one interior (new) => +1 vertex only");
     assert(r.cutVertA == 0, "cutVertA must be the REUSED corner (vertex 0), not a fresh index");
     assert(r.cutVertB == origVerts, "cutVertB must be the newly appended interior vertex");
+}
+
+unittest { // edgeSliceEx: adjacent-hit no-op must NOT leave Pass-1 mutation behind
+           // — fuzz-found, task 0303 (definitive minimal repro).
+    //
+    // edge(0,1)@t=0.5 (genuine interior insert) chained to edge(1,5)@t=1.0
+    // (F1 endpoint-reuse landing on the SHARED corner, vertex 1). Both edges
+    // border face 5 ([0,1,5,4]); the interior cut vertex is spliced in
+    // immediately next to the reused corner in that face's winding, so the
+    // two cut positions are ADJACENT there — rebuildFacesWithChordSplits'
+    // adjacent-hit guard correctly refuses to split it (facesSplit == 0).
+    // Before the fix, Pass 1 (insertEdgePoint) had already spliced the new
+    // vertex into BOTH faces incident to edge(0,1) (faces 0 and 5) and grown
+    // `vertices` by one, and that mutation was never rolled back on the
+    // Pass-2 no-op — leaving 9 verts, a stale edges[] (still 12), and
+    // Euler characteristic 9 - 12 + 6 = 3 (should stay 2).
+    import std.conv : to;
+    auto m = makeCube();
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(1, 5);
+    assert(eA != ~0u, "edge(0,1) must exist on cube");
+    assert(eB != ~0u, "edge(1,5) must exist on cube");
+
+    size_t origVerts = m.vertices.length;
+    size_t origEdges = m.edges.length;
+    size_t origFaces = m.faces.length;
+    uint[][] origFaceWindings = m.faces._store.dup;
+
+    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // land on the shared corner, vertex 1
+
+    auto r = m.edgeSliceEx(eA, eB, 0.5f, tB, /*splitPolygons*/true);
+
+    assert(r.facesSplit == 0,
+        "adjacent cut positions on the shared face must be a no-op (adjacent-hit guard)");
+    assert(r.cutVertA == ~0u && r.cutVertB == ~0u,
+        "a no-op result must not surface stale cut-vertex indices");
+    assert(m.vertices.length == origVerts,
+        "no-op must not leave Pass 1's interior insert behind — vertex count unchanged");
+    assert(m.edges.length == origEdges, "no-op must not touch edges[]");
+    assert(m.faces.length == origFaces, "no-op must not touch face count");
+    foreach (fi; 0 .. origFaces)
+        assert(m.faces[fi] == origFaceWindings[fi],
+            "no-op must not leave a spliced vertex in face " ~ fi.to!string ~ "'s winding");
+    assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
+        "Euler characteristic must stay 2 after a no-op cut");
 }
 
 unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0

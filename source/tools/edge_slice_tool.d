@@ -766,7 +766,20 @@ private:
             return;
         }
 
-        bakeChainFrom(chainBefore_, latchedPoints_);
+        size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
+        if (n == 0) {
+            // task 0303 (fuzz-found): the whole chain failed to bake even
+            // its first segment (e.g. a t=0/1 endpoint-reuse cut landing
+            // ADJACENT, in the shared face's winding, to another segment's
+            // cut point trips rebuildFacesWithChordSplits' adjacent-hit
+            // guard). bakeChainFrom/edgeSliceEx already leave the mesh
+            // exactly as chainBefore_ in that case (mesh.d's own
+            // Pass-1-undo-on-Pass-2-failure), so recording an edit here
+            // would be a genuine no-op undo entry — cancel instead, mirroring
+            // applyHeadless's n==0 contract.
+            cancelLiveEdit();
+            return;
+        }
         auto edit = factory();
         auto post = MeshSnapshot.capture(*mesh);
         edit.setSnapshots(chainBefore_, post, "Edge Slice");
