@@ -154,3 +154,85 @@ unittest { // cenY=1.5 centers cube at y=1.5
             "cenY=1.5: vert y out of [1,2]: " ~ y.to!string);
     }
 }
+
+// -------------------------------------------------------------------------
+// 7. Task 0314 (CRITICAL DoS/OOM): segmentsR is declared .min(1).max(64) in
+// BoxTool.params() but /api/command bypassed that bound entirely, and the
+// rounded-box corner builder is O(segmentsR^2) (~8n^2 verts). segmentsR:1000
+// used to allocate 8M+ verts and hang the main thread for 50+s. The generic
+// fix (params.d injectParamsInto now clamps Int/Float writes to the
+// declared min/max hints) must clamp this to 64 — fast, bounded output,
+// identical to requesting segmentsR:64 directly.
+// -------------------------------------------------------------------------
+
+unittest { // prim.cube segmentsR:1000 clamps to 64 — fast + bounded
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+
+    resetEmpty();
+    auto sw = StopWatch(AutoStart.yes);
+    auto resp = primCubeJson(
+        `"sizeX":1,"sizeY":1,"sizeZ":1,"radius":0.2,"segmentsR":1000`);
+    sw.stop();
+    assert(resp["status"].str == "ok", "segmentsR:1000 command failed: " ~ resp.toString);
+
+    // Regression guard: an unclamped segmentsR:1000 allocates ~8M verts and
+    // was observed to hang 50+s. Clamped to 64, this completes in well under
+    // a second; assert generously (5s) to absorb CI/build-machine variance
+    // while still catching a reintroduced O(n^2) blowup.
+    assert(sw.peek.total!"msecs" < 5000,
+        "prim.cube segmentsR:1000 took " ~ sw.peek.total!"msecs".to!string
+        ~ "ms — clamp to max(64) appears not to be enforced");
+
+    auto m = getModel();
+    // n=64 rounded-cube (segmentsX=Y=Z=1 default): verts = 8*(n^2+n+1),
+    // faces = 8*n^2 + 12*n + 6 (formula verified in box.d's own unittest
+    // for n=1..4; the DoS repro is exactly this formula evaluated at the
+    // clamped bound instead of the requested 1000).
+    enum size_t expectedVerts = 8 * (64 * 64 + 64 + 1);   // 33288
+    enum size_t expectedFaces = 8 * 64 * 64 + 12 * 64 + 6; // 33542
+    assert(m["vertices"].array.length == expectedVerts,
+        "segmentsR:1000 (clamped to 64): expected " ~ expectedVerts.to!string
+        ~ " verts, got " ~ m["vertices"].array.length.to!string);
+    assert(m["faces"].array.length == expectedFaces,
+        "segmentsR:1000 (clamped to 64): expected " ~ expectedFaces.to!string
+        ~ " faces, got " ~ m["faces"].array.length.to!string);
+}
+
+unittest { // prim.cube segmentsR:1000 == segmentsR:64 (proves the clamp value)
+    resetEmpty();
+    auto r1000 = primCubeJson(`"sizeX":1,"sizeY":1,"sizeZ":1,"radius":0.2,"segmentsR":1000`);
+    assert(r1000["status"].str == "ok", r1000.toString);
+    auto m1000 = getModel();
+
+    resetEmpty();
+    auto r64 = primCubeJson(`"sizeX":1,"sizeY":1,"sizeZ":1,"radius":0.2,"segmentsR":64`);
+    assert(r64["status"].str == "ok", r64.toString);
+    auto m64 = getModel();
+
+    assert(m1000["vertices"].array.length == m64["vertices"].array.length,
+        "segmentsR:1000 should clamp to the same result as segmentsR:64");
+    assert(m1000["faces"].array.length == m64["faces"].array.length,
+        "segmentsR:1000 should clamp to the same result as segmentsR:64");
+}
+
+// -------------------------------------------------------------------------
+// 8. Task 0315: box radius has no clamp vs size. radius >= min(size)/2
+// corrupts the rounded-cube topology (unit cube: 0.4999 → clean 24v/26f,
+// 0.5 → non-manifold/degenerate/duplicate-edge 6v/26f, since the inner
+// face-panel extents collapse to exactly zero at the boundary). Fixed by
+// insetting the existing maxR clamp by a small epsilon (buildCuboidParametric
+// in box.d), mirroring buildTube's strict-interval contract.
+// -------------------------------------------------------------------------
+
+unittest { // prim.cube radius:0.5 on a unit cube clamps below the boundary → clean 24v/26f
+    resetEmpty();
+    auto resp = primCubeJson(`"sizeX":1,"sizeY":1,"sizeZ":1,"radius":0.5,"segmentsR":1`);
+    assert(resp["status"].str == "ok", "radius:0.5 command failed: " ~ resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 24,
+        "radius:0.5 (clamped below size/2): expected clean 24 verts, got "
+        ~ m["vertices"].array.length.to!string ~ " (non-manifold/degenerate if != 24)");
+    assert(m["faces"].array.length == 26,
+        "radius:0.5 (clamped below size/2): expected clean 26 faces, got "
+        ~ m["faces"].array.length.to!string);
+}

@@ -265,7 +265,10 @@ public:
             Param.float_("outerRadius", "Outer Radius",  &params_.outerRadius, 1.0f).min(0.0f),
             Param.float_("innerRadius", "Inner Radius",  &params_.innerRadius, 0.5f).min(0.0f),
             Param.float_("height",      "Height",        &params_.height,      2.0f).min(0.0f),
-            Param.int_("segments",      "Segments",      &params_.segments,    24).min(3).max(256),
+            // task 0314: segments drives 4 rings of `segments` verts each;
+            // `.enforceBounds()` makes the declared hint authoritative on
+            // the headless JSON path.
+            Param.int_("segments",      "Segments",      &params_.segments,    24).min(3).max(256).enforceBounds(),
             Param.intEnum_("axis",      "Axis",          &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),

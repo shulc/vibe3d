@@ -10,7 +10,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
-import std.math : fabs, sqrt;
+import std.math : fabs, sqrt, isNaN;
 
 void main() {}
 
@@ -251,4 +251,63 @@ unittest { // JSON ↔ argstring
     assert(fA == mj["faces"].array.length,    "JSON ↔ arg face mismatch");
     assert(vA == 96, "expected 96 verts, got " ~ vA.to!string);
     assert(fA == 96, "expected 96 faces, got " ~ fA.to!string);
+}
+
+// -------------------------------------------------------------------------
+// 8. Task 0315: torus degenerate-radii guards — minorRadius<=0,
+// majorRadius<=0, and minorRadius>=majorRadius (previously unguarded and
+// able to fold the tube through the central axis).
+// -------------------------------------------------------------------------
+
+bool hasCoincidentVerts(JSONValue verts, double eps = 1e-7)
+{
+    auto arr = verts.array;
+    foreach (i; 0 .. arr.length)
+        foreach (j; i + 1 .. arr.length) {
+            double dx = arr[i].array[0].floating - arr[j].array[0].floating;
+            double dy = arr[i].array[1].floating - arr[j].array[1].floating;
+            double dz = arr[i].array[2].floating - arr[j].array[2].floating;
+            if (dx * dx + dy * dy + dz * dz < eps * eps) return true;
+        }
+    return false;
+}
+
+unittest { // minorRadius=0 no longer collapses each minor-loop ring to a point
+    resetEmpty();
+    auto resp = primTorusArg("majorRadius:1.0 minorRadius:0.0 majorSegments:8 minorSegments:6 axis:1");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 48,
+        "expected 48 verts (8*6), got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "minorRadius=0: expected no coincident vertices after degenerate-radius guard");
+}
+
+unittest { // majorRadius=0 no longer produces NaN / unbounded output
+    resetEmpty();
+    auto resp = primTorusArg("majorRadius:0.0 minorRadius:0.25 majorSegments:8 minorSegments:6 axis:1");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 48,
+        "expected 48 verts (8*6), got " ~ m["vertices"].array.length.to!string);
+    foreach (v; m["vertices"].array)
+        foreach (c; v.array)
+            assert(!isNaN(c.floating), "majorRadius=0: found NaN vertex coordinate");
+}
+
+unittest { // minorRadius >= majorRadius no longer folds the tube through the axis
+    resetEmpty();
+    auto resp = primTorusArg("majorRadius:1.0 minorRadius:2.0 majorSegments:8 minorSegments:6 axis:1");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 48,
+        "expected 48 verts (8*6), got " ~ m["vertices"].array.length.to!string);
+    foreach (v; m["vertices"].array) {
+        double x = v.array[0].floating;
+        double z = v.array[2].floating;
+        double radial = sqrt(x * x + z * z);
+        assert(radial > 1e-6,
+            "minorRadius>=majorRadius: expected radial distance to stay positive "
+            ~ "(no self-intersection through the axis), got " ~ radial.to!string);
+    }
 }

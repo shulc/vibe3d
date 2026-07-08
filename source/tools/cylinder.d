@@ -95,6 +95,17 @@ void buildCylinder(Mesh* dst, const ref CylinderParams p)
     float radB  = size[bIdx];
     float radC  = size[cIdx];
 
+    // Degenerate-radii guard (task 0315, mirrors buildTube's outerRadius
+    // floor): radB/radC are the two perpendicular-to-axis radii. Either
+    // landing at exactly 0 (e.g. sizeX=0 or sizeZ=0 for the default
+    // axis=Y) collapses every ring vertex's radius-scaled coordinate to 0,
+    // so side j and S-j land on identical positions (coincident verts /
+    // zero-area degenerate quads). Floor each to a small epsilon,
+    // sign-preserving. halfA == 0 is NOT guarded here — it is the
+    // intentional, already-clean "disk" degenerate case handled below.
+    if (abs(radB) < 1e-4f) radB = (radB < 0.0f) ? -1e-4f : 1e-4f;
+    if (abs(radC) < 1e-4f) radC = (radC < 0.0f) ? -1e-4f : 1e-4f;
+
     bool isDisk = abs(halfA) < 1e-9f;
 
     uint base = cast(uint)dst.vertices.length;
@@ -299,8 +310,11 @@ public:
             Param.float_("sizeX", "Radius X",   &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Radius Y",   &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 1.0f).min(0.0f),
-            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256),
-            Param.int_("segments", "Segments", &params_.segments, 1 ).min(1).max(256),
+            // task 0314: sides/segments feed the ring-vertex loops directly
+            // (O(sides*segments)); `.enforceBounds()` makes the declared
+            // hint authoritative on the headless JSON path.
+            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
+            Param.int_("segments", "Segments", &params_.segments, 1 ).min(1).max(256).enforceBounds(),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),

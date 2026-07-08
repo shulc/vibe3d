@@ -176,6 +176,25 @@ enum ParamFlags : uint {
     Hidden    = 1 << 0,
     ReadOnly  = 1 << 1,
     Transient = 1 << 2,
+    // EnforceBounds (task 0314) — opt-in: injectParamsInto clamps this
+    // Int/Float param's JSON-injected value to its declared `.min()`/
+    // `.max()` hints instead of writing it through unchecked. Deliberately
+    // NOT the default for every hinted param: several commands declare a
+    // `.min()/.max()` that is DELIBERATELY NARROWER than the field's real
+    // valid domain and rely on their own apply()-time check to REJECT
+    // (not coerce) an out-of-range value as an error — e.g.
+    // commands.mesh.sweep's `count` (`.min(2)`, `if (count_ < 2) return
+    // false;`, tested by tests/test_mesh_sweep.d's "count < 2 → error, mesh
+    // unchanged"), and commands.mesh.add_point / loop_slice's `t`/
+    // `position` (`.min(0.001).max(0.999)` as a UI-only sub-range, with
+    // `if (t_ <= 0 || t_ >= 1) return false;` as the real, stricter
+    // authority). Silently clamping those would replace a documented
+    // rejection with a silently-different, unrequested edit. This flag is
+    // for the OTHER common case — a param whose hint bound genuinely IS
+    // the entire valid domain and where "cap it at the max we support" is
+    // the correct behaviour (e.g. every primitive builder's segment/side/
+    // order subdivision-count knobs), so callers opt in per-Param.
+    EnforceBounds = 1 << 3,
 }
 
 struct Param {
@@ -197,6 +216,7 @@ struct Param {
     bool hidden_()    const { return (flags & ParamFlags.Hidden)    != 0; }
     bool readonly_()  const { return (flags & ParamFlags.ReadOnly)  != 0; }
     bool transient_() const { return (flags & ParamFlags.Transient) != 0; }
+    bool enforceBounds_() const { return (flags & ParamFlags.EnforceBounds) != 0; }
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -368,6 +388,10 @@ struct Param {
     Param hidden()    { flags |= ParamFlags.Hidden;    return this; }
     Param readonly()  { flags |= ParamFlags.ReadOnly;  return this; }
     Param transient() { flags |= ParamFlags.Transient; return this; }
+    // Opts this Param into injectParamsInto clamping (task 0314) — see
+    // ParamFlags.EnforceBounds above for when this is (and is NOT) the
+    // right choice for a given param.
+    Param enforceBounds() { flags |= ParamFlags.EnforceBounds; return this; }
 }
 
 // ---------------------------------------------------------------------------
@@ -771,6 +795,46 @@ unittest {
 //   injectParamsInto(cmd.params(), pj);
 //
 // Throws on malformed JSON (wrong type, bad Vec3 array, unknown enum tag).
+//
+// Opt-in bound enforcement (task 0314): an Int/Float Param marked
+// `.enforceBounds()` has its JSON-injected value clamped to the declared
+// `.min()`/`.max()` hints (`ParamHints.hasMinI/hasMaxI`, `hasMinF/hasMaxF`)
+// before the typed-pointer write. Those hints previously existed ONLY as UI
+// slider-range metadata (see params_widgets.d / forms_render.d) — the
+// interactive ImGui widgets clamp as a side effect of being a bounded
+// slider, but this headless JSON path wrote the raw value straight through
+// with NO enforcement at all, for every param, unconditionally. That let
+// any caller (HTTP /api/command, argstring, scripts) drive a
+// declared-bounded param — e.g. prim.cube's `segmentsR` (`.min(1).max(64)`)
+// — arbitrarily out of range, including into geometry-builder complexity
+// blowups (segmentsR:1000 on the O(n^2) rounded-cube corner builder ⇒ 8M+
+// verts / GB-scale RSS / a hung main thread).
+//
+// This is deliberately OPT-IN rather than applied to every hinted param:
+// a first pass tried unconditional clamping (both symmetric min+max, then
+// max-only) and both broke existing, tested command contracts where a
+// `.min()/.max()` hint is DELIBERATELY NARROWER than the field's real valid
+// domain, with the command's own apply()-time check as the actual
+// authority that REJECTS (not coerces) an out-of-range value:
+//   - commands.mesh.sweep's `count` (`.min(2)`, no max) has
+//     `if (count_ < 2) return false;`; tests/test_mesh_sweep.d locks in
+//     "count < 2 → error, mesh unchanged" as the product contract.
+//   - commands.mesh.add_point's `t` and commands.mesh.loop_slice's
+//     `position` (both `.min(0.001).max(0.999)` as a UI-only sub-range)
+//     have `if (t_ <= 0 || t_ >= 1) return false;`; tests/test_add_point.d
+//     asserts `t:1.0` is rejected.
+// Silently clamping those would replace a documented rejection with a
+// silently-different, unrequested edit the caller never asked for — worse
+// than doing nothing. So every primitive builder's segment/side/order
+// subdivision-count Params (where the hint genuinely IS the whole valid
+// domain and "cap it at the max we support" is correct) opt in explicitly
+// via `.enforceBounds()`; every other hinted Param keeps today's
+// behaviour (hint is UI-only, unenforced on this path) unless it also
+// opts in. Degenerate near-zero/negative geometry params (radius vs.
+// size, etc.) are guarded separately at the geometry-builder level (task
+// 0315: buildCuboidParametric / buildCone / buildCylinder / buildCapsule /
+// buildSphere* / buildTorus) — those aren't expressible as a single Param
+// bound anyway (radius's limit depends on sizeX/Y/Z).
 // ---------------------------------------------------------------------------
 
 void injectParamsInto(Param[] params, ref JSONValue pj)
@@ -793,12 +857,24 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                 else
                     *p.bptr = false;
                 break;
-            case Param.Kind.Int:
-                *p.iptr = cast(int)_jsonFloat(*jp);
+            case Param.Kind.Int: {
+                int iv = cast(int)_jsonFloat(*jp);
+                if (p.enforceBounds_) {
+                    if (p.hints.hasMinI && iv < p.hints.minI) iv = p.hints.minI;
+                    if (p.hints.hasMaxI && iv > p.hints.maxI) iv = p.hints.maxI;
+                }
+                *p.iptr = iv;
                 break;
-            case Param.Kind.Float:
-                *p.fptr = _jsonFloat(*jp);
+            }
+            case Param.Kind.Float: {
+                float fv = _jsonFloat(*jp);
+                if (p.enforceBounds_) {
+                    if (p.hints.hasMinF && fv < p.hints.minF) fv = p.hints.minF;
+                    if (p.hints.hasMaxF && fv > p.hints.maxF) fv = p.hints.maxF;
+                }
+                *p.fptr = fv;
                 break;
+            }
             case Param.Kind.String:
                 if (jp.type != JSONType.string)
                     throw new Exception(
@@ -906,4 +982,70 @@ private float _jsonFloat(ref JSONValue v)
     if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
     if (v.type == JSONType.float_)   return cast(float)v.floating;
     return 0.0f;
+}
+
+unittest {
+    // injectParamsInto clamps Int/Float writes to declared .min()/.max()
+    // hints (task 0314) ONLY when the Param opts in via `.enforceBounds()`
+    // — both directions, and a value already in-range passes through
+    // unchanged. Mirrors prim.cube's `segmentsR` (`.min(1).max(64)`), the
+    // concrete DoS repro.
+    import std.conv : to;
+
+    int    segs = 3;
+    float  radius = 10.0f;
+    auto ps = Param.int_("segmentsR", "Radius Segments", &segs, 3)
+        .min(1).max(64).enforceBounds();
+    auto pr = Param.float_("radius", "Radius", &radius, 10.0f)
+        .min(0.0f).max(20.0f).enforceBounds();
+    auto arr = [ps, pr];
+
+    JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+    pj["segmentsR"] = JSONValue(1000);   // way over max(64)
+    pj["radius"]    = JSONValue(-5.0);   // under min(0.0)
+    injectParamsInto(arr, pj);
+    assert(segs   == 64, "segmentsR should clamp to declared max(64), got " ~ segs.to!string);
+    assert(radius == 0.0f, "radius should clamp to declared min(0.0), got " ~ radius.to!string);
+
+    // Below min(1) also clamps (not just the max side) once opted in.
+    JSONValue pj2 = JSONValue(cast(JSONValue[string]) null);
+    pj2["segmentsR"] = JSONValue(-10);
+    injectParamsInto(arr, pj2);
+    assert(segs == 1, "segmentsR should clamp to declared min(1), got " ~ segs.to!string);
+
+    // In-range values pass through unchanged.
+    JSONValue pj3 = JSONValue(cast(JSONValue[string]) null);
+    pj3["segmentsR"] = JSONValue(10);
+    pj3["radius"]    = JSONValue(0.3);
+    injectParamsInto(arr, pj3);
+    assert(segs == 10, "in-range segmentsR should pass through, got " ~ segs.to!string);
+    assert(radius > 0.29f && radius < 0.31f,
+        "in-range radius should pass through, got " ~ radius.to!string);
+
+    // A Param with hints but NO `.enforceBounds()` opt-in is never clamped
+    // (task 0314's design: hints stay UI-only metadata unless a Param
+    // explicitly asks for headless enforcement). This is the case that
+    // matters for commands.mesh.sweep's `count` (`.min(2)`, no
+    // `.enforceBounds()`), whose own apply()-time check
+    // (`if (count_ < 2) return false;`) is the real authority — see
+    // tests/test_mesh_sweep.d's "count < 2 → error, mesh unchanged".
+    int countLike = 8;
+    auto pc = Param.int_("count", "Count", &countLike, 8).min(2);
+    auto arrC = [pc];
+    JSONValue pj4 = JSONValue(cast(JSONValue[string]) null);
+    pj4["count"] = JSONValue(1);   // below min(2), NOT enforced
+    injectParamsInto(arrC, pj4);
+    assert(countLike == 1,
+        "non-opted-in min hint must pass through unclamped (caller's own "
+        ~ "domain check decides accept/reject), got " ~ countLike.to!string);
+
+    // A Param with no hints at all is likewise never clamped, however
+    // large the value (enforceBounds() with no min/max hint is a no-op).
+    int unbounded = 0;
+    auto pu = Param.int_("free", "Free", &unbounded, 0);
+    auto arrU = [pu];
+    JSONValue pj5 = JSONValue(cast(JSONValue[string]) null);
+    pj5["free"] = JSONValue(99999);
+    injectParamsInto(arrU, pj5);
+    assert(unbounded == 99999, "hint-less param must not be clamped");
 }

@@ -258,3 +258,60 @@ unittest { // Tess vertex/face counts and all-triangle invariant
         }
     }
 }
+
+// -------------------------------------------------------------------------
+// 9. Task 0315: degenerate radius (sizeX=0) used to zero one world-axis
+// coordinate for every vertex; since all three sphere methods are
+// symmetric under reflection across that axis, pairs that previously
+// differed only in that coordinate's sign collapsed onto identical
+// positions (coincident verts / zero-area degenerate faces). All three
+// builders now floor a zeroed size to a small epsilon so reflected pairs
+// stay distinct; topology (vertex count) is unaffected.
+// -------------------------------------------------------------------------
+
+bool hasCoincidentVerts(JSONValue verts, double eps = 1e-7)
+{
+    auto arr = verts.array;
+    foreach (i; 0 .. arr.length)
+        foreach (j; i + 1 .. arr.length) {
+            double dx = arr[i].array[0].floating - arr[j].array[0].floating;
+            double dy = arr[i].array[1].floating - arr[j].array[1].floating;
+            double dz = arr[i].array[2].floating - arr[j].array[2].floating;
+            if (dx * dx + dy * dy + dz * dz < eps * eps) return true;
+        }
+    return false;
+}
+
+unittest { // Globe: sizeX=0 no longer collapses latitude-ring verts
+    resetEmpty();
+    auto resp = primSphereArg("sides:8 segments:4 axis:1 sizeX:0.0 sizeY:1.0 sizeZ:1.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    // V = (N-1)*S + 2 = 3*8+2 = 26
+    assert(m["vertices"].array.length == 26,
+        "V=(N-1)*S+2=26 expected, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "Globe sizeX=0: expected no coincident vertices after degenerate-radius guard");
+}
+
+unittest { // QuadBall: sizeX=0 no longer collapses reflected verts
+    resetEmpty();
+    auto resp = primSphereArg("method:qball order:1 sizeX:0.0 sizeY:1.0 sizeZ:1.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 26,
+        "qball order=1: expected 26 verts, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "QuadBall sizeX=0: expected no coincident vertices after degenerate-radius guard");
+}
+
+unittest { // Tess: sizeX=0 no longer collapses reflected verts
+    resetEmpty();
+    auto resp = primSphereArg("method:tess order:1 sizeX:0.0 sizeY:1.0 sizeZ:1.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 42,
+        "tess order=1: expected 42 verts, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "Tess sizeX=0: expected no coincident vertices after degenerate-radius guard");
+}

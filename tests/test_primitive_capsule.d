@@ -270,3 +270,58 @@ unittest { // endsize clamping
     assert(m1["faces"].array.length == mClamp["faces"].array.length,
         "endsize > 1 with sizeY = avgPerp should produce same face count as endsize = 1");
 }
+
+// -------------------------------------------------------------------------
+// Task 0315: degenerate perpendicular radius (sizeX=0 or sizeZ=0 — the two
+// radii perpendicular to the default Y axis) used to zero one ring
+// coordinate for every side vertex, so side j and (S-j) landed on
+// identical positions (coincident verts / zero-area degenerate faces).
+// buildCapsule now floors that radius to a small epsilon so every ring
+// vertex stays distinct. Topology (vertex count) is pinned via `endsize:0`
+// (hemH = |endsize|*avgPerp = 0 for any avgPerp), which decouples the
+// hemisphere-height heuristic from radB/radC so the level count is
+// identical regardless of which radius is degenerate — otherwise
+// avgPerp = (radB+radC)/2 legitimately shrinks when one radius floors to
+// ~0, which changes cylA and therefore the level count on its own (not a
+// bug; a real shape difference this test must not confuse with one).
+// -------------------------------------------------------------------------
+
+bool hasCoincidentVerts(JSONValue verts, double eps = 1e-7)
+{
+    auto arr = verts.array;
+    foreach (i; 0 .. arr.length)
+        foreach (j; i + 1 .. arr.length) {
+            double dx = arr[i].array[0].floating - arr[j].array[0].floating;
+            double dy = arr[i].array[1].floating - arr[j].array[1].floating;
+            double dz = arr[i].array[2].floating - arr[j].array[2].floating;
+            if (dx * dx + dy * dy + dz * dz < eps * eps) return true;
+        }
+    return false;
+}
+
+unittest { // sizeX=0 (radC, axis=Y default) no longer collapses ring verts
+    resetEmpty();
+    auto resp = primCapsuleArg(
+        "sides:8 segments:1 endsegments:2 endsize:0.0 axis:1 sizeX:0.0 sizeY:1.0 sizeZ:1.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    // levels = lowerHemi(1) + lowerEquator(1) + upperEquator(1) + upperHemi(1) = 4
+    // (endsize=0 ⇒ cylA=halfA always, independent of radB/radC)
+    // V = 1(south pole) + levels*S + 1(north pole) = 1 + 4*8 + 1 = 34
+    assert(m["vertices"].array.length == 34,
+        "V=1+4*S+1=34 expected, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "sizeX=0: expected no coincident vertices after degenerate-radius guard");
+}
+
+unittest { // sizeZ=0 (radB, axis=Y default) no longer collapses ring verts
+    resetEmpty();
+    auto resp = primCapsuleArg(
+        "sides:8 segments:1 endsegments:2 endsize:0.0 axis:1 sizeX:1.0 sizeY:1.0 sizeZ:0.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 34,
+        "V=1+4*S+1=34 expected, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "sizeZ=0: expected no coincident vertices after degenerate-radius guard");
+}

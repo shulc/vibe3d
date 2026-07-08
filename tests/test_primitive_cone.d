@@ -257,3 +257,47 @@ unittest { // apex on axis
             "axis=" ~ ax.to!string ~ ": apex must lie on the axis line");
     }
 }
+
+// -------------------------------------------------------------------------
+// 9. Task 0315: degenerate perpendicular radius (sizeX=0 or sizeZ=0, the
+// two radii perpendicular to the default Y axis) used to zero one ring
+// coordinate for every side vertex, so side j and (S-j) landed on
+// identical positions (coincident verts / zero-area degenerate
+// triangles). buildCone now floors that radius to a small epsilon so
+// every ring vertex stays distinct.
+// -------------------------------------------------------------------------
+
+bool hasCoincidentVerts(JSONValue verts, double eps = 1e-7)
+{
+    auto arr = verts.array;
+    foreach (i; 0 .. arr.length)
+        foreach (j; i + 1 .. arr.length) {
+            double dx = arr[i].array[0].floating - arr[j].array[0].floating;
+            double dy = arr[i].array[1].floating - arr[j].array[1].floating;
+            double dz = arr[i].array[2].floating - arr[j].array[2].floating;
+            if (dx * dx + dy * dy + dz * dz < eps * eps) return true;
+        }
+    return false;
+}
+
+unittest { // sizeX=0 (radC, axis=Y default) no longer collapses ring verts
+    resetEmpty();
+    auto resp = primConeArg("sides:8 segments:1 axis:1 sizeX:0.0 sizeY:1.0 sizeZ:1.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 9,
+        "V = N*S+1 = 9 expected, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "sizeX=0: expected no coincident vertices after degenerate-radius guard");
+}
+
+unittest { // sizeZ=0 (radB, axis=Y default) no longer collapses ring verts
+    resetEmpty();
+    auto resp = primConeArg("sides:8 segments:1 axis:1 sizeX:1.0 sizeY:1.0 sizeZ:0.0");
+    assert(resp["status"].str == "ok", resp.toString);
+    auto m = getModel();
+    assert(m["vertices"].array.length == 9,
+        "V = N*S+1 = 9 expected, got " ~ m["vertices"].array.length.to!string);
+    assert(!hasCoincidentVerts(m["vertices"]),
+        "sizeZ=0: expected no coincident vertices after degenerate-radius guard");
+}

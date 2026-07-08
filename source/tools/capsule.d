@@ -96,6 +96,15 @@ void buildCapsule(Mesh* dst, const ref CapsuleParams p)
     float radB  = size[bIdx];
     float radC  = size[cIdx];
 
+    // Degenerate-radii guard (task 0315, mirrors buildTube's outerRadius
+    // floor): radB/radC are the two perpendicular-to-axis radii. Either
+    // landing at exactly 0 (e.g. sizeX=0) collapses every ring vertex's
+    // radius-scaled coordinate to 0, so side j and S-j land on identical
+    // positions (coincident verts / zero-area degenerate faces). Floor
+    // each to a small epsilon, sign-preserving.
+    if (abs(radB) < 1e-4f) radB = (radB < 0.0f) ? -1e-4f : 1e-4f;
+    if (abs(radC) < 1e-4f) radC = (radC < 0.0f) ? -1e-4f : 1e-4f;
+
     // Hemisphere axial extent: proportion of the average perpendicular
     // radius, clamped so it can't exceed half the total axis length.
     float avgPerp = (abs(radB) + abs(radC)) * 0.5f;
@@ -304,9 +313,12 @@ public:
             Param.float_("sizeX", "Radius X",   &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Radius Y",   &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 1.0f).min(0.0f),
-            Param.int_("sides",       "Sides",       &params_.sides,       24).min(3).max(256),
-            Param.int_("segments",    "Segments",    &params_.segments,    1 ).min(1).max(256),
-            Param.int_("endsegments", "End Segments",&params_.endsegments, 6 ).min(2).max(64),
+            // task 0314: sides/segments/endsegments feed the ring-vertex
+            // loops directly; `.enforceBounds()` makes the declared hint
+            // authoritative on the headless JSON path.
+            Param.int_("sides",       "Sides",       &params_.sides,       24).min(3).max(256).enforceBounds(),
+            Param.int_("segments",    "Segments",    &params_.segments,    1 ).min(1).max(256).enforceBounds(),
+            Param.int_("endsegments", "End Segments",&params_.endsegments, 6 ).min(2).max(64).enforceBounds(),
             Param.float_("endsize",   "End Size",    &params_.endsize,     1.0f).min(0.0f),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),

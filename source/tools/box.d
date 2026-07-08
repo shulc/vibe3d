@@ -1195,11 +1195,22 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
         && abs(p.sizeX) >= 1e-9f && abs(p.sizeY) >= 1e-9f && abs(p.sizeZ) >= 1e-9f)
     {
         // Clamp radius so it doesn't exceed the smallest half-extent.
+        //
+        // Strict-interval contract (task 0315, mirrors buildTube's
+        // outer/inner clamp): radius must stay STRICTLY less than the
+        // smallest half-extent, not merely <=. At radius == maxR exactly,
+        // the inner face-panel extents (ix/iy/iz in the rounded-corner
+        // generators above) collapse to zero, producing coincident
+        // corner-ring vertices and duplicate/degenerate edges (verified:
+        // a unit cube with radius=0.5 corrupts to 6v/26f non-manifold,
+        // vs. a clean 24v/26f at radius=0.4999). The epsilon inset keeps
+        // radius on the safe side of that boundary.
         float clampedR = abs(p.radius);
         float maxR = abs(p.sizeX) * 0.5f;
         if (abs(p.sizeY) * 0.5f < maxR) maxR = abs(p.sizeY) * 0.5f;
         if (abs(p.sizeZ) * 0.5f < maxR) maxR = abs(p.sizeZ) * 0.5f;
-        if (clampedR > maxR) clampedR = maxR;
+        float maxRInset = maxR - maxR * 1e-4f;
+        if (clampedR > maxRInset) clampedR = maxRInset;
 
         BoxParams rp = p;
         rp.radius = clampedR;
@@ -2537,11 +2548,17 @@ public:
             Param.float_("sizeX", "Size X",     &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Size Y",     &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Size Z",     &params_.sizeZ, 1.0f).min(0.0f),
-            Param.int_("segmentsX", "Segments X", &params_.segmentsX, 1).min(1).max(64),
-            Param.int_("segmentsY", "Segments Y", &params_.segmentsY, 1).min(1).max(64),
-            Param.int_("segmentsZ", "Segments Z", &params_.segmentsZ, 1).min(1).max(64),
+            Param.int_("segmentsX", "Segments X", &params_.segmentsX, 1).min(1).max(64).enforceBounds(),
+            Param.int_("segmentsY", "Segments Y", &params_.segmentsY, 1).min(1).max(64).enforceBounds(),
+            Param.int_("segmentsZ", "Segments Z", &params_.segmentsZ, 1).min(1).max(64).enforceBounds(),
             Param.float_("radius",    "Radius",          &params_.radius,    0.0f).min(0.0f),
-            Param.int_(  "segmentsR", "Radius Segments", &params_.segmentsR, 3  ).min(1).max(64),
+            // segmentsR (task 0314 CRITICAL): the rounded-corner builder is
+            // O(segmentsR^2) — unclamped, segmentsR:1000 allocates 8M+
+            // verts / GB-scale RSS / hangs the main thread. `.enforceBounds()`
+            // makes the already-declared `.min(1).max(64)` hint authoritative
+            // on the headless JSON path too (previously UI-slider-only).
+            Param.int_(  "segmentsR", "Radius Segments", &params_.segmentsR, 3  )
+                .min(1).max(64).enforceBounds(),
             Param.bool_( "sharp",     "Sharp",           &params_.sharp,     false),
             // axis is auto-picked from the most-facing workplane normal
             // at choosePlane() time; hidden from the Property Panel but

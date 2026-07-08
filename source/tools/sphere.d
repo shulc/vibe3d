@@ -66,9 +66,19 @@ private void buildSphereGlobeAxisY(Mesh* dst, const ref SphereParams p)
     if (S < 3) S = 3;
     if (N < 2) N = 2;
 
+    // Degenerate-radii guard (task 0315, mirrors buildTube's outerRadius
+    // floor): sizeX/Y/Z are the per-world-axis ellipsoid radii. Any one
+    // landing at exactly 0 (e.g. sizeX=0) zeroes that coordinate for every
+    // latitude ring, and since cos(theta) is even, side j and (S-j) then
+    // land on identical positions — coincident verts / zero-area
+    // degenerate quads. Floor each to a small epsilon, sign-preserving.
+    float sx = abs(p.sizeX) < 1e-4f ? (p.sizeX < 0.0f ? -1e-4f : 1e-4f) : p.sizeX;
+    float sy = abs(p.sizeY) < 1e-4f ? (p.sizeY < 0.0f ? -1e-4f : 1e-4f) : p.sizeY;
+    float sz = abs(p.sizeZ) < 1e-4f ? (p.sizeZ < 0.0f ? -1e-4f : 1e-4f) : p.sizeZ;
+
     uint base = cast(uint)dst.vertices.length;
 
-    dst.addVertex(Vec3(p.cenX, p.cenY - p.sizeY, p.cenZ));   // south pole
+    dst.addVertex(Vec3(p.cenX, p.cenY - sy, p.cenZ));   // south pole
 
     foreach (k; 0 .. N - 1) {
         float phi = -PI * 0.5f + PI * cast(float)(k + 1) / cast(float)N;
@@ -79,13 +89,13 @@ private void buildSphereGlobeAxisY(Mesh* dst, const ref SphereParams p)
             float ctheta = cos(theta);
             float stheta = sin(theta);
             dst.addVertex(Vec3(
-                p.cenX - p.sizeX * cphi * stheta,
-                p.cenY + p.sizeY * sphi,
-                p.cenZ - p.sizeZ * cphi * ctheta));
+                p.cenX - sx * cphi * stheta,
+                p.cenY + sy * sphi,
+                p.cenZ - sz * cphi * ctheta));
         }
     }
 
-    dst.addVertex(Vec3(p.cenX, p.cenY + p.sizeY, p.cenZ));   // north pole
+    dst.addVertex(Vec3(p.cenX, p.cenY + sy, p.cenZ));   // north pole
 
     uint southPole = base;
     uint northPole = cast(uint)(base + 1 + (N - 1) * S);
@@ -182,6 +192,17 @@ void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
     float scale = (n < cast(int)QBALL_SCALE.length)
         ? QBALL_SCALE[n] : QBALL_SCALE[$ - 1];
 
+    // Degenerate-radii guard (task 0315): sizeX/Y/Z are the per-world-axis
+    // ellipsoid radii applied as a final per-axis scale below. Any one
+    // landing at exactly 0 flattens that whole axis, so every pair of
+    // projected points mirrored across it (the cube-sphere/icosphere
+    // projections are symmetric under that reflection) lands on identical
+    // final positions — coincident verts / zero-area degenerate faces.
+    // Floor each to a small epsilon, sign-preserving.
+    float sizeX = abs(p.sizeX) < 1e-4f ? (p.sizeX < 0.0f ? -1e-4f : 1e-4f) : p.sizeX;
+    float sizeY = abs(p.sizeY) < 1e-4f ? (p.sizeY < 0.0f ? -1e-4f : 1e-4f) : p.sizeY;
+    float sizeZ = abs(p.sizeZ) < 1e-4f ? (p.sizeZ < 0.0f ? -1e-4f : 1e-4f) : p.sizeZ;
+
     // 6 cube faces. For each: origin (corner i=j=0), u-axis, v-axis.
     // Choose u/v so u × v = outward normal — quads wound [00,10,11,01]
     // then carry the right-handed outward normal automatically.
@@ -230,9 +251,9 @@ void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
             if (r > 1e-9f) pos = pos / r;
         }
         // Empirical scale + per-axis sizing + center offset.
-        pos = Vec3(pos.x * scale * p.sizeX,
-                   pos.y * scale * p.sizeY,
-                   pos.z * scale * p.sizeZ) + cen;
+        pos = Vec3(pos.x * scale * sizeX,
+                   pos.y * scale * sizeY,
+                   pos.z * scale * sizeZ) + cen;
         uint idx = dst.addVertex(pos);
         lookup[k] = idx;
         return idx;
@@ -326,6 +347,16 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
 
     Vec3 cen = Vec3(p.cenX, p.cenY, p.cenZ);
 
+    // Degenerate-radii guard (task 0315): sizeX/Y/Z are the per-world-axis
+    // ellipsoid radii applied as a final per-axis scale below. Any one
+    // landing at exactly 0 flattens that whole axis; the icosphere's
+    // reflective symmetry then maps distinct pre-scale points onto
+    // identical final positions — coincident verts / zero-area degenerate
+    // faces. Floor each to a small epsilon, sign-preserving.
+    float sizeX = abs(p.sizeX) < 1e-4f ? (p.sizeX < 0.0f ? -1e-4f : 1e-4f) : p.sizeX;
+    float sizeY = abs(p.sizeY) < 1e-4f ? (p.sizeY < 0.0f ? -1e-4f : 1e-4f) : p.sizeY;
+    float sizeZ = abs(p.sizeZ) < 1e-4f ? (p.sizeZ < 0.0f ? -1e-4f : 1e-4f) : p.sizeZ;
+
     // Dedupe shared boundary verts. Adjacent base faces produce identical
     // pre-projection interpolated points along their shared edge — collapse
     // them by integer-quantized 3-tuple so the icosphere stays a closed
@@ -390,9 +421,9 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
                     grid[i][j] = *idx;
                     continue;
                 }
-                Vec3 pos = Vec3(onSphere.x * p.sizeX,
-                                onSphere.y * p.sizeY,
-                                onSphere.z * p.sizeZ) + cen;
+                Vec3 pos = Vec3(onSphere.x * sizeX,
+                                onSphere.y * sizeY,
+                                onSphere.z * sizeZ) + cen;
                 uint vi = dst.addVertex(pos);
                 lookup[key] = vi;
                 grid[i][j] = vi;
@@ -576,8 +607,11 @@ public:
                 Param.float_("sizeX", "Radius X",   &params_.sizeX, 0.5f).min(0.0f),
                 Param.float_("sizeY", "Radius Y",   &params_.sizeY, 0.5f).min(0.0f),
                 Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 0.5f).min(0.0f),
-                Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256),
-                Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256),
+                // task 0314: sides/segments feed the latitude-ring loops
+                // directly; `.enforceBounds()` makes the declared hint
+                // authoritative on the headless JSON path.
+                Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
+                Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256).enforceBounds(),
                 Param.intEnum_("axis", "Axis", &params_.axis,
                     [IntEnumEntry(0, "x", "X"),
                      IntEnumEntry(1, "y", "Y"),
@@ -597,14 +631,20 @@ public:
             Param.float_("sizeX", "Radius X",   &params_.sizeX, 0.5f).min(0.0f),
             Param.float_("sizeY", "Radius Y",   &params_.sizeY, 0.5f).min(0.0f),
             Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 0.5f).min(0.0f),
-            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256),
-            Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256),
+            // task 0314: sides/segments feed the latitude-ring loops
+            // directly; `.enforceBounds()` makes the declared hint
+            // authoritative on the headless JSON path.
+            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
+            Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256).enforceBounds(),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),
                  IntEnumEntry(2, "z", "Z")],
                 1),
-            Param.int_("order", "Subdivision Level", &params_.order, 2).min(0).max(16),
+            // task 0314: order drives O(order^2) subdivision (qball/tess);
+            // `.enforceBounds()` makes the declared hint authoritative on
+            // the headless JSON path.
+            Param.int_("order", "Subdivision Level", &params_.order, 2).min(0).max(16).enforceBounds(),
         ];
     }
 

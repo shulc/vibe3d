@@ -76,8 +76,22 @@ void buildTorus(Mesh* dst, const ref TorusParams p)
     int bIdx = (axisIdx + 1) % 3;
     int cIdx = (axisIdx + 2) % 3;
 
+    // Degenerate-radii guard (task 0315, mirrors buildTube's outer/inner
+    // clamp): majorRadius <= 0 collapses the whole ring to a point (or
+    // flips inside-out with a negative `rad`); minorRadius <= 0 collapses
+    // every minor-loop ring to a single point per major-loop position
+    // (coincident verts — all N points at fixed i land on the same
+    // (bIdx,cIdx) coordinate); minorRadius >= majorRadius makes
+    // `rad = R + r·cos(θ)` go non-positive for θ near π, folding the tube
+    // through the central axis (self-intersecting). Floor R to a small
+    // epsilon, then clamp r into the open interval (0, R) with the same
+    // relative epsilon inset buildTube uses for its inner/outer pair.
     float R = abs(p.majorRadius);
+    if (R < 1e-6f) R = 1e-6f;
+    float rEps = R * 1e-4f;
     float r = abs(p.minorRadius);
+    if (r < rEps)     r = rEps;
+    if (r > R - rEps) r = R - rEps;
 
     float[3] cen = [p.cenX, p.cenY, p.cenZ];
 
@@ -229,8 +243,11 @@ public:
             Param.float_("cenZ",        "Position Z",       &params_.cenZ,         0.0f),
             Param.float_("majorRadius", "Major Radius",     &params_.majorRadius,  1.0f).min(0.0f),
             Param.float_("minorRadius", "Minor Radius",     &params_.minorRadius,  0.25f).min(0.0f),
-            Param.int_("majorSegments", "Major Segments",   &params_.majorSegments, 24).min(3).max(256),
-            Param.int_("minorSegments", "Minor Segments",   &params_.minorSegments, 12).min(3).max(256),
+            // task 0314: majorSegments*minorSegments is the full vertex
+            // count (O(M*N)); `.enforceBounds()` makes the declared hint
+            // authoritative on the headless JSON path.
+            Param.int_("majorSegments", "Major Segments",   &params_.majorSegments, 24).min(3).max(256).enforceBounds(),
+            Param.int_("minorSegments", "Minor Segments",   &params_.minorSegments, 12).min(3).max(256).enforceBounds(),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),
