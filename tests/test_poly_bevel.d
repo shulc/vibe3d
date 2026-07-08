@@ -127,6 +127,36 @@ bool noCoincidentVerts(JSONValue m, double tol=1e-4) {
     return true;
 }
 
+// Newell polygon area (matches atlas/fuzz_invariants.py's degenerate-face check).
+double faceArea(JSONValue m, JSONValue faceArr) {
+    auto n = faceNormal(m, faceArr); // reuses the Newell-sum vector below
+    return len3(n) * 0.5;
+}
+V3 faceNormal(JSONValue m, JSONValue faceArr) {
+    auto idx = faceArr.array;
+    auto n   = idx.length;
+    V3 nm = V3(0, 0, 0);
+    foreach (k; 0 .. n) {
+        auto vi = vert(m, cast(size_t)idx[k].integer);
+        auto vj = vert(m, cast(size_t)idx[(k + 1) % n].integer);
+        nm.x += (vi.y - vj.y) * (vi.z + vj.z);
+        nm.y += (vi.z - vj.z) * (vi.x + vj.x);
+        nm.z += (vi.x - vj.x) * (vi.y + vj.y);
+    }
+    return nm;
+}
+
+bool noDegenerateFaces(JSONValue m, double areaEps=1e-6) {
+    foreach (f; m["faces"].array) {
+        // <3 distinct corner indices, or near-zero area.
+        bool[long] distinct;
+        foreach (c; f.array) distinct[c.integer] = true;
+        if (distinct.length < 3) return false;
+        if (faceArea(m, f) < areaEps) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Test A — inset=0.1 shift=0.2 on top face → 12v/10f, inner corners at
 //           (±0.4,0.7,±0.4), cap centroid (0,0.7,0) selected.
@@ -240,4 +270,70 @@ unittest {
             int n = countAt(m, V3(x, 0.7, z));
             assert(n == 1, "D: shift-only corner (" ~ x.to!string ~ ",0.7," ~ z.to!string ~ ") expected 1, got " ~ n.to!string);
         }
+}
+
+// ---------------------------------------------------------------------------
+// Test E — overshoot guard (task 0304, fuzz-found): inset at/beyond the
+//          top face's inradius (0.5) must never produce coincident verts
+//          or degenerate (zero-area) faces. Before the fix, inset=0.5
+//          collapsed all 4 cap corners onto the centroid (0,0.5,0) and
+//          inset=1.0 (2x inradius) landed them on the diagonally-opposite
+//          existing corner — both silently reported status:"ok".
+// ---------------------------------------------------------------------------
+
+unittest {
+    // E1 — inset == inradius exactly (the primary repro).
+    resetCube();
+    auto before = getModel();
+    int topFi = faceWithCentroid(before, V3(0, 0.5, 0));
+    assert(topFi >= 0, "E1: top face not found");
+    postSelect("polygons", [topFi]);
+
+    auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"inset":0.5,"shift":0.0}}`);
+    auto m = getModel();
+    // Either the overshoot guard clamps it (status ok, geometry changed) or it
+    // is an honest no-op (status error, mesh unchanged) — never a corrupted mesh.
+    if (r["status"].str == "ok") {
+        assert(noCoincidentVerts(m),  "E1: coincident verts at inset==inradius");
+        assert(noDegenerateFaces(m),  "E1: degenerate face at inset==inradius");
+        assert(isHoleFree(m),         "E1: not hole-free at inset==inradius");
+        assert(orphanVerts(m).length == 0, "E1: orphan verts at inset==inradius");
+    } else {
+        assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
+            "E1: no-op must leave mesh unchanged");
+    }
+
+    // E2 — inset == 2x inradius (the "lands on the diagonal corner" repro).
+    resetCube();
+    auto before2 = getModel();
+    int topFi2 = faceWithCentroid(before2, V3(0, 0.5, 0));
+    assert(topFi2 >= 0, "E2: top face not found");
+    postSelect("polygons", [topFi2]);
+
+    auto r2 = postCommandRaw(`{"id":"mesh.bevel","params":{"inset":1.0,"shift":0.0}}`);
+    auto m2 = getModel();
+    if (r2["status"].str == "ok") {
+        assert(noCoincidentVerts(m2), "E2: coincident verts at inset==2x inradius");
+        assert(noDegenerateFaces(m2), "E2: degenerate face at inset==2x inradius");
+        assert(isHoleFree(m2),        "E2: not hole-free at inset==2x inradius");
+        assert(orphanVerts(m2).length == 0, "E2: orphan verts at inset==2x inradius");
+    } else {
+        assert(m2["vertexCount"].integer == 8 && m2["faceCount"].integer == 6,
+            "E2: no-op must leave mesh unchanged");
+    }
+
+    // E3 — sanity: a normal small inset must be completely unaffected by
+    // the overshoot guard (no clamping should kick in below the inradius).
+    resetCube();
+    auto before3 = getModel();
+    int topFi3 = faceWithCentroid(before3, V3(0, 0.5, 0));
+    postSelect("polygons", [topFi3]);
+    postCommand(`{"id":"mesh.bevel","params":{"inset":0.1,"shift":0.0}}`);
+    auto m3 = getModel();
+    assert(m3["vertexCount"].integer == 12, "E3: normal inset must be unaffected by the guard");
+    assert(m3["faceCount"].integer   == 10, "E3: normal inset must be unaffected by the guard");
+    foreach (x; [-0.4, 0.4])
+        foreach (z; [-0.4, 0.4])
+            assert(countAt(m3, V3(x, 0.5, z)) == 1,
+                "E3: expected untouched inner corner (" ~ x.to!string ~ ",0.5," ~ z.to!string ~ ")");
 }

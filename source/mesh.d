@@ -5982,16 +5982,64 @@ struct Mesh {
         return processed;
     }
 
+    // Per-face safe upper bound for a uniform (all-corners-equal-inset)
+    // polygon inset. Mirrors the "does NOT overshoot and self-intersect"
+    // guard the edge-extrude face-aware inset already applies (mesh.d
+    // ~2520), generalized from "clamp to the far vertex of an edge" to
+    // "clamp to the point where a ring edge would collapse to zero
+    // length": `probe[i]` is each corner's per-unit-inset offset direction
+    // (`insetCorner(...,1)` — offsetMeet is affine in its width args, so
+    // the offset at any `inset` is `origPos[i] + probe[i]*inset` exactly).
+    // Ring edge (i, i+1)'s length is therefore an affine function of
+    // `inset` that reaches zero at
+    //     t = edgeLen / -dot(probe[next] - probe[i], edgeDir)
+    // The smallest positive such `t` across all ring edges is the largest
+    // inset that keeps every edge non-negative-length; beyond it the ring
+    // folds back on itself (self-intersects, corners overshoot past their
+    // neighbours). Returns +infinity when no edge would ever collapse.
+    private float maxSafeUniformInset(const Vec3[] origPos, const Vec3[] probe) {
+        const int N = cast(int)origPos.length;
+        float safe = float.infinity;
+        foreach (i; 0 .. N) {
+            const int next = (i + 1) % N;
+            Vec3 edge = origPos[next] - origPos[i];
+            const float edgeLen = edge.length;
+            if (edgeLen < 1e-9f) continue;
+            Vec3 edgeDir = edge / edgeLen;
+            Vec3 p = probe[next] - probe[i];
+            const float denom = -dot(p, edgeDir);
+            if (denom > 1e-9f) {
+                const float t = edgeLen / denom;
+                if (t < safe) safe = t;
+            }
+        }
+        return safe;
+    }
+
     /// Polygon bevel: for each selected face, inset each corner by `inset`
     /// AND displace the inset cap by `+faceNormal*shift` along the face normal,
     /// bridging the original boundary to the offset cap with N ring quads.
     /// Produces ONE slanted ring (not inset∘extrude, which would produce two rings).
     /// inset=0, shift>0 degenerates to a one-ring face-extrude along the normal.
     /// Returns 0 (no-op) when |inset|<1e-6 AND |shift|<1e-6.
+    ///
+    /// Overshoot guard: a positive `inset` is clamped per-face to
+    /// `maxSafeUniformInset` so the offset ring cannot fold past itself
+    /// (mirrors the edge-extrude face-aware inset clamp, ~2520 — "the
+    /// reference bumps the inset ... and stops"). Clamping can still land
+    /// several corners on (or very near) the same position — e.g. a square
+    /// face clamped to its inradius collapses every corner onto the
+    /// centroid, an elongated face collapses pairwise onto a line — so a
+    /// clamped pass finishes with `weldCoincidentVertices`, which merges
+    /// the coincident corners and drops any face that falls below 3
+    /// distinct vertices (the fully-collapsed cap), leaving the ring
+    /// quads as valid triangles instead of coincident-vertex / zero-area
+    /// geometry.
     size_t bevelFacesByMask(const bool[] mask, float inset, float shift) {
         import std.math : abs;
         if (abs(inset) < 1e-6f && abs(shift) < 1e-6f) return 0;
         size_t processed = 0;
+        bool anyClamped = false;
         const size_t nFaces = faces.length;
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
@@ -6001,9 +6049,21 @@ struct Mesh {
             Vec3[] origPos = new Vec3[](N);
             foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
             const Vec3 n = faceNormal(cast(uint)fi);
+
+            float effInset = inset;
+            if (inset > 0) {
+                Vec3[] probe = new Vec3[](N);
+                foreach (i; 0 .. N) probe[i] = insetCorner(origPos, i, n, 1.0f) - origPos[i];
+                const float capT = maxSafeUniformInset(origPos, probe);
+                // Landing AT the cap exactly (inset == capT) already collapses a
+                // ring edge to zero length (its two corners coincide) — trigger
+                // the weld cleanup below even when effInset doesn't need to move.
+                if (capT <= effInset) { effInset = capT; anyClamped = true; }
+            }
+
             uint[] newVerts = new uint[](N);
             foreach (i; 0 .. N)
-                newVerts[i] = addVertex(insetCorner(origPos, i, n, inset) + n * shift);
+                newVerts[i] = addVertex(insetCorner(origPos, i, n, effInset) + n * shift);
             faces[fi] = newVerts.dup;
             foreach (i; 0 .. N) {
                 const int next = (i + 1) % N;
@@ -6013,6 +6073,14 @@ struct Mesh {
             ++processed;
         }
         if (processed == 0) return 0;
+        if (anyClamped) {
+            // weldCoincidentVertices only remaps FACE references to the kept
+            // vertex — the welded-away vertex slots (e.g. 3 of 4 cap corners
+            // that all clamped onto the same centroid) stay in `vertices[]`
+            // as now-unreferenced orphans unless compacted away here too.
+            weldCoincidentVertices(1e-10);
+            compactUnreferenced();
+        }
         rebuildEdges();
         buildLoops();
         syncSelection();
@@ -6257,6 +6325,27 @@ struct Mesh {
         // Add the four corner verts for each ok edge.
         // Candidate A: p[face][v] = v + width * normalize(w - v)
         //   where w is v's neighbor in `face` OTHER than the bevel-edge partner.
+        //
+        // Overshoot guard (mirrors the edge-extrude face-aware inset clamp,
+        // mesh.d ~2520 — "the reference bumps the inset into the far vertex
+        // and stops... does NOT overshoot and self-intersect"): the chamfer
+        // corner cannot travel past the far end `w` of its non-bevel
+        // neighbor edge, so `width` is capped per-direction to that edge's
+        // own length. Landing exactly on `w` at the cap makes the new
+        // corner coincide with an EXISTING mesh vertex — `anyClamped` gates
+        // a `weldCoincidentVertices` pass after the topology rebuild below,
+        // which reuses that existing vertex (merging the new one into it)
+        // and collapses the consecutive-duplicate corner it creates in the
+        // face ring instead of leaving a coincident-vertex / zero-area mesh.
+        bool anyClamped = false;
+        float clampedWidth(uint from, uint to) {
+            const float farLen = (vertices[to] - vertices[from]).length;
+            // Landing AT the far vertex exactly (width == farLen) already makes
+            // the new corner coincide with an EXISTING mesh vertex — trigger the
+            // weld cleanup below even when the returned width doesn't move.
+            if (farLen > 1e-9f && width >= farLen) { anyClamped = true; return farLen; }
+            return width;
+        }
         foreach (qi; 0 .. qEdges.length) {
             if (!edgeOk[qi]) continue;
             auto ref q = qEdges[qi];
@@ -6275,10 +6364,10 @@ struct Mesh {
             uint wLv1 = predInFace(q.fL, v1);  // fL: wLv1→v1→v0
             uint wRv1 = succInFace(q.fR, v1);  // fR: v0→v1→wRv1
 
-            Vec3 pLv0 = vertices[v0] + width * safeNormalize(vertices[wLv0] - vertices[v0]);
-            Vec3 pRv0 = vertices[v0] + width * safeNormalize(vertices[wRv0] - vertices[v0]);
-            Vec3 pLv1 = vertices[v1] + width * safeNormalize(vertices[wLv1] - vertices[v1]);
-            Vec3 pRv1 = vertices[v1] + width * safeNormalize(vertices[wRv1] - vertices[v1]);
+            Vec3 pLv0 = vertices[v0] + clampedWidth(v0, wLv0) * safeNormalize(vertices[wLv0] - vertices[v0]);
+            Vec3 pRv0 = vertices[v0] + clampedWidth(v0, wRv0) * safeNormalize(vertices[wRv0] - vertices[v0]);
+            Vec3 pLv1 = vertices[v1] + clampedWidth(v1, wLv1) * safeNormalize(vertices[wLv1] - vertices[v1]);
+            Vec3 pRv1 = vertices[v1] + clampedWidth(v1, wRv1) * safeNormalize(vertices[wRv1] - vertices[v1]);
 
             q.ipLv0 = addVertex(pLv0);
             q.ipRv0 = addVertex(pRv0);
@@ -6385,6 +6474,17 @@ struct Mesh {
         resizeVertexSelection();
         clearVertexSelection();
         clearEdgeSelectionResize();
+
+        // Overshoot clamping (`clampedWidth` above) can land a new corner
+        // exactly on an EXISTING mesh vertex — weld it into that vertex and
+        // collapse the resulting duplicate corner in the face ring instead
+        // of leaving a coincident-vertex / zero-area mesh behind. Safe to
+        // run here: the chamfer quads occupy the array tail (chamferStart
+        // onward) so a fully-collapsed one only shortens the tail, and the
+        // reused-vertex case only shrinks an original face's corner count
+        // (quad -> triangle) without removing it, so no earlier face index
+        // shifts under the selection/material arrays touched above.
+        if (anyClamped) weldCoincidentVertices(1e-10);
 
         // Tail: rebuild topology + compact orphaned original endpoints.
         rebuildEdges();
@@ -13877,6 +13977,68 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
     assert(hasV2(-0.5f, 0.7f,  0.5f), "shift-only inner corner (-0.5,0.7, 0.5) missing");
 }
 
+unittest { // bevelFacesByMask: overshoot guard (task 0304, fuzz-found) —
+           // inset at/beyond the top face's inradius must never leave
+           // coincident vertices or degenerate (zero-area) faces behind.
+    import std.math : abs;
+    import std.conv : to;
+
+    float newellArea(Mesh m, const uint[] f) {
+        Vec3 nsum = Vec3(0, 0, 0);
+        foreach (i; 0 .. f.length) {
+            Vec3 a = m.vertices[f[i]];
+            Vec3 b = m.vertices[f[(i + 1) % f.length]];
+            nsum.x += (a.y - b.y) * (a.z + b.z);
+            nsum.y += (a.z - b.z) * (a.x + b.x);
+            nsum.z += (a.x - b.x) * (a.y + b.y);
+        }
+        return nsum.length * 0.5f;
+    }
+
+    void assertClean(Mesh m, string tag) {
+        foreach (i; 0 .. m.vertices.length)
+            foreach (j; i + 1 .. m.vertices.length)
+                assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+                    tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
+        foreach (fi, f; m.faces) {
+            bool[uint] distinct;
+            foreach (v; f) distinct[v] = true;
+            assert(distinct.length >= 3,
+                tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+            assert(newellArea(m, f) > 1e-9f,
+                tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
+        }
+    }
+
+    // Top face (index 4) has side length 1 → inradius 0.5. inset==0.5 is the
+    // primary repro (all 4 cap corners used to collapse onto the centroid).
+    {
+        auto m = makeCube();
+        bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
+        size_t n = m.bevelFacesByMask(mask, 0.5f, 0.0f);
+        assert(n == 1, "inset==inradius should still process (clamped)");
+        assertClean(m, "inset==inradius");
+    }
+
+    // inset==2x inradius is the "lands on the diagonal corner" repro.
+    {
+        auto m = makeCube();
+        bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
+        size_t n = m.bevelFacesByMask(mask, 1.0f, 0.0f);
+        assert(n == 1, "inset==2x inradius should still process (clamped)");
+        assertClean(m, "inset==2x inradius");
+    }
+
+    // Sanity: a normal small inset must be completely unaffected by the guard.
+    {
+        auto m = makeCube();
+        bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
+        assert(m.bevelFacesByMask(mask, 0.1f, 0.0f) == 1);
+        assert(m.vertices.length == 12, "normal inset must be unaffected by the overshoot guard");
+        assert(m.faces.length    == 10);
+    }
+}
+
 unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0.1
     import std.math : abs, sqrt;
     // Cube verts: 6=(0.5,0.5,0.5), 7=(-0.5,0.5,0.5).
@@ -13935,6 +14097,67 @@ unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0
     }
     float dot = n.y * (1.0f/sqrt(2.0f)) + n.z * (1.0f/sqrt(2.0f));
     assert(dot > 0.9f, "chamfer normal should point outward (+Y+Z direction)");
+}
+
+unittest { // bevelEdgesByMask: overshoot guard (task 0304, fuzz-found) —
+           // width == the length of the adjacent (non-bevel) edge must not
+           // slide the chamfer corner onto — and duplicate — an existing
+           // neighbor vertex, nor leave a zero-area face behind.
+    import std.math : abs;
+    import std.conv : to;
+
+    float newellArea(Mesh m, const uint[] f) {
+        Vec3 nsum = Vec3(0, 0, 0);
+        foreach (i; 0 .. f.length) {
+            Vec3 a = m.vertices[f[i]];
+            Vec3 b = m.vertices[f[(i + 1) % f.length]];
+            nsum.x += (a.y - b.y) * (a.z + b.z);
+            nsum.y += (a.z - b.z) * (a.x + b.x);
+            nsum.z += (a.x - b.x) * (a.y + b.y);
+        }
+        return nsum.length * 0.5f;
+    }
+
+    void assertClean(Mesh m, string tag) {
+        foreach (i; 0 .. m.vertices.length)
+            foreach (j; i + 1 .. m.vertices.length)
+                assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+                    tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
+        foreach (fi, f; m.faces) {
+            bool[uint] distinct;
+            foreach (v; f) distinct[v] = true;
+            assert(distinct.length >= 3,
+                tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+            assert(newellArea(m, f) > 1e-9f,
+                tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
+        }
+    }
+
+    auto m = makeCube();
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "edge (6,7) not found in cube");
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+
+    // width == 1.0 == length of every adjacent (non-bevel) edge on a unit cube.
+    size_t n = m.bevelEdgesByMask(mask, 1.0f);
+    assert(n == 1, "width==adjacent edge length should still process (clamped)");
+    assertClean(m, "width==adjacent edge length");
+
+    // Sanity: a normal small width must be completely unaffected by the guard.
+    auto m2 = makeCube();
+    int ei2 = -1;
+    foreach (i; 0 .. m2.edges.length) {
+        uint a = m2.edges[i][0], b = m2.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei2 = cast(int)i; break; }
+    }
+    bool[] mask2; mask2.length = m2.edges.length; mask2[] = false; mask2[ei2] = true;
+    assert(m2.bevelEdgesByMask(mask2, 0.1f) == 1);
+    assert(m2.vertices.length == 10, "normal width must be unaffected by the overshoot guard");
+    assert(m2.faces.length    == 7);
 }
 
 unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op

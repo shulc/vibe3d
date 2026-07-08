@@ -131,6 +131,20 @@ bool noCoincidentVerts(JSONValue m, double tol=1e-4) {
     return true;
 }
 
+double faceArea(JSONValue m, JSONValue faceArr) {
+    return len3(faceNormal(m, faceArr)) * 0.5;
+}
+
+bool noDegenerateFaces(JSONValue m, double areaEps=1e-6) {
+    foreach (f; m["faces"].array) {
+        bool[long] distinct;
+        foreach (c; f.array) distinct[c.integer] = true;
+        if (distinct.length < 3) return false;
+        if (faceArea(m, f) < areaEps) return false;
+    }
+    return true;
+}
+
 // Find edge index for endpoints (a,b) (order-independent), or -1.
 int edgeIndex(JSONValue m, int a, int b) {
     foreach (i, e; m["edges"].array) {
@@ -285,4 +299,51 @@ unittest {
 
     // In either case the mesh must still be manifold.
     assert(isHoleFree(m), "D: mesh not hole-free after shared-face skip");
+}
+
+// ---------------------------------------------------------------------------
+// Test E — overshoot guard (task 0304, fuzz-found): width == the length of
+//          the adjacent (non-bevel) edge must never slide the chamfer
+//          corner onto — and duplicate — an existing neighbor vertex.
+//          Before the fix, width=1.0 on a unit cube made the new corners
+//          exactly duplicate verts 2,3,4,5 and left two zero-area faces,
+//          while still reporting status:"ok".
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    int v6 = vertAt(before, V3( 0.5, 0.5, 0.5));
+    int v7 = vertAt(before, V3(-0.5, 0.5, 0.5));
+    assert(v6 >= 0 && v7 >= 0, "E: verts 6 and 7 not found");
+    int ei = edgeIndex(before, v6, v7);
+    assert(ei >= 0, "E: edge (6,7) not found");
+    postSelect("edges", [ei]);
+
+    // width == 1.0 == length of every adjacent (non-bevel) edge on a unit cube.
+    auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"width":1.0}}`);
+    auto m = getModel();
+    // Either the overshoot guard clamps it (status ok, geometry changed) or it
+    // is an honest no-op (status error, mesh unchanged) — never a corrupted mesh.
+    if (r["status"].str == "ok") {
+        assert(noCoincidentVerts(m), "E: coincident verts at width==adjacent edge length");
+        assert(noDegenerateFaces(m), "E: degenerate face at width==adjacent edge length");
+        assert(isHoleFree(m),        "E: not hole-free at width==adjacent edge length");
+        assert(orphanVerts(m).length == 0, "E: orphan verts at width==adjacent edge length");
+    } else {
+        assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
+            "E: no-op must leave mesh unchanged");
+    }
+
+    // Sanity: a normal small width must be completely unaffected by the guard.
+    resetCube();
+    auto before2 = getModel();
+    int v6b = vertAt(before2, V3( 0.5, 0.5, 0.5));
+    int v7b = vertAt(before2, V3(-0.5, 0.5, 0.5));
+    int eib = edgeIndex(before2, v6b, v7b);
+    postSelect("edges", [eib]);
+    postCommand(`{"id":"mesh.bevel","params":{"width":0.1}}`);
+    auto m2 = getModel();
+    assert(m2["vertexCount"].integer == 10, "E: normal width must be unaffected by the guard");
+    assert(m2["faceCount"].integer   == 7,  "E: normal width must be unaffected by the guard");
 }
