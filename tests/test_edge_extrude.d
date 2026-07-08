@@ -1375,3 +1375,48 @@ unittest {
     assert(isHoleFree(m), "0313: result is not hole-free / has folded (inconsistently wound) faces");
     assert(orphanVerts(m).length == 0, "0313: orphan verts: " ~ orphanVerts(m).to!string);
 }
+
+// ---------------------------------------------------------------------------
+// 16. TASK 0317 — a MULTI-edge overshoot must not cross-collapse two
+//     DIFFERENT free ends into one another, and the result must stay
+//     consistently wound. Repro (reviewer's live probe): n=3 grid
+//     (resetGrid(3) → side=4, 16 verts, index(i,j) = i*4+j); the CENTER quad
+//     face is [5,6,10,9]. Select its two OPPOSITE interior edges (5,6) and
+//     (9,10) — vertices 5,6,9,10 are each a free end of a DIFFERENT selected
+//     edge, and each is the OTHER edge's "far" vertex within the shared
+//     center face — then extrude with `width` (3) larger than the shared
+//     span between them (2/3). Pre-fix (task 0313's cleanup only dropped
+//     faces with <3 DISTINCT corners) this produced two DISTINCT-corner but
+//     ZERO-AREA "bowtie" quads where the two free ends' overshoot clamps
+//     welded onto EACH OTHER's original vertex and crossed. Fixing that
+//     alone (rerouting mutually-facing free ends onto a shared midpoint
+//     vertex instead) still left several folded (inconsistently wound)
+//     faces — a needsAlong cap-fan triangle and its own bridge independently
+//     picking winding via different local heuristics (edge-axis vs
+//     neighbour-averaged normal) once an overshoot clamp welds one of their
+//     shared corners onto a stable vertex. Both are fixed at the
+//     construction level in extrudeEdgesByMask (mutual-meet vertex reroute +
+//     a two-colouring winding-consistency pass over every face this op
+//     touched or created, anchored on the untouched rest of the mesh).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetGrid(3);
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 16);
+    assert(before["faceCount"].integer == 9);
+
+    int e56  = edgeIndex(before, 5, 6);
+    int e910 = edgeIndex(before, 9, 10);
+    assert(e56 >= 0 && e910 >= 0, "0317: center-quad opposite edges (5,6)/(9,10) not found");
+    postSelect("edges", [e56, e910]);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":3}}`);
+    auto m = getModel();
+
+    assert(noDegenerateFaces(m),
+        "0317: degenerate (repeated-corner/zero-area) face present");
+    assert(isHoleFree(m),
+        "0317: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(orphanVerts(m).length == 0, "0317: orphan verts: " ~ orphanVerts(m).to!string);
+}

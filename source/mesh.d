@@ -2785,6 +2785,39 @@ struct Mesh {
                 cast(long)(p.y * 1e5f + (p.y >= 0 ? 0.5f : -0.5f)),
                 cast(long)(p.z * 1e5f + (p.z >= 0 ? 0.5f : -0.5f)));
         }
+        // Task 0317: MUTUAL free-end overshoot guard. The far-vertex weld
+        //     below (and its along-edge-inset sibling further down) is safe
+        //     only when `farVertId` is a STABLE vertex that survives the op
+        //     untouched (e.g. a cube's other corner). When TWO SELECTED EDGES
+        //     each dissolve a free end that faces the OTHER edge's free end
+        //     across one shared non-selected boundary edge of a common face
+        //     (e.g. two OPPOSITE edges of one interior quad both selected —
+        //     each free end's `boundaryEdgeDir` far vertex resolves to the
+        //     OTHER edge's free end), an overshoot `width` makes BOTH corners
+        //     weld onto EACH OTHER's original vertex. That is a MUTUAL swap,
+        //     not a one-sided clamp: the two insets cross past one another,
+        //     producing a self-intersecting "bowtie" face with 4 DISTINCT
+        //     corners but zero net area (not caught by the <3-distinct-corner
+        //     drop, since nothing repeats). Detect it up front — `farVertId`
+        //     is itself a free end being dissolved by a DIFFERENT selected
+        //     edge — and reroute BOTH directions through one shared MIDPOINT
+        //     vertex instead of letting either reach the other's original
+        //     position. Keyed by the unordered (v,far) pair so both corners'
+        //     welds resolve to the identical id (no crossing, no coincident
+        //     duplicate). Free ends of the SAME edge never collide here
+        //     (`boundaryEdgeDir` already excludes the edge's own other
+        //     endpoint), and shared/chain corners are not dissolved via this
+        //     path, so single-edge cases (cube, octahedron, width_clamp) never
+        //     see `isFreeEnd(farVertId)` true — byte-identical there.
+        uint[ulong] mutualMeet;   // unordered (loV<<32|hiV) → shared meeting vert
+        uint mutualMeetVert(uint a, uint b) {
+            uint lo = a < b ? a : b, hi = a < b ? b : a;
+            ulong mk = (cast(ulong)lo << 32) | hi;
+            if (auto p = mk in mutualMeet) return *p;
+            uint nv = addVertex((vertices[lo] + vertices[hi]) * 0.5f);
+            mutualMeet[mk] = nv;
+            return nv;
+        }
         // Pass 1 (task 0313): far-vertex-clamp welds. When the face-aware clamp
         //     above actually saturates (offset would otherwise overshoot) AND
         //     exactly one contribution defined this corner's far vertex (no
@@ -2807,6 +2840,15 @@ struct Mesh {
             if (len <= *cap || len <= 1e-9f) continue; // did not actually saturate
             uint v = cast(uint)(k >> 32);
             uint farVertId = insetClampFarVert[k];
+            if (isFreeEnd(farVertId)) {
+                // Task 0317: mutual dissolve — reroute both directions onto
+                // one shared midpoint vertex (see guard comment above).
+                uint mv = mutualMeetVert(v, farVertId);
+                insetVert[k] = mv;
+                insetPosWeld[weldKeyOf(v, (vertices[v] + vertices[farVertId]) * 0.5f)] = mv;
+                weldedToFar[k] = true;
+                continue;
+            }
             Vec3 p = vertices[v] + normalize(acc) * (*cap);
             insetVert[k] = farVertId;
             insetPosWeld[weldKeyOf(v, p)] = farVertId;
@@ -3104,7 +3146,15 @@ struct Mesh {
                     t = vertices[v] - vertices[*op];   // fallback: extruded tangent
                 } else continue;
                 if (t.length < 1e-6f) continue;
-                if (weldToFar) { freeEndAlongVert[v] = farVertId; continue; }
+                if (weldToFar) {
+                    // Task 0317: the same mutual-dissolve hazard as the Pass 1
+                    // face-aware clamp above can occur here too — guard it the
+                    // same way (reroute to the shared midpoint vertex instead
+                    // of welding onto another dissolving free end).
+                    freeEndAlongVert[v] = isFreeEnd(farVertId)
+                        ? mutualMeetVert(v, farVertId) : farVertId;
+                    continue;
+                }
                 t = normalize(t);
                 freeEndAlongVert[v] = addVertex(vertices[v] + t * offLen);
             }
@@ -3137,6 +3187,12 @@ struct Mesh {
         uint[]   sideReshapeIdx;
         uint[][] sideReshapeBefore;
         uint[][] sideReshapeAfter;
+        // Task 0317: unconditional twin of `sideReshapeIdx` (that one is only
+        //     populated when the mesh-edit tracker has an open batch — inert
+        //     for the common one-shot command path). The winding-consistency
+        //     safety net below needs the touched-face set on EVERY call, not
+        //     just tracked ones.
+        bool[uint] sideTouched;
         foreach (fi; 0 .. faces.length) {
             auto f = faces[fi].dup;
             // Snapshot the pre-rewrite normal so we can preserve orientation.
@@ -3215,6 +3271,7 @@ struct Mesh {
                     auto r = faces[fi].dup;
                     foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
                 }
+                sideTouched[cast(uint)fi] = true;
                 if (recExtrude) {
                     sideReshapeIdx    ~= cast(uint)fi;
                     sideReshapeBefore ~= f;            // loop-top dup = pre-rewrite list
@@ -3481,6 +3538,13 @@ struct Mesh {
         //     saturates, or saturates only onto a vertex that ISN'T already
         //     a face-adjacent corner) never triggers a duplicate here, so
         //     this pass is a no-op — byte-identical to the pre-fix output.
+        // Task 0317: old→new face-index remap produced by this cleanup pass
+        //     (old index → new index, or -1 if dropped). Populated below
+        //     regardless of whether any face actually dropped (identity map
+        //     in that case) so the winding-consistency pass right after can
+        //     translate its pre-cleanup candidate indices forward.
+        size_t facesLenBeforeCleanup = faces.length;
+        int[] faceRemap = new int[](facesLenBeforeCleanup);
         {
             bool[] dropFace = new bool[](faces.length);
             bool anyDrop = false;
@@ -3516,8 +3580,10 @@ struct Mesh {
                 uint[]   droppedFaceMat;
                 uint[]   droppedFacePart;
                 uint[]   droppedFaceSub;
+                size_t newIdx = 0;
                 foreach (fi, ref f; faces) {
                     if (dropFace[fi]) {
+                        faceRemap[fi] = -1;
                         if (recExtrude) {
                             droppedFaceIdx   ~= cast(uint)fi;
                             droppedFaceLists ~= f.dup;
@@ -3527,6 +3593,8 @@ struct Mesh {
                         }
                         continue;
                     }
+                    faceRemap[fi] = cast(int)newIdx;
+                    ++newIdx;
                     keptFaces    ~= f;
                     keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
@@ -3541,6 +3609,142 @@ struct Mesh {
                 faceSelectionOrder = keptOrder;
                 faceMaterial       = keptMaterial;
                 facePart           = keptPart;
+            } else {
+                foreach (fi; 0 .. facesLenBeforeCleanup) faceRemap[fi] = cast(int)fi;
+            }
+        }
+
+        // --- Winding-consistency safety net (task 0317). Every rewritten
+        //     neighbour/side face and every freshly emitted bridge/cap picks
+        //     its own winding from a LOCAL heuristic (the "preserve original
+        //     normal" flip for rewrites, the neighbour-averaged `ne` dot-test
+        //     for bridges, the edge-axis dot-test for caps). Each heuristic is
+        //     individually sound for the small-inset geometry it was designed
+        //     around, but an extreme overshoot can collapse an inset onto a
+        //     vertex shared with ANOTHER independently-wound face — a stable
+        //     far vertex reused by a bridge/cap AND still incident to its own
+        //     ORIGINAL, untouched neighbour elsewhere in the mesh, or two
+        //     bridges of the same (or, pre task-0317-fix, two mutually facing)
+        //     selected edge(s) sharing one collapsed inset edge. The
+        //     independent heuristics can then disagree about which way two
+        //     faces should traverse the edge they end up sharing, folding the
+        //     surface even though neither face is individually degenerate,
+        //     and a single forward sweep is not always enough to resolve it
+        //     (face A may need to flip to satisfy face B, but B was already
+        //     accepted before A's conflict with it was even discovered).
+        //
+        //     This is a two-colouring problem: every UNTOUCHED, pre-existing
+        //     face's winding is fixed ground truth (the original mesh was a
+        //     valid manifold, so any edge shared by two untouched faces is
+        //     already consistent); every touched/created face this op
+        //     touched or emitted (rewritten neighbour/side faces + the
+        //     freshly emitted bridge/cap tail — translated through the
+        //     degenerate-cleanup remap above) gets EXACTLY one bit of freedom
+        //     — keep its current corner order, or reverse the whole face —
+        //     and adjacent faces sharing an edge must pick opposite
+        //     canonical directions along it. Solve by propagating from every
+        //     touched face directly adjacent to a fixed face (its required
+        //     state is forced), then flooding that decision across the
+        //     touched-face adjacency graph; any touched-face island with no
+        //     fixed anchor at all gets an arbitrary (but internally
+        //     consistent) root. A topology where every heuristic already
+        //     agrees (the overwhelming common case — no clamp ever saturates
+        //     onto another dissolving vertex) finds every touched face
+        //     already satisfying its neighbours, so nothing flips.
+        {
+            bool[uint] windingCandidate;
+            void addCandidate(size_t oldFi) {
+                if (oldFi >= faceRemap.length) return;
+                int nfi = faceRemap[oldFi];
+                if (nfi >= 0) windingCandidate[cast(uint)nfi] = true;
+            }
+            foreach (fi, _; affectedFaces) addCandidate(cast(size_t)fi);
+            foreach (fi, _; sideTouched) addCandidate(fi);
+            foreach (fi; firstBridge .. facesLenBeforeCleanup) addCandidate(fi);
+
+            // canonical(a,b) directed-edge sign: +1 if this face reads
+            // lo→hi, -1 if hi→lo. Two faces sharing an undirected edge are
+            // consistently wound iff their EFFECTIVE signs (own sign, times
+            // -1 if flipped) multiply to -1.
+            static struct EdgeUse { uint fi; int sign; }
+            EdgeUse[][ulong] edgeUsers;
+            foreach (fi; 0 .. faces.length) {
+                auto f = faces[fi];
+                if (f.length < 3) continue;
+                foreach (k; 0 .. f.length) {
+                    uint a = f[k], b = f[(k + 1) % f.length];
+                    uint lo = a < b ? a : b, hi = a < b ? b : a;
+                    ulong ek = (cast(ulong)lo << 32) | hi;
+                    edgeUsers[ek] ~= EdgeUse(cast(uint)fi, (a == lo) ? 1 : -1);
+                }
+            }
+
+            int[uint] state;     // 0 = keep, 1 = flip — only ever set for candidates
+            uint[] queue;
+            void seed(uint fi, int st) {
+                if (fi in state) return;
+                state[fi] = st;
+                queue ~= fi;
+            }
+            // needed multiplier so that signA * (signB*mul) == -1.
+            static int neededMul(int signA, int signB) { return -(signA * signB); }
+
+            // Seed every candidate directly adjacent (via a 2-user edge) to a
+            // fixed (non-candidate) face: its state is fully determined.
+            foreach (ek, users; edgeUsers) {
+                if (users.length != 2) continue;
+                auto u0 = users[0], u1 = users[1];
+                bool c0 = (u0.fi in windingCandidate) !is null;
+                bool c1 = (u1.fi in windingCandidate) !is null;
+                if (c0 == c1) continue;   // both fixed (nothing to do) or both candidate (flood below)
+                auto fixedU = c0 ? u1 : u0;
+                auto candU  = c0 ? u0 : u1;
+                int mul = neededMul(fixedU.sign, candU.sign);
+                seed(candU.fi, (mul == -1) ? 1 : 0);
+            }
+
+            // Flood the decision across candidate-candidate adjacency; once
+            // the initial fixed-seeded fronts are drained, root any
+            // remaining unassigned candidate arbitrarily (state = keep) and
+            // keep draining — this reaches every candidate exactly once.
+            size_t qi = 0;
+            while (true) {
+                while (qi < queue.length) {
+                    uint cur = queue[qi++];
+                    int curState = state[cur];
+                    auto f = faces[cur];
+                    foreach (k; 0 .. f.length) {
+                        uint a = f[k], b = f[(k + 1) % f.length];
+                        uint lo = a < b ? a : b, hi = a < b ? b : a;
+                        ulong ek = (cast(ulong)lo << 32) | hi;
+                        auto users = edgeUsers[ek];
+                        if (users.length != 2) continue;
+                        int curSign = 0;
+                        foreach (u; users) if (u.fi == cur) curSign = u.sign;
+                        int curEff = curSign * (curState == 1 ? -1 : 1);
+                        foreach (u; users) {
+                            if (u.fi == cur) continue;
+                            if ((u.fi in windingCandidate) is null) continue;   // fixed — already ground truth
+                            if (u.fi in state) continue;                       // already assigned
+                            int mul = neededMul(curEff, u.sign);
+                            seed(u.fi, (mul == -1) ? 1 : 0);
+                        }
+                    }
+                }
+                bool addedRoot = false;
+                foreach (fi, _; windingCandidate) {
+                    if (fi in state) continue;
+                    seed(fi, 0);
+                    addedRoot = true;
+                    break;
+                }
+                if (!addedRoot) break;
+            }
+
+            foreach (fi, st; state) {
+                if (st != 1) continue;
+                auto r = faces[fi].dup;
+                foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
             }
         }
 
