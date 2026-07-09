@@ -280,6 +280,17 @@ class Tool : ParamProvider {
     // other tool keeps the pre-0232 redo-steps-the-stack behavior.
     bool cancelsOnRedo() const { return false; }
 
+    // Mid-session per-step undo peel (task 0321). The app's navHistory()
+    // chokepoint calls this FIRST, before its own hasUncommittedEdit()
+    // whole-edit-cancel branch: a tool holding some internal sequence of
+    // not-yet-committed steps (e.g. EdgeSliceTool's latched chain points) can
+    // peel exactly ONE of those steps here and report true, so a real Ctrl+Z
+    // keystroke un-does one step at a time instead of unwinding the whole
+    // live edit. Default false ⇒ every other tool's undo behavior (and the
+    // existing hasUncommittedEdit()/cancelsOnRedo() cancel-whole-edit path)
+    // is completely unaffected.
+    bool tryUndoStepInSession() { return false; }
+
     // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
     // after history navigation moved geometry underneath an active tool. P0
     // ships a minimal stub (default no-op; transform marks its caches dirty,

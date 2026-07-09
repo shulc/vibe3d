@@ -5863,6 +5863,13 @@ void main(string[] args) {
     // second press still reaches the real undo/redo.
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navHistory(bool isUndo) {
+        // Mid-session per-step undo peel (task 0321) — checked BEFORE the
+        // whole-edit cancel branch below, so a tool holding an internal
+        // sequence of not-yet-committed steps (EdgeSliceTool's latched chain)
+        // can peel exactly one step per Ctrl+Z instead of unwinding
+        // everything. Default false on the base Tool ⇒ every other tool is
+        // byte-identical.
+        if (isUndo && activeTool !is null && activeTool.tryUndoStepInSession()) return true;
         if (activeTool !is null && activeTool.hasUncommittedEdit()
             && (isUndo || activeTool.cancelsOnRedo())) {
             activeTool.cancelUncommittedEdit();
