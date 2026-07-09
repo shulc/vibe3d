@@ -161,6 +161,16 @@ private:
     MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / layer switch)
     Viewport     cachedVp;
 
+    // Active-point index (task 0321, D2) — which `latchedPoints_[]` entry a
+    // scrub/drag or a numeric `activePoint`/`pointT` panel edit targets. Set
+    // by every latch producer (latchFirstPoint/appendPoint/armChain) to the
+    // point it just latched, and by a re-pick press (onMouseButtonDown, D3)
+    // to whichever earlier handle was grabbed. `pointProxy_` is the
+    // Param-bound mirror of `latchedPoints_[activePoint_].t`, exactly
+    // LoopSliceTool's `positionProxy_` <-> `positions_[current_]` pattern.
+    int          activePoint_ = -1;
+    float        pointProxy_  = 0.5f;
+
     // Cut-point handles (lazily built inside a live GL context) — one per
     // latched point, plus one for the pending (hover-derived) point.
     BoxHandler[] handles_;
@@ -205,6 +215,12 @@ public:
             Param.intArray_("chainArm", "Chain Arm", &chainArm_).transient(),
             Param.float_("tA", "t on Edge A", &tA_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.float_("tB", "t on Edge B", &tB_, 0.5f).min(0.0f).max(1.0f).transient(),
+            // Active-point index + numeric edit (task 0321, D2) — re-targets
+            // any already-latched chain point (not just the tail) for a
+            // panel-driven `t` edit; also the picker-free test driver for the
+            // re-pick+drag gesture (D3).
+            Param.int_("activePoint", "Active Point", &activePoint_, -1).transient(),
+            Param.float_("pointT", "Point t", &pointProxy_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.bool_("split", "Split Polygons", &split_, true),
             Param.bool_("middle", "Split at Middle", &middle_, false),
             Param.float_("snap", "Snap Value", &snap_, 0.5f).min(0.0f),
@@ -260,6 +276,8 @@ public:
         }
         root["armed"]  = JSONValue(armed_);
         root["built"]  = JSONValue(built_);
+        root["activePoint"] = JSONValue(activePoint_);
+        root["pointT"]      = JSONValue(pointProxy_);
         root["split"]  = JSONValue(split_);
         root["middle"] = JSONValue(middle_);
         root["snap"]   = JSONValue(snap_);
@@ -290,6 +308,7 @@ public:
         latchedPoints_ = [];
         edgesParam_    = [];
         dragPart_   = -1;
+        activePoint_ = -1;
         // split_/middle_/snap_/show_ deliberately NOT reset — sticky tool
         // options, matching Slice's other panel settings (Loop-Slice, unlike
         // Slice, DOES reset its own options in reinitSession — not the
@@ -331,6 +350,22 @@ public:
         return active && (armed_ || latchedPoints_.length > 0);
     }
 
+    // Mid-chain per-click undo peel (task 0321, D1). Reached from the app's
+    // navHistory() chokepoint BEFORE its whole-edit cancel branch: while a
+    // live latched chain exists, Ctrl+Z peels exactly the LAST latched point
+    // (keeping earlier ones) instead of unwinding the whole chain and
+    // dropping the tool. Returns false once the chain is empty (committed or
+    // never started), so navHistory falls through to the ordinary
+    // hasUncommittedEdit()/history.undo() path — the post-commit whole-chain
+    // undo (chainBefore_ + the single MeshBevelEdit at commitChain) is
+    // completely unaffected: dropArmedPreview() has already cleared
+    // latchedPoints_ by the time a commit lands.
+    override bool tryUndoStepInSession() {
+        if (!active || latchedPoints_.length == 0) return false;
+        peelLastPoint();
+        return true;
+    }
+
     public override void resyncSession() {
         if (!active) return;
         if (armed_ || latchedPoints_.length > 0) return;   // only commit/cancel may end a live chain
@@ -350,6 +385,7 @@ public:
         latchedPoints_ = [];
         edgesParam_    = [];
         dragPart_      = -1;
+        activePoint_   = -1;
         armedKey_.invalidate();
         chainBefore_   = MeshSnapshot.init;
     }
@@ -370,6 +406,30 @@ public:
     // genuine commitChain()/deactivate() path.
     override void onParamChanged(string pname) {
         if (pname == "chainArm") { armChain(); return; }
+        // Active-point index + numeric `t` edit (task 0321, D2) — re-target
+        // any latched point and re-bake via the same whole-polyline engine a
+        // scrub/drag uses. Handled BEFORE the `!armed_` guard below: a
+        // 1-point chain (phase_ EdgeA, not yet armed_) can still have its
+        // sole point's `t` edited (rebuildPreview() is a harmless no-op restore
+        // in that case — bakeChainFrom needs >=2 points to cut anything).
+        if (pname == "activePoint") {
+            int maxIdx = cast(int)latchedPoints_.length - 1;
+            if (maxIdx < 0)                  activePoint_ = -1;
+            else if (activePoint_ < 0)        activePoint_ = 0;
+            else if (activePoint_ > maxIdx)   activePoint_ = maxIdx;
+            syncProxy();
+            return;
+        }
+        if (pname == "pointT") {
+            // Bounds guard (task 0321 opponent fold, Risk #5) — a `pointT`
+            // write must never index `latchedPoints_[-1]` or past the end,
+            // e.g. right after a peel shrank the chain out from under a
+            // stale `activePoint_`.
+            if (activePoint_ < 0 || activePoint_ >= cast(int)latchedPoints_.length) return;
+            latchedPoints_[activePoint_].t = pointProxy_;
+            rebuildPreview();
+            return;
+        }
         if (!armed_) return;
         if (pname == "split" || pname == "middle" || pname == "snap"
             || pname == "tA" || pname == "tB")
@@ -400,6 +460,24 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         if (*editMode != EditMode.Edges)    return false;
+
+        // Re-pick (task 0321, D3): a press ON an already-latched point's
+        // handle grabs IT as the drag target — "grab the point under the
+        // cursor" rather than always scrubbing the tail. Checked BEFORE the
+        // hovered-edge latch/append logic below. `part < latchedPoints_.length`
+        // excludes the PENDING (hover-derived, not-yet-latched) handle draw()
+        // registers at part==latchedPoints_.length, so a click on the pending
+        // handle still falls through to the normal latch/append path below.
+        if (toolHandles_ !is null && latchedPoints_.length >= 1) {
+            int part = toolHandles_.test(cast(int)e.x, cast(int)e.y, cachedVp);
+            if (part >= 0 && part < cast(int)latchedPoints_.length) {
+                activePoint_ = part;
+                syncProxy();
+                scrubbing_   = true;
+                dragPart_    = part;
+                return true;
+            }
+        }
 
         int h = g_hoveredEdge;
         if (h < 0 || h >= cast(int)mesh.edges.length) return false;
@@ -436,10 +514,15 @@ public:
     // hover-derived pending point/line — no mesh write needed for that.
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !scrubbing_ || latchedPoints_.length == 0) return false;
-        auto last = latchedPoints_[$ - 1];
-        latchedPoints_[$ - 1].t = tFromClick(
-            mesh.vertices[last.v0], mesh.vertices[last.v1],
+        // Generalised (task 0321, D2/D3) from the hard-wired last point to
+        // `activePoint_` — set to the tail by latchFirstPoint/appendPoint/
+        // armChain, or to a re-picked earlier point by onMouseButtonDown.
+        if (activePoint_ < 0 || activePoint_ >= cast(int)latchedPoints_.length) return false;
+        auto p = latchedPoints_[activePoint_];
+        latchedPoints_[activePoint_].t = tFromClick(
+            mesh.vertices[p.v0], mesh.vertices[p.v1],
             cast(float)e.x, cast(float)e.y);
+        syncProxy();
         if (armed_) rebuildPreview();
         return true;
     }
@@ -545,6 +628,8 @@ private:
         phase_     = Phase.EdgeA;
         scrubbing_ = true;
         dragPart_  = 0;
+        activePoint_ = 0;
+        syncProxy();
         armedKey_.stamp(*mesh);
         // No cut yet — armed_/built_ stay false until a second point latches.
     }
@@ -559,6 +644,8 @@ private:
         armed_     = true;
         scrubbing_ = true;
         dragPart_  = cast(int)(latchedPoints_.length - 1);
+        activePoint_ = cast(int)(latchedPoints_.length - 1);
+        syncProxy();
         phase_     = Phase.EdgeB;
         armedKey_.stamp(*mesh);
         rebuildPreview();
@@ -572,6 +659,8 @@ private:
         auto pts = pointsFromEdgesParam();
         if (pts.length < 2) return;
         latchedPoints_ = pts;
+        activePoint_   = cast(int)latchedPoints_.length - 1;
+        syncProxy();
         chainBefore_   = MeshSnapshot.capture(*mesh);
         size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
         // Stamp AFTER baking — bakeChainFrom mutates the mesh (bumps
@@ -587,6 +676,54 @@ private:
         // screen-space caches in step (mirrors rebuildPreview/commitChain),
         // so this stays consistent if ever exercised with a visible window.
         refreshCaches();
+    }
+
+    // Mid-chain per-click undo peel (task 0321, D1) — pops exactly the LAST
+    // latched point, clamps every piece of chain state to the shrunk range
+    // (including `activePoint_` — Risk #5), then re-bakes by the remaining
+    // length:
+    //   >=2 points left -> still a real chain: re-arm + re-bake the shorter
+    //     polyline.
+    //   ==1 point left  -> a lone point bakes NO cut; rebuildPreview()'s
+    //     `bakeChainFrom` restores `chainBefore_` (the base mesh) via its own
+    //     `pts.length < 2` guard.
+    //   ==0 points left -> the mesh is ALREADY at `chainBefore_` (from the
+    //     length-1 case above, or was never cut at all); just clear the
+    //     session state (dropArmedPreview) WITHOUT touching the mesh again.
+    //     The tool stays active-idle — NOT dropped — so a further Ctrl+Z
+    //     falls through to the ordinary global history.
+    void peelLastPoint() {
+        if (latchedPoints_.length == 0) return;
+        latchedPoints_.length = latchedPoints_.length - 1;
+        if (edgesParam_.length > 0) edgesParam_.length = edgesParam_.length - 1;
+        scrubbing_ = false;
+        dragPart_  = -1;
+
+        if (latchedPoints_.length >= 2) {
+            armed_       = true;
+            phase_       = Phase.EdgeB;
+            activePoint_ = cast(int)(latchedPoints_.length - 1);
+            syncProxy();
+            rebuildPreview();
+        } else if (latchedPoints_.length == 1) {
+            armed_       = false;
+            phase_       = Phase.EdgeA;
+            activePoint_ = 0;
+            syncProxy();
+            rebuildPreview();
+        } else {
+            activePoint_ = -1;
+            dropArmedPreview();
+        }
+    }
+
+    // Keep the Param-bound `pointProxy_` mirror in sync with
+    // `latchedPoints_[activePoint_].t` after any mutation not itself driven
+    // by a "pointT" param write (a re-pick, a peel, a fresh latch) — mirrors
+    // LoopSliceTool's `syncProxy`/`positionProxy_`.
+    void syncProxy() {
+        if (activePoint_ >= 0 && cast(size_t)activePoint_ < latchedPoints_.length)
+            pointProxy_ = latchedPoints_[activePoint_].t;
     }
 
     // Build a ChainPoint[] from edgesParam_ against the CURRENT mesh — shared
