@@ -11489,6 +11489,7 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        bool[]   newSelected;
         newFacesArr.reserve(origFaceCount + origFaceCount / 2);
 
         size_t nSplit = 0;
@@ -11498,6 +11499,7 @@ struct Mesh {
             int   ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             uint  mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
             uint  prt = (fi < facePart.length           ? facePart[fi]           : 0u);
+            bool  seld = isFaceSelected(fi);
 
             // Faces not in the mask are copied whole (never split).
             bool eligible = (splitFaceMask.length == 0) ||
@@ -11508,6 +11510,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSelected ~= seld;
                 continue;
             }
 
@@ -11523,6 +11526,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSelected ~= seld;
                 continue;
             }
 
@@ -11536,6 +11540,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSelected ~= seld;
                 continue;
             }
 
@@ -11550,6 +11555,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSelected ~= seld;
                 continue;
             }
 
@@ -11559,13 +11565,17 @@ struct Mesh {
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
+            newSelected ~= seld;
 
-            // f2 (appended slot) — BOTH halves carry parent attrs.
+            // f2 (appended slot) — BOTH halves carry parent attrs, including
+            // the Select bit: a selected parent yields two selected halves
+            // (reference-pinned behavior).
             newFacesArr ~= f2;
             newSubpatch ~= sub;
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
+            newSelected ~= seld;
 
             nSplit++;
         }
@@ -11578,7 +11588,11 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
-        clearFaceSelectionResize();
+        // Inherit each parent's Select bit onto its emitted slot(s) instead of
+        // clearing — a selected parent's split halves stay selected, an
+        // unselected parent stays unselected, nothing-in ⇒ nothing-out.
+        // Writes ONLY the Select bit (Subpatch already written above).
+        setFacesSelectedFrom(newSelected);
 
         rebuildEdges();
         clearEdgeSelectionResize();
@@ -18510,6 +18524,143 @@ unittest { // cutByPlaneEx: Slice `gap` on a SHEARED cube — split edges stay
         assert(matched, "sheared: both halves of every split edge stay COLLINEAR "
                         ~ "with the original edge (not bent along the plane normal)");
     }
+}
+
+// ---------------------------------------------------------------------------
+// rebuildFacesWithChordSplits: keep-selection unittests (cut-keep-split-faces
+// -selected task) — the shared kernel now INHERITS each parent face's
+// Marks.Select bit onto every emitted slot (whole-copy AND both split
+// halves) instead of unconditionally clearing it. Asserted by GEOMETRY /
+// count, not fixed index — a split appends the second half right after the
+// first, shifting later face indices.
+// ---------------------------------------------------------------------------
+
+unittest { // cutByPlane: selected parent → BOTH split halves stay selected
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+    m.selectFace(0);
+
+    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+
+    assert(nSplit == 1, "single quad should produce 1 split");
+    assert(m.faces.length == 2, "2 sub-faces after cut");
+    assert(m.isFaceSelected(0) && m.isFaceSelected(1),
+           "both halves of a selected parent must stay selected");
+}
+
+unittest { // cutByPlane: unselected parent → BOTH split halves stay unselected (control)
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+    // Deliberately no selectFace() call.
+
+    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+
+    assert(nSplit == 1, "single quad should produce 1 split");
+    assert(m.faces.length == 2, "2 sub-faces after cut");
+    assert(!m.isFaceSelected(0) && !m.isFaceSelected(1),
+           "an unselected parent's split halves must stay unselected");
+}
+
+unittest { // cutByPlaneRestricted: only the selected+masked parents' halves stay selected
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    uint[] restrict;
+    foreach (fi; 0 .. m.faces.length) {
+        bool allFront = true, allBack = true;
+        foreach (vi; m.faces[fi]) {
+            if (m.vertices[vi].z > -0.49f) allFront = false;
+            if (m.vertices[vi].z <  0.49f) allBack  = false;
+        }
+        if (allFront || allBack) {
+            restrict ~= cast(uint)fi;
+            m.selectFace(cast(int)fi); // select both Z-facing faces before the cut
+        }
+    }
+    assert(restrict.length == 2, "cube has exactly two Z-facing faces");
+
+    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+
+    assert(nSplit == 2, "only the 2 selected faces split");
+    assert(m.faces.length == 8, "6 → 8 (each selected face → 2; neighbours stay whole)");
+
+    import std.math : abs;
+    int nSel = 0;
+    foreach (fi; 0 .. m.faces.length) {
+        if (!m.isFaceSelected(fi)) continue;
+        nSel++;
+        // A selected split half is one of the front/back halves: every vertex
+        // shares the SAME z (±0.5) — the top/bottom n-gons that merely
+        // absorbed a shared crossing vertex are copied whole and unselected.
+        float z0 = m.vertices[m.faces[fi][0]].z;
+        foreach (vi; m.faces[fi])
+            assert(abs(m.vertices[vi].z - z0) < 1e-4f,
+                   "a selected face after a restricted cut must be a front/back half");
+    }
+    assert(nSel == 4, "exactly 4 selected faces: both halves of each of the 2 selected parents");
+}
+
+unittest { // cutByPlane: nothing selected before ⇒ nothing selected after (nothing-in ⇒ nothing-out)
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+
+    size_t nSplit = m.cutByPlane(Vec3(0, 0, 0), Vec3(0, 1, 0));
+
+    assert(nSplit == 4, "4 side faces split by mid-plane cut");
+    assert(m.faces.length == 10, "6 faces → 4 split (×2) + 2 unchanged = 10");
+    assert(m.countSelectedFaces() == 0,
+           "nothing selected before the cut ⇒ nothing selected after");
+}
+
+unittest { // splitFaceByVertices: selected parent → BOTH halves selected
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+    m.selectFace(0);
+
+    size_t n = m.splitFaceByVertices(0, 0, 2); // chord across the non-adjacent diagonal
+
+    assert(n == 1, "quad splits along the 0-2 chord");
+    assert(m.faces.length == 2, "2 sub-faces after the split");
+    assert(m.isFaceSelected(0) && m.isFaceSelected(1),
+           "splitFaceByVertices: both halves of a selected parent must stay selected");
+}
+
+unittest { // edgeSlice (splitPolygons=true path): selected parent → BOTH halves selected
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+    m.selectFace(0);
+
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(2, 3);
+    assert(eA != ~0u && eB != ~0u, "both edges must exist on the quad");
+
+    size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/true);
+
+    assert(n == 1, "single-face edgeSlice chords once");
+    assert(m.faces.length == 2, "2 sub-faces after the slice");
+    assert(m.isFaceSelected(0) && m.isFaceSelected(1),
+           "edgeSlice split path: both halves of a selected parent must stay selected");
 }
 
 // ---------------------------------------------------------------------------
