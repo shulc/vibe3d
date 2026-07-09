@@ -60,6 +60,20 @@
 //      than record a no-op undo entry — mesh stays byte-identical, no undo
 //      entry, armed_ clears.
 //
+// Task 0321 (mid-chain per-click undo peel + editable earlier chain points):
+//   17. Mid-chain undo peel: `chainArm` a 3-point chain (chainSegments==2), a
+//      synthetic Ctrl+Z (the real navHistory -> tryUndoStepInSession hook,
+//      NOT `cmd("history.undo")` — that bypasses navHistory entirely) peels
+//      exactly the LAST latched point, keeping the first point byte-identical
+//      and re-baking the shorter chain; a SECOND Ctrl+Z peels to an empty
+//      chain -> base mesh, tool stays active. Neither peel touches the
+//      committed undo ledger.
+//   18. Edit-earlier re-bake (picker-free via `activePoint`/`pointT`): select
+//      the chain's INTERIOR point and drag its `t` -> both adjacent segments
+//      re-bake (the neighbor cuts stay byte-identical, the edited point's cut
+//      moves), chain length is unaffected, and a subsequent commit + undo
+//      still reverts the WHOLE chain in ONE step (the post-commit invariant).
+//
 // tests/test_edge_slice.d (the one-shot mesh.edgeSlice command) is untouched
 // and stays green independently — this file only exercises the tool path.
 
@@ -906,4 +920,218 @@ unittest {
     assert(st1["armed"].type == JSONType.false_, "commitChain-as-cancel must clear armed_");
 
     deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// Play a synthetic key event and wait for it to finish + settle (mirrors the
+// Enter/Escape play-events idiom already used by tests 12/14/16 above).
+// ---------------------------------------------------------------------------
+void playKey(int sym, int mod = 0) {
+    auto r = postCmd("/api/play-events",
+        format(`{"t":0.000,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":%d,"repeat":0}`,
+               sym, mod));
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    bool finished = false;
+    foreach (_; 0 .. 200) {
+        auto s = getJson("/api/play-events/status");
+        if (s["finished"].type == JSONType.true_) { finished = true; break; }
+        Thread.sleep(50.msecs);
+    }
+    assert(finished, "synthetic key replay did not finish within 10s");
+    Thread.sleep(150.msecs);   // settle (post-playback drain, per CLAUDE.md flake note)
+}
+
+// ---------------------------------------------------------------------------
+// 17. Task 0321, mid-chain undo peel: `chainArm` the SAME 3-edge chain as
+//     test 12 (chainSegments==2); a synthetic Ctrl+Z is the ONLY way to reach
+//     the real navHistory -> tryUndoStepInSession hook (`cmd("history.undo")`
+//     drives the raw HistoryUndo command and bypasses navHistory entirely —
+//     see the plan's Risk #2), so this test replays sym=122 (SDLK_z),
+//     mod=64 (KMOD_LCTRL). The chain latches 3 points (A, B, C); each Ctrl+Z
+//     peels exactly the LAST one, so the progression is 3 -> 2 -> 1 -> 0
+//     points over THREE Ctrl+Z's:
+//       1st: peels C -> a 1-segment (2-point) chain, still armed, A untouched.
+//       2nd: peels B -> a LONE latched point (A). `chainSegments` reports 0
+//            here too (it derives from length-1, clamped at 0), so it alone
+//            cannot tell "1 point left" from "0 points left" — `activePoint`
+//            disambiguates: peelLastPoint's length==1 branch sets
+//            activePoint_=0, the length==0 branch sets it to -1.
+//       3rd: peels A -> the chain is FINALLY empty (peelLastPoint's
+//            length==0 branch, previously uncovered), tool STILL active.
+//     None of the three peels records anything to the committed undo ledger.
+// ---------------------------------------------------------------------------
+unittest {
+    enum SDLK_z    = 122;
+    enum KMOD_LCTRL = 64;
+
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    auto st0 = getJson("/api/tool/state");
+    assert(st0["chainSegments"].integer == 2,
+        "chainArm must arm a 2-segment (3-point) chain, got " ~
+        st0["chainSegments"].integer.to!string);
+    int    edgeA0 = cast(int)st0["edgeA"].integer;
+    double tA0    = st0["tA"].floating;
+
+    long depthBefore = undoModelDepth();
+
+    // First Ctrl+Z: peel the last latched point (C) -> a 1-segment (2-point)
+    // chain; A must be untouched.
+    playKey(SDLK_z, KMOD_LCTRL);
+    auto st1 = getJson("/api/tool/state");
+    assert(st1["chainSegments"].integer == 1,
+        "first Ctrl+Z must peel to a 1-segment chain, got " ~
+        st1["chainSegments"].integer.to!string);
+    assert(cast(int)st1["edgeA"].integer == edgeA0,
+        "peel must leave the first latched point's edge unchanged");
+    assert(abs(st1["tA"].floating - tA0) < 1e-9,
+        "peel must leave the first latched point's t byte-identical");
+    assert(st1["armed"].type == JSONType.true_,
+        "a 2-point chain after peel is still a real armed preview");
+
+    long depthMid = undoModelDepth();
+    assert(depthMid == depthBefore,
+        "peel must NOT touch the committed undo ledger, went " ~
+        depthBefore.to!string ~ " -> " ~ depthMid.to!string);
+
+    // Second Ctrl+Z: peel B -> a LONE latched point (A) remains — NOT an
+    // empty chain. `chainSegments` is 0 either way (length-1 clamped at 0),
+    // so `activePoint` is what disambiguates it from the truly-empty state
+    // checked after the third Ctrl+Z below.
+    playKey(SDLK_z, KMOD_LCTRL);
+    auto st2 = getJson("/api/tool/state");
+    assert(st2["chainSegments"].integer == 0,
+        "second Ctrl+Z must peel to a (still non-empty) 1-point chain, got " ~
+        st2["chainSegments"].integer.to!string ~ " segments");
+    assert(st2["armed"].type == JSONType.false_, "a lone latched point is not armed");
+    assert(cast(int)st2["activePoint"].integer == 0,
+        "a lone latched point must report activePoint==0, distinguishing it from an empty chain's -1");
+
+    auto m1 = model();
+    assert(vertCount(m1) == 8, "a lone latched point cuts nothing -> base mesh (8v)");
+    assert(faceCount(m1) == 6, "a lone latched point cuts nothing -> base mesh (6f)");
+
+    long depthMid2 = undoModelDepth();
+    assert(depthMid2 == depthBefore,
+        "peel must NOT touch the committed undo ledger, went " ~
+        depthBefore.to!string ~ " -> " ~ depthMid2.to!string);
+
+    // Third Ctrl+Z: peel A -> the chain is now genuinely empty
+    // (peelLastPoint's length==0 branch, previously uncovered), tool STILL
+    // active.
+    playKey(SDLK_z, KMOD_LCTRL);
+    auto st3 = getJson("/api/tool/state");
+    assert(st3["chainSegments"].integer == 0,
+        "third Ctrl+Z must peel to an empty chain, got " ~
+        st3["chainSegments"].integer.to!string ~ " segments");
+    assert(st3["armed"].type == JSONType.false_, "an empty chain is not armed");
+    assert(cast(int)st3["activePoint"].integer == -1,
+        "an empty chain must report activePoint==-1, distinguishing it from the lone-point state");
+
+    auto m2 = model();
+    assert(vertCount(m2) == 8, "peel to an empty chain must restore the base mesh (8v)");
+    assert(faceCount(m2) == 6, "peel to an empty chain must restore the base mesh (6f)");
+
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore,
+        "peel must never record an undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    // The tool is still active-idle after peeling everything (not dropped) —
+    // a further command against it must still succeed.
+    deactivateTool();
+}
+
+// ---------------------------------------------------------------------------
+// 18. Task 0321, edit-earlier re-bake (Stage 2, picker-free via numeric):
+//     arm the same 3-point chain as test 17; `chainArm` sets `activePoint_`
+//     to the LAST latched point (index 2) — asserted directly, since this is
+//     the opponent-folded requirement that ALL THREE latch producers
+//     (latchFirstPoint/appendPoint/armChain) set it. Select the INTERIOR
+//     point (B, index 1) via `activePoint` and drag its `t` via `pointT` ->
+//     BOTH adjacent segments re-bake: A's and C's cut vertices stay
+//     byte-identical, B's cut vertex moves. Chain length is unaffected.
+//     Committing afterwards (tool-drop) still records exactly ONE undo
+//     entry, and one undo still reverts the WHOLE chain — the post-commit
+//     invariant is untouched by editing an interior point.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto m0 = model();
+    uint e0 = edgeIndexByVerts(m0, 0, 1);
+    uint e1 = edgeIndexByVerts(m0, 1, 2);
+    uint e2 = edgeIndexByVerts(m0, 5, 6);
+
+    activateTool();
+    cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
+    cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
+
+    auto st0 = getJson("/api/tool/state");
+    assert(st0["chainSegments"].integer == 2, "chainArm must arm a 2-segment chain");
+    assert(cast(int)st0["activePoint"].integer == 2,
+        "chainArm must set activePoint_ to the LAST latched point (index 2), got " ~
+        st0["activePoint"].integer.to!string);
+
+    // A-cut / C-cut land at e0's / e2's midpoints (interior default + the
+    // explicit tA/tB==0.5, same golden as test 11/12's 3-point chain).
+    auto e0a = edgeEndpoint(m0, e0, 0), e0b = edgeEndpoint(m0, e0, 1);
+    auto e2a = edgeEndpoint(m0, e2, 0), e2b = edgeEndpoint(m0, e2, 1);
+    auto cutA = lerp3(e0a, e0b, 0.5);
+    auto cutC = lerp3(e2a, e2b, 0.5);
+    auto mBefore = model();
+    assert(hasNewVertNear(mBefore, cutA, 8), "A-cut must sit at e0's midpoint before the edit");
+    assert(hasNewVertNear(mBefore, cutC, 8), "C-cut must sit at e2's midpoint before the edit");
+
+    // Select the INTERIOR point (B, index 1); its t must read back its
+    // current value (0.5, the pointsFromEdgesParam interior default) before
+    // any edit.
+    cmd("tool.attr mesh.edgeSliceTool activePoint 1");
+    auto st1 = getJson("/api/tool/state");
+    assert(cast(int)st1["activePoint"].integer == 1, "activePoint must select index 1");
+    assert(abs(st1["pointT"].floating - 0.5) < 1e-9,
+        "selecting activePoint=1 must sync pointT to B's current t (0.5), got " ~
+        st1["pointT"].floating.to!string);
+
+    // Drag B's t to 0.75 -> re-bakes both adjacent segments.
+    cmd("tool.attr mesh.edgeSliceTool pointT 0.75");
+
+    auto mAfter = model();
+    assert(hasNewVertNear(mAfter, cutA, 8), "A-cut must stay byte-identical after editing B");
+    assert(hasNewVertNear(mAfter, cutC, 8), "C-cut must stay byte-identical after editing B");
+
+    auto e1a = edgeEndpoint(m0, e1, 0), e1b = edgeEndpoint(m0, e1, 1);
+    auto oldB = lerp3(e1a, e1b, 0.5);
+    auto newB = lerp3(e1a, e1b, 0.75);
+    assert(!hasNewVertNear(mAfter, oldB, 8, 1e-3),
+        "B's cut vertex must have MOVED off its original midpoint after the edit");
+    assert(hasNewVertNear(mAfter, newB, 8),
+        "B's cut vertex must land at the edited t=0.75, expected near " ~ newB.to!string);
+
+    auto st2 = getJson("/api/tool/state");
+    assert(st2["chainSegments"].integer == 2,
+        "editing an interior point must not change chain length, got " ~
+        st2["chainSegments"].integer.to!string);
+
+    // Commit (tool-drop) + one undo -> the WHOLE chain reverts in ONE step.
+    long depthBefore = undoModelDepth();
+    deactivateTool();   // tool.set off -> deactivate() -> commitChain()
+    long depthAfter = undoModelDepth();
+    assert(depthAfter == depthBefore + 1,
+        "commit after an interior-point edit must still add exactly ONE undo entry, went " ~
+        depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
+
+    cmd("history.undo");
+    auto m1 = model();
+    assert(vertCount(m1) == 8,
+        "post-commit undo must revert the WHOLE edited chain in ONE step (8v)");
+    assert(faceCount(m1) == 6,
+        "post-commit undo must revert the WHOLE edited chain in ONE step (6f)");
 }
