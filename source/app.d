@@ -4520,12 +4520,23 @@ void main(string[] args) {
             {
                 import toolpipe.packets : FalloffPacket;
                 import falloff          : evaluateFalloff;
+                import std.math         : isFinite;
                 if (auto fpp = vts.get!FalloffPacket()) {
                     if (fpp.enabled) {
                         buf.put(`,"falloffWeights":[`);
                         foreach (i, v; subj.mesh.vertices) {
                             if (i) buf.put(",");
                             float w = evaluateFalloff(*fpp, v, cast(int) i, subj.viewport);
+                            // Honor the block's documented [0,1] contract for
+                            // EVERY falloff type: Screen/Lasso weights project
+                            // through the viewport (perspective divide can go
+                            // non-finite for a vert at/behind the camera) and
+                            // custom cubic-Bezier shapes can overshoot [0,1].
+                            // Guard so the emitter never produces nan/inf/out-of-
+                            // range (invalid JSON / broken wire contract).
+                            if (!isFinite(w)) w = 0.0f;
+                            else if (w < 0.0f) w = 0.0f;
+                            else if (w > 1.0f) w = 1.0f;
                             buf.put(format(`%f`, w));
                         }
                         buf.put(`]`);
