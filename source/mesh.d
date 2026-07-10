@@ -2656,7 +2656,17 @@ struct Mesh {
         //     directly. Geometrically this is v plus the inward bisector scaled by
         //     width/sin(half angle); it reduces to v + width·e1⊥ + width·e2⊥ at a
         //     right angle. Returns false if the corner is degenerate (collinear).
-        bool capMiterInset(uint v, int fi, out Vec3 pos) {
+        //     Task 0321: on a QUAD, also reports the diagonally opposite corner
+        //     (`farVert`) and its distance from `v` (`farLen`) — the natural
+        //     stopping point of the mitered bisector, mirroring the far-vertex
+        //     `boundaryEdgeDir` clamp below. The caller uses this to detect/weld
+        //     an overshoot instead of letting the inset overshoot an existing
+        //     vertex undetected (see the cap-miter convergence pass after Pass 1).
+        //     Left at their `out` defaults (farVert=0, farLen=NaN — D zero-inits
+        //     `out uint` but NOT `out float`) for non-quad faces (no well-defined
+        //     single opposite corner); callers gate on `farLen > 1e-6f`, which is
+        //     false for NaN, so the uninitialised farVert is never read.
+        bool capMiterInset(uint v, int fi, out Vec3 pos, out uint farVert, out float farLen) {
             auto f = faces[fi];
             foreach (k; 0 .. f.length) {
                 if (f[k] != v) continue;
@@ -2675,6 +2685,10 @@ struct Mesh {
                 float s = sin(halfT);
                 if (s < 1e-6f) return false;
                 pos = vertices[v] + bis * (width / s);
+                if (f.length == 4) {
+                    farVert = f[(k + 2) % 4];
+                    farLen = (vertices[farVert] - vertices[v]).length;
+                }
                 return true;
             }
             return false;
@@ -2705,6 +2719,12 @@ struct Mesh {
         //     because the face-aware/mitered inset folds the inset edge enough to
         //     make the averaged-normal heuristic unreliable.
         bool[ulong] sharedFaceAwareInset;
+        // Task 0321: (v<<32|fi) → diagonally-opposite far vertex / its distance,
+        //     for cap-miter keys on a QUAD face only (see capMiterInset). Consumed
+        //     by the cap-miter convergence pass after Pass 1 to clamp/weld an
+        //     overshooting mitered inset instead of leaving it unclamped.
+        uint[ulong]  capMiterFarVert;
+        float[ulong] capMiterFarLen;
         Vec3 insetDirAt(uint v, uint va, uint vb, int fi, bool coplanar) {
             uint other = (v == va) ? vb : va;
             bool sharedOnly = isShared(v) && !isFreeEnd(v) && !coplanar;
@@ -2735,11 +2755,15 @@ struct Mesh {
                     // cap-polygon offset (position override). Only meaningful for
                     // shared corners; free ends never have both boundary edges
                     // selected (their single edge is the only selected one).
-                    Vec3 mp;
-                    if (capMiterInset(v, fi, mp)) {
+                    Vec3 mp; uint capFar; float capFarLen;
+                    if (capMiterInset(v, fi, mp, capFar, capFarLen)) {
                         ulong k = (cast(ulong)v << 32) | cast(uint)fi;
                         insetPosOverride[k] = mp;
                         if (sharedOnly) sharedFaceAwareInset[k] = true;
+                        if (capFarLen > 1e-6f) {
+                            capMiterFarVert[k] = capFar;
+                            capMiterFarLen[k] = capFarLen;
+                        }
                         // Direction is irrelevant (overridden); return a unit dir
                         // so accumInset stays well-formed.
                         return inwardDir(va, vb, fi);
@@ -2810,12 +2834,59 @@ struct Mesh {
         //     path, so single-edge cases (cube, octahedron, width_clamp) never
         //     see `isFreeEnd(farVertId)` true — byte-identical there.
         uint[ulong] mutualMeet;   // unordered (loV<<32|hiV) → shared meeting vert
+        // Task 0321: positional twin of `mutualMeet`, keyed by the quantised
+        //     midpoint itself rather than the (a,b) pair. A single face can
+        //     produce more than one converging PAIR that geometrically meets at
+        //     the SAME point — e.g. a quad's two diagonal cap-corner pairs
+        //     (v0,v2) and (v1,v3) both cross at the face center — so a pure
+        //     pair-keyed cache would mint two coincident "meeting" vertices for
+        //     what is really one point. Check position first; only mint (and
+        //     register both caches) when this exact point hasn't been produced
+        //     by a different pair yet.
+        uint[string] mutualMeetPos;
         uint mutualMeetVert(uint a, uint b) {
             uint lo = a < b ? a : b, hi = a < b ? b : a;
             ulong mk = (cast(ulong)lo << 32) | hi;
             if (auto p = mk in mutualMeet) return *p;
-            uint nv = addVertex((vertices[lo] + vertices[hi]) * 0.5f);
+            Vec3 mid = (vertices[lo] + vertices[hi]) * 0.5f;
+            string pk = weldKeyOf(uint.max, mid);   // sentinel v — position-only key
+            if (auto pp = pk in mutualMeetPos) { mutualMeet[mk] = *pp; return *pp; }
+            uint nv = addVertex(mid);
             mutualMeet[mk] = nv;
+            mutualMeetPos[pk] = nv;
+            return nv;
+        }
+        // Task fuzz-0321b: the shared meeting point for a converging QUAD's
+        //     cap-miter corners (see `mutualMeetVertAt` below) is this face's
+        //     own centroid (the existing `Mesh.faceCentroid` member, reused
+        //     here rather than re-derived) instead of a per-diagonal
+        //     midpoint. For a parallelogram (incl. the axis-aligned
+        //     cube/square case) the two diagonals bisect each other AT the
+        //     centroid, so this is bit-identical to the old per-diagonal
+        //     midpoint there. For a non-parallelogram convex quad the two
+        //     diagonal midpoints DIFFER — using either alone left the OTHER
+        //     diagonal's pair converging to a second, distinct point, producing
+        //     an `[a,b,a,b]` folded face (two non-adjacent corners coincident,
+        //     not caught by the consecutive-only degenerate-face cleanup). The
+        //     centroid is one point shared by both diagonals' corners, so all 4
+        //     corners collapse onto the SAME vertex regardless of quad shape.
+        // Positional twin of `mutualMeetVert` that lands at an explicit
+        //     `meetPos` (rather than computing the (a,b) midpoint itself), so a
+        //     caller can supply a face-level meeting point (see `faceCentroid`)
+        //     shared by more than one pairwise `(a,b)` key. Shares the same
+        //     `mutualMeet`/`mutualMeetPos` caches as `mutualMeetVert`, so two
+        //     different diagonal pairs of one face that both resolve to the
+        //     identical `meetPos` (bit-identical — both derive it via the same
+        //     `faceCentroid(fi)` call) collapse onto ONE vertex.
+        uint mutualMeetVertAt(uint a, uint b, Vec3 meetPos) {
+            uint lo = a < b ? a : b, hi = a < b ? b : a;
+            ulong mk = (cast(ulong)lo << 32) | hi;
+            if (auto p = mk in mutualMeet) return *p;
+            string pk = weldKeyOf(uint.max, meetPos);
+            if (auto pp = pk in mutualMeetPos) { mutualMeet[mk] = *pp; return *pp; }
+            uint nv = addVertex(meetPos);
+            mutualMeet[mk] = nv;
+            mutualMeetPos[pk] = nv;
             return nv;
         }
         // Pass 1 (task 0313): far-vertex-clamp welds. When the face-aware clamp
@@ -2864,6 +2935,128 @@ struct Mesh {
             insetPosWeld[weldKeyOf(v, p)] = farVertId;
             weldedToFar[k] = true;
         }
+        // Pass 1b (task 0321): cap-miter convergence weld. The cap-miter path
+        //     (a shared corner whose face is fully ringed by selected edges — no
+        //     non-selected boundary edge to inset along, e.g. every corner of
+        //     every face when ALL edges of a closed mesh are selected) carries an
+        //     ABSOLUTE position override and, until now, no overshoot clamp at
+        //     all: an aggressive `width` can push the mitered inset straight
+        //     through — or exactly onto — the face's diagonally opposite corner
+        //     with no weld, minting a coincident duplicate. Worse, on a QUAD
+        //     whose every corner is a cap corner (the fully-selected-loop case),
+        //     that opposite corner is ITSELF converging back along the same
+        //     diagonal, not a fixed target — the identical "mutual dissolve"
+        //     hazard task 0317 fixed for face-aware free-end insets, here
+        //     triggered by full-loop selection instead of two opposing free ends.
+        //
+        //     `farVert` (the diagonally opposite corner, from capMiterInset) is
+        //     itself ALSO a cap-miter key of the SAME face exactly when it has
+        //     its own entry in `insetPosOverride` for (farVert, fi) — i.e. both
+        //     diagonal corners are converging toward each other. Detect that and
+        //     reroute BOTH directions through the shared midpoint vertex
+        //     (`mutualMeetVert`), using the SUM of both corners' own offsets
+        //     against the shared distance so an asymmetric pair (uneven corner
+        //     angles) is still caught the moment their reaches would meet or
+        //     cross — not only once either one alone reaches the far corner.
+        //     When `farVert` is NOT itself converging (a stable vertex, or a
+        //     boundary-edge-dissolved corner in a partially-selected face), fall
+        //     back to the plain one-sided task-0313 clamp: stop at — and reuse —
+        //     `farVert`'s own id once this corner's own offset alone reaches it.
+        //
+        //     Non-quad cap corners (no `capMiterFarVert` entry) and any width
+        //     modest enough that neither branch triggers keep the prior
+        //     unclamped `insetPosOverride` position untouched in Pass 2 below —
+        //     byte-identical there.
+        foreach (k, farVertId; capMiterFarVert) {
+            float farLen = capMiterFarLen[k];
+            if (farLen <= 1e-6f) continue;
+            uint v  = cast(uint)(k >> 32);
+            uint fi = cast(uint)(k & 0xffffffffUL);
+            float offLen = (insetPosOverride[k] - vertices[v]).length;
+            ulong farKey = (cast(ulong)farVertId << 32) | fi;
+            if (auto farOverride = farKey in insetPosOverride) {
+                // Mutual: farVert is also a cap corner of this same face,
+                // converging back along the same diagonal. Meet at the face's
+                // OWN centroid (see faceCentroid) rather than this diagonal's
+                // midpoint, so the OTHER diagonal pair — if it converges too —
+                // collapses onto the identical vertex instead of a second,
+                // distinct one (fuzz-0321b).
+                float farOffLen = (*farOverride - vertices[farVertId]).length;
+                if (offLen + farOffLen < farLen - 1e-6f) continue;   // not yet meeting
+                anyOvershootSaturated = true;
+                Vec3 meetPos = faceCentroid(fi);
+                uint mv = mutualMeetVertAt(v, farVertId, meetPos);
+                insetVert[k] = mv;
+                insetPosWeld[weldKeyOf(v, meetPos)] = mv;
+                weldedToFar[k] = true;
+            } else {
+                // One-sided: farVert is a stable/independently-handled corner.
+                if (offLen < farLen - 1e-6f) continue;   // did not reach it
+                anyOvershootSaturated = true;
+                insetVert[k] = farVertId;
+                insetPosWeld[weldKeyOf(v, vertices[farVertId])] = farVertId;
+                weldedToFar[k] = true;
+            }
+        }
+        // TODO(fuzz): n-GON (n>=5) cap-miter corners carry NO overshoot clamp
+        //     at all (`capMiterInset` only reports a diagonally-opposite far
+        //     vertex for QUADS, n==4, handled by Pass 1b above); their
+        //     `insetPosOverride` position flows unclamped straight to Pass 2.
+        //     TRIANGLES need no clamp — with only 3 corners in a cyclic face,
+        //     any two that end up coincident are, by construction, ADJACENT
+        //     (a 3-cycle has no non-adjacent pair), so the plain
+        //     consecutive-duplicate degenerate-face cleanup below already
+        //     catches a fully- or partially-collapsed triangle cleanly
+        //     (confirmed empirically: a regular AND a heavily scalene/100:1
+        //     octahedron, all edges selected, stay valid up to width=50 on a
+        //     unit-scale mesh — see test 19 in test_edge_extrude.d).
+        //
+        //     n>=5 DOES have non-adjacent corner pairs (e.g. a pentagon's
+        //     corners 0 and 2), so an `[...,a,...,a,...]` fold the
+        //     consecutive-only cleanup misses is theoretically reachable —
+        //     but INVESTIGATED AND NOT YET REPRODUCED via realistic
+        //     (irregular, non-symmetric) geometry: two DISTINCT corners'
+        //     raw mitered rays are fixed lines whose parametrisation is
+        //     LOCKED to the same single `width` value (position(width) =
+        //     v + (width/sin(halfAngle))·bisector), so for them to land at
+        //     the exact same point at the SAME width is a 2-equations/
+        //     1-unknown system — generically UNSATISFIABLE except at an
+        //     exact/near-symmetric critical width (unlike the quad bug this
+        //     mirrors, which was FORCED by Pass 1b's own approximate
+        //     trigger-and-weld formula, not by raw rays naturally crossing).
+        //     Confirmed empirically: an irregular pentagon AND an irregular
+        //     hexagon (interior faces of a tall open prism, isolating this
+        //     path from the far-vertex clamp above — see the "tall prism"
+        //     construction tried during this investigation) stayed
+        //     coincidence-free at width 0.9 through 50 (three orders of
+        //     magnitude past their ~unit-scale critical radius). A regular
+        //     (or near-regular) n>=5 primitive at OR VERY NEAR its exact
+        //     critical width remains an unproven but plausible latent gap.
+        //
+        //     A real fix needs a per-FACE (not per-pair, since n>=5 has no
+        //     single natural "opposite corner") convergence test — e.g. weld
+        //     every cap-miter corner of a face onto that face's own centroid
+        //     once the polygon's inward offset has collapsed — plus a
+        //     regression fixture that actually demonstrates the fold (a
+        //     regular pentagon/hexagon at its exact analytic critical width
+        //     is the most promising unexplored angle; every irregular
+        //     construction tried here passed even without any clamp). Given
+        //     that, this is left as a follow-up rather than shipped as an
+        //     unverified change.
+        //
+        //     Separately, while probing this a NEW, UNRELATED gap surfaced:
+        //     a standalone open n-gon (e.g. a lone pentagon face, or any
+        //     mesh boundary loop) whose corners are SHARED (>=2 selected
+        //     edges, not free ends/chamfer) rather than interior, run through
+        //     an overshoot width, mints coincident duplicate vertices at the
+        //     ORIGINAL corner positions — this traces to the boundary-edge
+        //     ridge-vertex construction (used for both interior and boundary
+        //     selected edges) not welding its ridge vertex back onto the
+        //     original position at extrude=0 for this shared/non-chamfer
+        //     boundary case. It is a DIFFERENT bug from the cap-miter gap
+        //     described above (unrelated to `insetPosOverride`/
+        //     `capMiterInset` entirely) and out of this task's scope; flagged
+        //     here for a separate follow-up task.
         // Pass 2: the general accumulated-direction inset (unclamped, or
         //     clamped-but-ambiguous, or cap-miter override), same
         //     (endpoint, quantised position) weld as before so two selected

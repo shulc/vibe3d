@@ -1189,7 +1189,7 @@ unittest {
     postSelect("edges", [ei]);
 
     // width = 1.5 ≫ the incident cube-edge length (1.0): inset must clamp.
-    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.1,"width":1.5}}`);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.1,"width":50.0}}`);
     auto m = getModel();
 
     // Welded topology: 2 dissolved free-end verts ↔ 2 new ridge verts (8v);
@@ -1363,7 +1363,7 @@ unittest {
     assert(ei >= 0, "0313: +Y..+Z edge not found");
     postSelect("edges", [ei]);
 
-    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":2.5}}`);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":10.0}}`);
     auto m = getModel();
 
     // No coincident duplicates, no degenerate (repeated-corner / zero-area)
@@ -1419,4 +1419,148 @@ unittest {
     assert(isHoleFree(m),
         "0317: result is not hole-free / has folded (inconsistently wound) faces");
     assert(orphanVerts(m).length == 0, "0317: orphan verts: " ~ orphanVerts(m).to!string);
+}
+
+// ---------------------------------------------------------------------------
+// 17. TASK fuzz-found — ALL 12 edges of a cube selected (the whole-mesh
+//     convention: empty selection ⇒ every edge) with an overshoot `width`
+//     must not corrupt the mesh. Unlike 0313 (a single free end overshooting
+//     onto a stable far vertex) and 0317 (two mutually-facing FREE ends of
+//     DIFFERENT edges overshooting onto each other), every vertex here is a
+//     SHARED corner (valence 3, all 3 incident edges selected) whose face is
+//     fully ringed by the selection — the cap-miter path (capMiterInset), not
+//     boundaryEdgeDir. That path carried NO overshoot clamp at all: at
+//     width=1.0 on a unit cube, each corner's mitered inset (magnitude =
+//     width/sin(45°) = width·√2) lands EXACTLY on the face's diagonally
+//     opposite corner — and that corner's OWN mitered inset lands right back,
+//     a mutual convergence the same way 0317's free ends did, just reached via
+//     full-loop selection instead of two opposing free ends. Pre-fix this
+//     mints 24 coincident un-welded vertex pairs (32 verts total: 8 original +
+//     24 unwelded duplicate insets). Fixed by giving capMiterInset a
+//     far-vertex clamp (task 0321) mirroring boundaryEdgeDir's, detecting the
+//     MUTUAL case (the far vertex is itself a converging cap corner of the
+//     same face) and rerouting both directions onto one shared meeting vertex
+//     — additionally deduped by POSITION so a quad's two diagonal pairs (which
+//     geometrically cross at the identical face-center point) collapse onto
+//     ONE vertex, not two coincident ones.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 8);
+    assert(before["faceCount"].integer == 6);
+
+    // Empty selection while in Edges edit mode ⇒ whole-mesh convention (all
+    // 12 edges), matching the fuzzer's minimal repro exactly.
+    postSelect("edges", []);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"width":1.0}}`);
+    auto m = getModel();
+
+    assert(noCoincidentVerts(m), "fuzz-alledges: coincident duplicate vertices present");
+    assert(noDegenerateFaces(m),
+        "fuzz-alledges: degenerate (repeated-corner/zero-area) face present");
+    assert(isHoleFree(m),
+        "fuzz-alledges: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(orphanVerts(m).length == 0,
+        "fuzz-alledges: orphan verts: " ~ orphanVerts(m).to!string);
+}
+
+// ---------------------------------------------------------------------------
+// 18. TASK fuzz-0321b — a NON-PARALLELOGRAM (trapezoid) quad's cap-miter
+//     corners must collapse to ONE meeting point, not two. Test 17's cube is
+//     a degenerate case for the mutual cap-miter weld: a square face's two
+//     diagonals bisect each other at the SAME point (the face center), so
+//     `mutualMeetVert`'s per-diagonal MIDPOINT happened to be identical for
+//     both diagonal pairs. A general convex (non-parallelogram) quad's two
+//     diagonals have DIFFERENT midpoints — e.g. an isosceles-trapezoid side
+//     face of a frustum (bottom square side 1.0 at z=-0.5, top square side
+//     0.3 at z=+0.5): the equal-length diagonals of its -X side face
+//     ([0,4,7,3]) meet at (-0.325,-0.175,0) and (-0.325,0.175,0)
+//     respectively — two DIFFERENT points. Pre-fix, selecting only that
+//     face's 4 edges with an overshoot width converges BOTH diagonal pairs
+//     but welds each pair onto its OWN per-diagonal midpoint, leaving the
+//     face as `[c02,c13,c02,c13]` — two NON-CONSECUTIVE repeated corners
+//     (an "a,b,a,b" fold) the consecutive-only degenerate-face cleanup does
+//     not catch. Fixed by using the face's own centroid (shared by both
+//     diagonals regardless of quad shape) as the meeting point instead.
+// ---------------------------------------------------------------------------
+
+unittest {
+    // Frustum: makeCube() topology/winding, top face (verts 4-7) shrunk from
+    // half-width 0.5 to 0.15, turning every side face into an isosceles
+    // trapezoid. Only the -X side face [0,4,7,3] is selected/tested.
+    immutable string rawMesh = `{"vertices":[`
+        ~ `[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],`
+        ~ `[-0.15,-0.15,0.5],[0.15,-0.15,0.5],[0.15,0.15,0.5],[-0.15,0.15,0.5]],`
+        ~ `"faces":[[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]}`;
+    postLoadMesh(rawMesh);
+
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 8);
+    assert(before["faceCount"].integer == 6);
+
+    int e04 = edgeIndex(before, 0, 4);
+    int e47 = edgeIndex(before, 4, 7);
+    int e73 = edgeIndex(before, 7, 3);
+    int e30 = edgeIndex(before, 3, 0);
+    assert(e04 >= 0 && e47 >= 0 && e73 >= 0 && e30 >= 0,
+        "trapezoid: -X side-face edges not found");
+    postSelect("edges", [e04, e47, e73, e30]);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":10.0}}`);
+    auto m = getModel();
+
+    assert(noCoincidentVerts(m), "trapezoid: coincident duplicate vertices present");
+    assert(noDegenerateFaces(m),
+        "trapezoid: degenerate (repeated-corner/zero-area) face present");
+    assert(isHoleFree(m),
+        "trapezoid: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(orphanVerts(m).length == 0,
+        "trapezoid: orphan verts: " ~ orphanVerts(m).to!string);
+}
+
+// ---------------------------------------------------------------------------
+// 19. TASK fuzz-residual2 — TRIANGLES need no cap-miter overshoot clamp.
+//     `capMiterInset` only reports a diagonally-opposite far vertex for QUADS
+//     (n==4, task fuzz-0321b/test 18 above); n>=5 n-gon cap-miter corners
+//     carry no clamp either (see the TODO(fuzz) comment in
+//     `extrudeEdgesByMask`, source/mesh.d, next to the Pass 1b block —
+//     investigated but not extended: every irregular pentagon/hexagon
+//     construction tried during that investigation stayed coincidence-free
+//     from width 0.9 through 50, so a realistic failing repro was not
+//     found). TRIANGLES specifically need no clamp at all — with only 3
+//     corners in a cyclic face, any two that end up coincident are, by
+//     construction, ADJACENT (a 3-cycle has no non-adjacent pair), so the
+//     plain consecutive-duplicate degenerate-face cleanup below already
+//     catches a fully- or partially-collapsed triangle cleanly. Confirmed
+//     here on a heavily SCALENE (non-uniformly scaled, 100:1 aspect)
+//     octahedron — every one of its 8 faces is a scalene triangle, and with
+//     all edges selected every corner of every face is cap-miter.
+// ---------------------------------------------------------------------------
+
+unittest {
+    immutable string rawMesh = `{"vertices":[`
+        ~ `[5,0,0],[-5,0,0],[0,1,0],[0,-1,0],[0,0,0.05],[0,0,-0.05]],`
+        ~ `"faces":[[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]}`;
+    postLoadMesh(rawMesh);
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 6);
+    assert(before["faceCount"].integer == 8);
+
+    int[] edgeIdx;
+    foreach (i; 0 .. before["edges"].array.length) edgeIdx ~= cast(int)i;
+    postSelect("edges", edgeIdx);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":50.0}}`);
+    auto m = getModel();
+
+    assert(noCoincidentVerts(m), "scalene-octahedron: coincident duplicate vertices present");
+    assert(noDegenerateFaces(m),
+        "scalene-octahedron: degenerate (repeated-corner/zero-area) face present");
+    assert(isHoleFree(m),
+        "scalene-octahedron: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(orphanVerts(m).length == 0,
+        "scalene-octahedron: orphan verts: " ~ orphanVerts(m).to!string);
 }
