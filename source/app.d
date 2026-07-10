@@ -4506,6 +4506,32 @@ void main(string[] args) {
                     buf.put(`}`);
                 }
             }
+            // task 0342 Phase 1 (stage-conformance fixtures): per-vertex
+            // falloff weights, mesh vertex-index order. Sibling optional
+            // block to "transform" above — emitted ONLY when a falloff is
+            // active (mirrors the "absent block ⇒ tests gate on its
+            // presence" convention). Read-only: `evaluateFalloff` is a pure
+            // function (source/falloff.d) and `vts.get!FalloffPacket()`
+            // just retrieves the packet `pipeline.evaluate` above already
+            // published — no additional cache mutation. Wire contract
+            // (locked, see doc/tasks/work/0342-stage-conformance-fixtures.md):
+            // key = "falloffWeights", one weight per vertex in mesh
+            // vertex-index order, values in [0, 1].
+            {
+                import toolpipe.packets : FalloffPacket;
+                import falloff          : evaluateFalloff;
+                if (auto fpp = vts.get!FalloffPacket()) {
+                    if (fpp.enabled) {
+                        buf.put(`,"falloffWeights":[`);
+                        foreach (i, v; subj.mesh.vertices) {
+                            if (i) buf.put(",");
+                            float w = evaluateFalloff(*fpp, v, cast(int) i, subj.viewport);
+                            buf.put(format(`%f`, w));
+                        }
+                        buf.put(`]`);
+                    }
+                }
+            }
             // Published hover state (vert/edge/face index, -1 = none). Lets
             // tests witness the during-drag hover FREEZE: while a tool drag is
             // active the hover must stay on the element picked at drag-start,
