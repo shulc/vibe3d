@@ -56,7 +56,10 @@ private string endpointPath(string ep) {
 // JSON numbers may parse as integer, uinteger, or float_ depending on how
 // the literal was written ("0" vs "0.0"). Coerce uniformly so a golden of
 // [0, 0, 0] compares the same as [0.0, 0.0, 0.0].
-private double asDouble(JSONValue v) {
+// Not `private`: reused by tests/stage_helpers.d (task 0342) so the
+// stage-conformance suites share the exact same JSON-number coercion
+// instead of a second copy drifting out of sync.
+double asDouble(JSONValue v) {
     final switch (v.type) {
         case JSONType.float_:    return v.floating;
         case JSONType.integer:   return cast(double) v.integer;
@@ -105,12 +108,16 @@ private double dist2(double[3] a, double[3] b) {
 
 private enum double COORD_EPS = 1e-4;
 private bool veq(double[3] a, double[3] b) { return dist2(a, b) <= COORD_EPS*COORD_EPS; }
-private double[3] jvec3(JSONValue v) {
+// Not `private` — reused by tests/stage_helpers.d (task 0342).
+double[3] jvec3(JSONValue v) {
     auto c = v.array; return [asDouble(c[0]), asDouble(c[1]), asDouble(c[2])];
 }
 
 // POST an argstring to /api/command; assert {"status":"ok"}.
-private void cmd(string argstring, string ctx) {
+// Not `private` — reused by tests/stage_helpers.d (task 0342) to drive
+// `pipe_setup` commands (actr.<mode>, tool.pipe.attr falloff ...) without a
+// second HTTP-driving copy.
+void cmd(string argstring, string ctx) {
     auto resp = cast(string) post(BASE ~ "/api/command", argstring);
     auto j = parseJSON(resp);
     if ("status" !in j || j["status"].str != "ok")
@@ -189,7 +196,10 @@ private int[] resolveCoords(string mode, JSONValue coordsArr, string ctx) {
 //                                     // explicit scale via /api/transform
 // translate/rotate/scale run the matching tool about the default action center.
 // An { "endpoint": ... } step is the low-level escape hatch (see postStep).
-private void runStep(JSONValue step, string name, string phase, size_t i) {
+// Not `private` — reused by tests/stage_helpers.d (task 0342) to run a
+// fixture's `mesh_build` steps through the SAME step vocabulary (reset /
+// select / translate / ...) instead of re-deriving mesh setup logic.
+void runStep(JSONValue step, string name, string phase, size_t i) {
     string ctx = format("%s: %s step %d", name, phase, i);
     if ("reset" in step) {
         // {"reset":true} → default cube; {"reset":true,"empty":true} → empty
