@@ -78,6 +78,9 @@ import tools.clone_tool : CloneTool;
 import tools.array_tool : ArrayTool;
 import tools.tack : TackTool;
 import tools.bridge_tool : BridgeTool, BridgeEditFactory;
+import tools.vert_merge_tool : VertexMergeTool;
+import tools.vertex_bevel_tool : VertexBevelTool;
+import tools.vertex_extrude_tool : VertexExtrudeTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -2988,6 +2991,46 @@ void main(string[] args) {
     reg.toolFactories["edge.bevel"] = () {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Vertex Bevel — interactive (task 0360 promotion of the one-shot
+    // mesh.vertexBevel command). Single-handle Inset, ACTR-anchored,
+    // mirrors EdgeBevelTool one element type down. Reuses bevelEditFactory
+    // (MeshBevelEdit snapshot undo) and the SAME id as the pre-existing
+    // one-shot command (reg.commandFactories["mesh.vertexBevel"] below,
+    // untouched) — separate registries, same precedent as poly.extrude/
+    // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
+    reg.toolFactories["mesh.vertexBevel"] = () {
+        auto t = new VertexBevelTool(() => &mesh(), &gpu, &editMode, litShader,
+                                     &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Vertex Extrude — interactive (task 0360 promotion of the one-shot
+    // mesh.vertexExtrude command). Two independent handles (Extrude/shift,
+    // Width) mirroring PolyBevelTool's Shift/Inset pair. Reuses
+    // bevelEditFactory (MeshBevelEdit snapshot undo); same id as the
+    // pre-existing one-shot command, separate registries (see
+    // mesh.vertexBevel above). Gated to Vertices mode.
+    reg.toolFactories["mesh.vertexExtrude"] = () {
+        auto t = new VertexExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
+                                       &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Vertex Merge — interactive (task 0360 promotion of the one-shot
+    // vert.merge command). No drawn handle — a generic viewport haul, same
+    // family as mesh.polyInsetTool. Reuses bevelEditFactory (MeshBevelEdit
+    // snapshot undo); same id as the pre-existing one-shot command (which
+    // keeps its own range/keep/morph params, untouched — see
+    // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
+    reg.toolFactories["vert.merge"] = () {
+        auto t = new VertexMergeTool(() => &mesh(), &gpu, &editMode, litShader,
+                                     &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };

@@ -218,12 +218,12 @@ panels:
     items:
       - title: Tools
         buttons:
-          - { label: Bevel,   action: { kind: command, id: mesh.vertexBevel } }
-          - { label: Extrude, action: { kind: command, id: mesh.vertexExtrude } }
+          - { label: Bevel,   action: { kind: tool, id: mesh.vertexBevel } }
+          - { label: Extrude, action: { kind: tool, id: mesh.vertexExtrude } }
       - title: Commands
         buttons:
           - { label: Join,         action: { kind: command, id: vert.join } }
-          - { label: Merge,        action: { kind: command, id: vert.merge } }
+          - { label: Merge,        action: { kind: tool, id: vert.merge } }
           - { label: "Add Vertex", action: { kind: command, id: mesh.addVertex } }
           - { label: Center,       action: { kind: command, id: mesh.centerVertices } }
           - { label: Collapse,     action: { kind: command, id: mesh.collapse } }

@@ -18,11 +18,14 @@ private bool[] allTrue(size_t n) {
     return m;
 }
 
-/// Vertex Extrude (one-shot, undoable): for each selected vertex, spawn a
-/// duplicate offset along the averaged face normal and connect
-/// original→duplicate with a new wire edge. Moves selection to new vertices.
-/// Vertices-mode only; empty selection ⇒ whole mesh; offset=0 is a no-op
-/// (snapshot discarded).
+/// Vertex Extrude (one-shot, undoable): for each selected, interior-
+/// manifold vertex, builds an N-gon ring of new vertices around it from
+/// its incident edges (see `Mesh.extrudeVerticesByMask`'s doc-comment for
+/// the full captured-law writeup, task 0360). `width` (ring radius) alone
+/// leaves the apex stationary; `shift` (extrude-along-normal) alone is a
+/// confirmed no-op — it only has any effect once `width` is also nonzero.
+/// Vertices-mode only; empty selection ⇒ whole mesh; `width`=0 is a no-op
+/// (snapshot discarded) regardless of `shift`.
 class MeshVertexExtrude : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
@@ -30,7 +33,8 @@ class MeshVertexExtrude : Command, Operator {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
-    private float            offset_ = 0.2f;
+    private float            shift_ = 0.0f;
+    private float            width_ = 0.0f;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -46,11 +50,13 @@ class MeshVertexExtrude : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.float_("offset", "Offset", &offset_, 0.2f),
+            Param.float_("shift", "Extrude", &shift_, 0.0f),
+            Param.float_("width", "Width",   &width_, 0.0f),
         ];
     }
 
-    void setOffset(float v) { offset_ = v; }
+    void setShift(float v) { shift_ = v; }
+    void setWidth(float v) { width_ = v; }
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
@@ -62,7 +68,7 @@ class MeshVertexExtrude : Command, Operator {
         snap = MeshSnapshot.capture(*mesh);
         const all = mesh.nothingSelected(EditMode.Vertices);
         auto mask = all ? allTrue(mesh.vertices.length) : mesh.selectedVertices;
-        size_t n = mesh.extrudeVerticesByMask(mask, offset_);
+        size_t n = mesh.extrudeVerticesByMask(mask, shift_, width_);
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

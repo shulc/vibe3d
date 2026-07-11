@@ -672,7 +672,8 @@ struct Mesh {
     /// happen to slide onto the same world-space point — the natural
     /// outcome when re-beveling on top of an already-overshot cap.
     /// Weld vertices marked true in `mask` whose pairwise squared distance
-    /// is below `epsSq`. Verts outside the mask are not candidates for
+    /// is at most `epsSq` (inclusive boundary — see task 0360 toolcard
+    /// evidence below). Verts outside the mask are not candidates for
     /// either side of a weld pair. Faces that collapse to fewer than 3
     /// unique verts are dropped (degenerate). Edge list rebuilt; selection
     /// arrays cleared. Returns the number of verts welded into another.
@@ -680,6 +681,36 @@ struct Mesh {
     /// Equivalent to `vert.merge range:fixed dist:eps keep:false` on
     /// the selected verts. epsSq=1e-12 + all-true mask matches the
     /// existing weldCoincidentVertices() behavior (used by edge bevel).
+    ///
+    /// Boundary law (task 0360, captured toolcard): the reference weld
+    /// threshold is CONFIRMED inclusive (`<=`, not `<`) — a discriminating
+    /// capture on a segments=2 grid cube (edge length 0.5) found NO merge
+    /// at dist=0.49 but a mass collapse at dist=0.5 (exactly the edge
+    /// length). This kernel used to compare with strict `<`, which missed
+    /// that exact-equality boundary case entirely (verified independently
+    /// this task: re-simulating the pre-fix `<` comparison against the
+    /// captured base geometry at dist=0.5 produced ZERO merges, vs the
+    /// captured reference's real collapse) — fixed to `<=` here.
+    ///
+    /// Open TODO (not resolved this task, do not assume a fix): the
+    /// reference's full-mesh, dist-at-exact-boundary case also implies a
+    /// TRANSITIVE/connected-component clustering algorithm (a chain of
+    /// vertices each within `dist` of the next all merge to one cluster,
+    /// even where the endpoints of the chain are individually farther
+    /// apart than `dist`). This kernel's algorithm is a single left-to-
+    /// right PAIRWISE pass (each vertex is only ever compared against
+    /// vertices with a LOWER, not-yet-remapped index, using each vertex's
+    /// ORIGINAL position — not a full graph-transitive-closure and not an
+    /// iterative re-centering pass). Independently re-deriving the
+    /// reference's exact clustering algorithm from the captured whole-mesh
+    /// case (task 0360) found that NEITHER this pairwise algorithm NOR a
+    /// naive full pairwise-Euclidean transitive closure reproduces the
+    /// reference's exact cluster count on that case — the reference's real
+    /// clustering/placement rule remains uncharacterized. Left as-is
+    /// (existing, well-tested pairwise behavior) rather than guessed; the
+    /// interactive Vertex Merge tool and its fixtures (task 0360) only
+    /// exercise the CONFIRMED boundary law on isolated pairs, not the
+    /// disputed whole-mesh transitive case.
     size_t weldVerticesByMask(in bool[] mask, double epsSq) {
         if (vertices.length < 2) return 0;
         if (mask.length != vertices.length) return 0;
@@ -693,7 +724,7 @@ struct Mesh {
                 if (!mask[j]) continue;
                 if (remap[j] != cast(int)j) continue;
                 Vec3 d = vertices[i] - vertices[j];
-                if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+                if (d.x * d.x + d.y * d.y + d.z * d.z <= epsSq)
                     remap[j] = cast(int)i;
             }
         }
@@ -4073,52 +4104,232 @@ struct Mesh {
         return exEdges.length;
     }
 
-    /// Vertex Extrude: additive, faceless. For each vertex selected in `mask`,
-    /// spawns a duplicate vertex offset along the averaged face-normal (or
-    /// (0,1,0) when the vertex has no incident faces) and connects
-    /// original→duplicate with a new wire edge. Selection moves to the new
-    /// vertices on return. Calls buildLoops (NOT rebuildEdges — wire edges must
-    /// survive). Returns the number of new vertices added (0 on no-op).
+    /// Vertex Extrude (Cone): additive. For each vertex selected in `mask`
+    /// that is interior-manifold (valence ≥ 3, every incident edge shared
+    /// by exactly 2 faces — same acceptance test `bevelVerticesByMask`
+    /// uses), builds an N-gon ring of new vertices around it from its
+    /// incident edges. UNLIKE `bevelVerticesByMask`, there is no vertex-
+    /// disjoint gating: `vi` is never removed here, so two mutually-
+    /// adjacent selected vertices process independently without conflict
+    /// (confirmed against the captured 4-mutually-adjacent-corner parity
+    /// case below — each vertex's own split points are private to it, even
+    /// on a shared edge).
     ///
-    /// Ordering invariant: selected indices are gathered from `mask` BEFORE any
-    /// addVertex / resize call that would grow or corrupt the arrays.
-    size_t extrudeVerticesByMask(in bool[] mask, float offset)
+    /// CAPTURED LAWS (task 0360 toolcard, reverse-engineered byte-exact
+    /// from the raw capture dumps — not just the summary prose):
+    ///  - `width == 0` (any `shift`, either sign) is a COMPLETE no-op —
+    ///    position-diffed byte-identical to the input, zero topology
+    ///    change. (fully confirmed)
+    ///  - `width != 0`, `shift == 0`: `vi`'s position is UNCHANGED
+    ///    (stationary apex). Each incident edge e=(vi,other) spawns TWO
+    ///    new vertices at the SAME position `vi + width·normalize(other −
+    ///    vi)`:
+    ///      * a "rim" vertex, private to `vi` but shared between the (≤2)
+    ///        ORIGINAL faces incident to `vi` across `e` — substituted
+    ///        into those faces in place of `vi`, exactly like
+    ///        `bevelVerticesByMask`'s split ring;
+    ///      * a "fan" vertex, ALSO private to `vi`, used only to close
+    ///        `vi`'s own local wall+cap structure (never shared with the
+    ///        original faces).
+    ///    Per ORIGINAL face F incident at `vi` (bounded there by predEdge/
+    ///    succEdge, in F's own winding), TWO new faces are appended:
+    ///      bridgeQuad(F) = [rim_succ, rim_pred, fan_pred, fan_succ]
+    ///      fanTri(F)     = [fan_succ, fan_pred, vi]
+    ///    (`vi` itself is the fan's apex — never removed/duplicated).
+    ///    This exactly reproduces the captured 4-corner cube case (8v/6f →
+    ///    32v/30f, apex stationary — 6 new verts + 6 new faces per
+    ///    accepted valence-3 vertex; see the golden fixture in
+    ///    tests/test_vertex_extrude_tool.d).
+    ///  - `width != 0` AND `shift != 0` (TENTATIVE — a SINGLE captured
+    ///    data point, task 0360 toolcard `behavior.shift_and_width_together`):
+    ///    the apex moves by `(shift + width) · vertexNormal(vi)` (confirmed
+    ///    magnitude + direction for exactly one case — a cube corner,
+    ///    shift=width=0.2 → 0.4 total displacement along the corner's
+    ///    (1,1,1)-type outward normal, vertexNormal being the SAME
+    ///    averaged-incident-face-normal formula the legacy single-vertex
+    ///    kernel used). The rim/fan ring positions in the captured
+    ///    combined case are NEITHER coincident with the shift==0 ring NOR
+    ///    a simple lerp toward the moved apex — no general law was
+    ///    derivable from one sample, so this kernel deliberately keeps
+    ///    rim/fan at the SAME width-offset-from-`vi` formula as the
+    ///    shift==0 case and only displaces the apex. This is a clearly-
+    ///    flagged APPROXIMATION, not a verified reference match — do not
+    ///    treat combined-case (shift!=0 && width!=0) geometry as
+    ///    reference-accurate; only the no-op and width-alone laws above
+    ///    are byte-exact.
+    ///
+    /// Selection is left untouched: `vi` is never removed or re-indexed,
+    /// so whatever was selected stays selected — matches the captured
+    /// post-apply selection (the apex vertices, at their original
+    /// indices, NOT the new ring — unlike `bevelVerticesByMask`, which
+    /// selects the new cap faces).
+    ///
+    /// Returns the number of accepted (processed) vertices, 0 on no-op.
+    size_t extrudeVerticesByMask(in bool[] mask, float shift, float width)
     {
         if (mask.length != vertices.length) return 0;
-        if (offset == 0.0f) return 0;
+        if (width == 0.0f) return 0;
 
-        // Snapshot selected indices before any mutation.
-        uint[] sel;
-        foreach (i; 0 .. mask.length)
-            if (mask[i]) sel ~= cast(uint)i;
-        if (sel.length == 0) return 0;
-
-        uint[] newVerts;
-        newVerts.reserve(sel.length);
-        foreach (v; sel)
-        {
-            // Averaged vertex normal over incident faces.
-            Vec3 dir = Vec3(0, 0, 0);
-            foreach (fi; facesAroundVertex(v))
-                dir = dir + faceNormal(cast(uint)fi);
-            float len = dir.length;
-            dir = (len > 1e-6f) ? dir * (1.0f / len) : Vec3(0, 1, 0);
-
-            uint nv = addVertex(vertices[v] + dir * offset);
-            addEdge(v, nv);
-            newVerts ~= nv;
+        uint succInFace_(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length)
+                if (f[k] == v) return f[(k+1)%f.length];
+            return uint.max;
+        }
+        uint predInFace_(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length)
+                if (f[k] == v) return f[(k + f.length - 1)%f.length];
+            return uint.max;
         }
 
+        auto edgeFacesMap = buildEdgeFaces();
+
+        bool[] accepted = new bool[](vertices.length);
+        size_t processed = 0;
+        foreach (vi; 0 .. cast(uint)vertices.length) {
+            if (vi >= mask.length || !mask[vi]) continue;
+
+            uint[] incEdges;
+            foreach (ei; edgesAroundVertex(vi)) incEdges ~= ei;
+            if (incEdges.length < 3) continue;
+
+            bool manifold = true;
+            foreach (ei; incEdges) {
+                ulong key = edgeKeyOrdered(edges[ei][0], edges[ei][1]);
+                auto fp = key in edgeFacesMap;
+                if (fp is null || (*fp)[0] < 0 || (*fp)[1] < 0) {
+                    manifold = false; break;
+                }
+            }
+            if (!manifold) continue;
+
+            accepted[vi] = true;
+            ++processed;
+        }
+        if (processed == 0) return 0;
+
+        // Freeze original counts before addVertex grows the array.
+        const uint origVertCount = cast(uint)vertices.length;
+        const uint origFaceCount = cast(uint)faces.length;
+
+        // rim/fan lookup, keyed by (vi << 32 | incidentEdgeIndex) — PRIVATE
+        // per accepted vertex (unlike bevelVerticesByMask's splitByKey,
+        // which is keyed by the raw edge alone: that dedup is only valid
+        // there because bevel's vertex-disjoint gating guarantees at most
+        // one accepted endpoint per edge; here BOTH endpoints of an edge
+        // may independently be accepted, and each gets its OWN split point
+        // — confirmed by the captured 4-mutually-adjacent-corner case,
+        // where the shared edge between two selected corners carries TWO
+        // distinct rim points, one near each end, not one shared midpoint
+        // point).
+        uint[ulong] rimOf;
+        uint[ulong] fanOf;
+
+        foreach (vi; 0 .. origVertCount) {
+            if (!accepted[vi]) continue;
+            Vec3 vpos = vertices[vi];
+            foreach (ei; edgesAroundVertex(vi)) {
+                uint other = edgeOtherVertex(cast(uint)ei, vi);
+                Vec3 sp = vpos + width * safeNormalize(vertices[other] - vpos);
+                ulong k = (cast(ulong)vi << 32) | cast(uint)ei;
+                rimOf[k] = addVertex(sp);
+                fanOf[k] = addVertex(sp);
+            }
+        }
+
+        // Tentative shift+width apex law (see doc-comment above). Computed
+        // AFTER rim/fan creation (which reads vi's ORIGINAL position) but
+        // BEFORE the face rebuild below (faceNormal here still reads the
+        // untouched `faces` array).
+        if (shift != 0.0f) {
+            foreach (vi; 0 .. origVertCount) {
+                if (!accepted[vi]) continue;
+                Vec3 n = Vec3(0, 0, 0);
+                foreach (fi; facesAroundVertex(vi)) n = n + faceNormal(cast(uint)fi);
+                float len = n.length;
+                n = (len > 1e-6f) ? n * (1.0f / len) : Vec3(0, 1, 0);
+                vertices[vi] = vertices[vi] + n * (shift + width);
+            }
+        }
+
+        struct VertSub { uint oldV; uint[] newVs; }
+        VertSub[][uint] faceSubs;
+        struct NewFaceSpec { uint[] verts; uint srcFi; }
+        NewFaceSpec[] extraFaces;
+
+        foreach (vi; 0 .. origVertCount) {
+            if (!accepted[vi]) continue;
+            foreach (fi; facesAroundVertex(vi)) {
+                uint p = predInFace_(cast(uint)fi, vi);
+                uint s = succInFace_(cast(uint)fi, vi);
+                uint peIdx = edgeIndexMap[edgeKey(p, vi)];
+                uint seIdx = edgeIndexMap[edgeKey(vi, s)];
+                ulong pk = (cast(ulong)vi << 32) | peIdx;
+                ulong sk = (cast(ulong)vi << 32) | seIdx;
+                uint rimPred = rimOf[pk], rimSucc = rimOf[sk];
+                uint fanPred = fanOf[pk], fanSucc = fanOf[sk];
+
+                faceSubs.require(cast(uint)fi) ~= VertSub(vi, [rimPred, rimSucc]);
+                extraFaces ~= NewFaceSpec([rimSucc, rimPred, fanPred, fanSucc], cast(uint)fi);
+                extraFaces ~= NewFaceSpec([fanSucc, fanPred, vi], cast(uint)fi);
+            }
+        }
+
+        // single rebuild pass: substituted/surviving faces then new faces
+        uint[][] newFaces;
+        uint[]   newMat;
+        uint[]   newPart;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        foreach (fi; 0 .. origFaceCount) {
+            auto orig  = faces[fi];
+            auto subsP = fi in faceSubs;
+            if (subsP is null) {
+                newFaces ~= orig.dup;
+            } else {
+                uint[][uint] repl;
+                foreach (s; *subsP) repl[s.oldV] = s.newVs;
+                uint[] rebuilt;
+                foreach (v; orig) {
+                    auto rp = v in repl;
+                    if (rp is null) rebuilt ~= v;
+                    else            rebuilt ~= *rp;
+                }
+                newFaces ~= rebuilt;
+            }
+            newMat  ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newOrd  ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub  ~= isFaceSubpatch(fi);
+        }
+
+        foreach (nf; extraFaces) {
+            newFaces ~= nf.verts;
+            newMat   ~= nf.srcFi < faceMaterial.length ? faceMaterial[nf.srcFi] : 0u;
+            newPart  ~= nf.srcFi < facePart.length     ? facePart[nf.srcFi]     : 0u;
+            newOrd   ~= 0;
+            newSub   ~= isFaceSubpatch(nf.srcFi);
+        }
+
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        facePart           = newPart;
+        faceSelectionOrder = newOrd;
+
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
         resizeVertexSelection();
-        resizeEdgeSelection();
+        clearEdgeSelectionResize();
+
+        rebuildEdges();
         buildLoops();
-
-        // Move selection to the extruded (new) vertices.
-        clearVertexSelection();
-        foreach (nv; newVerts)
-            selectVertex(cast(int)nv);
-
-        return newVerts.length;
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return processed;
     }
 
     /// Edge Extend: ADDITIVE, non-manifold. Per selected edge (with ≥1 adjacent
@@ -20648,55 +20859,64 @@ unittest { // thickenSurface: symmetric mode places originals at ±t/2
         assert(abs(m.vertices[i].z + 0.2f) < 1e-5f, "symmetric: inner vert at -0.2");
 }
 
-// extrudeVerticesByMask: cube corner 0 at (-0.5,-0.5,-0.5).
-// Corner 0 is incident to 3 faces whose normals are (0,0,-1)+(-1,0,0)+(0,-1,0)
-// = (-1,-1,-1), normalized → direction = normalize(-1,-1,-1).
-// Expected: +1 vertex, +1 edge; new vertex at corner + dir*0.5; selection
-// moves to new vertex only.
+// extrudeVerticesByMask (task 0360 cone/ring kernel rewrite): cube corner 0
+// at (-0.5,-0.5,-0.5), width=0.2, shift=0. Corner 0 (valence 3) gets a
+// stationary apex + a 6-vertex/6-face ring (2 new verts + 2 new faces per
+// incident edge — see the kernel's own doc-comment for the full law).
+// Selection is untouched (still vertex 0 — the apex never moves or gets
+// re-indexed).
 unittest {
-    import std.math : abs, sqrt;
+    import std.math : abs;
     auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.selectVertex(0);
     const size_t oldV = m.vertices.length; // 8
-    const size_t oldE = m.edges.length;    // 12
+    const size_t oldF = m.faces.length;    // 6
 
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;  // corner (-0.5,-0.5,-0.5)
-    size_t added = m.extrudeVerticesByMask(mask, 0.5f);
+    size_t processed = m.extrudeVerticesByMask(mask, 0.0f, 0.2f);
 
-    assert(added == 1,                    "extrudeVerticesByMask: should add 1 vertex");
-    assert(m.vertices.length == oldV + 1, "extrudeVerticesByMask: vertex count +1");
-    assert(m.edges.length    == oldE + 1, "extrudeVerticesByMask: edge count +1");
+    assert(processed == 1,                "extrudeVerticesByMask: should process 1 vertex");
+    assert(m.vertices.length == oldV + 6, "extrudeVerticesByMask: expected +6 verts");
+    assert(m.faces.length    == oldF + 6, "extrudeVerticesByMask: expected +6 faces");
 
-    // New vertex is at index oldV.
-    const float inv3 = 1.0f / sqrt(3.0f);
-    Vec3 expected = Vec3(-0.5f, -0.5f, -0.5f) + Vec3(-inv3, -inv3, -inv3) * 0.5f;
-    Vec3 got = m.vertices[oldV];
-    assert(abs(got.x - expected.x) < 1e-5f, "extrudeVerticesByMask: x mismatch");
-    assert(abs(got.y - expected.y) < 1e-5f, "extrudeVerticesByMask: y mismatch");
-    assert(abs(got.z - expected.z) < 1e-5f, "extrudeVerticesByMask: z mismatch");
+    // Apex (vertex 0) unmoved.
+    Vec3 apex = m.vertices[0];
+    assert(abs(apex.x - (-0.5f)) < 1e-5f &&
+           abs(apex.y - (-0.5f)) < 1e-5f &&
+           abs(apex.z - (-0.5f)) < 1e-5f,
+           "extrudeVerticesByMask: apex must stay at its original position");
 
-    // Wire edge (0 → oldV) must exist.
-    bool edgeFound = false;
-    foreach (e; m.edges)
-        if ((e[0] == 0 && e[1] == cast(uint)oldV) ||
-            (e[1] == 0 && e[0] == cast(uint)oldV))
-            edgeFound = true;
-    assert(edgeFound, "extrudeVerticesByMask: wire edge not found");
+    // Three ring points at exactly width=0.2 along each incident edge.
+    Vec3[3] expectedRing = [Vec3(-0.3f, -0.5f, -0.5f),
+                            Vec3(-0.5f, -0.3f, -0.5f),
+                            Vec3(-0.5f, -0.5f, -0.3f)];
+    foreach (e; expectedRing) {
+        bool found = false;
+        foreach (v; m.vertices) {
+            Vec3 d = v - e;
+            if (d.x*d.x + d.y*d.y + d.z*d.z < 1e-8f) { found = true; break; }
+        }
+        assert(found, "extrudeVerticesByMask: ring point not found");
+    }
 
-    // Selection must have moved: only the new vertex selected.
-    assert( m.isVertexSelected(oldV), "extrudeVerticesByMask: new vertex not selected");
-    assert(!m.isVertexSelected(0),    "extrudeVerticesByMask: original vertex still selected");
+    // Selection untouched: vertex 0 (the apex) is still the only selected vert.
+    assert(m.isVertexSelected(0), "extrudeVerticesByMask: apex must remain selected");
 }
 
-// extrudeVerticesByMask: offset=0 is a no-op.
+// extrudeVerticesByMask: width=0 is a no-op regardless of shift (confirmed
+// reference law, task 0360 — shift alone never moves anything).
 unittest {
     auto m = makeCube();
+    m.buildLoops();
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t added = m.extrudeVerticesByMask(mask, 0.0f);
-    assert(added == 0,                     "extrudeVerticesByMask: offset=0 must be no-op");
-    assert(m.vertices.length == 8,         "extrudeVerticesByMask: offset=0 must not add verts");
-    assert(m.edges.length    == 12,        "extrudeVerticesByMask: offset=0 must not add edges");
+    size_t processed = m.extrudeVerticesByMask(mask, 0.5f, 0.0f);
+    assert(processed == 0,          "extrudeVerticesByMask: width=0 must be no-op");
+    assert(m.vertices.length == 8,  "extrudeVerticesByMask: width=0 must not add verts");
+    assert(m.faces.length    == 6,  "extrudeVerticesByMask: width=0 must not add faces");
 }
 
 // ---------------------------------------------------------------------------
