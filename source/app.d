@@ -47,6 +47,7 @@ import tools.scale;
 import tools.rotate;
 import tools.box;
 import tools.mirror;
+import tools.radial_sweep_tool;
 import tools.sphere;
 import tools.cylinder;
 import tools.cone;
@@ -2694,6 +2695,21 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.mirrorTool", reg.toolFactories["mesh.mirrorTool"]);
+
+    // Radial Sweep — interactive revolve/lathe (task 0326), promoting the
+    // pre-existing `mesh.sweep` one-shot command to a drag/handle tool.
+    // Generator-preview architecture identical to mesh.mirrorTool above
+    // (own preview mesh, commits once at deactivate()); reuses the same
+    // generic bevelEditFactory/MeshBevelEdit snapshot-diff undo path.
+    reg.toolFactories["mesh.sweepTool"] = () {
+        auto t = new RadialSweepTool(() => &mesh(), &gpu, &editMode, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["mesh.sweepTool"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                "mesh.sweepTool", reg.toolFactories["mesh.sweepTool"]);
 
     // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
     // mesh.mirrorTool block above: same generic MeshBevelEdit/bevelEditFactory

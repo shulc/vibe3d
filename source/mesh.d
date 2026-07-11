@@ -10429,6 +10429,63 @@ struct Mesh {
         return chain;
     }
 
+    /// True when a revolve `angle` span (radians) is treated as a CLOSED
+    /// 360° sweep by `revolveProfile`/`revolveProfileEx` (same rule the
+    /// kernel uses internally: |angle − 2π| < 1e-3 or angle >= 2π).
+    ///
+    /// Exported (task 0326) so a caller translating a DIFFERENT "Count" UI
+    /// convention into this kernel's ring-count convention — e.g. the
+    /// interactive Radial Sweep tool, whose reference control means "number
+    /// of NEW bands" (ring count = Count+1) on an OPEN sweep but coincides
+    /// with "total rings" on a CLOSED 360° sweep — can determine which
+    /// translation applies using the exact same threshold the kernel itself
+    /// commits to, rather than duplicating (and risking drift from) the
+    /// constant.
+    static bool revolveSweepClosed(float angle) pure nothrow @nogc @safe {
+        import std.math : abs;
+        immutable float tau = 6.283185307f;   // 2π
+        return abs(angle - tau) < 1e-3f || angle >= tau;
+    }
+
+    /// Extended parameter set for `revolveProfileEx` (task 0326, additive —
+    /// see that function's doc comment). Every field defaults to exactly
+    /// what the original `revolveProfile` always did, so `RevolveParams.init`
+    /// plus a real `count`/`axis`/`center`/`angle` reproduces the legacy
+    /// behaviour bit for bit.
+    struct RevolveParams {
+        int   count      = 8;             // total ring count INCLUDING the
+                                           // original — same meaning as the
+                                           // legacy `revolveProfile.count`
+                                           // param (NOT the reference tool's
+                                           // "Count" UI convention; translate
+                                           // at the call site via
+                                           // `revolveSweepClosed`).
+        Vec3  axis       = Vec3(0, 1, 0); // free rotation axis DIRECTION —
+                                           // need not be unit length (this
+                                           // function normalises it); a
+                                           // near-zero vector is a guard
+                                           // failure.
+        Vec3  center     = Vec3(0, 0, 0); // pivot point the axis line
+                                           // passes through.
+        float angle      = 6.2831853f;    // total sweep ANGLE SPAN in
+                                           // radians (end − start).
+        float startAngle = 0.0f;          // radians; rotational placement
+                                           // of ring 0 (reference "Start
+                                           // Angle" — vibe3d gap #3).
+        float offset     = 0.0f;          // world units of axial
+                                           // translation PER RING STEP
+                                           // (spiral pitch; reference
+                                           // "Offset" — vibe3d gap #4).
+        bool  cap0       = false;         // close the start ring with an
+                                           // n-gon (reference "Cap Start" —
+                                           // vibe3d gap #7). Only takes
+                                           // effect for a CLOSED profile
+                                           // ring on a non-closed sweep —
+                                           // see revolveProfileEx.
+        bool  cap1       = false;         // close the end ring (reference
+                                           // "Cap End").
+    }
+
     /// Sweep a vertex chain (profile) around a principal axis to form a
     /// surface of revolution.
     ///
@@ -10441,80 +10498,138 @@ struct Mesh {
     /// `center`        — rotation pivot point.
     /// `angle`         — total sweep angle in radians (nonzero).
     ///
-    /// Closed sweep (|angle − 2π| < 1e-3 or angle >= 2π):
-    ///   stepAngle = angle/count; last bridge reuses ring[0]'s original verts
-    ///   (no seam duplicate — mirrors `radialArrayFaces` steps 1..count-1).
-    ///
-    /// Open arc (angle < 2π − 1e-3):
-    ///   stepAngle = angle/(count-1); endpoints land exactly at 0 and `angle`.
-    ///   Intentional divergence from `radialArrayFaces` (which excludes the
-    ///   copy at the total angle); an arc sweep wants inclusive endpoints.
-    ///
-    /// Selection finalise: deselects pre-existing faces, selects swept faces,
-    /// clears vertex and edge selection (mirrors `radialArrayFaces` :3807-3810).
-    ///
-    /// Winding: profile walk direction is arbitrary (vibe3d-divergence, v1);
-    /// global in-vs-out orientation is unspecified. The uniform quad formula
-    /// guarantees globally consistent winding per step. Pinning outward-vs-
-    /// inward is deferred (doc/radial_sweep_plan.md Phase 4).
-    ///
-    /// Open-profile sweeps leave boundary loops at the profile endpoints;
-    /// end-cap generation is deferred (doc/radial_sweep_plan.md Phase 4).
+    /// Thin, behaviour-preserving wrapper over `revolveProfileEx` (task
+    /// 0326) — resolves `axis` to a unit vector and leaves every new knob
+    /// (startAngle/offset/cap0/cap1) at its off default, so the output is
+    /// byte-identical to this function's pre-0326 standalone implementation.
+    /// Kept as a SEPARATE, unchanged-signature entry point (rather than
+    /// folding callers onto `revolveProfileEx` directly) because this kernel
+    /// is shared with the Sketch Extrude port (task 0323) — see
+    /// `revolveProfileEx`'s doc comment for the coordination note.
     ///
     /// Returns faces added (> 0) on success, 0 on guard failure or no-op.
     size_t revolveProfile(const(uint)[] profile, bool profileClosed,
                           int count, char axis, Vec3 center, float angle) {
-        import math : mulMV, pivotRotationMatrix;
+        Vec3 axisVec;
+        if      (axis == 'X') axisVec = Vec3(1, 0, 0);
+        else if (axis == 'Y') axisVec = Vec3(0, 1, 0);
+        else if (axis == 'Z') axisVec = Vec3(0, 0, 1);
+        else return 0;
+
+        RevolveParams p;
+        p.count  = count;
+        p.axis   = axisVec;
+        p.center = center;
+        p.angle  = angle;
+        // startAngle/offset/cap0/cap1 stay at RevolveParams.init's zero/off
+        // defaults — this reproduces the pre-0326 behaviour exactly.
+        return revolveProfileEx(profile, profileClosed, p);
+    }
+
+    /// Extended revolve/lathe kernel (task 0326) — additive superset of
+    /// `revolveProfile` backing the interactive Radial Sweep tool
+    /// (`tools/radial_sweep_tool.d`). Adds: a free 3D rotation axis (any
+    /// direction, not just a world X/Y/Z unit vector), a Start Angle offset
+    /// for ring 0, an axial spiral Offset per ring step, and optional
+    /// Start/End caps.
+    ///
+    /// ⚠ SHARED KERNEL: this function (and `revolveProfile` above, which
+    /// now forwards into it) also backs the task-0323 Sketch Extrude port.
+    /// Extend via `RevolveParams` fields ONLY — never change either
+    /// function's positional signature.
+    ///
+    /// Ring construction: ring[k] (k = 0 .. params.count-1) is the profile
+    /// rotated by `params.startAngle + stepAngle*k` around the axis line
+    /// (through `params.center`, direction `params.axis`), then translated
+    /// `params.offset*k` along the (normalised) axis — the spiral pitch.
+    /// `stepAngle` follows `revolveProfile`'s original closed/open split
+    /// (see `revolveSweepClosed`). Ring 0 REUSES the original profile
+    /// vertex indices (no new vertices, no rotation applied) ONLY when
+    /// `startAngle` is exactly 0 — a nonzero Start Angle rotates ring 0 away
+    /// from the literal selection, so it can no longer reuse those indices.
+    /// This preserves `revolveProfile`'s original vertex-count contract for
+    /// every caller that never sets startAngle.
+    ///
+    /// Caps: `cap0`/`cap1` each add ONE n-gon face at ring 0 / ring
+    /// (count-1), using the ring's own vertex loop. Capping requires a
+    /// CLOSED profile ring (`profileClosed == true`, length >= 3) — an open
+    /// vertex CHAIN has no single well-defined boundary n-gon to close (this
+    /// matches the measured reference behaviour on a degenerate 2-point
+    /// profile: capping added zero extra geometry, see
+    /// doc/tasks/*/radial_sweep toolcard findings §5). Capping is also a
+    /// no-op on a CLOSED 360° sweep (`revolveSweepClosed(angle)`) since
+    /// there is no exposed end to close — matches the reference help text
+    /// ("Cap options are only useful when the start/end angles do not
+    /// result in a complete rotation"). Cap winding direction (outward vs.
+    /// inward) is NOT verified against the reference (Invert-Polygons
+    /// winding parity was explicitly flagged un-captured in the toolcard) —
+    /// cap0 uses the ring's vertex order reversed, cap1 uses it as-is, a
+    /// plausible but unconfirmed convention.
+    ///
+    /// Returns faces added (> 0) on success, 0 on guard failure or no-op.
+    size_t revolveProfileEx(const(uint)[] profile, bool profileClosed,
+                            RevolveParams params) {
+        import math : mulMV, pivotRotationMatrix, normalize;
         import std.math : abs;
 
         // Guards.
         if (profile.length < 2) return 0;
         if (profileClosed && profile.length < 3) return 0;
-        if (count < 2) return 0;
-        if (axis != 'X' && axis != 'Y' && axis != 'Z') return 0;
-        if (abs(angle) < 1e-6f) return 0;
+        if (params.count < 2) return 0;
+        if (abs(params.angle) < 1e-6f) return 0;
+        immutable float axisLenSq = params.axis.x * params.axis.x
+                                   + params.axis.y * params.axis.y
+                                   + params.axis.z * params.axis.z;
+        if (axisLenSq < 1e-12f) return 0;
+        const Vec3 axisVec = normalize(params.axis);
 
-        Vec3 axisVec;
-        if      (axis == 'X') axisVec = Vec3(1, 0, 0);
-        else if (axis == 'Y') axisVec = Vec3(0, 1, 0);
-        else                  axisVec = Vec3(0, 0, 1);
-
-        // Closed-sweep detection: |angle − 2π| < 1e-3 or angle >= 2π.
-        immutable float tau         = 6.283185307f;   // 2π
-        immutable bool  sweepClosed = abs(angle - tau) < 1e-3f || angle >= tau;
+        immutable bool  sweepClosed = revolveSweepClosed(params.angle);
         immutable float stepAngle   = sweepClosed
-            ? angle / cast(float)count
-            : angle / cast(float)(count - 1);
+            ? params.angle / cast(float)params.count
+            : params.angle / cast(float)(params.count - 1);
+        immutable bool  hasStartAngle = abs(params.startAngle) > 1e-9f;
+        immutable bool  hasOffset     = abs(params.offset) > 1e-9f;
 
         // Snapshot pre-mutation face count for selection finalise.
         const size_t origFaceCount = faces.length;
 
         // Build per-step rings.
-        // ring[0] = existing profile verts (no copy);
-        // ring[k] (k >= 1) = new rotated copies appended to vertices[].
+        // ring[0] = existing profile verts, reused verbatim (no copy) IFF
+        // startAngle is exactly 0 (see doc comment above); otherwise a
+        // rotated copy like every other ring.
+        // ring[k] (k >= 1) = new rotated (+ optionally spiral-shifted)
+        // copies appended to vertices[].
         uint[][] rings;
-        rings.length = count;
-        rings[0] = profile.dup;
+        rings.length = params.count;
 
-        foreach (step; 1 .. count) {
-            float ang  = stepAngle * cast(float)step;
-            auto  rotM = pivotRotationMatrix(center, axisVec, ang);
+        uint[] buildRing(float ang, float axialShift) {
+            auto   rotM = pivotRotationMatrix(params.center, axisVec, ang);
             uint[] ring;
             ring.length = profile.length;
             foreach (k, vid; profile) {
                 Vec3 p  = vertices[vid];
                 auto v4 = Vec4(p.x, p.y, p.z, 1.0f);
                 auto r4 = mulMV(rotM, v4);
-                ring[k] = addVertex(Vec3(r4.x, r4.y, r4.z));
+                Vec3 pos = Vec3(r4.x, r4.y, r4.z);
+                if (hasOffset) pos = pos + axisVec * axialShift;
+                ring[k] = addVertex(pos);
             }
-            rings[step] = ring;
+            return ring;
+        }
+
+        rings[0] = hasStartAngle ? buildRing(params.startAngle, 0.0f)
+                                  : profile.dup;
+
+        foreach (step; 1 .. params.count) {
+            float ang = params.startAngle + stepAngle * cast(float)step;
+            rings[step] = buildRing(ang, params.offset * cast(float)step);
         }
 
         // Bridge consecutive rings into quad faces.
         size_t facesAdded = 0;
-        immutable int lastBridge = sweepClosed ? count - 1 : count - 2;
+        immutable int lastBridge = sweepClosed ? params.count - 1 : params.count - 2;
         foreach (i; 0 .. lastBridge + 1) {
-            int           nextIdx = sweepClosed ? (i + 1) % count : i + 1;
+            int           nextIdx = sweepClosed ? (i + 1) % params.count : i + 1;
             const(uint)[] ringA   = rings[i];
             const(uint)[] ringB   = rings[nextIdx];
 
@@ -10528,6 +10643,21 @@ struct Mesh {
                     addFace([ringA[j], ringA[j + 1], ringB[j + 1], ringB[j]]);
                     ++facesAdded;
                 }
+            }
+        }
+
+        // Start/End caps (task 0326) — see doc comment for the
+        // profileClosed + !sweepClosed gating rationale.
+        if (profileClosed && !sweepClosed) {
+            if (params.cap0) {
+                uint[] rev; rev.length = rings[0].length;
+                foreach (k, vid; rings[0]) rev[rings[0].length - 1 - k] = vid;
+                addFace(rev);
+                ++facesAdded;
+            }
+            if (params.cap1) {
+                addFace(rings[$ - 1].dup);
+                ++facesAdded;
             }
         }
 

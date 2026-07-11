@@ -187,6 +187,8 @@ panels:
               action: { kind: command, id: mesh.radial_array } }
           - { label: "Radial Sweep",
               action: { kind: command, id: mesh.sweep } }
+          - { label: "Radial Sweep Tool",
+              action: { kind: tool, id: mesh.sweepTool } }
           - { label: "Duplicate Layer",
               action: { kind: command, id: layer.duplicate } }
   - title: Mesh Edit
