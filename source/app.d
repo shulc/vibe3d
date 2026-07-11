@@ -75,6 +75,7 @@ import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
 import tools.array_tool : ArrayTool;
 import tools.tack : TackTool;
+import tools.bridge_tool : BridgeTool, BridgeEditFactory;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -2742,6 +2743,20 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
+
+    // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
+    // from the one-shot mesh.bridge command. Same generic MeshBevelEdit/
+    // bevelEditFactory undo path, same ToolHeadlessCommand one-shot wiring
+    // as Mirror/Tack above.
+    reg.toolFactories["mesh.bridgeTool"] = () {
+        auto t = new BridgeTool(() => &mesh(), &gpu, litShader, &editMode);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["mesh.bridgeTool"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
+                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                "mesh.bridgeTool", reg.toolFactories["mesh.bridgeTool"]);
 
     reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(() => &mesh(), &gpu, litShader);

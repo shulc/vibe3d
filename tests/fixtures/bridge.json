@@ -1,0 +1,154 @@
+{
+  "name": "bridge_tool_segments_twist",
+  "description": "mesh.bridgeTool (task 0357) — Segments/Twist/Remove Polygons golden. Base fixture: two coaxial unit squares (cap A z=0 face 0, cap B z=1 face 1) — the SAME setup as tests/test_bridge.d's loadCaps(). Segments law (spans=max(1,segments); interior rings linearly interpolated at t=i/spans) and Twist law for |twist|<=1 (f(t)=smoothstep(t)=3t^2-2t^3, slide toward the next/previous ring corner) are both closed-form and reference-VERIFIED (task 0357's private capture doc) — expected_vertices below are hand-derived from those closed forms on this exact fixture, not borrowed byte-for-byte from any external capture (the reference capture's own base case used a degenerate closed-cube selection unsuitable for a clean vertex-position golden).",
+  "source": "closed-form (task 0357 verified Segments/Twist laws) applied to a hand-authored fixture; see per-case description",
+  "tolerance": 1e-4,
+  "cases": [
+    {
+      "name": "polygon_default_remove_true",
+      "description": "Segments=1 (default), Twist=0, Remove Polygons=true — the toolcard's parity law: no interior rings, both caps deleted, 4 lateral bridge quads remain. No new vertices at spans=1.",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+            [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+          ],
+          "faces": [
+            [0,1,2,3],
+            [4,5,6,7]
+          ]
+        }},
+        { "select": { "mode": "polygons", "coords": [
+          [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+          [[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
+        ]}}
+      ],
+      "expected_before": { "verts": 8, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "remove": true, "flip": false } } }
+      ],
+      "expected_after": { "verts": 8, "faces": 4 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+        [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+      ]
+    },
+    {
+      "name": "polygon_remove_false",
+      "description": "Remove Polygons=false — both original caps PRESERVED alongside the 4 new bridge quads (bit-exact opposite of the default-true case above, task 0357 requirement).",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+            [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+          ],
+          "faces": [
+            [0,1,2,3],
+            [4,5,6,7]
+          ]
+        }},
+        { "select": { "mode": "polygons", "coords": [
+          [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+          [[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
+        ]}}
+      ],
+      "expected_before": { "verts": 8, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "remove": false, "flip": false } } }
+      ],
+      "expected_after": { "verts": 8, "faces": 6 }
+    },
+    {
+      "name": "polygon_segments3",
+      "description": "Segments law, Twist=0: spans=3 -> 2 interior rings at t=1/3, 2/3, linearly interpolated between the paired loop corners (identity pairing on this fixture). Closed-form, exact.",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+            [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+          ],
+          "faces": [
+            [0,1,2,3],
+            [4,5,6,7]
+          ]
+        }},
+        { "select": { "mode": "polygons", "coords": [
+          [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+          [[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
+        ]}}
+      ],
+      "expected_before": { "verts": 8, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 3, "twist": 0, "remove": true, "flip": false } } }
+      ],
+      "expected_after": { "verts": 16, "faces": 12 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+        [0,0,1],[1,0,1],[1,1,1],[0,1,1],
+        [0.0, 0.0, 0.333333], [1.0, 0.0, 0.333333], [1.0, 1.0, 0.333333], [0.0, 1.0, 0.333333],
+        [0.0, 0.0, 0.666667], [1.0, 0.0, 0.666667], [1.0, 1.0, 0.666667], [0.0, 1.0, 0.666667]
+      ]
+    },
+    {
+      "name": "polygon_twist1_integer_exact",
+      "description": "Twist law, |twist|=1 — the VERIFIED-EXACT integer regime (task 0357 findings_twist_dense.md: max error ~3e-8 at every interior ring, two independent reference loop shapes). f(1/3)=7/27, f(2/3)=20/27 (smoothstep), each interior-ring vertex slides toward the NEXT ring corner by that fraction.",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+            [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+          ],
+          "faces": [
+            [0,1,2,3],
+            [4,5,6,7]
+          ]
+        }},
+        { "select": { "mode": "polygons", "coords": [
+          [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+          [[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
+        ]}}
+      ],
+      "expected_before": { "verts": 8, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 3, "twist": 1, "remove": true, "flip": false } } }
+      ],
+      "expected_after": { "verts": 16, "faces": 12 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+        [0,0,1],[1,0,1],[1,1,1],[0,1,1],
+        [0.259259, 0.0, 0.333333], [1.0, 0.259259, 0.333333], [0.740741, 1.0, 0.333333], [0.0, 0.740741, 0.333333],
+        [0.740741, 0.0, 0.666667], [1.0, 0.740741, 0.666667], [0.259259, 1.0, 0.666667], [0.0, 0.259259, 0.666667]
+      ]
+    },
+    {
+      "name": "polygon_huge_segments_dos_regression",
+      "description": "DoS regression (task 0357 review convention): a huge Segments value must clamp, not hang/allocate unbounded memory. Param.enforceBounds() clamps at the UI layer (max 64); the kernel's own maxBridgeSpans=512 defense-in-depth cap is exercised directly by mesh.d's module unittest (this HTTP-level case pins the end-to-end clamp to the PARAM's own max=64, which is the value actually reachable through tool.attr / this command params path).",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+            [0,0,1],[1,0,1],[1,1,1],[0,1,1]
+          ],
+          "faces": [
+            [0,1,2,3],
+            [4,5,6,7]
+          ]
+        }},
+        { "select": { "mode": "polygons", "coords": [
+          [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+          [[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
+        ]}}
+      ],
+      "expected_before": { "verts": 8, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 100000000, "twist": 0, "remove": true, "flip": false } } }
+      ],
+      "expected_after": { "verts": 260, "faces": 256 }
+    }
+  ]
+}

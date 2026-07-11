@@ -157,6 +157,13 @@ struct MeshCacheKey {
     }
 }
 
+/// Hermite ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
+/// curve (task 0357, see `Mesh.bridgeTwistedVertex`). `t` is assumed in
+/// [0,1]; not clamped since every call site already guarantees that range.
+private float smoothstep01(float t) pure nothrow @nogc @safe {
+    return t * t * (3.0f - 2.0f * t);
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
@@ -10547,19 +10554,12 @@ struct Mesh {
         return N;
     }
 
-    /// Stitch two equal-length closed vertex loops into a ring of N quad faces.
-    /// Returns N (faces added) on success, 0 if loops are unequal or too short.
-    ///
-    /// Pairing rule: anchor B at the vertex nearest A[0]; pick forward vs.
-    /// reversed direction by minimum total paired Euclidean distance; `flip`
-    /// overrides the auto choice.  Quads wound [A[i], A[(i+1)%N], P[(i+1)%N], P[i]].
-    ///
-    /// Does NOT call buildLoops() — the caller must do so after all mutations.
-    ///
-    /// No empty-selection fallback: bridge requires exactly two loops.
-    /// Do NOT add a whole-mesh fallback here.
-    size_t bridgeLoops(const(uint)[] loopA, const(uint)[] loopB, bool flip = false) {
-        if (loopA.length != loopB.length || loopA.length < 3) return 0;
+    /// Shared pairing step (factored out of `bridgeLoops`, task 0357 — also
+    /// used by `bridgeLoopsSpans`): anchor B at the vertex nearest A[0];
+    /// pick forward vs. reversed direction by minimum total paired
+    /// Euclidean distance; `flip` overrides the auto choice. Returns the
+    /// pairing array P (P[i] is the loopB vertex paired with loopA[i]).
+    private uint[] pairBridgeLoop(const(uint)[] loopA, const(uint)[] loopB, bool flip) const {
         const size_t N = loopA.length;
 
         // Step 1 — anchor: B-vertex nearest A[0].
@@ -10588,8 +10588,121 @@ struct Mesh {
         foreach (i; 0 .. N)
             P[i] = useForward ? cast(uint)loopB[(k + i)     % N]
                               : cast(uint)loopB[(k + N - i) % N];
+        return P;
+    }
 
+    /// Stitch two equal-length closed vertex loops into a ring of N quad faces.
+    /// Returns N (faces added) on success, 0 if loops are unequal or too short.
+    ///
+    /// Pairing rule: anchor B at the vertex nearest A[0]; pick forward vs.
+    /// reversed direction by minimum total paired Euclidean distance; `flip`
+    /// overrides the auto choice.  Quads wound [A[i], A[(i+1)%N], P[(i+1)%N], P[i]].
+    ///
+    /// Does NOT call buildLoops() — the caller must do so after all mutations.
+    ///
+    /// No empty-selection fallback: bridge requires exactly two loops.
+    /// Do NOT add a whole-mesh fallback here.
+    size_t bridgeLoops(const(uint)[] loopA, const(uint)[] loopB, bool flip = false) {
+        if (loopA.length != loopB.length || loopA.length < 3) return 0;
+        uint[] P = pairBridgeLoop(loopA, loopB, flip);
         return bridgeLoopsPaired(loopA, P);
+    }
+
+    /// Hard internal cap on interior rings a single `bridgeLoopsSpans` call
+    /// may generate — defense-in-depth against a DoS via a huge Segments
+    /// value reaching this kernel through any path other than the
+    /// interactive tool's own `.enforceBounds()`-clamped Param (see
+    /// params.d's DoS note; task 0357 review convention).
+    enum size_t maxBridgeSpans = 512;
+
+    /// Multi-span, twisted bridge (task 0357) — generalizes `bridgeLoops`
+    /// with `spans-1` interior vertex rings, linearly interpolated at
+    /// t=i/spans (i=1..spans-1) between the two boundary loops, with an
+    /// optional per-ring `twist` (see `bridgeTwistedVertex`).
+    ///
+    /// `spans<=1` degenerates EXACTLY to `bridgeLoops` (same pairing, no
+    /// new verts) — the existing `mesh.bridge` command's behaviour is
+    /// preserved byte-for-byte through this path.
+    ///
+    /// Returns the number of faces added (0 on rejection — mismatched loop
+    /// lengths or too-short loops, same guard as `bridgeLoops`). Does NOT
+    /// call buildLoops() — the caller must do so after all mutations.
+    size_t bridgeLoopsSpans(const(uint)[] loopA, const(uint)[] loopB, bool flip,
+                            uint spans, float twist) {
+        if (loopA.length != loopB.length || loopA.length < 3) return 0;
+        if (spans < 1) spans = 1;
+        if (spans > maxBridgeSpans) spans = cast(uint)maxBridgeSpans;   // kernel-side DoS cap
+
+        uint[] P = pairBridgeLoop(loopA, loopB, flip);
+        if (spans == 1) return bridgeLoopsPaired(loopA, P);
+
+        const size_t N = loopA.length;
+        uint[][] rings = new uint[][](spans + 1);
+        rings[0]     = loopA.dup;
+        rings[spans] = P.dup;
+        foreach (i; 1 .. spans) {
+            float t = cast(float)i / cast(float)spans;
+            uint[] ring = new uint[](N);
+            foreach (k; 0 .. N)
+                ring[k] = addVertex(bridgeTwistedVertex(loopA, P, k, t, twist));
+            rings[i] = ring;
+        }
+
+        size_t added = 0;
+        foreach (s; 0 .. spans)
+            added += bridgeLoopsPaired(rings[s], rings[s + 1]);
+        return added;
+    }
+
+    /// Bridge Twist (task 0357) — per-ring corner-slide law.
+    ///
+    /// VERIFIED EXACT for `twist` in {-1, 0, 1} at every interior ring
+    /// t=i/spans (dense reference re-capture, two independent loop shapes —
+    /// octagon/spans=12 and 12-gon/spans=7 — max error ~3e-8; see task
+    /// 0357's Лог for the capture provenance): the vertex is a continuous
+    /// slide from its own
+    /// untwisted position `base_k(t)` toward the ADJACENT ring corner
+    /// (`base_{k+1}(t)` for twist>0, `base_{k-1}(t)` for twist<0) by a
+    /// fraction `f(t) = smoothstep(t) = 3t²-2t³`, reaching the adjacent
+    /// corner exactly at t=1 — never actually reached by an interior ring,
+    /// since interior t is always strictly in (0,1); the two boundary
+    /// loops (t=0, t=1) are never touched by twist, matching the reference
+    /// exactly.
+    ///
+    /// APPROXIMATION for fractional twist (non-integer) or |twist|>1
+    /// (multi-wrap): the SAME dense re-capture proved this formula's naive
+    /// extension — walk s(t)=twist*smoothstep(t) as a (possibly
+    /// multi-corner) distance, split into an integer corner-step `n` and a
+    /// fractional remainder `f` — does NOT match the reference numerically
+    /// in this regime (measured error up to ~1.7 at extreme multi-wrap).
+    /// The true reference law appears to be a quantized per-ring corner
+    /// re-index rather than a continuous slide, but the exact re-index
+    /// rule was NOT solved from the available samples (open item, see
+    /// task 0357's Лог). This function still extends the verified formula
+    /// this way — rather than snapping to the nearest corner — because it
+    /// degrades continuously (no popping) and is exact by construction at
+    /// every verified twist value. Any output outside `twist` in {-1,0,1}
+    /// is therefore a DOCUMENTED APPROXIMATION, not reference parity —
+    /// do not treat it as a verified law pending an exact fit.
+    private Vec3 bridgeTwistedVertex(const(uint)[] loopA, const(uint)[] pairedB,
+                                     size_t k, float t, float twist) const {
+        const size_t N = loopA.length;
+        Vec3 base(long idx) {
+            long m = idx % cast(long)N;
+            if (m < 0) m += cast(long)N;
+            return vec3Lerp(vertices[loopA[cast(size_t)m]], vertices[pairedB[cast(size_t)m]], t);
+        }
+        if (twist == 0.0f) return base(cast(long)k);
+
+        int   sign = (twist > 0.0f) ? 1 : -1;
+        float mag  = (twist > 0.0f) ? twist : -twist;
+        float s    = mag * smoothstep01(t);
+        long  n    = cast(long)s;             // floor (s is always >= 0)
+        float f    = s - cast(float)n;
+
+        Vec3 p0 = base(cast(long)k + cast(long)sign * n);
+        Vec3 p1 = base(cast(long)k + cast(long)sign * (n + 1));
+        return vec3Lerp(p0, p1, f);
     }
 
     /// Oriented open-boundary loops over faces 0..faceLimit.
@@ -16200,6 +16313,112 @@ unittest { // bridgeLoops: mismatch rejection + too-short rejection
     // Length 2 → too short → 0.
     size_t r2 = m.bridgeLoops([0u,1u], [4u,5u]);
     assert(r2 == 0, "length<3 must be rejected");
+}
+
+unittest { // bridgeLoopsSpans: spans=1 degenerates EXACTLY to bridgeLoops
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+
+    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 1, 0.0f);
+    assert(added == 4, "spans=1: expected 4 quads");
+    assert(m.faces.length == 4, "spans=1: face count");
+    assert(m.vertices.length == 8, "spans=1: no new verts");
+    foreach (f; m.faces) assert(f.length == 4, "spans=1: all quads");
+}
+
+unittest { // bridgeLoopsSpans: segments law (twist=0) — closed-form, exact
+    // Same two-coaxial-unit-squares fixture as bridgeLoops' own test.
+    // Task 0357 Segments law: spans=3 -> 2 interior rings at t=1/3, 2/3,
+    // linearly interpolated between the paired loop corners (identity
+    // pairing here, verified by the bridgeLoops test just above using the
+    // SAME fixture). Golden numbers hand-derived from that closed form,
+    // not borrowed from any external capture.
+    import std.math : abs;
+    import std.format : format;
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+
+    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 0.0f);
+    assert(added == 12, format("spans=3: expected 12 quads (3 spans * 4), got %d", added));
+    assert(m.faces.length == 12, "spans=3: face count");
+    assert(m.vertices.length == 16, "spans=3: 8 orig + 8 new (2 rings * 4)");
+    foreach (f; m.faces) assert(f.length == 4, "spans=3: all quads");
+
+    // New verts are indices 8..15: ring1 (t=1/3) then ring2 (t=2/3), each
+    // in loop-corner order [corner0..corner3] matching loopA/loopB's own
+    // vertex order (0,1,2,3 / 4,5,6,7).
+    static immutable Vec3[8] expected = [
+        Vec3(0.0f, 0.0f, 1.0f/3.0f), Vec3(1.0f, 0.0f, 1.0f/3.0f),
+        Vec3(1.0f, 1.0f, 1.0f/3.0f), Vec3(0.0f, 1.0f, 1.0f/3.0f),
+        Vec3(0.0f, 0.0f, 2.0f/3.0f), Vec3(1.0f, 0.0f, 2.0f/3.0f),
+        Vec3(1.0f, 1.0f, 2.0f/3.0f), Vec3(0.0f, 1.0f, 2.0f/3.0f),
+    ];
+    foreach (i, e; expected) {
+        Vec3 got = m.vertices[8 + i];
+        assert(abs(got.x - e.x) < 1e-5f && abs(got.y - e.y) < 1e-5f && abs(got.z - e.z) < 1e-5f,
+            format("spans=3 vert %d: expected (%.6f,%.6f,%.6f), got (%.6f,%.6f,%.6f)",
+                   8+i, e.x, e.y, e.z, got.x, got.y, got.z));
+    }
+}
+
+unittest { // bridgeLoopsSpans: twist law, |twist|=1 — VERIFIED EXACT regime
+    // Task 0357's dense reference re-capture: twist in {-1,0,1} is exact at
+    // every interior ring (two independent loop shapes, max err ~3e-8).
+    // Golden numbers here are computed from the SAME verified closed form
+    // (f(t) = smoothstep(t) = 3t^2-2t^3, slide toward the next corner) on
+    // the two-coaxial-unit-squares fixture — cross-checked by hand against
+    // the reference capture's own f(1/3)=7/27, f(2/3)=20/27 values (private
+    // doc) before being reproduced here.
+    import std.math : abs;
+    import std.format : format;
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+
+    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 1.0f);
+    assert(added == 12, "twist=1: expected 12 quads");
+    assert(m.vertices.length == 16, "twist=1: 8 orig + 8 new");
+
+    enum float f1 = 7.0f/27.0f;   // smoothstep(1/3)
+    enum float f2 = 20.0f/27.0f;  // smoothstep(2/3)
+    static immutable Vec3[8] expected = [
+        // Ring 1 (t=1/3): slide toward the NEXT corner (k+1) by f1.
+        Vec3(f1, 0.0f, 1.0f/3.0f), Vec3(1.0f, f1, 1.0f/3.0f),
+        Vec3(1.0f - f1, 1.0f, 1.0f/3.0f), Vec3(0.0f, 1.0f - f1, 1.0f/3.0f),
+        // Ring 2 (t=2/3): slide by f2.
+        Vec3(f2, 0.0f, 2.0f/3.0f), Vec3(1.0f, f2, 2.0f/3.0f),
+        Vec3(1.0f - f2, 1.0f, 2.0f/3.0f), Vec3(0.0f, 1.0f - f2, 2.0f/3.0f),
+    ];
+    foreach (i, e; expected) {
+        Vec3 got = m.vertices[8 + i];
+        assert(abs(got.x - e.x) < 1e-5f && abs(got.y - e.y) < 1e-5f && abs(got.z - e.z) < 1e-5f,
+            format("twist=1 vert %d: expected (%.6f,%.6f,%.6f), got (%.6f,%.6f,%.6f)",
+                   8+i, e.x, e.y, e.z, got.x, got.y, got.z));
+    }
+}
+
+unittest { // bridgeLoopsSpans: DoS defense — huge spans clamps to maxBridgeSpans
+    import std.format : format;
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+
+    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false,
+                                      100_000_000u, 0.0f);
+    assert(added == Mesh.maxBridgeSpans * 4,
+        format("huge spans must clamp to maxBridgeSpans, got %d (expected %d)",
+               added, Mesh.maxBridgeSpans * 4));
+    assert(m.faces.length == Mesh.maxBridgeSpans * 4, "clamped face count");
 }
 
 unittest { // extractSelectedEdgeCycles: two rings, figure-eight rejection
