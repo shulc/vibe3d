@@ -81,7 +81,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // B — inset=0 (the reference default): interactive apply must be a genuine
 //     no-op (captured law: BOTH inset==0 and inset<0 are byte-exact no-ops,
-//     unlike poly.inset's degenerate split at 0). No undo entry should be
+//     unlike the polygon-inset tool's degenerate split at 0). No undo entry should be
 //     needed since nothing changed.
 // ---------------------------------------------------------------------------
 

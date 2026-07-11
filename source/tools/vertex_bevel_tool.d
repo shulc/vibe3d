@@ -39,9 +39,9 @@ alias VertexBevelEditFactory = MeshBevelEdit delegate();
 //     Bevel's two handles, only inset is adjustable when beveling
 //     vertices.
 //   - `inset == 0` AND `inset < 0` are BOTH confirmed byte-exact no-ops
-//     (unlike poly.inset's degenerate-but-real zero-width split) —
+//     (unlike the polygon-inset tool's degenerate-but-real zero-width split) —
 //     mesh.bevelVerticesByMask already guards `amount < 1e-6f` as a
-//     no-op, so this divergence from poly.inset needed ZERO kernel
+//     no-op, so this divergence from the polygon-inset tool needed ZERO kernel
 //     changes to already be correct.
 //   - "Round Level" (extra rounding geometry) is a real, captured, but
 //     UNVERIFIED-formula reference option (confirmed to add substantial
