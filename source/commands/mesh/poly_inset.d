@@ -27,6 +27,17 @@ private bool[] allTrue(size_t n) {
 /// degenerate zero-width ring at inset=0) — the only remaining no-op case is
 /// an empty/undersized selection mask (evaluate returns false, snapshot
 /// discarded).
+///
+/// Default is deliberately NON-zero (task 0359 review): the reference tool's
+/// own default is bit-exact 0.0, but that value is a degenerate zero-area
+/// ring (coincident-position boundary verts — a NaN Newell-normal hazard if
+/// the result is later subdivided/lit without an intervening edit). The
+/// scriptable one-shot command keeps a safe non-zero default so a bare
+/// `mesh.poly_inset` invocation never manufactures degenerate geometry by
+/// accident; the interactive PolyInsetTool (tools/poly_inset_tool.d) still
+/// starts at the reference-matched 0.0 (its activate() does not build a
+/// preview, so 0.0 is only ever a transient starting value, never silently
+/// applied — see PolyInsetTool's class doc-comment).
 class MeshPolygonInset : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
@@ -34,7 +45,7 @@ class MeshPolygonInset : Command, Operator {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
-    private float            inset_ = 0.0f;   // reference default (bit-exact 0.0)
+    private float            inset_ = 0.1f;   // safe non-zero default (task 0359 review)
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -50,7 +61,7 @@ class MeshPolygonInset : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.float_("inset", "Inset", &inset_, 0.0f),
+            Param.float_("inset", "Inset", &inset_, 0.1f),
         ];
     }
 

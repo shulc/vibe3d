@@ -56,12 +56,12 @@ alias PolyInsetEditFactory = MeshBevelEdit delegate();
 // the clean cage; a drag/param-edit reverts to that cage and RE-RUNS the
 // kernel from the current `inset_` (rebuildPreview — never vertex-transforms
 // the already-split ridge); deactivate() commits ONE undo entry if any
-// topology was built. This does NOT reproduce MODO's per-release auto-chain
-// (each haul-release committing its own step, so a second drag insets the
-// FRESH inner faces) — that would need a materially different commit
-// lifecycle than every other topology tool in this codebase uses, and the
-// toolcard does not treat it as a load-bearing requirement. Deferred; see
-// task 0359 Лог.
+// topology was built. This does NOT reproduce the reference editor's
+// per-release auto-chain (each haul-release committing its own step, so a
+// second drag insets the FRESH inner faces) — that would need a materially
+// different commit lifecycle than every other topology tool in this
+// codebase uses, and the toolcard does not treat it as a load-bearing
+// requirement. Deferred; see task 0359 Лог.
 // ---------------------------------------------------------------------------
 class PolyInsetTool : Tool {
 private:
@@ -78,7 +78,16 @@ private:
     CommandHistory         history;
     PolyInsetEditFactory   factory;
 
-    float inset_ = 0.0f;   // reference default (task 0359 toolcard: bit-exact 0.0)
+    // Reference default (task 0359 toolcard: bit-exact 0.0). Deliberately
+    // NOT changed to a safe non-zero value like the one-shot command
+    // (commands/mesh/poly_inset.d) — this 0.0 is only ever a TRANSIENT
+    // starting value: activate()/reinitSession() do not build a preview
+    // (see reinitSession's doc-comment), so a session that ends without any
+    // drag/param-edit/doApply never manufactures the degenerate zero-area
+    // ring. Geometry is only ever produced once `inset_` has actually been
+    // written to something (a drag, a panel edit, or an explicit
+    // tool.attr), at which point the caller owns whatever value they chose.
+    float inset_ = 0.0f;
 
     bool         active;
     bool         built;

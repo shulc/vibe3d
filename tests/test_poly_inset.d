@@ -163,6 +163,31 @@ bool noCoincidentVerts(JSONValue m, double tol=1e-4) {
     return true;
 }
 
+// JSON numbers may parse as integer or float_ depending on how the literal
+// was written ("0" vs "0.5") — coerce uniformly, same convention
+// tests/fixture_helpers.d's asDouble uses.
+double numVal(JSONValue v) {
+    final switch (v.type) {
+        case JSONType.float_:   return v.floating;
+        case JSONType.integer:  return cast(double) v.integer;
+        case JSONType.uinteger: return cast(double) v.uinteger;
+        case JSONType.string:   case JSONType.array:  case JSONType.object:
+        case JSONType.true_:    case JSONType.false_: case JSONType.null_:
+            assert(false, "numVal: expected a number, got " ~ v.toString);
+    }
+}
+
+// True if every vertex coordinate is finite (no NaN/Inf) — a degenerate
+// zero-area face (e.g. the inset=0 ring) must NOT propagate into non-finite
+// positions through downstream ops (subdivide, normal computation, etc).
+bool allFinite(JSONValue m) {
+    import std.math : isFinite;
+    foreach (v; m["vertices"].array)
+        foreach (c; v.array)
+            if (!isFinite(numVal(c))) return false;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Test A — single face inset: cube top (+Y) face → 12 verts, 10 quads
 // ---------------------------------------------------------------------------
@@ -409,4 +434,85 @@ unittest {
     assert(mUndo["faceCount"].integer == before["faceCount"].integer,
         "F undo: expected " ~ before["faceCount"].integer.to!string ~
         " faces, got " ~ mUndo["faceCount"].integer.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Test G — interactive tool at inset=0 (task 0359 review): the reference-
+// matched default is a degenerate zero-area ring (coincident-position
+// boundary verts). Verify the TOOL's own headless apply at inset=0 still
+// produces topologically valid, fully-finite geometry (no NaN/Inf leaking
+// out of the degenerate quads) — same shape as the one-shot command's Test C,
+// but driven through mesh.polyInsetTool's applyHeadless() specifically.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    int topFi = faceWithCentroid(before, V3(0, 0.5, 0));
+    assert(topFi >= 0, "G: top face not found");
+    postSelect("polygons", [topFi]);
+
+    // inset=0 is the tool's own reference-matched default, but set it
+    // explicitly so this test doesn't silently stop covering the case if
+    // that default ever changes.
+    postCommand("tool.set mesh.polyInsetTool on");
+    postCommand("tool.attr mesh.polyInsetTool inset 0");
+    postCommand("tool.doApply");
+    postCommand("tool.set mesh.polyInsetTool off");
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 12,
+        "G: expected 12 verts after inset=0, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "G: expected 10 faces after inset=0, got " ~ m["faceCount"].integer.to!string);
+
+    auto fv = fvDist(m);
+    assert(fv == [4: 10], "G: expected all-quad fv-dist {4:10}, got " ~ fv.to!string);
+
+    assert(allFinite(m),               "G: non-finite (NaN/Inf) vertex coordinate after inset=0");
+    assert(isHoleFree(m),              "G: result is not hole-free after inset=0");
+    assert(orphanVerts(m).length == 0, "G: orphan verts after inset=0");
+
+    // The degenerate ring: 2 verts at each of the 4 original top-face corners.
+    foreach (x; [-0.5, 0.5])
+        foreach (z; [-0.5, 0.5])
+            assert(countAt(m, V3(x, 0.5, z)) == 2,
+                "G: expected 2 coincident verts at ("~x.to!string~",0.5,"~z.to!string~")");
+}
+
+// ---------------------------------------------------------------------------
+// Test H — small inset + subdivide (task 0359 review): a small-but-nonzero
+// inset (0.01, NOT the fully-degenerate inset=0 case) followed by ONE
+// mesh.subdivide pass must not produce any non-finite vertex. Catmull-Clark
+// face/edge/vertex points are position-weighted averages (no normalization
+// of a possibly-zero vector in that path), and mesh.faceNormal already
+// falls back to (0,1,0) for a near-zero-area face rather than dividing by
+// zero — this test is a black-box confirmation of that guard surviving the
+// specific geometry Polygon Inset produces, not a re-derivation of it.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    int topFi = faceWithCentroid(before, V3(0, 0.5, 0));
+    assert(topFi >= 0, "H: top face not found");
+    postSelect("polygons", [topFi]);
+
+    postCommand("tool.set mesh.polyInsetTool on");
+    postCommand("tool.attr mesh.polyInsetTool inset 0.01");
+    postCommand("tool.doApply");
+    postCommand("tool.set mesh.polyInsetTool off");
+
+    auto afterInset = getModel();
+    assert(afterInset["vertexCount"].integer == 12,
+        "H: expected 12 verts after small inset, got " ~
+        afterInset["vertexCount"].integer.to!string);
+    assert(allFinite(afterInset), "H: non-finite vertex coordinate after small inset");
+
+    postCommand("mesh.subdivide");
+    auto afterSub = getModel();
+    assert(allFinite(afterSub),
+        "H: non-finite vertex coordinate after subdividing a small-inset result");
+    assert(afterSub["vertexCount"].integer > afterInset["vertexCount"].integer,
+        "H: subdivide should grow the vertex count");
 }
