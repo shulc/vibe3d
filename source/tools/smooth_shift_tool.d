@@ -184,15 +184,27 @@ public:
     // goes through activate()→applyHeadless(), and ToolDoApplyCommand
     // captures its pre-snapshot BEFORE applyHeadless runs. Building a preview
     // on activate would poison that pre-snapshot.
+    //
+    // Deliberately does NOT touch shift_/scale_/maxAngle_/thicken_/sharp_
+    // (review fix, task 0358): those 5 Param-backed fields are owned by a
+    // strict layering — ctor default < preset YAML `attrs:` < sticky user
+    // default < live user edit — established BEFORE activate() ever runs
+    // (reg.toolFactories[id]() builds a fresh instance and applies the
+    // preset's attrs; activateToolById() then applies sticky defaults; only
+    // THEN does setActiveTool() call activate()). A prior version reset all
+    // 5 fields to hardcoded defaults here, which unconditionally clobbered
+    // that layering on every activation — silently discarding a preset's
+    // forced attr. Concretely: `mesh.thickenTool` (config/tool_presets.yaml)
+    // forces thicken=true via applyToolAttrs() at factory time, but this
+    // reset ran afterward (from activate()) and stomped it back to false,
+    // making the Thicken button behave identically to plain Smooth Shift
+    // (proven live: preset path built 10 faces instead of 11). Session
+    // bookkeeping (built/dragPart/before/gizmo) is genuinely per-activation
+    // transient state and belongs here; the 5 attrs are not.
     private void reinitSession() {
-        built     = false;
-        dragPart  = -1;
-        shift_    = 0.0f;
-        scale_    = 1.0f;
-        maxAngle_ = 89.5f;
-        thicken_  = false;
-        sharp_    = false;
-        before    = MeshSnapshot.capture(*mesh);
+        built    = false;
+        dragPart = -1;
+        before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
 
