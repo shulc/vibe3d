@@ -18,11 +18,15 @@ private bool[] allTrue(size_t n) {
     return m;
 }
 
-/// Polygon Inset (one-shot, undoable): for each selected face, shrink it
-/// inward by `inset` units (perpendicular-offset corner placement via
-/// offsetMeet) and connect the original boundary to the inset boundary
-/// with N ring quads. Polygons-mode only; empty selection ⇒ whole mesh;
-/// `|inset| < 1e-6` is a no-op (snapshot discarded, evaluate returns false).
+/// Polygon Inset (one-shot, undoable): for each selected face, move each
+/// corner toward the polygon centroid by an absolute distance of `inset`
+/// world units (see mesh.insetFacesByMask / insetCornerCentroid) and connect
+/// the original boundary to the inset boundary with N ring quads.
+/// Polygons-mode only; empty selection ⇒ whole mesh. `inset == 0` is NOT a
+/// no-op (task 0359, reference-matched: the split always happens, landing a
+/// degenerate zero-width ring at inset=0) — the only remaining no-op case is
+/// an empty/undersized selection mask (evaluate returns false, snapshot
+/// discarded).
 class MeshPolygonInset : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
@@ -30,7 +34,7 @@ class MeshPolygonInset : Command, Operator {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
-    private float            inset_ = 0.1f;
+    private float            inset_ = 0.0f;   // reference default (bit-exact 0.0)
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -46,7 +50,7 @@ class MeshPolygonInset : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.float_("inset", "Inset", &inset_, 0.1f),
+            Param.float_("inset", "Inset", &inset_, 0.0f),
         ];
     }
 

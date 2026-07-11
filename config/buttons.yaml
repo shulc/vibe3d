@@ -248,7 +248,7 @@ panels:
           - { label: "Smooth Shift", action: { kind: command, id: mesh.smooth_shift } }
           - { label: Thicken,        action: { kind: command, id: mesh.thicken } }
           - { label: Spikey,         action: { kind: command, id: mesh.spikey } }
-          - { label: Inset,          action: { kind: command, id: mesh.poly_inset } }
+          - { label: Inset,          action: { kind: tool,    id: mesh.polyInsetTool } }
           - { label: Reduce,         action: { kind: command, id: mesh.reduce } }
       - title: Commands
         buttons:

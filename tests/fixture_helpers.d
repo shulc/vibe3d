@@ -620,6 +620,18 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
             else
                 cmd("mesh.subdivide", ctx);
         }
+    } else if ("poly_inset" in step) {
+        // Polygon Inset (mesh.polyInsetTool, task 0359) — headless Post-Mode
+        // apply of the interactive tool: tool.set on, tool.attr inset <v>,
+        // tool.doApply, tool.set off. Mirrors the reference's own
+        // panel-apply gesture (tool.attr poly.inset inset ? + tool.apply).
+        //   { "poly_inset": { "inset": 0.2 } }
+        auto pi = step["poly_inset"];
+        double v = asDouble(pi["inset"]);
+        cmd("tool.set mesh.polyInsetTool on", ctx);
+        cmd(format("tool.attr mesh.polyInsetTool inset %g", v), ctx);
+        cmd("tool.doApply", ctx);
+        cmd("tool.set mesh.polyInsetTool off", ctx);
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {

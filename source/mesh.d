@@ -6675,17 +6675,51 @@ struct Mesh {
         return offsetMeet(origPos[i], ePrev, eNext, n, inset, inset);
     }
 
-    /// Per-face polygon inset: for each face flagged true in `mask`, shrink
-    /// the face inward by `inset` units (perpendicular-offset meeting at each
-    /// corner via `offsetMeet`) and bridge the original boundary to the new
-    /// inner boundary with N ring quads. The original face slot is replaced
-    /// by the inner face so its selection mark is preserved.
+    // Per-corner constant-distance-toward-centroid helper for
+    // insetFacesByMask (poly.inset). Deliberately SEPARATE from insetCorner/
+    // offsetMeet above (used by bevelFacesByMask / poly.bevel's per-edge
+    // perpendicular-offset miter law) — task 0359's toolcard capture showed
+    // poly.inset uses a DIFFERENT per-vertex law (a constant absolute
+    // displacement toward the polygon centroid, NOT a per-edge miter
+    // offset), so sharing insetCorner would have silently changed
+    // poly.bevel's already-verified geometry.
+    //
+    // Reference-captured law (toolcard `behavior.per_vertex_law` /
+    // `sign_law`): each new boundary vertex sits at `orig` moved toward the
+    // polygon centroid by an ABSOLUTE distance of exactly `inset` world
+    // units. Positive inset shrinks (toward centroid); negative grows
+    // (moves away — the duplicate scales larger), which falls out of this
+    // formula automatically via the signed `inset` multiply.
+    //
+    // OPEN AMBIGUITY (documented in the toolcard, not resolved by capture):
+    // the only parity case captured is a perfect square, where "move by a
+    // constant absolute distance" and "scale proportionally toward the
+    // centroid" are numerically indistinguishable (every corner starts
+    // equidistant from the centroid). This implementation picks the
+    // constant-distance law per the captured wording; unverified on a
+    // non-regular (asymmetric) selected polygon.
+    private Vec3 insetCornerCentroid(Vec3 orig, Vec3 centroid, float inset) {
+        Vec3 toCenter = centroid - orig;
+        const float len = toCenter.length;
+        if (len < 1e-9f) return orig;   // corner already at the centroid — no direction to move
+        return orig + (toCenter / len) * inset;
+    }
+
+    /// Per-face polygon inset: for each face flagged true in `mask`, move
+    /// each corner toward the polygon centroid by an absolute distance of
+    /// `inset` world units (see insetCornerCentroid) and bridge the original
+    /// boundary to the new inner boundary with N ring quads. The original
+    /// face slot is replaced by the inner face so its selection mark is
+    /// preserved.
     ///
-    /// `|inset| < 1e-6` is a whole-operation no-op (returns 0).
-    /// Returns the number of faces processed (>0 on success, 0 on no-op).
+    /// `inset == 0` is NOT a no-op (reference-matched, task 0359): it still
+    /// performs the full topology split, landing the new corners exactly on
+    /// the original ones (a degenerate zero-width ring) — the reference tool
+    /// does not skip the split at its default value either.
+    ///
+    /// Returns the number of faces processed (0 only when `mask` selects no
+    /// face, e.g. an empty/undersized mask).
     size_t insetFacesByMask(const bool[] mask, float inset) {
-        import std.math : abs;
-        if (abs(inset) < 1e-6f) return 0;
         size_t processed = 0;
         const size_t nFaces = faces.length; // snapshot before appending ring quads
         foreach (fi; 0 .. nFaces) {
@@ -6696,12 +6730,16 @@ struct Mesh {
             // Build per-corner position slice.
             Vec3[] origPos = new Vec3[](N);
             foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
-            // Newell face normal (robust to collinear leading triples).
-            const Vec3 n = faceNormal(cast(uint)fi);
+            // Polygon centroid (plain average of corners — matches the
+            // reference's "toward the centroid" wording; N-gon area-weighted
+            // centroids are not what was captured).
+            Vec3 centroid = Vec3(0, 0, 0);
+            foreach (p; origPos) centroid = centroid + p;
+            centroid = centroid * (1.0f / cast(float)N);
             // Add one inset vertex per corner.
             uint[] newVerts = new uint[](N);
             foreach (i; 0 .. N)
-                newVerts[i] = addVertex(insetCorner(origPos, i, n, inset));
+                newVerts[i] = addVertex(insetCornerCentroid(origPos[i], centroid, inset));
             // Replace the original face with the inner (inset) face.
             // The face slot index is unchanged, so faceMarks[fi] (select mark)
             // carries over to the inner face automatically.
@@ -6718,6 +6756,7 @@ struct Mesh {
         rebuildEdges();
         buildLoops();
         syncSelection();
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
         return processed;
     }
 
@@ -14776,9 +14815,15 @@ unittest { // detriangulateFacesByMask: partial mask — only masked faces merge
         "detriangulate partial: expected 11 faces, got " ~ m.faces.length.to!string);
 }
 
-unittest { // insetFacesByMask: single flat quad — no-op guard + inner corners at ±0.4
-    import std.math : abs;
-    // 1×1 quad at y=0, corners (±0.5, 0, ±0.5), winding [0,1,2,3].
+unittest { // insetFacesByMask: single flat quad — inset=0 still splits (task 0359
+           // reference parity) + constant-centroid-distance corner law
+    import std.math : abs, sqrt;
+    import std.conv : to;
+    // 1×1 quad at y=0, corners (±0.5, 0, ±0.5), winding [0,1,2,3], centroid
+    // (0,0,0). Every corner is equidistant from the centroid (a square), so
+    // moving "toward the centroid by an absolute distance of `inset`" lands
+    // each corner at distance inset/sqrt(2) closer along BOTH its x and z
+    // components (the diagonal toward the centroid).
     Mesh m;
     m.vertices = [
         Vec3(-0.5f, 0f, -0.5f), // 0
@@ -14789,27 +14834,53 @@ unittest { // insetFacesByMask: single flat quad — no-op guard + inner corners
     m.addFace([0, 1, 2, 3]);
     m.buildLoops();
 
-    // inset=0 must be a no-op (no-op guard).
+    // inset=0 is NOT a no-op (reference-matched, task 0359 toolcard
+    // `behavior.default_value_is_not_skipped`): the split still happens,
+    // landing the 4 new corners exactly on the 4 original ones (a
+    // degenerate zero-width ring — same topology delta as any other inset).
     bool[] allOne = [true];
-    assert(m.insetFacesByMask(allOne, 0.0f) == 0, "inset=0 must return 0");
-    assert(m.vertices.length == 4, "no-op must not add verts");
-    assert(m.faces.length    == 1, "no-op must not add faces");
+    assert(m.insetFacesByMask(allOne, 0.0f) == 1, "inset=0 must still process 1 face");
+    assert(m.vertices.length == 8, "expected 8 verts after inset=0 split");
+    assert(m.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads) after inset=0 split");
+    bool hasVertExact(float x, float z) {
+        foreach (v; m.vertices)
+            if (abs(v.x - x) < 1e-5f && abs(v.z - z) < 1e-5f) return true;
+        return false;
+    }
+    // Degenerate ring: the 4 new corners are bit-coincident with the 4
+    // originals (2 verts at each of the 4 corner positions).
+    foreach (x; [-0.5f, 0.5f])
+        foreach (z; [-0.5f, 0.5f])
+            assert(hasVertExact(x, z), "inset=0: degenerate corner missing at ("
+                ~ x.to!string ~ ",0," ~ z.to!string ~ ")");
+
+    // Fresh mesh for the inset=0.1 case (the inset=0 split above already
+    // mutated `m`'s topology).
+    Mesh m2;
+    m2.vertices = m.vertices[0 .. 4].dup;
+    m2.addFace([0, 1, 2, 3]);
+    m2.buildLoops();
 
     // inset=0.1: 4 new verts, 4 ring quads + 1 inner face = 5 faces total.
-    assert(m.insetFacesByMask(allOne, 0.1f) == 1, "inset=0.1 must process 1 face");
-    assert(m.vertices.length == 8, "expected 8 verts after single-face inset");
-    assert(m.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads)");
+    assert(m2.insetFacesByMask(allOne, 0.1f) == 1, "inset=0.1 must process 1 face");
+    assert(m2.vertices.length == 8, "expected 8 verts after single-face inset");
+    assert(m2.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads)");
 
-    // Inner corners must be at (±0.4, 0, ±0.4) — NOT ±0.6 (which would be outset).
+    // Inner corners must be at (±(0.5 - 0.1/sqrt(2)), 0, ±(0.5 - 0.1/sqrt(2)))
+    // — constant-absolute-distance-toward-centroid (task 0359), NOT the old
+    // per-edge-miter ±0.4 law (which moved 0.1 along EACH axis independently,
+    // i.e. inset*sqrt(2) total displacement — ruled out by the reference
+    // capture, see toolcard `behavior.per_vertex_law`).
+    immutable float d = 0.1f / sqrt(2.0f);
     bool hasVert(float x, float z) {
-        foreach (v; m.vertices)
+        foreach (v; m2.vertices)
             if (abs(v.x - x) < 1e-4f && abs(v.z - z) < 1e-4f) return true;
         return false;
     }
-    assert(hasVert(-0.4f, -0.4f), "inner corner (-0.4,0,-0.4) missing");
-    assert(hasVert( 0.4f, -0.4f), "inner corner ( 0.4,0,-0.4) missing");
-    assert(hasVert( 0.4f,  0.4f), "inner corner ( 0.4,0, 0.4) missing");
-    assert(hasVert(-0.4f,  0.4f), "inner corner (-0.4,0, 0.4) missing");
+    assert(hasVert(-(0.5f - d), -(0.5f - d)), "inner corner missing (-,-)");
+    assert(hasVert( (0.5f - d), -(0.5f - d)), "inner corner missing (+,-)");
+    assert(hasVert( (0.5f - d),  (0.5f - d)), "inner corner missing (+,+)");
+    assert(hasVert(-(0.5f - d),  (0.5f - d)), "inner corner missing (-,+)");
 }
 
 unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2

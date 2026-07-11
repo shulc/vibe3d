@@ -62,6 +62,7 @@ import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
 import tools.poly_bevel : PolyBevelTool;
+import tools.poly_inset_tool : PolyInsetTool;
 import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.loop_slice_tool : LoopSliceTool;
@@ -2861,6 +2862,19 @@ void main(string[] args) {
     // tool: reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Polygons.
     reg.toolFactories["poly.bevel"] = () {
         auto t = new PolyBevelTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Polygon Inset — interactive (task 0359 promotion of the one-shot
+    // mesh.poly_inset command). One attribute (inset), always per-polygon,
+    // no drawn gizmo (toolcard-confirmed) — a generic viewport click+drag
+    // hauls the value. Reuses the generic MeshBevelEdit/bevelEditFactory
+    // before/after-snapshot undo path, same as mesh.mirrorTool/mesh.tack
+    // above. Gated to Polygons.
+    reg.toolFactories["mesh.polyInsetTool"] = () {
+        auto t = new PolyInsetTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;

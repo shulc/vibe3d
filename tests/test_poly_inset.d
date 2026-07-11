@@ -1,18 +1,27 @@
 // Tests for mesh.poly_inset (Polygon Inset kernel + command).
 //
-// Geometry model (per-face v1): for each selected face of N verts, one inset
-// vertex is added per corner (offset inward by `inset` units via perpendicular
-// offsetMeet), the original face slot is replaced by the inner face (same slot
-// → selection mark preserved), and N ring quads bridge original boundary to
-// inner boundary.
+// Geometry model (task 0359, reference-parity rewrite): for each selected
+// face of N verts, one inset vertex is added per corner, moved TOWARD the
+// polygon centroid by an ABSOLUTE distance of `inset` world units (see
+// mesh.insetFacesByMask / insetCornerCentroid) — NOT a per-edge perpendicular/
+// miter offset. The original face slot is replaced by the inner face (same
+// slot → selection mark preserved), and N ring quads bridge original
+// boundary to inner boundary. `inset == 0` is NOT a no-op — the split always
+// happens (reference-matched), landing a degenerate zero-width ring.
 //
 // Cube vertex layout (from makeCube):
 //   0:(-0.5,-0.5,-0.5)  1:(0.5,-0.5,-0.5)  2:(0.5,0.5,-0.5)  3:(-0.5,0.5,-0.5)
 //   4:(-0.5,-0.5, 0.5)  5:(0.5,-0.5, 0.5)  6:(0.5,0.5, 0.5)  7:(-0.5,0.5, 0.5)
 // Cube faces (addFace order):
 //   0:[0,3,2,1]  1:[4,5,6,7]  2:[0,4,7,3]  3:[1,2,6,5]  4:[3,7,6,2]  5:[0,1,5,4]
-// Top face  (+Y, y= 0.5): face 4, centroid (0, 0.5, 0),  inner corners ±0.4 in x,z
-// Right face (+X, x= 0.5): face 3, centroid (0.5, 0, 0), inner corners ±0.4 in y,z
+// Top face  (+Y, y= 0.5): face 4, centroid (0, 0.5, 0)
+// Right face (+X, x= 0.5): face 3, centroid (0.5, 0, 0)
+//
+// Every cube face corner sits at the SAME distance from its face centroid
+// (a square), so "move by a constant absolute distance" displaces each
+// in-plane axis component by inset/sqrt(2) (the diagonal toward/away from
+// centroid) — e.g. inset=0.1 → inner corners at ±(0.5 - 0.1/sqrt(2)) ≈
+// ±0.42929 (NOT ±0.4, which was the old per-edge-miter law's prediction).
 
 import std.net.curl;
 import std.json;
@@ -20,6 +29,12 @@ import std.conv : to;
 import std.math : abs, sqrt;
 
 void main() {}
+
+// Per-axis in-plane displacement for a cube-face corner (every corner is
+// equidistant from its face centroid, so inset=0.1's constant-distance move
+// splits evenly across both in-plane axes: 0.1/sqrt(2)).
+immutable double SQRT2_ = sqrt(2.0);
+immutable double D1 = 0.1 / SQRT2_;
 
 // --- HTTP helpers ------------------------------------------------------------
 
@@ -177,10 +192,12 @@ unittest {
     assert(fv == [4: 10],
         "A: expected all-quad fv-dist {4:10}, got " ~ fv.to!string);
 
-    // Inner corners at (±0.4, 0.5, ±0.4) — one vertex each (no coincidents).
-    // ±0.4 confirms inset direction (outset would give ±0.6).
-    foreach (x; [-0.4, 0.4])
-        foreach (z; [-0.4, 0.4]) {
+    // Inner corners at (±(0.5-0.1/sqrt(2)), 0.5, ±(0.5-0.1/sqrt(2))) — one
+    // vertex each (no coincidents). The SHRUNK magnitude confirms inset
+    // direction (outset would grow past ±0.5).
+    double c = 0.5 - D1;
+    foreach (x; [-c, c])
+        foreach (z; [-c, c]) {
             int n = countAt(m, V3(x, 0.5, z));
             assert(n == 1,
                 "A: expected 1 inner corner at ("~x.to!string~",0.5,"~z.to!string~
@@ -228,7 +245,9 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test C — inset=0 no-op: command must respond status:error; mesh unchanged
+// Test C — inset=0 is NOT a no-op (task 0359, reference-matched): the split
+// still happens, landing a degenerate zero-width ring (4 new verts exactly
+// coincident with the 4 original top-face corners).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -238,18 +257,33 @@ unittest {
     assert(topFi >= 0, "C: top face not found");
     postSelect("polygons", [topFi]);
 
-    // inset=0 → Operator.evaluate() returns false → apply() returns false
-    // → /api/command throws → {"status":"error"}.
-    auto raw = postCommandRaw(`{"id":"mesh.poly_inset","params":{"inset":0.0}}`);
-    assert(raw["status"].str == "error",
-        "C: expected status:error for inset=0, got " ~ raw["status"].str);
+    postCommand(`{"id":"mesh.poly_inset","params":{"inset":0.0}}`);
+    auto m = getModel();
 
-    // Mesh must be unchanged.
-    auto after = getModel();
-    assert(after["vertexCount"].integer == 8,
-        "C: mesh modified on no-op (verts=" ~ after["vertexCount"].integer.to!string ~ ")");
-    assert(after["faceCount"].integer == 6,
-        "C: mesh modified on no-op (faces=" ~ after["faceCount"].integer.to!string ~ ")");
+    assert(m["vertexCount"].integer == 12,
+        "C: expected 12 verts after inset=0 split, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "C: expected 10 faces after inset=0 split, got " ~ m["faceCount"].integer.to!string);
+
+    // Still all-quads.
+    auto fv = fvDist(m);
+    assert(fv == [4: 10],
+        "C: expected all-quad fv-dist {4:10}, got " ~ fv.to!string);
+
+    // The degenerate ring: 2 verts at each of the 4 original top-face corner
+    // positions (original + coincident new inner corner).
+    foreach (x; [-0.5, 0.5])
+        foreach (z; [-0.5, 0.5]) {
+            int n = countAt(m, V3(x, 0.5, z));
+            assert(n == 2,
+                "C: expected 2 coincident verts at ("~x.to!string~",0.5,"~z.to!string~
+                "), found "~n.to!string);
+        }
+
+    // Topologically still hole-free and orphan-free (the ring quads are
+    // degenerate/zero-area, not missing).
+    assert(isHoleFree(m),              "C: result is not hole-free");
+    assert(orphanVerts(m).length == 0, "C: orphan verts after inset=0 split");
 }
 
 // ---------------------------------------------------------------------------
@@ -283,16 +317,96 @@ unittest {
     assert(noCoincidentVerts(m), "D: coincident verts found");
     assert(orphanVerts(m).length == 0, "D: orphan verts found");
 
-    // 8 distinct inset verts: top-face insets at (±0.4, 0.5, ±0.4),
-    // right-face insets at (0.5, ±0.4, ±0.4). Per-face independence means
-    // the two faces' inset verts are fully separate — no shared inner verts.
-    foreach (x; [-0.4, 0.4])
-        foreach (z; [-0.4, 0.4])
+    // 8 distinct inset verts: top-face insets at
+    // (±(0.5-0.1/sqrt(2)), 0.5, ±(0.5-0.1/sqrt(2))), right-face insets at
+    // (0.5, ±(0.5-0.1/sqrt(2)), ±(0.5-0.1/sqrt(2))). Per-face independence
+    // means the two faces' inset verts are fully separate — no shared inner
+    // verts.
+    double c = 0.5 - D1;
+    foreach (x; [-c, c])
+        foreach (z; [-c, c])
             assert(countAt(m, V3(x, 0.5, z)) == 1,
                 "D: top inset corner missing at ("~x.to!string~",0.5,"~z.to!string~")");
 
-    foreach (y; [-0.4, 0.4])
-        foreach (z; [-0.4, 0.4])
+    foreach (y; [-c, c])
+        foreach (z; [-c, c])
             assert(countAt(m, V3(0.5, y, z)) == 1,
                 "D: right inset corner missing at (0.5,"~y.to!string~","~z.to!string~")");
+}
+
+// ---------------------------------------------------------------------------
+// Test E — sign law: negative inset GROWS the duplicate outward (task 0359
+// toolcard `behavior.sign_law`, captured parity single_face_neg02). Same +X
+// face as Test D's right face, inset=-0.2: displacement magnitude is
+// |inset| (0.2) toward centroid, i.e. AWAY from it for a negative inset, so
+// each in-plane axis component grows by 0.2/sqrt(2).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    int rightFi = faceWithCentroid(before, V3(0.5, 0, 0));
+    assert(rightFi >= 0, "E: right face not found");
+    postSelect("polygons", [rightFi]);
+
+    postCommand(`{"id":"mesh.poly_inset","params":{"inset":-0.2}}`);
+    auto m = getModel();
+
+    assert(m["vertexCount"].integer == 12,
+        "E: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "E: expected 10 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // Outer (grown) corners at (0.5, ±(0.5+0.2/sqrt(2)), ±(0.5+0.2/sqrt(2))).
+    double g = 0.5 + 0.2 / SQRT2_;
+    foreach (y; [-g, g])
+        foreach (z; [-g, g])
+            assert(countAt(m, V3(0.5, y, z)) == 1,
+                "E: grown corner missing at (0.5,"~y.to!string~","~z.to!string~")");
+
+    assert(isHoleFree(m),        "E: result is not hole-free");
+    assert(noCoincidentVerts(m), "E: coincident verts found");
+    assert(orphanVerts(m).length == 0, "E: orphan verts found");
+}
+
+// ---------------------------------------------------------------------------
+// Test F — interactive tool (mesh.polyInsetTool, task 0359): headless
+// tool.set/tool.attr/tool.doApply drives the SAME kernel as the one-shot
+// command, and undo after tool.set off restores the pre-activation mesh
+// exactly — the same undo-after-deactivation shape test_edge_extend_tool.d
+// and its siblings pin for their own tools (redo is deliberately NOT
+// asserted here: ToolDoApplyCommand.apply() re-fires via
+// toolHost.getActiveTool(), which is null once the tool has been switched
+// off, a pre-existing characteristic of the tool.doApply redo path shared by
+// every interactive tool, not specific to Polygon Inset). Geometry itself is
+// pinned by tests/test_fixture_inset.d against the frozen reference.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    int rightFi = faceWithCentroid(before, V3(0.5, 0, 0));
+    assert(rightFi >= 0, "F: right face not found");
+    postSelect("polygons", [rightFi]);
+
+    postCommand("tool.set mesh.polyInsetTool on");
+    postCommand("tool.attr mesh.polyInsetTool inset 0.2");
+    postCommand("tool.doApply");
+    postCommand("tool.set mesh.polyInsetTool off");
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 12,
+        "F: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "F: expected 10 faces, got " ~ m["faceCount"].integer.to!string);
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "F: undo failed: " ~ u.toString);
+    auto mUndo = getModel();
+    assert(mUndo["vertexCount"].integer == before["vertexCount"].integer,
+        "F undo: expected " ~ before["vertexCount"].integer.to!string ~
+        " verts, got " ~ mUndo["vertexCount"].integer.to!string);
+    assert(mUndo["faceCount"].integer == before["faceCount"].integer,
+        "F undo: expected " ~ before["faceCount"].integer.to!string ~
+        " faces, got " ~ mUndo["faceCount"].integer.to!string);
 }
