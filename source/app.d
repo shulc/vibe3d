@@ -65,6 +65,7 @@ import tools.poly_extrude : PolyExtrudeTool;
 import tools.radial_array_tool : RadialArrayTool;
 import tools.poly_bevel : PolyBevelTool;
 import tools.poly_inset_tool : PolyInsetTool;
+import tools.smooth_shift_tool : SmoothShiftTool;
 import tools.magnet : MagnetTool;
 import tools.edge_bevel : EdgeBevelTool;
 import tools.loop_slice_tool : LoopSliceTool;
@@ -122,6 +123,7 @@ import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
 import commands.mesh.bridge : MeshBridge;
 import commands.mesh.thicken : MeshThicken;
 import commands.mesh.smooth_shift : MeshSmoothShift;
+import commands.mesh.smooth_shift_edit : MeshSmoothShiftEdit;
 import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
@@ -2563,6 +2565,11 @@ void main(string[] args) {
     // polyExtrudeEditFactory / edgeExtendEditFactory.
     auto radialArrayEditFactory = () => new MeshRadialArrayEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    // Smooth Shift + Thicken's typed edit factory (task 0358 interactive tool
+    // consumer), mirroring polyExtrudeEditFactory. The one-shot mesh.smooth_shift
+    // / mesh.thicken commands keep undoing via their own MeshSnapshot.
+    auto smoothShiftEditFactory = () => new MeshSmoothShiftEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -2912,7 +2919,6 @@ void main(string[] args) {
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
-
     // Polygon Inset — interactive (task 0359 promotion of the one-shot
     // mesh.poly_inset command). One attribute (inset), always per-polygon,
     // no drawn gizmo (toolcard-confirmed) — a generic viewport click+drag
@@ -2923,6 +2929,20 @@ void main(string[] args) {
         auto t = new PolyInsetTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Smooth Shift + Thicken — interactive (2 handles: Offset, Scale) + headless
+    // (tool.attr mesh.smoothShiftTool shift/scale/maxAngle/thicken/sharp <v>;
+    // tool.doApply). Topology-creating tool: own typed edit factory
+    // (MeshSmoothShiftEdit, snapshot-only undo). Gated to Polygons mode by
+    // SmoothShiftTool.supportedModes(). The reference editor's Thicken toolbar
+    // button is confirmed (task 0358) to be THIS SAME tool with thicken=1
+    // forced, not a separate tool — see config/buttons.yaml.
+    reg.toolFactories["mesh.smoothShiftTool"] = () {
+        auto t = new SmoothShiftTool(() => &mesh(), &gpu, &editMode, litShader,
+                                     &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, smoothShiftEditFactory);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.magnet"] = () {

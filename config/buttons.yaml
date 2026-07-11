@@ -249,8 +249,8 @@ panels:
       - title: Tools
         buttons:
           - { label: Bevel,          action: { kind: command, id: mesh.bevel } }
-          - { label: "Smooth Shift", action: { kind: command, id: mesh.smooth_shift } }
-          - { label: Thicken,        action: { kind: command, id: mesh.thicken } }
+          - { label: "Smooth Shift", action: { kind: tool,    id: mesh.smoothShiftTool } }
+          - { label: Thicken,        action: { kind: tool,    id: mesh.thickenTool } }
           - { label: Spikey,         action: { kind: command, id: mesh.spikey } }
           - { label: Inset,          action: { kind: tool,    id: mesh.polyInsetTool } }
           - { label: Reduce,         action: { kind: command, id: mesh.reduce } }

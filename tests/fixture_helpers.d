@@ -632,6 +632,31 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr mesh.polyInsetTool inset %g", v), ctx);
         cmd("tool.doApply", ctx);
         cmd("tool.set mesh.polyInsetTool off", ctx);
+    } else if ("smooth_shift" in step) {
+        // Smooth Shift + Thicken (mesh.smoothShiftTool, task 0358). Drives
+        // the interactive tool headlessly on the CURRENT polygon selection
+        // (empty ⇒ whole mesh, matching the kernel's mask convention):
+        // tool.set on, the 5 captured attrs via tool.attr, tool.doApply,
+        // tool.set off. Unset attrs keep the tool's own captured defaults
+        // (shift=0, scale=1, maxAngle=89.5deg, thicken=false, sharp=false —
+        // `thicken`/`sharp` are both booleans; see tools/smooth_shift_tool.d).
+        //   { "smooth_shift": { "shift": 0.3, "scale": 0.5, "thicken": true } }
+        auto ss = step["smooth_shift"];
+        cmd("tool.set mesh.smoothShiftTool on", ctx);
+        if ("shift" in ss)
+            cmd(format("tool.attr mesh.smoothShiftTool shift %g", asDouble(ss["shift"])), ctx);
+        if ("scale" in ss)
+            cmd(format("tool.attr mesh.smoothShiftTool scale %g", asDouble(ss["scale"])), ctx);
+        if ("maxAngle" in ss)
+            cmd(format("tool.attr mesh.smoothShiftTool maxAngle %g", asDouble(ss["maxAngle"])), ctx);
+        if ("thicken" in ss)
+            cmd(format("tool.attr mesh.smoothShiftTool thicken %d",
+                       ss["thicken"].type == JSONType.true_ ? 1 : 0), ctx);
+        if ("sharp" in ss)
+            cmd(format("tool.attr mesh.smoothShiftTool sharp %d",
+                       ss["sharp"].type == JSONType.true_ ? 1 : 0), ctx);
+        cmd("tool.doApply", ctx);
+        cmd("tool.set mesh.smoothShiftTool off", ctx);
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {

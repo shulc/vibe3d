@@ -267,3 +267,18 @@ presets:
     base: scale
     attrs:
       uniform: "true"
+
+  # Thicken (task 0358) — confirmed to be the SAME tool as Smooth Shift in
+  # the reference editor, activated with its `thicken` attribute forced on,
+  # not a separate tool class. Mirrors the reference editor's own preset
+  # mechanism for this exact relationship (a preset that runs the base tool
+  # with one attr overridden). The reference's own Thicken preset also
+  # forces maxAngle to a slightly different value (90.115deg) than the base
+  # tool's own factory default (89.5deg) — mirrored here for panel fidelity,
+  # though maxAngle does not affect geometry either way (see
+  # source/tools/smooth_shift_tool.d).
+  - id: mesh.thickenTool
+    base: mesh.smoothShiftTool
+    attrs:
+      thicken: "true"
+      maxAngle: "90.115"

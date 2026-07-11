@@ -6206,6 +6206,381 @@ struct Mesh {
         return a < b ? (cast(ulong)a << 32) | b : (cast(ulong)b << 32) | a;
     }
 
+    // -------------------------------------------------------------------
+    // Smooth Shift + Thicken kernel (task 0358). A deliberately SEPARATE
+    // function from extrudeFacesByMask — it is NOT a drop-in replacement
+    // and does not share its call sites (face_extrude.d, poly_extrude.d,
+    // smooth_shift.d's existing one-shot command all keep calling
+    // extrudeFacesByMask, untouched). Backs the interactive Smooth Shift
+    // tool (tools.smooth_shift_tool.SmoothShiftTool).
+    //
+    // Per-(island,vertex) cap law, reverse-engineered from a frozen
+    // reference-editor capture (see tests/fixtures/smooth_shift.json):
+    //     capPos = islandCentroid + scale * ((origPos + shift*smoothN) - islandCentroid)
+    // i.e. a standard per-vertex-smoothed-normal shift-extrude (the same
+    // "smooth=true" normal-averaging extrudeFacesByMask already does),
+    // followed by scaling the resulting cap footprint about the ISLAND'S
+    // ORIGINAL (pre-offset) cloned-vertex centroid. scale==1 collapses to
+    // a plain shift-extrude (matches the captured shift03 combo); the
+    // shift03_scale05 combo (shift=0.3, scale=0.5) pins this exact law —
+    // e.g. corner (-0.5,0.5,-0.5) → (-0.25, 0.65, -0.25), not (…, 0.8, …).
+    //
+    // UNLIKE extrudeFacesByMask, shift==0 is NOT special-cased as a no-op:
+    // the reference always builds the full (possibly-degenerate,
+    // coincident-vertex) extrude topology at shift=0 — confirmed live
+    // (combo "base_noop": a plain cube's top face still comes out 12v/10f).
+    // The caller (the interactive tool) decides whether a fully-identity
+    // gesture (nothing dragged) is worth an undo entry — see
+    // SmoothShiftTool's session lifecycle.
+    //
+    // `thicken`: when true, each cloned face's ORIGINAL vertices are
+    // additionally re-emitted, winding-REVERSED, as an extra "retained"
+    // polygon — a selection-scoped, symmetric double-walled protrusion
+    // (confirmed live: combo "thicken_top_only", 11 faces vs. 10 for the
+    // non-thicken case, the 11th being the original 4 verts unmoved; the
+    // winding reversal itself is independently derivable from the
+    // captured index order via the right-hand-rule face normal, not just
+    // taken from the reference help text). Deliberately distinct from
+    // Mesh.thickenSurface, which shells the WHOLE mesh unconditionally —
+    // a different, valid, unrelated feature (task 0358 finding).
+    //
+    // `maxAngle` (crease-gated normal splitting) and `sharp` (crease-corner
+    // rounding) are NOT parameters of this kernel and are NOT implemented —
+    // the same simplification smooth_shift.d's own doc comment already
+    // flags for the one-shot command (uniform, unweighted per-vertex normal
+    // averaging, no angle-gated splitting). SmoothShiftTool still stores/
+    // exposes both as panel attrs (for field-order parity with the
+    // reference panel), but their values do not affect geometry yet.
+    //
+    // Polygons-mode only (checked by the caller); empty selection ⇒ whole
+    // mesh (per the caller's mask convention, matching extrudeFacesByMask).
+    // Returns the number of faces cloned (0 on any no-op condition:
+    // mismatched mask, nothing selected, or a closed island with no
+    // boundary edges to wall).
+    size_t smoothShiftFacesByMask(in bool[] mask, float shift, float scale, bool thicken) {
+        if (mask.length != faces.length) return 0;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+
+        // Region-normal fallback for a degenerate (near-zero-length)
+        // per-vertex smoothed normal — same rule as extrudeFacesByMask.
+        Vec3 normSum = Vec3(0, 0, 0);
+        foreach (fi; 0 .. faces.length)
+            if (mask[fi]) normSum = normSum + faceNormal(cast(uint)fi);
+        {
+            float rlen = sqrt(normSum.x * normSum.x +
+                              normSum.y * normSum.y +
+                              normSum.z * normSum.z);
+            normSum = (rlen > 1e-6f) ? normSum * (1.0f / rlen) : Vec3(0, 1, 0);
+        }
+        immutable Vec3 regionNormal = normSum;
+
+        auto edgeFaces = buildEdgeFaces();
+
+        // Island id per selected face — adjacency via a FULLY shared edge
+        // (both incident faces selected). Mirrors extrudeFacesByMask's
+        // task-0312 fix: two selected faces touching only at a vertex are
+        // different islands, each getting its own clone at that corner.
+        int[size_t] islandOf;
+        {
+            size_t[][size_t] adj;
+            foreach (key, fp; edgeFaces) {
+                if (fp[0] < 0 || fp[1] < 0) continue;
+                if (fp[0] >= cast(int)mask.length || fp[1] >= cast(int)mask.length) continue;
+                if (!mask[fp[0]] || !mask[fp[1]]) continue;
+                adj[cast(size_t)fp[0]] ~= cast(size_t)fp[1];
+                adj[cast(size_t)fp[1]] ~= cast(size_t)fp[0];
+            }
+            int nextIsland = 0;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                if (fi in islandOf) continue;
+                size_t[] stack = [fi];
+                islandOf[fi] = nextIsland;
+                while (stack.length) {
+                    size_t cur = stack[$ - 1];
+                    stack = stack[0 .. $ - 1];
+                    if (auto nbrs = cur in adj)
+                        foreach (nb; *nbrs)
+                            if (nb !in islandOf) {
+                                islandOf[nb] = nextIsland;
+                                stack ~= nb;
+                            }
+                }
+                ++nextIsland;
+            }
+        }
+        static ulong ivKey(int island, uint vid) {
+            return (cast(ulong)cast(uint)island << 32) | vid;
+        }
+
+        // Per-(island,vertex) smoothed normal: uniform average of incident
+        // selected-face normals within the island; degenerate → regionNormal.
+        Vec3[ulong] vNorm;
+        {
+            Vec3[ulong] vNormSum;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                Vec3 fn = faceNormal(cast(uint)fi);
+                int island = islandOf[fi];
+                foreach (vid; faces[fi]) {
+                    ulong k = ivKey(island, vid);
+                    auto p = k in vNormSum;
+                    if (p is null) vNormSum[k] = fn;
+                    else          *p = *p + fn;
+                }
+            }
+            foreach (k, nsum; vNormSum) {
+                float nlen = sqrt(nsum.x*nsum.x + nsum.y*nsum.y + nsum.z*nsum.z);
+                vNorm[k] = (nlen > 1e-6f) ? nsum * (1.0f / nlen) : regionNormal;
+            }
+        }
+
+        // Per-island centroid of the ORIGINAL (pre-offset) cloned-vertex
+        // positions — the scale pivot. Each (island,vertex) counts ONCE
+        // (a shared ridge vertex must not be over-weighted by its incident
+        // selected-face count).
+        Vec3[int] islandCentroid;
+        {
+            Vec3[int] sum;
+            int[int]  cnt;
+            bool[ulong] seen;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                int island = islandOf[fi];
+                foreach (vid; faces[fi]) {
+                    ulong k = ivKey(island, vid);
+                    if (k in seen) continue;
+                    seen[k] = true;
+                    auto p = island in sum;
+                    if (p is null) { sum[island] = vertices[vid]; cnt[island] = 1; }
+                    else           { *p = *p + vertices[vid]; cnt[island] = cnt[island] + 1; }
+                }
+            }
+            foreach (isl, s; sum)
+                islandCentroid[isl] = s * (1.0f / cast(float)cnt[isl]);
+        }
+
+        // Boundary edges: exactly one incident face is selected.
+        struct BEdge { uint va, vb; int selFi; }
+        BEdge[] bEdges;
+        foreach (key, fp; edgeFaces) {
+            bool s0 = fp[0] >= 0 && fp[0] < cast(int)mask.length && mask[fp[0]];
+            bool s1 = fp[1] >= 0 && fp[1] < cast(int)mask.length && mask[fp[1]];
+            if (s0 == s1) continue;   // both selected (internal) or neither
+            uint va = cast(uint)(key >> 32);
+            uint vb = cast(uint)(key & 0xffffffffUL);
+            bEdges ~= BEdge(va, vb, s0 ? fp[0] : fp[1]);
+        }
+        if (bEdges.length == 0) return 0;   // closed island → nothing to wall
+
+        // Clone each (island,vertex) used by a selected face, once per
+        // (island,vertex) pair, at the scaled cap position.
+        uint[ulong] vertMap;
+        foreach (fi; 0 .. faces.length) {
+            if (!mask[fi]) continue;
+            int island = islandOf[fi];
+            Vec3 cen = islandCentroid[island];
+            foreach (vid; faces[fi]) {
+                ulong k = ivKey(island, vid);
+                if (k in vertMap) continue;
+                Vec3 orig    = vertices[vid];
+                Vec3 shifted = orig + vNorm[k] * shift;
+                Vec3 capPos  = cen + (shifted - cen) * scale;
+                vertMap[k] = addVertex(capPos);
+            }
+        }
+
+        size_t[] toCloneFace;
+        foreach (fi; 0 .. faces.length) if (mask[fi]) toCloneFace ~= fi;
+
+        // Reconstruct faces + parallel arrays (deleteFacesByMask rebuild
+        // idiom). Order: [non-selected originals] + [cap clones] +
+        // [thicken-retained originals, if any] + [wall quads].
+        uint[][] newFaces;
+        uint[]   newMat;
+        uint[]   newPart;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        foreach (fi; 0 .. faces.length) {
+            if (mask[fi]) continue;
+            newFaces ~= faces[fi];
+            newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+        immutable size_t capStart = newFaces.length;
+
+        // Cap clones: re-emit each selected face with cloned (offset+scaled)
+        // verts, same per-corner order as the original (index substitution
+        // only), same convention extrudeFacesByMask uses.
+        foreach (fi; toCloneFace) {
+            auto src = faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            int island = islandOf[fi];
+            foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
+            newFaces ~= cloned;
+            newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+            newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
+            newOrd   ~= 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+
+        // Thicken: retain the ORIGINAL (unmoved) face verts, winding
+        // REVERSED, as an extra inner-skin polygon per cloned face.
+        if (thicken) {
+            foreach (fi; toCloneFace) {
+                auto src = faces[fi];
+                uint[] reversed;
+                reversed.length = src.length;
+                foreach (k, vid; src) reversed[$ - 1 - k] = vid;
+                newFaces ~= reversed;
+                newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+                newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
+                newOrd   ~= 0;
+                newSub   ~= false;   // retained skin is not part of any subpatch cage
+            }
+        }
+
+        // Wall quads: one per boundary edge (same orientability rule as
+        // extrudeFacesByMask — the cap walks cloneA→cloneB iff the original
+        // face walked a→b; the wall shares that top edge in the opposite
+        // direction).
+        foreach (ref be; bEdges) {
+            uint a = be.va, b = be.vb;
+            int island = islandOf[be.selFi];
+            uint cloneA = vertMap[ivKey(island, a)], cloneB = vertMap[ivKey(island, b)];
+            bool origAtoB = false;
+            auto orig = faces[be.selFi];
+            foreach (k; 0 .. orig.length) {
+                uint u = orig[k], w = orig[(k + 1) % orig.length];
+                if (u == a && w == b) { origAtoB = true;  break; }
+                if (u == b && w == a) { origAtoB = false; break; }
+            }
+            if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
+            else          newFaces ~= [cloneA, cloneB, b, a];
+            newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
+            newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
+            newOrd  ~= 0;
+            newSub  ~= false;
+        }
+
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        facePart           = newPart;
+        faceSelectionOrder = newOrd;
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
+        // New selection = cap faces (chains a follow-up op off the top, same
+        // as extrudeFacesByMask). The retained thicken skin is NOT selected.
+        faceSelectionOrderCounter = 0;
+        foreach (fi; capStart .. capStart + selCount)
+            selectFace(cast(int)fi);
+
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();
+        buildLoops();
+
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return selCount;
+    }
+
+    unittest {
+        import std.math : abs;
+        import std.conv : to;
+
+        // base_noop: shift=0, scale=1, thicken=false, single top-face
+        // selection on a stock cube. Matches the frozen reference capture
+        // (tests/fixtures/smooth_shift.json "base_noop") — 12v/10f, NOT a
+        // no-op (see the kernel doc comment on the shift==0 divergence).
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false;
+            // Find the top face (all 4 verts at y ≈ +0.5).
+            int topFi = -1;
+            foreach (fi; 0 .. m.faces.length) {
+                bool allTop = true;
+                foreach (vid; m.faces[fi]) if (m.vertices[vid].y < 0.4f) { allTop = false; break; }
+                if (allTop) { topFi = cast(int)fi; break; }
+            }
+            assert(topFi >= 0, "smoothShiftFacesByMask test: no top face found");
+            mask[topFi] = true;
+            size_t n = m.smoothShiftFacesByMask(mask, 0.0f, 1.0f, false);
+            assert(n == 1, "smoothShiftFacesByMask base_noop: expected 1 face cloned");
+            assert(m.faces.length == 10,
+                "smoothShiftFacesByMask base_noop: expected 10 faces, got " ~ m.faces.length.to!string);
+            assert(m.vertices.length == 12,
+                "smoothShiftFacesByMask base_noop: expected 12 verts, got " ~ m.vertices.length.to!string);
+        }
+
+        // shift03_scale05: shift=0.3, scale=0.5 — pins the scale-about-
+        // island-centroid law exactly (frozen capture "shift03_scale05").
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false;
+            int topFi = -1;
+            foreach (fi; 0 .. m.faces.length) {
+                bool allTop = true;
+                foreach (vid; m.faces[fi]) if (m.vertices[vid].y < 0.4f) { allTop = false; break; }
+                if (allTop) { topFi = cast(int)fi; break; }
+            }
+            mask[topFi] = true;
+            size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 0.5f, false);
+            assert(n == 1, "smoothShiftFacesByMask shift03_scale05: expected 1 face cloned");
+            // Expect a new vertex at (-0.25, 0.65, -0.25) (corner (-0.5,0.5,-0.5)
+            // shifted+scaled about the top face's centroid (0,0.5,0)).
+            bool found = false;
+            foreach (v; m.vertices) {
+                if (abs(v.x - (-0.25f)) < 1e-3f && abs(v.y - 0.65f) < 1e-3f &&
+                    abs(v.z - (-0.25f)) < 1e-3f) { found = true; break; }
+            }
+            assert(found, "smoothShiftFacesByMask shift03_scale05: no cap vert at (-0.25,0.65,-0.25)");
+        }
+
+        // thicken_top_only: shift=0.3, thicken=true — retains the original
+        // top face as an 11th polygon (frozen capture "thicken_top_only").
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false;
+            int topFi = -1;
+            foreach (fi; 0 .. m.faces.length) {
+                bool allTop = true;
+                foreach (vid; m.faces[fi]) if (m.vertices[vid].y < 0.4f) { allTop = false; break; }
+                if (allTop) { topFi = cast(int)fi; break; }
+            }
+            mask[topFi] = true;
+            size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 1.0f, true);
+            assert(n == 1, "smoothShiftFacesByMask thicken_top_only: expected 1 face cloned");
+            assert(m.faces.length == 11,
+                "smoothShiftFacesByMask thicken_top_only: expected 11 faces, got " ~ m.faces.length.to!string);
+            assert(m.vertices.length == 12,
+                "smoothShiftFacesByMask thicken_top_only: expected 12 verts, got " ~ m.vertices.length.to!string);
+            // The retained face's 4 verts must all still be at y ≈ 0.5 (unmoved).
+            int retainedCount = 0;
+            foreach (fi; 0 .. m.faces.length) {
+                if (m.faces[fi].length != 4) continue;
+                bool allOrigTop = true;
+                foreach (vid; m.faces[fi])
+                    if (abs(m.vertices[vid].y - 0.5f) > 1e-3f) { allOrigTop = false; break; }
+                if (allOrigTop) ++retainedCount;
+            }
+            assert(retainedCount >= 1,
+                "smoothShiftFacesByMask thicken_top_only: no retained (unmoved) top face found");
+        }
+    }
+
     // Deduplicated edge insert: append (a,b) + record its index in `lookup`
     // unless an edge with the same undirected key is already present. The
     // stored index is `edges.length` BEFORE the append — identical to
