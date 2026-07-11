@@ -1,15 +1,16 @@
 // Golden parity fixture for the interactive Array tool (task 0355,
 // `mesh.arrayTool`, `source/tools/array_tool.d`), backed by the new 3-axis
 // grid kernel `Mesh.arrayFacesGrid` (source/mesh.d). Frozen from the
-// reference toolcard's captured parity case (vibe3d_private/toolcards/
-// poly.array/findings.md §6) — NO reference engine runs at test time; see
-// tests/fixtures/array.json for the full provenance note.
+// reference toolcard's captured parity case (task 0355's capture notes
+// §6) — NO reference engine runs at test time; see tests/fixtures/array.json
+// for the full provenance note.
 //
 // This file also carries a handful of vibe3d-ONLY regression checks (not
 // reference-parity claims) for the parts of the new grid kernel the
 // captured toolcard case doesn't exercise: a genuine multi-axis grid,
-// Replace Source, Invert Polygons, Merge Vertices, and undo — each is
-// checked against vibe3d's own documented kernel semantics (source/mesh.d's
+// Replace Source, Invert Polygons, Merge Vertices, undo, a DoS-cap guard,
+// and a Replace-Source double-transform guard — each is checked against
+// vibe3d's own documented kernel semantics (source/mesh.d's
 // `arrayFacesGrid` doc comment), not against a reference capture.
 
 import fixture_helpers;
@@ -17,6 +18,7 @@ import std.net.curl;
 import std.json;
 import std.conv : to;
 import std.math : abs;
+import std.datetime.stopwatch : StopWatch, AutoStart;
 
 void main() {}
 
@@ -83,8 +85,9 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// T3 — genuine multi-axis grid (vibe3d-only regression, findings.md §6's own
-// suggested follow-on: "numY=2, offY=2 ... a true 2-axis grid"). numX=2,
+// T3 — genuine multi-axis grid (vibe3d-only regression, task 0355's capture
+// notes §6's own suggested follow-on: "numY=2, offY=2 ... a true 2-axis
+// grid"). numX=2,
 // numY=2, numZ=1, offX=2, offY=2 => 4 total slots, no shared verts (offsets
 // exceed the cube's unit extent) => 4*8=32 verts, 4*6=24 faces. Confirms the
 // grid multiplies independently per axis rather than just summing offsets.
@@ -248,4 +251,100 @@ unittest {
     assert(m["vertexCount"].integer == 8);
     assert(m["faceCount"].integer == 6);
     assert(m["edgeCount"].integer == 12);
+}
+
+// ---------------------------------------------------------------------------
+// T8 — code review B1 (DoS guard): a wildly out-of-range requested grid must
+// neither hang the app nor build an unbounded number of clones. Each of
+// numX/numY/numZ individually clamps to ArrayTool.params()'s declared
+// max(64) (mirrors prim.cube's segmentsR precedent), but 64x64x64=262144
+// still exceeds Mesh.arrayFacesGrid's own MAX_ARRAY_GRID_SLOTS cap (10,000)
+// — the kernel rejects the whole grid as a clean no-op rather than trying to
+// build a quarter-million clones. Also pins that the apply completes fast
+// (a live rebuildPreview() re-runs the SAME kernel on every interactive
+// keystroke, so a slow path here would hang the app, not just this test).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    selectAllFaces();
+    armArrayTool();
+    cmd("tool.attr mesh.arrayTool numX 100000000");
+    cmd("tool.attr mesh.arrayTool numY 100000000");
+    cmd("tool.attr mesh.arrayTool numZ 100000000");
+
+    // A rejected (over-cap) apply is a legitimate no-op — same convention as
+    // test_mesh_array.d's "count <= 1 is a no-op" case: it may answer
+    // status=ok (nothing changed) or status=error ("did not apply"), so
+    // don't assert on the response status here, only that it returns fast
+    // and leaves the mesh untouched.
+    auto sw = StopWatch(AutoStart.yes);
+    post("http://localhost:8080/api/command", "tool.doApply");
+    sw.stop();
+    assert(sw.peek.total!"msecs" < 5000,
+        "Array apply with a huge requested grid must not hang — took "
+        ~ sw.peek.total!"msecs".to!string ~ "ms");
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 8,
+        "huge grid request should no-op (kernel product cap), got "
+        ~ m["vertexCount"].integer.to!string ~ " verts");
+    assert(m["faceCount"].integer == 6,
+        "huge grid request should no-op (kernel product cap), got "
+        ~ m["faceCount"].integer.to!string ~ " faces");
+}
+
+// ---------------------------------------------------------------------------
+// T9 — code review S1 (Replace Source double-transform): with replaceSource
+// on and count>1, slot (0,0,0) is mutated in place FIRST (the grid loop
+// always visits it first) — a bug fed the ALREADY-mutated source position
+// into later clones, compounding the transform. Exact reviewer repro:
+// numX=2, replace=true, sclX=200%, offX=5 on a unit cube (x in [-0.5,0.5],
+// pivot = mask centroid = origin).
+//   - Correct: source (mutated in place) scaled ONCE -> x in {-1,1}; clone
+//     is the ORIGINAL scaled once THEN shifted by offX=5 -> x in {4,6}.
+//   - Buggy (pre-fix): clone read the mutated source (x in {-1,1}) and
+//     scaled it AGAIN before shifting -> x in {3,7}.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    selectAllFaces();
+    armArrayTool();
+    cmd("tool.attr mesh.arrayTool numX 2");
+    cmd("tool.attr mesh.arrayTool numY 1");
+    cmd("tool.attr mesh.arrayTool numZ 1");
+    cmd("tool.attr mesh.arrayTool offX 5");
+    cmd("tool.attr mesh.arrayTool replace true");
+    cmd("tool.attr mesh.arrayTool sclX 200");
+    cmd("tool.doApply");
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 16,
+        "verts: expected 16 (8 mutated-in-place + 8 new clone), got "
+        ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 12);
+
+    auto verts = m["vertices"].array;
+    int seenNeg1 = 0, seenPos1 = 0, seen4 = 0, seen6 = 0, seen3 = 0, seen7 = 0;
+    foreach (v; verts) {
+        double x = v.array[0].floating;
+        if (approxEq(x, -1.0)) ++seenNeg1;
+        if (approxEq(x, 1.0))  ++seenPos1;
+        if (approxEq(x, 4.0))  ++seen4;
+        if (approxEq(x, 6.0))  ++seen6;
+        if (approxEq(x, 3.0))  ++seen3;
+        if (approxEq(x, 7.0))  ++seen7;
+    }
+    assert(seenNeg1 == 4 && seenPos1 == 4,
+        "replaced source should be scaled ONCE about the origin (x=-1/1); got "
+        ~ seenNeg1.to!string ~ "@-1, " ~ seenPos1.to!string ~ "@1");
+    assert(seen4 == 4 && seen6 == 4,
+        "clone should be the ORIGINAL scaled once then shifted (x=4/6), NOT "
+        ~ "the already-mutated source scaled again; got "
+        ~ seen4.to!string ~ "@4, " ~ seen6.to!string ~ "@6");
+    assert(seen3 == 0 && seen7 == 0,
+        "regression: clone must not read the already-mutated source position "
+        ~ "(would compound to x=3/7 instead of 4/6); got "
+        ~ seen3.to!string ~ "@3, " ~ seen7.to!string ~ "@7");
 }

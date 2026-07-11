@@ -8,10 +8,10 @@
 # params() (validateForms) — a misspelt attr fails loud at boot.
 #
 # Layout mirrors the captured reference panel's two collapsible sections
-# ("Array Generator" + "Clone Effector" — see vibe3d_private/toolcards/
-# poly.array/spec.json, task 0355): Count/Offset/Jitter/Scale/Rotate/Between
-# under Array Generator, Replace Source/Invert Polygons/Merge Vertices/
-# Distance/Source/Mesh Item under Clone Effector. Distance is auto-greyed by
+# ("Array Generator" + "Clone Effector" — see task 0355's capture notes):
+# Count/Offset/Jitter/Scale/Rotate/Between under Array Generator,
+# Replace Source/Invert Polygons/Merge Vertices/Distance/Source/Mesh Item
+# under Clone Effector. Distance is auto-greyed by
 # the renderer via ArrayTool.paramEnabled() (forms_render.d wraps a disabled
 # param in ImGui.BeginDisabled) unless Merge Vertices is on; Mesh Item is
 # greyed unless Source is Specific Mesh.

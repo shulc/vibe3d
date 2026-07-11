@@ -4966,6 +4966,22 @@ struct Mesh {
     /// on, reuses the identical weld + face-fingerprint-dedup tail as
     /// `arrayFaces`/`mirrorFaces`.
     ///
+    /// DoS guard (code review B1): `numX/numY/numZ` are each UI-clamped by
+    /// `ArrayTool.params()`, but this is a public Mesh method any caller can
+    /// drive directly, and 3 independently-bounded axes still multiply into
+    /// a huge product. `totalSlots` is capped at `MAX_ARRAY_GRID_SLOTS`
+    /// (10,000) — over that, the call is a clean no-op (returns 0) rather
+    /// than building an unbounded number of clones.
+    ///
+    /// Ordering guard (code review S1): every clone — including the
+    /// (0,0,0) slot when `replaceSource` mutates it IN PLACE — reads from
+    /// `origPos`/`origFaceVerts`, a snapshot taken ONCE before the grid
+    /// loop starts. Without this, since (0,0,0) is always visited first,
+    /// later clones would read the ALREADY-transformed source position/
+    /// winding and compound the transform (position) or cancel it out
+    /// (winding, under `invertPolygons`) instead of each being the
+    /// original transformed exactly once.
+    ///
     /// Returns the number of NEW faces inserted (0 ⇒ no grid geometry was
     /// added; note this can be 0 while `replaceSource` still mutated the
     /// originals in place at a 1×1×1 count).
@@ -4988,21 +5004,53 @@ struct Mesh {
         // nothing to replace). 1×1×1 with replaceSource=true still falls
         // through — it transforms the originals in place (null shift).
         if (totalSlots <= 1 && !replaceSource) return 0;
+        // Defense-in-depth DoS cap (review B1): the per-axis Count params are
+        // UI-clamped to a sane max each (see ArrayTool.params()), but this is
+        // a public Mesh method any caller can drive directly, and 3
+        // independently-bounded axes still multiply into a huge product
+        // (e.g. 64×64×64 ≈ 262k). Reject outright rather than silently
+        // reshape the requested grid down to something smaller — the caller
+        // asked for a specific Count X/Y/Z and a partial/rescaled grid would
+        // be a worse surprise than a clean no-op.
+        enum size_t MAX_ARRAY_GRID_SLOTS = 10_000;
+        if (totalSlots > MAX_ARRAY_GRID_SLOTS) return 0;
 
         size_t[] sourceFaces;
         sourceFaces.reserve(selCount);
         foreach (fi, ref f; faces)
             if (mask[fi]) sourceFaces ~= fi;
 
-        // Pivot for scale/rotate: the mask's own vertex centroid, captured
-        // ONCE from the ORIGINAL (pre-mutation) positions.
+        // Pivot for scale/rotate: the mask's own vertex centroid. Captured
+        // ONCE from the ORIGINAL (pre-mutation) positions, alongside a
+        // snapshot of every mask vertex's original position (`origPos`) —
+        // review S1: with `replaceSource` on, the (0,0,0) slot is always
+        // visited FIRST (the grid loop starts at i=j=k=0) and mutates
+        // `vertices[vid]` IN PLACE; every subsequent clone must still read
+        // the PRE-mutation position, not the already-transformed one, or
+        // the transform compounds across clones. `cloneVertex` below is fed
+        // exclusively from `origPos`, never a live `vertices[vid]` read.
+        // Same rationale extends to face WINDING: `origFaceVerts` snapshots
+        // each source face's untouched vertex-id order. Without it, a
+        // replaceSource+invertPolygons(count>1) combo has the same
+        // order-dependency bug as S1 one level up — the (0,0,0) slot
+        // reverses `faces[fi]` IN PLACE, and every later clone that read
+        // `faces[fi]` directly would clone the ALREADY-reversed order and
+        // then reverse it AGAIN, net cancelling back to the original
+        // winding for every clone after the first.
         Vec3 pivot = Vec3(0, 0, 0);
+        Vec3[uint] origPos;
+        uint[][size_t] origFaceVerts;
         {
-            bool[uint] seen;
             size_t n = 0;
-            foreach (fi; sourceFaces)
+            foreach (fi; sourceFaces) {
+                origFaceVerts[fi] = faces[fi].dup;
                 foreach (vid; faces[fi])
-                    if (vid !in seen) { seen[vid] = true; pivot = pivot + vertices[vid]; ++n; }
+                    if (vid !in origPos) {
+                        origPos[vid] = vertices[vid];
+                        pivot = pivot + vertices[vid];
+                        ++n;
+                    }
+            }
             if (n > 0) pivot = pivot * (1.0f / n);
         }
 
@@ -5051,17 +5099,20 @@ struct Mesh {
                         if (!replaceSource) continue;   // untouched original stays as-is
                         // replaceSource: mutate the ORIGINAL verts in place
                         // (shift is always (0,0,0) here), no new verts/faces.
+                        // Reads from `origPos` (the PRE-mutation snapshot),
+                        // never the live `vertices[vid]` — see the S1 fix
+                        // note above the pivot computation.
                         bool[uint] doneV;
                         foreach (fi; sourceFaces) {
-                            foreach (vid; faces[fi])
+                            foreach (vid; origFaceVerts[fi])
                                 if (vid !in doneV) {
                                     doneV[vid] = true;
-                                    vertices[vid] = cloneVertex(vertices[vid], shift, jit);
+                                    vertices[vid] = cloneVertex(origPos[vid], shift, jit);
                                 }
                         }
                         if (invertPolygons)
                             foreach (fi; sourceFaces) {
-                                faces[fi] = faces[fi].dup;
+                                faces[fi] = origFaceVerts[fi].dup;
                                 reverse(faces[fi]);
                             }
                         continue;
@@ -5069,15 +5120,15 @@ struct Mesh {
 
                     uint[uint] vertMap;
                     foreach (fi; sourceFaces) {
-                        foreach (vid; faces[fi]) {
+                        foreach (vid; origFaceVerts[fi]) {
                             if (vid !in vertMap) {
                                 vertMap[vid] = cast(uint)vertices.length;
-                                vertices ~= cloneVertex(vertices[vid], shift, jit);
+                                vertices ~= cloneVertex(origPos[vid], shift, jit);
                             }
                         }
                     }
                     foreach (fi; sourceFaces) {
-                        auto src = faces[fi];
+                        auto src = origFaceVerts[fi];
                         uint[] cloned;
                         cloned.length = src.length;
                         foreach (m, vid; src) cloned[m] = vertMap[vid];

@@ -26,11 +26,11 @@ alias ArrayEditFactory = MeshArrayEdit delegate();
 // interactive tool backed by the new 3-axis GRID kernel
 // (`Mesh.arrayFacesGrid`) — see that method's doc comment in source/mesh.d
 // for the full per-attribute semantics. This tool is grounded strictly in
-// the captured reference toolcard (vibe3d_private/toolcards/poly.array/
-// spec.json + findings.md, task 0355) — 23 attributes across the reference's
-// "Array Generator" + "Clone Effector" panel sections, with their captured
-// LIVE defaults (Count 2/1/2, Offset 1m/1m/1m, Jitter/Scale/Rotate/Between
-// at neutral, Clone Effector all off, Source=Active Meshes).
+// the captured reference toolcard (task 0355's capture notes) — 23
+// attributes across the reference's "Array Generator" + "Clone Effector"
+// panel sections, with their captured LIVE defaults (Count 2/1/2, Offset
+// 1m/1m/1m, Jitter/Scale/Rotate/Between at neutral, Clone Effector all
+// off, Source=Active Meshes).
 //
 // Lifecycle mirrors EdgeExtendTool/EdgeExtrudeTool's template (topology-
 // creating tools own their own undo plumbing, commit ONE before/after
@@ -41,7 +41,7 @@ alias ArrayEditFactory = MeshArrayEdit delegate();
 // (tool.set on) legitimately shows no grid yet, matching every sibling
 // tool's "preview appears on first drag/param-edit" convention.
 //
-// Drag law (captured, findings.md §4): the reference's "Post-Mode" commit
+// Drag law (captured, task 0355's capture notes §4): the reference's "Post-Mode" commit
 // model runs the array generator from the ORIGINAL source and commits on
 // EVERY haul step, rather than accumulating a transform delta on the built
 // preview — this tool follows that "revert-then-re-run-from-baseline" model
@@ -67,16 +67,16 @@ alias ArrayEditFactory = MeshArrayEdit delegate();
 //
 // NOT implemented (captured as doc-only / low-confidence, not guessed):
 //   - Right-click-drag → Count: doc-only, the one live attempt at this
-//     ran against a harness-broken empty selection (findings.md §7.2), so
+//     ran against a harness-broken empty selection (capture notes §7.2), so
 //     it is UNCONFIRMED evidence, not a real capture. RMB is left bound to
 //     the vibe3d-wide "cancel live edit" convention every other interactive
 //     tool in this codebase uses (Clone/LoopSlice/EdgeExtend), rather than
 //     guessing at an unverified count-drag mapping.
 //   - Ctrl-constrain-to-initial-direction: doc-only, not independently
 //     live-confirmed.
-//   - `type` (Automatic/Manual): spec.json flags this "static-only,
-//     UNCONFIRMED live" (confidence: low) — appears in the tool's own
-//     stale cmdhelptools.cfg block but not in either live docked-panel
+//   - `type` (Automatic/Manual): the capture notes flag this "static-only,
+//     UNCONFIRMED live" (confidence: low) — appears in the reference's own
+//     stale tool-help metadata but not in either live docked-panel
 //     screenshot. Left out of params() entirely rather than guessed.
 //   - Source = Specific Mesh / All BG / Random BG / Preset Shape, and the
 //     paired Mesh Item: the enum + item name ARE surfaced as params (panel/
@@ -161,10 +161,16 @@ public:
     // three modes).
 
     override Param[] params() {
+        // Count X/Y/Z: DoS guard (code review B1) — mirrors prim.cube's
+        // segmentsR precedent (`.min(1).max(64).enforceBounds()`). Per-axis
+        // max(64) alone still lets 3 axes multiply to ~262k, so
+        // Mesh.arrayFacesGrid ALSO caps the totalSlots PRODUCT directly
+        // (defense-in-depth — it's a public Mesh method any caller can
+        // drive, not only through this panel/attr path).
         return [
-            Param.int_("numX", "Count X", &numX_, 2).min(1),
-            Param.int_("numY", "Count Y", &numY_, 1).min(1),
-            Param.int_("numZ", "Count Z", &numZ_, 2).min(1),
+            Param.int_("numX", "Count X", &numX_, 2).min(1).max(64).enforceBounds(),
+            Param.int_("numY", "Count Y", &numY_, 1).min(1).max(64).enforceBounds(),
+            Param.int_("numZ", "Count Z", &numZ_, 2).min(1).max(64).enforceBounds(),
             Param.float_("offX", "Offset X", &offX_, 1.0f),
             Param.float_("offY", "Offset Y", &offY_, 1.0f),
             Param.float_("offZ", "Offset Z", &offZ_, 1.0f),
@@ -315,9 +321,10 @@ private:
 
     // Empty face selection ⇒ whole mesh — same convention as mesh.array /
     // mesh.mirror / mesh.smooth. (The captured live harness note about an
-    // empty selection dropping to 0 polygons was flagged by the toolcard
-    // itself as a HARNESS artifact, not a confirmed reference finding —
-    // see findings.md §7.2 — so it is not treated as a spec requirement.)
+    // empty selection dropping to 0 polygons was flagged by the capture
+    // notes themselves as a HARNESS artifact, not a confirmed reference
+    // finding — see task 0355's capture notes §7.2 — so it is not treated
+    // as a spec requirement.)
     bool[] currentMask() {
         bool[] mask = new bool[](mesh.faces.length);
         bool any = false;
