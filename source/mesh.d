@@ -10447,6 +10447,25 @@ struct Mesh {
         return abs(angle - tau) < 1e-3f || angle >= tau;
     }
 
+    /// True when a revolve is treated as a fully CLOSED, WRAPPING 360°
+    /// sweep — i.e. `revolveSweepClosed(angle)` AND no axial spiral
+    /// `offset`. A nonzero `offset` moves each successive ring along the
+    /// axis, so even an angle-closed (>=360°) sweep must NOT wrap its last
+    /// ring back onto ring 0 (they sit at different heights along the
+    /// axis) — doing so produced a spurious self-intersecting closing band
+    /// for any spiral/helix (task 0326 review finding S1: the advertised
+    /// spring/telephone-cord shape at End Angle > 360° + Offset > 0 was
+    /// broken). This is the single decision point `revolveProfileEx` uses
+    /// for BOTH the wrap-bridge/stepAngle choice and the cap-eligibility
+    /// gate, and the ONLY decision point the tool-layer Count-semantics
+    /// ring-count translation (`RadialSweepTool.toKernelParams`) should use
+    /// too — single source of truth so kernel and tool can never disagree
+    /// about what counts as "closed".
+    static bool revolveSweepClosedWithOffset(float angle, float offset) pure nothrow @nogc @safe {
+        import std.math : abs;
+        return revolveSweepClosed(angle) && abs(offset) <= 1e-9f;
+    }
+
     /// Extended parameter set for `revolveProfileEx` (task 0326, additive —
     /// see that function's doc comment). Every field defaults to exactly
     /// what the original `revolveProfile` always did, so `RevolveParams.init`
@@ -10459,7 +10478,7 @@ struct Mesh {
                                            // param (NOT the reference tool's
                                            // "Count" UI convention; translate
                                            // at the call site via
-                                           // `revolveSweepClosed`).
+                                           // `revolveSweepClosedWithOffset`).
         Vec3  axis       = Vec3(0, 1, 0); // free rotation axis DIRECTION —
                                            // need not be unit length (this
                                            // function normalises it); a
@@ -10543,7 +10562,9 @@ struct Mesh {
     /// (through `params.center`, direction `params.axis`), then translated
     /// `params.offset*k` along the (normalised) axis — the spiral pitch.
     /// `stepAngle` follows `revolveProfile`'s original closed/open split
-    /// (see `revolveSweepClosed`). Ring 0 REUSES the original profile
+    /// (see `revolveSweepClosedWithOffset` — a nonzero `offset` forces the
+    /// OPEN split even at a >=360° angle span, so a spiral never wraps its
+    /// last ring back onto ring 0). Ring 0 REUSES the original profile
     /// vertex indices (no new vertices, no rotation applied) ONLY when
     /// `startAngle` is exactly 0 — a nonzero Start Angle rotates ring 0 away
     /// from the literal selection, so it can no longer reuse those indices.
@@ -10557,10 +10578,14 @@ struct Mesh {
     /// matches the measured reference behaviour on a degenerate 2-point
     /// profile: capping added zero extra geometry, see
     /// doc/tasks/*/radial_sweep toolcard findings §5). Capping is also a
-    /// no-op on a CLOSED 360° sweep (`revolveSweepClosed(angle)`) since
-    /// there is no exposed end to close — matches the reference help text
-    /// ("Cap options are only useful when the start/end angles do not
-    /// result in a complete rotation"). Cap winding direction (outward vs.
+    /// no-op on a fully CLOSED, WRAPPING 360° sweep
+    /// (`revolveSweepClosedWithOffset(angle, offset)`) since there is no
+    /// exposed end to close — matches the reference help text ("Cap
+    /// options are only useful when the start/end angles do not result in
+    /// a complete rotation"). A nonzero `offset` (spiral) makes caps
+    /// available again even at a >=360° angle span, since the start/end
+    /// rings then sit at different heights and are genuinely exposed. Cap
+    /// winding direction (outward vs.
     /// inward) is NOT verified against the reference (Invert-Polygons
     /// winding parity was explicitly flagged un-captured in the toolcard) —
     /// cap0 uses the ring's vertex order reversed, cap1 uses it as-is, a
@@ -10583,7 +10608,12 @@ struct Mesh {
         if (axisLenSq < 1e-12f) return 0;
         const Vec3 axisVec = normalize(params.axis);
 
-        immutable bool  sweepClosed = revolveSweepClosed(params.angle);
+        // revolveSweepClosedWithOffset (NOT the bare angle-only
+        // revolveSweepClosed) — a nonzero spiral offset must never wrap the
+        // last ring back onto ring 0, even at a >=360° angle span (task
+        // 0326 review finding S1). This one flag drives stepAngle, the
+        // wrap-bridge decision below, AND the cap-eligibility gate.
+        immutable bool  sweepClosed = revolveSweepClosedWithOffset(params.angle, params.offset);
         immutable float stepAngle   = sweepClosed
             ? params.angle / cast(float)params.count
             : params.angle / cast(float)(params.count - 1);
@@ -20796,6 +20826,53 @@ unittest { // revolveProfile (c): guard rejections — all must return 0, mesh u
     // Vertex count must also be untouched: only the 3 verts we added.
     assert(m.vertices.length == 3,
         "guards: vertices.length must remain 3, got " ~ m.vertices.length.to!string);
+}
+
+unittest { // revolveProfileEx (d): spiral offset at a >=360deg angle span
+           // must NOT wrap the last ring onto ring 0 (task 0326 review S1)
+    import std.math : PI, abs;
+    import std.conv : to;
+
+    Mesh m;
+    m.addVertex(Vec3(1, 0, 0));  // v0
+    m.addVertex(Vec3(2, 0, 0));  // v1
+
+    immutable float tau = cast(float)(2 * PI);
+
+    Mesh.RevolveParams p;
+    p.count  = 5;
+    p.axis   = Vec3(0, 1, 0);
+    p.center = Vec3(0, 0, 0);
+    p.angle  = tau;      // angle-closed span on its own...
+    p.offset = 0.5f;     // ...but a nonzero spiral offset must force OPEN.
+
+    size_t vertsBefore = m.vertices.length;
+    size_t facesBefore = m.faces.length;
+    size_t inserted = m.revolveProfileEx([0u, 1u], false, p);
+
+    // OPEN topology: count-1 bridges (4), NOT count (5) — a wrap bridge
+    // would connect ring[4] (height 4*offset=2.0) back onto ring[0]
+    // (height 0), a spurious self-intersecting closing band.
+    assert(inserted == 4,
+        "spiral offset at >=360deg: expected 4 faces (no wrap band), got "
+        ~ inserted.to!string);
+    assert(m.faces.length - facesBefore == 4,
+        "spiral offset at >=360deg: expected +4 faces, got +"
+        ~ (m.faces.length - facesBefore).to!string);
+    // ring0 (reused, 0 new) + 4 new rings x 2 verts = 8 new verts.
+    assert(m.vertices.length - vertsBefore == 8,
+        "spiral offset at >=360deg: expected +8 verts, got +"
+        ~ (m.vertices.length - vertsBefore).to!string);
+
+    // Last ring (k=4) landed a full turn around (XZ back near the start)
+    // but risen 4*offset=2.0 along Y — proves the sweep kept climbing
+    // instead of folding back onto ring 0's height.
+    Vec3 lastRingV0 = m.vertices[$ - 2];
+    assert(abs(lastRingV0.y - 2.0f) < 1e-3f,
+        "spiral offset: last ring expected y~2.0, got " ~ lastRingV0.y.to!string);
+    assert(abs(lastRingV0.x - 1.0f) < 1e-2f && abs(lastRingV0.z) < 1e-2f,
+        "spiral offset: last ring expected XZ~(1,0) after a full turn, got ("
+        ~ lastRingV0.x.to!string ~ "," ~ lastRingV0.z.to!string ~ ")");
 }
 
 unittest { // extractSelectedEdgeChain: open chain, closed cycle, branching + multi-component rejections, empty

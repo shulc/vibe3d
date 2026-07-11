@@ -2701,15 +2701,19 @@ void main(string[] args) {
     // Generator-preview architecture identical to mesh.mirrorTool above
     // (own preview mesh, commits once at deactivate()); reuses the same
     // generic bevelEditFactory/MeshBevelEdit snapshot-diff undo path.
-    reg.toolFactories["mesh.sweepTool"] = () {
+    // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
+    // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
+    // Extrude port, the natural claimant of the bare "sweep" name since it
+    // shares the same `Mesh.revolveProfile`/`revolveProfileEx` kernel.
+    reg.toolFactories["mesh.radialSweepTool"] = () {
         auto t = new RadialSweepTool(() => &mesh(), &gpu, &editMode, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
-    reg.commandFactories["mesh.sweepTool"] = () => cast(Command)
+    reg.commandFactories["mesh.radialSweepTool"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
-                                "mesh.sweepTool", reg.toolFactories["mesh.sweepTool"]);
+                                "mesh.radialSweepTool", reg.toolFactories["mesh.radialSweepTool"]);
 
     // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
     // mesh.mirrorTool block above: same generic MeshBevelEdit/bevelEditFactory

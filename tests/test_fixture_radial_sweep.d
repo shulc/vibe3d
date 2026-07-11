@@ -198,3 +198,93 @@ unittest {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// B1 regression (task 0326 review — DoS): `toKernelParams` must clamp
+// `sides` into [1, MAX_SWEEP_SIDES] BEFORE it ever reaches
+// Mesh.RevolveParams.count. Pure-D, no HTTP -- defense-in-depth check for
+// any caller reaching `toKernelParams` outside the Param-write path (which
+// has its own PRIMARY clamp, exercised end-to-end by the HTTP-based test
+// below).
+// ---------------------------------------------------------------------------
+unittest {
+    RadialSweepParams huge;
+    huge.sides        = 100_000_000;
+    huge.endAngleDeg  = 180.0f;   // open sweep -> ringCount = sidesClamped+1
+    auto kpHuge = toKernelParams(huge);
+    assert(kpHuge.count == MAX_SWEEP_SIDES + 1,
+        "toKernelParams: huge sides must clamp to MAX_SWEEP_SIDES+1 (open sweep), got "
+        ~ kpHuge.count.to!string);
+
+    RadialSweepParams negative;
+    negative.sides = -5;   // default endAngleDeg=360 -> closed sweep -> no +1
+    auto kpNeg = toKernelParams(negative);
+    assert(kpNeg.count == 1,
+        "toKernelParams: negative/zero sides must clamp to 1 (closed sweep), got "
+        ~ kpNeg.count.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// B1 regression, end-to-end over HTTP: the ACTUAL vulnerable path was the
+// headless `tool.attr <tool> sides <huge>` write, which (before this fix)
+// wrote the unclamped value straight into `params_.sides`, and
+// `ToolAttrCommand.apply()` unconditionally calls `onParamChanged` +
+// `evaluate()` right after ANY attr write (regardless of session/interactive
+// state) -- so `rebuildRadialSweepPreview` -> `revolveProfileEx` ran
+// SYNCHRONOUSLY on the HTTP thread with an unbounded ring count (~1.6GB
+// alloc at 1e8, hanging the editor). This test's own completion within the
+// normal test timeout, plus the STORED value read back via the `?` query
+// actually being clamped (not just the kernel's translated count), is the
+// "clamped, not hung" proof.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json    : JSONValue, parseJSON;
+    import std.net.curl : get, post;
+
+    enum string BASE = "http://localhost:8080";
+    enum string TOOL = "mesh.radialSweepTool";
+
+    JSONValue postJson(string path, string body_) {
+        return parseJSON(cast(string) post(BASE ~ path, body_));
+    }
+    JSONValue getJson(string path) {
+        return parseJSON(cast(string) get(BASE ~ path));
+    }
+    void httpCmd(string line) {
+        auto r = postJson("/api/command", line);
+        assert(r["status"].str == "ok" || r["status"].str == "success",
+            "/api/command '" ~ line ~ "' failed: " ~ r.toString);
+    }
+    long qi(string attr) {
+        auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " " ~ attr ~ " ?");
+        assert(r["status"].str == "ok", "query " ~ attr ~ " failed: " ~ r.toString);
+        return r["value"].integer;
+    }
+
+    // Reset cube, select the same interior edge {1,2} used by the primary
+    // golden case above (edge index 2 on the default cube: vert1=
+    // (0.5,-0.5,-0.5), vert2=(0.5,0.5,-0.5)).
+    postJson("/api/reset", "");
+    postJson("/api/select", `{"mode":"edges","indices":[2]}`);
+
+    httpCmd("tool.set " ~ TOOL);
+    httpCmd("tool.attr " ~ TOOL ~ " sides 100000000");
+
+    long stored = qi("sides");
+    assert(stored == MAX_SWEEP_SIDES,
+        "tool.attr sides 100000000: expected the STORED value clamped to "
+        ~ MAX_SWEEP_SIDES.to!string ~ ", got " ~ stored.to!string);
+
+    httpCmd("tool.set " ~ TOOL ~ " off");
+
+    // Default Start/End Angle (0/360) -> closed sweep -> ringCount ==
+    // sidesClamped exactly (no +1): bounded, sane topology -- not the
+    // multi-gigabyte allocation the unclamped huge value would have
+    // attempted.
+    auto m = getJson("/api/model");
+    long wantFaces = 6 + MAX_SWEEP_SIDES;   // 6 base cube faces + one band/ring
+    assert(m["faceCount"].integer == wantFaces,
+        "clamped huge Count: expected " ~ wantFaces.to!string
+        ~ " faces (6 base + " ~ MAX_SWEEP_SIDES.to!string ~ " sweep bands), got "
+        ~ m["faceCount"].integer.to!string);
+}

@@ -105,17 +105,45 @@ struct RadialSweepParams {
     //   flip   = false   (reference "Invert Polygons")
 }
 
+/// Upper bound on `RadialSweepParams.sides` (reference "Count"). Enforced
+/// TWICE (task 0326 review finding B1 — Count was previously unbounded):
+///   1. The `sides` Param itself opts into `.max(MAX_SWEEP_SIDES)
+///      .enforceBounds()` (see `params()` below), so an out-of-range
+///      headless `tool.attr ... sides <n>` write is clamped BEFORE it ever
+///      reaches `onParamChanged`/`evaluate` — this is the PRIMARY defense,
+///      since `evaluate()` runs `rebuildRadialSweepPreview` SYNCHRONOUSLY
+///      on the UI/HTTP thread.
+///   2. `toKernelParams` (below) re-clamps defensively: `revolveProfileEx`
+///      is a shared PUBLIC kernel method, so this belt-and-braces clamp
+///      protects any future caller that reaches it through a path other
+///      than the Param write above.
+/// Without either, `tool.attr ... sides 100000000` allocated ~1.6GB
+/// synchronously and hung the editor.
+enum int MAX_SWEEP_SIDES = 1024;
+
 /// Translate `RadialSweepParams` (reference "Count" convention + every
 /// other panel field) into `Mesh.RevolveParams` (vibe3d's ring-count
-/// convention). The ONLY nontrivial step is the Count-semantics fix
-/// (task 0326 measured gap, see `sides`'s doc comment): everything else is
-/// a direct field copy / degrees-to-radians conversion.
+/// convention). The two nontrivial steps: the Count-semantics fix (task
+/// 0326 measured gap, see `sides`'s doc comment) and the `sides` DoS clamp
+/// (see `MAX_SWEEP_SIDES`) — everything else is a direct field copy /
+/// degrees-to-radians conversion.
 Mesh.RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @safe {
     enum float D2R = cast(float)(PI / 180.0);
     Mesh.RevolveParams kp;
     immutable float angleSpanRad = (p.endAngleDeg - p.startAngleDeg) * D2R;
-    immutable bool  closed       = Mesh.revolveSweepClosed(angleSpanRad);
-    kp.count      = closed ? p.sides : p.sides + 1;
+    // revolveSweepClosedWithOffset (NOT the bare angle-only
+    // revolveSweepClosed): a nonzero spiral `offset` must be treated as an
+    // OPEN sweep even at a >=360° angle span, or the ring-count
+    // translation below disagrees with revolveProfileEx's own OPEN
+    // wrap-bridge decision (task 0326 review finding S1) — same single
+    // source of truth the kernel itself uses.
+    immutable bool  closed = Mesh.revolveSweepClosedWithOffset(angleSpanRad, p.offset);
+
+    int sidesClamped = p.sides;
+    if (sidesClamped < 1) sidesClamped = 1;
+    else if (sidesClamped > MAX_SWEEP_SIDES) sidesClamped = MAX_SWEEP_SIDES;
+
+    kp.count      = closed ? sidesClamped : sidesClamped + 1;
     kp.axis       = p.axis;
     kp.center     = p.center;
     kp.angle      = angleSpanRad;
@@ -321,7 +349,7 @@ public:
     // mesh, since ToolHeadlessCommand never calls activate() on its
     // throwaway instance — mirrors MirrorTool's `buildMaskFromSelection`
     // fold #4). Matches MeshSweep.evaluate()'s extraction rule exactly
-    // (commands/mesh/sweep.d) so headless `mesh.sweepTool` and the
+    // (commands/mesh/sweep.d) so headless `mesh.radialSweepTool` and the
     // pre-existing `mesh.sweep` command agree on what counts as a profile.
     private bool captureProfile(Mesh* m, out uint[] profile, out bool profileClosed,
                                 out uint profileFaceIdx) {
@@ -346,7 +374,8 @@ public:
 
     override Param[] params() {
         return [
-            Param.int_("sides", "Count", &params_.sides, 24).min(1),
+            Param.int_("sides", "Count", &params_.sides, 24)
+                .min(1).max(MAX_SWEEP_SIDES).enforceBounds(),
             Param.intEnum_("axisPreset", "Axis", &params_.axisPreset,
                 [IntEnumEntry(0, "x",      "X"),
                  IntEnumEntry(1, "y",      "Y"),
