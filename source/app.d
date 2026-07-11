@@ -62,6 +62,7 @@ import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
+import tools.radial_array_tool : RadialArrayTool;
 import tools.poly_bevel : PolyBevelTool;
 import tools.poly_inset_tool : PolyInsetTool;
 import tools.magnet : MagnetTool;
@@ -143,6 +144,7 @@ import commands.mesh.clone_       : MeshClone;
 import commands.mesh.clone_edit   : MeshCloneEdit;
 import commands.mesh.array_edit   : MeshArrayEdit;
 import commands.mesh.radial_array_ : MeshRadialArray;
+import commands.mesh.radial_array_edit : MeshRadialArrayEdit;
 import commands.mesh.sweep         : MeshSweep;
 import commands.mesh.vert_merge        : MeshVertMerge;
 import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
@@ -2555,6 +2557,12 @@ void main(string[] args) {
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto polyExtrudeEditFactory = () => new MeshFaceExtrudeEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    // Radial Array's typed edit factory (interactive-tool consumer). The
+    // one-shot mesh.radial_array command undoes via its own MeshSnapshot;
+    // this factory exists so RadialArrayTool can bind it, mirroring
+    // polyExtrudeEditFactory / edgeExtendEditFactory.
+    auto radialArrayEditFactory = () => new MeshRadialArrayEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -2867,6 +2875,20 @@ void main(string[] args) {
         auto t = new PolyExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, polyExtrudeEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Radial Array — interactive (angle-cube haul → End Angle; axis-arrow haul
+    // → Offset; off-handle click → reposition Center) + headless (tool.attr
+    // mesh.radialArrayTool count/axis/center/angle/offset/weld; tool.doApply).
+    // Reuses the shared Mesh.radialArrayFaces kernel (same-mesh clone
+    // insertion, no new layers) already exercised by the one-shot
+    // mesh.radial_array command. Topology-creating tool: own typed edit
+    // factory (MeshRadialArrayEdit, snapshot-only undo).
+    reg.toolFactories["mesh.radialArrayTool"] = () {
+        auto t = new RadialArrayTool(() => &mesh(), &gpu, &editMode, litShader,
+                                     &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, radialArrayEditFactory);
         return cast(Tool)t;
     };
 

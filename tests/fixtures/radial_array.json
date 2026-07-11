@@ -1,0 +1,17 @@
+{
+  "name": "radial_array_parity_case1",
+  "source": "Frozen reference-editor capture (toolcards/radial_array/capture/parity_case1_{before,after}.json in the private task worktree, task 0356, 2026-07-11). NOT replayed against any external engine at test time — the counts and step law below are the only facts pulled from that capture; vertex ORDER is vibe3d-native (the reference's internal insertion order is not reproduced).",
+  "description": "8v/6f unit cube, one face selected (the +Y top face, 4 verts at y=0.5). Params: Count=4, Axis=Y, Center=origin, End Angle=270deg (Start implicitly 0), Offset=0.3 (TOTAL span across the array, reference semantics), Weld=0 (merge off), Replace Source=off (kept). Measured result: +12 verts / +3 faces — Count=4 means 4 total array elements, the ORIGINAL top face IS the 0-degree element (replace=false), and 3 new clones fill the 90/180/270-degree positions. The 3 new clones' Y values step by +0.1 each (0.6/0.7/0.8), NOT a flat +0.3 per clone: offset/(count-1) = 0.3/3 = 0.1 — a TOTAL span distributed evenly across the (count-1) point-to-point intervals. This is the corrected offset law RadialArrayTool implements (extraShift = axisUnit * offset/(count-1)); the original pre-capture guess (offset * axisUnit per clone) was wrong.",
+  "params": {
+    "count": 4,
+    "axis": "Y",
+    "center": [0, 0, 0],
+    "angle_deg": 270,
+    "offset": 0.3,
+    "weld": 0.0
+  },
+  "before": { "vertexCount": 8, "faceCount": 6 },
+  "after":  { "vertexCount": 20, "faceCount": 9 },
+  "yStepsPresent": [0.6, 0.7, 0.8],
+  "originalTopFaceY": 0.5
+}

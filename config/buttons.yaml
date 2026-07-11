@@ -185,6 +185,8 @@ panels:
               action: { kind: tool, id: mesh.arrayTool } }
           - { label: "Radial Array",
               action: { kind: command, id: mesh.radial_array } }
+          - { label: "Radial Array Tool",
+              action: { kind: tool, id: mesh.radialArrayTool } }
           - { label: "Radial Sweep",
               action: { kind: command, id: mesh.sweep } }
           - { label: "Radial Sweep Tool",

@@ -267,3 +267,54 @@ unittest {
         "verts: expected 32, got " ~ m["vertexCount"].integer.to!string);
     assert(m["faceCount"].integer == 24);
 }
+
+// ---------------------------------------------------------------------------
+// Reference-editor parity (task 0356). Frozen capture:
+// toolcards/radial_array/capture/parity_case1_{before,after}.json (private
+// task worktree) — replayed at the D-level in the tool's own units in
+// tests/test_fixture_radial_array.d (tests/fixtures/radial_array.json); this
+// is the SAME case expressed directly in mesh.radial_array's native units
+// (radians + per-step translate), pinning the one-shot command independent
+// of the interactive tool.
+//
+// 8v/6f cube, top face selected, count=4/axis=Y/total_angle=270deg/
+// extra_step_translate=(0, offset/(count-1), 0)=(0,0.1,0), weld=0. Measured
+// result: +12 verts/+3 faces (the original top face IS the 0-degree
+// element — Replace Source is off in the reference by default — and 3 new
+// clones fill the 90/180/270-degree positions). Each new copy's Y offset
+// steps by +0.1 (offset/(count-1) = 0.3/3), NOT a flat +0.3 per clone —
+// this pins the corrected law documented on
+// toolcards/radial_array/spec.json's `offset` attribute.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    postSelect("polygons", [4]);   // top face
+
+    postCommand(`{"id":"mesh.radial_array","params":{
+        "count":4,"axis":"Y","center":[0,0,0],
+        "total_angle":4.712389,
+        "extra_step_translate":[0,0.1,0],"weld":0
+    }}`);   // total_angle = 270deg in radians
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 20,
+        "verts: expected 20, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 9,
+        "faces: expected 9, got " ~ m["faceCount"].integer.to!string);
+
+    // Y-step law: 3 new copies land at y=0.6/0.7/0.8 (4 verts each — one
+    // ring per clone), not a flat +0.3 (the naive pre-capture guess).
+    foreach (yWant; [0.6, 0.7, 0.8]) {
+        int seen = 0;
+        foreach (v; m["vertices"].array)
+            if (approxEq(v.array[1].floating, yWant)) ++seen;
+        assert(seen == 4,
+            "expected 4 verts at y=" ~ yWant.to!string ~ ", got " ~ seen.to!string);
+    }
+    // Original top face (y=0.5) survives untouched (replace=false semantics).
+    int seenOrig = 0;
+    foreach (v; m["vertices"].array)
+        if (approxEq(v.array[1].floating, 0.5)) ++seenOrig;
+    assert(seenOrig == 4, "original top-face verts should survive at y=0.5");
+}
