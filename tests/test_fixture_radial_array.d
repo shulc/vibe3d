@@ -190,3 +190,47 @@ unittest { // ToolCommandParity
         "ToolCommandParity: command " ~ cmdFaces.to!string ~
         " faces vs tool " ~ toolFaces.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// TEST 4: `count` DoS clamp (review fix). A scripted `tool.attr ... count
+// <huge>` must NOT synchronously allocate `count * selectedFaceCount`
+// verts/faces (an easy OOM/hang) — the Param's `.max(256).enforceBounds()`
+// clamps the STORED field itself (not just the derived geometry), and
+// Mesh.radialArrayFaces clamps internally too as a defense-in-depth backstop
+// for any caller that reaches the kernel a different way (e.g. the one-shot
+// mesh.radial_array command). Verifies BOTH: the read-back `?` query sees
+// the clamped stored value, and the applied geometry matches count=256
+// exactly (not a partial/degenerate result and not the raw huge request).
+// ---------------------------------------------------------------------------
+
+unittest { // CountDosClamp
+    resetCube();
+    postSelect("polygons", [4]);   // top face
+
+    postCommand("tool.set mesh.radialArrayTool on");
+    postCommand("tool.attr mesh.radialArrayTool count 100000000");
+
+    // Stored field is clamped by the Param itself, not just the eventual
+    // kernel output — a write-then-query round-trip proves that.
+    auto q = parseJSON(post("http://localhost:8080/api/command",
+        "tool.attr mesh.radialArrayTool count ?"));
+    assert(q["status"].str == "ok",
+        "count query failed: " ~ q.toString);
+    assert(q["value"].integer == 256,
+        "count should clamp to 256, got " ~ q["value"].toString);
+
+    // A full 360-degree apply at the clamped count must complete promptly
+    // (the point of the fix — no hang/OOM) and produce EXACTLY the
+    // count=256 topology, not a partial result from the unclamped request:
+    // 6 original faces (unchanged count) + (256-1) new one-face clones;
+    // 8 original verts + (256-1)*4 new (unwelded) clone verts.
+    postCommand("tool.attr mesh.radialArrayTool angle 360");
+    postCommand("tool.doApply");
+    auto m = getModel();
+    assert(m["faces"].array.length == 6 + 255,
+        "clamped apply: expected " ~ (6 + 255).to!string ~
+        " faces, got " ~ m["faces"].array.length.to!string);
+    assert(m["vertices"].array.length == 8 + 255 * 4,
+        "clamped apply: expected " ~ (8 + 255 * 4).to!string ~
+        " verts, got " ~ m["vertices"].array.length.to!string);
+}

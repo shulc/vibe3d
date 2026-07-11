@@ -185,7 +185,16 @@ public:
 
     override Param[] params() {
         return [
-            Param.int_  ("count",  "Count",           &count_,  24).min(1),
+            // `.max(256).enforceBounds()` matches the project convention for
+            // any generator-tool Count/Sides Param whose evaluate() drives an
+            // O(count) mesh-allocating kernel (sphere/cylinder/cone/capsule's
+            // sides/segments) — `.min()`/`.max()` alone are UI-only hints; a
+            // raw `tool.attr mesh.radialArrayTool count 100000000` over HTTP
+            // writes straight through injectParamsInto without
+            // `.enforceBounds()`. Mesh.radialArrayFaces also clamps
+            // internally (defense-in-depth for the shared kernel — see its
+            // doc comment) so this bound and that one agree at 256.
+            Param.int_  ("count",  "Count",           &count_,  24).min(1).max(256).enforceBounds(),
             Param.enum_ ("axis",   "Axis",             &axis_,
                          [["X","X"], ["Y","Y"], ["Z","Z"]], "Y"),
             Param.vec3_ ("center", "Center",           &center_, Vec3(0, 0, 0)),

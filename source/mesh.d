@@ -4638,10 +4638,22 @@ struct Mesh {
     /// adjacent copies and drops duplicate faces — primarily useful
     /// for closed 360° rings where the first and last steps abut.
     ///
+    /// `count` is clamped to `MAX_RADIAL_ARRAY_COUNT` internally — this is
+    /// the durable safety net for BOTH callers that reach this shared
+    /// kernel (the one-shot `mesh.radial_array` command and the
+    /// interactive `mesh.radialArrayTool`): an unbounded `count` (e.g. a
+    /// scripted `tool.attr ... count 100000000`) would otherwise allocate
+    /// `count * selectedFaceCount` new faces/verts synchronously — an easy
+    /// DoS/OOM. UI-level Param hints (`.max().enforceBounds()`) are a
+    /// second, shallower line of defense that keeps the common interactive
+    /// path from ever reaching this clamp in practice.
+    ///
     /// Returns the number of new faces inserted.
     size_t radialArrayFaces(in bool[] mask, int count, char axis, Vec3 center,
                             float totalAngle, Vec3 extraShift, float weld) {
         import math : mulMV, pivotRotationMatrix;
+        enum int MAX_RADIAL_ARRAY_COUNT = 256;
+        if (count > MAX_RADIAL_ARRAY_COUNT) count = MAX_RADIAL_ARRAY_COUNT;
         if (mask.length != faces.length) return 0;
         if (count <= 1) return 0;
         if (axis != 'X' && axis != 'Y' && axis != 'Z') return 0;
