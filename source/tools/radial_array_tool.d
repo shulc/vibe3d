@@ -31,7 +31,7 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 //
 // The reference behavior is a two-stage generator+effector combo (a helix
 // path generator driving a clone effector) — see
-// toolcards/radial_array/spec.json for the captured attribute surface and
+// the captured spec for the attribute surface and
 // defaults. vibe3d already has the matching kernel
 // (`Mesh.radialArrayFaces`, shared verbatim with the one-shot
 // `mesh.radial_array` command) and its own same-mesh clone-insertion
@@ -39,7 +39,7 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 // kernel or structural rework, just an interactive session wrapped around
 // the existing kernel.
 //
-// Params (captured defaults, see spec.json's attributes[]):
+// Params (captured defaults):
 //   count  (int)    — 24. Total array elements, including the source.
 //   axis   (enum)   — Y. Principal axis only (X/Y/Z); the reference's
 //                     arbitrary-axis-vector handles (SDK 100/101) have no
@@ -53,7 +53,7 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 //   angle  (float)  — 0 degrees. "End Angle"; the reference also exposes a
 //                     Start Angle, but vibe3d's kernel only takes one
 //                     total-sweep angle (Start implicitly 0) — documented
-//                     gap, see spec.json missing_options.
+//                     gap (see the captured missing-options list).
 //   offset (float)  — 0. TOTAL span across the array (reference "Offset"
 //                     semantics, MEASURED from the frozen parity capture —
 //                     see below), not a fixed per-clone step.
@@ -61,14 +61,14 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 //                     Merge-Vertices-off default; >0 folds coincident verts
 //                     the same way the one-shot command's `weld` does.
 //
-// Offset law (the corrected finding from the frozen capture,
-// toolcards/radial_array/capture/parity_case1_{before,after}.json):
+// Offset law (the corrected finding from the frozen capture's
+// before/after parity case):
 // `Offset` is a TOTAL span divided evenly across the (count-1) point-to-
 // point intervals, NOT a fixed step multiplied by clone index. This tool
 // converts it once per rebuild into the per-step translate the kernel
 // actually wants: `extraShift = axisUnit * (offset / (count-1))`.
 //
-// Gizmo-haul surface: the reference's own SDK handle map (spec.json
+// Gizmo-haul surface: the reference's own SDK handle map (the capture notes
 // handle_map) declares handles ONLY for the axis vector (100/101, out of
 // scope above) and the Start/End Angle ring (103/104, "a blue cube handle"
 // per the reference help text) — Count and Offset have NO reference
@@ -88,7 +88,7 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 // click-to-place tool in this codebase uses.
 //
 // Pixel-level handle geometry is not calibrated against the reference
-// (spec.json's own handle_map note flags this as an explicit TODO, out of
+// (the capture's handle_map note flags this as an explicit TODO, out of
 // scope for a Stage-0 spec-extract) — the handles here are functional
 // (world-anchored, screen-scaled, correctly hit-tested) but not a pixel
 // trace of the reference's rendering.
@@ -128,7 +128,7 @@ private:
     CommandHistory          history;
     RadialArrayEditFactory  factory;
 
-    // Parameters — captured defaults (toolcards/radial_array/spec.json).
+    // Parameters — captured defaults (see the captured spec).
     int    count_  = 24;
     string axis_   = "Y";
     Vec3   center_ = Vec3(0, 0, 0);

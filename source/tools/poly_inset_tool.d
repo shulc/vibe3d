@@ -27,7 +27,7 @@ alias PolyInsetEditFactory = MeshBevelEdit delegate();
 // PolyInsetTool — interactive Polygon Inset (factory id `mesh.polyInsetTool`,
 // task 0359 promotion of the one-shot `mesh.poly_inset` command).
 //
-// Grounded in the captured toolcard (toolcards/inset/ in the private spec
+// Grounded in the captured toolcard (in the private spec
 // tree — not reproduced here beyond the geometry/behavior facts baked into
 // mesh.insetFacesByMask):
 //   - ONE attribute (`inset`, world units, default 0.0).
@@ -39,7 +39,7 @@ alias PolyInsetEditFactory = MeshBevelEdit delegate();
 //     ANYWHERE over the viewport (while the tool is active, outside camera-nav
 //     modifiers) drives the sole `inset` value: a generic, undecorated
 //     "numeric haul" (the same un-rigged mechanism poly.bevel's Shift/Inset
-//     rails and poly.smshift's Shift use, just without their extra arrow
+//     rails and the smooth-shift tool's Shift use, just without their extra arrow
 //     graphic — see toolcard `gestures[1]`).
 //
 // Drag law (NOT captured — flagged as an open TODO in the toolcard's

@@ -90,7 +90,7 @@ private:
     // Params — captured defaults (task 0358 toolcard, live panel reads):
     // shift=0, scale=1.0 (100%), maxAngle=89.5° (the tool's OWN factory
     // default, confirmed by two independent clean live panel renders — NOT
-    // the 1.572542 rad/≈90.115° value, which is presets.cfg's Thicken-preset
+    // the 1.572542 rad/≈90.115° value, which is the reference's Thicken preset
     // OVERRIDE applied only when entered via the Thicken button; see
     // mesh.thickenTool in config/tool_presets.yaml), thicken=off,
     // sharp=unchecked/false (a checkbox, confirmed live — an earlier float

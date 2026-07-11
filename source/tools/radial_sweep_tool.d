@@ -29,7 +29,7 @@ version (unittest) import std.conv : to;
 // (rebuilt every param change / handle drag from a base snapshot + the
 // captured profile), committed once at deactivate().
 //
-// Captured attrs (toolcards/radial_sweep/spec.json, task 0326) implemented
+// Captured attrs (task-0326 capture notes) implemented
 // here: Count (`sides`, translated per the measured Count-semantics gap —
 // see `toKernelParams`), Axis (free 3D vector + X/Y/Z/Custom quick-set,
 // draggable axis-line handles), Center, Start/End Angle (draggable angle

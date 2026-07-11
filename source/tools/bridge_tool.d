@@ -175,7 +175,7 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // deactivate() via the generic MeshBevelEdit snapshot-diff undo path.
 //
 // No gizmo/handle (task 0357 toolcard: the reference tool is ACTR-class,
-// same family as edge.slide/poly.sweep — a click-drag single-numeric-value
+// same family as edge.slide/sweep — a click-drag single-numeric-value
 // generator, not a T/R/S transform-gizmo tool; the captured viewport
 // screenshot shows no handle drawn on activation). The boundary selection
 // (2 polygons, or 2 disjoint closed edge cycles) is picked BEFORE
