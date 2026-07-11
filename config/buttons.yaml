@@ -167,9 +167,9 @@ panels:
       - title: Align
         buttons:
           - { label: "Radial Align",
-              action: { kind: command, id: mesh.radial_align } }
+              action: { kind: tool, id: xfrm.radialAlignTool } }
           - { label: "Linear Align",
-              action: { kind: command, id: mesh.linear_align } }
+              action: { kind: tool, id: xfrm.linearAlignTool } }
   # Duplicate palette
   - title: Duplicate
     items:

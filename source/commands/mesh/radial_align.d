@@ -10,16 +10,20 @@ import viewcache;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
+import tools.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
+                              MAX_ALIGN_SIDES;
 
-import std.math : sqrt;
-
-/// Project selected verts onto a sphere centred at their centroid
-/// with radius = mean distance from centroid. Each vert keeps its
-/// direction from centroid but its distance is rescaled to the
-/// average. This is the spherical case of a radial-align tool
-/// (a fuller tool could also support cylinder mode + interactive drag
-/// handles; spherical is the most common use and the simplest
-/// well-defined one-shot command).
+/// Distribute a selected vertex CHAIN at equal angular slots around a
+/// circle (task 0361 — replaces the previous sphere-projection algorithm,
+/// which did not match the reference "Radial Align" tool: the reference
+/// has NO cylinder/sphere mode, only planar `circle`/`nside`). See
+/// `tools/align_kernels.d`'s module doc comment for the full captured
+/// law: center = mean chain position, radius = mean distance from
+/// center, N points at equal `360/N`-degree slots in chain order.
+///
+/// This one-shot Command has no falloff plumbing (that lives in the
+/// interactive `xfrm.radialAlignTool`, tools/radial_align_tool.d, which
+/// shares this same kernel) — `weight` here is a plain uniform blend.
 class MeshRadialAlign : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
@@ -28,6 +32,12 @@ class MeshRadialAlign : Command, Operator {
     private FaceBoundsCache* fc;
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
+
+    private string mode_   = "circle";
+    private int    side_   = 4;
+    private float  rotate_ = 0.0f;
+    private float  angle_  = 0.0f;
+    private float  weight_ = 1.0f;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -41,67 +51,43 @@ class MeshRadialAlign : Command, Operator {
     override string name()  const { return "mesh.radial_align"; }
     override string label() const { return "Radial Align"; }
 
+    // `radius`/`centerX/Y/Z` interactive override and `smooth`/`flatten`
+    // (Polygons-mode-only smoothing) are intentionally not exposed — see
+    // tools/radial_align_tool.d's params() doc comment (same reasoning
+    // applies to this one-shot Command).
+    override Param[] params() {
+        return [
+            Param.enum_("mode", "Mode", &mode_,
+                [["circle", "Circle"], ["nside", "N-Sided"]], "circle"),
+            Param.int_("side", "Side", &side_, 4)
+                .min(1).max(MAX_ALIGN_SIDES).enforceBounds(),
+            Param.float_("rotate", "Rotate", &rotate_, 0.0f).angle(),
+            Param.float_("angle", "Angle", &angle_, 0.0f).angle(),
+            Param.float_("weight", "Weight", &weight_, 1.0f)
+                .min(0.0f).max(1.0f).enforceBounds(),
+        ];
+    }
+
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        bool[] vmask = new bool[](mesh.vertices.length);
-        bool any = false;
-        if (editMode == EditMode.Vertices) {
-            foreach (i; 0 .. mesh.selectedVertices.length)
-                if (mesh.selectedVertices[i]) { vmask[i] = true; any = true; }
-        } else if (editMode == EditMode.Edges) {
-            foreach (i; 0 .. mesh.selectedEdges.length)
-                if (mesh.selectedEdges[i])
-                    foreach (vi; mesh.edges[i]) { vmask[vi] = true; any = true; }
-        } else {
-            foreach (i; 0 .. mesh.selectedFaces.length)
-                if (mesh.selectedFaces[i])
-                    foreach (vi; mesh.faces[i]) { vmask[vi] = true; any = true; }
-        }
-        if (!any)
-            foreach (i; 0 .. mesh.vertices.length) vmask[i] = true;
 
-        // First pass: compute centroid + sum of distances → radius.
-        // Need ≥ 1 vert; ≥ 2 to have a meaningful sphere (a single
-        // vert collapses to "stay put").
-        size_t count = 0;
-        Vec3 sum = Vec3(0, 0, 0);
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!vmask[i]) continue;
-            ++count;
-            sum = sum + mesh.vertices[i];
-        }
-        if (count == 0) return false;
-        Vec3 centroid = sum * (1.0f / cast(float)count);
+        auto chain = extractAlignChain(mesh, editMode);
+        if (chain.verts.length < 1) return false;
 
-        // Second pass: mean distance from centroid = sphere radius.
-        float distSum = 0.0f;
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!vmask[i]) continue;
-            auto d = mesh.vertices[i] - centroid;
-            distSum += sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        }
-        float radius = distSum / cast(float)count;
-        if (radius < 1e-9f) return false;  // degenerate — all coincident
+        Vec3[] source = new Vec3[](chain.verts.length);
+        foreach (i, vi; chain.verts) source[i] = mesh.vertices[vi];
 
-        // Third pass: project. Each vert's new pos is centroid + r·dir
-        // where dir is its unit-vector direction from centroid. A vert
-        // exactly on the centroid has no defined direction — leave it
-        // alone.
+        bool nsideMode = (mode_ == "nside");
+        auto aligned = radialAlignTargets(source, nsideMode, side_, angle_, rotate_);
+
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!vmask[i]) continue;
-            touchedIdx  ~= cast(uint)i;
-            touchedPrev ~= mesh.vertices[i];
-            auto d = mesh.vertices[i] - centroid;
-            float len = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-            if (len < 1e-9f) continue;     // coincident with centroid → skip
-            float s = radius / len;
-            mesh.vertices[i].x = centroid.x + d.x * s;
-            mesh.vertices[i].y = centroid.y + d.y * s;
-            mesh.vertices[i].z = centroid.z + d.z * s;
+        foreach (i, vi; chain.verts) {
+            touchedIdx  ~= vi;
+            touchedPrev ~= mesh.vertices[vi];
+            mesh.vertices[vi] = lerp3(source[i], aligned[i], weight_);
         }
 
         mesh.commitChange(MeshEditScope.Position);

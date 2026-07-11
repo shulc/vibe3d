@@ -43,6 +43,8 @@ import tools.transform;
 import tools.move;
 import tools.push;
 import tools.bend;
+import tools.linear_align_tool;
+import tools.radial_align_tool;
 import tools.scale;
 import tools.rotate;
 import tools.box;
@@ -2665,6 +2667,20 @@ void main(string[] args) {
     };
     reg.toolFactories["xfrm.bend"] = () {
         auto t = new BendTool(() => &mesh(), &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
+    // Align deform-tools batch (task 0361) — same headless-attr-driven
+    // family as xfrm.push/xfrm.bend above (params()+applyHeadless() only,
+    // no gizmo drag; driven via `tool.attr ... ; tool.doApply` from the
+    // panel). Neutral tool ids per the task's public-repo naming rule.
+    reg.toolFactories["xfrm.linearAlignTool"] = () {
+        auto t = new LinearAlignTool(() => &mesh(), &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
+    reg.toolFactories["xfrm.radialAlignTool"] = () {
+        auto t = new RadialAlignTool(() => &mesh(), &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };

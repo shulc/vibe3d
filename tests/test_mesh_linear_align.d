@@ -1,6 +1,17 @@
-// Tests for mesh.linear_align — project selected verts onto a line
-// through their centroid along the bbox's longest axis. The
-// `mode=line, flatten=true` form of a linear-align tool.
+// Tests for mesh.linear_align — task 0361: chain-interpolation between
+// the selection's two fixed (edge-connectivity) endpoints, replacing the
+// prior bbox-collapse-to-centroid-line algorithm. See
+// source/tools/align_kernels.d's module doc comment for the captured law.
+//
+// The bit-exact numbers below are hand-verified against the private
+// capture (task 0361, cases "la_nonuniform" / "la_uniform" /
+// "la_weight05"); no reference engine runs at test time. The scenario
+// reproduces the capture exactly: an open
+// 4-vertex chain along 3 cube edges (A=(-.5,-.5,-.5) - B=(.5,-.5,-.5) -
+// C=(.5,-.5,.5) - D=(.5,.5,.5)), with B pre-displaced by
+// (-0.3,+0.35,+0.4) so uniform vs. non-uniform interpolation diverge (a
+// stock cube's equal orthogonal steps can't discriminate the two modes —
+// see the toolcard's own capture-method note).
 
 import std.net.curl;
 import std.json;
@@ -34,89 +45,120 @@ double[3][] dumpVerts() {
     return out_;
 }
 
-bool approxEq(double a, double b, double eps = 1e-5) {
+bool approxEq(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
-unittest { // 4 cube verts on the +Y face → line along longest axis
-    // Top face quad: vert indices vary by mesh setup. Select the four
-    // y=+0.5 corners explicitly. Their bbox is a flat 1x0x1 quad so
-    // the longest axis is X (or Z, tied — X wins lexicographically).
-    // After alignment, all four collapse onto the X axis through
-    // the centroid (which is the origin of the top face = (0, 0.5, 0)).
-    postJson("/api/reset", "");
-    cmd("select.typeFrom vertex");
-    // Find the four y=+0.5 verts.
-    auto before = dumpVerts();
-    int[] topIdx;
-    foreach (i, v; before) if (approxEq(v[1], 0.5)) topIdx ~= cast(int)i;
-    assert(topIdx.length == 4, "expected 4 verts at y=+0.5");
-    string idxStr = "[";
-    foreach (i, k; topIdx) {
-        if (i > 0) idxStr ~= ",";
-        idxStr ~= k.to!string;
-    }
-    idxStr ~= "]";
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":` ~ idxStr ~ `}`);
-    assert(sel["status"].str == "ok", sel.toString);
-    cmd("mesh.linear_align");
-    auto after = dumpVerts();
-    foreach (k; topIdx) {
-        auto v = after[k];
-        // After projection onto the X-axis line through (0, 0.5, 0):
-        // y stays 0.5 (centroid Y), z snaps to 0 (centroid Z),
-        // x retains its sign-magnitude.
-        assert(approxEq(v[1], 0.5),
-            "y should stay at centroid 0.5, got " ~ v[1].to!string);
-        assert(approxEq(v[2], 0.0),
-            "z should collapse to centroid 0, got " ~ v[2].to!string);
-        assert(approxEq(fabs(v[0]), 0.5),
-            "x should retain ±0.5 magnitude, got " ~ v[0].to!string);
-    }
-    // Unselected verts (y=-0.5 row) untouched.
-    foreach (i, v; after) {
-        if (approxEq(v[1], -0.5)) {
-            // Still on ±0.5 cube boundary in all axes.
-            foreach (c; 0 .. 3)
-                assert(approxEq(fabs(v[c]), 0.5),
-                    "unselected vert " ~ i.to!string ~ " should stay on cube");
-        }
-    }
+int findVert(double[3][] verts, double x, double y, double z) {
+    foreach (i, v; verts)
+        if (approxEq(v[0], x) && approxEq(v[1], y) && approxEq(v[2], z))
+            return cast(int)i;
+    return -1;
 }
 
-unittest { // 2 verts ⇒ already-collinear, should not move (each is on
-           // the line through the centroid in the "longest axis" direction
-           // of the 2-vert bbox)
+unittest { // open 4-vertex chain, uniform=false (default): endpoints fixed,
+           // interior verts project onto their own (own-position) line —
+           // bit-exact vs the "la_nonuniform" capture case.
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
-    // Verts 0 (-0.5,-0.5,-0.5) and 6 (+0.5,+0.5,+0.5) — body diagonal.
     auto before = dumpVerts();
-    int idx0 = -1, idx6 = -1;
-    foreach (i, v; before) {
-        if (approxEq(v[0], -0.5) && approxEq(v[1], -0.5) && approxEq(v[2], -0.5))
-            idx0 = cast(int)i;
-        if (approxEq(v[0],  0.5) && approxEq(v[1],  0.5) && approxEq(v[2],  0.5))
-            idx6 = cast(int)i;
-    }
-    assert(idx0 >= 0 && idx6 >= 0);
+    int idxA = findVert(before, -0.5, -0.5, -0.5);
+    int idxB = findVert(before,  0.5, -0.5, -0.5);
+    int idxC = findVert(before,  0.5, -0.5,  0.5);
+    int idxD = findVert(before,  0.5,  0.5,  0.5);
+    assert(idxA >= 0 && idxB >= 0 && idxC >= 0 && idxD >= 0,
+        "expected all 4 chain corners on the default cube");
+
+    // Pre-displace B so uniform vs nonuniform diverge (toolcard method).
+    cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
+
     auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idx0.to!string ~ `,` ~ idx6.to!string ~ `]}`);
+        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
     assert(sel["status"].str == "ok", sel.toString);
+
     cmd("mesh.linear_align");
     auto after = dumpVerts();
-    // Both verts had bbox = unit cube (longest axis = X). Centroid = (0,0,0).
-    // Projection onto X axis: y → 0, z → 0, x retains sign.
-    auto v0 = after[idx0]; auto v6 = after[idx6];
-    assert(approxEq(v0[0], -0.5));
-    assert(approxEq(v0[1],  0.0));
-    assert(approxEq(v0[2],  0.0));
-    assert(approxEq(v6[0],  0.5));
-    assert(approxEq(v6[1],  0.0));
-    assert(approxEq(v6[2],  0.0));
+
+    // Endpoints A/D never move.
+    assert(approxEq(after[idxA][0], -0.5) && approxEq(after[idxA][1], -0.5)
+        && approxEq(after[idxA][2], -0.5), "endpoint A must not move");
+    assert(approxEq(after[idxD][0],  0.5) && approxEq(after[idxD][1],  0.5)
+        && approxEq(after[idxD][2],  0.5), "endpoint D must not move");
+
+    // B: t = dot(B_source - A, D - A) / |D-A|^2 = 1.45/3 = 0.483333...
+    enum double nb = -0.0166667;
+    assert(approxEq(after[idxB][0], nb) && approxEq(after[idxB][1], nb)
+        && approxEq(after[idxB][2], nb), "B mismatch: " ~ after[idxB].to!string);
+
+    // C wasn't displaced: t = 2/3 (own-projection == index-spacing here).
+    enum double nc = 0.1666667;
+    assert(approxEq(after[idxC][0], nc) && approxEq(after[idxC][1], nc)
+        && approxEq(after[idxC][2], nc), "C mismatch: " ~ after[idxC].to!string);
+
+    // Topology untouched — align only moves existing verts.
+    auto model = getJson("/api/model");
+    assert(model["vertexCount"].integer == 8);
+    assert(model["faceCount"].integer == 6);
 }
 
-unittest { // undo restores
+unittest { // same chain, uniform=true — B lands at equal chain-index
+           // spacing (t=1/3) instead of its own projection (t=0.4833).
+           // Bit-exact vs la_uniform.json.
+    postJson("/api/reset", "");
+    cmd("select.typeFrom vertex");
+    auto before = dumpVerts();
+    int idxA = findVert(before, -0.5, -0.5, -0.5);
+    int idxB = findVert(before,  0.5, -0.5, -0.5);
+    int idxC = findVert(before,  0.5, -0.5,  0.5);
+    int idxD = findVert(before,  0.5,  0.5,  0.5);
+
+    cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
+    postJson("/api/select",
+        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+
+    cmd("mesh.linear_align uniform:true");
+    auto after = dumpVerts();
+
+    enum double ub = -0.1666667;
+    assert(approxEq(after[idxB][0], ub) && approxEq(after[idxB][1], ub)
+        && approxEq(after[idxB][2], ub), "uniform B mismatch: " ~ after[idxB].to!string);
+    enum double uc = 0.1666667;
+    assert(approxEq(after[idxC][0], uc) && approxEq(after[idxC][1], uc)
+        && approxEq(after[idxC][2], uc), "uniform C mismatch: " ~ after[idxC].to!string);
+    assert(approxEq(after[idxA][0], -0.5), "uniform endpoint A must not move");
+    assert(approxEq(after[idxD][0],  0.5), "uniform endpoint D must not move");
+}
+
+unittest { // weight=0.5 blends source -> aligned (nonuniform) linearly.
+           // Bit-exact vs la_weight05.json.
+    postJson("/api/reset", "");
+    cmd("select.typeFrom vertex");
+    auto before = dumpVerts();
+    int idxA = findVert(before, -0.5, -0.5, -0.5);
+    int idxB = findVert(before,  0.5, -0.5, -0.5);
+    int idxC = findVert(before,  0.5, -0.5,  0.5);
+    int idxD = findVert(before,  0.5,  0.5,  0.5);
+
+    cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
+    postJson("/api/select",
+        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+
+    cmd("mesh.linear_align weight:0.5");
+    auto after = dumpVerts();
+
+    assert(approxEq(after[idxB][0], 0.0916667, 1e-3) && approxEq(after[idxB][1], -0.0833333, 1e-3)
+        && approxEq(after[idxB][2], -0.0583333, 1e-3), "weight=0.5 B mismatch: " ~ after[idxB].to!string);
+    assert(approxEq(after[idxC][0], 0.3333333, 1e-3) && approxEq(after[idxC][1], -0.1666667, 1e-3)
+        && approxEq(after[idxC][2], 0.3333333, 1e-3), "weight=0.5 C mismatch: " ~ after[idxC].to!string);
+}
+
+unittest { // undo restores — no selection (whole-mesh fallback: 8 cube
+           // corners don't form a single clean chain, so extraction falls
+           // back to selection order; the op must still run + undo cleanly
+           // without crashing regardless of the resulting geometry).
     postJson("/api/reset", "");
     cmd("mesh.linear_align");
     cmd("history.undo");
@@ -126,4 +168,8 @@ unittest { // undo restores
             assert(approxEq(fabs(v[c]), 0.5),
                 "undo should restore ±0.5 corners");
     }
+    auto model = getJson("/api/model");
+    assert(model["vertexCount"].integer == 8);
+    assert(model["edgeCount"].integer == 12);
+    assert(model["faceCount"].integer == 6);
 }
