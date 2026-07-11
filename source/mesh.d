@@ -4908,6 +4908,266 @@ struct Mesh {
         return newFaceIndices.length;
     }
 
+    /// 3-axis GRID array — generalizes `arrayFaces` above to independent
+    /// Count/Offset per axis (`numX × numY × numZ` total instances,
+    /// INCLUDING the source at grid index (0,0,0)), plus per-clone
+    /// Jitter/Scale/Rotate/Replace-Source/Invert-Polygons/Merge-Vertices.
+    /// Backs the interactive Array tool (`tools/array_tool.d`,
+    /// `mesh.arrayTool`, task 0355) — grounded in the captured reference
+    /// toolcard's 23-attribute "Array Generator" + "Clone Effector" panel
+    /// (see `doc/tasks/*/0355-array-tool.md`). `arrayFaces` above is left
+    /// byte-for-byte UNTOUCHED — its callers (`mesh.array` one-shot command,
+    /// `CloneTool`) keep their exact 1D-line behaviour; this is an
+    /// ADDITIVE sibling, not a replacement.
+    ///
+    /// Grid layout: for step index (i,j,k) ∈ [0,numX)×[0,numY)×[0,numZ),
+    /// the per-axis translation is `i*stepX, j*stepY, k*stepZ`, where
+    /// `stepX/Y/Z` is `offset.x/y/z` directly (per-STEP spacing) unless
+    /// `between` is set, in which case it is re-derived so `offset` reads
+    /// as the total span from the FIRST to the LAST clone along that axis
+    /// (`offset.x/(numX-1)` when numX>1, else 0 — a single-count axis has
+    /// no span to divide).
+    ///
+    /// Scale (`scale`, 1.0 = 100%) and Rotate (`rotateDeg`, ZYX euler
+    /// degrees via `matrixFromEulerZYX` — the SAME convention the
+    /// transform tools use) are applied UNIFORMLY to every clone (not
+    /// accumulated/stepped by grid index — matches the captured "All
+    /// cloned elements receive the same amount of scaling" semantics),
+    /// about a PIVOT = the mask's own vertex centroid, captured once
+    /// before any mutation. NOTE: the reference capture did not confirm
+    /// an exact scale/rotate pivot for the interactive tool (not exercised
+    /// by the captured parity case, which uses the flat 100%/0° defaults)
+    /// — the mask centroid is this port's documented choice, not a
+    /// verified-live value; see the task's Лог for this gap.
+    ///
+    /// Jitter (`jitter`) is ONE random per-CLONE offset (not per-vertex —
+    /// "Max random per-clone offset variation" per the captured spec),
+    /// drawn from a FIXED-seed `Mt19937` (deterministic across runs and
+    /// platforms — same convention as `commands.mesh.jitter.MeshJitter`),
+    /// so the interactive tool and any parity fixture stay byte-
+    /// reproducible. Default 0/0/0 is a pure no-op.
+    ///
+    /// `replaceSource` (captured default OFF): when true, the ORIGINAL
+    /// selected faces' vertices are ALSO transformed IN PLACE by the
+    /// (0,0,0) slot's scale/rotate/jitter (shift is always zero for that
+    /// slot) instead of being left byte-untouched — "the source is
+    /// removed and replaced by a clone" (Jitter/Scale/Rotate now apply to
+    /// what was the source). When false (default), grid slot (0,0,0) IS
+    /// the untouched original: no new geometry is built for it.
+    ///
+    /// `invertPolygons`: reverses winding on every NEWLY BUILT clone face
+    /// (and on the in-place-mutated originals too, when `replaceSource` is
+    /// on — they count as "cloned geometry" in that mode). The untouched
+    /// (0,0,0) original is never flipped while `replaceSource` is off.
+    ///
+    /// `mergeVertices`/`mergeDistance`: the reference's boolean+threshold
+    /// pair (captured default OFF) — a real default-semantics divergence
+    /// from `arrayFaces`'s always-on `weld` epsilon (default 0.001). When
+    /// on, reuses the identical weld + face-fingerprint-dedup tail as
+    /// `arrayFaces`/`mirrorFaces`.
+    ///
+    /// Returns the number of NEW faces inserted (0 ⇒ no grid geometry was
+    /// added; note this can be 0 while `replaceSource` still mutated the
+    /// originals in place at a 1×1×1 count).
+    size_t arrayFacesGrid(in bool[] mask, int numX, int numY, int numZ,
+                          Vec3 offset, Vec3 jitter, Vec3 scale, Vec3 rotateDeg,
+                          bool between, bool replaceSource, bool invertPolygons,
+                          bool mergeVertices, float mergeDistance) {
+        import std.random : Mt19937, uniform01;
+        import std.algorithm.mutation : reverse;
+
+        if (mask.length != faces.length) return 0;
+        if (numX < 1) numX = 1;
+        if (numY < 1) numY = 1;
+        if (numZ < 1) numZ = 1;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+        size_t totalSlots = cast(size_t)numX * cast(size_t)numY * cast(size_t)numZ;
+        // 1×1×1 with replaceSource=false is a true no-op (nothing to add,
+        // nothing to replace). 1×1×1 with replaceSource=true still falls
+        // through — it transforms the originals in place (null shift).
+        if (totalSlots <= 1 && !replaceSource) return 0;
+
+        size_t[] sourceFaces;
+        sourceFaces.reserve(selCount);
+        foreach (fi, ref f; faces)
+            if (mask[fi]) sourceFaces ~= fi;
+
+        // Pivot for scale/rotate: the mask's own vertex centroid, captured
+        // ONCE from the ORIGINAL (pre-mutation) positions.
+        Vec3 pivot = Vec3(0, 0, 0);
+        {
+            bool[uint] seen;
+            size_t n = 0;
+            foreach (fi; sourceFaces)
+                foreach (vid; faces[fi])
+                    if (vid !in seen) { seen[vid] = true; pivot = pivot + vertices[vid]; ++n; }
+            if (n > 0) pivot = pivot * (1.0f / n);
+        }
+
+        float stepX = between ? (numX > 1 ? offset.x / (numX - 1) : 0.0f) : offset.x;
+        float stepY = between ? (numY > 1 ? offset.y / (numY - 1) : 0.0f) : offset.y;
+        float stepZ = between ? (numZ > 1 ? offset.z / (numZ - 1) : 0.0f) : offset.z;
+
+        bool anyRotate = (rotateDeg.x != 0.0f || rotateDeg.y != 0.0f || rotateDeg.z != 0.0f);
+        float[16] rotMat = anyRotate ? matrixFromEulerZYX(rotateDeg) : identityMatrix;
+
+        // Deterministic per-clone jitter — fixed seed, same convention as
+        // commands.mesh.jitter.MeshJitter. Drained once per grid slot
+        // (including the skipped/untouched source slot) so the sequence
+        // never depends on replaceSource/invertPolygons, only on the grid
+        // shape — same "drain regardless" rationale as MeshJitter.
+        Mt19937 rng;
+        rng.seed(0u);
+        Vec3 jitterFor() {
+            float ju = uniform01!float(rng) * 2.0f - 1.0f;
+            float jv = uniform01!float(rng) * 2.0f - 1.0f;
+            float jw = uniform01!float(rng) * 2.0f - 1.0f;
+            return Vec3(ju * jitter.x, jv * jitter.y, jw * jitter.z);
+        }
+
+        // Transform one ORIGINAL vertex position into a clone's local
+        // position: de-pivot -> scale -> rotate -> re-pivot -> translate.
+        Vec3 cloneVertex(Vec3 p, Vec3 shift, Vec3 jit) {
+            Vec3 local = p - pivot;
+            local = Vec3(local.x * scale.x, local.y * scale.y, local.z * scale.z);
+            if (anyRotate) local = transformPoint(rotMat, local);
+            return pivot + local + shift + jit;
+        }
+
+        size_t origFaceCount = faces.length;
+        size_t[] newFaceIndices;
+
+        foreach (i; 0 .. numX) {
+            foreach (j; 0 .. numY) {
+                foreach (k; 0 .. numZ) {
+                    bool isSourceSlot = (i == 0 && j == 0 && k == 0);
+                    Vec3 shift = isSourceSlot ? Vec3(0, 0, 0)
+                                              : Vec3(i * stepX, j * stepY, k * stepZ);
+                    Vec3 jit = jitterFor();
+
+                    if (isSourceSlot) {
+                        if (!replaceSource) continue;   // untouched original stays as-is
+                        // replaceSource: mutate the ORIGINAL verts in place
+                        // (shift is always (0,0,0) here), no new verts/faces.
+                        bool[uint] doneV;
+                        foreach (fi; sourceFaces) {
+                            foreach (vid; faces[fi])
+                                if (vid !in doneV) {
+                                    doneV[vid] = true;
+                                    vertices[vid] = cloneVertex(vertices[vid], shift, jit);
+                                }
+                        }
+                        if (invertPolygons)
+                            foreach (fi; sourceFaces) {
+                                faces[fi] = faces[fi].dup;
+                                reverse(faces[fi]);
+                            }
+                        continue;
+                    }
+
+                    uint[uint] vertMap;
+                    foreach (fi; sourceFaces) {
+                        foreach (vid; faces[fi]) {
+                            if (vid !in vertMap) {
+                                vertMap[vid] = cast(uint)vertices.length;
+                                vertices ~= cloneVertex(vertices[vid], shift, jit);
+                            }
+                        }
+                    }
+                    foreach (fi; sourceFaces) {
+                        auto src = faces[fi];
+                        uint[] cloned;
+                        cloned.length = src.length;
+                        foreach (m, vid; src) cloned[m] = vertMap[vid];
+                        if (invertPolygons) reverse(cloned);
+                        newFaceIndices ~= faces.length;
+                        faces ~= cloned;
+                    }
+                }
+            }
+        }
+
+        rebuildEdges();
+
+        resizeSubpatch();
+        faceSelectionOrder.length = faces.length;
+        resizeFaceSelection();
+        faceMaterial.length       = faces.length;
+        facePart.length           = faces.length;
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        foreach (idx; newFaceIndices) {
+            size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
+            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
+            faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
+            facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
+            selectFace(cast(int)idx);
+        }
+        // replaceSource re-selects the (mutated) originals too — they are
+        // now part of the array's output geometry, not leftover source.
+        if (replaceSource)
+            foreach (fi; sourceFaces) selectFace(cast(int)fi);
+
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        // Merge Vertices (boolean) + Distance (threshold) — default OFF,
+        // unlike arrayFaces's always-on weld epsilon. Identical weld +
+        // face-fingerprint-dedup tail as arrayFaces/mirrorFaces.
+        if (mergeVertices && mergeDistance > 0.0f) {
+            double epsSq = cast(double)mergeDistance * cast(double)mergeDistance;
+            if (weldCoincidentVertices(epsSq) > 0) {
+                import std.algorithm.sorting : sort;
+                import std.format : format;
+                bool[string] seenFp;
+                uint[][] keptFaces;
+                bool[]   keptSubpatch;
+                int[]    keptOrder;
+                bool[]   keptSelected;
+                uint[]   keptMaterial;
+                uint[]   keptPart;
+                keptFaces   .reserve(faces.length);
+                keptSubpatch.reserve(faces.length);
+                keptOrder   .reserve(faces.length);
+                keptSelected.reserve(faces.length);
+                keptMaterial.reserve(faces.length);
+                keptPart    .reserve(faces.length);
+                foreach (fi, ref f; faces) {
+                    auto sorted = f.dup;
+                    sort(sorted);
+                    string fp = format("%(%d,%)", sorted);
+                    if (fp in seenFp) continue;
+                    seenFp[fp] = true;
+                    keptFaces    ~= f;
+                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
+                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
+                }
+                faces              = keptFaces;
+                setFaceSubpatchFrom(keptSubpatch);
+                faceSelectionOrder = keptOrder;
+                setFacesSelectedFrom(keptSelected);
+                faceMaterial       = keptMaterial;
+                facePart           = keptPart;
+                rebuildEdges();
+                clearEdgeSelectionResize();
+                compactUnreferenced();
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newFaceIndices.length;
+    }
+
     /// Mirror the faces marked true in `mask` across the plane defined by
     /// `center` + (unit or non-unit) `normal` — the general, arbitrarily-
     /// oriented form of `mirrorFaces` below (which delegates here). Verts

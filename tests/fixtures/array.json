@@ -1,0 +1,47 @@
+{
+  "name": "array_grid_numX3_offX2",
+  "description": "Reference-captured parity case for the Array tool (task 0355, mesh.arrayTool), backed by the new 3-axis grid kernel Mesh.arrayFacesGrid. Frozen from the toolcard's Stage-1 fuzz case (vibe3d_private/toolcards/poly.array/findings.md §6): a plain 1x1x1 unit cube, all 6 faces selected (matches the reference's default Source=Active Meshes), numX=3/offX=2 with every other Array Generator/Clone Effector attr left at its captured live default (numY=numZ=1, offY=offZ=0, Jitter=0, Scale=100%, Rotate=0, Between=off, Replace Source=off, Invert Polygons=off, Merge Vertices=off/dist=0). The reference's own documented semantics (Offset = per-step spacing between source and first clone; Scale/Rotate/Jitter at neutral defaults leave every clone byte-identical to the source, just translated) predict exactly 24 vertices (8 original + 2x8 clones) / 18 faces (6x3), clone k translated by (2*k, 0, 0) -- this is a same-shape parity anchor with vibe3d's PRE-existing 1D-line arrayFaces (numY=numZ=1 degenerates the grid to a line), not yet a genuine multi-axis capture (see findings.md §6 note on a follow-on 2-axis case). The golden vertex list below was pulled from a live vibe3d run of this exact recipe and independently checked against the reference's own translate-by-(2k,0,0) rule before freezing -- no reference engine runs at test time.",
+  "source": "Frozen from vibe3d_private/toolcards/poly.array/findings.md §6 (captured parity case), replayed once against vibe3d's tool.set/tool.attr/tool.doApply headless path and cross-checked against the reference's documented Offset/Scale/Rotate semantics before freezing as golden.",
+  "tolerance": 0.0001,
+  "setup": [
+    { "endpoint": "reset" },
+    { "endpoint": "select", "body": { "mode": "polygons", "indices": [0, 1, 2, 3, 4, 5] } },
+    { "endpoint": "command", "argstring": "tool.set mesh.arrayTool on" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool numX 3" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool numY 1" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool numZ 1" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool offX 2" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool offY 0" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool offZ 0" },
+    { "endpoint": "command", "argstring": "tool.attr mesh.arrayTool merge false" },
+    { "endpoint": "command", "argstring": "tool.doApply" }
+  ],
+  "expected": {
+    "vertices": [
+      [-0.5, -0.5, -0.5],
+      [0.5, -0.5, -0.5],
+      [0.5, 0.5, -0.5],
+      [-0.5, 0.5, -0.5],
+      [-0.5, -0.5, 0.5],
+      [0.5, -0.5, 0.5],
+      [0.5, 0.5, 0.5],
+      [-0.5, 0.5, 0.5],
+      [1.5, -0.5, -0.5],
+      [1.5, 0.5, -0.5],
+      [2.5, 0.5, -0.5],
+      [2.5, -0.5, -0.5],
+      [1.5, -0.5, 0.5],
+      [2.5, -0.5, 0.5],
+      [2.5, 0.5, 0.5],
+      [1.5, 0.5, 0.5],
+      [3.5, -0.5, -0.5],
+      [3.5, 0.5, -0.5],
+      [4.5, 0.5, -0.5],
+      [4.5, -0.5, -0.5],
+      [3.5, -0.5, 0.5],
+      [4.5, -0.5, 0.5],
+      [4.5, 0.5, 0.5],
+      [3.5, 0.5, 0.5]
+    ]
+  }
+}

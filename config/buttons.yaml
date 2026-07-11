@@ -182,7 +182,7 @@ panels:
           - { label: "Mirror Tool",
               action: { kind: tool, id: mesh.mirrorTool } }
           - { label: Array,
-              action: { kind: command, id: mesh.array } }
+              action: { kind: tool, id: mesh.arrayTool } }
           - { label: "Radial Array",
               action: { kind: command, id: mesh.radial_array } }
           - { label: "Radial Sweep",

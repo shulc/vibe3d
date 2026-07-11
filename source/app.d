@@ -70,6 +70,7 @@ import tools.slice_tool : SliceTool;
 import tools.edge_slice_tool : EdgeSliceTool;
 import tools.reduce : ReductionTool;
 import tools.clone_tool : CloneTool;
+import tools.array_tool : ArrayTool;
 import tools.tack : TackTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
@@ -139,6 +140,7 @@ import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
 import commands.mesh.clone_       : MeshClone;
 import commands.mesh.clone_edit   : MeshCloneEdit;
+import commands.mesh.array_edit   : MeshArrayEdit;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.sweep         : MeshSweep;
 import commands.mesh.vert_merge        : MeshVertMerge;
@@ -2540,6 +2542,8 @@ void main(string[] args) {
                                                       &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto cloneEditFactory = () => new MeshCloneEdit(&mesh(), cameraView, editMode,
                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    auto arrayEditFactory = () => new MeshArrayEdit(&mesh(), cameraView, editMode,
+                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache());
     auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
     // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
@@ -2952,6 +2956,17 @@ void main(string[] args) {
         auto t = new CloneTool(() => &mesh(), &gpu, &editMode,
                                &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, cloneEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Array — interactive 3-axis grid array (task 0355), promoting the
+    // one-shot mesh.array command's 1D line kernel to Mesh.arrayFacesGrid.
+    // Snapshot undo via MeshArrayEdit; edit-mode-orthogonal (same face-
+    // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
+    reg.toolFactories["mesh.arrayTool"] = () {
+        auto t = new ArrayTool(() => &mesh(), &gpu, &editMode,
+                               &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, arrayEditFactory);
         return cast(Tool)t;
     };
 

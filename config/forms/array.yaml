@@ -1,0 +1,58 @@
+# Tool Properties form for the Array tool (mesh.arrayTool, task 0355).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/loopslice.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms), auto-discovered from
+# config/forms/*.yaml (source/app.d), and strict-validated against ArrayTool's
+# params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# Layout mirrors the captured reference panel's two collapsible sections
+# ("Array Generator" + "Clone Effector" — see vibe3d_private/toolcards/
+# poly.array/spec.json, task 0355): Count/Offset/Jitter/Scale/Rotate/Between
+# under Array Generator, Replace Source/Invert Polygons/Merge Vertices/
+# Distance/Source/Mesh Item under Clone Effector. Distance is auto-greyed by
+# the renderer via ArrayTool.paramEnabled() (forms_render.d wraps a disabled
+# param in ImGui.BeginDisabled) unless Merge Vertices is on; Mesh Item is
+# greyed unless Source is Specific Mesh.
+
+forms:
+  - id: array.main
+    label: Array
+    showLabel: false
+    whenTool:
+      - mesh.arrayTool
+    category: toolprops/main
+    ordinal: 150.60
+    rows:
+      # ---- Array Generator ----
+      - group: "Array Generator"
+        style: block
+        rows:
+          - { control: "tool.attr mesh.arrayTool numX ?", label: "Count X" }
+          - { control: "tool.attr mesh.arrayTool numY ?", label: "Count Y" }
+          - { control: "tool.attr mesh.arrayTool numZ ?", label: "Count Z" }
+          - { control: "tool.attr mesh.arrayTool offX ?", label: "Offset X" }
+          - { control: "tool.attr mesh.arrayTool offY ?", label: "Offset Y" }
+          - { control: "tool.attr mesh.arrayTool offZ ?", label: "Offset Z" }
+          - { control: "tool.attr mesh.arrayTool jitX ?", label: "Jitter X" }
+          - { control: "tool.attr mesh.arrayTool jitY ?", label: "Jitter Y" }
+          - { control: "tool.attr mesh.arrayTool jitZ ?", label: "Jitter Z" }
+          - { control: "tool.attr mesh.arrayTool sclX ?", label: "Scale X" }
+          - { control: "tool.attr mesh.arrayTool sclY ?", label: "Scale Y" }
+          - { control: "tool.attr mesh.arrayTool sclZ ?", label: "Scale Z" }
+          - { control: "tool.attr mesh.arrayTool angP ?", label: "Rotate X" }
+          - { control: "tool.attr mesh.arrayTool angH ?", label: "Rotate Y" }
+          - { control: "tool.attr mesh.arrayTool angB ?", label: "Rotate Z" }
+          - { control: "tool.attr mesh.arrayTool between ?", label: Between }
+
+      # ---- Clone Effector ----
+      - group: "Clone Effector"
+        style: block
+        rows:
+          - { control: "tool.attr mesh.arrayTool replace ?", label: "Replace Source" }
+          - { control: "tool.attr mesh.arrayTool flip ?",    label: "Invert Polygons" }
+          - { control: "tool.attr mesh.arrayTool merge ?",   label: "Merge Vertices" }
+          - { control: "tool.attr mesh.arrayTool dist ?",    label: Distance }
+          - { control: "tool.attr mesh.arrayTool source ?",  label: Source }
+          - { control: "tool.attr mesh.arrayTool item ?",    label: "Mesh Item" }
