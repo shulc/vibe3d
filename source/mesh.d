@@ -5998,12 +5998,50 @@ struct Mesh {
     /// Phase 5 (delta-path undo) is deferred: the drop+compact step makes the
     /// append-only recordAddFaces revert insufficient, so only snapshot undo
     /// (MeshFaceExtrudeEdit) is wired for Phases 1-4.
+    ///
+    /// Non-manifold-region reject (fuzz-found): if the selected region touches
+    /// a "book" edge (an undirected edge already shared by more than 2 faces
+    /// total), the whole call is a clean no-op (returns 0) rather than risk
+    /// winding/coincident corruption from extruding into an already-invalid
+    /// neighborhood.
     size_t extrudeFacesByMask(in bool[] mask, float distance, bool smooth = false) {
         if (mask.length != faces.length) return 0;
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;
         if (selCount == 0) return 0;
         if (distance == 0.0f) return 0;
+
+        // Non-manifold-region reject (fuzz-found): reject the whole operation
+        // if any edge of a SELECTED face is already shared by more than 2
+        // faces total (a "book" edge — e.g. 3+ pages hinged on one edge).
+        // Counts incidences directly with an edgeKeyOrdered map over ALL
+        // faces — NOT via buildEdgeFaces(), whose int[2] slot can't witness a
+        // 3rd/4th incident face (see its own comment below) — mirroring the
+        // 0312 unittest's edgeUseCount idiom. Matches the 0316 saturated-edge
+        // reject idiom. "Operate-per-2-manifold-island" was considered and
+        // rejected: the island BFS below itself rides buildEdgeFaces, which is
+        // blind to the same extra faces, so it can't reliably partition a
+        // book edge either — reject is the minimal, house-consistent choice.
+        {
+            size_t[ulong] edgeUseCountAll;
+            foreach (fi; 0 .. faces.length) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                    auto p = key in edgeUseCountAll;
+                    if (p is null) edgeUseCountAll[key] = 1;
+                    else           ++(*p);
+                }
+            }
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                    if (edgeUseCountAll[key] > 2) return 0;
+                }
+            }
+        }
 
         // Region normal: normalized average of selected face normals.
         Vec3 normSum = Vec3(0, 0, 0);
@@ -6440,6 +6478,51 @@ struct Mesh {
             assert(count <= 2,
                 "diagonal pair extrude: non-manifold edge used by " ~
                 count.to!string ~ " faces (task 0312 regression)");
+    }
+
+    // Mesh-robustness batch (fuzz-found): a "book" edge — one undirected edge
+    // shared by 3 faces (non-manifold input) — must reject the whole extrude
+    // as a clean no-op, not attempt to extrude into the already-invalid
+    // neighborhood. A normal disjoint 2-face pair (no book edge) must still
+    // extrude as before (no over-reject).
+    unittest {
+        import std.conv : to;
+        // Book mesh: 3 quad "pages" all hinged on the shared edge (v0,v1).
+        //   page A: v0,v1,v2,v3   (in the XY... here XZ-ish plane, x>0)
+        //   page B: v0,v1,v4,v5   (rotated: z>0)
+        //   page C: v0,v1,v6,v7   (rotated: x<0)
+        // Undirected edge (0,1) is used by all 3 pages => incidence count 3.
+        Mesh m;
+        uint v0 = m.addVertex(Vec3(0, 0, 0));
+        uint v1 = m.addVertex(Vec3(0, 1, 0));
+        uint v2 = m.addVertex(Vec3(1, 1, 0));
+        uint v3 = m.addVertex(Vec3(1, 0, 0));
+        uint v4 = m.addVertex(Vec3(0, 1, 1));
+        uint v5 = m.addVertex(Vec3(0, 0, 1));
+        uint v6 = m.addVertex(Vec3(-1, 1, 0));
+        uint v7 = m.addVertex(Vec3(-1, 0, 0));
+        m.addFace([v0, v1, v2, v3]);
+        m.addFace([v0, v1, v4, v5]);
+        m.addFace([v0, v1, v6, v7]);
+
+        size_t vertsBefore = m.vertices.length;
+        size_t facesBefore = m.faces.length;
+        bool[] mask; mask.length = m.faces.length; mask[] = false;
+        mask[0] = true; // select page A, which touches the book edge (0,1)
+        size_t n = m.extrudeFacesByMask(mask, 1.0f);
+        assert(n == 0, "book-edge extrude: expected reject (0), got " ~ n.to!string);
+        assert(m.vertices.length == vertsBefore,
+            "book-edge extrude: reject must not add verts");
+        assert(m.faces.length == facesBefore,
+            "book-edge extrude: reject must not add faces");
+
+        // A normal disjoint 2-face pair (not touching the book edge) must
+        // still extrude normally — the guard must not over-reject.
+        Mesh gm = makeGridPlane(2);
+        bool[] gmask; gmask.length = gm.faces.length; gmask[] = false;
+        gmask[0] = true; gmask[1] = true; // adjacent quads, shared edge used by only 2 faces
+        size_t gn = gm.extrudeFacesByMask(gmask, 1.0f);
+        assert(gn == 2, "disjoint pair extrude: expected 2 faces extruded, got " ~ gn.to!string);
     }
 
     private static ulong edgeKeyOrdered(uint a, uint b) {
