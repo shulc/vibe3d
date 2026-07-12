@@ -2,13 +2,16 @@
 // xfrm.flex preset wires ACEN=border + AXIS=select + Falloff=
 // selection + Transform T=R=S=1.
 //
-// Selection falloff semantics (`falloff.selection`):
+// Selection falloff semantics (`falloff.selection`, falloff-port Phase 2 —
+// ring-seed + fixed-4-pass Jacobi blur, see recomputeSelectionWeights):
 //   - Selected vert on selection boundary (has ≥1 unselected
 //     edge-neighbour) → weight = 0 (anchored).
-//   - Selected vert depth d hops from boundary, d ≥ steps →
+//   - Selected vert with NO boundary reachable via the in-selection BFS
+//     (e.g. the whole mesh selected)             →
 //     weight = 1 (full move with gizmo).
-//   - 0 < d < steps                                  →
-//     weight = applyShape(1 - d/steps, shape, in_, out_).
+//   - Interior selected vert, otherwise          →
+//     weight rises with graph-hop ring distance from the boundary,
+//     capped at `steps` hops, then smoothed by a fixed 4-pass blur.
 //   - Unselected vert                                →
 //     weight = 0 (falloff does NOT propagate outside selection).
 //
