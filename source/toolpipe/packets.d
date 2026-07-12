@@ -236,10 +236,10 @@ enum ElementMode : ubyte {
 /// distance from full-influence to no-influence; the curve maps it
 /// to a weight ∈ [0, 1].
 ///
-///   Linear  → 1 - t                    even attenuation
+///   Linear  → 1 - t                    even attenuation (default)
 ///   EaseIn  → 1 - t²                   stronger near full-influence
 ///   EaseOut → (1 - t)²                 stronger near zero-influence
-///   Smooth  → 1 - smoothstep(t)        S-curve (default)
+///   Smooth  → 1 - smoothstep(t)        S-curve
 ///   Custom  → cubic Bézier via in_/out_ control coords
 enum FalloffShape : ubyte {
     Linear  = 0,
@@ -283,7 +283,7 @@ enum LassoStyle : ubyte {
 /// `FalloffPacket` / `FalloffStage`, rebuilt every evaluate().
 struct FalloffConfig {
     FalloffType  type        = FalloffType.None;
-    FalloffShape shape       = FalloffShape.Smooth;
+    FalloffShape shape       = FalloffShape.Linear;
 
     // Linear: gradient between two world-space points. weight = 1.0
     // at `start`, 0.0 at `end`, attenuated by `shape`.
@@ -456,7 +456,7 @@ struct FalloffPacket {
     const(Vec3)[]  anchorPos;
 
     // Selection (D.7, xfrm.flex): pre-baked per-vert weights ∈
-    // [0, 1] from a Dijkstra geodesic + applyShape curve.
+    // [0, 1] from a Dijkstra geodesic + smoothstep curve.
     // Selected verts on the boundary → 0 (anchor); deep interior
     // → 1; unselected → 0. Empty slice degenerates to "no
     // falloff" (caller multiplies by 1.0 for every vert).

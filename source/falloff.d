@@ -475,10 +475,10 @@ private float lassoWeight(const ref FalloffPacket cfg, Vec3 pos,
 /// Map a normalised distance `t ∈ [0, 1]` (0 = full influence, 1 = no
 /// influence) to a weight `w ∈ [0, 1]` per the shape preset:
 ///
-///   Linear  → 1 - t                  even attenuation
+///   Linear  → 1 - t                  even attenuation (default)
 ///   EaseIn  → 1 - t²                 stronger near full-influence
 ///   EaseOut → (1 - t)²               stronger near zero-influence
-///   Smooth  → 1 - smoothstep(t)      S-curve (default)
+///   Smooth  → 1 - smoothstep(t)      S-curve
 ///   Custom  → cubic Bezier from (0,1) to (1,0) with control points
 ///             P1 = (1/3, (2-out_)/3), P2 = (2/3, (1+in_)/3) — at
 ///             in_=out_=0 both control points lie on the linear
@@ -523,6 +523,10 @@ float applyShape(float t, FalloffShape shape, float in_, float out_) {
 }
 
 unittest { // applyShape endpoints + linear midpoint
+    // Ordinal-locked curve values at t=0.5: Linear=0.5, EaseIn=0.75,
+    // EaseOut=0.25, Smooth=0.5. Asserted by ORDINAL/VALUE, not by a
+    // vibe3d shape-STRING-to-taxonomy mapping (the "EaseIn"/"EaseOut"
+    // labels are vibe3d's own naming for these two curves).
     import std.math : isClose;
     assert(isClose(applyShape(0.0f, FalloffShape.Linear,  0.5f, 0.5f), 1.0f));
     assert(isClose(applyShape(1.0f, FalloffShape.Linear,  0.5f, 0.5f), 0.0f));
@@ -572,7 +576,7 @@ unittest { // disabled packet returns 1.0 regardless of type
 }
 
 unittest { // radial falloff: center = 1, surface = 0, outside = 0
-    import std.math : isClose;
+    import std.math : isClose, sqrt;
     FalloffPacket p;
     p.enabled = true;
     p.type    = FalloffType.Radial;
@@ -583,12 +587,48 @@ unittest { // radial falloff: center = 1, surface = 0, outside = 0
     assert(isClose(evaluateFalloff(p, Vec3(0,    0, 0), 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3(1,    0, 0), 0, vp), 0.0f));
     assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 0.5f));
+    // Diagonal point at d = sqrt(0.5) ≈ 0.7071 → w = 1 - sqrt(0.5) ≈ 0.2929.
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0.5f, 0), 0, vp),
+                   1.0f - sqrt(0.5f), 1e-4f));
     // Outside the unit sphere → 0.
     assert(isClose(evaluateFalloff(p, Vec3(2,    0, 0), 0, vp), 0.0f));
     // Anisotropic ellipsoid: size=(2,1,1), point at x=1.
     p.size = Vec3(2, 1, 1);
     assert(isClose(evaluateFalloff(p, Vec3(1, 0, 0), 0, vp), 0.5f));
     assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 0.0f));
+}
+
+unittest { // default-flip guard: a falloff with NO explicit shape now
+    // yields the LINEAR curve value, not Smooth — guards against a silent
+    // revert of FalloffConfig.shape's default (packets.d).
+    import std.math : isClose;
+    FalloffPacket p;   // p.shape left at its struct default.
+    p.enabled = true;
+    p.type    = FalloffType.Radial;
+    p.center  = Vec3(0, 0, 0);
+    p.size    = Vec3(1, 1, 1);
+    Viewport vp;
+    // t=0.25 → linear 0.75 (a Smooth default would give ≈0.844 instead —
+    // this distinguishes the two curves at the same t).
+    assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0, 0), 0, vp), 0.75f));
+}
+
+unittest { // element falloff: spherical linear decay around a single-vertex
+    // anchor. Golden points: dist=0.5, anchor at the origin; t = d/dist.
+    import std.math : isClose;
+    FalloffPacket p;
+    p.enabled      = true;
+    p.type         = FalloffType.Element;
+    p.shape        = FalloffShape.Linear;
+    p.pickedRadius = 0.5f;
+    p.anchorPos    = [Vec3(0, 0, 0)];
+    Viewport vp;
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0),         0, vp), 1.0f));  // d=0
+    assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0, 0),     0, vp), 0.5f));  // d=0.25, t=0.5
+    // d = sqrt(0.125) ≈ 0.35355 (t ≈ 0.7071) → w ≈ 0.292893 (= 1 - sqrt(2)/2).
+    assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0.25f, 0), 0, vp),
+                   0.292893f, 1e-4f));
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0),      0, vp), 0.0f));  // d=0.5, t=1.0
 }
 
 unittest { // cylinder falloff: radial-perpendicular linear profile (axis-responsiveness)

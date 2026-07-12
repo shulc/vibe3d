@@ -76,10 +76,10 @@ presets:
       falloff:
         type: radial
 
-  # MODO ships xfrm.twist / xfrm.shear / xfrm.taper with `shape integer 0`
-  # (Linear) — the falloff stage's default Smooth
-  # shape would override this if not pinned here, leaving deform tools
-  # with the wrong attenuation curve compared to MODO.
+  # xfrm.twist / xfrm.shear / xfrm.taper use `shape integer 0` (Linear).
+  # The falloff stage's default shape is Linear too, so this pin is
+  # belt-and-suspenders — explicit here so a future default-shape change
+  # doesn't silently alter these deform tools' attenuation curve.
   - id: xfrm.twist
     base: rotate
     # Angle-scaling soft rotation (R(w*theta), radius-preserving — see
@@ -192,11 +192,13 @@ presets:
       axis:
         mode: element
 
-  # `xfrm.flex` mirrors MODO's stock `Flex` preset:
-  # ACEN=border, AXIS=select,
-  # Falloff=selection (with shape=smooth), Transform with T/R/S
-  # all on. The `falloff.selection` `steps` attr is an integer
-  # BFS-hop count (its own `steps` field/param, labelled "Steps").
+  # `xfrm.flex` — a soft-selection transform preset: ACEN=border,
+  # AXIS=select, Falloff=selection, Transform with T/R/S all on. The
+  # `falloff.selection` `steps` attr is an integer BFS-hop count (its own
+  # `steps` field/param, labelled "Steps"). Selection's post-smoothing ease
+  # is a fixed smoothstep decoupled from the Shape Preset (FalloffStage's
+  # `shape` config has no effect on this type — see the ease step in
+  # recomputeSelectionWeights), so no `shape` attr is set here.
   # D.7 of doc/deform_d7_flex_plan.md.
   - id: xfrm.flex
     base: xfrm.transform
@@ -211,7 +213,6 @@ presets:
         mode: select
       falloff:
         type:  selection
-        shape: smooth
 
   # ----- xfrm.transform per-mode presets --------------------------
   # Mirror MODO's stock TransformMove / TransformRotate / TransformScale

@@ -617,15 +617,18 @@ class FalloffStage : Stage, Operator {
         // "Shape Preset"); the legacy drawProperties() popup that used to render
         // it was retired in favour of this row.
         //
-        // NOT exposed for the Screen type: screenWeight() uses a FIXED linear
-        // ramp (matching the reference editor's screen falloff, which has no
-        // shape control), so the preset would be inert. Omitting it from
-        // params() makes the forms resolver hide the Shape Preset + In/Out rows
-        // for screen (value-driven row hiding), same as a per-type field.
-        if (type != FalloffType.Screen) {
+        // NOT exposed for Screen or Selection: screenWeight() uses a FIXED
+        // linear ramp (its disc profile has no shape control), and
+        // recomputeSelectionWeights() applies a FIXED smoothstep ease after
+        // the ring-distance smoothing (decoupled from `cfg.shape` — see the
+        // ease step there), so the preset would be inert for either. Omitting
+        // it from params() makes the forms resolver hide the Shape Preset +
+        // In/Out rows for both types (value-driven row hiding), same as a
+        // per-type field.
+        if (type != FalloffType.Screen && type != FalloffType.Selection) {
             ps ~= Param.intEnum_("shape", "Shape Preset",
                                  cast(int*)&config.shape, shapeEntries,
-                                 cast(int)FalloffShape.Smooth);
+                                 cast(int)FalloffShape.Linear);
 
             // In/Out tangent params are Custom-shape-only.
             if (shape == FalloffShape.Custom) {
@@ -782,8 +785,8 @@ class FalloffStage : Stage, Operator {
 
     /// D.7: bake Selection per-vert weights into `selWeights_`,
     /// implementing `falloff.selection` semantics (see
-    /// doc/deform_d7_flex_cross_engine_plan.md "Reverse-engineered
-    /// model"):
+    /// doc/deform_d7_flex_cross_engine_plan.md, Selection weighting
+    /// model):
     ///
     ///   - vert NOT in selection                  → weight = 0
     ///   - vert in selection, on boundary         → weight = 0
@@ -939,19 +942,22 @@ class FalloffStage : Stage, Operator {
             auto tmp = wA; wA = wB; wB = tmp;
         }
 
-        // Apply shape AFTER smoothing — the curve shapes (smooth,
-        // easeIn, easeOut) are post-process transforms on the linear
-        // weight. smoothstep(3w² − 2w³) maps the linear weight curve to
-        // the smooth one exactly within float precision.
-        import falloff : applyShape;
+        // Apply a FIXED smoothstep ease AFTER smoothing — Selection's
+        // post-ease is decoupled from `cfg.shape` (unlike every distance-
+        // metric falloff, which routes its curve through `applyShape`):
+        // the Shape Preset row is hidden for Selection (params(), above)
+        // precisely because this ease no longer reads it. Decoupling makes
+        // Selection immune to the distance-metric default-curve choice —
+        // it always eases the same way regardless of what `shape` holds.
+        // w ∈ [0, 1] here (0 = boundary, 1 = deep); smoothstep(w) =
+        // 1 − smoothstep(1 − w), so this is algebraically identical
+        // (<1 ULP in float) to the old `applyShape(1 − w, Smooth, …)`
+        // path — a pure decoupling, not a curve change.
         selWeights_.length = nVerts;
         foreach (vi; 0 .. nVerts) {
             if (!inSel[vi]) { selWeights_[vi] = 0.0f; continue; }
-            // applyShape(0) = 1, applyShape(1) = 0 by vibe3d convention.
-            // We have w ∈ [0, 1] where 0 = boundary, 1 = deep. Pass
-            // (1 - w) so deeper-in-selection (w high) → applyShape
-            // input low → result high.
-            selWeights_[vi] = applyShape(1.0f - wA[vi], shape, in_, out_);
+            float w = wA[vi];
+            selWeights_[vi] = w * w * (3.0f - 2.0f * w);
         }
 
         storeSelCacheKey(editModeI, selSig, stepsI);
@@ -1659,8 +1665,8 @@ unittest {
         foreach (j; 1 .. side - 1) {
             int hd = hopDepth(i, j);
             if (hd < 0) continue; // not a selected vert
-            // applyShape(1 - w): boundary w=0 -> applyShape(1)=0; interior
-            // w=1 -> applyShape(0)=1. So selected interior == 1, border == 0.
+            // Fixed smoothstep ease: smoothstep(0)=0, smoothstep(1)=1. So
+            // border w=0 -> eased 0; deep interior w=1 -> eased 1.
             float got = fs.selWeights_[vi(i, j)];
             if (hd == 0)
                 assert(abs(got - 0.0f) < 1e-6f, "steps=0 border must be 0");
