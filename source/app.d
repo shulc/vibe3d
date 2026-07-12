@@ -81,6 +81,7 @@ import tools.bridge_tool : BridgeTool, BridgeEditFactory;
 import tools.vert_merge_tool : VertexMergeTool;
 import tools.vertex_bevel_tool : VertexBevelTool;
 import tools.vertex_extrude_tool : VertexExtrudeTool;
+import tools.stroke_extrude_tool : StrokeExtrudeTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -154,6 +155,8 @@ import commands.mesh.array_edit   : MeshArrayEdit;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.radial_array_edit : MeshRadialArrayEdit;
 import commands.mesh.sweep         : MeshSweep;
+import commands.mesh.stroke_extrude      : MeshStrokeExtrude;
+import commands.mesh.stroke_extrude_edit : MeshStrokeExtrudeEdit;
 import commands.mesh.vert_merge        : MeshVertMerge;
 import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
 import commands.mesh.vert_join         : MeshVertJoin;
@@ -2576,6 +2579,12 @@ void main(string[] args) {
     // / mesh.thicken commands keep undoing via their own MeshSnapshot.
     auto smoothShiftEditFactory = () => new MeshSmoothShiftEdit(&mesh(), cameraView, editMode,
                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    // Stroke Extrude's typed edit factory (task 0323 interactive tool
+    // consumer). The one-shot mesh.strokeExtrude command undoes via its
+    // own MeshSnapshot; this factory exists so StrokeExtrudeTool can bind
+    // it, mirroring radialArrayEditFactory / smoothShiftEditFactory.
+    auto strokeExtrudeEditFactory = () => new MeshStrokeExtrudeEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -2930,6 +2939,21 @@ void main(string[] args) {
         auto t = new RadialArrayTool(() => &mesh(), &gpu, &editMode, litShader,
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, radialArrayEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Stroke Extrude — interactive (click-drag draws a camera-raycast
+    // world-space path, selected polygons extrude along it in bands) +
+    // headless via the separate one-shot mesh.strokeExtrude command
+    // (explicit path-point param — the interactive tool itself has NO
+    // headless path, matching the captured reference finding). Task 0323,
+    // basic/captured scope. Topology-creating tool: own typed edit factory
+    // (MeshStrokeExtrudeEdit, snapshot-only undo). Gated to Polygons mode
+    // by StrokeExtrudeTool.supportedModes().
+    reg.toolFactories["tool.strokeExtrude"] = () {
+        auto t = new StrokeExtrudeTool(() => &mesh(), &gpu, litShader,
+                                       &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, strokeExtrudeEditFactory);
         return cast(Tool)t;
     };
 
@@ -3613,6 +3637,14 @@ void main(string[] args) {
     reg.commandFactories["mesh.sweep"] = () => cast(Command)
         new MeshSweep(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache(), &edgeCache(), &faceCache());
+    // One-shot, headlessly-testable path-follow extrude (task 0323 —
+    // explicit world-space path-point param; see MeshStrokeExtrude's doc
+    // comment). The interactive tool.strokeExtrude drives its own commit
+    // through the separate record-flavor MeshStrokeExtrudeEdit instead of
+    // this factory.
+    reg.commandFactories["mesh.strokeExtrude"] = () => cast(Command)
+        new MeshStrokeExtrude(&mesh(), cameraView, editMode, &gpu,
+                              &vertexCache(), &edgeCache(), &faceCache());
     // Aliases — select.delete and select.remove delegate to the
     // same factory delegates as mesh.delete / mesh.remove respectively.
     reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];

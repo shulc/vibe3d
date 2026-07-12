@@ -255,6 +255,7 @@ panels:
           - { label: Spikey,         action: { kind: command, id: mesh.spikey } }
           - { label: Inset,          action: { kind: tool,    id: mesh.polyInsetTool } }
           - { label: Reduce,         action: { kind: command, id: mesh.reduce } }
+          - { label: "Stroke Extrude", action: { kind: tool,  id: tool.strokeExtrude } }
       - title: Commands
         buttons:
           - { label: Bridge,         action: { kind: command, id: mesh.bridge } }

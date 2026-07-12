@@ -11423,6 +11423,450 @@ struct Mesh {
     }
 
     // ---------------------------------------------------------------------------
+    // Path-follow extrude kernel (task 0323 "Sketch Extrude" port, basic/
+    // captured scope). ADDITIVE — shares no code with revolveProfile /
+    // revolveProfileEx above (the task-0326 Radial Sweep shared kernel): a
+    // fixed-axis revolve/lathe and a free camera-ray-cast path extrude are
+    // different operations (confirmed both statically and empirically by
+    // the task-0323 capture — see extrudeAlongPath's doc comment). Any
+    // future change here must NOT touch revolveProfile/revolveProfileEx,
+    // and `test_mesh_sweep` must stay green after any touch to this file.
+    // ---------------------------------------------------------------------------
+
+    /// Result of one band step of `extrudeAlongPath` — the newly created
+    /// "cap" faces (the ring at the moved end of the band) become the
+    /// running selection the NEXT band extrudes from.
+    private struct PathExtrudeStep {
+        size_t facesAdded;   // net face-count delta for this band (0 == guard failure)
+        size_t capStart;     // first index of the cap faces in the rebuilt faces[]
+        size_t capCount;     // number of cap faces (== number of selected faces in)
+    }
+
+    /// Centroid of the (deduplicated) vertices used by the faces marked in
+    /// `mask`. Used by `extrudeAlongPath` as the pivot for its optional
+    /// align-to-path ring rotation. Returns the origin for an empty mask.
+    private Vec3 maskVertexCentroid_(in bool[] mask) {
+        Vec3   sum = Vec3(0, 0, 0);
+        size_t n   = 0;
+        bool[] seen;
+        seen.length = vertices.length;
+        foreach (fi; 0 .. faces.length) {
+            if (fi >= mask.length || !mask[fi]) continue;
+            foreach (vid; faces[fi]) {
+                if (vid < seen.length) {
+                    if (seen[vid]) continue;
+                    seen[vid] = true;
+                }
+                sum = sum + vertices[vid];
+                ++n;
+            }
+        }
+        return n > 0 ? sum * (1.0f / cast(float)n) : Vec3(0, 0, 0);
+    }
+
+    /// Single-band worker for `extrudeAlongPath`: clones the boundary of
+    /// `mask`'s selected faces, offsets each clone to `translate` applied
+    /// after the optional rotation `rotM` (about the origin — callers pass
+    /// a matrix already built through the intended pivot, e.g. via
+    /// `pivotRotationMatrix`), and walls the gap between old and new
+    /// boundary with one quad per boundary edge.
+    ///
+    /// Deliberately self-contained rather than refactored out of
+    /// `extrudeFacesByMask` (kept ADDITIVE/independent per the task-0323
+    /// shared-file discipline — see the section doc comment above) even
+    /// though the island-partition + boundary-wall-winding structure is
+    /// the same idea. Always "rigid" per-(island,vertex) offset (no
+    /// smooth-normal blend option — not part of the captured behaviour
+    /// for this tool). See `extrudeFacesByMask`'s doc comment for the
+    /// island / corner-vertex rationale (task 0312 fuzz find), reused
+    /// verbatim here.
+    private PathExtrudeStep extrudePathStep_(in bool[] mask, Vec3 translate,
+                                             const(float[16])* rotM) {
+        import math : mulMV;
+
+        PathExtrudeStep result;
+        if (mask.length != faces.length) return result;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return result;
+
+        auto edgeFaces = buildEdgeFaces();
+        int[size_t] islandOf;
+        {
+            size_t[][size_t] adj;
+            foreach (key, fp; edgeFaces) {
+                if (fp[0] < 0 || fp[1] < 0) continue;
+                if (fp[0] >= cast(int)mask.length || fp[1] >= cast(int)mask.length) continue;
+                if (!mask[fp[0]] || !mask[fp[1]]) continue;
+                adj[cast(size_t)fp[0]] ~= cast(size_t)fp[1];
+                adj[cast(size_t)fp[1]] ~= cast(size_t)fp[0];
+            }
+            int nextIsland = 0;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                if (fi in islandOf) continue;
+                size_t[] stack = [fi];
+                islandOf[fi] = nextIsland;
+                while (stack.length) {
+                    size_t cur = stack[$ - 1];
+                    stack = stack[0 .. $ - 1];
+                    if (auto nbrs = cur in adj)
+                        foreach (nb; *nbrs)
+                            if (nb !in islandOf) {
+                                islandOf[nb] = nextIsland;
+                                stack ~= nb;
+                            }
+                }
+                ++nextIsland;
+            }
+        }
+        static ulong ivKey(int island, uint vid) {
+            return (cast(ulong)cast(uint)island << 32) | vid;
+        }
+
+        Vec3 newPos(Vec3 p) {
+            if (rotM is null) return p + translate;
+            auto r4 = mulMV(*rotM, Vec4(p.x, p.y, p.z, 1.0f));
+            return Vec3(r4.x, r4.y, r4.z) + translate;
+        }
+
+        // Per-(island,vertex) target position table, built BEFORE the
+        // clone loop (same ordering rationale as extrudeFacesByMask's
+        // vertOffset table — the clone loop only visits each (island,vid)
+        // once, on first sight).
+        Vec3[ulong] vertNewPos;
+        foreach (fi; 0 .. faces.length) {
+            if (!mask[fi]) continue;
+            int island = islandOf[fi];
+            foreach (vid; faces[fi]) {
+                ulong k = ivKey(island, vid);
+                if (k !in vertNewPos)
+                    vertNewPos[k] = newPos(vertices[vid]);
+            }
+        }
+
+        // Boundary edges: exactly one incident face is selected.
+        struct BEdge { uint va, vb; int selFi; }
+        BEdge[] bEdges;
+        foreach (key, fp; edgeFaces) {
+            bool s0 = fp[0] >= 0 && fp[0] < cast(int)mask.length && mask[fp[0]];
+            bool s1 = fp[1] >= 0 && fp[1] < cast(int)mask.length && mask[fp[1]];
+            if (s0 == s1) continue;   // both selected (internal) or neither
+            uint va = cast(uint)(key >> 32);
+            uint vb = cast(uint)(key & 0xffffffffUL);
+            bEdges ~= BEdge(va, vb, s0 ? fp[0] : fp[1]);
+        }
+        if (bEdges.length == 0) return result;   // closed island -- no-op
+
+        uint[ulong] vertMap;
+        foreach (fi; 0 .. faces.length) {
+            if (!mask[fi]) continue;
+            int island = islandOf[fi];
+            foreach (vid; faces[fi]) {
+                ulong k = ivKey(island, vid);
+                if (k !in vertMap)
+                    vertMap[k] = addVertex(vertNewPos[k]);
+            }
+        }
+
+        size_t[] toCloneFace;
+        foreach (fi; 0 .. faces.length) if (mask[fi]) toCloneFace ~= fi;
+
+        uint[][] newFaces;
+        uint[]   newMat;
+        uint[]   newPart;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        foreach (fi; 0 .. faces.length) {
+            if (mask[fi]) continue;
+            newFaces ~= faces[fi];
+            newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+        immutable size_t facesBefore = faces.length;
+        immutable size_t capStart    = newFaces.length;
+
+        foreach (fi; toCloneFace) {
+            auto src = faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            int island = islandOf[fi];
+            foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
+            newFaces ~= cloned;
+            newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+            newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
+            newOrd   ~= 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+        immutable size_t capCount = toCloneFace.length;
+
+        foreach (ref be; bEdges) {
+            uint a = be.va, b = be.vb;
+            int island = islandOf[be.selFi];
+            uint cloneA = vertMap[ivKey(island, a)], cloneB = vertMap[ivKey(island, b)];
+            bool origAtoB = false;
+            auto orig = faces[be.selFi];
+            foreach (k; 0 .. orig.length) {
+                uint u = orig[k], w = orig[(k + 1) % orig.length];
+                if (u == a && w == b) { origAtoB = true;  break; }
+                if (u == b && w == a) { origAtoB = false; break; }
+            }
+            if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
+            else          newFaces ~= [cloneA, cloneB, b, a];
+            newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
+            newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
+            newOrd  ~= 0;
+            newSub  ~= false;
+        }
+
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        facePart           = newPart;
+        faceSelectionOrder = newOrd;
+
+        // Rebuild faceMarks from scratch: resize+zero ALL bits, then set Subpatch.
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
+        // New selection = cap faces (chains a follow-up op off the top,
+        // and lets the top-level extrudeAlongPath loop derive the next
+        // band's mask from the selection state).
+        faceSelectionOrderCounter = 0;
+        foreach (fi; capStart .. capStart + capCount)
+            selectFace(cast(int)fi);
+
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();   // drops orig verts no longer referenced (none here — walls keep them)
+        buildLoops();
+
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+
+        result.facesAdded = faces.length - facesBefore;
+        result.capStart   = capStart;
+        result.capCount   = capCount;
+        return result;
+    }
+
+    /// Extrude a selected set of polygons along an ordered WORLD-SPACE
+    /// path, producing one new "band" (a duplicated + connected ring) per
+    /// path segment.
+    ///
+    /// `mask`        — bool[faces.length], the polygons to extrude (same
+    ///                 convention as `extrudeFacesByMask`).
+    /// `pathPoints`  — world-space points, length >= 2. `pathPoints[0]` is
+    ///                 the path ANCHOR (nominally the source polygons' own
+    ///                 position when the stroke began — only consecutive
+    ///                 DELTAS are used, so it need not exactly coincide
+    ///                 with any vertex). `pathPoints.length - 1` new bands
+    ///                 are created; band `i` translates the running ring
+    ///                 by `pathPoints[i+1] - pathPoints[i]`. A
+    ///                 near-zero-length segment (a duplicate/jittered
+    ///                 sample point) is silently skipped rather than
+    ///                 treated as a guard failure.
+    /// `alignToPath` — CAPTURED default true (reference "Align to Path"
+    ///                 defaults ON — task-0323 toolcard spec.json
+    ///                 `attributes[].align`). When true, each band's ring
+    ///                 is additionally rotated, about its own running
+    ///                 centroid, by the minimal rotation between the
+    ///                 previous and current path-segment tangent before
+    ///                 translating — a parallel-transport-style
+    ///                 incremental tilt. TODO/UNVERIFIED: the one captured
+    ///                 case (task-0323 toolcard behavior_law_measured) is
+    ///                 a straight path, where every segment shares one
+    ///                 tangent and this rotation is always identity;
+    ///                 curved-path tilt is a documented default, not a
+    ///                 captured law (finding_4 confirms align-to-path
+    ///                 tilts rings on the reference, but the exact tilt
+    ///                 formula for a CURVED path was not captured).
+    ///
+    /// Non-goals carried over verbatim from the toolcard (open_todo, not
+    /// invented here): the exact screen-pixel Precision→span-count law
+    /// (finding_3 — this kernel takes an already-resolved point list, so
+    /// the law lives at the caller/tool layer, not here), Scale/Spin
+    /// per-band modulation, the Profile-browser width modulation, and the
+    /// 5 non-primary curve gestures (reset/constrained/branch/delete/
+    /// delete_branch).
+    ///
+    /// Returns total NET faces added (> 0) on success, 0 on guard
+    /// failure / no-op (mesh left unchanged on a total failure of the
+    /// FIRST band; a later band's guard failure stops the loop early and
+    /// keeps whatever prior bands already committed — matching this
+    /// kernel's per-band commit granularity, one `commitChange` per band).
+    size_t extrudeAlongPath(in bool[] mask, const(Vec3)[] pathPoints, bool alignToPath = true) {
+        import std.math : acos;
+
+        if (mask.length != faces.length) return 0;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+        if (pathPoints.length < 2) return 0;
+        immutable size_t spanCount = pathPoints.length - 1;
+        // DoS backstop (defense-in-depth for the shared caller surface —
+        // both the one-shot mesh.strokeExtrude command and the
+        // interactive tool clamp the point list before calling in, this
+        // is the kernel's own hard cap). Matches the project convention
+        // for a generator kernel's own internal clamp (see
+        // Mesh.radialArrayFaces's doc comment for the precedent).
+        enum size_t maxSpans = 4096;
+        if (spanCount > maxSpans) return 0;
+
+        size_t totalAdded      = 0;
+        bool[] curMask         = mask.dup;
+        Vec3   prevTangent     = Vec3(0, 0, 0);
+        bool   havePrevTangent = false;
+
+        foreach (i; 0 .. spanCount) {
+            Vec3 translate = pathPoints[i + 1] - pathPoints[i];
+            immutable float segLenSq = translate.x * translate.x
+                                      + translate.y * translate.y
+                                      + translate.z * translate.z;
+            if (segLenSq < 1e-12f) continue;   // degenerate sample -- skip, not a failure
+            Vec3 tangent = translate * (1.0f / sqrt(segLenSq));
+
+            float[16] rotM;
+            bool hasRot = false;
+            if (alignToPath && havePrevTangent) {
+                immutable float c = dot(prevTangent, tangent);
+                immutable float cClamped = c < -1.0f ? -1.0f : (c > 1.0f ? 1.0f : c);
+                if (cClamped < 0.999999f) {   // measurable turn -- identity otherwise (straight path)
+                    Vec3 axis = cross(prevTangent, tangent);
+                    immutable float axisLenSq = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
+                    if (axisLenSq > 1e-12f) {
+                        axis = axis * (1.0f / sqrt(axisLenSq));
+                        immutable float angle = acos(cClamped);
+                        Vec3 pivot = maskVertexCentroid_(curMask);
+                        rotM   = pivotRotationMatrix(pivot, axis, angle);
+                        hasRot = true;
+                    }
+                }
+            }
+            prevTangent     = tangent;
+            havePrevTangent = true;
+
+            auto step = extrudePathStep_(curMask, translate, hasRot ? &rotM : null);
+            if (step.facesAdded == 0) break;   // guard failure -- stop, keep prior bands
+            totalAdded += step.facesAdded;
+
+            curMask = new bool[faces.length];
+            foreach (fi; step.capStart .. step.capStart + step.capCount) curMask[fi] = true;
+        }
+        return totalAdded;
+    }
+
+    unittest { // extrudeAlongPath (a): cube top face, straight vertical path, 16
+               // spans — pins the KERNEL's topology for the captured span count
+               // (task 0323 toolcard behavior_law_measured: cube top face,
+               // default attrs, straight 180px screen drag → +64v/+64f, 16
+               // bands). This test feeds the kernel a caller-resolved 16-point
+               // WORLD-space path directly — it does NOT reproduce the
+               // reference's screen-pixel→world camera-raycast mapping (that
+               // lives at the tool layer — see StrokeExtrudeTool's doc comment)
+               // nor the measured non-uniform per-band world spacing (a camera-
+               // perspective effect, finding_1 — NOT a kernel-level law). The
+               // exact screen-Precision→span-count formula is the toolcard's
+               // own open follow-up (finding_3) and is intentionally NOT
+               // guessed here or anywhere else in this port.
+        import std.conv : to;
+        import std.math : abs;
+
+        auto m = makeCube();
+        int topFi = -1;
+        foreach (fi; 0 .. m.faces.length) {
+            bool allTop = true;
+            foreach (vid; m.faces[fi])
+                if (abs(m.vertices[vid].y - 0.5f) > 1e-4f) { allTop = false; break; }
+            if (allTop) { topFi = cast(int)fi; break; }
+        }
+        assert(topFi >= 0, "extrudeAlongPath: top face not found on test cube");
+
+        bool[] mask;
+        mask.length = m.faces.length;
+        mask[]       = false;
+        mask[topFi]  = true;
+
+        Vec3[] path;
+        path ~= Vec3(0, 0.5f, 0);   // anchor -- top face's own height
+        foreach (k; 1 .. 17) path ~= Vec3(0, 0.5f + 0.1f * cast(float)k, 0);
+
+        size_t added = m.extrudeAlongPath(mask, path, /*alignToPath*/true);
+        assert(added == 64,
+            "extrudeAlongPath: expected +64 net faces for the captured 16-span case, got "
+            ~ added.to!string);
+        assert(m.faces.length == 6 + 64,
+            "extrudeAlongPath: expected 70 total faces (6 orig + 64 new), got "
+            ~ m.faces.length.to!string);
+        assert(m.vertices.length == 8 + 64,
+            "extrudeAlongPath: expected 72 total verts (8 orig + 64 new), got "
+            ~ m.vertices.length.to!string);
+
+        // Manifold (task 0363 discipline): every undirected edge used by at
+        // most 2 faces.
+        int[ulong] edgeUse;
+        foreach (ref face; m.faces) {
+            size_t n = face.length;
+            foreach (i; 0 .. n) {
+                uint a = face[i], b = face[(i + 1) % n];
+                ulong key = a < b ? ((cast(ulong)a << 32) | b) : ((cast(ulong)b << 32) | a);
+                edgeUse[key] = edgeUse.get(key, 0) + 1;
+            }
+        }
+        foreach (key, count; edgeUse)
+            assert(count <= 2,
+                "extrudeAlongPath: edge used by " ~ count.to!string ~ " faces -- non-manifold");
+    }
+
+    unittest { // extrudeAlongPath (b): guard rejections -- all must return 0,
+               // mesh unchanged.
+        auto m = makeCube();
+        bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
+        Vec3[] path2 = [Vec3(0, 0, 0), Vec3(0, 1, 0)];
+
+        // Mask length mismatch.
+        bool[] badMask = [true, false];
+        assert(m.extrudeAlongPath(badMask, path2) == 0,
+            "extrudeAlongPath: mask-length mismatch must return 0");
+
+        // No face selected.
+        bool[] emptyMask; emptyMask.length = m.faces.length;
+        assert(m.extrudeAlongPath(emptyMask, path2) == 0,
+            "extrudeAlongPath: empty mask must return 0");
+
+        // Fewer than 2 path points.
+        assert(m.extrudeAlongPath(mask, [Vec3(0, 0, 0)]) == 0,
+            "extrudeAlongPath: single-point path must return 0");
+        assert(m.extrudeAlongPath(mask, cast(Vec3[])[]) == 0,
+            "extrudeAlongPath: empty path must return 0");
+
+        // Span-count DoS backstop: 4098 points => 4097 spans, one past the
+        // internal 4096 cap => hard rejection. NOTE: deliberately NOT
+        // testing the "exactly at the cap succeeds" boundary end-to-end
+        // here — actually running 4096 real bands is O(bands × faces) and
+        // would make `dub test` pathologically slow; the cap's ALLOW side
+        // is already exercised cheaply by the 16-span case in test (a)
+        // above, so this test only needs to prove the REJECT side, which
+        // returns before any band runs (O(1), no mutation).
+        Vec3[] overCap;
+        overCap.length = 4098;
+        foreach (k, ref p; overCap) p = Vec3(0, 0.5f + 0.001f * cast(float)k, 0);
+        size_t facesBefore = m.faces.length;
+        size_t vertsBefore = m.vertices.length;
+        assert(m.extrudeAlongPath(mask, overCap) == 0,
+            "extrudeAlongPath: over-cap span count must return 0 (DoS backstop)");
+        assert(m.faces.length == facesBefore && m.vertices.length == vertsBefore,
+            "extrudeAlongPath: over-cap rejection must leave the mesh unchanged");
+    }
+
+    // ---------------------------------------------------------------------------
     // Mesh hygiene kernels
     // ---------------------------------------------------------------------------
 
