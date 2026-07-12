@@ -130,7 +130,16 @@ class HttpServer {
     // every registered command and tool factory id. Read-only snapshot of
     // post-startup-immutable AAs; served directly from the HTTP thread
     // (same thread-safety posture as toolpipeProvider).
-    private alias RegistryProvider = string delegate();
+    //
+    // `?params=1` (task 0365 — param-bounds Phase 3) additionally requests
+    // per-id Param schemas (`commandParams`/`toolParams`): the bool arg is
+    // whether the caller asked for that mode, so the provider can skip
+    // instantiating every factory on the common (registry-listing-only)
+    // path. This is the enabler for the fuzz-smoke's static contract check
+    // (tests/test_param_bounds.d) — a generic reader of every count-like
+    // Param's `.min()/.max()/.enforceBounds()` state without a hand-
+    // maintained per-tool table.
+    private alias RegistryProvider = string delegate(bool includeParams);
     private RegistryProvider registryProvider;
     private alias ToolPipeProvider = string delegate();
     private ToolPipeProvider toolpipeProvider;
@@ -1364,11 +1373,12 @@ class HttpServer {
                                    ~ toolpipeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
                 }
             }
-        } else if (request.path == "/api/registry" && request.method == "GET") {
+        } else if (request.path.startsWith("/api/registry") && request.method == "GET") {
             if (registryProvider !is null) {
                 try {
+                    bool wantParams = parseQueryInt(request.path, "params", 0) != 0;
                     response.statusCode = 200;
-                    response.body = registryProvider();
+                    response.body = registryProvider(wantParams);
                     response.headers["Content-Type"] = "application/json";
                 } catch (Exception e) {
                     response.statusCode = 500;

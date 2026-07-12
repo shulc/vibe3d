@@ -11,11 +11,14 @@ import params : Param;
 import snapshot : MeshSnapshot;
 import math : Vec3;
 
-/// DoS backstop (task 0365 P1) shared by `MeshAxisSlice` and `MeshJulienne`:
-/// each plane cut is an O(mesh) `cutByPlane` call, so `count`/`countA`/
-/// `countB` scale the apply loop below directly. Neither command has a
-/// shared `mesh.d` kernel to cap, so this is an apply-local clamp; Param
-/// `.min()` hints are UI-only and do not clamp a direct/scripted caller.
+/// DoS backstop (task 0365 P1, Param-layer bound added P2 fast-follow)
+/// shared by `MeshAxisSlice` and `MeshJulienne`: each plane cut is an
+/// O(mesh) `cutByPlane` call, so `count`/`countA`/`countB` scale the apply
+/// loop below directly. Neither command has a shared `mesh.d` kernel to
+/// cap, so the evaluate()-time clamp below is an apply-local backstop;
+/// each Param also carries `.max(MAX_AXIS_SLICE_COUNT).enforceBounds()` so
+/// a raw HTTP `tool.attr`/`/api/command` write is clamped at the Param
+/// layer too, not just once evaluate() runs.
 private enum int MAX_AXIS_SLICE_COUNT = 256;
 
 // ---------------------------------------------------------------------------
@@ -51,7 +54,13 @@ class MeshAxisSlice : Command, Operator {
     override Param[] params() {
         return [
             Param.int_("axis",  "Axis",  &axis_,  1).min(0).max(2),
-            Param.int_("count", "Count", &count_, 1).min(1),
+            // `.max(MAX_AXIS_SLICE_COUNT).enforceBounds()` matches the
+            // apply-local clamp in evaluate() below — `.min()`/`.max()`
+            // alone are UI-only hints and do not clamp a raw HTTP
+            // `tool.attr`/`/api/command` write, so the Param bound is
+            // added to agree with the backstop (defense-in-depth).
+            Param.int_("count", "Count", &count_, 1)
+                .min(1).max(MAX_AXIS_SLICE_COUNT).enforceBounds(),
         ];
     }
 
@@ -137,9 +146,16 @@ class MeshJulienne : Command, Operator {
     override Param[] params() {
         return [
             Param.int_("axisA",  "Axis A",  &axisA_,  0).min(0).max(2),
-            Param.int_("countA", "Count A", &countA_, 1).min(1),
+            // `.max(MAX_AXIS_SLICE_COUNT).enforceBounds()` matches the
+            // apply-local clamp in evaluate() below — `.min()`/`.max()`
+            // alone are UI-only hints and do not clamp a raw HTTP
+            // `tool.attr`/`/api/command` write, so the Param bound is
+            // added to agree with the backstop (defense-in-depth).
+            Param.int_("countA", "Count A", &countA_, 1)
+                .min(1).max(MAX_AXIS_SLICE_COUNT).enforceBounds(),
             Param.int_("axisB",  "Axis B",  &axisB_,  2).min(0).max(2),
-            Param.int_("countB", "Count B", &countB_, 1).min(1),
+            Param.int_("countB", "Count B", &countB_, 1)
+                .min(1).max(MAX_AXIS_SLICE_COUNT).enforceBounds(),
         ];
     }
 

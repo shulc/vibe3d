@@ -4497,7 +4497,20 @@ void main(string[] args) {
         // GET /api/registry — returns every registered command and tool
         // factory id as JSON arrays. Read-only snapshot of post-startup-
         // immutable AAs; served directly from the HTTP thread.
-        httpServer.setRegistryProvider(() {
+        //
+        // `?params=1` (task 0365, param-bounds Phase 3): additionally emits
+        // `commandParams`/`toolParams`, one entry per registered id, each a
+        // JSON array of that id's live Param schema — {name, kind,
+        // enforceBounds, value, min?, max?}. Built by instantiating the
+        // factory (the same cold-construction `cacheSupportedModes()`
+        // already proves safe for every registered id at startup) and
+        // reading `.params()` exactly as `args_dialog.d`/`commands/tool/
+        // set.d` do; `value` is boxed via `paramToJson` so the wire shape
+        // matches the existing `tool.attr <id> <attr> ?` read-back
+        // convention. This is the enabler for the fuzz-smoke's static
+        // "born-clamped" contract check (tests/test_param_bounds.d) — a
+        // generic reader instead of a hand-maintained per-tool table.
+        httpServer.setRegistryProvider((bool includeParams) {
             import std.array     : appender;
             import std.format    : format;
             import std.algorithm : sort;
@@ -4523,7 +4536,62 @@ void main(string[] args) {
                 firstName = false;
                 buf.put(format(`"%s":"%s"`, k, reg.commandNames.get(k, "")));
             }
-            buf.put(`}}`);
+            buf.put(`}`);
+
+            if (includeParams) {
+                import params : Param, paramToJson;
+
+                // One param's schema as a JSON object literal. min/max
+                // surface whichever hint family (float or int) the Param
+                // declared — a Param only ever uses the family matching its
+                // own Kind, so there is no ambiguity in practice.
+                string paramJson(const ref Param p) {
+                    auto v = appender!string;
+                    v.put(format(`{"name":"%s","kind":"%s","enforceBounds":%s,"value":%s`,
+                        p.name, p.kind, p.enforceBounds_ ? "true" : "false",
+                        paramToJson(p).toString()));
+                    if (p.hints.hasMinF)      v.put(format(`,"min":%s`, p.hints.minF));
+                    else if (p.hints.hasMinI) v.put(format(`,"min":%d`, p.hints.minI));
+                    if (p.hints.hasMaxF)      v.put(format(`,"max":%s`, p.hints.maxF));
+                    else if (p.hints.hasMaxI) v.put(format(`,"max":%d`, p.hints.maxI));
+                    v.put(`}`);
+                    return v.data;
+                }
+
+                buf.put(`,"commandParams":{`);
+                bool firstCmd = true;
+                foreach (k; cmds) {
+                    if (!firstCmd) buf.put(",");
+                    firstCmd = false;
+                    buf.put(format(`"%s":[`, k));
+                    auto cmd = reg.commandFactories[k]();
+                    bool firstP = true;
+                    foreach (ref p; cmd.params()) {
+                        if (!firstP) buf.put(",");
+                        firstP = false;
+                        buf.put(paramJson(p));
+                    }
+                    buf.put(`]`);
+                }
+                buf.put(`},"toolParams":{`);
+                bool firstTool = true;
+                foreach (k; tools) {
+                    if (!firstTool) buf.put(",");
+                    firstTool = false;
+                    buf.put(format(`"%s":[`, k));
+                    auto t = reg.toolFactories[k]();
+                    bool firstP = true;
+                    foreach (ref p; t.params()) {
+                        if (!firstP) buf.put(",");
+                        firstP = false;
+                        buf.put(paramJson(p));
+                    }
+                    buf.put(`]`);
+                }
+                buf.put(`}`);
+            }
+
+            buf.put(`}`);
             return buf.data;
         });
 
