@@ -92,8 +92,15 @@ JSONValue getRegistryWithParams() {
 // it does not miss any genuine count-like param (grep audit, no other
 // "major"/"minor"-named param exists outside prim.torus's segment pair,
 // which still matches via "segment").
+// Phase 4 (task 0365 P3 review NIT #2): broadened with divisions/resolution/
+// copies/loops so a future count-scaling Param named one of those can't slip
+// the auto-catch just because its name wasn't yet on this list. Verified
+// against the live registry (grep audit, source/tools/*.d + source/commands/
+// mesh/*.d Param declarations) that none of the four terms match any
+// EXISTING param name today — this is pure future-name coverage, not a
+// newly-surfaced gap.
 private auto countLikeNameRe =
-    regex(`(?i)count|segment|sides?|rings?|iter|steps|subdiv|num[xyz]?|precision`);
+    regex(`(?i)count|segment|sides?|rings?|iter|steps|subdiv|division|resolution|copies|loops|num[xyz]?|precision`);
 
 /// A numeric Param is "count-like" (subject to the born-clamped contract)
 /// when either (a) its name suggests an allocation/loop-scaling knob, or
