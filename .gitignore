@@ -13,6 +13,8 @@ vibe3d-test-modeling
 vibe3d-test-with-render
 *.dll
 *.o
+__pycache__/
+*.py[cod]
 run.log
 vibe3d.pdb
 vibe3d.exe
