@@ -2412,7 +2412,7 @@ struct Mesh {
     /// selected edges that share a corner cannot race on faces[fi].
     size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
         import math : Vec3, cross, dot, normalize;
-        import std.math : acos, sin;
+        import std.math : acos, sin, abs;
         import std.algorithm : clamp;
         static float clampf(float x, float lo, float hi) { return clamp(x, lo, hi); }
         if (mask.length != edges.length) return 0;
@@ -2585,6 +2585,17 @@ struct Mesh {
             // Boundary chamfer ends are NOT lifted — they get no ridge vert (the
             // chamfer ignores extrude). Their bridge/cap geometry is skipped below.
             if (isChamferEnd(v)) continue;
+            // Mesh-robustness fix (fuzz-found): at extrude≈0 the ridge vertex
+            // lands EXACTLY on `vertices[v]` regardless of `dir` — minting a
+            // fresh vertex there would be a coincident duplicate at the
+            // original corner position (only reachable for a SHARED/interior
+            // endpoint whose side faces still reference it elsewhere once
+            // dissolved-and-rewritten, since a free end's original vertex is
+            // otherwise fully orphaned and dropped by compaction). REUSE the
+            // original vertex id instead of appending a new one; every
+            // downstream reader goes through `ridgeVert[v]`, so this is
+            // transparent to the bridge/cap construction below.
+            if (abs(extrude) < 1e-6f) { ridgeVert[v] = v; continue; }
             Vec3 dir = (acc.length < 1e-6f) ? Vec3(0, 1, 0) : normalize(acc);
             ridgeVert[v] = addVertex(vertices[v] + dir * extrude);
         }
@@ -3093,19 +3104,17 @@ struct Mesh {
         //     that, this is left as a follow-up rather than shipped as an
         //     unverified change.
         //
-        //     Separately, while probing this a NEW, UNRELATED gap surfaced:
-        //     a standalone open n-gon (e.g. a lone pentagon face, or any
-        //     mesh boundary loop) whose corners are SHARED (>=2 selected
-        //     edges, not free ends/chamfer) rather than interior, run through
-        //     an overshoot width, mints coincident duplicate vertices at the
-        //     ORIGINAL corner positions — this traces to the boundary-edge
-        //     ridge-vertex construction (used for both interior and boundary
-        //     selected edges) not welding its ridge vertex back onto the
-        //     original position at extrude=0 for this shared/non-chamfer
-        //     boundary case. It is a DIFFERENT bug from the cap-miter gap
-        //     described above (unrelated to `insetPosOverride`/
-        //     `capMiterInset` entirely) and out of this task's scope; flagged
-        //     here for a separate follow-up task.
+        //     Separately (mesh-robustness batch, fuzz-found): a standalone
+        //     open n-gon (e.g. a lone pentagon face, or any mesh boundary
+        //     loop) whose corners are SHARED (>=2 selected edges, not free
+        //     ends/chamfer) rather than interior, run through an overshoot
+        //     width, used to mint coincident duplicate vertices at the
+        //     ORIGINAL corner positions at extrude≈0. Fixed above (Pass 1):
+        //     the ridge-vertex construction now REUSES the original vertex
+        //     id at extrude≈0 instead of appending a coincident one — see
+        //     `ridgeVert[v] = v` in Pass 1. Unrelated to the cap-miter gap
+        //     described above (that one is `insetPosOverride`/
+        //     `capMiterInset`-specific and still open).
         // Pass 2: the general accumulated-direction inset (unclamped, or
         //     clamped-but-ambiguous, or cap-miter override), same
         //     (endpoint, quantised position) weld as before so two selected
@@ -4113,6 +4122,62 @@ struct Mesh {
 
         commitChange(MeshEditScope.Geometry);
         return exEdges.length;
+    }
+
+    // Mesh-robustness batch (fuzz-found): a standalone open n-gon (single
+    // face, open boundary loop) whose corners are all SHARED (>=2 selected
+    // boundary edges per corner) run through an overshoot `width` at
+    // `extrude=0` used to mint a coincident duplicate vertex at each original
+    // corner position — the Pass-1 ridge vertex always minted a NEW vertex
+    // via addVertex(v + dir*extrude) even when extrude=0 (where dir*extrude
+    // is exactly the zero vector). Fixed: Pass 1 reuses the original vertex
+    // id at extrude≈0 instead. Confirmed by an HTTP-level before/after probe:
+    // a regular pentagon, all 5 boundary edges selected, extrude=0/width=0.3
+    // produced V=15 (5 coincident pairs) before the fix, V=10 (none) after.
+    unittest {
+        import std.conv : to;
+
+        // Regular pentagon: single open-boundary face, every corner shared
+        // by exactly 2 boundary edges (a chain-joint corner, not a free end).
+        Mesh m;
+        import std.math : PI, cos, sin;
+        uint[] pent;
+        foreach (k; 0 .. 5) {
+            double ang = 2 * PI * k / 5 - PI / 2;
+            pent ~= m.addVertex(Vec3(cast(float)cos(ang), 0, cast(float)sin(ang)));
+        }
+        m.addFace(pent);
+
+        bool[] mask; mask.length = m.edges.length; mask[] = true;
+        size_t n = m.extrudeEdgesByMask(mask, 0.0f, 0.3f);
+        assert(n == 5, "pentagon shared-corner extrude=0: expected 5 edges extruded, got " ~ n.to!string);
+
+        // No coincident duplicate vertices.
+        foreach (i; 0 .. m.vertices.length) {
+            foreach (j; i + 1 .. m.vertices.length) {
+                Vec3 d = m.vertices[i] - m.vertices[j];
+                float d2 = d.x*d.x + d.y*d.y + d.z*d.z;
+                assert(d2 > 1e-8f,
+                    "pentagon shared-corner extrude=0: verts " ~ i.to!string ~
+                    " and " ~ j.to!string ~ " are coincident");
+            }
+        }
+
+        // Edge-manifold: every undirected edge used by at most 2 faces.
+        size_t[ulong] edgeUseCount;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeUseCount;
+                if (p is null) edgeUseCount[key] = 1;
+                else           ++(*p);
+            }
+        }
+        foreach (key, count; edgeUseCount)
+            assert(count <= 2,
+                "pentagon shared-corner extrude=0: non-manifold edge used by " ~
+                count.to!string ~ " faces");
     }
 
     /// Vertex Extrude (Cone): additive. For each vertex selected in `mask`
