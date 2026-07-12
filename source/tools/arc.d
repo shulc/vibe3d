@@ -273,7 +273,10 @@ public:
             Param.float_("radius",     "Radius",       &params_.radius,     0.5f).min(0.0f),
             Param.float_("startAngle", "Start Angle",  &params_.startAngle, 0.0f),
             Param.float_("endAngle",   "End Angle",    &params_.endAngle,   180.0f),
-            Param.int_("segments",     "Segments",     &params_.segments,   24).min(1).max(1024),
+            // `.enforceBounds()` matches buildArc's internal
+            // `MAX_ARC_SEGMENTS` cap — `.min()/.max()` alone are UI-only
+            // hints and do not clamp a raw HTTP write.
+            Param.int_("segments",     "Segments",     &params_.segments,   24).min(1).max(1024).enforceBounds(),
             Param.intEnum_("axis",     "Axis",         &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),

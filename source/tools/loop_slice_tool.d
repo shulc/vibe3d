@@ -492,7 +492,16 @@ public:
             // on-screen slider geometry is deliberately remembered.)
             Param.float_("position", "Position", &positionProxy_, 0.5f)
                  .min(0.001f).max(0.999f).transient(),
-            Param.int_("count", "Count", &count_, 1).min(1),
+            // `.max(256).enforceBounds()` is the PRIMARY defense here, not
+            // suspenders: `onParamChanged("count")` synchronously calls
+            // syncPositionsToCount() (below), which does O(count) work
+            // BEFORE any apply/doApply runs. injectParamsInto clamps the
+            // field first (enforceBounds), strictly before it invokes
+            // onParamChanged, so a raw `tool.attr … count 1e9` HTTP write
+            // never reaches the growth loop with an unclamped value. The
+            // bound matches Mesh.insertEdgeLoopsMulti's internal
+            // `MAX_LOOP_SLICE_COUNT` apply-time cap.
+            Param.int_("count", "Count", &count_, 1).min(1).max(256).enforceBounds(),
             Param.int_("current", "Current", &current_, 0).min(0).transient(),
             Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
             Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Uniform),

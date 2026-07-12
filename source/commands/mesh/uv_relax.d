@@ -36,7 +36,10 @@ class UvRelax : Command {
 
     override Param[] params() {
         return [
-            Param.int_  ("iter", "Iterations", &iter_, 5).min(0),
+            // `.max(256).enforceBounds()` matches uvRelax's internal
+            // `MAX_UV_RELAX_ITER` cap — the Param bound alone is a UI-only
+            // hint and does not clamp a raw HTTP write.
+            Param.int_  ("iter", "Iterations", &iter_, 5).min(0).max(256).enforceBounds(),
             Param.float_("strn", "Strength",   &strn_, 0.5f).min(0.0f).max(1.0f),
         ];
     }

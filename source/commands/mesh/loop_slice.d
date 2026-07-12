@@ -104,7 +104,10 @@ class MeshLoopSlice : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.int_("count", "Count", &count_, 3).min(1),
+            // `.max(256).enforceBounds()` matches Mesh.insertEdgeLoopsMulti's
+            // internal `MAX_LOOP_SLICE_COUNT` cap — the Param bound alone is
+            // a UI-only hint and does not clamp a raw HTTP write.
+            Param.int_("count", "Count", &count_, 3).min(1).max(256).enforceBounds(),
         ];
     }
 

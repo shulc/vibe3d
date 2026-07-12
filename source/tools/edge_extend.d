@@ -191,7 +191,10 @@ public:
             Param.float_("scaleX",  "Scale X",     &scaleX_,  1.0f),
             Param.float_("scaleY",  "Scale Y",     &scaleY_,  1.0f),
             Param.float_("scaleZ",  "Scale Z",     &scaleZ_,  1.0f),
-            Param.int_  ("segments","Segments",    &segments_, 1),
+            // `.max(1024).enforceBounds()` matches Mesh.extendEdgesByMask's
+            // internal `MAX_EXTEND_SEGMENTS` cap — the Param bound alone is
+            // a UI-only hint and does not clamp a raw HTTP write.
+            Param.int_  ("segments","Segments",    &segments_, 1).min(1).max(1024).enforceBounds(),
             // HIDDEN test-automation hook (Phase 4b): the sel-center R/S pivot the
             // interactive drag would freeze. Setting it via tool.attr arms a
             // one-shot override consumed by the next applyHeadless (see

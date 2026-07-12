@@ -65,7 +65,10 @@ class UvUnwrap : Command {
             Param.float_("size",  "Size",   &size_,  1.0f),
             Param.enum_("center", "Center", &center_,
                         [["origin","Origin"],["bbox","BBox"]], "origin"),
-            Param.int_  ("iter",  "Iterations", &iter_, 30).min(0),
+            // `.max(256).enforceBounds()` matches uvUnwrap's internal
+            // `MAX_UV_UNWRAP_ITER` cap — the Param bound alone is a UI-only
+            // hint and does not clamp a raw HTTP write.
+            Param.int_  ("iter",  "Iterations", &iter_, 30).min(0).max(256).enforceBounds(),
             Param.enum_("seams", "Seams", &seams_,
                         [["boundary","Boundary"],["selected","Selected"]],
                         "selected"),

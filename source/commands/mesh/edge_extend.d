@@ -67,7 +67,10 @@ class MeshEdgeExtend : Command, Operator {
             Param.float_("scaleX",   "Scale X",     &scaleX_,  1.0f),
             Param.float_("scaleY",   "Scale Y",     &scaleY_,  1.0f),
             Param.float_("scaleZ",   "Scale Z",     &scaleZ_,  1.0f),
-            Param.int_("segments",   "Segments",    &segments_, 1),
+            // `.max(1024).enforceBounds()` matches Mesh.extendEdgesByMask's
+            // internal `MAX_EXTEND_SEGMENTS` cap — the Param bound alone is
+            // a UI-only hint and does not clamp a raw HTTP write.
+            Param.int_("segments",   "Segments",    &segments_, 1).min(1).max(1024).enforceBounds(),
         ];
     }
     // For a future tool's drag path.

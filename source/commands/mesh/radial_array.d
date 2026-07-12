@@ -51,7 +51,10 @@ class MeshRadialArray : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.int_  ("count",       "Count", &count_, 6).min(1),
+            // `.max(256).enforceBounds()` matches Mesh.radialArrayFaces'
+            // internal `MAX_RADIAL_ARRAY_COUNT` cap — added for read-back-
+            // clamp parity with the kernel's already-present cap.
+            Param.int_  ("count",       "Count", &count_, 6).min(1).max(256).enforceBounds(),
             Param.enum_ ("axis",        "Axis",  &axis_,
                          [["X","X"], ["Y","Y"], ["Z","Z"]], "Y"),
             Param.vec3_ ("center",      "Center", &center_, Vec3(0, 0, 0)),

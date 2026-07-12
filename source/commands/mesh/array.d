@@ -51,7 +51,12 @@ class MeshArray : Command, Operator {
 
     override Param[] params() {
         return [
-            Param.int_  ("count",  "Count",  &count_,  2).min(1),
+            // `.max(256).enforceBounds()` matches Mesh.arrayFaces'
+            // internal `MAX_ARRAY_COUNT` cap — `.min()`/`.max()` alone are
+            // UI-only hints and do not clamp a raw HTTP
+            // `tool.attr`/`/api/command` write, so the Param bound is
+            // added to agree with the kernel backstop (defense-in-depth).
+            Param.int_  ("count",  "Count",  &count_,  2).min(1).max(256).enforceBounds(),
             Param.vec3_ ("offset", "Offset", &offset_, Vec3(1, 0, 0)),
             Param.float_("weld",   "Weld Distance", &weld_, 0.001f).min(0.0f),
         ];

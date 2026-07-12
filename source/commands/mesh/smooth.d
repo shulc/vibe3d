@@ -79,7 +79,10 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     override Param[] params() {
         return [
             Param.float_("strn",       "Strength",         &strn_,          1.0f).min(0.0f).max(1.0f),
-            Param.int_  ("iter",       "Iterations",       &iter_,          1).min(0),
+            // `.max(256).enforceBounds()` matches the local `MAX_SMOOTH_ITER`
+            // apply-loop cap below — the Param bound alone is a UI-only
+            // hint and does not clamp a raw HTTP write.
+            Param.int_  ("iter",       "Iterations",       &iter_,          1).min(0).max(256).enforceBounds(),
             Param.bool_ ("lockBound",  "Lock Boundary",    &lockBound_,     false),
             Param.bool_ ("lockCorner", "Lock Corner",      &lockCorner_,    false),
             Param.bool_ ("preserve",   "Preserve Volume",  &preserve_,      false),
