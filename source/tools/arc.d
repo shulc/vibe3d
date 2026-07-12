@@ -63,6 +63,11 @@ void buildArc(Mesh* dst, const ref ArcParams p)
 {
     int S = p.segments;
     if (S < 1) S = 1;
+    // DoS backstop (task 0365 P1): `segments` allocates S+1 verts + S wire
+    // edges; the Param's `.max(1024)` hint is UI-only and does not clamp a
+    // direct/scripted caller reaching this kernel.
+    enum int MAX_ARC_SEGMENTS = 1024;
+    if (S > MAX_ARC_SEGMENTS) S = MAX_ARC_SEGMENTS;
 
     int axisIdx = p.axis;
     if (axisIdx < 0 || axisIdx > 2) axisIdx = 1;

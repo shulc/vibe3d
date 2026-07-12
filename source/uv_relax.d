@@ -42,6 +42,12 @@ bool uvRelax(const ref Mesh m, MeshMap* uv,
 {
     if (iterations < 1 || strength == 0.0f) return false;
 
+    // DoS backstop (task 0365 P1): `iterations` scales the Jacobi pass
+    // count below; Param `.min()` hints are UI-only and do not clamp a
+    // direct/scripted caller.
+    enum int MAX_UV_RELAX_ITER = 256;
+    if (iterations > MAX_UV_RELAX_ITER) iterations = MAX_UV_RELAX_ITER;
+
     const size_t nL = m.loops.length;
     if (nL == 0) return false;
 

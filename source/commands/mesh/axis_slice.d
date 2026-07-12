@@ -11,6 +11,13 @@ import params : Param;
 import snapshot : MeshSnapshot;
 import math : Vec3;
 
+/// DoS backstop (task 0365 P1) shared by `MeshAxisSlice` and `MeshJulienne`:
+/// each plane cut is an O(mesh) `cutByPlane` call, so `count`/`countA`/
+/// `countB` scale the apply loop below directly. Neither command has a
+/// shared `mesh.d` kernel to cap, so this is an apply-local clamp; Param
+/// `.min()` hints are UI-only and do not clamp a direct/scripted caller.
+private enum int MAX_AXIS_SLICE_COUNT = 256;
+
 // ---------------------------------------------------------------------------
 // MeshAxisSlice — cut the mesh with N evenly-spaced planes along a chosen axis.
 //
@@ -52,6 +59,7 @@ class MeshAxisSlice : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (count_ < 1) return false;
+        if (count_ > MAX_AXIS_SLICE_COUNT) count_ = MAX_AXIS_SLICE_COUNT;
 
         // Compute bounding box along the chosen axis.
         if (mesh.vertices.length == 0) return false;
@@ -139,6 +147,8 @@ class MeshJulienne : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (countA_ < 1 || countB_ < 1) return false;
+        if (countA_ > MAX_AXIS_SLICE_COUNT) countA_ = MAX_AXIS_SLICE_COUNT;
+        if (countB_ > MAX_AXIS_SLICE_COUNT) countB_ = MAX_AXIS_SLICE_COUNT;
         if (mesh.vertices.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);

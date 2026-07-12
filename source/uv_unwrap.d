@@ -71,6 +71,12 @@ bool uvUnwrap(const ref Mesh m, MeshMap* uv, int iterations,
 {
     if (iterations < 1) return false;
 
+    // DoS backstop (task 0365 P1): `iterations` scales the Gauss-Seidel
+    // pass count below; Param `.min()` hints are UI-only and do not clamp a
+    // direct/scripted caller.
+    enum int MAX_UV_UNWRAP_ITER = 256;
+    if (iterations > MAX_UV_UNWRAP_ITER) iterations = MAX_UV_UNWRAP_ITER;
+
     const size_t nL = m.loops.length;
     if (nL == 0) return false;
 

@@ -121,6 +121,12 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     private bool applyKernel() {
         if (iter_ <= 0 || strn_ <= 0.0f) return true;  // no-op apply
 
+        // DoS backstop (task 0365 P1): `iter` scales the Laplacian pass
+        // count below; Param `.min()` hints are UI-only and do not clamp a
+        // direct/scripted `tool.attr`/command write.
+        enum int MAX_SMOOTH_ITER = 256;
+        int iterCapped = iter_ > MAX_SMOOTH_ITER ? MAX_SMOOTH_ITER : iter_;
+
         // Affected-vertex mask (selection-aware).
         bool[] vmask = new bool[](mesh.vertices.length);
         bool any = false;
@@ -264,7 +270,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // positions, not partially updated ones), then commits.
         Vec3[] prev = mesh.vertices.dup;
         Vec3[] cur  = mesh.vertices.dup;
-        foreach (_; 0 .. iter_) {
+        foreach (_; 0 .. iterCapped) {
             foreach (vi; 0 .. mesh.vertices.length) {
                 if (!vmask[vi]) continue;
                 auto nbrs = adjNbrs[adjOff[vi] .. adjOff[vi + 1]];

@@ -105,27 +105,38 @@ struct RadialSweepParams {
     //   flip   = false   (reference "Invert Polygons")
 }
 
-/// Upper bound on `RadialSweepParams.sides` (reference "Count"). Enforced
-/// TWICE (task 0326 review finding B1 — Count was previously unbounded):
+/// Upper bound on `RadialSweepParams.sides` (reference "Count"). Enforced at
+/// THREE layers (task 0326 review finding B1 — Count was previously
+/// unbounded; task 0365 P1 added the kernel-level backstop as the durable
+/// third layer):
 ///   1. The `sides` Param itself opts into `.max(MAX_SWEEP_SIDES)
-///      .enforceBounds()` (see `params()` below), so an out-of-range
+///      .enforceBounds()` (see `params()` below — the bare identifier, NOT
+///      `mesh.MAX_SWEEP_SIDES`: this class's `mesh` @property shadows the
+///      module name in method scope, so the qualified form would not compile;
+///      the whole-module `import mesh;` still resolves the bare name), so an
+///      out-of-range
 ///      headless `tool.attr ... sides <n>` write is clamped BEFORE it ever
 ///      reaches `onParamChanged`/`evaluate` — this is the PRIMARY defense,
 ///      since `evaluate()` runs `rebuildRadialSweepPreview` SYNCHRONOUSLY
 ///      on the UI/HTTP thread.
-///   2. `toKernelParams` (below) re-clamps defensively: `revolveProfileEx`
-///      is a shared PUBLIC kernel method, so this belt-and-braces clamp
-///      protects any future caller that reaches it through a path other
-///      than the Param write above.
-/// Without either, `tool.attr ... sides 100000000` allocated ~1.6GB
+///   2. `toKernelParams` (below) re-clamps defensively before translating
+///      into `Mesh.RevolveParams`.
+///   3. `Mesh.revolveProfileEx` itself clamps `count` to the same ceiling —
+///      the durable backstop for any caller that reaches the shared kernel
+///      through a path other than this tool.
+/// Without any of these, `tool.attr ... sides 100000000` allocated ~1.6GB
 /// synchronously and hung the editor.
-enum int MAX_SWEEP_SIDES = 1024;
+///
+/// The constant itself lives in `mesh.d` (`mesh.MAX_SWEEP_SIDES`), not
+/// here — `mesh.d` is a core module and must not import `tools/*`, so
+/// `revolveProfileEx`'s own cap needs a definition it can reference
+/// directly; this tool references the same one for consistency.
 
 /// Translate `RadialSweepParams` (reference "Count" convention + every
 /// other panel field) into `Mesh.RevolveParams` (vibe3d's ring-count
 /// convention). The two nontrivial steps: the Count-semantics fix (task
 /// 0326 measured gap, see `sides`'s doc comment) and the `sides` DoS clamp
-/// (see `MAX_SWEEP_SIDES`) — everything else is a direct field copy /
+/// (see `mesh.MAX_SWEEP_SIDES`) — everything else is a direct field copy /
 /// degrees-to-radians conversion.
 Mesh.RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @safe {
     enum float D2R = cast(float)(PI / 180.0);

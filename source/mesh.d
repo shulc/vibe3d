@@ -94,6 +94,17 @@ enum MapDomain {
 /// comment and doc/uv_maps_plan.md Stage 6).
 enum string kUvMapName = "uv";
 
+/// Upper bound on radial-sweep ring count (`RevolveParams.count`, after the
+/// tool's Count→ring-count translation). Shared by TWO callers: this
+/// module's own `revolveProfileEx` kernel-level backstop (its durable
+/// defense against a direct/scripted caller — Param `.min()/.max()` hints
+/// are UI-only and do not clamp the headless write path) and
+/// `tools.radial_sweep_tool`'s Param `.max()`/`toKernelParams` clamp.
+/// Lives here — not in the tool module it originally shipped in — because
+/// `mesh.d` is a core module that must not import `tools/*`; this is the
+/// one definition both sides read (task 0365 P1 relocation).
+enum int MAX_SWEEP_SIDES = 1024;
+
 /// A generic named, typed per-element float attribute channel — the single
 /// reusable home for continuous per-element data (UV, vertex weight, edge
 /// crease, vertex color, …) so each such attribute does NOT become a bespoke
@@ -4406,6 +4417,12 @@ struct Mesh {
         if (segments < 1) segments = 1;    // clamp: N≥1. N=1 is the base ring of
                                            // the general loop (same topology/
                                            // order as pre-Phase-3; see doc above).
+        // DoS backstop (task 0365 P1): `segments` allocates one new ring of
+        // verts + bridge faces per step; Param `.min()/.max()` hints are
+        // UI-only and do not clamp a direct/scripted caller reaching this
+        // shared kernel.
+        enum int MAX_EXTEND_SEGMENTS = 1024;
+        if (segments > MAX_EXTEND_SEGMENTS) segments = MAX_EXTEND_SEGMENTS;
 
         // --- Mesh-edit tracker (mesh_edit_delta). Inert unless a batch is open
         //     (the interactive preview drag runs batchless ⇒ zero cost). This op
@@ -5014,6 +5031,11 @@ struct Mesh {
     size_t arrayFaces(in bool[] mask, int count, Vec3 offset, float weld) {
         if (mask.length != faces.length) return 0;
         if (count <= 1) return 0;
+        // DoS backstop (task 0365 P1): `count` allocates `count-1` new
+        // copies of every masked face; Param `.min()` hints are UI-only and
+        // do not clamp a direct/scripted caller reaching this shared kernel.
+        enum int MAX_ARRAY_COUNT = 256;
+        if (count > MAX_ARRAY_COUNT) count = MAX_ARRAY_COUNT;
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;
         if (selCount == 0) return 0;
@@ -9800,6 +9822,16 @@ struct Mesh {
         newFaceIndices = [];
         if (seeds.length == 0 || positionsIn.length == 0) return false;
 
+        // DoS backstop (task 0365 P1): `positionsIn.length` scales the
+        // per-position ring/vertex work below (one `addVertex` + one ring
+        // split per entry); Param `.min()` hints (loop_slice's `count`) are
+        // UI-only and do not clamp a direct/scripted caller reaching this
+        // shared kernel. Truncate rather than reject so a legitimate large
+        // request degrades to a bounded cut instead of failing outright.
+        enum size_t MAX_LOOP_SLICE_COUNT = 256;
+        if (positionsIn.length > MAX_LOOP_SLICE_COUNT)
+            positionsIn = positionsIn[0 .. MAX_LOOP_SLICE_COUNT];
+
         // Dedup coincident cut positions (task 0308, fuzz-found): Free mode's
         // `insertAt`/`count` bookkeeping does not enforce distinct slice
         // fractions (two `insertAt 0.5` calls, or a fresh `count`-grown slot
@@ -11312,6 +11344,13 @@ struct Mesh {
         if (profile.length < 2) return 0;
         if (profileClosed && profile.length < 3) return 0;
         if (params.count < 2) return 0;
+        // DoS backstop (task 0365 P1): `count` allocates one ring of
+        // `profile.length` verts per step; Param `.min()/.max()` hints are
+        // UI-only and do not clamp a direct/scripted caller reaching this
+        // shared kernel. Clamp (not reject) — the `< 2` guard above is the
+        // only documented reject sentinel for this param
+        // (`test_mesh_sweep.d`'s count<2 contract).
+        if (params.count > MAX_SWEEP_SIDES) params.count = MAX_SWEEP_SIDES;
         if (abs(params.angle) < 1e-6f) return 0;
         immutable float axisLenSq = params.axis.x * params.axis.x
                                    + params.axis.y * params.axis.y
