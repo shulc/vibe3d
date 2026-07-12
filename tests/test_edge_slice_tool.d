@@ -48,17 +48,25 @@
 //      base mesh with NO undo entry recorded.
 //
 // Task 0303 (fuzz-found — doApply/commitChain corrupt the mesh on a failed
-// chain that reuses a shared corner):
-//   15. doApply: edge(0,1)@0.5 (interior) + edge(1,5)@endpoint-reuse of the
-//      SHARED corner (vertex 1) lands the two cut positions ADJACENT in the
-//      shared face's winding — a legitimate no-op (adjacent-hit guard).
-//      doApply must report failure ("did not apply") AND leave the mesh
-//      byte-identical to the base cube (no leaked vertex, edges[] not stale,
-//      Euler characteristic unchanged, no undo entry).
-//   16. Same failing chain via the interactive commitChain path (`chainArm` +
-//      synthetic Enter): a chain that bakes zero segments must cancel rather
-//      than record a no-op undo entry — mesh stays byte-identical, no undo
-//      entry, armed_ clears.
+// chain that reuses a shared corner) — RE-DERIVED by the mesh-robustness
+// batch (task 0349): edge(0,1)@0.5 (interior) + edge(1,5)@endpoint-reuse of
+// the SHARED corner (vertex 1) lands the two cut positions ADJACENT in the
+// shared face's winding, so rebuildFacesWithChordSplits' adjacent-hit guard
+// correctly refuses to CHORD-SPLIT that face (facesSplit stays 0) — but Pass
+// 1 already spliced a REAL new vertex into edge(0,1), which is a legitimate
+// degenerate-chain edge-split (matches the frozen reference: cube V8/E12/F6
+// -> V9/E13/F6, chi stays 2) and is now KEPT, not force-reverted. Tests
+// 15/16 previously asserted the OLD over-rollback ("did not apply" / no
+// leaked vertex) as correct — that encoded the exact bug this batch fixes.
+// This is an INTENTIONAL REVERSAL, mirroring the mesh.d kernel unittest's own
+// re-derivation, not a silently regenerated test.
+//   15. doApply (headless): the chain above now reports SUCCESS and keeps
+//      the split — vertCount +1, edgeCount +1, faceCount unchanged, Euler
+//      stays 2, no duplicate-position verts, exactly ONE undo entry recorded.
+//   16. Same chain via the interactive commitChain path (`chainArm` +
+//      synthetic Enter): `chainArm`'s eager bake already shows `built=true`
+//      and the kept vertex live; the synthetic Enter COMMITS it (one undo
+//      entry, armed_ clears) rather than cancelling.
 //
 // Task 0321 (mid-chain per-click undo peel + editable earlier chain points):
 //   17. Mid-chain undo peel: `chainArm` a 3-point chain (chainSegments==2), a
@@ -802,22 +810,24 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 15. Task 0303 (fuzz-found, definitive minimal repro): a chain reusing a
-//     shared corner — edge(0,1)@0.5 (genuine interior insert) chained to
-//     edge(1,5)@endpoint-reuse of the SHARED corner (vertex 1, common to
-//     both edges). Both edges border face 5 ([0,1,5,4]); the interior cut
-//     vertex is spliced in immediately next to the reused corner in that
-//     face's winding, so the two cut positions are ADJACENT there —
-//     rebuildFacesWithChordSplits' adjacent-hit guard correctly refuses to
-//     split it (a legitimate no-op: the "chord" would just be the existing
-//     half-edge). doApply must report failure ("did not apply") AND leave
-//     the mesh byte-identical to the base cube.
+// 15. Task 0303 (fuzz-found, definitive minimal repro), RE-DERIVED by the
+//     mesh-robustness batch (task 0349) — an INTENTIONAL REVERSAL, not a
+//     silently regenerated test. A chain reusing a shared corner —
+//     edge(0,1)@0.5 (genuine interior insert) chained to edge(1,5)@endpoint-
+//     reuse of the SHARED corner (vertex 1, common to both edges). Both
+//     edges border face 5 ([0,1,5,4]); the interior cut vertex is spliced in
+//     immediately next to the reused corner in that face's winding, so the
+//     two cut positions are ADJACENT there — rebuildFacesWithChordSplits'
+//     adjacent-hit guard correctly refuses to CHORD-SPLIT that face
+//     (facesSplit stays 0). But the interior insert on edge(0,1) is a REAL,
+//     legitimate degenerate-chain edge-split (matches the frozen reference:
+//     cube V8/E12/F6 -> V9/E13/F6, chi stays 2) — doApply must now report
+//     SUCCESS and KEEP it, with exactly one undo entry recorded.
 //
-//     Before the fix: Pass 1 (insertEdgePoint) had already spliced the new
-//     vertex into BOTH faces incident to edge(0,1) (faces 0 and 5) before
-//     Pass 2 detected the no-op, and that mutation was never rolled back —
-//     V 8->9 (vertex 8 leaked into faces 0 & 5), edges[] stale (still 12),
-//     Euler characteristic 9 - 12 + 6 = 3 (should stay 2).
+//     Before this reversal (the 0303 fix, too broad): Pass 1 (insertEdgePoint)
+//     spliced the new vertex into BOTH faces incident to edge(0,1) (faces 0
+//     and 5), and the kernel unconditionally rolled that back on the Pass-2
+//     no-op — discarding a legitimate mutation, not just a corrupt one.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -836,38 +846,38 @@ unittest {
     cmd(format("tool.attr mesh.edgeSliceTool tB %.3f", tB));
 
     auto r = postCmd("/api/command", "tool.doApply");
-    assert(r["status"].str == "error",
-        "adjacent-hit no-op chain must report failure, got " ~ r.toString);
-    assert(r["message"].str.canFind("did not apply"),
-        "expected a \"did not apply\" failure message, got " ~ r["message"].str);
+    assert(r["status"].str == "ok",
+        "kept degenerate-chain insert must report success, got " ~ r.toString);
 
     auto m1 = model();
-    assert(vertCount(m1) == vertCount(m0),
-        "failed doApply must not leave a leaked vertex, got " ~ vertCount(m1).to!string
+    assert(vertCount(m1) == vertCount(m0) + 1,
+        "kept insert: expected exactly one new vertex, got " ~ vertCount(m1).to!string
         ~ " (was " ~ vertCount(m0).to!string ~ ")");
     assert(faceCount(m1) == faceCount(m0),
-        "failed doApply must not touch face count, got " ~ faceCount(m1).to!string);
-    assert(edgeCount(m1) == edgeCount(m0),
-        "failed doApply must not leave edges[] stale, got " ~ edgeCount(m1).to!string
+        "kept insert: face count must be unchanged, got " ~ faceCount(m1).to!string);
+    assert(edgeCount(m1) == edgeCount(m0) + 1,
+        "kept insert: edge(0,1) splits into two edges — net +1, got " ~ edgeCount(m1).to!string
         ~ " (was " ~ edgeCount(m0).to!string ~ ")");
     assert(vertCount(m1) - edgeCount(m1) + cast(long)faceCount(m1) == 2,
-        "Euler characteristic must stay 2 after a failed doApply");
-    assert(duplicatePositionVerts(m1) == 0, "no duplicate vertex positions after a failed doApply");
+        "Euler characteristic must stay 2 after a kept degenerate-chain insert");
+    assert(duplicatePositionVerts(m1) == 0, "no duplicate vertex positions after a kept insert");
 
     long depthAfter = undoModelDepth();
-    assert(depthAfter == depthBefore,
-        "a failed doApply must not record any undo entry, went " ~
+    assert(depthAfter == depthBefore + 1,
+        "a kept degenerate-chain insert must record exactly one undo entry, went " ~
         depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
 
     deactivateTool();
 }
 
 // ---------------------------------------------------------------------------
-// 16. Task 0303, interactive commitChain path: `chainArm` arms the SAME
-//     failing 2-edge chain as test 15 and a synthetic Enter drives the REAL
-//     commitChain() — since bakeChainFrom bakes ZERO segments, commitChain
-//     must cancel rather than record a no-op undo entry. Mesh stays
-//     byte-identical to the base cube; no undo entry; armed_ clears.
+// 16. Task 0303, interactive commitChain path, RE-DERIVED by the mesh-
+//     robustness batch (task 0349) — `chainArm` arms the SAME kept-insert
+//     2-edge chain as test 15. `bakeChainFrom` now COUNTS the kept segment
+//     (gated on `!meshChanged`, not `facesSplit==0`), so armChain's eager
+//     bake already shows `built=true` and the kept vertex live on the mesh.
+//     A synthetic Enter drives the REAL commitChain(), which now records ONE
+//     undo entry (a genuine mutation) instead of cancelling.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -882,15 +892,14 @@ unittest {
     cmd(format("tool.attr mesh.edgeSliceTool tB %.3f", tB));
     cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
 
-    // Sanity: armChain bakes eagerly (mutate/revert preview), but this
-    // specific chain fails to bake ANY segment — `built_` must reflect that,
-    // and the live mesh must already read back unchanged (armChain's own
-    // bakeChainFrom no-ops cleanly, per the mesh.d fix).
+    // Sanity: armChain bakes eagerly (mutate/revert preview) and this chain's
+    // single segment is now a KEPT insert — `built_` must reflect that, and
+    // the live mesh must already show the kept vertex.
     auto st0 = getJson("/api/tool/state");
-    assert(st0["built"].type == JSONType.false_,
-        "armChain must report built=false when the chain fails to bake");
-    assert(vertCount(model()) == vertCount(m0),
-        "armChain must not leave a leaked vertex when the chain fails to bake");
+    assert(st0["built"].type == JSONType.true_,
+        "armChain must report built=true for a kept degenerate-chain insert");
+    assert(vertCount(model()) == vertCount(m0) + 1,
+        "armChain must show the kept vertex live on the mesh");
 
     long depthBefore = undoModelDepth();
 
@@ -907,17 +916,17 @@ unittest {
     Thread.sleep(150.msecs);
 
     auto m1 = model();
-    assert(vertCount(m1) == vertCount(m0), "failed commitChain must not leave a leaked vertex");
-    assert(faceCount(m1) == faceCount(m0), "failed commitChain must not touch face count");
-    assert(edgeCount(m1) == edgeCount(m0), "failed commitChain must not leave edges[] stale");
+    assert(vertCount(m1) == vertCount(m0) + 1, "committed kept insert must keep the new vertex");
+    assert(faceCount(m1) == faceCount(m0), "committed kept insert must not touch face count");
+    assert(edgeCount(m1) == edgeCount(m0) + 1, "committed kept insert: edge(0,1) split, net +1 edge");
 
     long depthAfter = undoModelDepth();
-    assert(depthAfter == depthBefore,
-        "a chain that bakes zero segments must NOT record any undo entry, went " ~
+    assert(depthAfter == depthBefore + 1,
+        "a chain that bakes a kept segment must record exactly one undo entry, went " ~
         depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
 
     auto st1 = getJson("/api/tool/state");
-    assert(st1["armed"].type == JSONType.false_, "commitChain-as-cancel must clear armed_");
+    assert(st1["armed"].type == JSONType.false_, "commitChain must clear armed_ on commit");
 
     deactivateTool();
 }

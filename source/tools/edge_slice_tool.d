@@ -819,13 +819,19 @@ private:
                 float endT = (mesh.edges[sub][0] == seed) ? 0.0f : 1.0f;
                 r = mesh.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
             }
-            // S4: this dead-end check is effectively inert whenever
-            // split_==false — edgeSliceEx's points-only branch (mesh.d)
-            // reports facesSplit=2 as a bare SUCCESS MARKER for any distinct,
-            // in-range edge pair (no face-path/connectivity requirement at
-            // all in that mode), so it can only ever be 0 or 2 here, never a
-            // real "dead end" signal. It only bites when split_==true.
-            if (r.facesSplit == 0) return k;
+            // S4 (mesh-robustness batch: gate on `!r.meshChanged`, not
+            // `facesSplit==0`): in split mode, facesSplit==0 can be a KEPT
+            // insert (meshChanged==true — a legitimate chain that
+            // degenerated to a plain edge-split) that CONTINUES the chain,
+            // not only a dead-end signal. This check is effectively inert
+            // whenever split_==false — edgeSliceEx's points-only branch
+            // (mesh.d) reports facesSplit=2/meshChanged=true as a bare
+            // SUCCESS MARKER for any distinct, in-range edge pair (no
+            // face-path/connectivity requirement at all in that mode), so
+            // meshChanged is always true there. It only bites when
+            // split_==true and the whole segment truly resolved to nothing
+            // (no path AND no vertex spliced in).
+            if (!r.meshChanged) return k;
             seed = r.cutVertB;   // NEXT segment's exact seed — no position scanning
         }
         return pts.length - 1;
@@ -905,15 +911,20 @@ private:
 
         size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
         if (n == 0) {
-            // task 0303 (fuzz-found): the whole chain failed to bake even
-            // its first segment (e.g. a t=0/1 endpoint-reuse cut landing
-            // ADJACENT, in the shared face's winding, to another segment's
-            // cut point trips rebuildFacesWithChordSplits' adjacent-hit
-            // guard). bakeChainFrom/edgeSliceEx already leave the mesh
-            // exactly as chainBefore_ in that case (mesh.d's own
-            // Pass-1-undo-on-Pass-2-failure), so recording an edit here
-            // would be a genuine no-op undo entry — cancel instead, mirroring
-            // applyHeadless's n==0 contract.
+            // task 0303 (fuzz-found) — UPDATED for the mesh-robustness batch:
+            // `edgeSliceEx` no longer ALWAYS undoes Pass 1 on a Pass-2 no-op.
+            // A legitimate chain that degenerates to a plain edge-split (a
+            // real vertex kept and finalized, facesSplit==0 but
+            // meshChanged==true) is now RETAINED by the kernel and COUNTED
+            // by `bakeChainFrom` (gated on `!meshChanged`, not
+            // `facesSplit==0`) — so it never reaches this branch. `n==0`
+            // here means every segment genuinely resolved to nothing (e.g. a
+            // t=0/1 endpoint-reuse cut landing ADJACENT, in the shared
+            // face's winding, to another segment's cut point, with no
+            // vertex spliced in at all — the TRUE no-op case). The kernel
+            // leaves the mesh exactly as chainBefore_ in that case, so
+            // recording an edit here would be a genuine no-op undo entry —
+            // cancel instead, mirroring applyHeadless's n==0 contract.
             cancelLiveEdit();
             return;
         }

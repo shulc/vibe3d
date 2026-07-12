@@ -66,9 +66,14 @@ class MeshEdgeSlice : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
 
-        size_t nSplit = mesh.edgeSlice(edges_[0], edges_[1], tA_, tB_);
+        // Mesh-robustness batch (fuzz-found): gate on `!r.meshChanged`, NOT
+        // `facesSplit==0` — a chain that degenerates to a plain edge-split
+        // (a real vertex kept and finalized by the kernel, facesSplit==0 but
+        // meshChanged==true) must be recorded as a successful edit, not
+        // force-reverted. Only a TRUE no-op (meshChanged==false) rolls back.
+        auto r = mesh.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);
 
-        if (nSplit == 0) {
+        if (!r.meshChanged) {
             snap.restore(*mesh);
             snap = MeshSnapshot.init;
             return false;
