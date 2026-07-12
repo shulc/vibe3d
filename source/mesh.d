@@ -4191,8 +4191,8 @@ struct Mesh {
     /// case below — each vertex's own split points are private to it, even
     /// on a shared edge).
     ///
-    /// CAPTURED LAWS (task 0360 toolcard, reverse-engineered byte-exact
-    /// from the raw capture dumps — not just the summary prose):
+    /// DERIVED LAWS (task 0360, fitted byte-exact to the frozen reference
+    /// fixtures — not just the summary prose):
     ///  - `width == 0` (any `shift`, either sign) is a COMPLETE no-op —
     ///    position-diffed byte-identical to the input, zero topology
     ///    change. (fully confirmed)
@@ -6602,8 +6602,8 @@ struct Mesh {
     // extrudeFacesByMask, untouched). Backs the interactive Smooth Shift
     // tool (tools.smooth_shift_tool.SmoothShiftTool).
     //
-    // Per-(island,vertex) cap law, reverse-engineered from a frozen
-    // reference-editor capture (see tests/fixtures/smooth_shift.json):
+    // Per-(island,vertex) cap law, fitted to the frozen reference fixture
+    // (see tests/fixtures/smooth_shift.json):
     //     capPos = islandCentroid + scale * ((origPos + shift*smoothN) - islandCentroid)
     // i.e. a standard per-vertex-smoothed-normal shift-extrude (the same
     // "smooth=true" normal-averaging extrudeFacesByMask already does),
