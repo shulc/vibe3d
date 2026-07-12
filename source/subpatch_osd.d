@@ -14,6 +14,7 @@
 ///     refined/un-refined faces).
 module subpatch_osd;
 
+import std.math : sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
@@ -141,8 +142,42 @@ float runGlEvaluatorSmokeTest() {
 /// `mesh.subdivide` command) carry per-face state — selection in
 /// particular — across the refinement.
 ///
+/// True if cage face `fi` is degenerate for CC-subdivide purposes: fewer
+/// than 3 corners, fewer than 3 distinct vertex indices after collapsing
+/// consecutive duplicates (including the last-to-first wrap), or a
+/// near-zero Newell normal (collinear / zero-area). Mirrors the idiom in
+/// `Mesh.makePolygonFromVerts` (`mesh.d`) so both call sites agree on
+/// what counts as degenerate.
+private bool isDegenerateSubdivFace_(ref const Mesh cage, size_t fi) {
+    const face = cage.faces[fi];
+    if (face.length < 3) return true;
+
+    uint[] deduped;
+    deduped.reserve(face.length);
+    foreach (i; 0 .. face.length) {
+        uint prev = face[(i + face.length - 1) % face.length];
+        if (face[i] != prev) deduped ~= face[i];
+    }
+    while (deduped.length >= 2 && deduped[$ - 1] == deduped[0])
+        deduped = deduped[0 .. $ - 1];
+    if (deduped.length < 3) return true;
+
+    float nx = 0, ny = 0, nz = 0;
+    foreach (i; 0 .. deduped.length) {
+        Vec3 a = cage.vertices[deduped[i]];
+        Vec3 b = cage.vertices[deduped[(i + 1) % deduped.length]];
+        nx += (a.y - b.y) * (a.z + b.z);
+        ny += (a.z - b.z) * (a.x + b.x);
+        nz += (a.x - b.x) * (a.y + b.y);
+    }
+    immutable float len = sqrt(nx*nx + ny*ny + nz*nz);
+    return len < 1e-6f;
+}
+
 /// Returns `Mesh.init` when OSD can't build a topology (degenerate
-/// input or empty subset).
+/// input or empty subset), or when any marked face is itself degenerate
+/// (zero-area / collinear / <3 distinct corners) — reject-whole rather
+/// than risk emitting coincident verts from a bad face.
 Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
                      uint[]* faceOriginOut = null) {
     immutable int nv = cast(int)cage.vertices.length;
@@ -171,6 +206,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             (faceMask.length == 0)
             || ((fi < faceMask.length) && faceMask[fi]);
         if (!marked) continue;
+        // Reject-whole: a degenerate marked face refuses the entire
+        // subdivide rather than emit coincident verts from a bad input
+        // (out of scope: partial skip-face refine — see mesh-robustness
+        // plan). The caller (`commands.mesh.subdivide`) treats an empty
+        // result as a clean no-op.
+        if (isDegenerateSubdivFace_(cage, fi)) return Mesh.init;
         markedFaceIndices ~= cast(int)fi;
         subTotalIndices  += cast(int)cage.faces[fi].length;
         foreach (cvi; cage.faces[fi]) {

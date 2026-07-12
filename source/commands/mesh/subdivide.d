@@ -84,7 +84,20 @@ class Subdivide : Command, Operator {
             auto prevSelectedFaces = polygonMode
                 ? mesh.selectedFaces.dup : null;
             uint[] faceOrigin;
-            *mesh = catmullClarkOsd(*mesh, mask, &faceOrigin);
+            Mesh sub = catmullClarkOsd(*mesh, mask, &faceOrigin);
+            // `catmullClarkOsd` returns `Mesh.init` (empty) when OSD can't
+            // build a topology — a degenerate marked face, or an
+            // all-degenerate/empty subset. Without this guard the
+            // unconditional `*mesh = sub` below would WIPE the mesh on a
+            // GIGO input; treat it as a clean no-op instead (mirrors
+            // `commands/mesh/make_polygon.d`'s reject-is-a-no-op idiom).
+            if (sub.vertices.length == 0 || sub.faces.length == 0) {
+                snap.restore(*mesh);
+                snap = MeshSnapshot.init;
+                refreshCaches();
+                return false;
+            }
+            *mesh = sub;
             mesh.resetSelection();
             foreach (k, parentFi; faceOrigin) {
                 if (parentFi < prevSelectedFaces.length
