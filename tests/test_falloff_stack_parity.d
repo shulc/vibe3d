@@ -94,8 +94,9 @@ unittest {
     // ── Primary: Linear along X ───────────────────────────────────────────
     // start=(-1,0,0), end=(1,0,0), shape=linear.
     // t(x) = (x+1)/2  →  w_X(−0.5)=0.75, w_X(0.5)=0.25.
-    // NOTE: default shape is Smooth (S-curve); must override to Linear for
-    //       exact rational weights at cube corners.
+    // NOTE: default shape is Linear; set it explicitly anyway so this test
+    //       stays correct regardless of what the default happens to be —
+    //       exact rational weights at cube corners require Linear.
     cmd("tool.pipe.attr falloff type linear");
     cmd(`tool.pipe.attr falloff start "-1,0,0"`);
     cmd(`tool.pipe.attr falloff end "1,0,0"`);
@@ -105,7 +106,8 @@ unittest {
     // start=(0,−1,0), end=(0,1,0), shape=linear, mix=multiply.
     // t(y) = (y+1)/2  →  w_Y(−0.5)=0.75, w_Y(0.5)=0.25.
     // falloff.add creates a new stage (id="falloff#1") and sets its type;
-    // shape must still be set explicitly (defaults to Smooth after add).
+    // shape is set explicitly here too, so the case doesn't depend on the
+    // stage's default curve.
     cmd("falloff.add linear");
     cmd(`tool.pipe.attr falloff#1 start "0,-1,0"`);
     cmd(`tool.pipe.attr falloff#1 end "0,1,0"`);

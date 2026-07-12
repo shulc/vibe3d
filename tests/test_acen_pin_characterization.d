@@ -445,6 +445,7 @@ unittest {
         cmd("tool.pipe.attr actionCenter mode " ~ c.mode);
         if (c.falloff) {
             cmd("tool.pipe.attr falloff type radial");
+            cmd("tool.pipe.attr falloff shape linear");
             cmd(`tool.pipe.attr falloff center "-0.5,-0.5,-0.5"`);
             cmd(`tool.pipe.attr falloff size "2,2,2"`);
         }
@@ -485,6 +486,7 @@ unittest {
         cmd("tool.pipe.attr actionCenter mode auto");
         if (c.falloff) {
             cmd("tool.pipe.attr falloff type radial");
+            cmd("tool.pipe.attr falloff shape linear");
             cmd(`tool.pipe.attr falloff center "-0.5,-0.5,-0.5"`);
             cmd(`tool.pipe.attr falloff size "2,2,2"`);
         }

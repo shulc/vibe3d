@@ -2,7 +2,7 @@
 //
 // Verifies:
 // - WGHT stage is registered at TaskCode.Wght.
-// - Default attrs: type=none, shape=smooth, default geometry placeholders.
+// - Default attrs: type=none, shape=linear, default geometry placeholders.
 // - falloff/enabled state path = "false" by default.
 // - tool.pipe.attr falloff <name> <value> round-trips through listAttrs.
 // - Setting type to each of the five recognised values (none / linear /
@@ -76,7 +76,7 @@ unittest { // defaults
     resetCube();
     auto a = getFalloffAttrs();
     assert(a["type"]   == "none",   "default type expected none, got " ~ a["type"]);
-    assert(a["shape"]  == "smooth", "default shape expected smooth, got " ~ a["shape"]);
+    assert(a["shape"]  == "linear", "default shape expected linear, got " ~ a["shape"]);
     assert(a["start"]  == "0,0,0",  "default start: " ~ a["start"]);
     assert(a["end"]    == "0,1,0",  "default end: "   ~ a["end"]);
     assert(a["center"] == "0,0,0",  "default center: " ~ a["center"]);
