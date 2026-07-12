@@ -13682,6 +13682,15 @@ struct Mesh {
         size_t facesSplit = 0;
         uint   cutVertA   = ~0u;
         uint   cutVertB   = ~0u;
+        // Mesh-robustness batch (fuzz-found): true iff this call left the
+        // mesh geometrically changed — a face split OR a KEPT vertex insert
+        // (a legitimate interior cut that degenerated to a plain edge-split,
+        // facesSplit==0, but a real vertex was spliced in and finalized).
+        // Distinct from `facesSplit`, which counts ONLY face splits. Callers
+        // MUST gate rollback/stop on `meshChanged`, never on `facesSplit==0`:
+        // a kept degenerate-chain insert has `facesSplit==0` but
+        // `meshChanged==true`.
+        bool   meshChanged = false;
     }
 
     // -----------------------------------------------------------------------
@@ -13711,22 +13720,46 @@ struct Mesh {
     // touched at all. Byte-identical to the pre-existing behaviour when true
     // (the default), so every existing caller is unaffected.
     //
-    // Returns facesSplit = the number of faces split; 0 = no-op (dead-end /
-    // same edge / OOB), in which case cutVertA/cutVertB stay ~0u. With
-    // splitPolygons==false a successful two-point insert sets facesSplit = 2
-    // (a NONZERO SUCCESS MARKER, not a literal inserted-vertex count — under
-    // F1 an endpoint insert reuses a corner and adds no vertex at all; if
-    // BOTH tA and tB resolve to endpoints the points-only cut is a
+    // Returns facesSplit = the number of faces actually chord-split; 0 can
+    // mean EITHER of two different outcomes distinguished by `meshChanged`
+    // (mesh-robustness batch, fuzz-found — this is a deliberate reversal of
+    // the earlier always-rollback behaviour):
+    //   - meshChanged == false: a TRUE no-op (dead-end / same edge / OOB, or
+    //     every cut point reused an existing corner with nothing spliced
+    //     in) — cutVertA/cutVertB stay ~0u, the mesh is restored byte-
+    //     identical to entry.
+    //   - meshChanged == true: a legitimate chain that degenerated to a
+    //     plain edge-split — Pass 1 spliced a REAL new vertex into the path
+    //     faces' windings, but the adjacent-hit guard below then refused to
+    //     chord-split any of them. This is KEPT and finalized (matches the
+    //     reference: a chord chain reusing a corner mid-chain still inserts
+    //     the other, genuinely interior, cut points). cutVertA/cutVertB are
+    //     the real inserted/reused vertex indices, not sentinels.
+    // With splitPolygons==false a successful two-point insert sets
+    // facesSplit = 2 (a NONZERO SUCCESS MARKER, not a literal inserted-vertex
+    // count — under F1 an endpoint insert reuses a corner and adds no vertex
+    // at all; if BOTH tA and tB resolve to endpoints the points-only cut is a
     // geometric no-op yet still reports facesSplit = 2 with cutVertA/cutVertB
     // set to the two reused corners) rather than a face-split count, since no
-    // face is split in that mode.
+    // face is split in that mode; meshChanged is always true here too (a
+    // points-only success already counted as a change for the chain).
     // Caller owns snapshot/undo — this method does NOT capture a snapshot.
+    // Callers MUST gate rollback/stop on `!meshChanged`, never on
+    // `facesSplit == 0` — see EdgeSliceResult's own doc comment.
     //
     // Degenerate guard: if both cut points resolve to the SAME vertex (e.g.
     // an F1 endpoint cut on each edge lands on a shared corner),
     // rebuildFacesWithChordSplits sees hits.length == 1 (< 2) on the shared
-    // face, copies it whole, and facesSplit stays 0 — already safe, no new
-    // code needed.
+    // face, copies it whole, and facesSplit stays 0. If Pass 1 spliced in a
+    // real vertex before hitting this guard, that insert is KEPT (see
+    // above); if both cuts were pure corner-reuse (no insert at all), this
+    // is the TRUE no-op case and the whole call rolls back — already safe,
+    // no new code needed beyond the meshChanged gate.
+    //
+    // Every insertEdgePoint vertex is a manifold-preserving edge-split (it
+    // splices into all ≤2 faces incident to that edge), so keeping a partial
+    // insert from a longer broken chain cannot introduce a non-manifold
+    // edge — the self-oracle for this reversal.
     //
     // Non-manifold meshes (edges shared by 3+ faces) are out of scope for v1.
     // -----------------------------------------------------------------------
@@ -13881,6 +13914,7 @@ struct Mesh {
             syncSelection();
             commitChange(MeshEditScope.Geometry);
             result.facesSplit = 2;
+            result.meshChanged = true;
             return result;
         }
 
@@ -13939,7 +13973,33 @@ struct Mesh {
             if (f < origFaceCount) splitMask[f] = true;
 
         result.facesSplit = rebuildFacesWithChordSplits(splitMask, isCutVert);
-        if (result.facesSplit == 0) {
+        // Mesh-robustness batch (fuzz-found, reversal of the 0303 over-
+        // rollback): `facesSplit==0` alone no longer means "nothing
+        // happened". Pass 1 (insertEdgePoint) may have already spliced a
+        // REAL vertex into the incident faces' windings even though Pass 2's
+        // adjacent-hit guard then refused to chord-split any face along the
+        // path (rebuildFacesWithChordSplits' own nSplit==0 early return,
+        // untouched). That is a legitimate degenerate-chain edge-split —
+        // matching the reference behaviour — and must be KEPT, not rolled
+        // back; only a TRUE no-op (every cut reused an existing corner, no
+        // vertex spliced in at all) still rolls back to the pre-call state.
+        result.meshChanged = (result.facesSplit > 0)
+                           || (vertices.length > vertsBeforePass1);
+        if (result.facesSplit == 0 && vertices.length > vertsBeforePass1) {
+            // KEEP + FINALIZE: Pass 1 already spliced the new vertex into the
+            // incident face windings in-place, but rebuildFacesWithChordSplits
+            // early-returned at nSplit==0 WITHOUT rebuilding edges/loops. Run
+            // the same finalize tail a successful split gets. Leave
+            // cutVertA/cutVertB as insertEdgePoint returned them — a real
+            // caller-visible result, not a no-op sentinel.
+            rebuildEdges();
+            clearEdgeSelectionResize();
+            buildLoops();
+            syncSelection();
+            commitChange(MeshEditScope.Geometry);
+        } else if (result.facesSplit == 0) {
+            // TRUE no-op: every cut reused an existing corner (Pass 1 spliced
+            // in nothing new), so vertices.length == vertsBeforePass1 exactly.
             // rebuildFacesWithChordSplits' own nSplit==0 branch returns
             // early WITHOUT touching edges/loops/selection (see its doc
             // comment), so those are still consistent with the PRE-Pass-1
@@ -21238,20 +21298,93 @@ unittest { // edgeSliceEx: mixed endpoint (t=0, reuse) + interior (t=0.5, new ve
     assert(r.cutVertB == origVerts, "cutVertB must be the newly appended interior vertex");
 }
 
-unittest { // edgeSliceEx: adjacent-hit no-op must NOT leave Pass-1 mutation behind
-           // — fuzz-found, task 0303 (definitive minimal repro).
+unittest { // edgeSliceEx: KEPT degenerate-chain edge-split, RE-DERIVED
+           // (mesh-robustness batch) — this is an INTENTIONAL REVERSAL of
+           // the 0303 always-rollback fix, re-derived from a frozen
+           // reference capture. It previously asserted the OLD (over-
+           // rollback) behaviour as correct — that encoded the bug this
+           // batch fixes. Do NOT read this as test-fitting.
     //
     // edge(0,1)@t=0.5 (genuine interior insert) chained to edge(1,5)@t=1.0
     // (F1 endpoint-reuse landing on the SHARED corner, vertex 1). Both edges
     // border face 5 ([0,1,5,4]); the interior cut vertex is spliced in
     // immediately next to the reused corner in that face's winding, so the
     // two cut positions are ADJACENT there — rebuildFacesWithChordSplits'
-    // adjacent-hit guard correctly refuses to split it (facesSplit == 0).
-    // Before the fix, Pass 1 (insertEdgePoint) had already spliced the new
-    // vertex into BOTH faces incident to edge(0,1) (faces 0 and 5) and grown
-    // `vertices` by one, and that mutation was never rolled back on the
-    // Pass-2 no-op — leaving 9 verts, a stale edges[] (still 12), and
-    // Euler characteristic 9 - 12 + 6 = 3 (should stay 2).
+    // adjacent-hit guard correctly refuses to CHORD-SPLIT it (facesSplit ==
+    // 0). But Pass 1 (insertEdgePoint) already spliced a REAL new vertex
+    // into both faces incident to edge(0,1) (faces 0 and 5) — that is a
+    // legitimate degenerate-chain edge-split (matches the reference: cube
+    // V8/E12/F6 -> V9/E13/F6, chi stays 2), and must be KEPT + finalized,
+    // not rolled back. Before this fix that insert was unconditionally
+    // discarded (over-rollback, task 0303's own fix — too broad).
+    import std.conv : to;
+    auto m = makeCube();
+    uint eA = m.edgeIndexOfVerts(0, 1);
+    uint eB = m.edgeIndexOfVerts(1, 5);
+    assert(eA != ~0u, "edge(0,1) must exist on cube");
+    assert(eB != ~0u, "edge(1,5) must exist on cube");
+
+    size_t origVerts = m.vertices.length;
+    size_t origEdges = m.edges.length;
+    size_t origFaces = m.faces.length;
+
+    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // land on the shared corner, vertex 1
+
+    auto r = m.edgeSliceEx(eA, eB, 0.5f, tB, /*splitPolygons*/true);
+
+    assert(r.facesSplit == 0,
+        "adjacent cut positions on the shared face must not CHORD-SPLIT any face");
+    assert(r.meshChanged,
+        "a kept degenerate-chain insert must report meshChanged == true");
+    assert(r.cutVertA == cast(uint)origVerts,
+        "cutVertA must be the newly inserted interior vertex on edge(0,1)");
+    assert(r.cutVertB == 1,
+        "cutVertB must be the REUSED shared corner (vertex 1), not a sentinel");
+
+    assert(m.vertices.length == origVerts + 1,
+        "kept insert: exactly one new vertex (the edge(0,1) interior cut)");
+    assert(m.edges.length == origEdges + 1,
+        "kept insert: edge(0,1) splits into two edges — net +1 edge");
+    assert(m.faces.length == origFaces,
+        "kept insert: no face is added or removed, only re-wound");
+    assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
+        "Euler characteristic must stay 2 after a kept degenerate-chain insert");
+
+    // edge(0,1) itself is gone; the two half-edges (0,newV) and (newV,1) exist.
+    assert(m.edgeIndexOfVerts(0, 1) == ~0u,
+        "edge(0,1) must no longer exist as a single edge after the split");
+    assert(m.edgeIndexOfVerts(0, r.cutVertA) != ~0u,
+        "half-edge (0, newVert) must exist after the kept split");
+    assert(m.edgeIndexOfVerts(r.cutVertA, 1) != ~0u,
+        "half-edge (newVert, 1) must exist after the kept split");
+
+    // Manifold: every undirected edge used by at most 2 faces.
+    size_t[ulong] edgeUseCount;
+    foreach (fi; 0 .. m.faces.length) {
+        auto f = m.faces[fi];
+        foreach (k; 0 .. f.length) {
+            ulong key = Mesh.edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+            auto p = key in edgeUseCount;
+            if (p is null) edgeUseCount[key] = 1;
+            else           ++(*p);
+        }
+    }
+    foreach (key, count; edgeUseCount)
+        assert(count <= 2,
+            "kept degenerate-chain insert: non-manifold edge used by " ~
+            count.to!string ~ " faces");
+}
+
+unittest { // edgeSliceEx: TRUE no-op (both cuts reuse existing ADJACENT
+           // corners, nothing spliced in) must still roll back byte-
+           // identical — sibling of the KEPT-insert case above, guarding
+           // the regression requirement (mesh-robustness batch).
+    //
+    // edge(0,1)@t=0 (reuse vertex 0) chained to edge(1,5)@t=1 (reuse vertex
+    // 1). Both land on EXISTING corners that are already adjacent in face 5's
+    // winding ([0,1,5,4]) — the adjacent-hit guard refuses to split, and
+    // since NEITHER cut inserted anything new, vertices.length is untouched:
+    // a genuinely empty operation.
     import std.conv : to;
     auto m = makeCube();
     uint eA = m.edgeIndexOfVerts(0, 1);
@@ -21264,23 +21397,26 @@ unittest { // edgeSliceEx: adjacent-hit no-op must NOT leave Pass-1 mutation beh
     size_t origFaces = m.faces.length;
     uint[][] origFaceWindings = m.faces._store.dup;
 
-    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // land on the shared corner, vertex 1
+    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
+    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // reuse vertex 1
 
-    auto r = m.edgeSliceEx(eA, eB, 0.5f, tB, /*splitPolygons*/true);
+    auto r = m.edgeSliceEx(eA, eB, tA, tB, /*splitPolygons*/true);
 
     assert(r.facesSplit == 0,
-        "adjacent cut positions on the shared face must be a no-op (adjacent-hit guard)");
+        "adjacent reused corners on the shared face must be a no-op (adjacent-hit guard)");
+    assert(!r.meshChanged,
+        "a true no-op (nothing spliced in) must report meshChanged == false");
     assert(r.cutVertA == ~0u && r.cutVertB == ~0u,
-        "a no-op result must not surface stale cut-vertex indices");
+        "a true no-op result must not surface stale cut-vertex indices");
     assert(m.vertices.length == origVerts,
-        "no-op must not leave Pass 1's interior insert behind — vertex count unchanged");
-    assert(m.edges.length == origEdges, "no-op must not touch edges[]");
-    assert(m.faces.length == origFaces, "no-op must not touch face count");
+        "true no-op must not add any vertex — both cuts were pure corner reuse");
+    assert(m.edges.length == origEdges, "true no-op must not touch edges[]");
+    assert(m.faces.length == origFaces, "true no-op must not touch face count");
     foreach (fi; 0 .. origFaces)
         assert(m.faces[fi] == origFaceWindings[fi],
-            "no-op must not leave a spliced vertex in face " ~ fi.to!string ~ "'s winding");
+            "true no-op must not leave any winding change in face " ~ fi.to!string);
     assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
-        "Euler characteristic must stay 2 after a no-op cut");
+        "Euler characteristic must stay 2 after a true no-op cut");
 }
 
 unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0
