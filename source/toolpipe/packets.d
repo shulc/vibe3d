@@ -136,7 +136,7 @@ enum FalloffType : uint {
     Lasso     = 4,   // 7.5e
     Cylinder  = 5,   // Stage 12 — radial-perpendicular-to-axis (xfrm.vortex)
     Element   = 6,   // Stage 14.1 — sphere around picked element centroid (xfrm.elementMove preset)
-    Selection = 7,   // D.7 — `falloff.selection`; selected=1.0, unselected decays by BFS hop distance from selection (xfrm.flex preset)
+    Selection = 7,   // D.7 — `falloff.selection`; confined to the selection, boundary pinned to 0, interior weight rises with graph-hop ring distance from the border (xfrm.flex preset)
     Composite = 8,   // multi-falloff — weight = Mix-Mode accumulation of `contributors` (each sub-packet carries its own `mix`)
     VertexMap = 9,   // per-vertex weight read from a named Point dim-1 MeshMap; defaults to 1.0 for unregistered / out-of-range vertices
 }
@@ -326,11 +326,13 @@ struct FalloffConfig {
     // centred on the natural pick point.
     ElementMode    elementMode = ElementMode.Auto;
 
-    // Selection (D.7, xfrm.flex): the "Steps" count — the BFS-hop depth
-    // the per-vert weight grows across from the selection border
-    // inward. See FalloffStage's `steps` field doc for the smoothing-
-    // pass-count formula. Integer by nature (discrete hops).
-    int steps = 4;
+    // Selection (D.7, xfrm.flex): the "Steps" count — the ring-seed cap
+    // depth `S` (`S = max(steps, 1)`) the per-vert weight ramps across
+    // from the selection border inward (`seed = min(ring, S) / S`). The
+    // blur that follows the seed is a FIXED 4-pass graph-Laplacian Jacobi,
+    // independent of this value — see `recomputeSelectionWeights`. Integer
+    // by nature (discrete hops).
+    int steps = 2;
 
     // Anchor ring — vertex indices that get weight=1.0 regardless
     // of the sphere math. Click-pick populates with the clicked
@@ -455,11 +457,13 @@ struct FalloffPacket {
     // the `pickedCenter` point distance.
     const(Vec3)[]  anchorPos;
 
-    // Selection (D.7, xfrm.flex): pre-baked per-vert weights ∈
-    // [0, 1] from a Dijkstra geodesic + smoothstep curve.
-    // Selected verts on the boundary → 0 (anchor); deep interior
-    // → 1; unselected → 0. Empty slice degenerates to "no
-    // falloff" (caller multiplies by 1.0 for every vert).
+    // Selection (D.7, xfrm.flex): pre-baked per-vert weights ∈ [0, 1]
+    // from a ring-distance seed (graph-hop BFS from the selection border)
+    // + a fixed-4-pass graph-Laplacian Jacobi blur + a fixed smoothstep
+    // ease (see `recomputeSelectionWeights`). Selected verts on the
+    // boundary → 0 (anchor); deep interior → close to 1; unselected → 0.
+    // Empty slice degenerates to "no falloff" (caller multiplies by 1.0
+    // for every vert).
     const(float)[] selectionWeights;
 
     // VertexMap: pre-baked per-vert weights read from a named Point

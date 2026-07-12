@@ -121,6 +121,216 @@ private float selectionWeight(const ref FalloffPacket cfg, int vertIdx) {
     return arr[cast(size_t)vertIdx];
 }
 
+// ---------------------------------------------------------------------------
+// Selection falloff RAW-weight kernel (D.7 / falloff-port Phase 2). A pure
+// topology function — no Mesh, no Stage, no caching — so it can be driven
+// directly on a synthetic adjacency by the tier-1 golden unittests below, as
+// well as by `FalloffStage.recomputeSelectionWeights` (the live per-drag
+// baker, which owns the mesh/selection→inSel/adjacency plumbing plus the
+// post-kernel ease and the result cache).
+//
+// Two-stage law, `S = max(steps, 1)`:
+//
+//   1. Ring seed. `seed(v) = min(ring(v), S) / S`, where `ring(v)` is the
+//      plain (unweighted) BFS hop distance from `v` to the nearest BOUNDARY
+//      vertex — a selected vertex with ≥1 unselected neighbour (a
+//      Dirichlet-0 pin) — walking only the in-selection subgraph. Boundary
+//      vertices are ring 0 (seed 0); vertices deeper than `S` hops saturate
+//      at seed 1.0. Valence-agnostic: a plain hop count over the adjacency,
+//      not a flat-grid/degree-4 special case — real meshes have arbitrary
+//      valence (CC poles, tri fans, non-manifold junctions).
+//   2. Fixed-4-pass graph-Laplacian Jacobi blur, INDEPENDENT of `steps`.
+//      Each interior selected vertex (no unselected neighbour) is replaced
+//      by the uniform (1/valence) mean of its in-selection neighbours'
+//      PREVIOUS-pass seed (snapshot-then-write — Jacobi, not Gauss-Seidel).
+//      Boundary vertices stay pinned at 0 through all 4 passes.
+//
+// `inSel[v] == false` ⇒ output 0 unconditionally — the domain never expands
+// past the raw selection. A disjoint fully-interior component (every
+// neighbour selected, no boundary reachable by the in-selection BFS)
+// saturates its ring at `S` and its weight at 1.0 by construction of the
+// cap — the "no boundary → full move" degenerate every transform path
+// relies on (see the M9 aliasing unittest in toolpipe.stages.falloff).
+//
+// Returns an `inSel.length`-long RAW weight array (pre-ease). The caller
+// applies its own ease curve (FalloffStage's fixed smoothstep, or a test's
+// own) — this kernel has no opinion on easing.
+// ---------------------------------------------------------------------------
+float[] bakeSelectionRingWeights(const(size_t)[] adjOffset,
+                                  const(uint)[]   adjNeighbors,
+                                  const(bool)[]   inSel,
+                                  int steps)
+{
+    immutable size_t nV = inSel.length;
+    float[] raw = new float[](nV);
+    if (nV == 0) return raw;
+
+    immutable int S = (steps > 1) ? steps : 1; // S = max(steps, 1)
+
+    // Boundary set: selected vertex with ≥1 unselected neighbour.
+    bool[] isB = new bool[](nV);
+    foreach (vi; 0 .. nV) {
+        if (!inSel[vi]) continue;
+        foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
+            if (!inSel[n]) { isB[vi] = true; break; }
+        }
+    }
+
+    // --- Ring seed: multi-source BFS from the boundary set, confined to
+    // the in-selection subgraph. ---
+    enum int UNSEEN = int.max;
+    int[]  ring  = new int[](nV);
+    ring[] = UNSEEN;
+    uint[] queue = new uint[](nV);
+    size_t qHead = 0, qTail = 0;
+    foreach (vi; 0 .. nV) {
+        if (inSel[vi] && isB[vi]) {
+            ring[vi] = 0;
+            queue[qTail++] = cast(uint)vi;
+        }
+    }
+    while (qHead < qTail) {
+        uint v  = queue[qHead++];
+        int  rv = ring[v];
+        foreach (n; adjNeighbors[adjOffset[v] .. adjOffset[v + 1]]) {
+            if (!inSel[n] || ring[n] != UNSEEN) continue;
+            ring[n] = rv + 1;
+            queue[qTail++] = n;
+        }
+    }
+
+    foreach (vi; 0 .. nV) {
+        if (!inSel[vi]) { raw[vi] = 0.0f; continue; }
+        int r = ring[vi];
+        int capped = (r == UNSEEN || r > S) ? S : r;
+        raw[vi] = cast(float)capped / cast(float)S;
+    }
+
+    // --- Fixed-4-pass Jacobi blur (uniform 1/valence neighbour mean). ---
+    float[] wA = raw;
+    float[] wB = new float[](nV);
+    foreach (pass; 0 .. 4) {
+        foreach (vi; 0 .. nV) {
+            if (!inSel[vi] || isB[vi]) { wB[vi] = 0.0f; continue; }
+            float sum = 0.0f;
+            int   cnt = 0;
+            foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
+                if (!inSel[n]) continue;
+                sum += wA[n];
+                cnt += 1;
+            }
+            wB[vi] = (cnt > 0) ? (sum / cast(float)cnt) : wA[vi];
+        }
+        auto tmp = wA; wA = wB; wB = tmp;
+    }
+    return wA;
+}
+
+unittest { // Selection RAW-weight kernel vs the flat-grid diffusion law
+           // (falloff-port Phase 2, tier-1 goldens). Builds a synthetic
+           // 4-connected grid adjacency directly (no Mesh, no HTTP): an
+           // (N+2)x(N+2) padded grid with only the inner NxN block marked
+           // `inSel`, so the inner block's border vertices have a real
+           // unselected neighbour one hop outside — the Dirichlet-0
+           // boundary condition — exactly like a selection carved out of a
+           // larger mesh.
+    import std.math : abs;
+
+    void buildPaddedGrid(int side, int N, out size_t[] offset,
+                         out uint[] neighbors, out bool[] inSel)
+    {
+        int idx(int i, int j) { return i * side + j; }
+        size_t nV = cast(size_t)(side * side);
+        uint[][] adj = new uint[][](nV);
+        foreach (i; 0 .. side)
+            foreach (j; 0 .. side) {
+                int v = idx(i, j);
+                if (i > 0)        adj[v] ~= cast(uint) idx(i - 1, j);
+                if (i < side - 1) adj[v] ~= cast(uint) idx(i + 1, j);
+                if (j > 0)        adj[v] ~= cast(uint) idx(i, j - 1);
+                if (j < side - 1) adj[v] ~= cast(uint) idx(i, j + 1);
+            }
+        offset = new size_t[](nV + 1);
+        size_t cursor = 0;
+        foreach (v; 0 .. nV) { offset[v] = cursor; cursor += adj[v].length; }
+        offset[nV] = cursor;
+        neighbors = new uint[](cursor);
+        foreach (v; 0 .. nV)
+            neighbors[offset[v] .. offset[v] + adj[v].length] = adj[v][];
+
+        inSel = new bool[](nV);
+        // Inner NxN block, offset by the 1-cell padding ring on every side.
+        foreach (i; 1 .. N + 1)
+            foreach (j; 1 .. N + 1)
+                inSel[idx(i, j)] = true;
+    }
+
+    float smoothstepEase(float w) { return w * w * (3.0f - 2.0f * w); }
+
+    // --- 5x5 selection (padded to a 7x7 grid) ---------------------------
+    {
+        size_t[] off; uint[] nbr; bool[] sel;
+        buildPaddedGrid(7, 5, off, nbr, sel);
+        int idx(int i, int j) { return i * 7 + j; }
+        auto w2 = bakeSelectionRingWeights(off, nbr, sel, 2);
+        // Block-relative (bi,bj) = (padded i,j) - 1: centre=(2,2),
+        // edge=(2,1), diag=(1,1) — frozen 5x5 steps=2 goldens.
+        assert(abs(w2[idx(3, 3)] - 0.25f)  < 1e-6f, "5x5 steps=2 centre");
+        assert(abs(w2[idx(3, 2)] - 0.125f) < 1e-6f, "5x5 steps=2 edge");
+        assert(abs(w2[idx(2, 2)] - 0.125f) < 1e-6f, "5x5 steps=2 diag");
+    }
+
+    // --- 7x7 selection (padded to a 9x9 grid) ---------------------------
+    {
+        size_t[] off; uint[] nbr; bool[] sel;
+        buildPaddedGrid(9, 7, off, nbr, sel);
+        int idx(int i, int j) { return i * 9 + j; }
+        auto w2 = bakeSelectionRingWeights(off, nbr, sel, 2);
+        // Block-relative (bi,bj) = (padded i,j) - 1 — frozen 7x7 steps=2
+        // goldens by (dx,dz).
+        assert(abs(w2[idx(2, 2)] - 0.17578125f) < 1e-6f, "7x7 steps=2 (1,1)");
+        assert(abs(w2[idx(2, 3)] - 0.28125f)    < 1e-6f, "7x7 steps=2 (1,2)");
+        assert(abs(w2[idx(3, 3)] - 0.515625f)   < 1e-6f, "7x7 steps=2 (2,2)");
+        assert(abs(w2[idx(4, 4)] - 0.6796875f)  < 1e-6f, "7x7 steps=2 (3,3)");
+
+        // steps_0 == steps_1 (S = max(steps,1) caps both to S=1).
+        auto w0 = bakeSelectionRingWeights(off, nbr, sel, 0);
+        auto w1 = bakeSelectionRingWeights(off, nbr, sel, 1);
+        foreach (vi; 0 .. w0.length)
+            assert(abs(w0[vi] - w1[vi]) < 1e-9f, "steps=0 must equal steps=1");
+        assert(abs(w1[idx(4, 4)] - 0.84375f) < 1e-6f, "7x7 steps=0/1 centre");
+
+        // Post-ease lock: FalloffStage applies a fixed smoothstep over the
+        // RAW kernel output (see recomputeSelectionWeights) — this locks
+        // the ease separately from the diffusion.
+        assert(abs(smoothstepEase(w2[idx(4, 4)]) - 0.7579278945922852f) < 1e-5f,
+               "post-ease smoothstep(0.6796875) must match the locked value");
+    }
+
+    // --- Degenerate invariants -------------------------------------------
+    {
+        // All-boundary: a single selected vertex surrounded entirely by
+        // unselected padding — every neighbour is outside the selection,
+        // so the lone selected vertex is itself the boundary → weight 0
+        // regardless of steps.
+        size_t[] off; uint[] nbr; bool[] sel;
+        buildPaddedGrid(3, 1, off, nbr, sel);
+        auto w = bakeSelectionRingWeights(off, nbr, sel, 2);
+        foreach (vi; 0 .. w.length)
+            if (sel[vi]) assert(abs(w[vi] - 0.0f) < 1e-6f,
+                "all-boundary selection must read 0");
+
+        // No-boundary: the WHOLE padded grid selected — no unselected
+        // neighbour exists anywhere, so the BFS finds no boundary seed and
+        // every vertex saturates at ring S -> weight 1.0.
+        bool[] fullSel = new bool[](sel.length);
+        fullSel[] = true;
+        auto wFull = bakeSelectionRingWeights(off, nbr, fullSel, 2);
+        foreach (v; wFull)
+            assert(abs(v - 1.0f) < 1e-6f, "no-boundary (fully selected) must read 1");
+    }
+}
+
 /// VertexMap falloff: looks up the pre-baked `vertexMapWeights` slice at
 /// `vertIdx`. Values are clamped to [0, 1] here (the buffer stores raw map
 /// data). An empty / undersized / negative-index case degenerates to 1.0

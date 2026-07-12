@@ -189,14 +189,15 @@ class FalloffStage : Stage, Operator {
     //
     // The weight map is COMPLETELY position-independent: it depends only
     // on mesh topology (edges + vertex count), the selection (per edit
-    // mode), `steps` (→ stepsI/iters), and the shape params (shape/in_/out_).
-    // ALL of those are frozen during a transform drag (selection frozen,
-    // topology frozen — transform tools mutate vertex POSITIONS directly
-    // without bumping mesh.mutationVersion). So the map can be computed
-    // ONCE per drag and reused across the ~17 iteration frames, instead of
-    // re-running the Laplacian smoothing every pipe walk. We cache it keyed
-    // on (mutationVersion, editMode, selectionSignature, stepsI, shape,
-    // in_, out_); a key miss recomputes.
+    // mode), `steps` (→ stepsI, the ring-seed cap depth), and the shape
+    // params (shape/in_/out_, dead for Selection but still folded into the
+    // cache key — see storeSelCacheKey). ALL of those are frozen during a
+    // transform drag (selection frozen, topology frozen — transform tools
+    // mutate vertex POSITIONS directly without bumping mesh.mutationVersion).
+    // So the map can be computed ONCE per drag and reused across the ~17
+    // iteration frames, instead of re-running the ring-seed BFS + Jacobi
+    // blur every pipe walk. We cache it keyed on (mutationVersion, editMode,
+    // selectionSignature, stepsI, shape, in_, out_); a key miss recomputes.
     private float[] selWeights_;
 
     // VertexMap: `config.mapName` (embedded above) names the active weight
@@ -680,9 +681,10 @@ class FalloffStage : Stage, Operator {
                                      cast(int)ElementConnect.Ignore);
                 break;
             case FalloffType.Selection:
-                // `falloff.selection` (attr `steps`) — the BFS-hop count, a
-                // proper integer (discrete smoothing iterations).
-                ps ~= Param.int_("steps", "Steps", &config.steps, 4).min(1);
+                // `falloff.selection` (attr `steps`) — the ring-seed cap
+                // depth `S` (a proper integer; the Jacobi blur pass count
+                // is fixed at 4, independent of this value).
+                ps ~= Param.int_("steps", "Steps", &config.steps, 2).min(1);
                 break;
             case FalloffType.Composite:
                 // A FalloffStage's own `type` is never Composite — that
@@ -784,36 +786,32 @@ class FalloffStage : Stage, Operator {
     }
 
     /// D.7: bake Selection per-vert weights into `selWeights_`,
-    /// implementing `falloff.selection` semantics (see
-    /// doc/deform_d7_flex_cross_engine_plan.md, Selection weighting
-    /// model):
+    /// implementing `falloff.selection` semantics via
+    /// `falloff.bakeSelectionRingWeights` (see that function's header for
+    /// the two-stage ring-seed + fixed-4-pass Jacobi-blur kernel; its
+    /// tier-1 golden unittests in source/falloff.d drive it directly on a
+    /// synthetic grid):
     ///
     ///   - vert NOT in selection                  → weight = 0
     ///   - vert in selection, on boundary         → weight = 0
-    ///     (selected vert with ≥1 unselected neighbour)
-    ///   - vert in selection, geodesic g from boundary, g < G
-    ///                                            → weight = applyShape(g/G)
-    ///   - vert in selection, g ≥ G               → weight = 1
+    ///     (selected vert with ≥1 unselected neighbour, a Dirichlet-0 pin)
+    ///   - vert in selection, interior            → weight rises with
+    ///     graph-hop ring distance from the boundary, `ring/S` capped at
+    ///     1.0 (`S = max(steps, 1)`), then smoothed by exactly 4 Jacobi
+    ///     passes (uniform 1/valence mean over in-selection neighbours).
+    ///     The pass count is FIXED, independent of `steps` — `steps` only
+    ///     sets the ring-seed's cap depth `S`.
     ///
-    /// `geodesic g` = Dijkstra shortest path from the SELECTED
-    /// boundary set to v, walk confined to the in-selection
-    /// subgraph, edges weighted by world-space length. Using
-    /// geodesic distance rather than unit hops captures the
-    /// per-vert variation produced when edge lengths differ across
-    /// the selection (e.g. shorter top-cap edges vs longer side-face
-    /// edges after Catmull-Clark).
-    ///
-    /// `G` (the "steps" range in geodesic units) =
-    ///   `steps · avg_sel_edge_length`. An empirical fit puts the exact G at
-    /// `Steps · avg_edge · 0.81` (the 0.81 factor comes from the
-    /// iterative smoothing convergence); we omit the 0.81 for
-    /// cleanliness — at the cost of ~5 % residual.
+    /// A disjoint fully-interior component (every neighbour selected, no
+    /// boundary reachable via the in-selection BFS) has no ring-0 seed to
+    /// walk from, so its ring saturates at `S` and its weight at 1.0 — the
+    /// "no boundary → full move" degenerate every transform path relies on.
     ///
     /// Empty selection → empty weight slice (caller treats as "no
     /// constraint", matching the "empty selection moves everything"
     /// convention every transform path uses).
     void recomputeSelectionWeights() {
-        import std.math : sqrt, lround;
+        import falloff : bakeSelectionRingWeights;
         if (mesh_ is null || editMode_ is null) { selWeights_.length = 0; return; }
         size_t nVerts = mesh_.vertices.length;
         if (nVerts == 0) { selWeights_.length = 0; return; }
@@ -821,7 +819,7 @@ class FalloffStage : Stage, Operator {
         // --- Cache gate -------------------------------------------------
         // selWeights_ is position-independent. If every key field matches
         // the cached values AND the buffer is the right length, the result
-        // is identical to last frame — reuse it and skip the smoothing.
+        // is identical to last frame — reuse it and skip the recompute.
         int stepsI = steps;
         if (stepsI < 0) stepsI = 0;
         const int    editModeI = cast(int)(*editMode_);
@@ -871,92 +869,30 @@ class FalloffStage : Stage, Operator {
             if (vi >= 0 && cast(size_t)vi < nVerts) inSel[vi] = true;
         }
 
-        // Vertex→neighbor CSR adjacency. Edge lengths used to be required
-        // for the Dijkstra-based weight pass; the iterative Laplacian
-        // smoothing below ignores them (each in-selection neighbour
-        // contributes equally). Owned by Mesh itself and rebuilt only when
+        // Vertex→neighbor CSR adjacency. Edge lengths are not needed — the
+        // ring-seed BFS and the Jacobi blur both treat every in-selection
+        // neighbour equally. Owned by Mesh itself and rebuilt only when
         // mutationVersion moves — no per-call uint[][] GC churn.
         const(size_t)[] adjOffset;
         const(uint)[]    adjNeighbors;
         mesh_.vertexAdjacencyCSR(adjOffset, adjNeighbors);
 
-        // Boundary verts: selected with ≥1 unselected neighbour.
-        // These are pinned to weight 0 across the smoothing — the
-        // "soft border" hinge.
-        bool[] isB = new bool[](nVerts);
-        foreach (vi; 0 .. nVerts) {
-            if (!inSel[vi]) continue;
-            foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
-                if (!inSel[n]) { isB[vi] = true; break; }
-            }
-        }
+        // RAW weights: ring-seed + fixed-4-pass Jacobi blur, computed by
+        // the pure kernel shared with the tier-1 golden unittests in
+        // source/falloff.d.
+        float[] raw = bakeSelectionRingWeights(adjOffset, adjNeighbors, inSel, stepsI);
 
-        // Iterative Laplacian smoothing — a DIFFUSION APPROXIMATION of
-        // the reference engine's selection-falloff weight. The reference's
-        // exact operator is NOT a uniform Laplacian and is closed-source,
-        // so this is meaningfully closer, not bit-perfect: an irreducible
-        // ~4–9.5 % per-vertex residual remains across the steps range.
-        //
-        // Initial state: boundary (selection-border) verts = 0, interior
-        // selected verts = 1. Each iteration replaces every interior weight
-        // with the mean of its in-selection neighbours (α = 1.0 → pure
-        // Jacobi neighbour-mean; over-relaxation α > 1 was tested and does
-        // NOT help). Boundary stays pinned at 0 (the soft-border hinge).
-        //
-        // Iteration count scales QUADRATICALLY with steps:
-        //   iters ≈ round(0.7·steps² + 2).
-        // The smoothing is a diffusion process whose reach (how far the
-        // weight gradient penetrates from the border) grows ∝ √iters; the
-        // reference engine scales that reach LINEARLY in steps, so matching
-        // it requires iters ∝ steps². With steps == 0 we collapse to no
-        // smoothing — the selection-edge hinge is the whole weight map
-        // (binary 0/1).
-        enum float kLapAlpha = 1.0f;
-        // stepsI computed at the cache gate above.
-        int iters = (stepsI <= 0) ? 0 : cast(int) lround(0.7f * stepsI * stepsI + 2.0f);
-
-        float[] wA = new float[](nVerts);
-        float[] wB = new float[](nVerts);
-        // Initial weights
-        foreach (vi; 0 .. nVerts) {
-            if (!inSel[vi])      wA[vi] = 0.0f;
-            else if (isB[vi])    wA[vi] = 0.0f;
-            else                 wA[vi] = 1.0f;
-        }
-        foreach (it; 0 .. iters) {
-            // Per-iteration pass: wB[v] = (1-α)·wA[v] + α·avg(wA[selected_neighbours])
-            foreach (vi; 0 .. nVerts) {
-                if (!inSel[vi])      { wB[vi] = 0.0f; continue; }
-                if (isB[vi])         { wB[vi] = 0.0f; continue; }
-                float sum = 0.0f;
-                int   cnt = 0;
-                foreach (n; adjNeighbors[adjOffset[vi] .. adjOffset[vi + 1]]) {
-                    if (!inSel[n]) continue;
-                    sum += wA[n];
-                    cnt += 1;
-                }
-                float avg = (cnt > 0) ? (sum / cast(float)cnt) : wA[vi];
-                wB[vi] = (1.0f - kLapAlpha) * wA[vi] + kLapAlpha * avg;
-            }
-            // swap
-            auto tmp = wA; wA = wB; wB = tmp;
-        }
-
-        // Apply a FIXED smoothstep ease AFTER smoothing — Selection's
-        // post-ease is decoupled from `cfg.shape` (unlike every distance-
-        // metric falloff, which routes its curve through `applyShape`):
-        // the Shape Preset row is hidden for Selection (params(), above)
-        // precisely because this ease no longer reads it. Decoupling makes
-        // Selection immune to the distance-metric default-curve choice —
-        // it always eases the same way regardless of what `shape` holds.
-        // w ∈ [0, 1] here (0 = boundary, 1 = deep); smoothstep(w) =
-        // 1 − smoothstep(1 − w), so this is algebraically identical
-        // (<1 ULP in float) to the old `applyShape(1 − w, Smooth, …)`
-        // path — a pure decoupling, not a curve change.
+        // Apply a FIXED smoothstep ease over the RAW kernel output —
+        // Selection's post-ease is decoupled from `cfg.shape` (unlike
+        // every distance-metric falloff, which routes its curve through
+        // `applyShape`): the Shape Preset row is hidden for Selection
+        // (params(), above) precisely because this ease no longer reads
+        // it. `raw[vi]` is already 0 for both unselected and boundary
+        // verts, and smoothstep(0) == 0, so no separate unselected branch
+        // is needed here.
         selWeights_.length = nVerts;
         foreach (vi; 0 .. nVerts) {
-            if (!inSel[vi]) { selWeights_[vi] = 0.0f; continue; }
-            float w = wA[vi];
+            float w = raw[vi];
             selWeights_[vi] = w * w * (3.0f - 2.0f * w);
         }
 
@@ -1509,9 +1445,10 @@ private:
                 if (maxHalf > 0) pickedRadius = maxHalf;
                 break;
             case FalloffType.Selection:
-                // `steps` is the BFS-hop range — bbox sizing doesn't apply.
-                // Pin to the default so a fresh selection switch starts clean.
-                steps = 4;
+                // `steps` is the ring-seed cap depth — bbox sizing doesn't
+                // apply. Pin to the default so a fresh selection switch
+                // starts clean.
+                steps = 2;
                 break;
             case FalloffType.Composite:
                 // Never a stage's own type — nothing to auto-size.
@@ -1606,14 +1543,15 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
 }
 
 // ---------------------------------------------------------------------------
-// Regression guard for recomputeSelectionWeights() — locks the two empirically
-// fitted smoothing constants (alpha = 1.0, iters = round(0.7*steps^2 + 2)). The
+// Regression guard for recomputeSelectionWeights() — locks the ring-seed +
+// fixed-4-pass Jacobi-blur law (falloff-port Phase 2) on a real Mesh, not
+// just the synthetic-adjacency kernel unittest in source/falloff.d. The
 // asserts split into mesh-agnostic STRUCTURAL invariants (hold for any mesh)
-// and a small FROZEN-OUTPUT table on one specific grid+selection (what fails
-// if someone reverts alpha or relinearises the iteration count). The frozen
-// values are NOT a reference-parity claim — recomputeSelectionWeights is a
-// diffusion APPROXIMATION of the closed-source reference operator (~4-9.5 %
-// per-vertex residual).
+// and a small FROZEN-OUTPUT table on one specific grid+selection: this grid's
+// selected block is topologically identical to the tier-1 kernel unittest's
+// synthetic 7x7 grid (a one-quad-deep border plus a genuine interior), so the
+// numbers below are the SAME executable-spec values reached through a real
+// Mesh + FalloffStage instead of a hand-built adjacency.
 //
 // READ-ONLY / side-effect-free: this block compiles into the live editor's
 // unittest pass, so it only constructs a throwaway Mesh + FalloffStage and
@@ -1635,7 +1573,8 @@ unittest {
     // rows/cols 1..6, so selected verts span vertex rows/cols 1..7.
     // hopDepth(i,j) = min(i, j, 8-i, 8-j) - 1: 0 on the selection border,
     // growing inward. Deepest interior verts are the centre 2x2 (depth 3).
-    // Returns < 0 for verts outside the selected block.
+    // Returns < 0 for verts outside the selected block. This is exactly the
+    // 4-connected ring distance the kernel's BFS computes.
     static int hopDepth(int i, int j) {
         int d = i;
         if (j < d) d = j;
@@ -1657,31 +1596,37 @@ unittest {
 
     int vi(int i, int j) { return i * side + j; }
 
-    // --- steps == 0: binary hinge map (no smoothing) -----------------------
+    // --- steps == 0 and steps == 1 are IDENTICAL (S = max(steps, 1) caps
+    // both to S=1) — border pinned to 0; no vertex reads flat 1.0 anymore
+    // (that was the old flat-hot-seed profile this rewrite replaces). ------
     fs.steps = 0;
     fs.recomputeSelectionWeights();
     assert(fs.selWeights_.length == grid.vertices.length);
+    auto w0 = fs.selWeights_.dup;
+
+    fs.steps = 1;
+    fs.recomputeSelectionWeights();
+    auto w1 = fs.selWeights_.dup;
+
     foreach (i; 1 .. side - 1)
         foreach (j; 1 .. side - 1) {
             int hd = hopDepth(i, j);
             if (hd < 0) continue; // not a selected vert
-            // Fixed smoothstep ease: smoothstep(0)=0, smoothstep(1)=1. So
-            // border w=0 -> eased 0; deep interior w=1 -> eased 1.
-            float got = fs.selWeights_[vi(i, j)];
+            assert(abs(w0[vi(i, j)] - w1[vi(i, j)]) < 1e-6f,
+                "steps=0 must equal steps=1 (S=max(steps,1) caps both to 1)");
             if (hd == 0)
-                assert(abs(got - 0.0f) < 1e-6f, "steps=0 border must be 0");
-            else
-                assert(abs(got - 1.0f) < 1e-6f, "steps=0 interior must be 1");
+                assert(abs(w0[vi(i, j)] - 0.0f) < 1e-6f, "border must be 0");
         }
+    // Deepest-interior selected vert (centre, hopDepth 3) saturates near 1
+    // at S=1 (ring 3 caps to S=1, then the fixed 4-pass blur pulls it only
+    // slightly below 1 from the pinned-0 border).
+    assert(w1[vi(4, 4)] > 0.9f, "deepest interior must exceed 0.9 at steps<=1");
 
-    // --- steps > 0: smoothed weights, border pinned to 0, monotone with hop
-    // depth, bounded in [0,1]. NOTE on direction: more steps == more diffusion
-    // passes == the falloff reaches FARTHER from the pinned-0 border, so the
-    // interior weight DECREASES as steps grow (at steps=1 the centre still
-    // sits near 1; by steps=6 it has bled almost to 0). The "deepest interior
-    // > 0.9" saturation invariant therefore holds at the shallow end
-    // (steps=1); the in-range + border-pin + monotone invariants hold at
-    // every steps>0.
+    // --- steps > 1: border pinned to 0, monotone with hop depth, bounded
+    // in [0,1]. NOTE on direction: a LARGER `steps` raises `S`, so a
+    // fixed-ring vertex's seed (`ring/S`) SHRINKS — the interior weight
+    // DECREASES as steps grow (the knob direction is unchanged from before
+    // this rewrite; only the profile shape changed).
     fs.steps = 2;
     fs.recomputeSelectionWeights();
     auto w2 = fs.selWeights_;
@@ -1700,23 +1645,18 @@ unittest {
     assert(w2[vi(4, 2)] <= w2[vi(4, 3)] + 1e-6f);
     assert(w2[vi(4, 3)] <= w2[vi(4, 4)] + 1e-6f);
 
-    // Deepest-interior selected vert (centre, hopDepth 3) saturates near 1 at
-    // the shallow end (steps=1, before the falloff has bled inward).
-    fs.steps = 1;
-    fs.recomputeSelectionWeights();
-    auto w1 = fs.selWeights_;
-    assert(w1[vi(4, 4)] > 0.9f, "deepest interior must exceed 0.9 at steps=1");
-
     // --- FROZEN OUTPUT -----------------------------------------------------
-    // Frozen output of alpha = 1.0 / iters = round(0.7*steps^2 + 2) on this
-    // exact grid + selection — locks the constants; NOT a reference-parity
-    // claim. (Reverting alpha to 0.76 or relinearising iters to 4*steps+1
-    // changes these and fails here.) Tolerance 1e-4 absorbs float-order noise.
-    assert(abs(w2[vi(4, 2)] - 0.320533f) < 1e-4f); // steps=2, hopDepth 1
-    assert(abs(w2[vi(4, 3)] - 0.718783f) < 1e-4f); // steps=2, hopDepth 2
-    assert(abs(w2[vi(4, 4)] - 0.830364f) < 1e-4f); // steps=2, hopDepth 3 (centre)
-    assert(abs(w2[vi(3, 3)] - 0.593262f) < 1e-4f); // steps=2, off-axis interior
-    assert(abs(w1[vi(4, 4)] - 0.988770f) < 1e-4f); // steps=1 centre (near 1)
+    // Frozen values of the ring-seed + fixed-4-pass Jacobi law (post
+    // smoothstep ease, i.e. exactly what `selWeights_` publishes) on this
+    // exact grid + selection. Bit-identical to the executable spec — this
+    // grid's selected block is the same topology as the tier-1 kernel
+    // unittest's synthetic 7x7 grid (source/falloff.d), just addressed
+    // through a real Mesh + FalloffStage instead of a hand-built adjacency.
+    assert(abs(w2[vi(4, 2)] - 0.27590154111385345f) < 1e-5f); // steps=2, hopDepth 1
+    assert(abs(w2[vi(4, 3)] - 0.59326171875f)        < 1e-5f); // steps=2, hopDepth 2
+    assert(abs(w2[vi(4, 4)] - 0.7579278945922852f)   < 1e-5f); // steps=2, hopDepth 3 (centre)
+    assert(abs(w2[vi(3, 3)] - 0.5234298706054688f)   < 1e-5f); // steps=2, off-axis interior
+    assert(abs(w1[vi(4, 4)] - 0.93438720703125f)     < 1e-5f); // steps<=1 centre (near 1)
 }
 
 // ---------------------------------------------------------------------------
