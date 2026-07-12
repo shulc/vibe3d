@@ -18,14 +18,14 @@ groups:
           action: { kind: script, lines: ["select.convert polygon"] }
   - title: toolpipe
     buttons:
-      # MODO-style Action Center pulldown. Mirrors the action-centers
-      # popover sheet from the MODO 9 UI:
+      # reference-style Action Center pulldown. Mirrors the action-centers
+      # popover sheet from the reference UI:
       # top-level actr.<mode> presets, "(none)" first,
       # divider, then granular Center → / Axis → submenus that map to
       # vibe3d's per-stage `tool.pipe.attr` commands.
       #
       # `dynamicLabel: true` makes the button face show the active
-      # mode's label (matches MODO's PopupFace="optionOrLabel"), and
+      # mode's label (matches the reference's PopupFace="optionOrLabel"), and
       # `checked: notEquals: "none"` keeps it visually pressed for
       # every mode except `(none)`.
       - label: "Action Center"
@@ -65,7 +65,7 @@ groups:
             - kind: submenu
               label: Center
               # Granular ACEN-only — leaves AXIS untouched. Mirrors
-              # MODO's frm_modomodes_centers:sheet. Maps to vibe3d's
+              # the reference's centers submenu. Maps to vibe3d's
               # ActionCenterStage.applySetAttr("mode", ...).
               items:
                 - label: Automatic
@@ -92,7 +92,7 @@ groups:
             - kind: submenu
               label: Axis
               # Granular AXIS-only — leaves ACEN untouched. Mirrors
-              # MODO's frm_modomodes_axis:sheet. Maps to vibe3d's
+              # the reference's axis submenu. Maps to vibe3d's
               # AxisStage.applySetAttr("mode", ...).
               items:
                 - label: Automatic
@@ -119,7 +119,7 @@ groups:
       - label: "AI"
         action: { kind: command, id: ai.toggle }
         checked: { path: "ai/enabled", equals: "true" }
-      # MODO-style Snapping pulldown. Master toggle on top (matches the
+      # reference-style Snapping pulldown. Master toggle on top (matches the
       # default @x keybind → tool.snapState true), divider,
       # then a checkbox per SnapType. Button face stays highlighted as
       # long as snap is on. Mirrors the snap palette structure but
@@ -239,7 +239,7 @@ groups:
                   - { label: Vertex Map, action: { kind: script, lines: ["falloff.add vertexMap"] } }
               - { kind: divider }
               - { label: "Clear Stacked", action: { kind: command, id: falloff.clear } }
-      # Phase 7.6: Symmetry (SYMM) — MODO symmetry-popover parity.
+      # Phase 7.6: Symmetry (SYMM) — reference symmetry-popover parity.
       # Click   → master toggle (symmetry.toggle).
       # Alt+click → Options popup (axis pick + workplane).
       # Button face: static "Symmetry" when off; flips to

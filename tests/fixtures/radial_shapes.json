@@ -1,7 +1,7 @@
 {
   "name": "radial_shapes",
   "description": "Reference-parity: the radial-falloff SHAPE curves (linear / easeIn / easeOut / smooth / custom). Each case scales a seg-4 cube along Y under a radial falloff of that shape; the dense vertex set samples the curve across t in [0.5,0.87] and asserts every vertex against the frozen reference. Confirms vibe3d applyShape == the reference's radial falloff per profile (custom verifies the in_/out_ tangent convention). Empty reset.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

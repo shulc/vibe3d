@@ -28,7 +28,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
-    private float            strn_ = 1.0f;   // `strn` (strength) attr — MODO default 1.0
+    private float            strn_ = 1.0f;   // `strn` (strength) attr — reference default 1.0
     private int              iter_ = 1;      // `iter` (iterations) attr
     private bool             lockBound_ = false;  // `lockBound` —
     // freezes verts on boundary edges (edges adjacent to only one face,
@@ -40,11 +40,11 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     // polygon and lies on the boundary.
     private bool             lockSharp_     = false; // `lockSharp`
     private float            sharpAngleDeg_ = 60.0f; // `sharpAngle`,
-    // DEGREES (MODO default 60°). Freezes verts on interior edges whose
+    // DEGREES (reference default 60°). Freezes verts on interior edges whose
     // dihedral angle exceeds this threshold; converted to radians at the
     // dihedral test below. Boundary edges aren't covered here — use
     // lockBound / lockCorner for those. Greyed out (paramEnabled) unless
-    // lockSharp is on, matching MODO's disabled spinner.
+    // lockSharp is on, matching the reference's disabled spinner.
     // Optional falloff packet — set via `setFalloff` from either the
     // wrapping tool (XfrmSmoothTool reads the toolpipe's FalloffStage)
     // or the HTTP injector (tests pass a `falloff` JSON alongside the
@@ -75,7 +75,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     override string name()  const { return "mesh.smooth"; }
     override string label() const { return "Smooth"; }
 
-    // Row order matches MODO's Smooth Tool Properties top-to-bottom.
+    // Row order matches the reference Smooth tool properties top-to-bottom.
     override Param[] params() {
         return [
             Param.float_("strn",       "Strength",         &strn_,          1.0f).min(0.0f).max(1.0f),
@@ -92,7 +92,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     }
 
     // Sharp Angle is meaningful only while Lock Sharp Edges is on —
-    // grey it out otherwise, matching MODO's disabled spinner.
+    // grey it out otherwise, matching the reference's disabled spinner.
     override bool paramEnabled(string name) const {
         if (name == "sharpAngle") return lockSharp_;
         return true;

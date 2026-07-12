@@ -1,7 +1,7 @@
 {
   "name": "softrotate",
   "description": "Reference-parity: softRotate = radial-falloff Rotate (xfrm.softRotate). The reference applies R(w*theta) (angle scaled by per-vertex weight, radius preserved). Cases cross multiple angles and a smooth falloff shape. Empty reset; rotation about Z.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

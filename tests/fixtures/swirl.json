@@ -1,7 +1,7 @@
 {
   "name": "swirl",
   "description": "Reference-parity: swirl = radial-falloff Rotate (xfrm.swirl \u2014 wired identically to softRotate). Seg-2 cube rotated about Z; asserted against the frozen reference R(w*theta). Empty reset.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

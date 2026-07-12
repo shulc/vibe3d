@@ -1,7 +1,7 @@
 {
   "name": "flare",
   "description": "Reference-parity: flare = push-along-(smooth)normals + linear falloff (xfrm.flare). A seg-4 cube is pushed along each vertex's smooth normal (uniform average of incident face normals = the reference engine's default; per-vertex-type face=axis/edge=45deg/corner=diagonal) by dist x linear-weight. Push is linear in weight (v + w*dist*normal). Plain seg cube (no subdivision) keeps topology - hence normals - identical in both engines; a CC mesh leaves a ~0.3deg normal residual from differing subdivision connectivity (documented separately, not a flare bug).",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

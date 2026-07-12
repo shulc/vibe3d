@@ -290,7 +290,7 @@ unittest {
 //    they are gated in falloff.yaml on `whenAttr: start` — and Screen's
 //    params() does not expose `start`. rowVisible("start") is therefore false,
 //    the gate hides both actions, and the soft-drag panel shows only Screen's
-//    own config (matching MODO, which surfaces neither for a screen falloff).
+//    own config (matching the reference, which surfaces neither for a screen falloff).
 //    Pinned via the SAME stage-query the row gate resolves through.
 // ---------------------------------------------------------------------------
 unittest {

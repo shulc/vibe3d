@@ -1,7 +1,7 @@
 {
   "name": "offcenter_rot",
   "description": "Reference-parity: soft Rotate (xfrm.softRotate) about Z with the radial falloff CENTRE off the rotation axis (center.x=0.5). The rotation changes each vertex's distance to the falloff centre, pinning the weight-evaluation timing: the weight is taken at the ORIGINAL (pre-rotation) position, then R(w*theta) is applied about the pivot (origin) \u2014 confirming the falloff centre and the rotation pivot are independent. Rotation about Z and the falloff centre are an INFERRED convention, not stored in the capture.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

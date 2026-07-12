@@ -73,7 +73,7 @@ unittest {
                              vx, vy, vx, vy - 80, 10));
     settle();
 
-    // MODO `center.element` parity: the gizmo / action center is GLUED to the
+    // reference `center.element` parity: the gizmo / action center is GLUED to the
     // picked element — after the drag it sits at the vertex's NEW position, not
     // at the moving-set centroid (the bug) and not frozen at the click point.
     auto verts = getJson("/api/model")["vertices"].array;

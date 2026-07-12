@@ -3,7 +3,7 @@
   "stage": "acen",
   "name": "probe_acen_select_poly",
   "description": "ACEN stage-conformance (frozen packet-before-geometry capture): the golden `actionCenter.center` is the reference toolpipe's OWN published ActionCenter packet, read via a passive late-pipe probe during a live haul (zero drift confirmed across every recorded MOVE frame) -- not inferred from post-transform geometry.",
-  "source": "Frozen from a task-0341 pipe-probe capture (packet-before-geometry: the golden is the reference pipeline's own published stage packet, read directly during a live haul via a passive probe -- not reverse-engineered from post-transform geometry). No reference tool at test time.",
+  "source": "Frozen from a task-0341 pipe-probe capture (packet-before-geometry: the golden is the reference pipeline's own published stage packet, read directly during a live haul via a passive probe -- not derived from post-transform geometry). No reference tool at test time.",
   "tolerance": 0.0001,
   "cases": [
     {

@@ -3,7 +3,7 @@
   "stage": "acen",
   "name": "acen_origin_analytic",
   "description": "ACEN stage-conformance, Mode.Origin (task 0342 Phase 3): trivial constant world (0,0,0), independent of mesh/selection state (source/toolpipe/stages/actcenter.d computeCenter's Mode.Origin arm returns Vec3(0,0,0) unconditionally). Two cases pin the SAME golden under different selections to demonstrate the selection-independence explicitly rather than assuming it from a single case.",
-  "source": "Analytic -- Mode.Origin is a hard-coded constant in the stage under test, no reference-editor measurement needed (no formula to reverse-engineer). Cross-checked against a live vibe3d run at authoring time.",
+  "source": "Analytic -- Mode.Origin is a hard-coded constant in the stage under test, no reference measurement needed (no formula to derive). Cross-checked against a live vibe3d run at authoring time.",
   "tolerance": 0.0001,
   "cases": [
     {

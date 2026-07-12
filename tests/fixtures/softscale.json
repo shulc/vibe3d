@@ -1,7 +1,7 @@
 {
   "name": "softscale",
   "description": "Reference-parity: softScale = radial-falloff Scale (xfrm.softScale). A seg-2 cube scaled along Y under a radial linear falloff; every vertex asserted against the frozen reference. Built on an empty reset.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

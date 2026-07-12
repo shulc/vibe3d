@@ -6103,10 +6103,10 @@ void main(string[] args) {
         return true;
     }
 
-    // Run a command immediately with a MODO-style argstring injected — used by
+    // Run a command immediately with a baked argstring injected — used by
     // shortcut bindings that pin arguments (`mesh.subdivide: "D ccsds"`), so a
     // param-carrying command applies at once instead of popping the args dialog
-    // (mirrors MODO baking `poly.subdivide ccsds` into its keymap). Positional
+    // (mirrors baking `poly.subdivide ccsds` into its keymap). Positional
     // args map onto params() in declaration order; `name:value` args match by
     // name. Injection writes through the same param pointers the dialog uses.
     // Returns false only if the id has no factory.
@@ -6121,7 +6121,7 @@ void main(string[] args) {
         if (argstr.length > 0 && schema.length > 0) {
             auto pj = parseArgstring(commandId ~ " " ~ argstr).params;
             if (pj.type == JSONType.object) {
-                // MODO positional args → schema order (so "ccsds" fills `mode`).
+                // Positional args → schema order (so "ccsds" fills `mode`).
                 if (auto pos = "_positional" in pj)
                     if (pos.type == JSONType.array)
                         foreach (i, ref v; pos.array)
@@ -6227,7 +6227,7 @@ void main(string[] args) {
                 // scripted history nav and must remain tool-agnostic.
                 if (*id == "history.undo") { navHistory(true);  return; }
                 if (*id == "history.redo") { navHistory(false); return; }
-                // A binding that pinned arguments (MODO-style "D ccsds") runs
+                // A binding that pinned arguments (baked "D ccsds") runs
                 // immediately with them injected — no args dialog.
                 if (auto argp = canon in shortcuts.argsByCanon) {
                     runCommandWithArgs(*id, *argp);

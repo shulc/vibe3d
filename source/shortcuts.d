@@ -16,7 +16,7 @@ struct Shortcut {
     bool shift;
     bool alt;
     bool gui;          // Cmd on macOS, Windows/Super elsewhere.
-    string args;       // Optional MODO-style argstring baked into the binding:
+    string args;       // Optional baked argstring embedded in the binding:
                        // the text after the key spec ("D ccsds" → "ccsds").
                        // A command with a non-empty schema then runs immediately
                        // with these args injected instead of opening the dialog.
@@ -66,7 +66,7 @@ struct ShortcutTable {
     string[string] commandIdByCanon;
     string[string] editModeByCanon;
 
-    // canon → baked argstring, for bindings that pin arguments (MODO-style
+    // canon → baked argstring, for bindings that pin arguments (e.g.
     // `mesh.subdivide: "D ccsds"`). Absent for argless bindings; the dispatcher
     // consults it only in the command branch to run-with-args, no dialog.
     string[string] argsByCanon;
@@ -80,7 +80,7 @@ Shortcut parseShortcut(string s) {
     s = s.strip();
     if (s.length == 0) return Shortcut(0, false, false, false, false);
 
-    // A binding may carry a MODO-style argstring after the key spec:
+    // A binding may carry a baked argstring after the key spec:
     //   "D ccsds"  →  key spec "D", args "ccsds"
     // The key spec never contains whitespace (modifiers join with '+'), so the
     // first whitespace run separates the key spec from its trailing arguments.

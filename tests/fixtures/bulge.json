@@ -1,7 +1,7 @@
 {
   "name": "bulge",
   "description": "Reference-parity: bulge = radial-falloff Scale (xfrm.bulge \u2014 wired identically to softScale in vibe3d). Seg-2 cube scaled along Y under a radial linear falloff; asserted against the frozen reference. Empty reset.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

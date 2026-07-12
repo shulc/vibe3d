@@ -3,14 +3,14 @@ tools:
   rotate:             E
   scale:              R
   xfrm.transform:     Y
-  xfrm.elementMove:   T            # MODO: t
-  mesh.mirrorTool:    "Shift+V"    # MODO: shift-v (*.mirror)
-  mesh.loopSliceTool: "Alt+C"      # MODO: alt-c (poly.loopSlice)
-  mesh.sliceTool:     "Shift+C"    # MODO: shift-c (poly.knife)
-  edge.bevel:         B            # MODO: b (*.bevel)
-  poly.bevel:         "Shift+B"    # MODO: shift-b
-  poly.extrude:       "Shift+X"    # MODO: shift-x (*.extrude)
-  edge.extend:        Z            # MODO: z
+  xfrm.elementMove:   T            # ref: t
+  mesh.mirrorTool:    "Shift+V"    # ref: shift-v (*.mirror)
+  mesh.loopSliceTool: "Alt+C"      # ref: alt-c (poly.loopSlice)
+  mesh.sliceTool:     "Shift+C"    # ref: shift-c (poly.knife)
+  edge.bevel:         B            # ref: b (*.bevel)
+  poly.bevel:         "Shift+B"    # ref: shift-b
+  poly.extrude:       "Shift+X"    # ref: shift-x (*.extrude)
+  edge.extend:        Z            # ref: z
   prim.cube: ""
 
 commands:
@@ -26,16 +26,16 @@ commands:
   select.drop:           Escape
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
-  mesh.subdivide:        "D ccsds"          # MODO: d (poly.subdivide ccsds) — applies immediately
-  mesh.subdivide_faceted: "Shift+D"         # MODO: shift-d (faceted)
-  mesh.triple:           "Shift+T"          # MODO: shift-t
-  mesh.flip:             F                  # MODO: f (poly.flip)
-  mesh.spinEdge:         V                  # MODO: v (edge.spinQuads)
-  mesh.setMaterial:      M                  # MODO: m (poly.setMaterial)
-  mesh.copy:             "Ctrl+C"           # MODO: ctrl-c
-  mesh.paste:            "Ctrl+V"           # MODO: ctrl-v
-  mesh.cut:              "Ctrl+X"           # MODO: ctrl-x
-  tool.reset:            "Ctrl+D"           # MODO: ctrl-d
+  mesh.subdivide:        "D ccsds"          # ref: d (poly.subdivide ccsds) — applies immediately
+  mesh.subdivide_faceted: "Shift+D"         # ref: shift-d (faceted)
+  mesh.triple:           "Shift+T"          # ref: shift-t
+  mesh.flip:             F                  # ref: f (poly.flip)
+  mesh.spinEdge:         V                  # ref: v (edge.spinQuads)
+  mesh.setMaterial:      M                  # ref: m (poly.setMaterial)
+  mesh.copy:             "Ctrl+C"           # ref: ctrl-c
+  mesh.paste:            "Ctrl+V"           # ref: ctrl-v
+  mesh.cut:              "Ctrl+X"           # ref: ctrl-x
+  tool.reset:            "Ctrl+D"           # ref: ctrl-d
   history.undo:          "Ctrl+Z"
   history.redo:          "Ctrl+Shift+Z"
   mesh.delete:           Delete

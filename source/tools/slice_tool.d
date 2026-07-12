@@ -882,7 +882,7 @@ public:
     override Param[] params() {
         return [
             // Start/End: the drawn cut line — per-gesture geometry, not a
-            // remembered setting (MODO AUTORESET-equivalent). Excluded from
+            // remembered setting (reference auto-reset equivalent). Excluded from
             // sticky-tool-defaults capture via .transient().
             Param.float_("startX", "Start X", &start_.x, -1.0f).transient(),
             Param.float_("startY", "Start Y", &start_.y,  0.0f).transient(),

@@ -24,7 +24,7 @@ unittest {
     assert(canonFromEvent(SDLK_ESCAPE, cast(SDL_Keymod)0) == "escape");
 }
 
-// A binding may carry a MODO-style argstring after the key spec ("D ccsds").
+// A binding may carry a baked argstring after the key spec ("D ccsds").
 // The args ride on the Shortcut but never leak into the canonical/display key.
 unittest {
     auto sc = parseShortcut("D ccsds");

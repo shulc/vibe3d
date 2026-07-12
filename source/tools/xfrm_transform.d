@@ -942,7 +942,7 @@ public:
         // under `visualOnly` leaves the resident registration/hot-state from
         // the owner cell's most recent real pass untouched; the gizmo banks
         // below still render (world-derived, reprojected under `vp`), so the
-        // SAME hot part highlights in every cell (MODO-faithful: Test only
+        // SAME hot part highlights in every cell (reference-faithful: Test only
         // in the active cell, Draw — and the persistent hot state — in all).
         if (!visualOnly) {
             toolHandles.begin();
@@ -998,7 +998,7 @@ public:
         // never appears for the standard scale/TransformScale presets.
         // SX/SY/SZ/uniformScale + TX/TY/TZ/RX/RY/RZ below are per-gesture
         // transform run-state (run.t / headlessRotate / run.s) — reset each
-        // session (MODO AUTORESET), not a remembered setting. Excluded from
+        // session (reference auto-reset), not a remembered setting. Excluded from
         // sticky-tool-defaults capture via .transient().
         auto pSX = Param.float_("SX", "Scale X", &run.s.x, 1.0f).transient();
         auto pSY = Param.float_("SY", "Scale Y", &run.s.y, 1.0f).transient();
@@ -1299,8 +1299,8 @@ public:
 
     // Element-move flow active? = the WGHT slot is falloff.element, so a
     // plain click relocates the gizmo onto the picked element (tryPickElement).
-    // Mirrors MODO's ElementMove preset (center.element + falloff.element):
-    // in that mode MODO drops the transform center handle (xfrm.transform
+    // Mirrors the reference element-move preset (center.element + falloff.element):
+    // in that mode the reference drops the transform center handle (xfrm.transform
     // -16777211 vs the normal +EASFQG) so every click is an element pick, not
     // a center-handle grab. We match by hiding the Move centerBox below.
     private bool elementPickActive() const {
@@ -1309,7 +1309,7 @@ public:
     }
 
     private void registerGizmoHandles(ToolHandles th) {
-        // Hide the Move center handle in the element-move flow (MODO parity):
+        // Hide the Move center handle in the element-move flow (reference parity):
         // invisible → ToolHandles.test() skips it (so a central click falls
         // through to tryPickElement) AND BoxHandler.draw early-outs (so it
         // isn't shown). Axis arrows / plane handles stay live.

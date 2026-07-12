@@ -1,6 +1,6 @@
 # Tool presets — declarative "compound" tools built by wrapping a base
 # tool and configuring one or more toolpipe stages on activate. Mirrors
-# MODO's stock tool-preset definitions (e.g. `xfrm.shear`, `xfrm.twist`,
+# the stock tool-preset definitions (e.g. `xfrm.shear`, `xfrm.twist`,
 # `xfrm.softDrag`):
 # each preset names a base tool + per-pipe-stage attributes.
 #
@@ -17,16 +17,16 @@ presets:
   # ----- Deform sub-tab (D.1 of doc/deform_plan.md) ---------------
   - id: xfrm.softDrag
     base: move
-    # MODO's softDrag is a brush-style tool: each LMB drag is one
+    # The stock softDrag is a brush-style tool: each LMB drag is one
     # atomic action that commits to history; the next click starts a
     # fresh weighted pull from the new grab point instead of piling
-    # onto the previous baseline. Matches MODO's brush-reset tool
+    # onto the previous baseline. Matches the reference brush-reset tool
     # behaviour.
     flags: [brushReset]
     pipe:
       falloff:
         type: screen
-        # MODO ships xfrm.softDrag (and the bare
+        # The reference ships xfrm.softDrag (and the bare
         # falloff.screen preset) with `trans integer 0` — camera-
         # facing only. Verts behind the camera don't participate in
         # the drag; flip to "true" only for through-the-mesh deform.
@@ -120,10 +120,10 @@ presets:
       falloff:
         type: radial
 
-  # `xfrm.flare` mirrors MODO's stock `Flare` preset —
+  # `xfrm.flare` mirrors the reference's stock `Flare` preset —
   # surprisingly, just push-along-normals + linear falloff (NOT the
   # outward-scale-perpendicular-to-axis behaviour the name might
-  # suggest). Same wiring lets us match MODO bit-for-bit.
+  # suggest). Same wiring lets us match the reference bit-for-bit.
   - id: xfrm.flare
     base: xfrm.push
     pipe:
@@ -148,8 +148,8 @@ presets:
         shape: linear
 
   # ----- Transform sub-tab ----------------------------------------
-  # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` —
-  # MODO's preset only sets the ACEN slot (center.element), the WGHT
+  # `xfrm.elementMove` mirrors the reference's `tool.set ElementMove` —
+  # the reference preset only sets the ACEN slot (center.element), the WGHT
   # slot (falloff.element with mode=automatic) and the ACTR slot
   # (xfrm.transform). It does NOT touch the AXIS slot, so AXIS stays
   # at its default (axis.auto = workplane / world axes). We match
@@ -159,7 +159,7 @@ presets:
   # the falloff stage activation).
   - id: xfrm.elementMove
     base: xfrm.transform
-    # MODO's stock ElementMove: T=1, R=0, S=0 (translate-only).
+    # The reference's stock ElementMove: T=1, R=0, S=0 (translate-only).
     # User flips R/S via the property panel for the unified Transform.
     attrs:
       T: "true"
@@ -171,16 +171,16 @@ presets:
       falloff:
         type:  element
         shape: linear
-        # Mirror MODO's stock `mode integer 0` default —
+        # Mirror the reference's stock `mode integer 0` default —
         # explicit `auto` so re-activating the preset resets the
         # 7-mode pick selector to its default (without this, mode
         # is whatever the previous activation left behind).
         mode:  auto
 
-  # MODO-name alias for the same preset (stock `ElementMove`). Resolves to
+  # Reference-name alias for the same preset (stock `ElementMove`). Resolves to
   # the canonical `xfrm.elementMove` block above — see the loader's `alias:`
   # handling in source/tool_presets.d. Useful for cross-engine diff cases
-  # that share a case JSON between MODO and vibe3d.
+  # that share a case JSON between the reference and vibe3d.
   - id: ElementMove
     alias: xfrm.elementMove
 
@@ -215,10 +215,10 @@ presets:
         type:  selection
 
   # ----- xfrm.transform per-mode presets --------------------------
-  # Mirror MODO's stock TransformMove / TransformRotate / TransformScale
+  # Mirror the reference's stock TransformMove / TransformRotate / TransformScale
   # presets — one tool (xfrm.transform) with different T/R/S flag combos
   # and H selecting the handle family. `presentation` is vibe3d's explicit
-  # split between MODO's per-mode full handles and bare Transform's compact
+  # split between the reference's per-mode full handles and bare Transform's compact
   # combined handles.
   - id: TransformMove
     base: xfrm.transform
@@ -247,7 +247,7 @@ presets:
       H: "2"
       presentation: "full"
 
-  # Bare Transform: all three handler banks visible (MODO's
+  # Bare Transform: all three handler banks visible (the reference's
   # `Transform` preset with T=R=S=1). Documented limitation: each
   # sub-tool maintains its own edit session, so single-drag undo
   # records one entry per sub-tool. Most users want one of the per-

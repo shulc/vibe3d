@@ -1,7 +1,7 @@
 {
   "name": "vortex",
   "description": "Reference-parity: vortex = CYLINDER-falloff Rotate (xfrm.vortex). The reference applies R(w*theta) (rotation angle scaled by per-vertex weight, radius preserved). Rotation about Z and the cylinder axis Z are an INFERRED convention, not stored in the capture. Empty reset.",
-  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "source": "Frozen reference capture (radial falloff, real-GL session; captured from a reference session via the private capture tooling).",
   "tolerance": 0.0001,
   "cases": [
     {

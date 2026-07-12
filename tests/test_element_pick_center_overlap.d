@@ -8,7 +8,7 @@
 // Before the fix the centerBox won the hit-test → the click started a
 // center-plane drag instead of an element pick, so the gizmo never moved.
 //
-// MODO's ElementMove preset drops the transform center handle exactly so
+// The reference's ElementMove preset drops the transform center handle exactly so
 // every click is an element pick; vibe3d now hides the centerBox in the
 // element-move flow, so the click falls through to tryPickElement and the
 // pivot relocates onto the clicked face.
