@@ -175,6 +175,19 @@ private float smoothstep01(float t) pure nothrow @nogc @safe {
     return t * t * (3.0f - 2.0f * t);
 }
 
+/// Per-edge dihedral result, indexed like `Mesh.edges[]`. Returned by
+/// `Mesh.computeEdgeSharpness` — the shared sharp-edge test used by both
+/// `MeshSmooth.lockSharp` (`commands/mesh/smooth.d`) and the AI support-loop
+/// candidate generator (`ai.support_loop_candidates`). Boundary edges (only
+/// one adjacent face) are left at `.init` (`interior = false`).
+struct EdgeSharpness {
+    bool  interior = false;  // false for boundary edges (dihedral undefined)
+    float angleDeg = 0.0f;   // dihedral angle between the two adjacent faces
+    bool  sharp    = false;  // angleDeg exceeds the threshold passed in
+    uint  faceA    = uint.max;
+    uint  faceB    = uint.max;
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
@@ -7746,6 +7759,85 @@ struct Mesh {
         }
         float len = sqrt(nx*nx + ny*ny + nz*nz);
         return len > 1e-6f ? Vec3(nx / len, ny / len, nz / len) : Vec3(0, 1, 0);
+    }
+
+    /// Per-face normal approximation used by `MeshSmooth`'s `lockSharp`
+    /// dihedral test and the AI support-loop candidate generator
+    /// (`ai.support_loop_candidates`): cross of a face's first 3 vertices,
+    /// normalized. Deliberately NOT `faceNormal()` (Newell's method, used
+    /// everywhere else in this file) — kept as its own smaller function so
+    /// extracting the dihedral test out of `commands/mesh/smooth.d`'s inline
+    /// computation does not change `MeshSmooth`'s existing numeric behavior
+    /// (it always used this simpler 3-vertex-cross approximation — "exact
+    /// for planar quads/triangles, a non-averaged approximation for
+    /// non-planar n-gons").
+    Vec3 faceNormalTri3(uint fi) const {
+        const uint[] f = faces[fi];
+        if (f.length < 3) return Vec3(0, 1, 0);
+        Vec3 a = vertices[f[0]];
+        Vec3 b = vertices[f[1]];
+        Vec3 c = vertices[f[2]];
+        Vec3 n = cross(b - a, c - a);
+        float len = n.length;
+        return len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
+    }
+
+    /// Per-edge dihedral sharpness, indexed like `edges[]`. Shared by
+    /// `MeshSmooth.lockSharp` (`commands/mesh/smooth.d`) and the AI
+    /// support-loop candidate generator (`ai.support_loop_candidates`) so the
+    /// definition of "sharp edge" can never drift between the two call
+    /// sites. Walks the half-edge loops exactly once per undirected INTERIOR
+    /// edge (`li < twin` dedup — identical to the original inline
+    /// `lockSharp` loop this replaces) and compares `faceNormalTri3` normals
+    /// via the monotone `dot < cos(threshold)` test (cos is
+    /// decreasing on [0, π], so this avoids an `acos` per edge and is
+    /// numerically identical to the pre-extraction code). Boundary edges
+    /// (`twin == uint.max`) are left at `EdgeSharpness.init`.
+    EdgeSharpness[] computeEdgeSharpness(float thresholdDeg) const {
+        import std.math : cos, acos, PI;
+
+        auto result = new EdgeSharpness[](edges.length);
+        auto fn = new Vec3[](faces.length);
+        foreach (fi; 0 .. faces.length) fn[fi] = faceNormalTri3(cast(uint)fi);
+
+        immutable cosThreshold = cos(thresholdDeg * (PI / 180.0f));
+        foreach (li, ref l; loops) {
+            if (l.twin == uint.max) continue;
+            if (cast(uint)li > l.twin) continue;
+            if (li >= loopEdge.length) continue;
+            immutable ei = loopEdge[li];
+            if (ei >= result.length) continue;
+
+            immutable faceB = loops[l.twin].face;
+            Vec3 n1 = fn[l.face];
+            Vec3 n2 = fn[faceB];
+            float dot = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
+            immutable dotClamped = dot < -1.0f ? -1.0f : (dot > 1.0f ? 1.0f : dot);
+
+            result[ei].interior = true;
+            result[ei].angleDeg = acos(dotClamped) * (180.0f / PI);
+            result[ei].sharp    = dot < cosThreshold;
+            result[ei].faceA    = l.face;
+            result[ei].faceB    = faceB;
+        }
+        return result;
+    }
+
+    unittest { // computeEdgeSharpness: cube — every one of the 12 edges is a
+               // 90° dihedral, all interior, all sharp at a 30° threshold.
+        Mesh m = makeCube();
+        auto sharp = m.computeEdgeSharpness(30.0f);
+        assert(sharp.length == m.edges.length);
+        assert(sharp.length == 12);
+        foreach (i, ref s; sharp) {
+            assert(s.interior, "cube edge should have two adjacent faces");
+            assert(s.sharp, "cube edge should be sharp at 30deg threshold");
+            assert(s.angleDeg > 85.0f && s.angleDeg < 95.0f,
+                   "cube dihedral should be ~90deg");
+        }
+        // A very permissive threshold makes every edge fall below it.
+        auto notSharp = m.computeEdgeSharpness(120.0f);
+        foreach (ref s; notSharp) assert(!s.sharp);
     }
 
     // Per-corner inset helper: given the origPos ring and corner index i,

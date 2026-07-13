@@ -6,10 +6,9 @@ import mesh;
 import view;
 import editmode;
 import viewcache;
-import math : Vec3, cross, Viewport;
+import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
-import std.math : cos, PI;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -148,47 +147,34 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         if (!any)
             foreach (i; 0 .. mesh.vertices.length) vmask[i] = true;
 
-        // Pre-smooth per-face normals. Built ONCE when any flag that
-        // needs them is on (lockSharp for the dihedral test;
-        // preserve for the per-vert normal that defines each vert's
-        // tangent plane). Newell-ish triangle cross on f[0..2] —
-        // exact for planar quads / triangles; non-planar n-gons get
-        // a non-averaged approximation that's still usable.
+        // Pre-smooth per-face normals — only needed by `preserve` (the
+        // per-vert normal that defines each vert's tangent plane). The
+        // `lockSharp` dihedral test below no longer builds its own copy;
+        // it shares `Mesh.computeEdgeSharpness` with the AI support-loop
+        // candidate generator (`ai.support_loop_candidates`) so the
+        // definition of "sharp edge" can't drift between the two call
+        // sites.
         Vec3[] faceNormal;
-        if (lockSharp_ || preserve_) {
+        if (preserve_) {
             faceNormal.length = mesh.faces.length;
-            foreach (fi; 0 .. mesh.faces.length) {
-                auto f = mesh.faces[fi];
-                if (f.length < 3) { faceNormal[fi] = Vec3(0, 1, 0); continue; }
-                Vec3 a = mesh.vertices[f[0]];
-                Vec3 b = mesh.vertices[f[1]];
-                Vec3 c = mesh.vertices[f[2]];
-                Vec3 n = cross(b - a, c - a);
-                float len = n.length;
-                faceNormal[fi] = (len > 1e-9f) ? n * (1.0f / len) : Vec3(0, 1, 0);
-            }
+            foreach (fi; 0 .. mesh.faces.length)
+                faceNormal[fi] = mesh.faceNormalTri3(cast(uint)fi);
         }
 
-        // `lockSharp`: pin verts on interior edges whose
-        // dihedral angle exceeds sharpThreshold. Walk each interior
-        // half-edge ONCE (li < twin dedup) using the shared
-        // faceNormal cache. cos is monotone-decreasing on [0, π],
-        // so angle > threshold ⇔ dot(n1, n2) < cos(threshold) —
-        // saves a per-edge acos.
+        // `lockSharp`: pin verts on interior edges whose dihedral angle
+        // exceeds sharpAngleDeg_. `computeEdgeSharpness` walks each
+        // interior half-edge ONCE (li < twin dedup) using the exact same
+        // 3-vertex-cross face-normal approximation this block always
+        // used inline — extracting it into `Mesh` does not change the
+        // numeric result (see mesh.d's computeEdgeSharpness unittest).
         if (lockSharp_) {
-            float cosThreshold = cos(sharpAngleDeg_ * (PI / 180.0f));
-            foreach (li, ref l; mesh.loops) {
-                if (l.twin == uint.max) continue;
-                if (cast(uint)li > l.twin) continue;
-                Vec3 n1 = faceNormal[l.face];
-                Vec3 n2 = faceNormal[mesh.loops[l.twin].face];
-                float dot = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
-                if (dot < cosThreshold) {
-                    uint a = l.vert;
-                    uint b = mesh.loops[l.next].vert;
-                    if (a < vmask.length) vmask[a] = false;
-                    if (b < vmask.length) vmask[b] = false;
-                }
+            auto sharpness = mesh.computeEdgeSharpness(sharpAngleDeg_);
+            foreach (ei, ref s; sharpness) {
+                if (!s.sharp) continue;
+                uint a = mesh.edges[ei][0];
+                uint b = mesh.edges[ei][1];
+                if (a < vmask.length) vmask[a] = false;
+                if (b < vmask.length) vmask[b] = false;
             }
         }
 
