@@ -245,6 +245,8 @@ version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
 import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
 import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces;
+import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import commands.ai3d.import_result : Ai3dImportResult;
 import property_panel : PropertyPanel;
 import forms_render;
@@ -2464,6 +2466,12 @@ void main(string[] args) {
     char[256] ai3dWorkerUrlBuf;
     ai3dWorkerUrlBuf[] = 0;
     ai3dWorkerUrlBuf[0 .. "http://127.0.0.1:47831".length] = "http://127.0.0.1:47831";
+    // Requested face budget for the create-job body (task ai3d-maxfaces).
+    // The widget cannot be trusted to clamp on its own (same lesson as the
+    // negative-scale ImGui v_min gap) — clamped to [1000, Ai3dMaxTotalFaces]
+    // right after the widget below, and `ai3dController.start()` threads it
+    // to `stageArtifact`, whose `clampMaxFaces` is the real authority.
+    int ai3dMaxFaces = Ai3dDefaultRequestedFaces;
 
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
@@ -9405,6 +9413,15 @@ void main(string[] args) {
                 ImGui.SetNextItemWidth(280);
                 ImGui.InputText("Worker URL", ai3dWorkerUrlBuf[]);
 
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderInt("Max faces", &ai3dMaxFaces, 1_000, cast(int) Ai3dMaxTotalFaces);
+                // SliderInt's vMin/vMax only bound the drag/click gesture —
+                // its text-entry mode (Ctrl+click) can still land an
+                // out-of-range value, so clamp right after, same as every
+                // other numeric-from-widget value in this codebase.
+                if (ai3dMaxFaces < 1_000) ai3dMaxFaces = 1_000;
+                if (ai3dMaxFaces > cast(int) Ai3dMaxTotalFaces) ai3dMaxFaces = cast(int) Ai3dMaxTotalFaces;
+
                 const bool ai3dJobRunning = ai3dController.busy();
 
                 if (!ai3dModal.healthChecked) {
@@ -9437,7 +9454,8 @@ void main(string[] args) {
                         ai3dModal.errorMessage = null;
                         const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
                         ai3dController.start(ai3dPickedImagePath,
-                            workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
+                            workerUrl.length ? workerUrl : "http://127.0.0.1:47831",
+                            120_000, ai3dMaxFaces);
                     }
                     if (!healthy) ImGui.EndDisabled();
                 } else {
