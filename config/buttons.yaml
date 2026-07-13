@@ -289,6 +289,10 @@ panels:
           - { label: Connect, action: { kind: command, id: select.connect } }
           - { label: Between, action: { kind: command, id: select.between } }
           - { label: Invert, action: { kind: command, id: select.invert } }
+      - title: Fill
+        buttons:
+          - { label: "Fill Holes",       action: { kind: command, id: select.fill.holes } }
+          - { label: "Fill Inside Loop", action: { kind: command, id: select.fill.insideLoop } }
   - title: UV
     items:
       - title: Create

@@ -97,6 +97,7 @@ import commands.select.type_from : SelectTypeFromCommand;
 import commands.select.drop     : SelectDropCommand;
 import commands.select.element  : SelectElementCommand;
 import commands.select.convert  : SelectConvertCommand;
+import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.file.load;
@@ -3475,6 +3476,11 @@ void main(string[] args) {
     reg.commandFactories["select.invert"]         = () => cast(Command) new SelectInvert(&mesh(), cameraView, editMode);
     reg.commandFactories["select.connect"]        = () => cast(Command) new SelectConnect(&mesh(), cameraView, editMode);
     reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh(), cameraView, editMode);
+    reg.commandFactories["select.fill.holes"]      = () => cast(Command)
+        new SelectFillHoles(&mesh(), cameraView, editMode);
+    reg.commandFactories["select.fill.insideLoop"] = () => cast(Command)
+        (new SelectFillInsideLoop(&mesh(), cameraView, editMode, &editMode))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["select.typeFrom"]  = () => cast(Command)
         new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode,
                                   (EditMode m) => switchGeometryType(m));
