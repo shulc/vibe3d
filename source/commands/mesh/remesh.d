@@ -152,7 +152,7 @@ final class Remesh : Command, Operator {
 
 final class RemeshStart : Command {
     private RemeshJob job;
-    private int   targetQuadsArg = 6000;
+    private int   targetQuadsArg = 20_000;
     private float adaptivityArg  = 1.0f;
     private float sharpEdgeArg   = 90.0f;
 
@@ -173,7 +173,7 @@ final class RemeshStart : Command {
             // remesh_job.d. That clamp is the one that actually matters for
             // a headless argstring call; this Param bound is the UI-facing
             // mirror of it (slider + Ctrl-click text entry both stay sane).
-            Param.int_("targetQuads", "Target Quads", &targetQuadsArg, 6000)
+            Param.int_("targetQuads", "Target Quads", &targetQuadsArg, 20_000)
                 .min(MIN_REMESH_TARGET_QUADS).max(MAX_REMESH_TARGET_QUADS).enforceBounds(),
             Param.float_("adaptivity", "Adaptivity", &adaptivityArg, 1.0f)
                 .min(0.0f).max(10.0f).enforceBounds(),

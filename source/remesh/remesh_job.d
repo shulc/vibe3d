@@ -38,7 +38,7 @@ import math : Vec3;
 /// (already `.min()/.max()`-hinted) or a headless `mesh.remesh.start`
 /// argstring (which bypasses UI hints entirely).
 struct RemeshParams {
-    int    targetQuads = 6000;
+    int    targetQuads = 20_000;
     double adaptivity  = 1.0;
     double sharpEdge   = 90.0;
 }

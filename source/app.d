@@ -2493,7 +2493,8 @@ void main(string[] args) {
     // cached here for display.
     bool   remeshModalOpen;
     bool   remeshModalPendingOpen;
-    int    remeshTargetQuads = 6000;
+    bool   remeshModalPendingClose;  // set on a successful remesh -> auto-close
+    int    remeshTargetQuads = 20_000;
     float  remeshAdaptivity  = 1.0f;
     float  remeshSharpEdge   = 90.0f;
     string remeshLastError;
@@ -6351,8 +6352,12 @@ void main(string[] args) {
                 // out-of-range guard — the mesh is unchanged, so don't lie
                 // "Done". Mirror onAi3dEvent's imp.succeeded() check.
                 if (cmd.applied()) {
+                    // The mesh changed (visible in the viewport) — the action
+                    // happened, so auto-close the modal. A failed/no-op remesh
+                    // (below) keeps it open so the error stays visible.
                     remeshLastError   = null;
                     remeshLastSummary = "Done -- " ~ nFaces.to!string ~ " faces";
+                    remeshModalPendingClose = true;
                 } else {
                     remeshLastSummary = null;
                     remeshLastError   = "remesh produced no usable geometry";
@@ -9497,6 +9502,14 @@ void main(string[] args) {
             }
 
             if (ImGui.BeginPopupModal("Generate 3D", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                // Auto-close once the generated mesh has landed as a new layer:
+                // the action happened, so the modal dismisses itself. A failure
+                // (state != "succeeded") keeps it open so the error stays visible.
+                if (ai3dModal.state == "succeeded") {
+                    ImGui.CloseCurrentPopup();
+                    ai3dModalOpen = false;
+                }
+
                 ImGui.Text("Image: " ~ ai3dPickedImagePath);
 
                 ImGui.SetNextItemWidth(280);
@@ -9535,6 +9548,16 @@ void main(string[] args) {
 
                 ImGui.Separator();
 
+                // Cancel is the single close affordance (no separate Dismiss):
+                // idle -> just closes; running -> aborts the job AND closes so a
+                // job can't complete and silently import a layer after the modal
+                // is gone. A successful generate auto-closes above.
+                void closeAi3dModal() {
+                    if (ai3dController.busy()) ai3dController.requestCancel();
+                    ImGui.CloseCurrentPopup();
+                    ai3dModalOpen = false;
+                }
+
                 if (!ai3dJobRunning) {
                     if (!healthy) ImGui.BeginDisabled();
                     if (ImGui.Button("Generate")) {
@@ -9549,35 +9572,27 @@ void main(string[] args) {
                             120_000, ai3dMaxFaces);
                     }
                     if (!healthy) ImGui.EndDisabled();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeAi3dModal();
                 } else {
                     ImGui.Text(format("%s: %s (%.0f%%)",
                         ai3dModal.state.length ? ai3dModal.state : "running",
                         ai3dModal.stage, ai3dModal.progress * 100.0));
-                    if (ImGui.Button("Cancel"))
-                        ai3dController.requestCancel();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeAi3dModal();
                 }
 
+                // Only the error survives on screen (a success auto-closes).
+                // TextUnformatted (not printf-style Text): an error message can
+                // carry a "%" that Text would read as a conversion off an empty
+                // va_list.
                 if (ai3dModal.errorCode.length)
-                    ImGui.Text("Error: " ~ ai3dModal.errorCode ~ " — " ~ ai3dModal.errorMessage);
-                if (ai3dModal.state == "succeeded")
-                    ImGui.Text("Done — imported as a new layer.");
-
-                ImGui.Separator();
-                if (ImGui.Button("Dismiss")) {
-                    // Review fix: dismissing while a job is still running
-                    // must also cancel it — otherwise the job can complete
-                    // and silently import a layer AFTER the modal is gone
-                    // (a layer appearing "from nowhere" with no visible
-                    // cause). requestCancel() is a no-op if nothing is
-                    // running.
-                    if (ai3dController.busy()) ai3dController.requestCancel();
-                    ImGui.CloseCurrentPopup();
-                    ai3dModalOpen = false;
-                }
+                    ImGui.TextUnformatted("Error: " ~ ai3dModal.errorCode
+                                          ~ " — " ~ ai3dModal.errorMessage);
                 ImGui.EndPopup();
             } else {
-                // Dismissed via ESC / [X] — same semantics as Dismiss above,
-                // including the cancel-while-busy guard.
+                // Closed via ESC — same semantics as the Cancel button: abort
+                // any in-flight job so it can't land after the modal is gone.
                 if (ai3dController.busy()) ai3dController.requestCancel();
                 ai3dModalOpen = false;
             }
@@ -9596,6 +9611,15 @@ void main(string[] args) {
             }
 
             if (ImGui.BeginPopupModal("Remesh (Quad)", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                // Auto-close once a remesh has actually landed (set by
+                // tickRemeshJob on a successful apply): the action happened, so
+                // the window dismisses itself — no manual close needed.
+                if (remeshModalPendingClose) {
+                    remeshModalPendingClose = false;
+                    ImGui.CloseCurrentPopup();
+                    remeshModalOpen = false;
+                }
+
                 ImGui.SetNextItemWidth(280);
                 ImGui.SliderInt("Target Quads", &remeshTargetQuads,
                                  MIN_REMESH_TARGET_QUADS, cast(int) MAX_REMESH_TARGET_QUADS);
@@ -9618,6 +9642,16 @@ void main(string[] args) {
 
                 ImGui.Separator();
 
+                // Cancel is the single close affordance (no separate Dismiss):
+                // idle -> just closes the window; running -> aborts the job AND
+                // closes. A successful remesh auto-closes above, so the only
+                // time you click Cancel after starting is to abandon a run.
+                void closeRemeshModal() {
+                    if (remeshJob.busy()) remeshJob.cancel();
+                    ImGui.CloseCurrentPopup();
+                    remeshModalOpen = false;
+                }
+
                 const bool remeshBusy = remeshJob.busy();
                 if (!remeshBusy) {
                     if (ImGui.Button("Remesh")) {
@@ -9631,35 +9665,24 @@ void main(string[] args) {
                         if (remeshJob.state() == RemeshJob.State.failed)
                             remeshLastError = remeshJob.message();
                     }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeRemeshModal();
                 } else {
-                    ImGui.Text("Remeshing...");
-                    if (ImGui.Button("Cancel"))
-                        remeshJob.cancel();
+                    ImGui.TextUnformatted("Remeshing...");
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeRemeshModal();
                 }
 
-                // TextUnformatted (not Text): remeshLastError/Summary can carry
-                // the helper's raw stderr tail (geogram prints residuals with
-                // stray "%"), and ImGui.Text is printf-style — a "%" would index
-                // an empty va_list out of bounds. TextUnformatted skips
-                // formatting and takes the D string + length verbatim.
+                // Only the error survives on screen (a success auto-closes the
+                // modal). TextUnformatted (not Text): the message can carry the
+                // helper's raw stderr tail with stray "%", which the printf-style
+                // ImGui.Text would read as a conversion off an empty va_list.
                 if (remeshLastError.length)
                     ImGui.TextUnformatted("Error: " ~ remeshLastError);
-                if (remeshLastSummary.length)
-                    ImGui.TextUnformatted(remeshLastSummary);
-
-                ImGui.Separator();
-                if (ImGui.Button("Dismiss")) {
-                    // Same cancel-while-busy guard as the AI3D modal's
-                    // Dismiss: otherwise the job can complete AFTER the modal
-                    // is gone and silently rewrite the mesh with no visible
-                    // cause.
-                    if (remeshJob.busy()) remeshJob.cancel();
-                    ImGui.CloseCurrentPopup();
-                    remeshModalOpen = false;
-                }
                 ImGui.EndPopup();
             } else {
-                // Dismissed via ESC / [X] — same semantics as Dismiss above.
+                // Closed via ESC — same semantics as the Cancel button: abort
+                // any in-flight job so it can't land after the modal is gone.
                 if (remeshJob.busy()) remeshJob.cancel();
                 remeshModalOpen = false;
             }
