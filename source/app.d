@@ -248,6 +248,9 @@ import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
 import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces;
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import commands.ai3d.import_result : Ai3dImportResult;
+import remesh.remesh_job         : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
@@ -1256,6 +1259,15 @@ void main(string[] args) {
             _Exit(0);
         }
     }
+
+    // Quad-remesh job (source/remesh/remesh_job.d) — a crash-isolated
+    // SUBPROCESS (the external autoremesher_cli helper), polled once per
+    // frame near the ai3d drain below; never a worker thread (the helper's
+    // geogram backend can abort() on bad input, and only process isolation
+    // survives that). Cancel any in-flight subprocess at shutdown so vibe3d
+    // never leaves an orphaned helper running.
+    auto remeshJob = new RemeshJob();
+    scope(exit) remeshJob.cancel();
 
     EventLogger evLog;
     version (ReleaseBuild) {
@@ -2473,6 +2485,20 @@ void main(string[] args) {
     // to `stageArtifact`, whose `clampMaxFaces` is the real authority.
     int ai3dMaxFaces = Ai3dDefaultRequestedFaces;
 
+    // Quad Remesh modal (source/remesh/remesh_job.d). No health-check /
+    // event-queue snapshot needed like ai3dModal above — RemeshJob is polled
+    // synchronously in this same thread, so the modal reads its
+    // state()/message()/busy() directly every frame. Only the two things
+    // that don't survive a post-success clear() (see tickRemeshJob) are
+    // cached here for display.
+    bool   remeshModalOpen;
+    bool   remeshModalPendingOpen;
+    int    remeshTargetQuads = 6000;
+    float  remeshAdaptivity  = 1.0f;
+    float  remeshSharpEdge   = 90.0f;
+    string remeshLastError;
+    string remeshLastSummary;
+
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
     auto aiState       = new EditorAiState();
@@ -3619,6 +3645,23 @@ void main(string[] args) {
         new Subdivide(&mesh(), cameraView, editMode,
                       &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                       () => setActiveTool(null));
+    // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
+    // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
+    // the ai3d drain for how the result lands); `mesh.remesh` is the
+    // undoable apply that a successful job's result is fired through.
+    reg.commandFactories["mesh.remesh.start"] = () => cast(Command)
+        new RemeshStart(&mesh(), cameraView, editMode, remeshJob);
+    reg.commandFactories["mesh.remesh"] = () => cast(Command)
+        new Remesh(&mesh(), cameraView, editMode,
+                   &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                   () => setActiveTool(null), remeshJob);
+    reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
+        new RemeshOpen(&mesh(), cameraView, editMode, () {
+            remeshModalOpen        = true;
+            remeshModalPendingOpen = true;
+            remeshLastError        = null;
+            remeshLastSummary      = null;
+        });
     reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
         new SubdivideFaceted(&mesh(), cameraView, editMode,
                              &gpu, &vertexCache(), &edgeCache(), &faceCache(),
@@ -6281,6 +6324,45 @@ void main(string[] args) {
                 ai3dModal.state       = "failed";
                 ai3dModal.errorCode    = ev.code;
                 ai3dModal.errorMessage = ev.message;
+                break;
+        }
+    }
+
+    // Quad Remesh (source/remesh/remesh_job.d) per-frame tick. poll() is
+    // non-blocking (a single tryWait() on the subprocess). On a
+    // running->succeeded transition, fire the undoable `mesh.remesh` apply
+    // through the ordinary runCommand path (one Model-undo entry —
+    // commands/mesh/remesh.d) and clear the job; on running->failed,
+    // capture the message for the modal and clear. Mirrors onAi3dEvent's
+    // shape but simpler — no worker thread / event queue, since RemeshJob
+    // is polled synchronously in this same thread.
+    void tickRemeshJob() {
+        remeshJob.poll();
+        final switch (remeshJob.state()) {
+            case RemeshJob.State.idle:
+            case RemeshJob.State.running:
+                break;
+            case RemeshJob.State.succeeded:
+                const nFaces = remeshJob.resultFaces().length;
+                auto cmd = cast(Remesh) reg.commandFactories["mesh.remesh"]();
+                runCommand(cmd);
+                // runCommand can no-op: Remesh.evaluate rejects (returns false,
+                // applied()==false) when every rebuilt face was dropped by the
+                // out-of-range guard — the mesh is unchanged, so don't lie
+                // "Done". Mirror onAi3dEvent's imp.succeeded() check.
+                if (cmd.applied()) {
+                    remeshLastError   = null;
+                    remeshLastSummary = "Done -- " ~ nFaces.to!string ~ " faces";
+                } else {
+                    remeshLastSummary = null;
+                    remeshLastError   = "remesh produced no usable geometry";
+                }
+                remeshJob.clear();
+                break;
+            case RemeshJob.State.failed:
+                remeshLastSummary = null;
+                remeshLastError   = remeshJob.message();
+                remeshJob.clear();
                 break;
         }
     }
@@ -9083,6 +9165,13 @@ void main(string[] args) {
             // delegate invoke — ai3d.event_queue).
             ai3dController.drain(&onAi3dEvent);
 
+            // Quad Remesh (source/remesh/remesh_job.d) per-frame poll —
+            // same "always outside httpServer.running" reasoning as the
+            // ai3d drain above: a normal editor run with HTTP off must still
+            // be able to complete a remesh job. tickRemeshJob() never
+            // blocks (a single non-blocking tryWait() on the subprocess).
+            tickRemeshJob();
+
             // ---- Events ----
             while (SDL_PollEvent(&event)) {
                 // In --test mode, drop real keyboard/mouse input from the
@@ -9491,6 +9580,88 @@ void main(string[] args) {
                 // including the cancel-while-busy guard.
                 if (ai3dController.busy()) ai3dController.requestCancel();
                 ai3dModalOpen = false;
+            }
+        }
+
+        // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
+        // Same BeginPopupModal convention as the AI3D modal above. Opened by
+        // `mesh.remesh.open` (registered below, near the other mesh.remesh.*
+        // factories). Unlike ai3dModal, this reads remeshJob.state()/busy()/
+        // message() DIRECTLY every frame — RemeshJob is polled synchronously
+        // in this same thread (no worker thread / event queue to snapshot).
+        if (remeshModalOpen) {
+            if (remeshModalPendingOpen) {
+                ImGui.OpenPopup("Remesh (Quad)");
+                remeshModalPendingOpen = false;
+            }
+
+            if (ImGui.BeginPopupModal("Remesh (Quad)", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderInt("Target Quads", &remeshTargetQuads,
+                                 MIN_REMESH_TARGET_QUADS, cast(int) MAX_REMESH_TARGET_QUADS);
+                // SliderInt's vMin/vMax only bound the drag/click gesture — its
+                // text-entry mode (Ctrl+click) can still land an out-of-range
+                // value, so clamp right after (same convention as ai3dMaxFaces
+                // above; the REAL authority is RemeshJob.start()'s kernel clamp).
+                if (remeshTargetQuads < MIN_REMESH_TARGET_QUADS) remeshTargetQuads = MIN_REMESH_TARGET_QUADS;
+                if (remeshTargetQuads > cast(int) MAX_REMESH_TARGET_QUADS) remeshTargetQuads = cast(int) MAX_REMESH_TARGET_QUADS;
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderFloat("Adaptivity", &remeshAdaptivity, 0.0f, 10.0f);
+                if (remeshAdaptivity < 0.0f) remeshAdaptivity = 0.0f;
+                if (remeshAdaptivity > 10.0f) remeshAdaptivity = 10.0f;
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderFloat("Sharp Edge (deg)", &remeshSharpEdge, 0.0f, 180.0f);
+                if (remeshSharpEdge < 0.0f) remeshSharpEdge = 0.0f;
+                if (remeshSharpEdge > 180.0f) remeshSharpEdge = 180.0f;
+
+                ImGui.Separator();
+
+                const bool remeshBusy = remeshJob.busy();
+                if (!remeshBusy) {
+                    if (ImGui.Button("Remesh")) {
+                        remeshLastError   = null;
+                        remeshLastSummary = null;
+                        RemeshParams p;
+                        p.targetQuads = remeshTargetQuads;
+                        p.adaptivity  = remeshAdaptivity;
+                        p.sharpEdge   = remeshSharpEdge;
+                        remeshJob.start(mesh(), p);
+                        if (remeshJob.state() == RemeshJob.State.failed)
+                            remeshLastError = remeshJob.message();
+                    }
+                } else {
+                    ImGui.Text("Remeshing...");
+                    if (ImGui.Button("Cancel"))
+                        remeshJob.cancel();
+                }
+
+                // TextUnformatted (not Text): remeshLastError/Summary can carry
+                // the helper's raw stderr tail (geogram prints residuals with
+                // stray "%"), and ImGui.Text is printf-style — a "%" would index
+                // an empty va_list out of bounds. TextUnformatted skips
+                // formatting and takes the D string + length verbatim.
+                if (remeshLastError.length)
+                    ImGui.TextUnformatted("Error: " ~ remeshLastError);
+                if (remeshLastSummary.length)
+                    ImGui.TextUnformatted(remeshLastSummary);
+
+                ImGui.Separator();
+                if (ImGui.Button("Dismiss")) {
+                    // Same cancel-while-busy guard as the AI3D modal's
+                    // Dismiss: otherwise the job can complete AFTER the modal
+                    // is gone and silently rewrite the mesh with no visible
+                    // cause.
+                    if (remeshJob.busy()) remeshJob.cancel();
+                    ImGui.CloseCurrentPopup();
+                    remeshModalOpen = false;
+                }
+                ImGui.EndPopup();
+            } else {
+                // Dismissed via ESC / [X] — same semantics as Dismiss above.
+                if (remeshJob.busy()) remeshJob.cancel();
+                remeshModalOpen = false;
             }
         }
 
