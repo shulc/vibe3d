@@ -169,3 +169,10 @@ unittest {
     p.faces = [face];
     assertInvalid(sceneWith(p));
 }
+
+// This file is pure unittest{} blocks (no HTTP-driven assertions) — every
+// other tests/test_*.d provides a main() so run_test.d's `dmd -unittest`
+// compile can link (module unittests run automatically at process start
+// under -unittest; main itself does nothing). Pre-existing gap, unrelated
+// to task 0381 — fixed here since it is this suite's stated regression gate.
+void main() {}
