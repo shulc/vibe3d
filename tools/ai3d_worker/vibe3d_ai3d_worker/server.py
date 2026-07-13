@@ -77,16 +77,21 @@ class TripoSRBackend:
         device: str,
         chunk_size: int,
         mc_resolution: int,
+        foreground_ratio: float = 0.85,
+        remove_bg: bool = True,
     ) -> None:
         self.triposr_root = triposr_root
         self.model_name_or_path = model
         self.device = device
         self.chunk_size = chunk_size
         self.mc_resolution = mc_resolution
+        self.foreground_ratio = foreground_ratio
+        self.remove_bg = remove_bg
         self.code_revision = self._git_revision(triposr_root)
         self.model_revision = model
         self._model = None
         self._torch = None
+        self._rembg_session = None
         self._lock = threading.Lock()
 
     def _git_revision(self, root: Path) -> str:
@@ -127,8 +132,29 @@ class TripoSRBackend:
     def generate(self, image_path: Path, output_path: Path) -> None:
         torch, model = self._load()
         from PIL import Image
+        import numpy as np
 
-        image = Image.open(image_path).convert("RGB")
+        # TripoSR REQUIRES foreground segmentation + centering BEFORE inference
+        # (this mirrors upstream TripoSR run.py exactly). Feeding a raw RGB image
+        # whose background is not removed makes the model reconstruct the whole
+        # frame as a near-flat slab — "a square with the subject in low relief" —
+        # which is the classic failure even on a clean product photo on white.
+        # remove_background() cuts the subject out, resize_foreground() centers +
+        # scales it into the frame, then it is composited onto mid-gray (0.5),
+        # exactly the distribution TripoSR was trained on.
+        if self.remove_bg:
+            from tsr.utils import remove_background, resize_foreground
+            import rembg
+            if self._rembg_session is None:
+                self._rembg_session = rembg.new_session()
+            image = remove_background(Image.open(image_path), self._rembg_session)
+            image = resize_foreground(image, self.foreground_ratio)
+            arr = np.array(image).astype(np.float32) / 255.0
+            arr = arr[:, :, :3] * arr[:, :, 3:4] + (1.0 - arr[:, :, 3:4]) * 0.5
+            image = Image.fromarray((arr * 255.0).astype(np.uint8))
+        else:
+            image = Image.open(image_path).convert("RGB")
+
         with torch.no_grad():
             scene_codes = model([image], device=self.device)
             meshes = model.extract_mesh(
@@ -473,6 +499,14 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--device", default="cuda:0")
     serve.add_argument("--chunk-size", type=int, default=8192)
     serve.add_argument("--mc-resolution", type=int, default=120)
+    serve.add_argument("--foreground-ratio", type=float, default=0.85,
+                       help="fraction of the frame the segmented subject fills "
+                            "after background removal (TripoSR default 0.85)")
+    serve.add_argument("--no-remove-bg", action="store_true",
+                       help="skip rembg background removal + foreground resize. "
+                            "NOT recommended: feeding a raw image whose background "
+                            "is not removed makes TripoSR reconstruct the whole "
+                            "frame as a shapeless blob instead of the subject.")
     # Task 0381 Phase 4: per-phase delay (ms) for the `fake` backend's
     # simulated 5-phase run, so a client's "cancel while genuinely running"
     # test can land its cancel after the worker has actually reported
@@ -491,6 +525,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.device,
                 args.chunk_size,
                 args.mc_resolution,
+                foreground_ratio=args.foreground_ratio,
+                remove_bg=not args.no_remove_bg,
             )
         else:
             backend = FakeBackend()
