@@ -976,8 +976,9 @@ protected:
     /// Project a click pixel onto the appropriate relocation plane for
     /// the current ACEN mode:
     ///
-    ///   Auto / None : active work plane (ground Y=0 by default; the
-    ///                 user-pinned work plane when one is set).
+    ///   Auto / None : active work plane — camera-most-facing principal
+    ///                 axis (argmax|fwd|) through the camera focus by
+    ///                 default; the user-pinned work plane when one is set.
     ///                 In-plane numeric point is PROVISIONAL (0058 follow-up).
     ///   Screen      : camera-perpendicular plane through the current
     ///                 selection bbox center.
