@@ -32,6 +32,8 @@ import std.path : buildPath, extension;
 import std.string : startsWith, toLower;
 import std.uuid : randomUUID;
 
+import ai3d.scene_validator : Ai3dMaxTotalFaces;
+
 // ---------------------------------------------------------------------------
 // Bounds (Risk 4b + the DoS-clamp project convention). Every HTTP request
 // this module issues sets BOTH timeouts so a stalled connection unwinds well
@@ -53,6 +55,11 @@ enum Ai3dMaxArtifactBytes = 16 * 1024 * 1024;
 /// regardless of caller, independent of that Param's own `.enforceBounds()`
 /// UI/injection-path clamp (two-layer clamp, project convention).
 enum Ai3dMaxGenerationDeadlineMs = 600_000;
+/// Default requested face count for the create-job body when the caller
+/// (a Param, a test hook, a scripted command) does not have a stronger
+/// opinion. Deliberately equal to the pre-ai3d-maxfaces hardcoded literal
+/// (`maxFaces:50000`) so existing behavior is the default, not a surprise.
+enum Ai3dDefaultRequestedFaces = 50_000;
 
 /// Clamp a caller-supplied poll-loop deadline to (0, Ai3dMaxGenerationDeadlineMs].
 /// The authoritative kernel-side bound for `stageArtifact`'s poll loop —
@@ -61,6 +68,21 @@ int clampGenerationDeadlineMs(int timeoutMs) {
     if (timeoutMs <= 0) return 1;
     if (timeoutMs > Ai3dMaxGenerationDeadlineMs) return Ai3dMaxGenerationDeadlineMs;
     return timeoutMs;
+}
+
+/// Clamp a caller-supplied `maxFaces` request to [1000, Ai3dMaxTotalFaces].
+/// The authoritative kernel-side bound for `stageArtifact`'s create-job
+/// body — applied unconditionally regardless of caller, independent of the
+/// `generate.d` Param's own `.enforceBounds()` UI/injection-path clamp
+/// (two-layer clamp, project convention; mirrors clampGenerationDeadlineMs
+/// immediately above). `Ai3dMaxTotalFaces` (ai3d.scene_validator) is the
+/// same ceiling the imported OBJ must clear on the way back in, so a
+/// request above it can only ever produce an artifact the validator will
+/// reject anyway.
+int clampMaxFaces(int maxFaces) {
+    if (maxFaces < 1_000) return 1_000;
+    if (maxFaces > Ai3dMaxTotalFaces) return cast(int) Ai3dMaxTotalFaces;
+    return maxFaces;
 }
 
 /// One reported step of a staged transfer, posted to the caller's
@@ -161,10 +183,12 @@ Ai3dHealthResult probeHealthCheck(string baseUrl, ref shared bool stopRequested)
 /// including a stalled artifact download — Risk 4a). On any cancellation
 /// path the generation-bound `DELETE /v1/jobs/{id}` is issued (best-effort).
 Ai3dStageResult stageArtifact(string baseUrl, string imagePath, int timeoutMs,
+                               int maxFaces,
                                ref shared bool stopRequested,
                                scope void delegate(Ai3dProgress) onProgress = null) {
     Ai3dStageResult result;
     const boundedTimeoutMs = clampGenerationDeadlineMs(timeoutMs);
+    const boundedMaxFaces = clampMaxFaces(maxFaces);
     const url = normalizeLocalWorkerUrl(baseUrl);
     if (url.length == 0) {
         result.code = "invalid_worker_url";
@@ -190,7 +214,7 @@ Ai3dStageResult stageArtifact(string baseUrl, string imagePath, int timeoutMs,
             return result;
         }
 
-        auto created = createJob(url, imagePath, stopRequested);
+        auto created = createJob(url, imagePath, boundedMaxFaces, stopRequested);
         if (created.aborted) {
             result.cancelled = true;
             result.code = "cancelled";
@@ -411,7 +435,8 @@ private BoundedBytes getBytesBounded(string url, Header[] headers, ref shared bo
     return BoundedBytes(sink.data, false);
 }
 
-private BoundedJson createJob(string baseUrl, string imagePath, ref shared bool stopRequested) {
+private BoundedJson createJob(string baseUrl, string imagePath, int maxFaces,
+                               ref shared bool stopRequested) {
     const mediaType = imageMediaType(imagePath);
     if (mediaType.length == 0)
         throw new Exception("Unsupported AI3D image type");
@@ -425,7 +450,7 @@ private BoundedJson createJob(string baseUrl, string imagePath, ref shared bool 
     appendAscii(body, "\r\n--" ~ boundary ~ "\r\n");
     appendAscii(body, `Content-Disposition: form-data; name="options"` ~ "\r\n");
     appendAscii(body, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-    appendAscii(body, `{"protocol":1,"output":"obj","maxFaces":50000}`);
+    appendAscii(body, `{"protocol":1,"output":"obj","maxFaces":` ~ maxFaces.to!string ~ `}`);
     appendAscii(body, "\r\n--" ~ boundary ~ "--\r\n");
 
     auto http = HTTP(baseUrl ~ "/v1/jobs");
@@ -493,7 +518,8 @@ unittest {
     // `cancelled` without ever reaching the network (invalid URL also
     // exercises the same early-return shape, keeping this test offline).
     shared bool stop = true;
-    auto r = stageArtifact("http://127.0.0.1:1", "/nonexistent.png", 1000, stop);
+    auto r = stageArtifact("http://127.0.0.1:1", "/nonexistent.png", 1000,
+        Ai3dDefaultRequestedFaces, stop);
     assert(r.cancelled || r.code.length > 0);
 }
 
@@ -502,6 +528,17 @@ unittest {
     assert(clampGenerationDeadlineMs(-5) == 1);
     assert(clampGenerationDeadlineMs(1_000) == 1_000);
     assert(clampGenerationDeadlineMs(Ai3dMaxGenerationDeadlineMs + 1) == Ai3dMaxGenerationDeadlineMs);
+}
+
+unittest {
+    assert(clampMaxFaces(0) == 1_000);
+    assert(clampMaxFaces(-5) == 1_000);
+    assert(clampMaxFaces(999) == 1_000);
+    assert(clampMaxFaces(1_000) == 1_000);
+    assert(clampMaxFaces(50_000) == 50_000);
+    assert(clampMaxFaces(cast(int) Ai3dMaxTotalFaces) == cast(int) Ai3dMaxTotalFaces);
+    assert(clampMaxFaces(cast(int) Ai3dMaxTotalFaces + 1) == cast(int) Ai3dMaxTotalFaces);
+    assert(clampMaxFaces(int.max) == cast(int) Ai3dMaxTotalFaces);
 }
 
 unittest {

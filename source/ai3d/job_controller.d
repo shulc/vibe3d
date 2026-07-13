@@ -22,7 +22,7 @@ import core.time : msecs, seconds, MonoTime;
 import ai3d.event_queue : Ai3dEventQueue;
 import ai3d.job_events : Ai3dEvent, Ai3dEventKind;
 import ai3d.stage_artifact : stageArtifact, probeHealthCheck, Ai3dProgress,
-    Ai3dStageResult, Ai3dHealthResult;
+    Ai3dStageResult, Ai3dHealthResult, Ai3dDefaultRequestedFaces;
 
 /// Shutdown join budget (Risk 4c). Comfortably above the per-transfer
 /// Ai3dOperationTimeoutMs backstop (stage_artifact.d) so a wedged transfer
@@ -50,13 +50,17 @@ final class Ai3dJobController {
     /// Spawn the worker thread that runs the full generate pipeline
     /// (stageArtifact) against `workerUrl` for `imagePath`, posting events as
     /// it goes. No-ops (returns false) if a job is already in flight — the
-    /// single-in-flight rule (Phase 4).
-    bool start(string imagePath, string workerUrl, int timeoutMs = 120_000) {
+    /// single-in-flight rule (Phase 4). `maxFaces` is the requested (not yet
+    /// clamped) face budget for the create-job body; `stageArtifact` applies
+    /// the authoritative `clampMaxFaces` bound regardless of what's passed
+    /// here.
+    bool start(string imagePath, string workerUrl, int timeoutMs = 120_000,
+               int maxFaces = Ai3dDefaultRequestedFaces) {
         if (atomicLoad(busy_)) return false;
         atomicStore(busy_, true);
         atomicStore(abortRequested_, false);
         auto self = this;
-        worker_ = new Thread({ self.runJob(imagePath, workerUrl, timeoutMs); });
+        worker_ = new Thread({ self.runJob(imagePath, workerUrl, timeoutMs, maxFaces); });
         worker_.isDaemon = true;
         worker_.start();
         return true;
@@ -144,7 +148,7 @@ final class Ai3dJobController {
         queue_.push(ev);
     }
 
-    private void runJob(string imagePath, string workerUrl, int timeoutMs) {
+    private void runJob(string imagePath, string workerUrl, int timeoutMs, int maxFaces) {
         scope(exit) atomicStore(busy_, false);
 
         void onProgress(Ai3dProgress p) {
@@ -161,7 +165,7 @@ final class Ai3dJobController {
 
         Ai3dStageResult r;
         try {
-            r = stageArtifact(workerUrl, imagePath, timeoutMs, abortRequested_, &onProgress);
+            r = stageArtifact(workerUrl, imagePath, timeoutMs, maxFaces, abortRequested_, &onProgress);
         } catch (Exception e) {
             // stageArtifact() is documented not to throw; this is a
             // belt-and-braces backstop so a worker-thread bug can never

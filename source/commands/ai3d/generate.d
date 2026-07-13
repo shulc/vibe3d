@@ -1,7 +1,8 @@
 module commands.ai3d.generate;
 
 import ai3d.stage_artifact : stageArtifact, clampGenerationDeadlineMs,
-    Ai3dMaxGenerationDeadlineMs;
+    clampMaxFaces, Ai3dMaxGenerationDeadlineMs, Ai3dDefaultRequestedFaces;
+import ai3d.scene_validator : Ai3dMaxTotalFaces;
 
 import command;
 import commands.ai3d.import_result : Ai3dImportResult;
@@ -25,6 +26,7 @@ final class Ai3dGenerate : Command {
     private string workerUrlArg = "http://127.0.0.1:47831";
     private string nameArg;
     private int timeoutMsArg = 120_000;
+    private int maxFacesArg = Ai3dDefaultRequestedFaces;
     private Ai3dImportResult importer;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
@@ -54,6 +56,12 @@ final class Ai3dGenerate : Command {
             // bound doesn't depend on this Param's opt-in.
             Param.int_("timeoutMs", "Timeout (ms)", &timeoutMsArg, 120_000)
                 .min(1).max(Ai3dMaxGenerationDeadlineMs).enforceBounds(),
+            // Two-layer clamp (same convention as timeoutMs above):
+            // `.enforceBounds()` is the UI/injection-path clamp;
+            // `stageArtifact` (via `clampMaxFaces`) ALSO hard-caps this at
+            // the kernel regardless of how the field got written.
+            Param.int_("maxFaces", "Max faces", &maxFacesArg, Ai3dDefaultRequestedFaces)
+                .min(1000).max(cast(int) Ai3dMaxTotalFaces).enforceBounds(),
         ];
     }
 
@@ -68,7 +76,7 @@ final class Ai3dGenerate : Command {
         // requestArtifact()/healthCheck() logic.
         shared bool neverCancel = false;
         auto staged = stageArtifact(workerUrlArg, imageArg,
-            clampGenerationDeadlineMs(timeoutMsArg), neverCancel);
+            clampGenerationDeadlineMs(timeoutMsArg), clampMaxFaces(maxFacesArg), neverCancel);
         if (!staged.ok) {
             try logWarn("ai3d", "generate failed: "
                 ~ (staged.message.length ? staged.message : staged.code));
