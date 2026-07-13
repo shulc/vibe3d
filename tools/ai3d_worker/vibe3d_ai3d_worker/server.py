@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -49,6 +50,7 @@ class Job:
     progress: float = 0.0
     cancellation_requested: bool = False
     error: dict[str, Any] | None = None
+    input_path: Path | None = None
     artifact_path: Path | None = None
     artifact_sha256: str = ""
     artifact_bytes: int = 0
@@ -56,10 +58,92 @@ class Job:
     updated_at: float = field(default_factory=time.time)
 
 
+class FakeBackend:
+    backend_id = "triposr"
+    code_revision = "fake-dev"
+    model_revision = "fake"
+
+    def generate(self, image_path: Path, output_path: Path) -> None:
+        output_path.write_bytes(FAKE_OBJ)
+
+
+class TripoSRBackend:
+    backend_id = "triposr"
+
+    def __init__(
+        self,
+        triposr_root: Path,
+        model: str,
+        device: str,
+        chunk_size: int,
+        mc_resolution: int,
+    ) -> None:
+        self.triposr_root = triposr_root
+        self.model_name_or_path = model
+        self.device = device
+        self.chunk_size = chunk_size
+        self.mc_resolution = mc_resolution
+        self.code_revision = self._git_revision(triposr_root)
+        self.model_revision = model
+        self._model = None
+        self._torch = None
+        self._lock = threading.Lock()
+
+    def _git_revision(self, root: Path) -> str:
+        head = root / ".git" / "HEAD"
+        try:
+            text = head.read_text(encoding="utf-8").strip()
+            if text.startswith("ref: "):
+                ref = root / ".git" / text[5:]
+                return ref.read_text(encoding="utf-8").strip()[:40]
+            return text[:40]
+        except OSError:
+            return "unknown"
+
+    def _load(self):
+        with self._lock:
+            if self._model is not None:
+                return self._torch, self._model
+            if not self.triposr_root.exists():
+                raise ProtocolError(503, "model_missing", "TripoSR root does not exist")
+            sys.path.insert(0, str(self.triposr_root))
+            import torch
+            from tsr.system import TSR
+
+            if self.device.startswith("cuda") and not torch.cuda.is_available():
+                raise ProtocolError(503, "unsupported_gpu", "CUDA is not available")
+            model = TSR.from_pretrained(
+                self.model_name_or_path,
+                config_name="config.yaml",
+                weight_name="model.ckpt",
+            )
+            model.renderer.set_chunk_size(self.chunk_size)
+            model.to(self.device)
+            model.eval()
+            self._torch = torch
+            self._model = model
+            return torch, model
+
+    def generate(self, image_path: Path, output_path: Path) -> None:
+        torch, model = self._load()
+        from PIL import Image
+
+        image = Image.open(image_path).convert("RGB")
+        with torch.no_grad():
+            scene_codes = model([image], device=self.device)
+            meshes = model.extract_mesh(
+                scene_codes,
+                True,
+                resolution=self.mc_resolution,
+            )
+        meshes[0].export(output_path)
+
+
 class JobStore:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, backend) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.backend = backend
         self.lock = threading.RLock()
         self.jobs: dict[str, Job] = {}
 
@@ -72,11 +156,12 @@ class JobStore:
             job_dir = self.data_dir / job_id
             job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
             suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[image_media_type]
-            (job_dir / f"input{suffix}").write_bytes(image_bytes)
+            input_path = job_dir / f"input{suffix}"
+            input_path.write_bytes(image_bytes)
             (job_dir / "options.json").write_text(json.dumps(options, sort_keys=True), encoding="utf-8")
-            job = Job(job_id=job_id, generation=1)
+            job = Job(job_id=job_id, generation=1, input_path=input_path)
             self.jobs[job_id] = job
-        threading.Thread(target=self._run_fake_backend, args=(job_id,), daemon=True).start()
+        threading.Thread(target=self._run_backend, args=(job_id,), daemon=True).start()
         return job
 
     def get(self, job_id: str) -> Job:
@@ -133,11 +218,11 @@ class JobStore:
                 raise ProtocolError(409, "artifact_hash_mismatch", "Artifact hash mismatch")
             return data
 
-    def _run_fake_backend(self, job_id: str) -> None:
+    def _run_backend(self, job_id: str) -> None:
         phases = [
             ("validating_input", 0.1),
             ("preprocessing", 0.25),
-            ("reconstructing", 0.6),
+            ("reconstructing", 0.55),
             ("exporting", 0.85),
             ("validating_artifact", 0.95),
         ]
@@ -169,15 +254,40 @@ class JobStore:
             job_dir = self.data_dir / job_id
             tmp_dir = Path(tempfile.mkdtemp(prefix="publish-", dir=job_dir))
             tmp_obj = tmp_dir / "result.obj"
-            tmp_obj.write_bytes(FAKE_OBJ)
-            digest = hashlib.sha256(FAKE_OBJ).hexdigest()
+            try:
+                if job.input_path is None:
+                    raise ProtocolError(500, "internal", "Missing input path")
+                self.backend.generate(job.input_path, tmp_obj)
+            except ProtocolError as exc:
+                job.state = "failed"
+                job.stage = "done"
+                job.error = exc.body()
+                job.updated_at = time.time()
+                return
+            except Exception as exc:
+                job.state = "failed"
+                job.stage = "done"
+                job.error = ProtocolError(
+                    500,
+                    "backend_failed",
+                    "Backend failed during mesh generation",
+                    details={"type": exc.__class__.__name__},
+                ).body()
+                job.updated_at = time.time()
+                return
+            data = tmp_obj.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
             manifest = {
                 "schema": 1,
                 "jobId": job_id,
-                "backend": {"id": "fake", "codeRevision": "dev", "modelRevision": "none"},
+                "backend": {
+                    "id": self.backend.backend_id,
+                    "codeRevision": self.backend.code_revision,
+                    "modelRevision": self.backend.model_revision,
+                },
                 "outputSha256": digest,
-                "outputBytes": len(FAKE_OBJ),
-                "counts": {"vertices": 3, "faces": 1},
+                "outputBytes": len(data),
+                "counts": {},
                 "licenseNoticeIds": [],
             }
             (tmp_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
@@ -185,7 +295,7 @@ class JobStore:
             os.replace(tmp_dir, published)
             job.artifact_path = published / "result.obj"
             job.artifact_sha256 = digest
-            job.artifact_bytes = len(FAKE_OBJ)
+            job.artifact_bytes = len(data)
             job.state = "succeeded"
             job.stage = "done"
             job.progress = 1.0
@@ -275,7 +385,11 @@ class WorkerHandler(BaseHTTPRequestHandler):
         return {
             "protocol": PROTOCOL_VERSION,
             "workerVersion": __version__,
-            "backend": {"id": "triposr", "codeRevision": "fake-dev", "modelRevision": "fake"},
+            "backend": {
+                "id": self.store.backend.backend_id,
+                "codeRevision": self.store.backend.code_revision,
+                "modelRevision": self.store.backend.model_revision,
+            },
             "ready": True,
             "capabilities": {
                 "input": ["image/png", "image/jpeg", "image/webp"],
@@ -327,9 +441,9 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
 
 class WorkerServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], data_dir: Path) -> None:
+    def __init__(self, address: tuple[str, int], data_dir: Path, backend=None) -> None:
         super().__init__(address, WorkerHandler)
-        self.store = JobStore(data_dir)
+        self.store = JobStore(data_dir, backend or FakeBackend())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,9 +453,27 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=47831)
     serve.add_argument("--data-dir", required=True)
+    serve.add_argument("--backend", choices=["fake", "triposr"], default="fake")
+    serve.add_argument("--triposr-root", default="")
+    serve.add_argument("--pretrained-model-name-or-path", default="stabilityai/TripoSR")
+    serve.add_argument("--device", default="cuda:0")
+    serve.add_argument("--chunk-size", type=int, default=8192)
+    serve.add_argument("--mc-resolution", type=int, default=256)
     args = parser.parse_args(argv)
     if args.command == "serve":
-        server = WorkerServer((args.host, args.port), Path(args.data_dir))
+        if args.backend == "triposr":
+            if not args.triposr_root:
+                parser.error("--backend triposr requires --triposr-root")
+            backend = TripoSRBackend(
+                Path(args.triposr_root),
+                args.pretrained_model_name_or_path,
+                args.device,
+                args.chunk_size,
+                args.mc_resolution,
+            )
+        else:
+            backend = FakeBackend()
+        server = WorkerServer((args.host, args.port), Path(args.data_dir), backend)
         print(f"vibe3d_ai3d_worker listening on http://{args.host}:{server.server_port}", flush=True)
         try:
             server.serve_forever()
@@ -355,4 +487,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

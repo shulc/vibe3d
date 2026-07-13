@@ -10,6 +10,21 @@ Run the fake worker locally:
 python3 -m vibe3d_ai3d_worker serve --host 127.0.0.1 --port 47831 --data-dir /tmp/vibe3d-ai3d-worker
 ```
 
+Run the TripoSR backend on the prepared Fedora dev box:
+
+```sh
+cd /tmp/vibe3d-ai3d-worker.FcriPO
+PYTHONPATH=$PWD ~/vibe3d-ai-mvp/TripoSR/.venv/bin/python -m vibe3d_ai3d_worker serve \
+  --host 127.0.0.1 \
+  --port 47831 \
+  --data-dir /tmp/vibe3d-ai3d-worker \
+  --backend triposr \
+  --triposr-root ~/vibe3d-ai-mvp/TripoSR
+```
+
+The first TripoSR job may lazily download `model.ckpt` into the Hugging Face
+cache. Warm the worker before UX testing when measuring generation time.
+
 Scripted editor MVP path, with the editor already running in its normal test
 HTTP mode:
 
