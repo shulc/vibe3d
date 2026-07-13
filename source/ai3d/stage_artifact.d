@@ -49,7 +49,7 @@ enum Ai3dPollIntervalMs = 250;
 /// arithmetic in the `onReceive` accumulator (abort mid-download on
 /// overflow — never grow the buffer unbounded for a misbehaving worker
 /// response).
-enum Ai3dMaxArtifactBytes = 16 * 1024 * 1024;
+enum Ai3dMaxArtifactBytes = 64 * 1024 * 1024;   // raised in lockstep with the validator ceiling (a ~500k-face ASCII OBJ is ~20MB+); this is the REAL artifact download cap (getBytesBounded).
 /// Kernel cap on the caller-supplied generation-deadline (`generate.d`'s
 /// `timeoutMs` Param): the authoritative floor/ceiling enforced HERE
 /// regardless of caller, independent of that Param's own `.enforceBounds()`

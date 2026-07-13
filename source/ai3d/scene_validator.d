@@ -5,7 +5,10 @@ import std.string : representation;
 
 import io.scene_ir : ImportedScene;
 
-enum size_t Ai3dMaxArtifactBytes = 64 * 1024 * 1024;
+// The artifact DOWNLOAD byte cap lives in `ai3d.stage_artifact`
+// (`Ai3dMaxArtifactBytes` there, enforced in getBytesBounded). This module only
+// validates an already-parsed scene, so its budget is `Ai3dMaxValidatedSceneBytes`
+// (below) — do NOT re-add a download-cap constant here; it would be dead.
 enum size_t Ai3dMaxParts = 16;
 enum size_t Ai3dMaxVerticesPerPart = 500_000;
 enum size_t Ai3dMaxTotalVertices = 1_000_000;
@@ -25,11 +28,11 @@ enum size_t Ai3dMaxTotalCorners = 2_000_000;
 enum size_t Ai3dMaxSurfaces = 32;
 enum size_t Ai3dMaxUtf8NameBytes = 256;
 enum size_t Ai3dMaxTotalUtf8NameBytes = 8_192;
-enum size_t Ai3dMaxUvEntries = 200_000;
+enum size_t Ai3dMaxUvEntries = 2_000_000;
 enum float Ai3dMaxAbsCoordinate = 10_000.0f;
 enum float Ai3dMaxAbsUv = 100.0f;
 enum size_t Ai3dMaxPositionComponents = 3_000_000;
-enum size_t Ai3dMaxUvComponents = 400_000;
+enum size_t Ai3dMaxUvComponents = 4_000_000;
 // Coupled to Ai3dMaxTotalFaces (raised alongside it, task ai3d-maxfaces):
 // io/scene_import.d unconditionally sets `faceMaterial.length = faces.length`
 // for every imported part (every face gets a material index, even with a
