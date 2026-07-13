@@ -189,15 +189,20 @@ private WorkplaneFrame frameFromPacket(const WorkplanePacket p) {
 /// The frame accessor used by every plane-consuming tool: the `applyHeadless`
 /// of all 8 interactive Create-tools (sphere/cone/box/tube/torus/cylinder/
 /// capsule + arc), the interactive commit at `arc.d:317`, and the
-/// ACEN.Auto relocate plane at `transform.d:1036` all call this — it is a
-/// live production path, not a headless-only shim. `WorkplaneStage` is the
+/// ACEN.Auto relocate plane in `transform.d` (`computeClickRelocateHitRaw`)
+/// all call this — it is a live production path, not a headless-only shim.
+/// The relocate call site additionally calls `pickMostFacingPlane` directly
+/// for its auto-mode plane NORMAL (see below); this accessor still supplies
+/// its `isAuto` flag and the pinned-plane fallback. `WorkplaneStage` is the
 /// single owner of the answer:
 ///   - auto  ⇒ the `WorkplanePacket.init` default (world XZ, origin 0) —
-///     there is no headless equivalent of the camera-facing pick, so this
-///     is NOT the last-published camera-driven packet (see Risk 1 in
-///     doc/workplane_single_source_plan.md: reading the live camera pick
-///     here would tilt the ACEN.Auto relocate plane and break the
-///     auto-origin=focus behaviour).
+///     there is no headless equivalent of the camera-facing pick THROUGH
+///     THIS ACCESSOR, because it deliberately avoids `pipeline.evaluate`
+///     (re-entrancy risk on tool event-handling paths — see
+///     doc/acen_auto_port_plan.md Risk 3). A caller that needs the live
+///     camera-facing axis in auto mode (the ACEN.Auto relocate) reads it
+///     from a separate, pure `pickMostFacingPlane(vp)` call instead of
+///     from this accessor's auto branch.
 ///   - non-auto ⇒ the stage's live basis + center.
 /// `g_pipeCtx is null` or the stage can't be found ⇒ the same world-XZ
 /// default (the one fallback identity, `worldXZFrame`).

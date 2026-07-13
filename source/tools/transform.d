@@ -1000,13 +1000,14 @@ protected:
     }
 
     // Geometry-only click-relocate: project the cursor ray onto the
-    // appropriate plane for the current ACEN mode (active work plane,
-    // ground Y=0 by default, for Auto/None; camera-perpendicular through
-    // selection center for Screen). Returns false in modes that don't
-    // allow click-relocate. No snap, no side-effects — pure geometry.
-    // Used by computeClickRelocateHit (which then optionally snaps the
-    // result) and by updateLiveSnapPreview (which decides separately
-    // what to do with the hit).
+    // appropriate plane for the current ACEN mode (active work plane —
+    // through the camera focus, normal = the principal world axis the
+    // camera most directly faces, by default, for Auto/None; camera-
+    // perpendicular through selection center for Screen). Returns false
+    // in modes that don't allow click-relocate. No snap, no side-effects
+    // — pure geometry. Used by computeClickRelocateHit (which then
+    // optionally snaps the result) and by updateLiveSnapPreview (which
+    // decides separately what to do with the hit).
     // Both projection kinds are handled: screenPointToRay builds a
     // perspective ray from the eye or an ortho ray parallel to the view
     // forward, and the Auto/None branch swaps in a camera-perpendicular
@@ -1015,7 +1016,7 @@ protected:
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create_common         : currentWorkplaneFrame;
+        import tools.create_common         : currentWorkplaneFrame, pickMostFacingPlane;
         import math : screenRay, rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
@@ -1030,33 +1031,45 @@ protected:
             case ActionCenterStage.Mode.None: {
                 // Project onto the active work plane. currentWorkplaneFrame()
                 // reads WorkplaneStage state directly (no pipeline.evaluate,
-                // no re-entrancy) and returns the stored center for pinned
-                // (non-auto) mode. In auto mode the plane passes through the
-                // camera focus rather than the world origin so the relocate
-                // lands on the plane the user is actually looking at.
+                // no re-entrancy) and returns the stored normal/center for a
+                // user-pinned (non-auto) work plane — that branch is
+                // unchanged. In auto mode the plane's through-point is the
+                // camera focus (not the world origin), and its normal is the
+                // principal world axis the camera is most directly facing
+                // (`pickMostFacingPlane`, the same camera-facing pick
+                // Create-tool primitive placement already uses via
+                // `pickWorkplaneFrame`) — recomputed instantaneously from the
+                // live viewport on every call, with no sticky state carried
+                // between clicks. `pickMostFacingPlane` is a pure function of
+                // `cachedVp` (no pipeline.evaluate), so this stays
+                // re-entrancy-safe on the event-handling path.
                 auto wf = currentWorkplaneFrame();
-                if (wf.isAuto) wf.origin = cachedVp.focus;
+                Vec3 planeOrigin = wf.origin;
                 Vec3 planeNormal = wf.normal;
+                if (wf.isAuto) {
+                    planeOrigin = cachedVp.focus;
+                    planeNormal = pickMostFacingPlane(cachedVp).normal;
+                }
                 // Ortho fix: an orthographic camera projects all rays parallel
-                // to its forward vector. When that forward is (near-)parallel to
-                // the workplane (the Front / Side quad cells, whose view dir is
-                // perpendicular to the +Y ground plane's normal), the projection
-                // ray lies IN the plane — rayPlaneIntersect degenerates
-                // (denom≈0 → returns false) and the relocate silently no-ops.
-                // Even in the Top cell, where it happens to hit, projecting onto
-                // an off-axis workplane would not land under the cursor. Swap in
-                // a camera-perpendicular plane through the same origin so the
-                // click always projects to the point under the cursor at focus
-                // depth — matching the perspective relocate in every cell (and
-                // reducing to the identical XZ plane in the Top cell, where the
-                // view forward already equals the workplane normal). Perspective
-                // is untouched: its diverging rays hit the workplane fine.
+                // to its forward vector. When that forward is (near-)parallel
+                // to the chosen plane (e.g. a pinned plane edge-on to the
+                // view), the projection ray lies IN the plane —
+                // rayPlaneIntersect degenerates (denom≈0 → returns false) and
+                // the relocate silently no-ops. Swap in a camera-perpendicular
+                // plane through the same origin so the click always projects
+                // to the point under the cursor at focus depth — matching the
+                // perspective relocate in every cell. For the auto case this
+                // is now largely redundant (the principal-axis normal is
+                // already the axis most perpendicular to the parallel ortho
+                // rays, so it rarely degenerates), but it is kept — and still
+                // needed — for a user-pinned plane that happens to be edge-on
+                // to an ortho camera.
                 if (isOrtho(cachedVp))
                     planeNormal = Vec3(cachedVp.view[2],
                                        cachedVp.view[6],
                                        cachedVp.view[10]);
                 return rayPlaneIntersect(crHitOrig, dir,
-                                         wf.origin, planeNormal, worldHit);
+                                         planeOrigin, planeNormal, worldHit);
             }
             case ActionCenterStage.Mode.Screen: {
                 Vec3 selCen = currentSelectionBBoxCenter();
