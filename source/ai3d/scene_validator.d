@@ -5,31 +5,40 @@ import std.string : representation;
 
 import io.scene_ir : ImportedScene;
 
-enum size_t Ai3dMaxArtifactBytes = 16 * 1024 * 1024;
+enum size_t Ai3dMaxArtifactBytes = 64 * 1024 * 1024;
 enum size_t Ai3dMaxParts = 16;
-enum size_t Ai3dMaxVerticesPerPart = 50_000;
-enum size_t Ai3dMaxTotalVertices = 200_000;
-enum size_t Ai3dMaxFacesPerPart = 50_000;   // = Ai3dMaxTotalFaces (a single-part
+enum size_t Ai3dMaxVerticesPerPart = 500_000;
+enum size_t Ai3dMaxTotalVertices = 1_000_000;
+enum size_t Ai3dMaxFacesPerPart = 500_000;  // = Ai3dMaxTotalFaces (a single-part
                                             // artifact may use the whole face
-                                            // budget; the worker requests
-                                            // maxFaces:50000, so a one-part
-                                            // TripoSR-class mesh of 25k-50k faces
-                                            // must not be rejected — see
-                                            // commands/ai3d/generate.d create-job).
-enum size_t Ai3dMaxTotalFaces = 50_000;
+                                            // budget; the worker's create-job
+                                            // requests a user-chosen `maxFaces`
+                                            // up to this ceiling — see
+                                            // ai3d.stage_artifact.clampMaxFaces
+                                            // / commands/ai3d/generate.d — so a
+                                            // one-part TripoSR-class mesh
+                                            // up to the full budget must not be
+                                            // rejected).
+enum size_t Ai3dMaxTotalFaces = 500_000;
 enum size_t Ai3dMaxCornersPerFace = 16;
-enum size_t Ai3dMaxTotalCorners = 200_000;
+enum size_t Ai3dMaxTotalCorners = 2_000_000;
 enum size_t Ai3dMaxSurfaces = 32;
 enum size_t Ai3dMaxUtf8NameBytes = 256;
 enum size_t Ai3dMaxTotalUtf8NameBytes = 8_192;
 enum size_t Ai3dMaxUvEntries = 200_000;
 enum float Ai3dMaxAbsCoordinate = 10_000.0f;
 enum float Ai3dMaxAbsUv = 100.0f;
-enum size_t Ai3dMaxPositionComponents = 600_000;
+enum size_t Ai3dMaxPositionComponents = 3_000_000;
 enum size_t Ai3dMaxUvComponents = 400_000;
-enum size_t Ai3dMaxFaceMaterialEntries = 50_000;
-enum size_t Ai3dMaxIndexEntries = 200_000;
-enum size_t Ai3dMaxValidatedSceneBytes = 16 * 1024 * 1024;
+// Coupled to Ai3dMaxTotalFaces (raised alongside it, task ai3d-maxfaces):
+// io/scene_import.d unconditionally sets `faceMaterial.length = faces.length`
+// for every imported part (every face gets a material index, even with a
+// single default material) — a cap lower than Ai3dMaxFacesPerPart would
+// silently reject any real single-material mesh above its own value before
+// the face cap ever gets a chance to.
+enum size_t Ai3dMaxFaceMaterialEntries = 500_000;
+enum size_t Ai3dMaxIndexEntries = 2_000_000;
+enum size_t Ai3dMaxValidatedSceneBytes = 64 * 1024 * 1024;
 
 struct Ai3dSceneValidation {
     bool ok;
@@ -203,11 +212,20 @@ bool importedSceneIsValidForAi3d(const ref ImportedScene scene) {
 }
 
 unittest {
-    // task 0381 follow-up (face-cap regression): a single-part artifact may use
-    // the WHOLE face budget — Ai3dMaxFacesPerPart == Ai3dMaxTotalFaces == the
-    // worker's create-job `maxFaces:50000` (commands/ai3d/generate.d). The old
-    // per-part cap of 25_000 (half the total) silently rejected every real
-    // TripoSR-class single-part mesh of 25k–50k faces, so no geometry appeared.
+    // task ai3d-maxfaces (ceiling raise, follow-up to the 0381 face-cap
+    // regression): a single-part artifact may use the WHOLE face budget —
+    // Ai3dMaxFacesPerPart == Ai3dMaxTotalFaces == the ceiling
+    // ai3d.stage_artifact.clampMaxFaces enforces on the user-chosen
+    // `maxFaces` (commands/ai3d/generate.d). Every face also gets a
+    // faceMaterial entry (io/scene_import.d always sizes it to
+    // faces.length), so `mk()` below populates that stream too — this is
+    // the real shape of an imported single-material mesh, not a stripped-down
+    // approximation, and it exercises the Ai3dMaxFaceMaterialEntries cap
+    // raised alongside the face caps above.
+    //
+    // Constructing/validating a real Ai3dMaxFacesPerPart(+1)-face part is
+    // O(faces) but still fast in practice (sub-second) — the shipped
+    // ceiling is tested directly rather than against a scaled-down stand-in.
     import io.scene_ir : ImportedScene, ImportedPart;
     import math : Vec3;
 
@@ -216,6 +234,7 @@ unittest {
         p.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
         p.faces.length = nFaces;
         foreach (ref f; p.faces) f = [0u, 1u, 2u];
+        p.faceMaterial.length = nFaces; // always 0 (default material)
         return p;
     }
 
