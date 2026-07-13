@@ -47,7 +47,7 @@ import std.net.curl : get;
 import std.math     : fabs;
 import std.format   : format;
 
-import fixture_helpers : cmd, runStep, asDouble, jvec3;
+import fixture_helpers : cmd, runStep, asDouble, jvec3, requireProvenance;
 // Reused for the Mode.Element live-pick verifier (see
 // runStageAcenElementLivePick below) — camera/viewport projection math is
 // already duplicated once in drag_helpers.d (from source/math.d) for the
@@ -89,6 +89,7 @@ private void runCaseSetup(JSONValue cs, string cn) {
 void runStageAcenSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<stage-acen-suite>";
+    requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -114,6 +115,7 @@ void runStageAcenSuite(string fixtureJson) {
 void runStageAxisSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<stage-axis-suite>";
+    requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -145,6 +147,7 @@ void runStageAxisSuite(string fixtureJson) {
 void runStageFalloffSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<stage-falloff-suite>";
+    requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");

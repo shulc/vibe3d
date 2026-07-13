@@ -16,7 +16,14 @@
  *      in imported modules are SILENT there. This lane catches what the
  *      static-lib path misses.  See run_test.d:425-434 for the documented
  *      limitation that motivated this lane.
- *   7. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
+ *   7. python3 tools/local/fixture_gen/provenance_check.py — golden-fixture
+ *      provenance gate (task 0366): fast, offline, MODO-free lint over
+ *      tests/fixtures/**.json + the inline .d blocks, exiting non-zero on
+ *      any MISSING or STRUCTURALLY INVALID `provenance` block (a valid
+ *      `simulated`/`analytic` block is allowed — just counted as smoke, not
+ *      parity). Skipped automatically when the private tools/local tree
+ *      (and its provenance_check.py) isn't present.
+ *   8. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
  *
  * Opt-in (NOT in the default set, runs only via --only perf-abs):
  *   perf-abs: rdmd tools/perf/run.d --n 316 — the FULL ~100K-face matrix
@@ -43,11 +50,12 @@
  *                 always compiles (dub test has no --no-build equivalent);
  *                 --no-build is accepted but ignored for that lane.
  *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf, snapshot,
- *                 dubtest}.
+ *                 dubtest, provenance}.
  *   --only-X      run ONLY suite X (mutually exclusive with --skip-X).
  *                 X ∈ {unit, blender, modo, acen, perf, snapshot, dubtest,
- *                 perf-abs}; perf-abs is opt-in (n=316, ~5 min, absolute vs the
- *                 committed baseline) and runs ONLY via --only perf-abs.
+ *                 provenance, perf-abs}; perf-abs is opt-in (n=316, ~5 min,
+ *                 absolute vs the committed baseline) and runs ONLY via
+ *                 --only perf-abs.
  *
  * Flake note (NO default exclusions as of the -j8 hardening pass). The
  * historical -j8 flakes had two distinct root causes, both now fixed:
@@ -167,8 +175,8 @@ int main(string[] args) {
         "j|jobs",     "worker count for unit + ACEN drag suites "
                     ~ "(default = clamp(cpus/4, 4, 12))", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
-        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | dubtest | perf-abs)", &only,
-        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot | dubtest)", &skip);
+        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | dubtest | provenance | perf-abs)", &only,
+        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot | dubtest | provenance)", &skip);
 
     if (info.helpWanted) {
         writeln("usage: ./run_all.d [options]");
@@ -197,7 +205,7 @@ int main(string[] args) {
             cmd ~= "--exclude";
             cmd ~= e;
         }
-        suites ~= Suite("unit", "1/7 Unit tests (run_test.d)", cmd);
+        suites ~= Suite("unit", "1/8 Unit tests (run_test.d)", cmd);
     }
 
     // (MS-3.6) The MS-2 shadow lane was retired with the shadow itself: it gated
@@ -210,7 +218,7 @@ int main(string[] args) {
         if (exists("tools/local/blender_diff/run.d")) {
             string[] cmd = ["rdmd", "tools/local/blender_diff/run.d"];
             if (noBuild) cmd ~= "--no-build";
-            suites ~= Suite("blender", "2/7 reference geometry diff (blender)", cmd);
+            suites ~= Suite("blender", "2/8 reference geometry diff (blender)", cmd);
         } else {
             writeln(yellow("- skipped blender suite (tools/local/blender_diff not present)"));
         }
@@ -220,7 +228,7 @@ int main(string[] args) {
         if (exists("tools/local/modo_diff/run.d")) {
             string[] cmd = ["rdmd", "tools/local/modo_diff/run.d"];
             if (noBuild) cmd ~= "--no-build";
-            suites ~= Suite("modo", "3/7 reference geometry diff (bevel / prim)", cmd);
+            suites ~= Suite("modo", "3/8 reference geometry diff (bevel / prim)", cmd);
         } else {
             writeln(yellow("- skipped modo suite (tools/local/modo_diff not present)"));
         }
@@ -230,7 +238,7 @@ int main(string[] args) {
         if (exists("tools/local/modo_diff/run_acen_drag.py")) {
             string[] cmd = ["./tools/local/modo_diff/run_acen_drag.py",
                             "-j", j.format!"%d"];
-            suites ~= Suite("acen", "4/7 ACEN drag verification", cmd);
+            suites ~= Suite("acen", "4/8 ACEN drag verification", cmd);
         } else {
             writeln(yellow("- skipped acen suite (tools/local/modo_diff not present)"));
         }
@@ -254,7 +262,7 @@ int main(string[] args) {
                         "test_history_jump"];
         if (noBuild) cmd ~= "--no-build";
         suites ~= Suite("snapshot",
-                        "5/7 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
+                        "5/8 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
                         cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
     }
 
@@ -279,7 +287,26 @@ int main(string[] args) {
                 ~ "no --no-build equivalent)"));
         string[] cmd = ["dub", "test", "--config=modeling"];
         suites ~= Suite("dubtest",
-                        "6/7 module unittests (dub test --config=modeling)", cmd);
+                        "6/8 module unittests (dub test --config=modeling)", cmd);
+    }
+
+    // Provenance lane (task 0366) — a fast, offline, MODO-free lint gate over
+    // every golden fixture's `provenance` block: exits non-zero on any
+    // MISSING or STRUCTURALLY INVALID block (a present-and-valid
+    // `simulated`/`analytic` block is fine — it's just counted as smoke, not
+    // parity, by the script's own report). Sits right next to dubtest: both
+    // are cheap, deterministic, no-external-engine gates that belong early in
+    // the run. Skipped automatically when the private tools/local tree (and
+    // its provenance_check.py) isn't present, same convention as blender/modo/acen.
+    if (include("provenance")) {
+        if (exists("tools/local/fixture_gen/provenance_check.py")) {
+            string[] cmd = ["python3", "tools/local/fixture_gen/provenance_check.py"];
+            suites ~= Suite("provenance",
+                            "7/8 golden-fixture provenance gate", cmd);
+        } else {
+            writeln(yellow("- skipped provenance suite (tools/local/fixture_gen "
+                ~ "not present)"));
+        }
     }
 
     // Perf lane — RELATIVE INVARIANTS ONLY on a small (n=64) mesh. A full
@@ -308,7 +335,7 @@ int main(string[] args) {
         } else {
             string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
                             "--no-absolute"];
-            suites ~= Suite("perf", "7/7 perf relative invariants (n=64)", cmd);
+            suites ~= Suite("perf", "8/8 perf relative invariants (n=64)", cmd);
         }
     }
 

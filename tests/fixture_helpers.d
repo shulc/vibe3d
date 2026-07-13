@@ -664,6 +664,22 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
     }
 }
 
+/// task 0366: assert a golden fixture carries a `provenance` block before
+/// the runner trusts it as a parity/smoke check. A bare (pre-0366, or a
+/// hand-added fixture that forgot the block) fixture is a coding mistake,
+/// not a valid state — this fails loud at the LIVE runner as the D-side
+/// belt-and-suspenders backstop to tools/local/fixture_gen/provenance_check.py
+/// (the offline Python gate, run separately in run_all.d's `provenance`
+/// lane). Does not judge the block's CONTENT (see provenance.lint_provenance
+/// for that, Python-side only) — only that one is present at all.
+void requireProvenance(JSONValue fx, string name) {
+    assert("provenance" in fx,
+        format("%s: golden fixture has no 'provenance' block (task 0366 — "
+               ~ "every golden must carry structured provenance; back-fill it "
+               ~ "via tools/local/fixture_gen/backfill_provenance.py or stamp "
+               ~ "it at generation time via provenance.make_provenance)", name));
+}
+
 /// Run a frozen-state fixture given as its JSON text. Executes the setup
 /// steps against a live vibe3d, then asserts /api/model's vertices match
 /// `expected.vertices` within tolerance. Asserts (with a diagnostic) on
@@ -671,6 +687,7 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
 void runFixture(string fixtureJson) {
     auto fx     = parseJSON(fixtureJson);
     string name = ("name" in fx) ? fx["name"].str : "<unnamed>";
+    requireProvenance(fx, name);
     double tol  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
 
     // ---- setup ----------------------------------------------------------
@@ -718,6 +735,7 @@ void runFixture(string fixtureJson) {
 void runParityFixture(string fixtureJson) {
     auto fx     = parseJSON(fixtureJson);
     string name = ("name" in fx) ? fx["name"].str : "<unnamed>";
+    requireProvenance(fx, name);
     double tol  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-3;
     runOneParity(name, tol, fx["input"], fx["op"], fx["expected_pairs"]);
 }
@@ -734,6 +752,7 @@ void runParityFixture(string fixtureJson) {
 void runParitySuite(string fixtureJson) {
     auto fx       = parseJSON(fixtureJson);
     string suite  = ("name" in fx) ? fx["name"].str : "<unnamed-suite>";
+    requireProvenance(fx, suite);
     double tolDef = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-3;
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -871,6 +890,7 @@ private bool jApproxEq(JSONValue e, JSONValue a, double tol) {
 void runTopologyDiffSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<topo-suite>";
+    requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -933,6 +953,7 @@ void runTopologyDiffSuite(string fixtureJson) {
 void runPreviewStateSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<preview-suite>";
+    requireProvenance(fx, suite);
     double tol   = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -961,6 +982,7 @@ void runPreviewStateSuite(string fixtureJson) {
 void runAttrEchoSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<attr-echo-suite>";
+    requireProvenance(fx, suite);
     double tol   = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
     foreach (cs; fx["cases"].array) {
         string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
