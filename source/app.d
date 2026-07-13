@@ -9435,11 +9435,13 @@ void main(string[] args) {
                 }
 
                 // Health-gated (Phase 0/3): Generate only enables once a
-                // standalone probeHealth() round trip reports protocol 1,
-                // the triposr backend, and OBJ capability.
+                // standalone probeHealth() round trip reports a compatible
+                // protocol and OBJ capability. The backend id (triposr,
+                // trellis, fake, …) is informational only — any conformant
+                // worker that speaks protocol 1 and emits OBJ is accepted, so
+                // we deliberately do NOT pin a specific backend name here.
                 const bool healthy = ai3dModal.healthChecked && ai3dModal.healthOk
                     && ai3dModal.healthProtocol == 1
-                    && ai3dModal.healthBackend == "triposr"
                     && ai3dModal.healthObjCapable;
 
                 ImGui.Separator();
