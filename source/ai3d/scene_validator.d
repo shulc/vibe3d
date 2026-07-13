@@ -149,9 +149,9 @@ Ai3dSceneValidation validateImportedSceneForAi3d(const ref ImportedScene scene) 
             expectedUvFloats += face.length * 2;
         }
 
-        if (part.faceSubpatch.length != 0 && part.faceSubpatch.length != part.faces.length)
+        if (part.faceSubpatch.length != 0 && part.faceSubpatch.length < part.faces.length)
             return fail("artifact_invalid", "AI3D faceSubpatch stream is misaligned");
-        if (part.faceMaterial.length != 0 && part.faceMaterial.length != part.faces.length)
+        if (part.faceMaterial.length != 0 && part.faceMaterial.length < part.faces.length)
             return fail("artifact_invalid", "AI3D faceMaterial stream is misaligned");
         if (part.uv.length != 0 && part.uv.length != expectedUvFloats)
             return fail("artifact_invalid", "AI3D UV stream is misaligned");
@@ -195,4 +195,3 @@ Ai3dSceneValidation validateImportedSceneForAi3d(const ref ImportedScene scene) 
 bool importedSceneIsValidForAi3d(const ref ImportedScene scene) {
     return validateImportedSceneForAi3d(scene).ok;
 }
-

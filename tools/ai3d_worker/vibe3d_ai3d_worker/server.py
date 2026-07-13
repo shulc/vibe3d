@@ -458,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--pretrained-model-name-or-path", default="stabilityai/TripoSR")
     serve.add_argument("--device", default="cuda:0")
     serve.add_argument("--chunk-size", type=int, default=8192)
-    serve.add_argument("--mc-resolution", type=int, default=256)
+    serve.add_argument("--mc-resolution", type=int, default=120)
     args = parser.parse_args(argv)
     if args.command == "serve":
         if args.backend == "triposr":

@@ -10,6 +10,7 @@ import document : Document, Layer;
 import editmode;
 import io.scene_import : importViaAssimp;
 import io.scene_ir : ImportedScene, flattenToMesh;
+import log : logWarn;
 import mesh;
 import params : Param;
 import view;
@@ -73,16 +74,25 @@ final class Ai3dImportResult : Command {
             foreach (l; doc.layers) preSelected[l] = l.selected;
 
             ImportedScene scene;
-            if (!importViaAssimp(pathArg, scene))
+            if (!importViaAssimp(pathArg, scene)) {
+                try logWarn("ai3d", "importResult failed: assimp import failed");
+                catch (Exception) {}
                 return false;
+            }
             auto validation = validateImportedSceneForAi3d(scene);
-            if (!validation.ok)
+            if (!validation.ok) {
+                try logWarn("ai3d", "importResult failed: " ~ validation.message);
+                catch (Exception) {}
                 return false;
+            }
 
             auto layer = new Layer;
             layer.mesh = flattenToMesh(scene);
-            if (layer.mesh.vertices.length == 0 || layer.mesh.faces.length == 0)
+            if (layer.mesh.vertices.length == 0 || layer.mesh.faces.length == 0) {
+                try logWarn("ai3d", "importResult failed: flattened mesh is empty");
+                catch (Exception) {}
                 return false;
+            }
             layer.name = nameArg.length ? nameArg : defaultLayerName(pathArg);
             layer.visible = true;
             layer.selected = false;

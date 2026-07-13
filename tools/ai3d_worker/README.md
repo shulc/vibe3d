@@ -23,7 +23,9 @@ PYTHONPATH=$PWD ~/vibe3d-ai-mvp/TripoSR/.venv/bin/python -m vibe3d_ai3d_worker s
 ```
 
 The first TripoSR job may lazily download `model.ckpt` into the Hugging Face
-cache. Warm the worker before UX testing when measuring generation time.
+cache. Warm the worker before UX testing when measuring generation time. The
+default `--mc-resolution 120` is intentionally conservative so the generated OBJ
+fits the editor MVP validator budget (`<= 25k` faces per part).
 
 Scripted editor MVP path, with the editor already running in its normal test
 HTTP mode:

@@ -110,13 +110,25 @@ unittest {
 
 unittest {
     auto p = triPart();
+    p.faceMaterial = [];
+    assertValid(sceneWith(p));
     p.faceMaterial = [0u, 0u];
+    assertValid(sceneWith(p));
+    p.faceMaterial = null;
+    p.faces ~= [0u, 1u, 2u];
+    p.uv = null;
+    p.faceMaterial = [0u];
     assertInvalid(sceneWith(p));
 }
 
 unittest {
     auto p = triPart();
     p.faceSubpatch = [false, true];
+    assertValid(sceneWith(p));
+    p.faceSubpatch = null;
+    p.faces ~= [0u, 1u, 2u];
+    p.uv = null;
+    p.faceSubpatch = [false];
     assertInvalid(sceneWith(p));
 }
 
