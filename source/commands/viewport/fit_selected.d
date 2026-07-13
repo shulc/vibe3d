@@ -23,16 +23,25 @@ class FitSelected : Command {
 
     override bool apply() {
         // Frame selected (or whole mesh if nothing selected).
+        //
+        // Perf (task 0388): the per-element selection tests below MUST use the
+        // non-allocating scalar accessors (`isVertexSelected`/`isEdgeSelected`/
+        // `isFaceSelected`), NOT the `mesh.selectedX[i]` @property. The latter
+        // materializes a fresh `bool[]` snapshot of the whole marks array on
+        // EVERY index — inside a `0 .. length` loop that is O(n²) and cost ~6 s
+        // on a 100 K-face mesh. `verts.reserve` up front also drops the append
+        // churn on the whole-mesh path.
         Vec3[] verts;
+        verts.reserve(mesh.vertices.length);
         if (editMode == EditMode.Vertices) {
             bool any = mesh.hasAnySelectedVertices();
             foreach (i; 0 .. mesh.vertices.length)
-                if (!any || mesh.selectedVertices[i]) verts ~= mesh.vertices[i];
+                if (!any || mesh.isVertexSelected(i)) verts ~= mesh.vertices[i];
         } else if (editMode == EditMode.Edges) {
             bool any = mesh.hasAnySelectedEdges();
             bool[] vis = new bool[](mesh.vertices.length);
             foreach (i; 0 .. mesh.edges.length) {
-                if (any && !mesh.selectedEdges[i]) continue;
+                if (any && !mesh.isEdgeSelected(i)) continue;
                 foreach (vi; mesh.edges[i])
                     if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
             }
@@ -40,7 +49,7 @@ class FitSelected : Command {
             bool any = mesh.hasAnySelectedFaces();
             bool[] vis = new bool[](mesh.vertices.length);
             foreach (i; 0 .. mesh.faces.length) {
-                if (any && !mesh.selectedFaces[i]) continue;
+                if (any && !mesh.isFaceSelected(i)) continue;
                 foreach (vi; mesh.faces[i])
                     if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
             }

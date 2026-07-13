@@ -19,11 +19,16 @@ class SelectionExpand : Command {
     }
 
     override bool apply() {
+        // Perf (task 0388): iterate the geometry length and test membership via
+        // the non-allocating `isXSelected(i)` scalar accessor. `mesh.selectedX`
+        // is a @property that rebuilds a whole `bool[]` per access, so both the
+        // loop bound and the per-element test used to allocate — the latter,
+        // inside the loop, was O(n²).
         snap = SelectionSnapshot.capture(*mesh);
         if (editMode == EditMode.Vertices) {
             bool[] toAdd = new bool[](mesh.vertices.length);
-            foreach (i; 0 .. mesh.selectedVertices.length)
-                if (mesh.selectedVertices[i])
+            foreach (i; 0 .. mesh.vertices.length)
+                if (mesh.isVertexSelected(i))
                     foreach (ni; mesh.verticesAroundVertex(cast(uint)i))
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)
@@ -33,8 +38,8 @@ class SelectionExpand : Command {
             auto edgeAdj = mesh.edgeAdjacencySharingVertex();
 
             bool[] toAdd = new bool[](mesh.edges.length);
-            foreach (i; 0 .. mesh.selectedEdges.length)
-                if (mesh.selectedEdges[i])
+            foreach (i; 0 .. mesh.edges.length)
+                if (mesh.isEdgeSelected(i))
                     foreach (ni; edgeAdj[i])
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)
@@ -45,8 +50,8 @@ class SelectionExpand : Command {
             auto faceAdj = mesh.faceAdjacencySharingVertex();
 
             bool[] toAdd = new bool[](mesh.faces.length);
-            foreach (i; 0 .. mesh.selectedFaces.length)
-                if (mesh.selectedFaces[i])
+            foreach (i; 0 .. mesh.faces.length)
+                if (mesh.isFaceSelected(i))
                     foreach (ni; faceAdj[i])
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)

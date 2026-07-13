@@ -38,13 +38,19 @@ private:
     }
 
     bool applyPolygons() {
-        if (mesh.selectedFaces.length < mesh.faces.length)
+        // Perf (task 0388): `mesh.selectedFaces` is a @property that rebuilds a
+        // whole `bool[]` per read, so its `.length` and per-element indexing use
+        // the lock-step `faceMarks.length` / `isFaceSelected` scalar accessors
+        // instead — the find-last loop below reads only `faceSelectionOrder`
+        // (a plain field), so this keeps the command O(mesh) without any
+        // per-call array materialization.
+        if (mesh.faceMarks.length < mesh.faces.length)
             mesh.resizeFaceSelection();
         if (mesh.faceSelectionOrder.length < mesh.faces.length)
             mesh.faceSelectionOrder.length = mesh.faces.length;
 
         int lastFace = -1, secondLastFace = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedFaces.length) {
+        foreach (i; 0 .. mesh.faceMarks.length) {
             if (i >= mesh.faceSelectionOrder.length) break;
             int ord = mesh.faceSelectionOrder[i];
             if (ord <= 0) continue;
@@ -74,17 +80,17 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = nf; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedFaces[bestNext])
+        if (bestNext >= 0 && !mesh.isFaceSelected(bestNext))
             mesh.selectFace(bestNext);
         return true;
     }
 
     bool applyEdges() {
-        if (mesh.selectedEdges.length < mesh.edges.length)
+        if (mesh.edgeMarks.length < mesh.edges.length)
             mesh.resizeEdgeSelection();
 
         int lastEdge = -1, secondLastEdge = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedEdges.length) {
+        foreach (i; 0 .. mesh.edgeMarks.length) {
             if (i >= mesh.edgeSelectionOrder.length) break;
             int ord = mesh.edgeSelectionOrder[i];
             if (ord <= 0) continue;
@@ -112,17 +118,17 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = ne; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedEdges[bestNext])
+        if (bestNext >= 0 && !mesh.isEdgeSelected(bestNext))
             mesh.selectEdge(bestNext);
         return true;
     }
 
     bool applyVertices() {
-        if (mesh.selectedVertices.length < mesh.vertices.length)
+        if (mesh.vertexMarks.length < mesh.vertices.length)
             mesh.resizeVertexSelection();
 
         int lastVert = -1, secondLastVert = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedVertices.length) {
+        foreach (i; 0 .. mesh.vertexMarks.length) {
             if (i >= mesh.vertexSelectionOrder.length) break;
             int ord = mesh.vertexSelectionOrder[i];
             if (ord <= 0) continue;
@@ -152,7 +158,7 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = nv; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedVertices[bestNext])
+        if (bestNext >= 0 && !mesh.isVertexSelected(bestNext))
             mesh.selectVertex(bestNext);
         return true;
     }
