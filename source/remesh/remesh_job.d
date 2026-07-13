@@ -28,7 +28,7 @@ import std.path    : buildPath, expandTilde, dirName;
 import std.process : Pid, spawnProcess, tryWait, kill, wait, environment, thisProcessID;
 import std.stdio   : File, stdin;
 import std.string  : strip;
-import core.time   : MonoTime;
+import core.time   : MonoTime, Duration;
 
 import mesh : Mesh;
 import math : Vec3;
@@ -72,23 +72,46 @@ final class RemeshJob {
     private Vec3[]   resultVertices_;
     private uint[][] resultFaces_;
 
-    // --- Region-mode state (task 0385, local/selected-region remesh) -------
-    // Populated at start() time when a non-empty, non-total face selection
-    // is passed in; read only while state_ == running. Everything the
-    // eventual stitch needs is CAPTURED here rather than re-read from the
-    // live `Mesh` later, mirroring the existing OBJ-marshalling convention:
-    // start() returns immediately, and poll() (which does the stitching)
-    // runs long after the caller's `mesh` reference may have moved on.
+    // --- Region-mode state (task 0385, local/selected-region remesh; task
+    // 0386 extends this to a hole-filled, per-component queue). Populated at
+    // start() time when a non-empty, non-total face selection is passed in;
+    // read only while state_ == running. Everything the eventual stitch
+    // needs is CAPTURED here rather than re-read from the live `Mesh` later,
+    // mirroring the existing OBJ-marshalling convention: start() returns
+    // immediately, and poll() (which does the stitching) runs long after the
+    // caller's `mesh` reference may have moved on.
     private bool     regionMode_;
     private int      regionAttempt_;        // 1 = open-patch, 2 = triangle (retry)
     private string   helperBin_;             // located CLI path, reused across retries
-    private string   regionInPath_;          // region-only input OBJ, same across attempts
+    private string   regionInPath_;          // region-only input OBJ, same path reused per component/attempt
     private int      paramsTargetQuads_;
     private double   paramsAdaptivity_;
     private double   paramsSharpEdge_;
-    private Vec3[]   regionOrigVerts_;       // FULL mesh vertex copy, global indices
-    private uint[][] regionKeepFaces_;       // faces NOT in the region, global indices
-    private uint[][] regionBoundaryLoops_;   // Bo_i, ordered ORIGINAL global vertex indices
+
+    // Task 0386: the (hole-filled) selection is split into connected
+    // components and stitched SEQUENTIALLY against a WORKING mesh, re-seeded
+    // after every successful component stitch. This is index-safe because
+    // `region_stitch.stitchRegion` never renumbers EXISTING vertices (see
+    // its module doc) — origVerts.dup + appended patch verts — so a
+    // boundary loop's global vertex indices, computed ONCE up front per
+    // component, stay valid against the working mesh no matter how many
+    // earlier components have already been folded in.
+    private Vec3[]   workingVerts_;          // current working mesh vertices (grows each success)
+    private uint[][] workingFaces_;          // current working mesh faces
+    private int[]    workingOwner_;          // parallel to workingFaces_: owning PENDING component
+                                              // index, or -1 (never selected, or newly-created
+                                              // patch/bridge geometry from an earlier component)
+    private size_t   numComponents_;
+    private size_t   componentIdx_;          // component currently being processed
+    private size_t   succeededComponents_;
+    private size_t   skippedComponents_;
+
+    // Per-CURRENT-component transient state, (re)built by
+    // prepareCurrentComponent() at the start of each component's turn and
+    // reused unchanged across its open-patch -> triangle attempt escalation.
+    private uint[][] regionKeepFaces_;       // every working face NOT in the current component
+    private int[]    regionKeepOwners_;      // parallel to regionKeepFaces_ (see workingOwner_ doc)
+    private uint[][] regionBoundaryLoops_;   // current component's Bo_i, ORIGINAL global vertex indices
 
     State  state() const { return state_; }
     string message() const { return message_; }
@@ -142,49 +165,6 @@ final class RemeshJob {
             foreach (b; selectedFaceMask) if (b) ++selCount;
         const bool region = selCount > 0 && selCount < mesh.faces.length;
 
-        Mesh     regionMesh;
-        uint[][] keepFacesGlobal;
-        uint[][] globalLoops;
-
-        if (region) {
-            uint[][] regionFacesGlobal;
-            foreach (fi, face; mesh.faces.range) {
-                if (fi < selectedFaceMask.length && selectedFaceMask[fi])
-                    regionFacesGlobal ~= face.dup;
-                else
-                    keepFacesGlobal ~= face.dup;
-            }
-
-            // Compact the region's own vertices (for the OBJ write + the
-            // temp Mesh used to derive its boundary loops); translate back
-            // to global indices immediately after.
-            bool[uint] usedSet;
-            foreach (f; regionFacesGlobal) foreach (v; f) usedSet[v] = true;
-            uint[] usedGlobal = usedSet.keys.dup;
-            sort(usedGlobal);
-            uint[uint] g2l;
-            foreach (i, v; usedGlobal) g2l[v] = cast(uint) i;
-
-            regionMesh = Mesh.init;
-            regionMesh.vertices = new Vec3[](usedGlobal.length);
-            foreach (i, v; usedGlobal) regionMesh.vertices[i] = mesh.vertices[v];
-            uint[ulong] edgeLookup;
-            foreach (f; regionFacesGlobal) {
-                auto local = f.map!(v => g2l[v]).array;
-                regionMesh.addFaceFast(edgeLookup, local);
-            }
-            regionMesh.buildLoops();
-
-            auto localLoops = regionMesh.boundaryLoops();
-            if (localLoops.length == 0) {
-                state_   = State.failed;
-                message_ = "selected region has no open boundary (fully enclosed) -- "
-                         ~ "cannot stitch; clear the selection to remesh the whole mesh";
-                return;
-            }
-            globalLoops = localLoops.map!(loop => loop.map!(li => usedGlobal[li]).array).array;
-        }
-
         string dir;
         try {
             dir = buildPath(tempDir(),
@@ -201,65 +181,102 @@ final class RemeshJob {
         const outPath = buildPath(dir, "out.obj");
         const logPath = buildPath(dir, "log.txt");
 
-        try {
-            if (region) writeTriangulatedObj(regionMesh, inPath);
-            else        writeTriangulatedObj(mesh, inPath);
-        } catch (Exception e) {
-            try rmdirRecurse(dir); catch (Exception) {}
-            state_   = State.failed;
-            message_ = "failed to write input OBJ: " ~ e.msg;
-            return;
-        }
-
         workDir_    = dir;
         outPath_    = outPath;
         logPath_    = logPath;
         regionMode_ = region;
 
-        if (region) {
-            regionOrigVerts_     = mesh.vertices.dup;
-            regionKeepFaces_     = keepFacesGlobal;
-            regionBoundaryLoops_ = globalLoops;
-            regionInPath_        = inPath;
-
-            if (!spawnRegionAttempt(1)) {
+        if (!region) {
+            // Whole-mesh path — unchanged behavior (no `--mode` flag: the
+            // helper's own default is `closed`).
+            try {
+                writeTriangulatedObj(mesh, inPath);
+            } catch (Exception e) {
                 try rmdirRecurse(dir); catch (Exception) {}
                 state_   = State.failed;
-                message_ = "failed to launch remesher";
+                message_ = "failed to write input OBJ: " ~ e.msg;
                 workDir_ = null; outPath_ = null; logPath_ = null;
                 return;
             }
+
+            File log;
+            try {
+                log = File(logPath, "w");
+                auto args = [
+                    bin,
+                    "--input",        inPath,
+                    "--output",       outPath,
+                    "--target-quads", paramsTargetQuads_.to!string,
+                    "--sharp-edge",   paramsSharpEdge_.to!string,
+                    "--adaptivity",   paramsAdaptivity_.to!string,
+                ];
+                pid_    = spawnProcess(args, stdin, log, log);
+                hasPid_ = true;
+            } catch (Exception e) {
+                if (log.isOpen) try log.close(); catch (Exception) {}
+                try rmdirRecurse(dir); catch (Exception) {}
+                state_   = State.failed;
+                message_ = "failed to launch remesher: " ~ e.msg;
+                workDir_ = null; outPath_ = null; logPath_ = null;
+                return;
+            }
+
+            logFile_ = log;
+            state_   = State.running;
             message_ = null;
             return;
         }
 
-        // Whole-mesh path — unchanged behavior (no `--mode` flag: the
-        // helper's own default is `closed`).
-        File log;
-        try {
-            log = File(logPath, "w");
-            auto args = [
-                bin,
-                "--input",        inPath,
-                "--output",       outPath,
-                "--target-quads", paramsTargetQuads_.to!string,
-                "--sharp-edge",   paramsSharpEdge_.to!string,
-                "--adaptivity",   paramsAdaptivity_.to!string,
-            ];
-            pid_    = spawnProcess(args, stdin, log, log);
-            hasPid_ = true;
-        } catch (Exception e) {
-            if (log.isOpen) try log.close(); catch (Exception) {}
+        // ---- region mode (task 0385; hole-fill + per-component queue: 0386) --
+        regionInPath_ = inPath;
+
+        // Part A: fold small, fully-enclosed selection holes into the
+        // region BEFORE splitting into components (see Mesh.fillSelectionHoles) —
+        // a user who "missed a part" of an otherwise-connected patch would
+        // otherwise leave internal boundary loops that the external
+        // remesher's own hole-merging turns into a stitch-breaking loop-
+        // count mismatch.
+        auto filledMask = mesh.fillSelectionHoles(selectedFaceMask);
+
+        // Part B step 1: split the (hole-filled) selection into connected
+        // components (shared-vertex flood fill — Mesh.faceComponentsOf).
+        auto faceAdj   = mesh.faceAdjacencySharingVertex();
+        auto components = Mesh.faceComponentsOf(filledMask, faceAdj);
+
+        if (components.length == 0) {
             try rmdirRecurse(dir); catch (Exception) {}
             state_   = State.failed;
-            message_ = "failed to launch remesher: " ~ e.msg;
+            message_ = "selected region has no faces to remesh";
             workDir_ = null; outPath_ = null; logPath_ = null;
             return;
         }
 
-        logFile_ = log;
-        state_   = State.running;
-        message_ = null;
+        // Seed the working mesh = the FULL original mesh, every selected
+        // face tagged with the (pending) component that owns it; every
+        // other face tagged -1 (always "kept", never touched by any
+        // component's stitch).
+        const(uint[])[] allFaces = mesh.faces.range;
+        workingVerts_ = mesh.vertices.dup;
+        workingFaces_ = new uint[][](allFaces.length);
+        workingOwner_ = new int[](allFaces.length);
+        workingOwner_[] = -1;
+        foreach (fi, f; allFaces) workingFaces_[fi] = f.dup;
+        foreach (ci, comp; components)
+            foreach (fi; comp) workingOwner_[fi] = cast(int) ci;
+
+        numComponents_       = components.length;
+        componentIdx_        = 0;
+        succeededComponents_ = 0;
+        skippedComponents_   = 0;
+
+        // beginNextComponent() sets state_/message_ to running (a subprocess
+        // is now in flight), or — if every component was immediately
+        // skippable (e.g. all fully closed) or a hard error struck first —
+        // straight to succeeded/failed via finalizeRegionJob()/its own error
+        // path. Either way it owns state_/message_ from here; only clear
+        // message_ on the "still running" outcome (finalize/hardError already
+        // set the message they want shown).
+        if (beginNextComponent()) message_ = null;
     }
 
     /// Spawn one region-mode attempt (`--mode open-patch` first; `--mode
@@ -350,11 +367,14 @@ final class RemeshJob {
         // ---- region mode ----------------------------------------------
         if (w.status != 0) {
             if (regionAttempt_ == 1 && spawnRegionAttempt(2)) return; // escalate to triangle
-            state_   = State.failed;
-            message_ = "remesher exited with status " ~ w.status.to!string
-                     ~ " (open-patch and triangle attempts both failed)"
-                     ~ readLogTail(logPath_);
-            cleanupFiles();
+            // Task 0386: both attempts exhausted for THIS component (or the
+            // triangle retry couldn't even be launched) — skip just this
+            // one (its faces stay as-is in the working mesh) and keep the
+            // queue moving, rather than failing the whole job over one bad
+            // component.
+            ++skippedComponents_;
+            ++componentIdx_;
+            beginNextComponent();
             return;
         }
 
@@ -363,23 +383,157 @@ final class RemeshJob {
         StitchResult sr;
         const bool parsed = parsePolygonObj(outPath_, patchVerts, patchFaces) && patchFaces.length > 0;
         if (parsed)
-            sr = stitchRegion(regionOrigVerts_, regionKeepFaces_, regionBoundaryLoops_, patchVerts, patchFaces);
+            sr = stitchRegion(workingVerts_, regionKeepFaces_, regionBoundaryLoops_, patchVerts, patchFaces);
 
         if (parsed && sr.ok) {
-            resultVertices_ = sr.vertices;
-            resultFaces_    = sr.faces;
-            state_   = State.succeeded;
-            message_ = null;
-            cleanupFiles();
+            // Fold this component's stitched result into the working mesh.
+            // The kept prefix (regionKeepFaces_, unchanged in sr.faces per
+            // stitchRegion's contract) carries its owner tags forward
+            // unchanged — a still-pending component's faces are untouched
+            // and stay findable on its own turn; the newly appended patch +
+            // bridge faces belong to no pending component.
+            workingVerts_ = sr.vertices;
+            workingFaces_ = sr.faces;
+            workingOwner_ = new int[](sr.faces.length);
+            foreach (i, o; regionKeepOwners_) workingOwner_[i] = o;
+            foreach (i; regionKeepOwners_.length .. sr.faces.length) workingOwner_[i] = -1;
+
+            ++succeededComponents_;
+            ++componentIdx_;
+            beginNextComponent();
             return;
         }
 
         if (regionAttempt_ == 1 && spawnRegionAttempt(2)) return; // escalate to triangle
 
-        state_ = State.failed;
-        const string reason = parsed ? sr.failReason : "remesher produced no usable geometry";
-        message_ = "region remesh: stitch failed after open-patch + triangle attempts -- "
-                 ~ reason ~ readLogTail(logPath_);
+        // Task 0386: both attempts produced an unstitchable patch for this
+        // component — skip it (graceful per-component degradation) and
+        // keep the queue moving instead of failing the whole job.
+        ++skippedComponents_;
+        ++componentIdx_;
+        beginNextComponent();
+    }
+
+    /// Advance the component queue (task 0386): skip past every already-
+    /// decided/closed component, then either spawn the next stitchable
+    /// one's first (open-patch) attempt, or — once the queue is empty —
+    /// finalize the job (`finalizeRegionJob`). Returns true iff a
+    /// subprocess is now running (state_ == running); false means state_
+    /// has already been set to succeeded/failed by this call (or an earlier
+    /// hard error) and the caller (start()/poll()) should just return.
+    private bool beginNextComponent() {
+        while (componentIdx_ < numComponents_) {
+            string errMsg;
+            final switch (prepareCurrentComponent(errMsg)) {
+                case PrepResult.hardError:
+                    state_   = State.failed;
+                    message_ = errMsg;
+                    cleanupFiles();
+                    return false;
+                case PrepResult.skip:
+                    ++skippedComponents_;
+                    ++componentIdx_;
+                    continue;
+                case PrepResult.ready:
+                    if (spawnRegionAttempt(1)) return true;
+                    state_   = State.failed;
+                    message_ = "failed to launch remesher";
+                    cleanupFiles();
+                    return false;
+            }
+        }
+        finalizeRegionJob();
+        return false;
+    }
+
+    private enum PrepResult { ready, skip, hardError }
+
+    /// Prepare `componentIdx_`'s turn: extract its own CURRENT faces out of
+    /// the working mesh (still untouched original geometry — a not-yet-
+    /// processed component's faces are always carried through unchanged by
+    /// every earlier stitch, see workingOwner_'s doc), derive its boundary
+    /// loops, and write its region-only input OBJ (overwriting whatever the
+    /// previous component left there). Populates
+    /// regionKeepFaces_/regionKeepOwners_/regionBoundaryLoops_ for
+    /// spawnRegionAttempt()/poll() to use across this component's attempt(s).
+    ///
+    /// A component with no faces left (defensive — should not happen,
+    /// components are non-empty by construction) or no open boundary
+    /// (fully closed — nothing to stitch) returns `skip`: a per-geometry
+    /// condition, not a systemic failure. Only an I/O error writing the
+    /// input OBJ is a `hardError` (mirrors start()'s own launch-failure
+    /// handling — an environment problem, not something retrying a
+    /// different component would route around).
+    private PrepResult prepareCurrentComponent(out string errMsg) {
+        uint[][] regionFacesGlobal;
+        uint[][] otherFacesGlobal;
+        int[]    otherOwners;
+        foreach (fi, f; workingFaces_) {
+            if (workingOwner_[fi] == cast(int) componentIdx_) {
+                regionFacesGlobal ~= f.dup;
+            } else {
+                otherFacesGlobal ~= f.dup;
+                otherOwners      ~= workingOwner_[fi];
+            }
+        }
+        if (regionFacesGlobal.length == 0) return PrepResult.skip;
+
+        bool[uint] usedSet;
+        foreach (f; regionFacesGlobal) foreach (v; f) usedSet[v] = true;
+        uint[] usedGlobal = usedSet.keys.dup;
+        sort(usedGlobal);
+        uint[uint] g2l;
+        foreach (i, v; usedGlobal) g2l[v] = cast(uint) i;
+
+        Mesh regionMesh = Mesh.init;
+        regionMesh.vertices = new Vec3[](usedGlobal.length);
+        foreach (i, v; usedGlobal) regionMesh.vertices[i] = workingVerts_[v];
+        uint[ulong] edgeLookup;
+        foreach (f; regionFacesGlobal) {
+            auto local = f.map!(v => g2l[v]).array;
+            regionMesh.addFaceFast(edgeLookup, local);
+        }
+        regionMesh.buildLoops();
+
+        auto localLoops = regionMesh.boundaryLoops();
+        if (localLoops.length == 0) return PrepResult.skip; // fully closed component
+
+        regionBoundaryLoops_ = localLoops.map!(loop => loop.map!(li => usedGlobal[li]).array).array;
+        regionKeepFaces_      = otherFacesGlobal;
+        regionKeepOwners_     = otherOwners;
+
+        try {
+            writeTriangulatedObj(regionMesh, regionInPath_);
+        } catch (Exception e) {
+            errMsg = "failed to write input OBJ: " ~ e.msg;
+            return PrepResult.hardError;
+        }
+        return PrepResult.ready;
+    }
+
+    /// Finalize the region job once the component queue is empty (task
+    /// 0386): if not a single component could be remeshed, the whole job
+    /// soft-fails (mesh untouched — same externally-visible outcome as the
+    /// pre-0386 single-region soft-fail); otherwise the working mesh
+    /// (however many components actually succeeded) is the result, and a
+    /// non-fatal note is attached if any component was skipped along the
+    /// way. Always tears down the temp workdir — the job is done either way.
+    private void finalizeRegionJob() {
+        if (succeededComponents_ == 0) {
+            state_   = State.failed;
+            message_ = "region remesh: none of the " ~ numComponents_.to!string
+                     ~ " selected region component(s) could be remeshed "
+                     ~ "(all too complex/degenerate for the external remesher)";
+        } else {
+            resultVertices_ = workingVerts_;
+            resultFaces_    = workingFaces_;
+            state_          = State.succeeded;
+            message_        = skippedComponents_ > 0
+                ? "remeshed " ~ succeededComponents_.to!string ~ " of "
+                  ~ numComponents_.to!string ~ " region components ("
+                  ~ skippedComponents_.to!string ~ " too complex/degenerate)"
+                : null;
+        }
         cleanupFiles();
     }
 
@@ -971,4 +1125,325 @@ unittest {
     const argv = readText(argvLog);
     assert(!argv.canFind("--mode"),
            "an all-faces selection must take the whole-mesh path (no --mode flag), got: " ~ argv);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0386 — auto-fill-holes + per-component queue. Shared test helpers
+// (`hf`-prefixed to avoid any ambiguity with the per-block local helpers of
+// similar shape above). Manifold/seam metrics mirror region_stitch.d's own
+// version(unittest) block (private to that module, so ported here rather
+// than duplicated per test block below).
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    private Mesh hfGridMesh(int nx, int ny, float cell) {
+        Mesh m = Mesh.init;
+        m.vertices = new Vec3[]((nx + 1) * (ny + 1));
+        foreach (j; 0 .. ny + 1)
+            foreach (i; 0 .. nx + 1)
+                m.vertices[j * (nx + 1) + i] = Vec3(i * cell, j * cell, 0);
+        uint[ulong] lookup;
+        foreach (j; 0 .. ny)
+            foreach (i; 0 .. nx) {
+                uint v00 = cast(uint)(j * (nx + 1) + i);
+                uint v10 = cast(uint)(j * (nx + 1) + i + 1);
+                uint v11 = cast(uint)((j + 1) * (nx + 1) + i + 1);
+                uint v01 = cast(uint)((j + 1) * (nx + 1) + i);
+                m.addFaceFast(lookup, [v00, v10, v11, v01]);
+            }
+        m.buildLoops();
+        return m;
+    }
+
+    private string hfGridPatchText(int nx, int ny, float cell, float x0, float y0) {
+        import std.array : appender;
+        auto app = appender!string;
+        foreach (j; 0 .. ny + 1)
+            foreach (i; 0 .. nx + 1)
+                app.put("v " ~ (x0 + i * cell).to!string ~ " " ~ (y0 + j * cell).to!string ~ " 0\n");
+        foreach (j; 0 .. ny)
+            foreach (i; 0 .. nx) {
+                uint v00 = cast(uint)(j * (nx + 1) + i) + 1;
+                uint v10 = cast(uint)(j * (nx + 1) + i + 1) + 1;
+                uint v11 = cast(uint)((j + 1) * (nx + 1) + i + 1) + 1;
+                uint v01 = cast(uint)((j + 1) * (nx + 1) + i) + 1;
+                app.put("f " ~ v00.to!string ~ " " ~ v10.to!string ~ " "
+                       ~ v11.to!string ~ " " ~ v01.to!string ~ "\n");
+            }
+        return app.data;
+    }
+
+    private void hfWaitUntilDone(RemeshJob job, Duration timeout) {
+        import core.thread : Thread;
+        import core.time   : msecs;
+        auto deadline = MonoTime.currTime + timeout;
+        while (job.busy() && MonoTime.currTime < deadline) {
+            job.poll();
+            if (job.busy()) Thread.sleep(10.msecs);
+        }
+    }
+
+    private ulong hfEdgeKey(uint a, uint b) {
+        return a < b ? (cast(ulong) a << 32) | b : (cast(ulong) b << 32) | a;
+    }
+
+    private int[ulong] hfEdgeUseCounts(const(uint[])[] faces) {
+        int[ulong] ec;
+        foreach (f; faces) {
+            const size_t n = f.length;
+            foreach (k; 0 .. n) {
+                ulong key = hfEdgeKey(f[k], f[(k + 1) % n]);
+                if (auto p = key in ec) ++(*p); else ec[key] = 1;
+            }
+        }
+        return ec;
+    }
+
+    private size_t hfCountNonManifold(const(uint[])[] faces) {
+        size_t n = 0;
+        foreach (c; hfEdgeUseCounts(faces).byValue) if (c > 2) ++n;
+        return n;
+    }
+
+    private bool[ulong] hfBoundaryEdgeSet(const(uint[])[] faces) {
+        bool[ulong] s;
+        foreach (key, c; hfEdgeUseCounts(faces)) if (c == 1) s[key] = true;
+        return s;
+    }
+
+    /// Count interior edges whose two faces traverse them in the SAME
+    /// direction (flipped-normal seam). 0 == the whole mesh is consistently
+    /// wound.
+    private size_t hfCountOrientationDefects(const(uint[])[] faces) {
+        int[ulong] dir;
+        foreach (f; faces) {
+            const size_t n = f.length;
+            foreach (k; 0 .. n) {
+                uint a = f[k], b = f[cast(size_t)((k + 1) % n)];
+                ulong key = (cast(ulong) a << 32) | b;
+                if (auto p = key in dir) ++(*p); else dir[key] = 1;
+            }
+        }
+        size_t d = 0;
+        foreach (key, c; dir) if (c >= 2) ++d;
+        return d;
+    }
+
+    /// Fake CLI dispatch keyed on the region's own INPUT CONTENT (not
+    /// `--mode`/call order): needed once a job serves more than one region
+    /// component per run (task 0386) — each component's subprocess call
+    /// must get ITS OWN footprint's canned patch. `marker` is a substring
+    /// (e.g. a corner vertex line) unique to that footprint's input OBJ;
+    /// `patchObj` is `cp`'d to `--output` whenever `--input` contains it —
+    /// regardless of `--mode`, so this doubles as an "always this output"
+    /// stub across the open-patch/triangle escalation. `elseObj` is used
+    /// when NONE of the markers match (a component this test doesn't name
+    /// explicitly, or a fallback bad patch).
+    private void hfWriteDispatchScript(string scriptPath, string[] markers,
+                                        string[] patchObjs, string elseObj) {
+        import std.file : write, setAttributes;
+        import std.conv : octal;
+        import std.array : appender;
+        auto app = appender!string;
+        app.put("#!/bin/sh\n");
+        app.put("in=\"\"; out=\"\"\n");
+        app.put("while [ $# -gt 0 ]; do\n");
+        app.put("  case \"$1\" in\n");
+        app.put("    --input) shift; in=\"$1\" ;;\n");
+        app.put("    --output) shift; out=\"$1\" ;;\n");
+        app.put("  esac\n");
+        app.put("  shift\n");
+        app.put("done\n");
+        if (markers.length == 0) {
+            // No per-footprint dispatch needed (a single-component test) --
+            // an unconditional `cp` (an `else` with no preceding `if` is
+            // invalid POSIX shell syntax).
+            app.put("cp \"" ~ elseObj ~ "\" \"$out\"\n");
+        } else {
+            foreach (i, marker; markers) {
+                app.put((i == 0 ? "if" : "elif") ~ " grep -qF \"" ~ marker ~ "\" \"$in\"; then\n");
+                app.put("  cp \"" ~ patchObjs[i] ~ "\" \"$out\"\n");
+            }
+            app.put("else\n");
+            app.put("  cp \"" ~ elseObj ~ "\" \"$out\"\n");
+            app.put("fi\n");
+        }
+        app.put("exit 0\n");
+        write(scriptPath, app.data);
+        setAttributes(scriptPath, octal!755);
+    }
+}
+
+version (Posix)
+unittest {
+    // Task 0386, case (a): a CONNECTED 4x4 block selection missing ONE
+    // interior face -- Mesh.fillSelectionHoles must fold the missed face
+    // back in so the region collapses to a SINGLE connected component with
+    // a single boundary loop, rather than the 2-loop shape that broke the
+    // original single-region stitch ("patch has fewer boundary loops than
+    // the region"). End to end through a fake CLI that returns a finer grid
+    // over the (hole-filled) region's own footprint. Verifies the final
+    // stitched mesh directly: non-manifold==0, orientation-defects==0, and
+    // the seam is fully closed (result's boundary-edge set == the ORIGINAL
+    // whole mesh's).
+    import std.file : write;
+    import core.time : seconds;
+
+    // 6x6 grid; select the central 4x4 block (i,j in [1,5)) MINUS ONE
+    // interior face (i=2,j=3) -- a single-face hole fully enclosed by the
+    // rest of the block.
+    auto m = hfGridMesh(6, 6, 1.0f);
+    auto mask = new bool[](36);
+    foreach (j; 1 .. 5) foreach (i; 1 .. 5)
+        if (!(i == 2 && j == 3)) mask[j * 6 + i] = true;
+
+    const patch = buildPath(tempDir(), "vibe3d_remesh_test_holefill_patch.obj");
+    scope(exit) tryRemove(patch);
+    // Finer grid over the SAME [1,5]x[1,5] footprint as the hole-filled region.
+    write(patch, hfGridPatchText(8, 8, 0.5f, 1.0f, 1.0f));
+
+    const script = buildPath(tempDir(), "vibe3d_remesh_fake_holefill.sh");
+    scope(exit) tryRemove(script);
+    hfWriteDispatchScript(script, [], [], patch); // single footprint -- always this patch
+
+    environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+    scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+    auto job = new RemeshJob();
+    job.start(m, RemeshParams(), mask);
+    assert(job.busy());
+    hfWaitUntilDone(job, 5.seconds);
+    assert(job.state() == RemeshJob.State.succeeded, job.message());
+    assert(job.message().length == 0,
+           "a single clean component must succeed with no partial-success note: " ~ job.message());
+
+    auto resultFaces = job.resultFaces();
+    assert(hfCountNonManifold(resultFaces) == 0, "introduced non-manifold edges must be 0");
+    assert(hfCountOrientationDefects(resultFaces) == 0, "seam must be consistently wound");
+
+    uint[][] origFaces;
+    foreach (fi; 0 .. m.faces.length) origFaces ~= m.faces[fi].dup;
+    assert(hfBoundaryEdgeSet(resultFaces) == hfBoundaryEdgeSet(origFaces),
+           "stitched mesh's boundary-edge set must equal the original mesh's");
+
+    job.clear();
+}
+
+version (Posix)
+unittest {
+    // Task 0386, case (b): TWO DISJOINT selected blocks (a wide unselected
+    // gap between them, itself touching the mesh's own open boundary and
+    // far larger than either block) must NOT be merged by
+    // Mesh.fillSelectionHoles -- they split into 2 connected components and
+    // are remeshed/stitched INDEPENDENTLY, both succeeding on the first
+    // (open-patch) attempt. The fake CLI dispatches on each component's own
+    // input-OBJ content since the two subprocess calls must return
+    // DIFFERENT footprints.
+    import std.file : write;
+    import core.time : seconds;
+
+    // 10x10 grid; block A = i,j in [1,3) (footprint [1,3]x[1,3]), block B =
+    // i,j in [6,8) (footprint [6,8]x[6,8]) -- far apart, share no vertices.
+    auto m = hfGridMesh(10, 10, 1.0f);
+    auto mask = new bool[](100);
+    foreach (j; 1 .. 3) foreach (i; 1 .. 3) mask[j * 10 + i] = true;
+    foreach (j; 6 .. 8) foreach (i; 6 .. 8) mask[j * 10 + i] = true;
+
+    const patchA = buildPath(tempDir(), "vibe3d_remesh_test_2block_patchA.obj");
+    const patchB = buildPath(tempDir(), "vibe3d_remesh_test_2block_patchB.obj");
+    scope(exit) { tryRemove(patchA); tryRemove(patchB); }
+    write(patchA, hfGridPatchText(4, 4, 0.5f, 1.0f, 1.0f)); // finer grid over [1,3]x[1,3]
+    write(patchB, hfGridPatchText(4, 4, 0.5f, 6.0f, 6.0f)); // finer grid over [6,8]x[6,8]
+
+    const script = buildPath(tempDir(), "vibe3d_remesh_fake_2block.sh");
+    scope(exit) tryRemove(script);
+    // Block A's own corner vertex line ("v 1.000000 1.000000 0.000000")
+    // never appears in block B's input OBJ (max coord 3 < 6) and vice
+    // versa, so this is an unambiguous per-component dispatch key.
+    hfWriteDispatchScript(script, ["1.000000 1.000000"], [patchA], patchB);
+
+    environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+    scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+    auto job = new RemeshJob();
+    job.start(m, RemeshParams(), mask);
+    assert(job.busy());
+    hfWaitUntilDone(job, 8.seconds);
+    assert(job.state() == RemeshJob.State.succeeded, job.message());
+    assert(job.message().length == 0,
+           "both components succeeding cleanly must carry no partial-success note: " ~ job.message());
+
+    auto resultFaces = job.resultFaces();
+    assert(hfCountNonManifold(resultFaces) == 0, "introduced non-manifold edges must be 0");
+    assert(hfCountOrientationDefects(resultFaces) == 0, "both seams must be consistently wound");
+
+    uint[][] origFaces;
+    foreach (fi; 0 .. m.faces.length) origFaces ~= m.faces[fi].dup;
+    assert(hfBoundaryEdgeSet(resultFaces) == hfBoundaryEdgeSet(origFaces),
+           "stitched mesh's boundary-edge set must equal the original mesh's (both blocks)");
+
+    job.clear();
+}
+
+version (Posix)
+unittest {
+    // Task 0386, case (c): of TWO disjoint selected blocks, one gets a
+    // patch the stitch can never accept (positioned nowhere near its
+    // region boundary -- fails BOTH open-patch and triangle attempts) while
+    // the other succeeds normally. The job must still reach `succeeded`
+    // (partial success), the failed component's ORIGINAL faces must remain
+    // completely unchanged in the result, and the overall mesh must stay
+    // manifold.
+    import std.file : write;
+    import std.algorithm.searching : canFind;
+    import core.time : seconds;
+
+    auto m = hfGridMesh(10, 10, 1.0f);
+    auto mask = new bool[](100);
+    foreach (j; 1 .. 3) foreach (i; 1 .. 3) mask[j * 10 + i] = true; // block A -- will succeed
+    foreach (j; 6 .. 8) foreach (i; 6 .. 8) mask[j * 10 + i] = true; // block B -- will be skipped
+
+    const patchGood = buildPath(tempDir(), "vibe3d_remesh_test_skip_good.obj");
+    const patchBad  = buildPath(tempDir(), "vibe3d_remesh_test_skip_bad.obj");
+    scope(exit) { tryRemove(patchGood); tryRemove(patchBad); }
+    write(patchGood, hfGridPatchText(4, 4, 0.5f, 1.0f, 1.0f));  // matches block A's footprint
+    write(patchBad,  hfGridPatchText(4, 4, 0.5f, 50.0f, 50.0f)); // nowhere near block B's rim
+
+    const script = buildPath(tempDir(), "vibe3d_remesh_fake_skip.sh");
+    scope(exit) tryRemove(script);
+    // Block A's marker -> good patch (every attempt); anything else
+    // (block B, both open-patch AND triangle attempts) -> the bad patch,
+    // so block B fails identically on both tries and must be skipped.
+    hfWriteDispatchScript(script, ["1.000000 1.000000"], [patchGood], patchBad);
+
+    environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+    scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+    // Block B's ORIGINAL face vertex-lists (untouched -- must survive
+    // verbatim in the result once skipped).
+    uint[][] blockBOrigFaces;
+    foreach (j; 6 .. 8) foreach (i; 6 .. 8) blockBOrigFaces ~= m.faces[j * 10 + i].dup;
+    assert(blockBOrigFaces.length == 4);
+
+    auto job = new RemeshJob();
+    job.start(m, RemeshParams(), mask);
+    assert(job.busy());
+    hfWaitUntilDone(job, 10.seconds);
+    assert(job.state() == RemeshJob.State.succeeded,
+           "one good + one unstitchable component must still be a partial success: " ~ job.message());
+    assert(job.message().length > 0, "a partial success must carry a non-fatal note");
+    assert(job.message().canFind("1") && job.message().canFind("2"),
+           "the note should mention 1 (succeeded) of 2 (total) components: " ~ job.message());
+
+    auto resultFaces = job.resultFaces();
+    assert(hfCountNonManifold(resultFaces) == 0,
+           "the mesh must stay manifold even with one component skipped");
+
+    foreach (bf; blockBOrigFaces) {
+        bool found = false;
+        foreach (rf; resultFaces) if (rf == bf) { found = true; break; }
+        assert(found, "a skipped component's original faces must survive unchanged in the result");
+    }
+
+    job.clear();
 }

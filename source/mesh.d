@@ -8907,6 +8907,167 @@ struct Mesh {
         checkOrderEquality(sub);
     }
 
+    /// Connected components of every face `fi` where `want[fi]` is true,
+    /// via the shared-vertex adjacency relation `faceAdj` (see
+    /// `faceAdjacencySharingVertex` above — this deliberately INCLUDES
+    /// diagonal-only touches, unlike the shared-EDGE island BFS used by
+    /// e.g. `extrudeFacesByMask`; callers that need edge-only islands must
+    /// build their own adjacency instead of reusing this one).
+    /// `faceAdj.length` must equal `want.length`. Each returned component is
+    /// a non-empty, arbitrary-order list of face indices; every face with
+    /// `want[fi]==true` appears in exactly one component. A small, generic,
+    /// reusable BFS idiom — shared by `fillSelectionHoles` below and (task
+    /// 0386) `remesh.remesh_job`'s per-component region split.
+    static uint[][] faceComponentsOf(const(bool)[] want, const(int[][]) faceAdj) {
+        auto compId = new int[](want.length);
+        compId[] = -1;
+        uint[][] components;
+        foreach (start; 0 .. want.length) {
+            if (!want[start] || compId[start] != -1) continue;
+            const int cid = cast(int) components.length;
+            uint[] comp;
+            uint[] stack = [cast(uint) start];
+            compId[start] = cid;
+            while (stack.length) {
+                const uint cur = stack[$ - 1];
+                stack = stack[0 .. $ - 1];
+                comp ~= cur;
+                foreach (nb; faceAdj[cur]) {
+                    if (nb < 0 || !want[nb] || compId[nb] != -1) continue;
+                    compId[nb] = cid;
+                    stack ~= cast(uint) nb;
+                }
+            }
+            components ~= comp;
+        }
+        return components;
+    }
+
+    /// Auto-fill small, fully-enclosed holes in a face selection mask (task
+    /// 0386, follow-up to the local quad-remesh's boundary-pinned stitch —
+    /// see `remesh.region_stitch`; also planned reuse for a `select.fill.holes`
+    /// command, task 0387 — do NOT fork this logic per caller): a user
+    /// selecting a CONNECTED patch but missing a few interior faces leaves
+    /// those faces as tiny unselected "holes" — extra internal boundary
+    /// loops that break downstream region operations expecting a single
+    /// outer boundary (region_stitch failed with "patch has fewer boundary
+    /// loops than the region" on exactly this shape of selection).
+    ///
+    /// An unselected connected component (shared-VERTEX flood fill via
+    /// `faceComponentsOf`/`faceAdjacencySharingVertex`) is folded INTO the
+    /// selection iff:
+    ///   (a) it is fully enclosed — every one of its boundary edges borders
+    ///       a SELECTED face, never the mesh's own open boundary; and
+    ///   (b) its face count is strictly less than the number of originally
+    ///       selected faces, so the "rest of the model" component can never
+    ///       be swallowed by an inverted/near-total selection.
+    /// Returns a NEW mask (same length as `faces`); `selectedFaceMask` is
+    /// read-only. A folded-in hole is real mesh geometry reclassified from
+    /// keep to region — nothing is synthesized.
+    bool[] fillSelectionHoles(const(bool)[] selectedFaceMask) const {
+        const size_t nf = faces.length;
+        auto mask = new bool[](nf);
+        foreach (fi; 0 .. nf) mask[fi] = fi < selectedFaceMask.length && selectedFaceMask[fi];
+
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0 || selCount >= nf) return mask; // nothing to fill
+
+        auto faceAdj   = faceAdjacencySharingVertex();
+        auto edgeFaces = buildEdgeFaces();
+
+        auto unselected = new bool[](nf);
+        foreach (fi; 0 .. nf) unselected[fi] = !mask[fi];
+        auto holes = faceComponentsOf(unselected, faceAdj);
+
+        const(uint[])[] allFaces = faces.range;
+        foreach (comp; holes) {
+            if (comp.length >= selCount) continue; // would swallow the rest of the model
+
+            bool enclosed = true;
+            outer: foreach (fi; comp) {
+                auto face = allFaces[fi];
+                const size_t n = face.length;
+                foreach (k; 0 .. n) {
+                    const ulong key = edgeKeyOrdered(face[k], face[(k + 1) % n]);
+                    auto p = key in edgeFaces;
+                    if (p is null) continue; // shouldn't happen — defensive
+                    const int other = (*p)[0] == cast(int) fi ? (*p)[1] : (*p)[0];
+                    // -1 = the mesh's own open boundary. A same-component
+                    // unselected neighbour can never appear here: sharing a
+                    // full EDGE implies sharing a vertex, so it would
+                    // already be part of THIS component (shared-vertex
+                    // flood fill), not a different one.
+                    if (other == -1 || !mask[other]) { enclosed = false; break outer; }
+                }
+            }
+            if (enclosed) foreach (fi; comp) mask[fi] = true;
+        }
+
+        return mask;
+    }
+
+    unittest {
+        // fillSelectionHoles: a CONNECTED 4x4 block selection missing ONE
+        // interior face leaves a single-face "hole" -- fully enclosed by
+        // the selection, far smaller than it -- which must be folded back
+        // in, collapsing the selection to a single connected component.
+        auto m = makeGridPlane(6);
+        assert(m.faces.length == 36);
+
+        bool[] mask = new bool[](36);
+        foreach (i; 1 .. 5) foreach (j; 1 .. 5)
+            if (!(i == 2 && j == 3)) mask[i * 6 + j] = true;
+        assert(!mask[2 * 6 + 3]);
+
+        size_t selBefore = 0;
+        foreach (b; mask) if (b) ++selBefore;
+        assert(selBefore == 15);
+
+        auto filled = m.fillSelectionHoles(mask);
+        assert(filled[2 * 6 + 3], "the fully-enclosed single-face hole must be filled");
+
+        size_t selAfter = 0;
+        foreach (b; filled) if (b) ++selAfter;
+        assert(selAfter == 16, "exactly the one missing face should be added back");
+
+        auto faceAdj = m.faceAdjacencySharingVertex();
+        auto comps = Mesh.faceComponentsOf(filled, faceAdj);
+        assert(comps.length == 1, "the filled 4x4 block must be a single connected component");
+    }
+
+    unittest {
+        // fillSelectionHoles: the "rest of the model" component (>= selCount)
+        // must never be swallowed, even on a CLOSED mesh where it has no
+        // open boundary at all (so the enclosure check alone would
+        // otherwise pass).
+        auto m = makeCube();
+        bool[] mask = new bool[](m.faces.length);
+        mask[0] = true; // select just 1 of the cube's 6 faces
+        auto filled = m.fillSelectionHoles(mask);
+        size_t selAfter = 0;
+        foreach (b; filled) if (b) ++selAfter;
+        assert(selAfter == 1, "a single selected face on a closed mesh must NOT swallow the other 5");
+    }
+
+    unittest {
+        // fillSelectionHoles: two disjoint selected blocks separated by a
+        // wide unselected gap (which also touches the mesh's own open
+        // boundary -- not enclosed, and far larger than either block) must
+        // be left completely alone, then split into 2 components.
+        auto m = makeGridPlane(10);
+        bool[] mask = new bool[](100);
+        foreach (i; 1 .. 3) foreach (j; 1 .. 3) mask[i * 10 + j] = true; // block A, 2x2
+        foreach (i; 6 .. 8) foreach (j; 6 .. 8) mask[i * 10 + j] = true; // block B, 2x2
+
+        auto filled = m.fillSelectionHoles(mask);
+        assert(filled == mask, "no small enclosed hole exists -- mask must be unchanged");
+
+        auto faceAdj = m.faceAdjacencySharingVertex();
+        auto comps = Mesh.faceComponentsOf(filled, faceAdj);
+        assert(comps.length == 2, "two disjoint blocks must split into 2 connected components");
+    }
+
     /// Return the vertex indices touched by the current edge selection.
     /// Each vertex is included at most once.
     /// If nothing is selected, returns all vertex indices.

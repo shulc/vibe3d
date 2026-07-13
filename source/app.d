@@ -6345,6 +6345,12 @@ void main(string[] args) {
                 break;
             case RemeshJob.State.succeeded:
                 const nFaces = remeshJob.resultFaces().length;
+                // Task 0386: on a region remesh, message() carries a non-fatal
+                // "remeshed N of M region components (...)" note when some
+                // components were too complex/degenerate to stitch (partial
+                // success) — null on a fully clean run. Read it BEFORE
+                // clear() below, which wipes it.
+                const string partialNote = remeshJob.message();
                 auto cmd = cast(Remesh) reg.commandFactories["mesh.remesh"]();
                 runCommand(cmd);
                 // runCommand can no-op: Remesh.evaluate rejects (returns false,
@@ -6356,7 +6362,8 @@ void main(string[] args) {
                     // happened, so auto-close the modal. A failed/no-op remesh
                     // (below) keeps it open so the error stays visible.
                     remeshLastError   = null;
-                    remeshLastSummary = "Done -- " ~ nFaces.to!string ~ " faces";
+                    remeshLastSummary = "Done -- " ~ nFaces.to!string ~ " faces"
+                                      ~ (partialNote.length ? " (" ~ partialNote ~ ")" : "");
                     remeshModalPendingClose = true;
                 } else {
                     remeshLastSummary = null;
@@ -9680,12 +9687,19 @@ void main(string[] args) {
                     if (ImGui.Button("Cancel")) closeRemeshModal();
                 }
 
-                // Only the error survives on screen (a success auto-closes the
-                // modal). TextUnformatted (not Text): the message can carry the
-                // helper's raw stderr tail with stray "%", which the printf-style
-                // ImGui.Text would read as a conversion off an empty va_list.
+                // The error survives on screen across the modal staying open
+                // (a full success auto-closes it). A PARTIAL success (task
+                // 0386: some region components skipped) still auto-closes —
+                // remeshLastSummary shows for the one frame before that
+                // happens, same as a plain "Done" summary always has.
+                // TextUnformatted (not Text): either message can carry the
+                // helper's raw stderr tail with stray "%", which the printf-
+                // style ImGui.Text would read as a conversion off an empty
+                // va_list.
                 if (remeshLastError.length)
                     ImGui.TextUnformatted("Error: " ~ remeshLastError);
+                else if (remeshLastSummary.length)
+                    ImGui.TextUnformatted(remeshLastSummary);
                 ImGui.EndPopup();
             } else {
                 // Closed via ESC — same semantics as the Cancel button: abort
