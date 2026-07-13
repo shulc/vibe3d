@@ -174,6 +174,130 @@ class TripoSRBackend:
         mesh.export(output_path)
 
 
+class TrellisBackend:
+    """Microsoft TRELLIS (Structured 3D Latents) image-to-3D, MIT-licensed.
+
+    Produces markedly cleaner geometry than TripoSR on clean single-object
+    photos. Runs on 8 GB VRAM via FP16 (``--trellis-precision half``) plus the
+    fork's per-stage CPU<->GPU offload (only one sub-model is resident at a
+    time), so peak VRAM stays ~5 GB even for TRELLIS-image-large.
+
+    We decode ``formats=['mesh']`` ONLY: that never touches nvdiffrast /
+    diff_gaussian_rasterization / diffoctreerast (the CUDA source-build
+    extensions), so the worker needs only prebuilt wheels + the pure-PyTorch
+    flexicubes mesh extractor. The raw mesh is very dense (~600k faces), so we
+    decimate to ``max_faces`` before export; TRELLIS emits Z-up like TripoSR,
+    so we apply the same -90 deg X rotation to stand the subject upright (Y-up).
+    """
+
+    backend_id = "trellis"
+
+    def __init__(
+        self,
+        trellis_root: Path,
+        model: str,
+        device: str,
+        precision: str = "half",
+        ss_steps: int = 12,
+        slat_steps: int = 12,
+        seed: int = 1,
+        max_faces: int = DEFAULT_MAX_FACES,
+    ) -> None:
+        self.trellis_root = trellis_root
+        self.model_name_or_path = model
+        self.device = device
+        self.precision = precision
+        self.ss_steps = ss_steps
+        self.slat_steps = slat_steps
+        self.seed = seed
+        self.max_faces = max_faces
+        self.code_revision = self._git_revision(trellis_root)
+        self.model_revision = model
+        self._pipeline = None
+        self._torch = None
+        self._lock = threading.Lock()
+
+    def _git_revision(self, root: Path) -> str:
+        head = root / ".git" / "HEAD"
+        try:
+            text = head.read_text(encoding="utf-8").strip()
+            if text.startswith("ref: "):
+                ref = root / ".git" / text[5:]
+                return ref.read_text(encoding="utf-8").strip()[:40]
+            return text[:40]
+        except OSError:
+            return "unknown"
+
+    def _load(self):
+        with self._lock:
+            if self._pipeline is not None:
+                return self._torch, self._pipeline
+            if not self.trellis_root.exists():
+                raise ProtocolError(503, "model_missing", "TRELLIS root does not exist")
+            # TRELLIS reads these at import time to pick attention / sparse-conv
+            # backends. 'xformers' avoids the flash-attn source build; 'native'
+            # skips spconv's first-call autotune. setdefault so an operator can
+            # still override from the environment.
+            os.environ.setdefault("ATTN_BACKEND", "xformers")
+            os.environ.setdefault("SPCONV_ALGO", "native")
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            sys.path.insert(0, str(self.trellis_root))
+            import torch
+            from trellis.pipelines import TrellisImageTo3DPipeline
+
+            if self.device.startswith("cuda") and not torch.cuda.is_available():
+                raise ProtocolError(503, "unsupported_gpu", "CUDA is not available")
+            pipeline = TrellisImageTo3DPipeline.from_pretrained(self.model_name_or_path)
+            if self.precision in ("half", "float16"):
+                pipeline.to(torch.float16)  # halves resident VRAM for the 8 GB path
+                if "image_cond_model" in pipeline.models:
+                    pipeline.models["image_cond_model"].half()
+            # Deliberately NO pipeline.cuda(): the fork moves each sub-model to
+            # the GPU only for its stage inside run() (dynamic offload). Forcing
+            # everything resident here would blow the 8 GB budget.
+            self._torch = torch
+            self._pipeline = pipeline
+            return torch, pipeline
+
+    def generate(self, image_path: Path, output_path: Path) -> None:
+        torch, pipeline = self._load()
+        from PIL import Image
+        import numpy as np
+        import trimesh
+
+        # TRELLIS does its own foreground segmentation internally
+        # (preprocess_image=True runs rembg), so unlike TripoSR we pass the
+        # image through untouched.
+        image = Image.open(image_path)
+        with torch.no_grad():
+            outputs = pipeline.run(
+                image,
+                seed=self.seed,
+                formats=["mesh"],  # geometry only; no gaussian/RF -> no CUDA-ext builds
+                sparse_structure_sampler_params={"steps": self.ss_steps, "cfg_strength": 7.5},
+                slat_sampler_params={"steps": self.slat_steps, "cfg_strength": 3.0},
+            )
+        mesh = outputs["mesh"][0]
+        verts = mesh.vertices.detach().float().cpu().numpy()
+        faces = mesh.faces.detach().cpu().numpy()
+        tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+        # TRELLIS, like TripoSR, emits Z-up; vibe3d is Y-up. -90 deg about X:
+        # (x, y, z) -> (x, z, -y) stands the subject upright, head +Y.
+        tm.apply_transform(
+            trimesh.transformations.rotation_matrix(-np.pi / 2.0, [1, 0, 0])
+        )
+
+        # The raw flexicubes mesh is ~600k faces — too dense for the editor's
+        # import validator and for interactive editing. Quadric-decimate down to
+        # max_faces (fast_simplification). This preserves the silhouette well
+        # even at a ~12x reduction.
+        if self.max_faces and len(tm.faces) > self.max_faces:
+            tm = tm.simplify_quadric_decimation(face_count=self.max_faces)
+
+        tm.export(output_path)
+
+
 class JobStore:
     def __init__(self, data_dir: Path, backend, phase_delay_s: float = 0.02) -> None:
         self.data_dir = data_dir
@@ -502,10 +626,25 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=47831)
     serve.add_argument("--data-dir", required=True)
-    serve.add_argument("--backend", choices=["fake", "triposr"], default="fake")
+    serve.add_argument("--backend", choices=["fake", "triposr", "trellis"], default="fake")
     serve.add_argument("--triposr-root", default="")
     serve.add_argument("--pretrained-model-name-or-path", default="stabilityai/TripoSR")
     serve.add_argument("--device", default="cuda:0")
+    # --- TRELLIS backend (image->3D via Structured 3D Latents, MIT) ---
+    serve.add_argument("--trellis-root", default="",
+                       help="path to the TRELLIS checkout (added to sys.path)")
+    serve.add_argument("--trellis-model", default="jetx/TRELLIS-image-large",
+                       help="HuggingFace model id for the TRELLIS pipeline")
+    serve.add_argument("--trellis-precision", choices=["half", "full"], default="half",
+                       help="'half' (FP16) fits 8 GB VRAM; 'full' needs ~16 GB")
+    serve.add_argument("--trellis-ss-steps", type=int, default=12,
+                       help="sparse-structure sampler steps (more = slower/finer)")
+    serve.add_argument("--trellis-slat-steps", type=int, default=12,
+                       help="structured-latent sampler steps (more = slower/finer)")
+    serve.add_argument("--trellis-seed", type=int, default=1)
+    serve.add_argument("--trellis-max-faces", type=int, default=DEFAULT_MAX_FACES,
+                       help="decimate the (very dense) raw mesh down to this many "
+                            "faces before export")
     serve.add_argument("--chunk-size", type=int, default=8192)
     serve.add_argument("--mc-resolution", type=int, default=120)
     serve.add_argument("--foreground-ratio", type=float, default=0.85,
@@ -536,6 +675,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.mc_resolution,
                 foreground_ratio=args.foreground_ratio,
                 remove_bg=not args.no_remove_bg,
+            )
+        elif args.backend == "trellis":
+            if not args.trellis_root:
+                parser.error("--backend trellis requires --trellis-root")
+            backend = TrellisBackend(
+                Path(args.trellis_root),
+                args.trellis_model,
+                args.device,
+                precision=args.trellis_precision,
+                ss_steps=args.trellis_ss_steps,
+                slat_steps=args.trellis_slat_steps,
+                seed=args.trellis_seed,
+                max_faces=args.trellis_max_faces,
             )
         else:
             backend = FakeBackend()
