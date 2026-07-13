@@ -277,3 +277,79 @@ unittest {
         format("negScale-on drag collapsed to the pivot (meanDist=%.6f) — "
             ~ "the clamp was not actually bypassed", meanDist));
 }
+
+// ---------------------------------------------------------------------------
+// Cases 4/5 — the PANEL-WRITE path (`applyScalePanelValue`'s clamp,
+// source/tools/scale.d, the exact site the historical bug lived at as the
+// ImGui `v_min` floor). Reviewer NIT: Cases 2/3 above only exercise the
+// gizmo-drag `clampScaleFactor` path; this pins the SEPARATE
+// `applyScalePanelValue` clamp too.
+//
+// `applyScalePanelValue` is reached through `XfrmTransformTool.reEvaluate()`,
+// which `ToolAttrCommand.apply()` (source/commands/tool/attr.d) triggers
+// whenever `t.hasLiveAttrEval()` is true at the moment of a raw HTTP
+// `tool.attr` write — i.e. a value edit that lands INSIDE an already-live
+// transform session, not a fresh tool's first attr write (which is
+// deliberately inert — see the ToolAttrCommand doc comment). `tool.beginSession`
+// (test-mode-only; `XfrmTransformTool.openLiveSessionForTest()`) opens that
+// live session with NO geometry change — the same proven idiom
+// `tests/test_rs_insession_cancel.d` uses to reach this exact seam
+// (`tool.set TransformScale` -> `tool.beginSession` -> `tool.attr … SX 2` ->
+// v6.x becomes 1.0). So: open the session, THEN write `SX` — that write both
+// sets `run.s.x` AND (because the session is live) re-triggers `reEvaluate()`
+// -> `scaleSub.applyScalePanelValue(run.s)`, landing on the exact clamp this
+// case pins.
+//
+// NOTE on what stays UNTESTED: the actual ImGui `DragFloat` `v_min` floor
+// (`scale.d`'s panel sliders, `xfrm_transform.d`'s uniform slider) requires a
+// live ImGui mouse-drag on a rendered widget, which this headless HTTP
+// harness cannot drive (no GUI event loop in `--test` mode) — that specific
+// site is verified by code review only, not by an automated regression test.
+// `applyScalePanelValue` is the programmatic twin of that same clamp law
+// (both guard "the panel value must not go negative unless negScale"), and
+// IS headlessly reachable, so it is regression-tested here as the closest
+// available proxy for the historically-missed floor.
+// ---------------------------------------------------------------------------
+
+// Open a live scale session with NO geometry change (`tool.beginSession`),
+// then write `SX` as a raw HTTP `tool.attr` — landing inside the live
+// session, this write re-triggers `reEvaluate()` -> `applyScalePanelValue(run.s)`
+// (NOT just the raw unclamped Param-pointer write Case 1 exercises).
+double[3][] setSXViaPanelPath(bool negScale, double sx) {
+    cmd("tool.set scale on");
+    if (negScale) cmd("tool.attr scale negScale true");
+    cmd("tool.beginSession");
+    cmd(format("tool.attr scale SX %s", sx));
+
+    auto after = dumpVerts();
+    cmd("tool.set scale off");
+    return after;
+}
+
+unittest { // Case 4 — negScale OFF: the panel-write path clamps SX to 0.
+    reset();
+    auto after = setSXViaPanelPath(false, -5.0);
+    assert(after.length == 8);
+    // World-aligned basis on a fresh whole-mesh scale (pivot == origin): a
+    // clamped-to-0 X factor collapses every vertex's X coordinate to
+    // pivot.x == 0 (SY/SZ stay at their identity default 1 — beginSession
+    // opens the session with no geometry change, and this case only writes SX).
+    enum double tol = 1e-3;
+    foreach (i, v; after)
+        assertApprox(v[0], 0.0, tol,
+            format("negScale-off panel-write vert[%d].x should clamp to 0", i));
+}
+
+unittest { // Case 5 — negScale ON: the panel-write path lets SX go negative.
+    reset();
+    auto before = dumpVerts();
+    auto after = setSXViaPanelPath(true, -5.0);
+    assert(after.length == 8);
+    // Every vertex's X must have flipped sign relative to the origin pivot
+    // (all 8 cube corners have x == ±0.5, never 0) — proof the panel-write
+    // path actually let the factor go negative instead of clamping.
+    foreach (i, v; after)
+        assert(v[0] * before[i][0] < 0,
+            format("negScale-on panel-write vert[%d].x did not flip sign: "
+                ~ "before=%.4f after=%.4f", i, before[i][0], v[0]));
+}

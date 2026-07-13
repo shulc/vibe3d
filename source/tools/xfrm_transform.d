@@ -3837,6 +3837,28 @@ noBankConsumed:
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
+        // Task 0332 — this is the WRAPPED role's single choke point that
+        // drives geometry from `run.s` (reached via
+        // `ScaleTool.applyScaleFromActivationCpuOnly`'s wrapped branch, i.e.
+        // any panel-value / live-session `tool.attr` write that lands on
+        // `reEvaluate()` -> `applyScalePanelValue`). `ScaleTool`'s own clamp
+        // on its LOCAL `factors` copy never reaches actual geometry here —
+        // this method re-reads `wrap.publishedScale()`/`run.s` fresh — so
+        // negScale must gate the same clamp-at-0 floor here too, or a
+        // live-session panel/attr write bypasses the interactive drag path's
+        // clamp entirely. Mirrors `ScaleTool.clampScaleFactor`'s two-step
+        // rule: reject non-finite to identity 1.0 UNCONDITIONALLY, then
+        // floor at 0 per-axis only when `!negScale`.
+        import std.math : isFinite;
+        float rejectNonFinite(float f) { return isFinite(f) ? f : 1.0f; }
+        scaleAccum.x = rejectNonFinite(scaleAccum.x);
+        scaleAccum.y = rejectNonFinite(scaleAccum.y);
+        scaleAccum.z = rejectNonFinite(scaleAccum.z);
+        if (!negScale) {
+            if (scaleAccum.x < 0.0f) scaleAccum.x = 0.0f;
+            if (scaleAccum.y < 0.0f) scaleAccum.y = 0.0f;
+            if (scaleAccum.z < 0.0f) scaleAccum.z = 0.0f;
+        }
         run.s = scaleAccum;
         bool pureScalePreset = flagS && !flagT && !flagR;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
