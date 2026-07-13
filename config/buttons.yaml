@@ -23,6 +23,7 @@ panels:
                 - { label: "OBJ…",   action: { kind: command, id: "file.export.obj"  } }
                 - { label: "glTF…",  action: { kind: command, id: "file.export.gltf" } }
                 - { label: "FBX…",   action: { kind: command, id: "file.export.fbx"  } }
+          - { label: "Generate 3D…", action: { kind: command, id: "ai3d.generate.open" } }
           - { label: Quit, action: { kind: command, id: file.quit } }
       - title: History
         buttons:

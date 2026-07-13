@@ -2431,6 +2431,16 @@ void main(string[] args) {
         string errorMessage;
     }
     Ai3dModalState ai3dModal;
+    // Modal open/popup-pending state (Phase 3) — mirrors ArgsDialog's
+    // pendingOpen convention (source/args_dialog.d). Set by
+    // ai3d.generate.open's onPicked callback (registered below, near the
+    // other ai3d.* factories); drawn once per frame beside drawTabPanel().
+    bool   ai3dModalOpen;
+    bool   ai3dModalPendingOpen;
+    string ai3dPickedImagePath;
+    char[256] ai3dWorkerUrlBuf;
+    ai3dWorkerUrlBuf[] = 0;
+    ai3dWorkerUrlBuf[0 .. "http://127.0.0.1:47831".length] = "http://127.0.0.1:47831";
 
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
@@ -3285,6 +3295,26 @@ void main(string[] args) {
             new Ai3dGenerateStartTestCommand(&mesh(), cameraView, editMode, ai3dController);
         reg.commandFactories["ai3d.generate.cancel"] = () => cast(Command)
             new Ai3dGenerateCancelTestCommand(&mesh(), cameraView, editMode, ai3dController);
+
+        // ai3d.generate.open — `File > Generate 3D…` (task 0381 Phase 3).
+        // Zero params, so dispatchAction's tryOpenArgsDialog (app.d, near
+        // line 7288) never pops the generic args dialog for it — the click
+        // runs apply() directly. On a picked image, stash the path, reset
+        // the modal snapshot, open the popup, and kick off a health probe
+        // so the modal's health line + Generate gate populate before the
+        // user commits.
+        import commands.ai3d.generate_open : Ai3dGenerateOpen;
+        reg.commandFactories["ai3d.generate.open"] = () => cast(Command)
+            new Ai3dGenerateOpen(&mesh(), cameraView, editMode, (string path) {
+                import std.string : fromStringz;
+                ai3dPickedImagePath  = path;
+                ai3dModal            = Ai3dModalState.init;
+                ai3dModalOpen        = true;
+                ai3dModalPendingOpen = true;
+                const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
+                ai3dController.probeHealth(
+                    workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
+            });
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
@@ -9310,6 +9340,90 @@ void main(string[] args) {
 
         drawSidePanel();
         drawTabPanel();
+
+        // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
+        // Same BeginPopupModal convention as ArgsDialog (args_dialog.d:48):
+        // pendingOpen → OpenPopup once, then cleared; BeginPopupModal
+        // returns true while open, false after ESC/[X]/CloseCurrentPopup.
+        // Reads ONLY the immutable ai3dModal snapshot (written by
+        // onAi3dEvent, near runCommand) plus the controller's busy()/
+        // start()/requestCancel() surface — it never touches the queue or
+        // any Document/Mesh state directly.
+        if (ai3dModalOpen) {
+            import std.format : format;
+            import std.string : fromStringz;
+
+            if (ai3dModalPendingOpen) {
+                ImGui.OpenPopup("Generate 3D");
+                ai3dModalPendingOpen = false;
+            }
+
+            if (ImGui.BeginPopupModal("Generate 3D", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                ImGui.Text("Image: " ~ ai3dPickedImagePath);
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.InputText("Worker URL", ai3dWorkerUrlBuf[]);
+
+                const bool ai3dJobRunning = ai3dController.busy();
+
+                if (!ai3dModal.healthChecked) {
+                    ImGui.Text("Checking worker health…");
+                } else if (!ai3dModal.healthOk) {
+                    ImGui.Text("Worker not ready: "
+                        ~ (ai3dModal.healthMessage.length ? ai3dModal.healthMessage : ai3dModal.errorCode));
+                } else {
+                    ImGui.Text(format("Worker ready (backend=%s, protocol=%d)",
+                                       ai3dModal.healthBackend, ai3dModal.healthProtocol));
+                }
+
+                // Health-gated (Phase 0/3): Generate only enables once a
+                // standalone probeHealth() round trip reports protocol 1,
+                // the triposr backend, and OBJ capability.
+                const bool healthy = ai3dModal.healthChecked && ai3dModal.healthOk
+                    && ai3dModal.healthProtocol == 1
+                    && ai3dModal.healthBackend == "triposr"
+                    && ai3dModal.healthObjCapable;
+
+                ImGui.Separator();
+
+                if (!ai3dJobRunning) {
+                    if (!healthy) ImGui.BeginDisabled();
+                    if (ImGui.Button("Generate")) {
+                        ai3dModal.state       = "";
+                        ai3dModal.stage       = "";
+                        ai3dModal.progress    = 0;
+                        ai3dModal.errorCode    = null;
+                        ai3dModal.errorMessage = null;
+                        const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
+                        ai3dController.start(ai3dPickedImagePath,
+                            workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
+                    }
+                    if (!healthy) ImGui.EndDisabled();
+                } else {
+                    ImGui.Text(format("%s: %s (%.0f%%)",
+                        ai3dModal.state.length ? ai3dModal.state : "running",
+                        ai3dModal.stage, ai3dModal.progress * 100.0));
+                    if (ImGui.Button("Cancel"))
+                        ai3dController.requestCancel();
+                }
+
+                if (ai3dModal.errorCode.length)
+                    ImGui.Text("Error: " ~ ai3dModal.errorCode ~ " — " ~ ai3dModal.errorMessage);
+                if (ai3dModal.state == "succeeded")
+                    ImGui.Text("Done — imported as a new layer.");
+
+                ImGui.Separator();
+                if (ImGui.Button("Dismiss")) {
+                    ImGui.CloseCurrentPopup();
+                    ai3dModalOpen = false;
+                }
+                ImGui.EndPopup();
+            } else {
+                // Dismissed via ESC / [X] — same semantics as Dismiss above.
+                ai3dModalOpen = false;
+            }
+        }
+
         drawStatusBar();
         version (WithRender) drawIPRPanel(&mesh(), cameraView);
 
