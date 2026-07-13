@@ -141,3 +141,48 @@ forms:
           - { control: "tool.attr xfrm.transform SX ?", label: X }
           - { control: "tool.attr xfrm.transform SY ?", label: Y }
           - { control: "tool.attr xfrm.transform SZ ?", label: Z }
+      # Task 0332 — Negative Scale: relaxes the scale-factor clamp (both the
+      # app-code clamp and the ImGui slider v_min floor, source/tools/scale.d
+      # + source/tools/xfrm_transform.d) so a scale drag/panel edit can cross
+      # zero into a mirrored (negative) factor. Off by default.
+      - { control: "tool.attr xfrm.transform negScale ?", label: "Negative Scale",
+          booleanStyle: checkbox }
+
+  # ---- Task 0332 — Slip UVs: OFF (default) matches vibe3d's current
+  # transform behavior (UVs untouched by any transform apply path) with no
+  # extra code. ON is captured (per-face/per-corner planar reprojection) but
+  # DEFERRED — see source/tools/xfrm_transform.d field doc comment and
+  # doc/tasks/backlog/0383-slipuv-on-planar-reproject.md; the checkbox is a
+  # stored no-op until that follow-up lands. Applies regardless of which
+  # T/R/S bank is enabled, so whenTool is the union of every id that builds
+  # an XfrmTransformTool (mirrors the per-bank whenTool lists above).
+  - id: transform.options
+    showLabel: false
+    whenTool:
+      - move
+      - rotate
+      - scale
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformMove
+      - TransformRotate
+      - TransformScale
+      - xfrm.elementMove
+      - ElementMove
+      - move.element
+      - xfrm.softDrag
+      - xfrm.softMove
+      - xfrm.shear
+      - xfrm.softRotate
+      - xfrm.twist
+      - xfrm.swirl
+      - xfrm.vortex
+      - xfrm.softScale
+      - xfrm.taper
+      - xfrm.bulge
+    category: toolprops/main
+    ordinal: 150.48
+    rows:
+      - { control: "tool.attr xfrm.transform slipUV ?", label: "Slip UVs",
+          booleanStyle: checkbox }

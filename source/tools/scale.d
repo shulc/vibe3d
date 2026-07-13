@@ -893,8 +893,30 @@ public:
         pendingScaleValid = true;
     }
 
-    private float clampScaleFactor(float f) const {
+    // Task 0332 — gated on the wrapper's `negScale` param: when on, a
+    // negative scale factor (the drag has crossed zero) is let through
+    // unclamped (mirror). Off (default, and the standalone/unwrapped
+    // unit-test construction) keeps the pre-0332 clamp-at-0 behavior.
+    // Regardless of the flag, a non-finite delta (NaN/inf, float drift
+    // in the accumulated `dragScaleScalarDelta`) is rejected back to the
+    // identity factor 1.0 — never propagated into the kernel.
+    private float clampScaleFactor(float f) {
+        import std.math : isFinite;
+        if (!isFinite(f)) return 1.0f;
+        if (negScaleAllowed()) return f;
         return f < 0.0f ? 0.0f : f;
+    }
+
+    // Cross-instance query for the wrapper's negScale flag (mirrors the
+    // existing `cast(XfrmTransformTool) wrapperRef` pattern used throughout
+    // this class). Standalone (wrapperRef is null, unit-test construction
+    // only) has no negScale param at all — always clamp there.
+    private bool negScaleAllowed() {
+        if (wrapperRef is null) return false;
+        import tools.xfrm_transform : XfrmTransformTool;
+        if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+            return wrap.negScaleEnabled();
+        return false;
     }
 
     private void setDragAxisScale(bool scaleX, bool scaleY, bool scaleZ,
@@ -950,11 +972,16 @@ public:
         } else if (dragAxis >= 0) {
             propScale = scaleAccum;
         }
-        ImGui.DragFloat("X", &propScale.x, 0.01f, 0.0f, float.max, "%.4f");
+        // Task 0332: negScale relaxes both the slider's v_min floor and the
+        // post-write clamp below so a panel drag can cross zero into a
+        // negative (mirrored) factor.
+        bool  allowNeg  = negScaleAllowed();
+        float scaleVMin = allowNeg ? -float.max : 0.0f;
+        ImGui.DragFloat("X", &propScale.x, 0.01f, scaleVMin, float.max, "%.4f");
         bool xActive = ImGui.IsItemActive(), xDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Y", &propScale.y, 0.01f, 0.0f, float.max, "%.4f");
+        ImGui.DragFloat("Y", &propScale.y, 0.01f, scaleVMin, float.max, "%.4f");
         bool yActive = ImGui.IsItemActive(), yDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Z", &propScale.z, 0.01f, 0.0f, float.max, "%.4f");
+        ImGui.DragFloat("Z", &propScale.z, 0.01f, scaleVMin, float.max, "%.4f");
         bool zActive = ImGui.IsItemActive(), zDone = ImGui.IsItemDeactivatedAfterEdit();
 
         bool anyActive = xActive || yActive || zActive;
@@ -962,9 +989,9 @@ public:
         if (!(anyActive || anyDone)) return;
 
         // Clamp and update scaleAccum from propScale.
-        if (xActive || xDone) { if (propScale.x < 0) propScale.x = 0; scaleAccum.x = propScale.x; }
-        if (yActive || yDone) { if (propScale.y < 0) propScale.y = 0; scaleAccum.y = propScale.y; }
-        if (zActive || zDone) { if (propScale.z < 0) propScale.z = 0; scaleAccum.z = propScale.z; }
+        if (xActive || xDone) { if (!allowNeg && propScale.x < 0) propScale.x = 0; scaleAccum.x = propScale.x; }
+        if (yActive || yDone) { if (!allowNeg && propScale.y < 0) propScale.y = 0; scaleAccum.y = propScale.y; }
+        if (zActive || zDone) { if (!allowNeg && propScale.z < 0) propScale.z = 0; scaleAccum.z = propScale.z; }
 
         buildVertexCacheIfNeeded();
         // Phase 7.5: re-capture falloff per active frame; per-vertex
@@ -1050,10 +1077,14 @@ public:
     // value edit blends through falloff and uses the fast path the same way a
     // slider drag does.
     void applyScalePanelValue(Vec3 factors) {
-        // Absolute value-driven: the panel value IS scaleAccum (clamped >= 0).
-        if (factors.x < 0) factors.x = 0;
-        if (factors.y < 0) factors.y = 0;
-        if (factors.z < 0) factors.z = 0;
+        // Absolute value-driven: the panel value IS scaleAccum (clamped >= 0
+        // unless task 0332's negScale is on for the wrapper — see
+        // negScaleAllowed()).
+        if (!negScaleAllowed()) {
+            if (factors.x < 0) factors.x = 0;
+            if (factors.y < 0) factors.y = 0;
+            if (factors.z < 0) factors.z = 0;
+        }
         scaleAccum = factors;
         propScale  = factors;
 

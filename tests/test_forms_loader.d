@@ -41,7 +41,9 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 private string[] transformUniverse() {
-    return ["T", "R", "S", "TX", "TY", "TZ", "RX", "RY", "RZ", "SX", "SY", "SZ"];
+    // Task 0332: negScale/slipUV added to XfrmTransformTool.params().
+    return ["T", "R", "S", "negScale", "slipUV",
+            "TX", "TY", "TZ", "RX", "RY", "RZ", "SX", "SY", "SZ"];
 }
 
 private string[] falloffUniverse() {
@@ -393,11 +395,14 @@ unittest {
         return;   // harness ran from an unexpected cwd; HTTP test below still covers boot
     auto forms = loadForms("config/forms/transform.yaml");
     // Split into three per-bank forms (Position / Rotate / Scale) so each can
-    // carry its own whenTool list (the ids whose T / R / S flag is enabled).
-    assert(forms.length == 3);
+    // carry its own whenTool list (the ids whose T / R / S flag is enabled),
+    // plus a fourth bank-independent group (task 0332: negScale/slipUV apply
+    // regardless of which T/R/S bank is enabled).
+    assert(forms.length == 4);
     assert(forms[0].id == "transform.position");
     assert(forms[1].id == "transform.rotate");
     assert(forms[2].id == "transform.scale");
+    assert(forms[3].id == "transform.options");
     validateForms(forms, realisticValidators(), "config/forms/transform.yaml");
 
     // ---- whenTool coverage: the reviewer finding's regression fence --------
@@ -412,27 +417,29 @@ unittest {
         foreach (ref f; formsForTool(toolId)) ids ~= f.id;
         return ids;
     }
-    // Single-bank ids: exactly their one group.
-    assert(formIds("move")   == ["transform.position"]);
-    assert(formIds("rotate") == ["transform.rotate"]);
-    assert(formIds("scale")  == ["transform.scale"]);
-    // Per-mode + element presets: single bank each.
-    assert(formIds("TransformMove")    == ["transform.position"]);
-    assert(formIds("TransformRotate")  == ["transform.rotate"]);
-    assert(formIds("TransformScale")   == ["transform.scale"]);
-    assert(formIds("xfrm.elementMove") == ["transform.position"]);
-    assert(formIds("ElementMove")      == ["transform.position"]);
-    // Deform presets (base move/rotate/scale): single bank each.
-    assert(formIds("xfrm.softMove")   == ["transform.position"]);
-    assert(formIds("xfrm.twist")      == ["transform.rotate"]);
-    assert(formIds("xfrm.taper")      == ["transform.scale"]);
-    // T+R+S ids: all three groups, Position->Rotate->Scale order.
+    // Single-bank ids: their one bank group + the bank-independent options group
+    // (task 0332: transform.options' whenTool is the union of every id that
+    // builds an XfrmTransformTool).
+    assert(formIds("move")   == ["transform.position", "transform.options"]);
+    assert(formIds("rotate") == ["transform.rotate",   "transform.options"]);
+    assert(formIds("scale")  == ["transform.scale",    "transform.options"]);
+    // Per-mode + element presets: single bank each + options.
+    assert(formIds("TransformMove")    == ["transform.position", "transform.options"]);
+    assert(formIds("TransformRotate")  == ["transform.rotate",   "transform.options"]);
+    assert(formIds("TransformScale")   == ["transform.scale",    "transform.options"]);
+    assert(formIds("xfrm.elementMove") == ["transform.position", "transform.options"]);
+    assert(formIds("ElementMove")      == ["transform.position", "transform.options"]);
+    // Deform presets (base move/rotate/scale): single bank each + options.
+    assert(formIds("xfrm.softMove")   == ["transform.position", "transform.options"]);
+    assert(formIds("xfrm.twist")      == ["transform.rotate",   "transform.options"]);
+    assert(formIds("xfrm.taper")      == ["transform.scale",    "transform.options"]);
+    // T+R+S ids: all three bank groups, Position->Rotate->Scale order, + options.
     assert(formIds("xfrm.transform") ==
-           ["transform.position", "transform.rotate", "transform.scale"]);
+           ["transform.position", "transform.rotate", "transform.scale", "transform.options"]);
     assert(formIds("Transform") ==
-           ["transform.position", "transform.rotate", "transform.scale"]);
+           ["transform.position", "transform.rotate", "transform.scale", "transform.options"]);
     assert(formIds("xfrm.flex") ==
-           ["transform.position", "transform.rotate", "transform.scale"]);
+           ["transform.position", "transform.rotate", "transform.scale", "transform.options"]);
     // A non-transform tool selects none of these forms.
     assert(formIds("prim.cube").length == 0);
     assert(formIds("xfrm.flare").length == 0);   // PushTool, deliberately excluded

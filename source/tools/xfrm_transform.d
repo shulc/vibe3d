@@ -294,6 +294,29 @@ public:
     // `uniform` bool param (preset attr `uniform: "true"`).
     bool  uniform    = false;
     float uniformVal = 1.0f;
+
+    // Task 0332 — Negative Scale. Off by default (preserves the pre-existing
+    // "scale factor clamps at 0" behavior); when on, the scale-factor clamps
+    // at both the app-code layer (scale.d clampScaleFactor/post-write clamps,
+    // the uniform post-write clamp below) AND the ImGui slider `v_min` floor
+    // (scale.d panel sliders, the uniform slider below) are relaxed so a drag
+    // can cross zero into a mirrored (negative) scale. Reference-faithful
+    // winding (capture-settled, task 0332 golden `xform_attrs_golden.json`):
+    // a negative-axis scale mirrors positions with polygon vertex order
+    // UNCHANGED (winding is NOT auto-reversed) — normals invert on non-
+    // perpendicular faces, which is left as-is (inside-out is the intended
+    // result of the mirror, not a bug).
+    bool negScale = false;
+
+    // Task 0332 — Slip UVs. Off by default. vibe3d's transform apply path
+    // never touches UVs today, so OFF already matches the captured reference
+    // default byte-exact (dUV==0) — no apply-path code is needed for OFF.
+    // The ON law (per-face/per-corner planar reprojection, captured but
+    // MEDIUM-confidence and deep — see xform_attrs_golden.json) is DEFERRED;
+    // this flag is stored/exposed for panel parity and is currently a no-op
+    // when set. Follow-up: doc/tasks/backlog/0383-slipuv-on-planar-reproject.md.
+    bool slipUV = false;
+
     // Handle family selector: 0=Move, 1=Rotate, 2=Scale,
     // 3=Uniform Scale. Presentation is separate: bare Transform uses
     // compact combined handles, while per-mode presets use the full bank.
@@ -1010,6 +1033,17 @@ public:
             Param.bool_ ("T",  "Translate", &flagT, true),
             Param.bool_ ("R",  "Rotate",    &flagR, true),
             Param.bool_ ("S",  "Scale",     &flagS, true),
+            // Task 0332 — negScale gates the scale-factor clamp (scale.d
+            // clampScaleFactor + panel post-write clamps + the ImGui `v_min`
+            // floors, both here and in scale.d) so a drag/panel edit can cross
+            // zero into a negative (mirrored) factor. Default off preserves
+            // the pre-0332 clamp-at-0 behavior.
+            Param.bool_ ("negScale", "Negative Scale", &negScale, false),
+            // Task 0332 — slipUV: OFF (default) already matches vibe3d's
+            // current transform behavior (UVs untouched) with no apply-path
+            // code. ON is captured but deferred (see field doc comment) — the
+            // flag is stored/exposed for panel parity only; it is a no-op.
+            Param.bool_ ("slipUV", "Slip UVs", &slipUV, false),
             // Hidden bool: set by the preset's `uniform: "true"` attr.
             // Controls single-factor lock (uniformScale param + disc-only handle).
             Param.bool_ ("uniform", "Uniform Scale", &uniform, false).hidden(),
@@ -1072,9 +1106,13 @@ public:
                 // fans the single edit value back into all three axes.
                 import ImGui = d_imgui;
                 uniformVal = publishedScale().x;
-                ImGui.DragFloat("Scale", &uniformVal, 0.01f, 0.0f, float.max, "%.4f");
+                // Task 0332: negScale relaxes both the slider's v_min floor
+                // and the post-write clamp below so a uniform-scale drag can
+                // cross zero into a negative (mirrored) factor.
+                float scaleVMin = negScale ? -float.max : 0.0f;
+                ImGui.DragFloat("Scale", &uniformVal, 0.01f, scaleVMin, float.max, "%.4f");
                 if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
-                    if (uniformVal < 0.0f) uniformVal = 0.0f;
+                    if (!negScale && uniformVal < 0.0f) uniformVal = 0.0f;
                     run.s = Vec3(uniformVal, uniformVal, uniformVal);
                 }
             } else {
@@ -4022,6 +4060,13 @@ noBankConsumed:
     public Vec3 publishedTranslate() const { return run.t; }
     public Vec3 publishedRotate()    const { return headlessRotate; }
     public Vec3 publishedScale()     const { return run.s; }
+
+    // Task 0332 — cross-instance query for the wrapped ScaleTool's clamp
+    // gates (`clampScaleFactor`, the panel post-write clamps and the ImGui
+    // `v_min` floors). Standalone `ScaleTool` (wrapperRef is null, unit-test
+    // construction only) has no negScale param at all and keeps the pre-0332
+    // clamp-at-0 behavior unconditionally.
+    public bool negScaleEnabled() const { return negScale; }
 
     // Phase 5a (rotate sub-tool re-scope) — the wrapper-truth rotate state the
     // wrapped RotateTool reads instead of its own `angleAccum`/`propDeg` second
