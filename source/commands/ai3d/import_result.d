@@ -32,6 +32,17 @@ final class Ai3dImportResult : Command {
     private Layer prePrimary;
     private size_t preActiveIndex;
     private bool applied;
+    // task 0381 follow-up: surface WHY an import failed so the UI modal can show
+    // it (previously every failure only went to stderr via logWarn — a silently
+    // rejected mesh looked like "Done — imported" with no geometry).
+    private string failCode_;
+    private string failMessage_;
+
+    /// True once apply() has successfully inserted the layer.
+    bool succeeded() const { return applied; }
+    /// The reason apply() returned false (empty until a failure), for the modal.
+    string failureCode() const { return failCode_; }
+    string failureMessage() const { return failMessage_; }
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
@@ -61,8 +72,18 @@ final class Ai3dImportResult : Command {
     }
 
     override bool apply() {
-        if (doc is null || doc.layers.length == 0) return false;
-        if (pathArg.length == 0 && inserted is null) return false;
+        failCode_ = null;
+        failMessage_ = null;
+        if (doc is null || doc.layers.length == 0) {
+            failCode_ = "internal";
+            failMessage_ = "no document to import into";
+            return false;
+        }
+        if (pathArg.length == 0 && inserted is null) {
+            failCode_ = "artifact_missing";
+            failMessage_ = "no artifact path to import";
+            return false;
+        }
 
         auto prevLayer = doc.active();
         const prevIndex = doc.activeIndex;
@@ -75,12 +96,16 @@ final class Ai3dImportResult : Command {
 
             ImportedScene scene;
             if (!importViaAssimp(pathArg, scene)) {
+                failCode_ = "artifact_invalid";
+                failMessage_ = "3D file could not be parsed";
                 try logWarn("ai3d", "importResult failed: assimp import failed");
                 catch (Exception) {}
                 return false;
             }
             auto validation = validateImportedSceneForAi3d(scene);
             if (!validation.ok) {
+                failCode_ = validation.code;
+                failMessage_ = validation.message;
                 try logWarn("ai3d", "importResult failed: " ~ validation.message);
                 catch (Exception) {}
                 return false;
@@ -89,6 +114,8 @@ final class Ai3dImportResult : Command {
             auto layer = new Layer;
             layer.mesh = flattenToMesh(scene);
             if (layer.mesh.vertices.length == 0 || layer.mesh.faces.length == 0) {
+                failCode_ = "artifact_invalid";
+                failMessage_ = "imported mesh is empty";
                 try logWarn("ai3d", "importResult failed: flattened mesh is empty");
                 catch (Exception) {}
                 return false;

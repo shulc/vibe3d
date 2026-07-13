@@ -9,7 +9,13 @@ enum size_t Ai3dMaxArtifactBytes = 16 * 1024 * 1024;
 enum size_t Ai3dMaxParts = 16;
 enum size_t Ai3dMaxVerticesPerPart = 50_000;
 enum size_t Ai3dMaxTotalVertices = 200_000;
-enum size_t Ai3dMaxFacesPerPart = 25_000;
+enum size_t Ai3dMaxFacesPerPart = 50_000;   // = Ai3dMaxTotalFaces (a single-part
+                                            // artifact may use the whole face
+                                            // budget; the worker requests
+                                            // maxFaces:50000, so a one-part
+                                            // TripoSR-class mesh of 25k-50k faces
+                                            // must not be rejected — see
+                                            // commands/ai3d/generate.d create-job).
 enum size_t Ai3dMaxTotalFaces = 50_000;
 enum size_t Ai3dMaxCornersPerFace = 16;
 enum size_t Ai3dMaxTotalCorners = 200_000;
@@ -194,4 +200,37 @@ Ai3dSceneValidation validateImportedSceneForAi3d(const ref ImportedScene scene) 
 
 bool importedSceneIsValidForAi3d(const ref ImportedScene scene) {
     return validateImportedSceneForAi3d(scene).ok;
+}
+
+unittest {
+    // task 0381 follow-up (face-cap regression): a single-part artifact may use
+    // the WHOLE face budget — Ai3dMaxFacesPerPart == Ai3dMaxTotalFaces == the
+    // worker's create-job `maxFaces:50000` (commands/ai3d/generate.d). The old
+    // per-part cap of 25_000 (half the total) silently rejected every real
+    // TripoSR-class single-part mesh of 25k–50k faces, so no geometry appeared.
+    import io.scene_ir : ImportedScene, ImportedPart;
+    import math : Vec3;
+
+    static ImportedPart mk(size_t nFaces) {
+        ImportedPart p;
+        p.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+        p.faces.length = nFaces;
+        foreach (ref f; p.faces) f = [0u, 1u, 2u];
+        return p;
+    }
+
+    ImportedScene atBudget;
+    atBudget.parts = [mk(Ai3dMaxFacesPerPart)];
+    assert(validateImportedSceneForAi3d(atBudget).ok,
+        "a single part at the full per-part face budget must pass");
+
+    ImportedScene overBudget;
+    overBudget.parts = [mk(Ai3dMaxFacesPerPart + 1)];
+    const r = validateImportedSceneForAi3d(overBudget);
+    assert(!r.ok, "an over-budget face count must be rejected");
+    // The reason must be carried so the UI modal can display WHY (not stderr-only).
+    assert(r.message == "AI3D part exceeds face limit",
+        "rejection must carry the face-limit reason: " ~ r.message);
+    assert(Ai3dMaxFacesPerPart == Ai3dMaxTotalFaces,
+        "per-part face cap must equal the total budget for the single-part case");
 }

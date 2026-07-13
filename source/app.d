@@ -6243,6 +6243,24 @@ void main(string[] args) {
                     reg.commandFactories["ai3d.importResult"]();
                 imp.setInput(ev.objPath, "AI 3D " ~ ev.jobId[0 .. prefixLen]);
                 runCommand(imp);
+                if (imp.succeeded()) {
+                    ai3dModal.state        = "succeeded";
+                    ai3dModal.errorCode    = null;
+                    ai3dModal.errorMessage = null;
+                } else {
+                    // The worker job succeeded but the editor-side import did
+                    // not (validation reject / unparseable file / empty mesh).
+                    // Surface the REASON in the modal instead of the misleading
+                    // "Done — imported as a new layer" — otherwise a silently
+                    // rejected mesh (e.g. over the face-count budget) looks like
+                    // success with no geometry.
+                    ai3dModal.state        = "failed";
+                    ai3dModal.errorCode    = imp.failureCode().length
+                                             ? imp.failureCode() : "import_failed";
+                    ai3dModal.errorMessage = imp.failureMessage().length
+                                             ? imp.failureMessage()
+                                             : "the generated model could not be imported";
+                }
                 break;
             case Ai3dEventKind.terminal:
                 ai3dModal.state = ev.state;
