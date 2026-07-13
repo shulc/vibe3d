@@ -2,6 +2,16 @@
   "name": "translate_top_face_y",
   "description": "Reference-parity: select the +Y top face of a unit cube, translate it +1.0 along Y. The 4 top verts move y 0.5 -> 1.5; the rest stay. before/after pairs are a frozen reference capture; the reference engine's vertex order differs from vibe3d's, hence the by-before-position correspondence.",
   "source": "Frozen reference capture (provenance recorded in private capture notes, not here).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "unknown",
+    "captured_utc": "unknown",
+    "harness": "private capture notes (not identified by path in the public fixture)",
+    "task": null,
+    "notes": "Fixture prose defers provenance detail to private capture notes not named by path; source=live-capture per the 'Frozen reference capture' signature convention, method honestly left unknown pending that note."
+  },
   "tolerance": 1e-3,
   "input": [
     { "endpoint": "reset" },

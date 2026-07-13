@@ -2,6 +2,16 @@
   "name": "taper",
   "description": "Reference-parity matrix for taper = linear-falloff Scale (xfrm.taper preset). Each case scales one axis (SX/SY/SZ) under a perpendicular linear gradient and asserts every vertex matches the frozen reference; vibe3d reproduces each bit-for-bit. Coverage: all three scale axes crossed with a gradient axis, a shrink factor (<1), and gradient reversal. Built on an empty reset so the welded segmented cube is the only geometry. Driven numerically via the xfrm.taper preset (tool.set + tool.pipe.attr falloff + tool.attr S? + tool.doApply).",
   "source": "Frozen reference capture (xfrm.taper, linear falloff, parameter matrix; captured via the private capture tooling, headless).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private capture tooling (parameter matrix, headless)",
+    "task": null,
+    "notes": "Headless capture, no live drag."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

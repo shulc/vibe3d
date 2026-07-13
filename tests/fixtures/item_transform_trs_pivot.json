@@ -12,5 +12,15 @@
     1.0, 3.0, 4.0, 1.0
   ],
   "tolerance": 1e-6,
-  "source": "analytic: M = T(pos)*T(pivot)*Rz*Ry*Rx*S*T(-pivot) (ZYX, column-major float[16]); expected_matrix computed by an independent numpy formula, NOT by composedMatrix()"
+  "source": "analytic: M = T(pos)*T(pivot)*Rz*Ry*Rx*S*T(-pivot) (ZYX, column-major float[16]); expected_matrix computed by an independent numpy formula, NOT by composedMatrix()",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "harness": "hand-authored independent numpy formula",
+    "task": null,
+    "notes": "M = T(pos)*T(pivot)*Rz*Ry*Rx*S*T(-pivot); expected_matrix computed independently in numpy, NOT via vibe3d's own composedMatrix() \u2014 a cross-check, not a reference-editor capture."
+  }
 }

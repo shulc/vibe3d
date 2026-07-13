@@ -2,6 +2,16 @@
   "name": "slice_fast",
   "description": "Slice tool (mesh.sliceTool) S1 `fast` preview-gate parity (lifecycle revised task 0278): the SAME mid-plane cube cut driven with fast=false (live preview during drag) and fast=true (cut deferred to mouse-up) must yield the IDENTICAL geometry (12v/10f, one index-shared crossing vertex per straddled edge). Both cases assert the same frozen golden, proving the committed geometry is fast-independent through the HTTP command path — and unchanged by the task-0278 baseline-on-activate + bake-on-deactivate lifecycle (the headless doApply path is a single cut, one history entry per session). Analytic self-golden (Mesh.cutByPlane is connectivity-correct by construction).",
   "source": "Analytic. Cube +/-0.5; line along Z through origin -> plane normal ||X (X=0); new verts are edge midpoints (t=0.5). Same golden as slice.json case midX.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "harness": "hand-derived closed-form plane law (source/math.d planeFromLineAndWorkplane / planeForSlice)",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

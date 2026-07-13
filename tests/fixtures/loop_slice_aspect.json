@@ -2,6 +2,16 @@
   "name": "loop_slice_aspect",
   "description": "Loop Slice Keep Aspect (task 0259: aspect). Cage = a FLAT open strip of 3 quads in a row along X, 1 quad wide in Z, all at y=0 (planar), but the MIDDLE quad is 3 units wide so the cut span is distinct from the Inset. Verts (col i, row j): 0=(0,0,0) 1=(0,0,1) 2=(1,0,0) 3=(1,0,1) 4=(4,0,0) 5=(4,0,1) 6=(5,0,0) 7=(5,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]; Q1 normal faceNormal([2,4,5,3])=(0,-1,0)=-Y. The seed edge (1,0,0)-(4,0,0)=(2,4) gives a 1-face open ring cutting Q1's two long rails (x=1..4), so the world CUT SPAN = |(4,0,0)-(1,0,0)| = 3. The Vee profile (tent, samples t=[0.25,0.5,0.75] h=[0.5,1.0,0.5]) inserts 3 loops at x = 1 + t*3 = 1.75,2.5,3.25 and displaces each along -Y by h*effectiveDepth. aspect OFF (default): effectiveDepth = raw depth = 2, so y = -h*2 = [-1,-2,-1] (this is byte-for-byte the 0256/0258 raw-depth cut). aspect ON: effectiveDepth = cut span = 3 (isotropic scaling keeps the profile's height:width proportions), so y = -h*3 = [-1.5,-3,-1.5]. Topology IDENTICAL in both cases (14 verts / 19 edges / 6 faces: Q1 -> 4 sub-quads via 3 loops, 6 new rail midpoints) — Keep Aspect relocates the new verts only.",
   "source": "Analytic self-golden; reference formula genuinely UNCAPTURABLE (task 0263, attempt logged). Keep Aspect (aspect, bool, spec.json default true) auto-derives the Inset from the profile's aspect ratio, so it only bites with a PROFILE loaded — and the reference profiles are closed-content Bezier-curve presets loaded via a preset-browser widget, with the aspect/inset controls gated behind a loaded profile (blocking-dialog pattern confirmed live on the reference app, task 0263: e.g. 'This option only applies when ...'). So the exact reference aspect FORMULA cannot be captured headlessly. The DERIVED rule aspect -> effectiveDepth = cut span is the canonical aspect-preserving (isotropic) construction: the profile is a unit-normalized curve (X along-cut 0..1, Y height 0..1); preserving its ratio scales Y by the same world-units-per-normalized-unit factor as X, i.e. depth = cut span independent of the curve. The normal-inset the profile rides on is live-confirmed (loop_slice_profile.json). The Vee curve is a vibe3d-DEFINED stand-in; no exact-match claim. vibe3d ships aspect DEFAULT OFF (a documented deviation from the reference default true) so the whole default tool state + every prior profile cut stay byte-for-byte; the OFF/ON contrast is asserted here.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "0263",
+    "notes": "Reference aspect FORMULA genuinely uncapturable (profile presets are closed-content Bezier curves gated behind a loaded profile); DERIVED aspect-preserving construction, not reference-matched. vibe3d ships a documented default deviation (aspect default OFF vs reference default true)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

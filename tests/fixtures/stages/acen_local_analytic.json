@@ -4,6 +4,16 @@
   "name": "acen_local_analytic",
   "description": "ACEN stage-conformance, Mode.Local (task 0342 Phase 3): a single CONNECTED 3-face cluster (an L-shaped tri-quad region, deliberately NOT the full top-face rectangle) on a segments-2 cube's top face. Chosen specifically so Local's cluster-AVERAGE-of-face-centroids formula numerically DIVERGES from Select's bbox-center formula on the same selection -- proving the two modes are wired to distinct code paths rather than one silently reusing the other's result.",
   "source": "Analytic -- hand-derived from vibe3d's own documented ActionCenterStage formula (source/toolpipe/stages/actcenter.d: Mode.Local averages the face centroids of the faces in cluster 0, cluster membership from the connected-component BFS over the selected faces), NOT captured from any reference editor (no live probe exists for this mode -- see the 0342 task log Phase 0 disposition: Local is idle-eval-equivalent and was already numerically verified fixed by an earlier commit). Cross-checked against a live vibe3d run at authoring time (GET /api/toolpipe/eval after the same mesh_build/selection/pipe_setup below returned actionCenter.center == [-0.083333, 0.5, -0.083333] and type==4, and actr.select on the IDENTICAL selection returned the bbox center [0, 0.5, 0] -- confirming the two formulas genuinely diverge on this selection rather than coincide.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand",
+    "captured_utc": "unknown",
+    "harness": "hand-derived from source/toolpipe/stages/actcenter.d, cross-checked live at authoring time",
+    "task": null,
+    "notes": "Mode.Local formula derivation; cross-checked against a live vibe3d run at authoring time (not a reference-editor capture)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

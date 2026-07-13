@@ -2,6 +2,16 @@
   "name": "split_edge_cube_edge0",
   "description": "Split edge 0 (the back-left vertical edge, v0-v3) of a unit cube at its midpoint. mesh.split_edge appends one new vertex at the next free index (8) and re-derives edges; the 8 original cube verts stay put.",
   "source": "hand-authored (analytic), empirically confirmed against vibe3d /api/model. Grounds: makeCube() verts are +/-0.5 (source/mesh.d:2653); edge 0 = {v0,v3} = first edge of addFace([0,3,2,1]) (also pinned by a green unittest in test_transform.d); addVertex appends without dedup (source/mesh.d) so the midpoint lands at index 8.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": null,
+    "notes": "Grounded in source/mesh.d facts (makeCube +/-0.5, edge0 ordering, no-dedup addVertex) and empirically confirmed against vibe3d's own /api/model \u2014 not reference-editor-derived."
+  },
   "tolerance": 1e-4,
   "setup": [
     { "endpoint": "reset" },

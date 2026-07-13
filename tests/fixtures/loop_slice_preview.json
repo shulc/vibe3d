@@ -2,6 +2,16 @@
   "name": "loop_slice_preview",
   "description": "Loop Slice preview-state parity: transient tool state (count / mode / slice positions) read from /api/tool/state after activating on a seed edge.",
   "source": "Self-golden capture via gen.py selfdrive-loopslice.",
+  "provenance": {
+    "schema": 1,
+    "source": "simulated",
+    "reference": "vibe3d-selfgen",
+    "method": "self-drive",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/gen.py selfdrive-loopslice",
+    "task": "0343",
+    "notes": "preview-state fixture (belt_count3): transient tool state read from vibe3d's own /api/tool/state, not reference-app parity."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

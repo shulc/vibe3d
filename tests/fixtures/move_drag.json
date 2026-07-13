@@ -2,6 +2,16 @@
   "name": "move_drag",
   "description": "Reference-parity: translation captured from a REAL gizmo move-arrow handle drag (the user grabs the handle by hand via --manual). Every selected vertex shifts by the same delta; replayed with vibe3d's move tool ({translate}). Complements translate_no_acen (headless move-tool matrix) by exercising the real drag path across selection patterns (single face, adjacent, islands) on plain + segmented cubes. Pairs are the engine's actual output, matched by position.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/move_drag).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/move_drag",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

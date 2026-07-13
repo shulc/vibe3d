@@ -2,6 +2,16 @@
   "name": "move_sds_patch",
   "description": "Reference-parity: translate a connected face patch on a Catmull-Clark subdivided cube. The patch = the 4 sub-faces of the original +Y face; they share the face-center vertex (INTERIOR \u2014 every incident sub-face selected) while the other 8 patch verts are on the selection border. Establishes connected-patch coverage on SDS geometry for future selection-border tests. (vibe3d mesh.subdivide == the reference's Catmull-Clark, verified.)",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/move_sds_patch).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/move_sds_patch",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -2,6 +2,16 @@
   "name": "loop_slice_caps",
   "description": "Loop Slice 'Cap Sections' option (task 0252; geometry corrected by the LIVE reference capture in task 0261). Reuses the 0251 unit cube (8 verts / 12 edges / 6 quad faces); the seed edge is the vertical edge (1,-1,-1)-(1,1,-1), so the ring cuts a horizontal belt around the 4 side faces at y=0 (4 vertical rails). Split (always ON here) duplicates each of the 4 rail midpoints into a coincident lo/hi pair, opening the surface into TWO boundary edge-loops (verts 12-15 sit on top of 8-11). With Cap Sections OFF the two loops are left open: 16 verts / 24 edges / 10 faces, 8 boundary edges, 2 disconnected shells (exactly 0251's split-on result). With Cap Sections ON each shell's 4-edge boundary loop is filled by ONE cap polygon (a quad through that loop's 4 verts, in the loop's plane): 16 verts / 24 edges / 12 faces — the two caps add NO new edges (each cap edge reuses an existing shell boundary edge) and NO new verts, so expected_vertices is identical to the OFF case. Both boundary loops are closed (0 boundary edges) but the two shells stay DISCONNECTED — each cap seals its own shell into an independent closed solid (2 components; Euler V-E+F = 16-24+12 = 4 = 2 per shell). This matches the real reference capture (split+caps on the cube belt ⇒ +2 faces, one flat cap per shell), NOT a strip of bridging quads. Reference-captured geometry law: capping fills each split boundary loop with one polygon and never moves or adds a vertex.",
   "source": "LIVE-captured from the reference app (task 0261) — driven headlessly through the reference app's command port (no mouse, no human drive): build a cube, select the vertical seed edge, activate Loop Slice, set count/position/split/caps via tool attributes, apply, drop, dump vertices+faces. Full drive transcript + raw dumps are in the private toolcard (toolcards/mesh.loopSlice/findings.md + capture/). The real geometry: split+caps ON adds exactly 2 faces (16v/24e/12f), one single-polygon cap per shell filling that shell's boundary loop in its own plane — the two shells remain disconnected. The pre-0261 DERIVED model (a ring of 4 bridging quads → 16v/28e/14f, shells re-joined) was WRONG: it filled the gap band coplanar with the side faces, making the cut geometrically invisible on flat surfaces. Coordinates here are the reference capture scaled from the reference's 1m (±0.5) cube to this ±1 fixture cube; the topology (counts + which verts each cap fills) is captured verbatim.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private toolcard capture (toolcards/mesh.loopSlice/findings.md + capture/)",
+    "task": "0261",
+    "notes": "Driven headlessly via the reference app's command port (no mouse, no human drive). Coordinates scaled from the reference's +/-0.5 cube to this +/-1 fixture cube; topology captured verbatim."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

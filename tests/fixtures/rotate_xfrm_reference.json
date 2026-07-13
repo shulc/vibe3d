@@ -2,6 +2,16 @@
   "name": "rotate_xfrm_reference",
   "description": "Cross-engine pin for the unified xfrm.transform rotate apply (applyTRS). Reuses the frozen reference golden from a real rotate-ring handle capture (top face, +Y axis, 60 deg), but applies it through the xfrm.transform Euler path (tool.set rotate / tool.attr rotate RY / tool.doApply) instead of the rotate_about primitive \u2014 so it exercises the REFACTORED geometry path against the reference engine output. Only the Y-axis case is reproducible this way: a Y rotation is invariant to the pivot Y-component, so ACEN.Auto (top-face centroid 0,0.5,0) yields the same result as the captured origin pivot. Combined with test_rotate_drag_parity (drag==numeric==applyTRS) this gives drag==reference transitively.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/rotate_drag).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/rotate_drag",
+    "task": null,
+    "notes": "Same generator/capture as rotate_drag.json (fixture's own `source` prose points at the rotate_drag harness)."
+  },
   "tolerance": 0.001,
   "input": [
     {

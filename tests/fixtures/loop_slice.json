@@ -2,6 +2,16 @@
   "name": "loop_slice",
   "description": "Loop Slice topology parity (vibe3d self-golden): vert/edge/face count deltas + per-vertex nearest-match against frozen golden, plus a reference-INDEPENDENT analytic check that every new vertex lies at lerp(edgeA, edgeB, t) of a pre-op edge.",
   "source": "Self-golden capture via tools/local/fixture_gen/gen.py selfdrive-loopslice. Reference-app parity DEFERRED (the reference tool can't be driven headlessly for this gesture).",
+  "provenance": {
+    "schema": 1,
+    "source": "simulated",
+    "reference": "vibe3d-selfgen",
+    "method": "self-drive",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/gen.py selfdrive-loopslice",
+    "task": "0343",
+    "notes": "Self-golden topology-diff fixture (belt_t030/belt_two cases); reference-app parity DEFERRED, verified instead by a reference-INDEPENDENT analytic lerp check."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

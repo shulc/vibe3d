@@ -2,6 +2,16 @@
   "name": "tack_two_cubes",
   "description": "Tack (mesh.tack) headless one-shot: polygon-to-polygon rigid alignment of a disjoint source cube's +Y face onto a disjoint target cube's tilted +Y face, at an explicit off-centroid clicked point. Golden numbers reproduced exactly from doc/tack_tool_plan.md's Phase-0 capture (R, t, and the 4 source-face after-verts); the remaining 4 source-island verts (0,1,4,5) were computed from the SAME R/t via after = R*before + t (not re-derived independently). Box B (target, indices 8-15) is read-only and must stay byte-identical.",
   "source": "hand-derived from doc/tack_tool_plan.md Phase-0 RFB-capture golden (private doc; golden numbers reproduced here, not the capture provenance itself)",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "doc/tack_tool_plan.md Phase-0 RFB-capture (private)",
+    "task": null,
+    "notes": "Golden numbers reproduced from a private RFB-capture doc (RFB/VNC injection drives a real reference-editor haul); the capture provenance chain itself lives in that private doc, not restated here."
+  },
   "tolerance": 1e-4,
   "setup": [
     { "endpoint": "load-mesh", "body": {

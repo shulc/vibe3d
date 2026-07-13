@@ -61,6 +61,16 @@ unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SX=2.
     enum string json = `{
       "name": "acen_select_center/l_shape_sx2",
       "source": "analytic golden — selection bbox center pivot, vertex mode",
+      "provenance": {
+        "schema": 1,
+        "source": "analytic",
+        "reference": "analytic",
+        "method": "hand",
+        "captured_utc": "unknown",
+        "harness": null,
+        "task": null,
+        "notes": "analytic golden -- selection bbox center pivot, vertex mode; source-grounded against actcenter.d/mesh.d (see file header derivation)."
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "acen.select L-shape SX=2 (bbox pivot discriminates avg)",
@@ -100,6 +110,16 @@ unittest { // ACEN-SelectAuto, same L-shape: center path is lockstep with Select
     enum string json = `{
       "name": "acen_select_center/selectauto_lockstep",
       "source": "analytic golden — SelectAuto center lockstep with Select",
+      "provenance": {
+        "schema": 1,
+        "source": "analytic",
+        "reference": "analytic",
+        "method": "hand",
+        "captured_utc": "unknown",
+        "harness": null,
+        "task": null,
+        "notes": "SelectAuto center lockstep with Select -- same derivation chain as :63 (selectionCentroid(SelectSubMode.Center), actcenter.d:737)."
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "acen.selectauto L-shape SX=2 (same center as select)",

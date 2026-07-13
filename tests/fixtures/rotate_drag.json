@@ -2,6 +2,16 @@
   "name": "rotate_drag",
   "description": "Reference-parity: rigid rotations captured from a REAL gizmo rotate-ring handle drag (grabbed by hand via --manual). Recovered by a SINGLE Kabsch SVD on the index-aligned selected before/after pairs (no permutation search \u2014 the index-ordered dump gives exact correspondence), replayed via rotate_about (axis/angle/pivot). Complements rotate_none (auto-captured) with a reliable manual single-ring set across selection patterns on plain + segmented cubes. Pairs are the engine's actual output, matched by position.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/rotate_drag).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/rotate_drag",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

@@ -2,6 +2,16 @@
   "name": "falloff_local",
   "description": "Reference-parity: ACEN.Local (per-cluster) move along each cluster's normal under a linear falloff, per-vertex WEIGHTED. The reference weights per-cluster translate by the falloff (it is NOT exempt) \u2014 ground truth for the MS-4 per-cluster fold.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/falloff_local).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/falloff_local",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

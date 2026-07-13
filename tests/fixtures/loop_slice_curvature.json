@@ -2,6 +2,16 @@
   "name": "loop_slice_curvature",
   "description": "Loop Slice 'Preserve Curvature' option (task 0254). Cage = a CURVED open strip of 3 quads in a row along X, 1 quad wide in Z, whose column heights follow a symmetric bump h=[0,1,1,0] so the two long (X-direction) boundary edges arc up and back down. Verts (col i, row j) at (x=i, y=h[i], z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,1,0) 3=(1,1,1) 4=(2,1,0) 5=(2,1,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]. The seed edge is the top-row long edge of the MIDDLE quad, (1,1,0)-(2,1,0) = a boundary edge of Q1 only, so collectEdgeRing gives a 1-face open ring cutting Q1's two long rails (2,4) at y=1 and (3,5) at y=1 — both curved (their cage neighbours continue down to y=0 on each side). The cut inserts one loop vertex per rail at t=0.5. OFF (default, linear): each new vert sits on the straight chord midpoint, y=1.0 exactly. ON (Preserve Curvature): each new vert is placed on the CHORD-WEIGHTED Catmull-Rom spline through the four cage points P0=(0,0,0)/(0,0,1), P1=va, P2=vb, P3=(3,0,0)/(3,0,1); at t=0.5 the spline overshoots the flat chord and BULGES to y=1+(sqrt2-1)/4=1.1035534 (the LIVE-captured reference value, measurably off the chord toward where the smooth surface would round), x/z unchanged. Topology is IDENTICAL either way (10 verts / 13 edges / 4 faces) — curvature only relocates the two new verts. The flat_cage case (heights all 0) proves ON is a no-op on a locally-straight cage: the four spline points are collinear so the spline equals the chord, byte-for-byte with linear.",
   "source": "LIVE-VERIFIED (task 0263). The reference `curvature` behaviour was captured headlessly (attributes set via the private capture tooling's command port; the cut COMMITTED by a real interactive viewport gesture, not just a scripted apply — the two commit paths were cross-checked bit-identical). The reference bulges the rail midpoint to y=1+(sqrt2-1)/4=1.1035534 (NOT the classic uniform Catmull-Rom 1.125). The curve is a CHORD-WEIGHTED Catmull-Rom whose endpoint tangents scale the uniform secant by the cut edge's fraction of the incident cage-edge lengths; CONFIRMED bit-exact on two discriminating cages — heights [0,1,1,0] -> 1.1035534, heights [0,2,2,0] -> 2.1545086 (uniform would give 1.125 / 2.25). vibe3d's curvatureSplinePoint was corrected to this construction (source/mesh.d). tension is a linear blend of the same curve (task 0255). The prior 1.125 value was a DERIVED uniform-Catmull-Rom stand-in, now replaced with the captured reference geometry.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private capture tooling command port + interactive viewport commit",
+    "task": "0263",
+    "notes": "Attributes set via command port; the cut COMMITTED by a real interactive viewport gesture (cross-checked bit-identical against a scripted commit)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

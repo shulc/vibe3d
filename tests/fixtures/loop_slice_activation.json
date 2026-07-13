@@ -2,6 +2,16 @@
   "name": "loop_slice_activation",
   "description": "Loop Slice ACTIVATION model (task 0245): a POLYGON selection makes the tool act on the edge(s) BETWEEN the selected faces. Two adjacent selected quads seed their shared edge, so the ring crossing that edge is cut. Analytic golden on the default cube (makeCube ±0.5); reference-independent lerp checks confirm each new vertex sits on a pre-op edge. The negative activation cases (a lone / two non-adjacent faces seed NOTHING) are asserted analytically in the Mesh.interiorEdgesOfSelectedFaces unittest — they can't run through this end-to-end path because a no-op tool.doApply returns false, which the fixture harness treats as a command error.",
   "source": "Analytic self-golden. Activation rule derived from the live-captured reference `select` semantics (toolcards/mesh.loopSlice spec.json: the selection PICKS the loop) + the program directive (2 adjacent polygons -> edge between them). The reference loop-slice gesture cannot be driven headlessly (needs a human VNC drive), so the polygon-activation geometry is NOT independently re-captured live.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand",
+    "captured_utc": "unknown",
+    "harness": "derived from toolcards/mesh.loopSlice spec.json select-semantics + a program directive",
+    "task": null,
+    "notes": "Activation geometry itself not independently captured; derives from previously live-captured `select` semantics + a program directive (2 adjacent polygons -> edge between them)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

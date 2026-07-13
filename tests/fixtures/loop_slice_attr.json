@@ -2,6 +2,16 @@
   "name": "loop_slice_attr",
   "description": "Loop Slice attr-echo parity: the Position attr echoes in tool state and derives a slice vertex at the implied parameter along the ring rails.",
   "source": "Self-golden capture via gen.py selfdrive-loopslice.",
+  "provenance": {
+    "schema": 1,
+    "source": "simulated",
+    "reference": "vibe3d-selfgen",
+    "method": "self-drive",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/gen.py selfdrive-loopslice",
+    "task": "0343",
+    "notes": "Self-golden: vibe3d's own output, reference-app parity DEFERRED (the reference tool can't be driven headlessly for this gesture)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

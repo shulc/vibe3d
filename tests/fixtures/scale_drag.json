@@ -2,6 +2,16 @@
   "name": "scale_drag",
   "description": "Reference-parity: single-axis scale captured from a REAL gizmo single-axis handle drag (the per-axis handle is found by hover confirmation, then dragged along its own screen direction) with NO action center (acen=none), so the pivot is the world axis. Complements scale_axis (same origin-pivot single-axis scale, but applied headless via the geometry API) by exercising the real drag path, across selection patterns (single face, adjacent, islands) on plain + segmented cubes. The per-axis factor + pivot are recovered from the engine's before/after and replayed via scale_about; expected pairs are the engine's actual output, matched by position.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/scale_drag).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/scale_drag",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

@@ -2,6 +2,16 @@
   "name": "scale_axis",
   "description": "Single-axis scale about the world origin, across element mode \u00d7 selection {none,one,adjacent,islands} (same selections as move/scale_origin). Per-mode axis: vertices=X, edges=Y, polygons=Z. Engine-neutral (scale about a fixed pivot, no recovery, no drag \u2014 per-axis xfrm.scale is mode-gated headless, so applied via the geometry API). Empty selection scales the whole mesh.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/scale_axis).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/scale_axis",
+    "task": null,
+    "notes": "Headless numeric capture via command port (per-axis xfrm.scale factor); no live mouse/gizmo drag (see scale_origin/README.md for the shared rationale)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

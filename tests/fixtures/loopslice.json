@@ -2,6 +2,16 @@
   "name": "loopslice",
   "description": "Loop-slice topology parity (frozen capture): vert/edge/face count deltas + per-vertex nearest-match against golden verts, plus a reference-INDEPENDENT analytic lerp check. Golden verts frozen from a captured gesture; no external tool at test time.",
   "source": "Frozen capture via tools/local/capture-kit -> fixture_gen/gen.py from-trace.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/gen.py from-trace (capture-kit trace)",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

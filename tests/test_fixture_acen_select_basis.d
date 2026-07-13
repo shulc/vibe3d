@@ -32,6 +32,16 @@ unittest { // Top face (+Y, face 4): SY=1.5 → local-Y = world−Z → Z stretc
     enum string json = `{
       "name": "acen_select_basis/top_face_sy",
       "source": "analytic golden from the measured selection local frame (axis.d)",
+      "provenance": {
+        "schema": 1,
+        "source": "analytic",
+        "reference": "analytic",
+        "method": "hand",
+        "captured_utc": "unknown",
+        "harness": null,
+        "task": null,
+        "notes": "analytic golden from the measured selection local frame (axis.d) -- top face (+Y) case."
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "top face SY=1.5",
@@ -71,6 +81,16 @@ unittest { // Right face (+X, face 3): SY=1.5 → local-Y = world−Y → Y stre
     enum string json = `{
       "name": "acen_select_basis/right_face_sy",
       "source": "analytic golden from the measured selection local frame (axis.d)",
+      "provenance": {
+        "schema": 1,
+        "source": "analytic",
+        "reference": "analytic",
+        "method": "hand",
+        "captured_utc": "unknown",
+        "harness": null,
+        "task": null,
+        "notes": "analytic golden from the measured selection local frame (axis.d) -- right face (+X) case."
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "right face SY=1.5",
@@ -111,6 +131,16 @@ unittest { // Bottom face (−Y, face 5): SY=1.5 → local-Y = world−Z → Z s
     enum string json = `{
       "name": "acen_select_basis/bottom_face_sy",
       "source": "analytic golden from the measured selection local frame (axis.d)",
+      "provenance": {
+        "schema": 1,
+        "source": "analytic",
+        "reference": "analytic",
+        "method": "hand",
+        "captured_utc": "unknown",
+        "harness": null,
+        "task": null,
+        "notes": "analytic golden from the measured selection local frame (axis.d) -- bottom face (-Y) case."
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "bottom face SY=1.5",

@@ -2,6 +2,16 @@
   "name": "loop_slice_reversey",
   "description": "Loop Slice Reverse Inset (task 0258: reversey). Reuses the 0256 profile mesh (a FLAT open strip of 3 quads in a row along X, 1 quad wide in Z, all at y=0). Verts (col i, row j) at (x=i, y=0, z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,0,0) 3=(1,0,1) 4=(2,0,0) 5=(2,0,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]; Q1 normal faceNormal([2,4,5,3])=(0,-1,0)=-Y. The seed edge (1,0,0)-(2,0,0)=(2,4) gives a 1-face open ring cutting Q1's two long rails (x=1..2). The Vee profile is a symmetric tent (samples t=[0.25,0.5,0.75] h=[0.5,1.0,0.5]): apex 1.0 at the centre. With Inset depth=2 pressed along the face normal -Y, the three inserted loops (x=1+t=1.25,1.5,1.75) get y = -h*depth. reversey OFF: heights [0.5,1.0,0.5] -> y=[-1,-2,-1] (the Vee INSETS into the surface, dipping to y=-2 at the apex). reversey ON flips the inset sign (h -> -h): y=[+1,+2,+1] (the Vee now BULGES out of the surface, rising to y=+2 at the apex). The two cases share IDENTICAL topology (14 verts / 19 edges / 6 faces: Q1 -> 4 sub-quads via 3 loops, 6 new rail midpoints) and differ ONLY in the SIGN of the normal displacement — reversey mirrors the displacement across the surface. The OFF case is byte-for-byte the un-reversed Vee profile cut (the 0256 mechanism with reverseY_ identity, = the 0257 reversex-OFF baseline).",
   "source": "Analytic self-golden; reference geometry genuinely UNCAPTURABLE (task 0263, attempt logged). reversey (Reverse Inset, bool, default false) flips the profile's normal-direction displacement, so it only bites with a PROFILE loaded — and the reference profiles are closed-content Bezier-curve presets loaded via a preset-browser widget, with the Reverse controls gated behind a loaded profile (blocking-dialog pattern confirmed live on the reference app, task 0263). So exact reversey geometry cannot be captured headlessly. The DERIVED mapping reversey -> (height := -height) is the canonical 'reverse the Inset direction' — and the Inset IS the normal-direction displacement scale, which was live-confirmed (loop_slice_profile.json: depth insets the loop along the face normal by exactly depth), so a sign flip provably lands on the other surface side. The Vee curve is a vibe3d-DEFINED stand-in (LoopSliceTool.profileSamples); the OFF/ON sign-flip invariant is asserted on it. No exact-preset-match claim.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "0263",
+    "notes": "Reference geometry genuinely uncapturable (same profile-gating as reversex). DERIVED mapping (height := -height); underlying Inset direction IS live-confirmed (loop_slice_profile.json); no exact-preset-match claim."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

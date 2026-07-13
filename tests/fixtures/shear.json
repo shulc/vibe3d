@@ -2,6 +2,16 @@
   "name": "shear",
   "description": "Reference-parity matrix for soft-shear = linear-falloff Move (xfrm.shear preset). Each case freezes before/after vertex pairs captured from the reference engine and replays the xfrm.shear preset in vibe3d WITHOUT any external engine at runtime; vibe3d reproduces every case bit-for-bit. Coverage: all three translate axes (TX/TY/TZ) each crossed with a perpendicular linear gradient (Y, Z, X), plus negative sign, double magnitude, and gradient reversal. Built on an empty-reset scene so the welded segmented cube is the ONLY geometry (a plain reset's default cube would survive prim.cube's append and be sheared too). Capture must zero all of TX/TY/TZ per case \u2014 the tool attrs persist across cases otherwise.",
   "source": "Frozen reference capture (xfrm.shear, linear falloff, parameter matrix; captured via the private capture tooling).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private capture tooling (parameter matrix)",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

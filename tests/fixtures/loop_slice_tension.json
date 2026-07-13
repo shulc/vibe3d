@@ -2,6 +2,16 @@
   "name": "loop_slice_tension",
   "description": "Loop Slice 'Tension' option (task 0255) — the strength control for 'Preserve Curvature' (task 0254). Same CURVED open strip as loop_slice_curvature.json: 3 quads in a row along X, 1 quad wide in Z, column heights h=[0,1,1,0] so the two long boundary edges arc up and back down. Verts (col i, row j) at (x=i, y=h[i], z=j): 0=(0,0,0) 1=(0,0,1) 2=(1,1,0) 3=(1,1,1) 4=(2,1,0) 5=(2,1,1) 6=(3,0,0) 7=(3,0,1). Faces Q0=[0,2,3,1] Q1=[2,4,5,3] Q2=[4,6,7,5]. Seed = the middle quad's top long edge (1,1,0)-(2,1,0), a 1-face open ring cutting Q1's two long rails (2,4) and (3,5) at t=0.5. With Preserve Curvature ON, each new vert = lerp + tension*(catmullRom - lerp): the linear chord midpoint is y=1.0 and the full chord-weighted Catmull-Rom spline point is y=1.1035534, so Tension scales the bulge between them. tension=1.0 (100%, default) → y=1.1035534 (full bulge, byte-for-byte the 0254 curvature-on result); tension=0.5 (50%) → y=1.0517767 (half bulge); tension=0.0 (0%) → y=1.0 (flat chord, byte-for-byte the linear curvature-off result even though curvature is ON). Topology is IDENTICAL in every case (10 verts / 13 edges / 4 faces) — Tension only relocates the two new verts along the rail-normal bulge. x/z unchanged.",
   "source": "LIVE-VERIFIED (task 0263). The reference `tension` behaviour was captured HEADLESSLY on the reference app (attributes via its command port + a real interactive commit; tension is gated behind Preserve Curvature — the reference blocks setting it out of order, so it is set AFTER curvature). Captured points on the 0254 curved cage: tension=1.0 -> y=1.1035534, tension=0.5 -> y=1.0517767 (reference 1.051776647), tension=0.0 -> y=1.0. This CONFIRMS the reference Tension is a LINEAR blend of the (chord-weighted, task 0263) spline against the flat chord: result = lerp + tension*(catmullRom - lerp). The wire value is a fraction whose UI display is percent (1.0 = 100%), mapping to `curveTension`. Full-bulge value corrected from the prior derived 1.125 (uniform Catmull-Rom) to the captured 1.1035534. Capture provenance in the private toolcards/mesh.loopSlice.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private toolcard capture (toolcards/mesh.loopSlice)",
+    "task": "0263",
+    "notes": "Attributes via command port + a real interactive commit; tension is gated behind Preserve Curvature (set after curvature)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

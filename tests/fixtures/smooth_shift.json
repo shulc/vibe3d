@@ -2,6 +2,16 @@
   "name": "smooth_shift",
   "description": "Reference-parity golden fixtures for the Smooth Shift + Thicken interactive tool (mesh.smoothShiftTool, task 0358). Frozen from a live reference-editor capture: a stock unit cube (segments=1, 8v/6f), top face selected only (y>0.4), the tool's 5 attrs driven numerically, applied once. Every case here is a topology-CHANGING op (adds cap/skin verts+faces), so it uses the topology-diff verifier (count deltas + bidirectional position match) rather than the rigid-cluster before/after-pair verifier. 'base_noop', 'shift03', and 'thicken_top_only' are the 3 combos this task requires at minimum; 'shift03_scale05' and 'thicken_top_only_noshift' are additional frozen combos from the same capture session that pin the scale-about-centroid law and the thicken+shift=0 interaction respectively. No reference engine runs at test time — the geometry below is transcribed from the frozen capture and independently re-derived analytically (see the smoothShiftFacesByMask doc comment in source/mesh.d) before being pinned here.",
   "source": "Frozen reference-editor capture (task 0358 toolcard), numeric tool.attr + apply on a stock cube's top face.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "toolcards/smooth_shift (task 0358)",
+    "task": "0358",
+    "notes": "Headless numeric tool.attr + apply capture on a stock cube's top face; no live gizmo drag."
+  },
   "tolerance": 1e-4,
   "cases": [
     {

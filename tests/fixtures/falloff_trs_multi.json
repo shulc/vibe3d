@@ -2,6 +2,16 @@
   "name": "falloff_trs_multi",
   "description": "Reference-parity: per-vertex WEIGHTED COMBINED translate+rotate+scale (one tool operation) under a linear falloff. The reference applies ONE composed affine (linear Mlin + translation t) blended toward identity per vertex by a SINGLE falloff weight evaluated at the BEFORE position: after = pivot + ((1-w)I + w*Mlin)*(before-pivot) + w*t. This unified single-matrix / single-weight model reproduces every captured vertex within 0.001 (validated at gen time) \u2014 it does NOT split the weight position across T/R/S. Ground truth for the MS-4 matrix-state fold + weight-position unification.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/falloff_trs_multi).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/falloff_trs_multi",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

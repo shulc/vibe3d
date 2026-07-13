@@ -2,6 +2,16 @@
   "name": "translate_no_acen",
   "description": "Translate matrix without an explicit action center, driven through vibe3d's move tool (tool.set move + TX/TY/TZ + doApply). Covers vertex/edge/polygon modes x selection {none,one,adjacent,islands}. Empty selection moves the WHOLE mesh (matches the reference tool); polygons_islands picks two opposite faces = every vertex on a unit cube.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/translate_no_acen).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/translate_no_acen",
+    "task": null,
+    "notes": "Headless numeric capture (xfrm.move); no live gizmo drag."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

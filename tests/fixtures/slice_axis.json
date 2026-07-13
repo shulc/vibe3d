@@ -2,6 +2,16 @@
   "name": "slice_axis",
   "description": "Slice tool (mesh.sliceTool, task 0269 S3; owner-revised 0284 EXTRUSION-DIRECTION model) axis/vector override. The `axis` is an EXTRUSION DIRECTION, NOT the cut normal: the slice plane is the drawn Start->End line EXTRUDED along the axis direction (n = normalize(cross(lineDir, axisDir))), so it ALWAYS CONTAINS BOTH drawn endpoints. All three cases draw the SAME Y-line through the origin (start=(0,-0.5,0), end=(0,0.5,0)) and only change the axis, proving: same line, different axis -> different plane, but EVERY plane contains the line. axis=x extrudes the Y-line along X -> cross(Y,X) = -Z -> the Z=0 cut (both endpoints have z=0). axis=z extrudes along Z -> cross(Y,Z) = X -> the X=0 cut (both endpoints have x=0). axis=custom vector=(0,0,2) -> normalize -> Z-extrusion -> the X=0 cut (proves the custom vector is normalized). infinite=true forces the full-mesh cut so the topology is the clean 12v/10f mid-cut regardless of the drawn segment span. Analytic self-golden (Mesh.cutByPlane connectivity-correct by construction; plane law = math.planeForSlice).",
   "source": "Analytic. Cube +/-0.5; plane law = math.planeForSlice(start, end, +Y, axisMode, vector) = extrude the line along axisDir. axis=x + Y-line -> n=(0,0,-1) through origin (Z=0 mid-cut); axis=z + Y-line -> n=(1,0,0) (X=0 mid-cut); custom (0,0,2) + Y-line -> normalize(Z) -> n=(1,0,0) (X=0 mid-cut). New verts are edge midpoints (t=0.5) on the mid-plane. The Y-line lies in EVERY resulting plane (x=0 and z=0 both pass through it), the owner-bug invariant.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "harness": "hand-derived closed-form plane law (source/math.d planeFromLineAndWorkplane / planeForSlice)",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

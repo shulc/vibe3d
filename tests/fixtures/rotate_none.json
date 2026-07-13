@@ -2,6 +2,16 @@
   "name": "rotate_none",
   "description": "Reference-parity: rigid rotations recovered from real-engine acen=none rotate drags (varied selection / drag start / angle / axis). Each case selects the cluster by coords and replays the recovered rigid rotation via rotate_about (explicit axis/angle/pivot through /api/transform); expected pairs are the engine's actual post-op vertices.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/rotate_none).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/rotate_none",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

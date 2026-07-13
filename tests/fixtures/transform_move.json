@@ -2,6 +2,16 @@
   "name": "transform_move",
   "description": "Reference-parity (frozen capture): a rigid translation of the selected verts, replayed with vibe3d's move tool. Golden verts frozen from a captured gizmo haul; no external tool at test time.",
   "source": "Frozen capture via tools/local/fixture_gen/gen.py from-trace.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/gen.py from-trace",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

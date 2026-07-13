@@ -2,6 +2,16 @@
   "name": "slice_selection",
   "description": "Slice tool (mesh.sliceTool) SELECTION RESTRICTION (task 0279). The reference Slice cuts ONLY the selected polygons, and the whole layer when nothing (or everything) is selected. Captured headless on the reference (command-port + axis-locked X plane): on a seg-1 cube (8v/6f) an x=0 bisecting plane crosses the 4 X-spanning side faces. With 2 faces selected (front z=-0.5 + back z=+0.5) ONLY those two split — 12v/8f (the 4 crossing verts still appear, and the two unselected crossed neighbours top/bottom absorb their shared crossing vert as a watertight n-gon); with 1 face selected (front) only front splits — 10v/7f (just 2 crossing verts on front's spanning edges); with NOTHING selected the whole span is cut — 12v/10f (reference-captured 12v/8f, 10v/7f, 12v/10f respectively). Analytic self-golden: crossing verts sit at the 0.5 midpoint of a pre-op cube edge; the restriction is proven by (a) the face-count delta and (b) the whole-only midpoints being provably ABSENT under the 1-face restriction (bidirectional vertex-set match). Mirrors Loop Slice's Slice Selected restriction (mesh.rebuildFacesWithChordSplits face mask + edge-scoped vertex insertion).",
   "source": "LIVE-CAPTURED reference (task 0279, headless command-port + axis-locked plane). vibe3d geometry is connectivity-correct by construction (Mesh.cutByPlaneRestricted). Plane law = math.planeFromLineAndWorkplane(start,end,+Y): line along Z -> normal ||X through origin (x=0). Selection is coordinate-based (engine-neutral face-vertex coords).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private toolcard capture, axis-locked plane",
+    "task": "0279",
+    "notes": "LIVE-CAPTURED reference, driven headlessly via command port + an axis-locked plane; vibe3d geometry is connectivity-correct by construction (Mesh.cutByPlaneRestricted)."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

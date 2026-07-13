@@ -2,6 +2,16 @@
   "name": "falloff_drag",
   "description": "Reference-parity: per-vertex WEIGHTED single-axis transform (linear falloff), move/scale/rotate. The gradient was RECOVERED from the captured weighting and re-expressed as vibe3d-native start/end handles, so vibe3d's weighted transform reproduces the frozen reference verts independent of the reference engine's internal falloff-axis convention.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/falloff_drag).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/falloff_drag",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

@@ -2,6 +2,16 @@
   "name": "loop_slice_keep_quads",
   "description": "Loop Slice 'Keep Quads' option (task 0249; watertight-by-default 0265 — `quad` is now a geometric NO-OP). Custom planar mesh: two unit quads Q0=[0,1,4,3] and Q1=[1,2,5,4] side by side, capped on the far side by a triangle T=[2,6,5]. The seed edge is the vertical edge (1,0,0)-(1,1,0) shared by Q0 and Q1. The quad ring walks {Q0,Q1} and TERMINATES at the non-quad T (walkRingSide stops at the triangle). Three midpoints are inserted at 0.5 of the seed edge (1,0.5), Q0's left boundary edge (0,0.5) and Q1's exit rail (2,0.5) — so both ON and OFF land 10 verts / 5 faces. Since task 0265 the terminating-midpoint absorb is the DEFAULT: T ABSORBS the terminating midpoint (2,0.5) into its boundary, becoming the quad [2,6,5,mid]; the full edge (2,5) is gone => 14 edges, watertight + all-quad — the SAME whether Keep Quads is ON or OFF (Keep Quads no longer changes geometry). Reference-independent geometry law: every new vertex sits at the 0.5 midpoint of a pre-op edge (identical vertex set both ways).",
   "source": "LIVE-CAPTURED (task 0263). Reference-app findings (attributes via command port + a real interactive commit; capture provenance in the private toolcards/mesh.loopSlice): (1) the reference GATES `quad` behind Slice Selected — setting it with Slice Selected off pops a blocking dialog 'This option only applies when Slice Selected is turned on.'; (2) with Slice Selected on, `quad` on vs off produce IDENTICAL geometry on every capturable mesh (10 verts / 14 edges / 5 faces) — Keep Quads has no observable geometric effect on this terminating-triangle mesh; (3) the reference DEFAULT (no Slice Selected, no quad) already keeps the cut WATERTIGHT: the terminating triangle absorbs the midpoint into a quad [2,6,5,mid] (14 edges). Task 0265 changed vibe3d's default to MATCH the reference: the terminating-midpoint absorb is now the default in Mesh.insertEdgeLoopsMulti, so both quad-OFF and quad-ON produce the reference-identical watertight 10 verts / 14 edges / 5 faces (captured ls_der_quad_off.json == ls_der_quad_on.json, face [2,6,5,9]). `quad` is retained for panel parity but is a geometric no-op.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "private toolcard capture (toolcards/mesh.loopSlice)",
+    "task": "0263",
+    "notes": "Attributes set via command port + a real interactive commit."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

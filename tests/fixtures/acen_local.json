@@ -2,6 +2,16 @@
   "name": "acen_local",
   "description": "Reference-parity: actr.local per-cluster transform on a 2-cluster asymmetric face selection of a CLEAN segments-2 cube (empty reset so prim.cube isn't appended onto the default cube). Each disjoint cluster transforms about its OWN center along its OWN local frame (fwd=normal). move locks the per-cluster axis; rotate the centre + axis. Also pins TZ on a segments=4 cube with three patches on three different faces (+Y/+X/-Z, 9 polys -> 3 disjoint clusters).",
   "source": "Frozen reference capture (manual viewport drag, actr.local).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": null,
+    "notes": "Hand-authored; no fixture_gen harness. actr.local manual viewport gizmo drag captured via the private capture tooling (task not cited in fixture prose)."
+  },
   "tolerance": 0.001,
   "cases": [
     {

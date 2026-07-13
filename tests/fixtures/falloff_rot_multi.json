@@ -2,6 +2,16 @@
   "name": "falloff_rot_multi",
   "description": "Reference-parity: per-vertex WEIGHTED MULTI-AXIS rotation (RX+RY composed in one operation) under a linear falloff. The reference applies ONE composed rotation matrix R blended toward identity per vertex by falloff weight: after = pivot + ((1-w)I + w*R)*(before-pivot). This single-matrix blend reproduces every captured vertex within 0.001 (validated at gen time); a per-axis SEQUENTIAL blend does not. Ground truth for the MS-4 matrix-state fold.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/falloff_rot_multi).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/falloff_rot_multi",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.001,
   "cases": [
     {

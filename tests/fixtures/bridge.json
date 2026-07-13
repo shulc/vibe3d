@@ -2,6 +2,16 @@
   "name": "bridge_tool_segments_twist",
   "description": "mesh.bridgeTool (task 0357) — Segments/Twist/Remove Polygons golden. Base fixture: two coaxial unit squares (cap A z=0 face 0, cap B z=1 face 1) — the SAME setup as tests/test_bridge.d's loadCaps(). Segments law (spans=max(1,segments); interior rings linearly interpolated at t=i/spans) and Twist law for |twist|<=1 (f(t)=smoothstep(t)=3t^2-2t^3, slide toward the next/previous ring corner) are both closed-form and reference-VERIFIED (task 0357's private capture doc) — expected_vertices below are hand-derived from those closed forms on this exact fixture, not borrowed byte-for-byte from any external capture (the reference capture's own base case used a degenerate closed-cube selection unsuitable for a clean vertex-position golden).",
   "source": "closed-form (task 0357 verified Segments/Twist laws) applied to a hand-authored fixture; see per-case description",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "harness": "task 0357 closed-form derivation (private)",
+    "task": "0357",
+    "notes": "Closed-form Segments/Twist laws verified in task 0357, applied to a hand-authored base fixture; see per-case description in the fixture itself."
+  },
   "tolerance": 1e-4,
   "cases": [
     {

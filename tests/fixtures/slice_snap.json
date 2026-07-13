@@ -2,6 +2,16 @@
   "name": "slice_snap",
   "description": "Slice tool (mesh.sliceTool, task 0271 S5) Angle Snap. With snap ON + snapAngle 45, the drawn line's angle IN THE WORK PLANE (headless = world XZ, axis1 +X / axis2 +Z) is quantized to the nearest 45-degree multiple, pivoting about Start, BEFORE the cut plane (and the clip span) is built. A raw ~19-degree line (dir (2,0,0.7), angle atan2(0.7,2)=19.3deg) snaps to 0deg -> a line purely along +X at z=0 -> the Z=0 mid-cut (12v/10f, the S0 midZ topology). A raw ~81-degree line (dir (0.3,0,2), angle atan2(2,0.3)=81.5deg) snaps to 90deg -> a line along +Z at x=0 -> the X=0 mid-cut. If snapping were NOT applied, each RAW line would give a TILTED cut whose verts do NOT sit on the axis plane, so a passing nearest-match here is itself proof the snap fired. Analytic self-golden (Mesh.cutByPlane connectivity-correct by construction; snap law = math.snapLineEndpointToAngle + math.planeForSlice).",
   "source": "Analytic. Cube +/-0.5; snap = math.snapLineEndpointToAngle(start, end, +X, +Z, 45) then math.planeForSlice(snapStart, snapEnd, +Y, free). 19.3deg -> 0deg gives end rotated onto +X at z=0 -> plane normal (0,0,1) through Start (z=0) -> Z=0 cut, new verts at z=0 edge midpoints. 81.5deg -> 90deg gives end onto +Z at x=0 -> plane normal (1,0,0) through Start (x=0) -> X=0 cut, new verts at x=0 edge midpoints. snap OFF (default) would keep the raw tilted line -- covered by the raw-line goldens (tests/fixtures/slice.json etc.) and the math.snapLineEndpointToAngle unittest.",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "harness": "hand-derived closed-form plane law (source/math.d planeFromLineAndWorkplane / planeForSlice)",
+    "task": null,
+    "notes": null
+  },
   "tolerance": 0.0001,
   "cases": [
     {

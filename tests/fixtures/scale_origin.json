@@ -2,6 +2,16 @@
   "name": "scale_origin",
   "description": "Uniform scale (x2) about the world origin, across element mode (vertex/edge/polygon) x selection {none,one,adjacent,islands} \u2014 the same selections as the move matrix. Engine-neutral (scale about a fixed pivot, no recovery). Empty selection scales the whole mesh (scale tool); non-empty uses scale_about with pivot [0,0,0].",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/scale_origin).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "unknown",
+    "harness": "tools/local/fixture_gen/scale_origin",
+    "task": null,
+    "notes": "Headless numeric capture via command port (xfrm.scale factor about the world origin); no live mouse/gizmo drag \u2014 see fixture_gen/scale_origin/README.md."
+  },
   "tolerance": 0.0001,
   "cases": [
     {
