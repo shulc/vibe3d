@@ -25,6 +25,8 @@ import std.json;
 import std.conv : to;
 import std.math : abs, PI;
 
+import fixture_helpers : requireProvenance;
+
 void main() {}
 
 // ---------------------------------------------------------------------------
@@ -64,7 +66,9 @@ int countVertsAtY(JSONValue m, double y) {
 
 private JSONValue fixture() {
     enum string json = import("fixtures/radial_array.json");
-    return parseJSON(json);
+    auto fx = parseJSON(json);
+    requireProvenance(fx, "radial_array");
+    return fx;
 }
 
 // ---------------------------------------------------------------------------

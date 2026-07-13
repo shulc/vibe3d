@@ -25,6 +25,8 @@ import std.conv  : to;
 import std.math  : fabs;
 import std.format: format;
 
+import fixture_helpers : requireProvenance;
+
 void main() {}
 
 immutable baseUrl = "http://localhost:8080";
@@ -95,6 +97,7 @@ double[][] modelVerts(int layer) {
 unittest {
     enum string fixtureJson = import("fixtures/item_transform_trs_pivot.json");
     auto fx = parseJSON(fixtureJson);
+    requireProvenance(fx, "item_transform_trs_pivot");
 
     double tol = ("tolerance" in fx) ? num(fx["tolerance"]) : 1e-6;
     auto item  = fx["item"];

@@ -34,6 +34,7 @@ import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
 import tools.transform : TransformTool;
 import tools.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
+import fixture_helpers : requireProvenance;
 
 void main() {}
 
@@ -200,6 +201,7 @@ unittest { // FOLD reproduces every multi-axis rotate + combined T+R+S case
     foreach (jsonText; [import("fixtures/falloff_rot_multi.json"),
                         import("fixtures/falloff_trs_multi.json")]) {
         auto fx = parseJSON(jsonText);
+        requireProvenance(fx, fx["name"].str);
         double tol = ("tolerance" in fx) ? asD(fx["tolerance"]) : 1e-3;
         foreach (cs; fx["cases"].array) {
             string nm = fx["name"].str ~ "/" ~ cs["name"].str;
@@ -211,6 +213,7 @@ unittest { // FOLD reproduces every multi-axis rotate + combined T+R+S case
 
 unittest { // PER-PASS sequential blend diverges on the multi-axis rotate cases
     auto fx = parseJSON(import("fixtures/falloff_rot_multi.json"));
+    requireProvenance(fx, fx["name"].str);
     foreach (cs; fx["cases"].array)
         assertPerPassDiverges(fx["name"].str ~ "/" ~ cs["name"].str,
                               cs["op"].array[0], cs["expected_pairs"], 0.005);
