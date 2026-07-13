@@ -162,7 +162,16 @@ class TripoSRBackend:
                 True,
                 resolution=self.mc_resolution,
             )
-        meshes[0].export(output_path)
+        mesh = meshes[0]
+        # TripoSR emits meshes Z-up (the subject's height runs along +Z); vibe3d
+        # and conventional OBJ consumers are Y-up, so a raw import lies on its
+        # side. Rotate -90 deg about X (Z-up -> Y-up): (x, y, z) -> (x, z, -y).
+        # Verified on a real figurine: this stands the subject upright, head +Y.
+        import trimesh
+        mesh.apply_transform(
+            trimesh.transformations.rotation_matrix(-np.pi / 2.0, [1, 0, 0])
+        )
+        mesh.export(output_path)
 
 
 class JobStore:
