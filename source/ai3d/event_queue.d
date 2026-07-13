@@ -172,22 +172,67 @@ unittest {
 }
 
 unittest {
-    // LOAD-BEARING: drain() must invoke the delegate LOCK-FREE. A delegate
-    // that re-enters the queue (pushes a new event) from inside drain()
-    // must NOT deadlock — proving the mutex is released before the
-    // delegate runs. core.sync.mutex.Mutex is non-recursive, so if drain()
-    // held the lock across the delegate call, this single-threaded test
-    // would hang forever instead of completing.
+    // LOAD-BEARING, genuine two-thread proof: drain() must invoke the
+    // delegate LOCK-FREE (copy the pending events under the mutex, release
+    // it, THEN invoke the delegate over the copy).
+    //
+    // A same-thread re-entrant push() from inside the delegate can NOT
+    // distinguish "lock held" from "lock released": this repo's
+    // core.sync.mutex.Mutex is RECURSIVE (PTHREAD_MUTEX_RECURSIVE on
+    // POSIX, CRITICAL_SECTION on Windows), so a same-thread re-lock always
+    // succeeds regardless of whether drain() actually released the mutex
+    // first — an earlier version of this test asserted exactly that and
+    // passed even with a (hypothetically) buggy lock-holding drain(),
+    // proving nothing (review fix, task 0381).
+    //
+    // The only way to genuinely observe the lock being held is a SECOND
+    // thread trying to push() while the drain delegate is still running:
+    // if drain() held the mutex across the delegate call, that push()
+    // would block for the whole delegate duration; since the mutex is
+    // actually released beforehand, the push() returns almost immediately
+    // instead.
+    import core.atomic : atomicLoad, atomicStore;
+    import core.thread  : Thread;
+    import core.time    : msecs, seconds, MonoTime;
+    import std.conv     : to;
+
     auto q = new Ai3dEventQueue();
     q.push(statusEv("job1", 1, 0.1));
 
-    bool reentered;
-    q.drain((ref const Ai3dEvent e) {
-        if (!reentered) {
-            reentered = true;
-            q.push(statusEv("job2", 1, 0.2)); // would deadlock if drain held the lock here
-        }
+    shared bool delegateRunning;
+    shared bool delegateDone;
+    enum delegateSleepMs = 300;
+
+    auto drainer = new Thread({
+        q.drain((ref const Ai3dEvent e) {
+            atomicStore(delegateRunning, true);
+            Thread.sleep(delegateSleepMs.msecs);
+            atomicStore(delegateDone, true);
+        });
     });
-    assert(reentered);
-    assert(!q.empty()); // job2's event is now pending for the next drain
+    drainer.start();
+
+    // Wait for the delegate to actually start running before we try to
+    // race it.
+    auto waitDeadline = MonoTime.currTime + 2.seconds;
+    while (!atomicLoad(delegateRunning) && MonoTime.currTime < waitDeadline)
+        Thread.sleep(1.msecs);
+    assert(atomicLoad(delegateRunning), "drain()'s delegate never started");
+
+    // While the delegate is still sleeping (mid-run), push() from THIS
+    // (different) thread must return promptly.
+    const pushStart = MonoTime.currTime;
+    q.push(statusEv("job2", 1, 0.2));
+    const pushElapsedMs = (MonoTime.currTime - pushStart).total!"msecs";
+
+    assert(!atomicLoad(delegateDone),
+           "test invariant violated: the delegate finished before push() was attempted "
+           ~ "(the sleep window was too short on this host — not a lock-freedom failure)");
+    assert(pushElapsedMs < delegateSleepMs / 2,
+           "push() from another thread must return promptly while drain()'s delegate "
+           ~ "is still running — it took " ~ pushElapsedMs.to!string
+           ~ "ms, suggesting drain() holds the queue's mutex across the delegate call");
+
+    drainer.join();
+    assert(!q.empty()); // job2's event is pending for the next drain
 }

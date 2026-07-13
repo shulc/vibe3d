@@ -232,13 +232,13 @@ Ai3dStageResult stageArtifact(string baseUrl, string imagePath, int timeoutMs,
                 result.cancelled = (state == "cancelled");
                 result.code = "job_" ~ state;
                 result.message = "AI3D job did not succeed (" ~ state ~ ")";
-                issueCancelDelete(url, jobId, generation, stopRequested);
+                issueCancelDelete(url, jobId, generation);
                 return result;
             }
             if (waited >= boundedTimeoutMs) {
                 result.code = "timeout";
                 result.message = "AI3D job timed out";
-                issueCancelDelete(url, jobId, generation, stopRequested);
+                issueCancelDelete(url, jobId, generation);
                 return result;
             }
             Thread.sleep(Ai3dPollIntervalMs.msecs);
@@ -249,7 +249,7 @@ Ai3dStageResult stageArtifact(string baseUrl, string imagePath, int timeoutMs,
             result.cancelled = true;
             result.code = "cancelled";
             result.message = "cancelled while polling";
-            issueCancelDelete(url, jobId, generation, stopRequested);
+            issueCancelDelete(url, jobId, generation);
             return result;
         }
 
@@ -271,7 +271,7 @@ Ai3dStageResult stageArtifact(string baseUrl, string imagePath, int timeoutMs,
             result.cancelled = true;
             result.code = "cancelled";
             result.message = "cancelled during download";
-            issueCancelDelete(url, jobId, generation, stopRequested);
+            issueCancelDelete(url, jobId, generation);
             return result;
         }
         auto data = downloaded.data;
@@ -451,13 +451,25 @@ private BoundedJson createJob(string baseUrl, string imagePath, ref shared bool 
 /// Best-effort generation-bound cancel DELETE. Exceptions are swallowed —
 /// this runs only on a path that has already decided the result (cancelled/
 /// failed/timed out); a failed DELETE must never mask that outcome.
-private void issueCancelDelete(string baseUrl, string jobId, long generation,
-                                ref shared bool stopRequested) {
+///
+/// Deliberately does NOT wire the live `stopRequested` flag into this
+/// request's cancel callback (review fix, task 0381): on the USER-cancel
+/// path `stopRequested` is already true by the time this fires, so a live
+/// callback would make curl abort the DELETE itself
+/// (CURLE_ABORTED_BY_CALLBACK) before it ever reaches the worker — the one
+/// generation-bound cancel the DELETE exists to deliver would silently
+/// never happen on exactly the path it's for, orphaning the server-side
+/// job until its own timeout. A fresh, always-false flag means this
+/// request can only ever end via its own bounded
+/// connect/operationTimeout (<=10s, well inside the 35s join budget) —
+/// never via self-cancellation.
+private void issueCancelDelete(string baseUrl, string jobId, long generation) {
     try {
+        shared bool never = false;
         auto http = HTTP(baseUrl ~ "/v1/jobs/" ~ jobId);
         http.method = HTTP.Method.del;
         applyBoundedTimeouts(http);
-        applyCancelCallback(http, stopRequested);
+        applyCancelCallback(http, never);
         http.addRequestHeader("X-Vibe3D-AI3D-Protocol", "1");
         http.addRequestHeader("X-Vibe3D-AI3D-Expected-Generation", generation.to!string);
         auto sink = appender!(ubyte[])();

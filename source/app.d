@@ -9437,12 +9437,21 @@ void main(string[] args) {
 
                 ImGui.Separator();
                 if (ImGui.Button("Dismiss")) {
+                    // Review fix: dismissing while a job is still running
+                    // must also cancel it — otherwise the job can complete
+                    // and silently import a layer AFTER the modal is gone
+                    // (a layer appearing "from nowhere" with no visible
+                    // cause). requestCancel() is a no-op if nothing is
+                    // running.
+                    if (ai3dController.busy()) ai3dController.requestCancel();
                     ImGui.CloseCurrentPopup();
                     ai3dModalOpen = false;
                 }
                 ImGui.EndPopup();
             } else {
-                // Dismissed via ESC / [X] — same semantics as Dismiss above.
+                // Dismissed via ESC / [X] — same semantics as Dismiss above,
+                // including the cancel-while-busy guard.
+                if (ai3dController.busy()) ai3dController.requestCancel();
                 ai3dModalOpen = false;
             }
         }
