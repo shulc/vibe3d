@@ -9661,7 +9661,14 @@ void main(string[] args) {
                         p.targetQuads = remeshTargetQuads;
                         p.adaptivity  = remeshAdaptivity;
                         p.sharpEdge   = remeshSharpEdge;
-                        remeshJob.start(mesh(), p);
+                        // Task 0385: a non-empty face selection remeshes just
+                        // that region and stitches it back in (see
+                        // commands.mesh.remesh.RemeshStart, which mirrors this
+                        // same selection -> region-mask translation for the
+                        // headless/HTTP `mesh.remesh.start` path).
+                        const(bool)[] regionMask =
+                            mesh().hasAnySelectedFaces() ? mesh().selectedFaces : null;
+                        remeshJob.start(mesh(), p, regionMask);
                         if (remeshJob.state() == RemeshJob.State.failed)
                             remeshLastError = remeshJob.message();
                     }

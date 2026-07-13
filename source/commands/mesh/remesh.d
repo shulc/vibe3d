@@ -190,7 +190,15 @@ final class RemeshStart : Command {
         p.targetQuads = targetQuadsArg;
         p.adaptivity  = adaptivityArg;
         p.sharpEdge   = sharpEdgeArg;
-        job.start(*mesh, p);
+
+        // Task 0385: a non-empty face selection switches RemeshJob into
+        // region mode (remesh + boundary-pinned stitch of just the
+        // selected faces); no selection keeps the existing whole-mesh
+        // path. `hasAnySelectedFaces()` — not a raw `selectedFaces.length`
+        // check — mirrors every other mesh command's "empty selection
+        // means whole mesh" convention (see mesh.nothingSelected).
+        const(bool)[] regionMask = mesh.hasAnySelectedFaces() ? mesh.selectedFaces : null;
+        job.start(*mesh, p, regionMask);
 
         if (job.state() == RemeshJob.State.failed)
             throw new Exception("mesh.remesh.start: " ~ job.message());

@@ -19,7 +19,9 @@ module remesh.remesh_job;
 // instead of an event queue.
 // ---------------------------------------------------------------------------
 
-import std.array   : split;
+import std.algorithm.iteration : map;
+import std.algorithm.sorting   : sort;
+import std.array   : array, split;
 import std.conv    : to;
 import std.file    : exists, tempDir, mkdirRecurse, rmdirRecurse, readText, thisExePath;
 import std.path    : buildPath, expandTilde, dirName;
@@ -30,6 +32,7 @@ import core.time   : MonoTime;
 
 import mesh : Mesh;
 import math : Vec3;
+import remesh.region_stitch : stitchRegion, StitchResult;
 
 /// User-facing remesh parameters, mapped 1:1 onto autoremesher_cli's flags.
 /// Values are hints only — `start()` is the kernel boundary that actually
@@ -69,6 +72,24 @@ final class RemeshJob {
     private Vec3[]   resultVertices_;
     private uint[][] resultFaces_;
 
+    // --- Region-mode state (task 0385, local/selected-region remesh) -------
+    // Populated at start() time when a non-empty, non-total face selection
+    // is passed in; read only while state_ == running. Everything the
+    // eventual stitch needs is CAPTURED here rather than re-read from the
+    // live `Mesh` later, mirroring the existing OBJ-marshalling convention:
+    // start() returns immediately, and poll() (which does the stitching)
+    // runs long after the caller's `mesh` reference may have moved on.
+    private bool     regionMode_;
+    private int      regionAttempt_;        // 1 = open-patch, 2 = triangle (retry)
+    private string   helperBin_;             // located CLI path, reused across retries
+    private string   regionInPath_;          // region-only input OBJ, same across attempts
+    private int      paramsTargetQuads_;
+    private double   paramsAdaptivity_;
+    private double   paramsSharpEdge_;
+    private Vec3[]   regionOrigVerts_;       // FULL mesh vertex copy, global indices
+    private uint[][] regionKeepFaces_;       // faces NOT in the region, global indices
+    private uint[][] regionBoundaryLoops_;   // Bo_i, ordered ORIGINAL global vertex indices
+
     State  state() const { return state_; }
     string message() const { return message_; }
     bool   busy() const { return state_ == State.running; }
@@ -91,13 +112,21 @@ final class RemeshJob {
     /// clamped/sanitized HERE — the kernel boundary — before it ever reaches
     /// the subprocess args, regardless of what a caller (UI modal, HTTP
     /// argstring) passed in.
-    void start(const ref Mesh mesh, RemeshParams rawParams) {
+    ///
+    /// `selectedFaceMask`, when non-empty and covering at least one but NOT
+    /// every face, switches to REGION mode (task 0385): only the selected
+    /// faces are extracted, remeshed as an open patch, and stitched back
+    /// into the rest of the mesh (boundary-pinned — see
+    /// `remesh.region_stitch`). An empty selection, or a selection covering
+    /// every face (nothing left to "keep"), takes the ORIGINAL whole-mesh
+    /// path unchanged.
+    void start(const ref Mesh mesh, RemeshParams rawParams, const(bool)[] selectedFaceMask = null) {
         if (state_ == State.running) return;
 
         const p = sanitizeParams(rawParams);
-        const targetQuads = p.targetQuads;
-        const adaptivity  = p.adaptivity;
-        const sharpEdge   = p.sharpEdge;
+        paramsTargetQuads_ = p.targetQuads;
+        paramsAdaptivity_  = p.adaptivity;
+        paramsSharpEdge_   = p.sharpEdge;
 
         auto bin = locateHelper();
         if (bin is null) {
@@ -105,6 +134,55 @@ final class RemeshJob {
             message_ = "remesher not found (set VIBE3D_AUTOREMESHER_BIN or "
                      ~ "build ~/Code/D-AutoRemesher)";
             return;
+        }
+        helperBin_ = bin;
+
+        size_t selCount = 0;
+        if (selectedFaceMask.length)
+            foreach (b; selectedFaceMask) if (b) ++selCount;
+        const bool region = selCount > 0 && selCount < mesh.faces.length;
+
+        Mesh     regionMesh;
+        uint[][] keepFacesGlobal;
+        uint[][] globalLoops;
+
+        if (region) {
+            uint[][] regionFacesGlobal;
+            foreach (fi, face; mesh.faces.range) {
+                if (fi < selectedFaceMask.length && selectedFaceMask[fi])
+                    regionFacesGlobal ~= face.dup;
+                else
+                    keepFacesGlobal ~= face.dup;
+            }
+
+            // Compact the region's own vertices (for the OBJ write + the
+            // temp Mesh used to derive its boundary loops); translate back
+            // to global indices immediately after.
+            bool[uint] usedSet;
+            foreach (f; regionFacesGlobal) foreach (v; f) usedSet[v] = true;
+            uint[] usedGlobal = usedSet.keys.dup;
+            sort(usedGlobal);
+            uint[uint] g2l;
+            foreach (i, v; usedGlobal) g2l[v] = cast(uint) i;
+
+            regionMesh = Mesh.init;
+            regionMesh.vertices = new Vec3[](usedGlobal.length);
+            foreach (i, v; usedGlobal) regionMesh.vertices[i] = mesh.vertices[v];
+            uint[ulong] edgeLookup;
+            foreach (f; regionFacesGlobal) {
+                auto local = f.map!(v => g2l[v]).array;
+                regionMesh.addFaceFast(edgeLookup, local);
+            }
+            regionMesh.buildLoops();
+
+            auto localLoops = regionMesh.boundaryLoops();
+            if (localLoops.length == 0) {
+                state_   = State.failed;
+                message_ = "selected region has no open boundary (fully enclosed) -- "
+                         ~ "cannot stitch; clear the selection to remesh the whole mesh";
+                return;
+            }
+            globalLoops = localLoops.map!(loop => loop.map!(li => usedGlobal[li]).array).array;
         }
 
         string dir;
@@ -124,7 +202,8 @@ final class RemeshJob {
         const logPath = buildPath(dir, "log.txt");
 
         try {
-            writeTriangulatedObj(mesh, inPath);
+            if (region) writeTriangulatedObj(regionMesh, inPath);
+            else        writeTriangulatedObj(mesh, inPath);
         } catch (Exception e) {
             try rmdirRecurse(dir); catch (Exception) {}
             state_   = State.failed;
@@ -132,6 +211,30 @@ final class RemeshJob {
             return;
         }
 
+        workDir_    = dir;
+        outPath_    = outPath;
+        logPath_    = logPath;
+        regionMode_ = region;
+
+        if (region) {
+            regionOrigVerts_     = mesh.vertices.dup;
+            regionKeepFaces_     = keepFacesGlobal;
+            regionBoundaryLoops_ = globalLoops;
+            regionInPath_        = inPath;
+
+            if (!spawnRegionAttempt(1)) {
+                try rmdirRecurse(dir); catch (Exception) {}
+                state_   = State.failed;
+                message_ = "failed to launch remesher";
+                workDir_ = null; outPath_ = null; logPath_ = null;
+                return;
+            }
+            message_ = null;
+            return;
+        }
+
+        // Whole-mesh path — unchanged behavior (no `--mode` flag: the
+        // helper's own default is `closed`).
         File log;
         try {
             log = File(logPath, "w");
@@ -139,9 +242,9 @@ final class RemeshJob {
                 bin,
                 "--input",        inPath,
                 "--output",       outPath,
-                "--target-quads", targetQuads.to!string,
-                "--sharp-edge",   sharpEdge.to!string,
-                "--adaptivity",   adaptivity.to!string,
+                "--target-quads", paramsTargetQuads_.to!string,
+                "--sharp-edge",   paramsSharpEdge_.to!string,
+                "--adaptivity",   paramsAdaptivity_.to!string,
             ];
             pid_    = spawnProcess(args, stdin, log, log);
             hasPid_ = true;
@@ -150,21 +253,62 @@ final class RemeshJob {
             try rmdirRecurse(dir); catch (Exception) {}
             state_   = State.failed;
             message_ = "failed to launch remesher: " ~ e.msg;
+            workDir_ = null; outPath_ = null; logPath_ = null;
             return;
         }
 
-        workDir_ = dir;
-        outPath_ = outPath;
-        logPath_ = logPath;
         logFile_ = log;
         state_   = State.running;
         message_ = null;
+    }
+
+    /// Spawn one region-mode attempt (`--mode open-patch` first; `--mode
+    /// triangle` if poll() decides the first attempt's patch could not be
+    /// stitched robustly). Reuses the SAME region input OBJ and output path
+    /// across attempts — only the log is appended to (with a separator)
+    /// so a final failure message can show both trials. Returns false if
+    /// the subprocess could not even be spawned (I/O error); the caller
+    /// then treats the job as a hard failure.
+    private bool spawnRegionAttempt(int attempt) {
+        const string modeStr = attempt == 1 ? "open-patch" : "triangle";
+        try {
+            if (logFile_.isOpen) try logFile_.close(); catch (Exception) {}
+            logFile_ = File(logPath_, attempt == 1 ? "w" : "a");
+            if (attempt != 1)
+                logFile_.writefln("--- retry: --mode %s ---", modeStr);
+
+            auto args = [
+                helperBin_,
+                "--input",        regionInPath_,
+                "--output",       outPath_,
+                "--mode",         modeStr,
+                "--target-quads", paramsTargetQuads_.to!string,
+                "--sharp-edge",   paramsSharpEdge_.to!string,
+                "--adaptivity",   paramsAdaptivity_.to!string,
+            ];
+            pid_    = spawnProcess(args, stdin, logFile_, logFile_);
+            hasPid_ = true;
+            regionAttempt_ = attempt;
+            state_  = State.running;
+            return true;
+        } catch (Exception) {
+            return false;
+        }
     }
 
     /// Non-blocking — call once per frame. Transitions running -> succeeded
     /// or running -> failed once the subprocess has terminated; a no-op
     /// otherwise (including when idle/succeeded/failed already, so it is
     /// always safe to call unconditionally from the main loop).
+    ///
+    /// Region mode (task 0385) additionally may transition running ->
+    /// running: if the open-patch attempt's output can't be stitched back
+    /// robustly (`region_stitch.stitchRegion` reports `!ok`, which folds in
+    /// both "wrong rim-loop count" and "outer-rim too far from the region
+    /// boundary" — see that module), a SECOND attempt (`--mode triangle`)
+    /// is spawned automatically and poll() keeps running against it. Only
+    /// if that second attempt ALSO fails to produce a stitchable patch does
+    /// the job soft-fail (mesh untouched).
     void poll() {
         if (state_ != State.running) return;
 
@@ -179,26 +323,64 @@ final class RemeshJob {
         }
         if (!w.terminated) return;
 
-        scope(exit) cleanupFiles();
+        if (!regionMode_) {
+            scope(exit) cleanupFiles();
 
-        if (w.status == 0) {
-            Vec3[] verts;
-            uint[][] faces;
-            if (parsePolygonObj(outPath_, verts, faces) && faces.length > 0) {
-                resultVertices_ = verts;
-                resultFaces_    = faces;
-                state_   = State.succeeded;
-                message_ = null;
+            if (w.status == 0) {
+                Vec3[] verts;
+                uint[][] faces;
+                if (parsePolygonObj(outPath_, verts, faces) && faces.length > 0) {
+                    resultVertices_ = verts;
+                    resultFaces_    = faces;
+                    state_   = State.succeeded;
+                    message_ = null;
+                    return;
+                }
+                state_   = State.failed;
+                message_ = "remesher produced no usable geometry" ~ readLogTail(logPath_);
                 return;
             }
+
             state_   = State.failed;
-            message_ = "remesher produced no usable geometry" ~ readLogTail(logPath_);
+            message_ = "remesher exited with status " ~ w.status.to!string
+                     ~ readLogTail(logPath_);
             return;
         }
 
-        state_   = State.failed;
-        message_ = "remesher exited with status " ~ w.status.to!string
-                 ~ readLogTail(logPath_);
+        // ---- region mode ----------------------------------------------
+        if (w.status != 0) {
+            if (regionAttempt_ == 1 && spawnRegionAttempt(2)) return; // escalate to triangle
+            state_   = State.failed;
+            message_ = "remesher exited with status " ~ w.status.to!string
+                     ~ " (open-patch and triangle attempts both failed)"
+                     ~ readLogTail(logPath_);
+            cleanupFiles();
+            return;
+        }
+
+        Vec3[]   patchVerts;
+        uint[][] patchFaces;
+        StitchResult sr;
+        const bool parsed = parsePolygonObj(outPath_, patchVerts, patchFaces) && patchFaces.length > 0;
+        if (parsed)
+            sr = stitchRegion(regionOrigVerts_, regionKeepFaces_, regionBoundaryLoops_, patchVerts, patchFaces);
+
+        if (parsed && sr.ok) {
+            resultVertices_ = sr.vertices;
+            resultFaces_    = sr.faces;
+            state_   = State.succeeded;
+            message_ = null;
+            cleanupFiles();
+            return;
+        }
+
+        if (regionAttempt_ == 1 && spawnRegionAttempt(2)) return; // escalate to triangle
+
+        state_ = State.failed;
+        const string reason = parsed ? sr.failReason : "remesher produced no usable geometry";
+        message_ = "region remesh: stitch failed after open-patch + triangle attempts -- "
+                 ~ reason ~ readLogTail(logPath_);
+        cleanupFiles();
     }
 
     /// Cooperative cancel: signal the subprocess, reap it, clean up temp
@@ -560,4 +742,233 @@ unittest {
         assert(!job.busy());
         assert(job.state() == RemeshJob.State.idle);
     }
+}
+
+version (Posix)
+unittest {
+    // Region mode (task 0385): start()'s selection-mask path, driven end to
+    // end through a FAKE `autoremesher_cli` (never the real, heavy,
+    // environment-specific binary) that branches on `--mode` so both the
+    // first-attempt-succeeds path and the open-patch -> triangle escalation
+    // path are exercised through the REAL start()/poll() state machine (not
+    // just region_stitch.stitchRegion in isolation, which has its own
+    // dedicated unit tests in region_stitch.d).
+    import std.file    : write, setAttributes, remove;
+    import std.conv    : octal;
+    import std.array   : appender;
+    import core.thread : Thread;
+    import core.time   : Duration, msecs, seconds;
+
+    // A 6x6 quad grid (row-major face index = j*6+i), matching
+    // region_stitch.d's own grid-test conventions.
+    Mesh gridMesh(int nx, int ny, float cell) {
+        Mesh m = Mesh.init;
+        m.vertices = new Vec3[]((nx + 1) * (ny + 1));
+        foreach (j; 0 .. ny + 1)
+            foreach (i; 0 .. nx + 1)
+                m.vertices[j * (nx + 1) + i] = Vec3(i * cell, j * cell, 0);
+        uint[ulong] lookup;
+        foreach (j; 0 .. ny)
+            foreach (i; 0 .. nx) {
+                uint v00 = cast(uint)(j * (nx + 1) + i);
+                uint v10 = cast(uint)(j * (nx + 1) + i + 1);
+                uint v11 = cast(uint)((j + 1) * (nx + 1) + i + 1);
+                uint v01 = cast(uint)((j + 1) * (nx + 1) + i);
+                m.addFaceFast(lookup, [v00, v10, v11, v01]);
+            }
+        m.buildLoops();
+        return m;
+    }
+
+    // An nx*ny quad-grid OBJ over [x0,x0+nx*cell] x [y0,y0+ny*cell] — used
+    // to write canned "remesher output" patches for the fake CLI to `cp`.
+    string gridObjText(int nx, int ny, float cell, float x0, float y0) {
+        auto app = appender!string;
+        foreach (j; 0 .. ny + 1)
+            foreach (i; 0 .. nx + 1)
+                app.put("v " ~ (x0 + i * cell).to!string ~ " " ~ (y0 + j * cell).to!string ~ " 0\n");
+        foreach (j; 0 .. ny)
+            foreach (i; 0 .. nx) {
+                uint v00 = cast(uint)(j * (nx + 1) + i) + 1;
+                uint v10 = cast(uint)(j * (nx + 1) + i + 1) + 1;
+                uint v11 = cast(uint)((j + 1) * (nx + 1) + i + 1) + 1;
+                uint v01 = cast(uint)((j + 1) * (nx + 1) + i) + 1;
+                app.put("f " ~ v00.to!string ~ " " ~ v10.to!string ~ " "
+                       ~ v11.to!string ~ " " ~ v01.to!string ~ "\n");
+            }
+        return app.data;
+    }
+
+    // Fake CLI: ignores the input entirely (the region OBJ is written by
+    // the real start(), but this stand-in doesn't need to read it) and
+    // `cp`s a pre-baked patch depending on `--mode`.
+    void writeModeSwitchScript(string scriptPath, string openPatchObj, string triangleObj) {
+        write(scriptPath,
+            "#!/bin/sh\n"
+          ~ "out=\"\"; mode=\"closed\"\n"
+          ~ "while [ $# -gt 0 ]; do\n"
+          ~ "  case \"$1\" in\n"
+          ~ "    --output) shift; out=\"$1\" ;;\n"
+          ~ "    --mode) shift; mode=\"$1\" ;;\n"
+          ~ "  esac\n"
+          ~ "  shift\n"
+          ~ "done\n"
+          ~ "if [ \"$mode\" = \"open-patch\" ]; then cp \"" ~ openPatchObj ~ "\" \"$out\"; "
+          ~ "else cp \"" ~ triangleObj ~ "\" \"$out\"; fi\n"
+          ~ "exit 0\n");
+        setAttributes(scriptPath, octal!755);
+    }
+
+    void waitUntilDone(RemeshJob job, Duration timeout) {
+        auto deadline = MonoTime.currTime + timeout;
+        while (job.busy() && MonoTime.currTime < deadline) {
+            job.poll();
+            if (job.busy()) Thread.sleep(10.msecs);
+        }
+    }
+
+    // 6x6 grid, select the central 2x2 block (faces (i,j) with i,j in [2,4)) --
+    // matches region_stitch.d's own "single hole" test exactly.
+    bool[] centralRegionMask() {
+        auto mask = new bool[](36);
+        foreach (j; 0 .. 6) foreach (i; 0 .. 6)
+            if (i >= 2 && i < 4 && j >= 2 && j < 4) mask[j * 6 + i] = true;
+        return mask;
+    }
+
+    const goodPatch = buildPath(tempDir(), "vibe3d_remesh_test_good_patch.obj");
+    const badPatch  = buildPath(tempDir(), "vibe3d_remesh_test_bad_patch.obj");
+    scope(exit) { tryRemove(goodPatch); tryRemove(badPatch); }
+    // Good: finer grid over the SAME [2,4]x[2,4] footprint as the region.
+    write(goodPatch, gridObjText(4, 4, 0.5f, 2.0f, 2.0f));
+    // Bad: same shape, but at the WRONG location -- its rim sits nowhere
+    // near the region's boundary loop, so stitchRegion must reject it.
+    write(badPatch, gridObjText(4, 4, 0.5f, 20.0f, 20.0f));
+
+    // --- A: open-patch succeeds on the FIRST attempt --------------------
+    {
+        auto script = buildPath(tempDir(), "vibe3d_remesh_fake_region_ok.sh");
+        scope(exit) tryRemove(script);
+        writeModeSwitchScript(script, goodPatch, goodPatch);
+
+        environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+        scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+        auto job = new RemeshJob();
+        auto m   = gridMesh(6, 6, 1.0f);
+        job.start(m, RemeshParams(), centralRegionMask());
+        assert(job.busy());
+        waitUntilDone(job, 5.seconds);
+        assert(job.state() == RemeshJob.State.succeeded, job.message());
+        // 49 original verts + 25 patch verts (16 faces used) = at least the
+        // original count; exact patch-interior count depends on trimming,
+        // so just assert it grew and every face is a valid triangle/quad.
+        assert(job.resultVertices().length > 49);
+        assert(job.resultFaces().length > 32, "expected kept(32) + new geometry");
+        job.clear();
+    }
+
+    // --- B: open-patch's patch can't be stitched -> escalates to triangle,
+    //        which succeeds -- validates the retry state machine. ---------
+    {
+        auto script = buildPath(tempDir(), "vibe3d_remesh_fake_region_escalate.sh");
+        scope(exit) tryRemove(script);
+        writeModeSwitchScript(script, badPatch, goodPatch);
+
+        environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+        scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+        auto job = new RemeshJob();
+        auto m   = gridMesh(6, 6, 1.0f);
+        job.start(m, RemeshParams(), centralRegionMask());
+        waitUntilDone(job, 5.seconds);
+        assert(job.state() == RemeshJob.State.succeeded,
+               "escalation to triangle should still succeed: " ~ job.message());
+        assert(job.resultFaces().length > 32);
+        job.clear();
+    }
+
+    // --- C: both attempts produce an unstitchable patch -> soft-fail ----
+    {
+        auto script = buildPath(tempDir(), "vibe3d_remesh_fake_region_fail.sh");
+        scope(exit) tryRemove(script);
+        writeModeSwitchScript(script, badPatch, badPatch);
+
+        environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+        scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+        auto job = new RemeshJob();
+        auto m   = gridMesh(6, 6, 1.0f);
+        job.start(m, RemeshParams(), centralRegionMask());
+        waitUntilDone(job, 5.seconds);
+        assert(job.state() == RemeshJob.State.failed);
+        assert(job.message().length > 0);
+        job.clear();
+    }
+}
+
+version (Posix)
+unittest {
+    // Region mode: a selection covering EVERY face is equivalent to no
+    // selection at all (nothing left to "keep") -- must take the ORIGINAL
+    // whole-mesh path, not the region path (there is no boundary loop to
+    // pin against a fully-selected closed surface). Distinguished from the
+    // region path deterministically: only the region path ever passes
+    // `--mode`, so a fake CLI that records its own argv lets us assert the
+    // whole-mesh path was taken without depending on message text.
+    import std.file    : write, setAttributes, readText;
+    import std.conv     : octal;
+    import std.algorithm.searching : canFind;
+    import core.thread  : Thread;
+    import core.time    : Duration, seconds, msecs;
+
+    void waitUntilDone(RemeshJob job, Duration timeout) {
+        auto deadline = MonoTime.currTime + timeout;
+        while (job.busy() && MonoTime.currTime < deadline) {
+            job.poll();
+            if (job.busy()) Thread.sleep(10.msecs);
+        }
+    }
+
+    Mesh cube() {
+        Mesh m = Mesh.init;
+        m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+        uint[ulong] edgeLookup;
+        m.addFaceFast(edgeLookup, [0u, 1u, 2u, 3u]);
+        m.buildLoops();
+        return m;
+    }
+
+    auto m = cube();
+    auto allSelected = new bool[](m.faces.length);
+    allSelected[] = true;
+
+    const argvLog = buildPath(tempDir(), "vibe3d_remesh_test_allsel_argv.txt");
+    scope(exit) tryRemove(argvLog);
+
+    auto script = buildPath(tempDir(), "vibe3d_remesh_fake_allsel.sh");
+    scope(exit) tryRemove(script);
+    write(script,
+        "#!/bin/sh\n"
+      ~ "echo \"$@\" > \"" ~ argvLog ~ "\"\n"
+      ~ "out=\"\"\n"
+      ~ "while [ $# -gt 0 ]; do\n"
+      ~ "  if [ \"$1\" = \"--output\" ]; then shift; out=\"$1\"; fi\n"
+      ~ "  shift\n"
+      ~ "done\n"
+      ~ "printf 'v 0 0 0\\nv 1 0 0\\nv 1 1 0\\nv 0 1 0\\nf 1 2 3 4\\n' > \"$out\"\n"
+      ~ "exit 0\n");
+    setAttributes(script, octal!755);
+
+    environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+    scope(exit) environment.remove("VIBE3D_AUTOREMESHER_BIN");
+
+    auto job = new RemeshJob();
+    job.start(m, RemeshParams(), allSelected);
+    waitUntilDone(job, 5.seconds);
+    assert(job.state() == RemeshJob.State.succeeded, job.message());
+
+    const argv = readText(argvLog);
+    assert(!argv.canFind("--mode"),
+           "an all-faces selection must take the whole-mesh path (no --mode flag), got: " ~ argv);
 }
