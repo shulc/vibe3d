@@ -243,6 +243,9 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     aiModelAdapterMinConfidence;
 version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
+import ai3d.job_controller       : Ai3dJobController;
+import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+import commands.ai3d.import_result : Ai3dImportResult;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
@@ -1215,6 +1218,19 @@ void main(string[] args) {
             httpServer.stop();
         }
     }
+
+    // AI3D async job controller (task 0381, doc/ai3d_ui_plan.md). Owns the
+    // dedicated worker thread(s) that run std.net.curl transfers
+    // (ai3d.stage_artifact); constructed with NO Document/Mesh/GpuMesh/View/
+    // ImGui/history reference (Risk 3) — it is structurally incapable of
+    // mutating the scene. The only channel out is the immutable Ai3dEvent
+    // queue, drained once per frame below (onAi3dEvent, near runCommand) and
+    // is the SOLE path that ever dispatches a document mutation
+    // (ai3d.importResult, via the ordinary undoable runCommand path).
+    // Phase 4 replaces this bare stop() with the full join-then-_exit(0)
+    // shutdown hardening (Risk 4c).
+    auto ai3dController = new Ai3dJobController();
+    scope(exit) ai3dController.stop();
 
     EventLogger evLog;
     version (ReleaseBuild) {
@@ -2394,6 +2410,28 @@ void main(string[] args) {
     // fields. Any Command whose params() returns non-empty automatically
     // gets a dialog — no further app.d changes needed for new commands.
     auto argsDialog    = new ArgsDialog();
+
+    // AI3D (task 0381) modal snapshot — written ONLY by onAi3dEvent (below,
+    // near runCommand) from drained immutable Ai3dEvent copies. The Phase 3
+    // modal reads this to render health/progress/error without ever
+    // touching the controller or its queue directly.
+    static struct Ai3dModalState {
+        bool   healthChecked;
+        bool   healthOk;
+        int    healthProtocol;
+        string healthBackend;
+        bool   healthObjCapable;
+        string healthMessage;
+
+        string jobId;
+        string state;    // ""|"submitted"|"queued"|"running"|"succeeded"|"failed"|"cancelled"
+        string stage;
+        double progress = 0;
+        string errorCode;
+        string errorMessage;
+    }
+    Ai3dModalState ai3dModal;
+
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
     auto aiState       = new EditorAiState();
@@ -3231,6 +3269,22 @@ void main(string[] args) {
             new Ai3dGenerate(&mesh(), cameraView, editMode, &document,
                              &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                              onActiveLayerChanged);
+
+        // ai3d.generate.start / ai3d.generate.cancel — test-only hooks
+        // (task 0381 Phase 2, mirrors tool.beginSession/tool.panelEdit)
+        // that drive the app-owned Ai3dJobController directly. There is no
+        // production HTTP path to the async controller until the Phase 3
+        // modal exists (a live UI picker + Generate/Cancel button click),
+        // so automated tests need a bare starter/canceller to exercise the
+        // per-frame drain + ai3d.importResult wiring end-to-end against the
+        // real vibe3d --test process. Gated on g_testMode; unreachable in a
+        // normal build/run.
+        import commands.ai3d.generate_test_hooks : Ai3dGenerateStartTestCommand,
+            Ai3dGenerateCancelTestCommand;
+        reg.commandFactories["ai3d.generate.start"] = () => cast(Command)
+            new Ai3dGenerateStartTestCommand(&mesh(), cameraView, editMode, ai3dController);
+        reg.commandFactories["ai3d.generate.cancel"] = () => cast(Command)
+            new Ai3dGenerateCancelTestCommand(&mesh(), cameraView, editMode, ai3dController);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
@@ -6089,6 +6143,69 @@ void main(string[] args) {
         applyOrRefire(cmd, RecordMode.Record, null);
     }
 
+    // AI3D (task 0381) main-thread drain handler — the ONLY place the
+    // controller's events touch app state. Reads immutable Ai3dEvent copies
+    // (drained lock-free, ai3d.event_queue) and updates the modal snapshot;
+    // the ONLY document mutation is the ai3d.importResult dispatch below,
+    // run through the ordinary undoable runCommand path (one Model-undo
+    // entry, layer identity preserved for undo/redo — commands/ai3d/
+    // import_result.d). Never constructs/touches an HTTP/curl handle
+    // itself — that only ever happens on the controller's worker thread.
+    void onAi3dEvent(ref const Ai3dEvent ev) {
+        final switch (ev.kind) {
+            case Ai3dEventKind.health:
+                ai3dModal.healthChecked   = true;
+                ai3dModal.healthOk        = ev.healthOk;
+                ai3dModal.healthProtocol  = ev.healthProtocol;
+                ai3dModal.healthBackend   = ev.healthBackend;
+                ai3dModal.healthObjCapable = ev.healthObjCapable;
+                ai3dModal.healthMessage   = ev.message;
+                break;
+            case Ai3dEventKind.submitted:
+                ai3dModal.jobId       = ev.jobId;
+                ai3dModal.state       = "submitted";
+                ai3dModal.stage       = "submitted";
+                ai3dModal.progress    = 0.0;
+                ai3dModal.errorCode    = null;
+                ai3dModal.errorMessage = null;
+                break;
+            case Ai3dEventKind.status:
+                ai3dModal.jobId    = ev.jobId;
+                ai3dModal.state    = ev.state;
+                ai3dModal.stage    = ev.stage;
+                ai3dModal.progress = ev.progress;
+                break;
+            case Ai3dEventKind.downloaded:
+                // A cancelled/late artifact is never imported: stageArtifact()
+                // (ai3d.stage_artifact) only returns ok=true (which is the
+                // sole condition job_controller.d posts `downloaded` under)
+                // when cancellation was NEVER observed during the run — a
+                // cancelled job instead terminates via the `terminal` case
+                // below with state=="cancelled" and no `downloaded` event at
+                // all (verified by test_ai3d_controller.d's cancel-while-
+                // queued case: `!sawDownloaded`). No extra app-side guard
+                // needed here.
+                const prefixLen = ev.jobId.length < 8 ? ev.jobId.length : 8;
+                auto imp = cast(Ai3dImportResult)
+                    reg.commandFactories["ai3d.importResult"]();
+                imp.setInput(ev.objPath, "AI 3D " ~ ev.jobId[0 .. prefixLen]);
+                runCommand(imp);
+                break;
+            case Ai3dEventKind.terminal:
+                ai3dModal.state = ev.state;
+                if (ev.code.length) {
+                    ai3dModal.errorCode    = ev.code;
+                    ai3dModal.errorMessage = ev.message;
+                }
+                break;
+            case Ai3dEventKind.transportError:
+                ai3dModal.state       = "failed";
+                ai3dModal.errorCode    = ev.code;
+                ai3dModal.errorMessage = ev.message;
+                break;
+        }
+    }
+
     // Intercept commands that surface an args dialog (the popup that
     // appears when invoking a command from a menu/button without
     // explicit arguments). Returns true if the dialog has been opened — the
@@ -8877,6 +8994,15 @@ void main(string[] args) {
                 httpServer.tickEventPlayer();
                 httpServer.tickAll();
             }
+
+            // AI3D async controller drain (task 0381 Phase 2). Deliberately
+            // OUTSIDE the `httpServer.running` guard above — the controller
+            // (and the Phase 3 modal that drives it) must work in a normal
+            // editor run with HTTP off, not only under --test/the HTTP
+            // server. onAi3dEvent (near runCommand) is the only consumer;
+            // drain() itself never blocks (copy-under-mutex, lock-free
+            // delegate invoke — ai3d.event_queue).
+            ai3dController.drain(&onAi3dEvent);
 
             // ---- Events ----
             while (SDL_PollEvent(&event)) {
