@@ -20,6 +20,7 @@ import mesh;
 import params : Param;
 import view;
 import viewcache;
+import log : logWarn;
 
 final class Ai3dGenerate : Command {
     private Document* doc;
@@ -69,7 +70,9 @@ final class Ai3dGenerate : Command {
             importer = new Ai3dImportResult(mesh, view, editMode, doc, gpu, vc, ec, fc, onSwitch);
             importer.setInput(artifactPath, nameArg);
             return importer.apply();
-        } catch (Exception) {
+        } catch (Exception e) {
+            try logWarn("ai3d", "generate failed: " ~ e.msg);
+            catch (Exception) {}
             return false;
         }
     }
@@ -97,6 +100,8 @@ private string normalizeLocalWorkerUrl(string raw) {
 private string requestArtifact(string baseUrl, string imagePath, int timeoutMs) {
     healthCheck(baseUrl);
     auto created = createJob(baseUrl, imagePath);
+    if ("jobId" !in created.object)
+        throw new Exception("AI3D create failed: " ~ created.toString());
     const jobId = created["jobId"].str;
     const generation = created["generation"].integer.to!long;
 
@@ -162,10 +167,13 @@ private JSONValue createJob(string baseUrl, string imagePath) {
     appendAscii(body, `{"protocol":1,"output":"obj","maxFaces":50000}`);
     appendAscii(body, "\r\n--" ~ boundary ~ "--\r\n");
 
-    return postBytesJson(baseUrl ~ "/v1/jobs", body.data, [
+    return postBytesJson(
+        baseUrl ~ "/v1/jobs",
+        body.data,
+        "multipart/form-data; boundary=" ~ boundary,
+        [
         Header("X-Vibe3D-AI3D-Protocol", "1"),
-        Header("Content-Type", "multipart/form-data; boundary=" ~ boundary),
-    ]);
+        ]);
 }
 
 private string imageMediaType(string path) {
@@ -186,12 +194,13 @@ private JSONValue getJson(string url, Header[] headers) {
     return parseJSON(cast(string) data);
 }
 
-private JSONValue postBytesJson(string url, const(ubyte)[] body, Header[] headers) {
+private JSONValue postBytesJson(string url, const(ubyte)[] body, string contentType,
+                                Header[] headers) {
     auto http = HTTP(url);
     http.method = HTTP.Method.post;
     foreach (h; headers)
         http.addRequestHeader(h.name, h.value);
-    http.postData = cast(string) body;
+    http.setPostData(body, contentType);
     auto sink = appender!(ubyte[])();
     http.onReceive = (ubyte[] data) {
         sink.put(data);
