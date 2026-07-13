@@ -404,7 +404,7 @@ bool isSourceBackedTest(string path) {
         "math", "mesh", "tools.", "toolpipe.", "falloff", "symmetry",
         "view", "viewcache", "handler", "shader", "editmode", "command",
         "snapshot", "forms", "params", "argstring", "shortcuts", "ai.",
-        "buttonset",
+        "buttonset", "ai3d.", "document", "commands.ai3d.",
     ];
     foreach (line; txt.splitLines) {
         auto s = line.strip;
