@@ -204,11 +204,16 @@ class WorkplaneAlignToSelectionCommand : Command, Operator {
         // faces. This is the bread-and-butter "align to that face" UX.
         if (editMode == EditMode.Polygons) {
             if (mesh.faces.length == 0) return false;
+            // Perf (task 0388): `mesh.selectedFaces` is a @property that
+            // rebuilds a whole `bool[]` per read — both the `.length` guard
+            // and the index below allocated one every iteration. `fi` is
+            // monotonically increasing, so once it runs past
+            // `faceMarks.length` every later `isFaceSelected` call is also
+            // out-of-range and returns false — same net effect as the old
+            // `break`, without per-iteration allocation.
             uint[] selFaces;
-            foreach (fi; 0 .. mesh.faces.length) {
-                if (fi >= mesh.selectedFaces.length) break;
-                if (mesh.selectedFaces[fi]) selFaces ~= cast(uint)fi;
-            }
+            foreach (fi; 0 .. mesh.faces.length)
+                if (mesh.isFaceSelected(fi)) selFaces ~= cast(uint)fi;
             if (selFaces.length == 0) return false;
 
             Vec3 nAccum = Vec3(0, 0, 0);

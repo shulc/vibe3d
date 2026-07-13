@@ -90,18 +90,22 @@ class SelectLoop : Command {
             return int.max;
         }
 
+        // Perf (task 0388): `mesh.selectedFaces` is a @property that rebuilds
+        // a whole `bool[]` per read — indexing it inside this doubly-nested
+        // loop (faces × facesAroundEdge) was O(mesh²) / worse. Replaced with
+        // the non-allocating, bounds-checked `isFaceSelected(i)` scalar
+        // accessor (identical to the old `i >= length || !arr[i]` / `i <
+        // length && arr[i]` guards).
         struct Pair { int a, b; ulong key; }
         Pair[] pairs;
         foreach (fi, face; mesh.faces) {
-            if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
+            if (!mesh.isFaceSelected(fi)) continue;
             foreach (e; mesh.faceEdges(cast(uint)fi)) {
                 uint ei = mesh.edgeIndex(e.a, e.b);
                 if (ei == ~0u) continue;
                 ulong key = edgeKey(e.a, e.b);
                 foreach (adjFi; mesh.facesAroundEdge(ei)) {
-                    if (adjFi > fi &&
-                        adjFi < mesh.selectedFaces.length &&
-                        mesh.selectedFaces[adjFi])
+                    if (adjFi > fi && mesh.isFaceSelected(adjFi))
                         pairs ~= Pair(cast(int)fi, cast(int)adjFi, key);
                 }
             }

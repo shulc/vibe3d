@@ -116,18 +116,23 @@ private:
         if (!hasFalloff_ && dist_ <= 1e-9f) return false;
 
         // Build moving set (same mask as mesh.jitter).
+        //
+        // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
+        // whole `bool[]` per read — indexing it inside these loops was
+        // O(mesh²). Iterate the lock-step `*Marks.length` and test via the
+        // non-allocating `isXSelected(i)` scalar accessor instead.
         bool[] vmask = new bool[](mesh.vertices.length);
         bool any = false;
         if (editMode == EditMode.Vertices) {
-            foreach (i; 0 .. mesh.selectedVertices.length)
-                if (mesh.selectedVertices[i]) { vmask[i] = true; any = true; }
+            foreach (i; 0 .. mesh.vertexMarks.length)
+                if (mesh.isVertexSelected(i)) { vmask[i] = true; any = true; }
         } else if (editMode == EditMode.Edges) {
-            foreach (i; 0 .. mesh.selectedEdges.length)
-                if (mesh.selectedEdges[i])
+            foreach (i; 0 .. mesh.edgeMarks.length)
+                if (mesh.isEdgeSelected(i))
                     foreach (vi; mesh.edges[i]) { vmask[vi] = true; any = true; }
         } else {
-            foreach (i; 0 .. mesh.selectedFaces.length)
-                if (mesh.selectedFaces[i])
+            foreach (i; 0 .. mesh.faceMarks.length)
+                if (mesh.isFaceSelected(i))
                     foreach (vi; mesh.faces[i]) { vmask[vi] = true; any = true; }
         }
         if (!any)

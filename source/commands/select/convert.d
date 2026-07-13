@@ -88,16 +88,16 @@ private:
     // vertex → edge: select edges where both endpoints are selected.
     // -----------------------------------------------------------------------
     void vertToEdge() {
+        // Perf (task 0388): `mesh.selectedVertices` is a @property that
+        // rebuilds a whole `bool[]` per read — indexing it twice per edge
+        // inside this loop was O(edges * vertices). `isVertexSelected(i)`
+        // is the non-allocating, bounds-checked scalar equivalent of
+        // `i < selectedVertices.length && selectedVertices[i]`.
         bool[] newSel = new bool[](mesh.edges.length);
         foreach (ei, e; mesh.edges) {
             uint a = e[0], b = e[1];
-            if (a < mesh.selectedVertices.length &&
-                b < mesh.selectedVertices.length &&
-                mesh.selectedVertices[a] &&
-                mesh.selectedVertices[b])
-            {
+            if (mesh.isVertexSelected(a) && mesh.isVertexSelected(b))
                 newSel[ei] = true;
-            }
         }
         mesh.clearVertexSelection();
         mesh.clearEdgeSelection();
@@ -109,13 +109,14 @@ private:
     // vertex → polygon: select polys where ALL vertices are selected.
     // -----------------------------------------------------------------------
     void vertToPoly() {
+        // Perf (task 0388): see vertToEdge — isVertexSelected(vi) replaces
+        // the bounds-check + @property-index pair, dropping the per-face,
+        // per-vertex O(vertices) allocation.
         bool[] newSel = new bool[](mesh.faces.length);
         foreach (fi, face; mesh.faces) {
             bool allSel = true;
             foreach (vi; face) {
-                if (vi >= mesh.selectedVertices.length ||
-                    !mesh.selectedVertices[vi])
-                {
+                if (!mesh.isVertexSelected(vi)) {
                     allSel = false;
                     break;
                 }
@@ -164,8 +165,10 @@ private:
                 foreach (ei; mesh.edgesAroundVertex(a)) {
                     auto e = mesh.edges[ei];
                     if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) {
-                        if (ei < mesh.selectedEdges.length
-                            && mesh.selectedEdges[ei])
+                        // Perf (task 0388): isEdgeSelected(ei) replaces the
+                        // bounds-check + @property-index pair (was O(edges)
+                        // allocated per face*edge visit).
+                        if (mesh.isEdgeSelected(ei))
                             found = true;
                         break;
                     }

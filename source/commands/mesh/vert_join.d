@@ -57,8 +57,11 @@ class MeshVertJoin : Command, Operator {
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         int  firstIdx = -1;
+        // Perf (task 0388): isVertexSelected(vi) replaces the bounds-check +
+        // @property-index pair — `mesh.selectedVertices` rebuilds a whole
+        // `bool[]` per read, which was O(mesh²) inside this loop.
         foreach (vi; 0 .. mesh.vertices.length) {
-            if (vi >= mesh.selectedVertices.length || !mesh.selectedVertices[vi]) continue;
+            if (!mesh.isVertexSelected(vi)) continue;
             if (firstIdx < 0) firstIdx = cast(int)vi;
             sum = sum + mesh.vertices[vi];
             ++count;
