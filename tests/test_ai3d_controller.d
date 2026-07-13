@@ -162,6 +162,62 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// Scenario 3b (task 0381 Phase 4): cancel while GENUINELY running, using the
+// fake worker's `--delay` hook (a 150ms per-phase delay -> ~750ms total run)
+// so the job reliably reaches state=="running" (observed via a status
+// event) BEFORE cancel is requested — unlike Scenario 3, which exercises
+// the near-instant "cancel before the first poll" path. Asserts the same
+// no-downloaded / terminal-cancelled guarantees, but genuinely exercised
+// against a running transfer rather than the collapsed queued path.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!ai3dPython3Available()) { stderr.writeln("SKIP test_ai3d_controller (no python3)"); return; }
+    auto fw = spawnAi3dFakeWorker(150);
+    scope(exit) teardownAi3dFakeWorker(fw);
+    if (!fw.ok) return;
+
+    auto c = new Ai3dJobController();
+    const imagePath = ai3dWriteTempPng();
+    scope(exit) ai3dRemoveQuiet(imagePath);
+
+    assert(c.start(imagePath, fw.baseUrl, 10_000));
+
+    // Wait for a status event reporting the job is genuinely running (not
+    // just "submitted"/"queued") before cancelling — proving this test
+    // actually exercises the mid-transfer path, not the collapsed queued
+    // one.
+    bool sawRunning;
+    assert(ai3dWaitUntil({
+        c.drain((ref const Ai3dEvent e) {
+            if (e.kind == Ai3dEventKind.status && e.state == "running") sawRunning = true;
+        });
+        return sawRunning;
+    }, 2_000), "expected the fake worker (--delay 150) to report state==running before cancel");
+
+    c.requestCancel();
+
+    Ai3dEvent[] all;
+    bool sawTerminal, sawDownloaded;
+    assert(ai3dWaitUntil({
+        c.drain((ref const Ai3dEvent e) {
+            all ~= e;
+            if (e.kind == Ai3dEventKind.terminal) sawTerminal = true;
+            if (e.kind == Ai3dEventKind.downloaded) sawDownloaded = true;
+        });
+        return sawTerminal;
+    }, 2_000), "expected a terminal event within 2s of cancelling a running job");
+
+    assert(!sawDownloaded, "a job cancelled while running must never post a downloaded event");
+    foreach (ref e; all)
+        if (e.kind == Ai3dEventKind.terminal)
+            assert(e.state == "cancelled" || e.state == "failed",
+                   "cancel-while-running should terminate as cancelled (or a race-lost failed), got: " ~ e.state);
+
+    assert(ai3dWaitUntil({ return !c.busy(); }, 2_000));
+    assert(c.join(5_000));
+}
+
+// ---------------------------------------------------------------------------
 // Scenario 4: drain()'s delegate runs LOCK-FREE at the controller level too
 // — while a job is still in flight, the drain delegate triggers MORE
 // controller activity (a stand-in for `onAi3dEvent` dispatching

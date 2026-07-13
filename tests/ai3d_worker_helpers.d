@@ -8,6 +8,7 @@ module ai3d_worker_helpers;
 // too, per the *_helpers.d convention (dirEntries("tests", "*_helpers.d")
 // in run_test.d pulls every such file into every test's compile).
 
+import std.conv : to;
 import std.file : exists, mkdirRecurse, rmdirRecurse, write, tempDir, remove;
 import std.path : buildPath;
 import std.process : environment, pipeProcess, Redirect, Pid, ProcessPipes,
@@ -52,7 +53,14 @@ struct Ai3dFakeWorker {
 /// avoids any port-collision scheme across parallel test workers. Returns
 /// `.ok == false` (never throws) when python3 or the worker package is
 /// unavailable, so callers can skip gracefully.
-Ai3dFakeWorker spawnAi3dFakeWorker() {
+/// `delayMs` (task 0381 Phase 4) is the fake backend's PER-PHASE sleep (5
+/// phases) — the default (0, meaning the worker's own `--delay 20` default)
+/// gives a ~100ms total run window, far shorter than a real controller's
+/// 250ms poll tick, so a "cancel while genuinely running" test needs a
+/// wider window (e.g. 150) to reliably land its cancel after the worker has
+/// actually reported state=="running" at least once, instead of collapsing
+/// into the queued-cancel path.
+Ai3dFakeWorker spawnAi3dFakeWorker(int delayMs = 0) {
     Ai3dFakeWorker fw;
     const workerRoot = "tools/ai3d_worker";
     if (!exists(workerRoot)) {
@@ -74,6 +82,8 @@ Ai3dFakeWorker spawnAi3dFakeWorker() {
         "--host", "127.0.0.1", "--port", "0",
         "--data-dir", fw.dataDir, "--backend", "fake",
     ];
+    if (delayMs > 0)
+        args ~= ["--delay", delayMs.to!string];
     try {
         fw.pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr, env);
     } catch (ProcessException e) {

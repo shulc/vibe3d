@@ -243,7 +243,7 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     aiModelAdapterMinConfidence;
 version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController;
+import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
 import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
 import commands.ai3d.import_result : Ai3dImportResult;
 import property_panel : PropertyPanel;
@@ -1227,10 +1227,33 @@ void main(string[] args) {
     // queue, drained once per frame below (onAi3dEvent, near runCommand) and
     // is the SOLE path that ever dispatches a document mutation
     // (ai3d.importResult, via the ordinary undoable runCommand path).
-    // Phase 4 replaces this bare stop() with the full join-then-_exit(0)
-    // shutdown hardening (Risk 4c).
+    //
+    // Shutdown (Phase 4, Risk 4c): request a stop, then join within budget
+    // BEFORE falling into normal druntime teardown. `stageArtifact`'s
+    // Ai3dOperationTimeoutMs (10s) backstop on every transfer means a
+    // wedged perform() unwinds well inside Ai3dClientJoinTimeoutMs (35s) in
+    // practice, so join() almost always succeeds here. On a join TIMEOUT,
+    // take the abrupt exit path — NOT normal druntime shutdown, which
+    // would try to join the core.thread worker still blocked inside
+    // libcurl's perform() (hang) or run module dtors over a half-torn
+    // transport (crash). The abrupt exit skips both: no cross-thread frees
+    // (the worker owns and frees its own HTTP handle), no GC/module dtor
+    // pass, no hang.
     auto ai3dController = new Ai3dJobController();
-    scope(exit) ai3dController.stop();
+    scope(exit) {
+        ai3dController.stop();
+        if (!ai3dController.join(Ai3dClientJoinTimeoutMs)) {
+            // core.stdc.stdlib._Exit (C99/C11, cross-platform) is the
+            // abrupt exit this hardening calls for — druntime does not
+            // bind POSIX's lowercase `_exit` on every platform, but
+            // `_Exit` has the identical contract (immediate termination,
+            // no atexit/module-dtor pass, no stdio flush) and is available
+            // on both POSIX and Windows.
+            import core.stdc.stdlib : _Exit;
+            logWarn("ai3d", "controller join timed out at shutdown; forcing exit");
+            _Exit(0);
+        }
+    }
 
     EventLogger evLog;
     version (ReleaseBuild) {

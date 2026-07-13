@@ -140,12 +140,20 @@ class TripoSRBackend:
 
 
 class JobStore:
-    def __init__(self, data_dir: Path, backend) -> None:
+    def __init__(self, data_dir: Path, backend, phase_delay_s: float = 0.02) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.backend = backend
         self.lock = threading.RLock()
         self.jobs: dict[str, Job] = {}
+        # Per-phase sleep in _run_backend (task 0381 Phase 4). The default
+        # (0.02s x 5 phases ~= 100ms) is far shorter than a real vibe3d
+        # controller's 250ms poll tick, so a "cancel while genuinely
+        # running" test would almost always land its cancel before the
+        # FIRST status poll even observes "running" — collapsing straight
+        # to the queued-cancel path. `--delay <ms>` (serve CLI) widens this
+        # window so such tests can reliably land mid-run.
+        self.phase_delay_s = phase_delay_s
 
     def create_job(self, image_media_type: str, image_bytes: bytes, options: dict[str, Any]) -> Job:
         with self.lock:
@@ -227,7 +235,7 @@ class JobStore:
             ("validating_artifact", 0.95),
         ]
         for stage, progress in phases:
-            time.sleep(0.02)
+            time.sleep(self.phase_delay_s)
             with self.lock:
                 job = self.jobs.get(job_id)
                 if job is None or job.state in {"failed", "cancelled"}:
@@ -441,9 +449,15 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
 
 class WorkerServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], data_dir: Path, backend=None) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        data_dir: Path,
+        backend=None,
+        phase_delay_s: float = 0.02,
+    ) -> None:
         super().__init__(address, WorkerHandler)
-        self.store = JobStore(data_dir, backend or FakeBackend())
+        self.store = JobStore(data_dir, backend or FakeBackend(), phase_delay_s)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -459,6 +473,13 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--device", default="cuda:0")
     serve.add_argument("--chunk-size", type=int, default=8192)
     serve.add_argument("--mc-resolution", type=int, default=120)
+    # Task 0381 Phase 4: per-phase delay (ms) for the `fake` backend's
+    # simulated 5-phase run, so a client's "cancel while genuinely running"
+    # test can land its cancel after the worker has actually reported
+    # state=="running" at least once, instead of the ~100ms default window
+    # collapsing every such test into the queued-cancel path. Ignored by
+    # the triposr backend (real GPU inference sets its own pace).
+    serve.add_argument("--delay", type=int, default=20)
     args = parser.parse_args(argv)
     if args.command == "serve":
         if args.backend == "triposr":
@@ -473,7 +494,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             backend = FakeBackend()
-        server = WorkerServer((args.host, args.port), Path(args.data_dir), backend)
+        server = WorkerServer(
+            (args.host, args.port), Path(args.data_dir), backend, args.delay / 1000.0
+        )
         print(f"vibe3d_ai3d_worker listening on http://{args.host}:{server.server_port}", flush=True)
         try:
             server.serve_forever()
