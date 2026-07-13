@@ -10,6 +10,18 @@ Run the fake worker locally:
 python3 -m vibe3d_ai3d_worker serve --host 127.0.0.1 --port 47831 --data-dir /tmp/vibe3d-ai3d-worker
 ```
 
+Scripted editor MVP path, with the editor already running in its normal test
+HTTP mode:
+
+```sh
+curl -sS http://127.0.0.1:8080/api/command \
+  --data 'ai3d.generate image:"/absolute/path/input.png" workerUrl:"http://127.0.0.1:47831" name:"AI 3D test"'
+```
+
+The command is explicit-only: editor startup does not contact the worker. The
+current implementation is a synchronous vertical slice for MVP validation; the
+production UI/controller thread will replace it.
+
 Run contract tests:
 
 ```sh

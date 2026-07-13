@@ -54,6 +54,11 @@ final class Ai3dImportResult : Command {
         ];
     }
 
+    void setInput(string path, string name = null) {
+        pathArg = path;
+        nameArg = name;
+    }
+
     override bool apply() {
         if (doc is null || doc.layers.length == 0) return false;
         if (pathArg.length == 0 && inserted is null) return false;

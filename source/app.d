@@ -3191,6 +3191,7 @@ void main(string[] args) {
                                           LayerSelect, LayerRename, LayerSetVisible,
                                           LayerReorder, LayerAttr, LayerParent;
         import commands.ai3d.import_result : Ai3dImportResult;
+        import commands.ai3d.generate : Ai3dGenerate;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.duplicate"] = () => cast(Command)
@@ -3223,6 +3224,13 @@ void main(string[] args) {
             new Ai3dImportResult(&mesh(), cameraView, editMode, &document,
                                  &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                  onActiveLayerChanged);
+        // Explicit/scripted vertical-slice command. It is intentionally inert
+        // unless the caller supplies an image path; normal editor startup makes
+        // no worker request. The async UI/controller will replace this path.
+        reg.commandFactories["ai3d.generate"] = () => cast(Command)
+            new Ai3dGenerate(&mesh(), cameraView, editMode, &document,
+                             &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                             onActiveLayerChanged);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
