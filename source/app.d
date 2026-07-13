@@ -3190,6 +3190,7 @@ void main(string[] args) {
         import commands.layer.commands : LayerAdd, LayerDelete, LayerDuplicate,
                                           LayerSelect, LayerRename, LayerSetVisible,
                                           LayerReorder, LayerAttr, LayerParent;
+        import commands.ai3d.import_result : Ai3dImportResult;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.duplicate"] = () => cast(Command)
@@ -3214,6 +3215,14 @@ void main(string[] args) {
         // layer.parent — set/clear item-parent reference (task 0082).
         reg.commandFactories["layer.parent"] = () => cast(Command)
             new LayerParent(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+
+        // ai3d.importResult — editor-side landing command for the optional
+        // external AI3D worker. It consumes a staged OBJ path, validates the
+        // ImportedScene through the AI3D gate, then adds one undoable layer.
+        reg.commandFactories["ai3d.importResult"] = () => cast(Command)
+            new Ai3dImportResult(&mesh(), cameraView, editMode, &document,
+                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                 onActiveLayerChanged);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
