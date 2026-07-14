@@ -10263,6 +10263,21 @@ struct Mesh {
         // polygon split (`emitNgonRingSplit`). Unused (`-1`/`false`) for quads.
         int  entryJ = -1, exitJ = -1;
         bool ngon = false;
+        // Task 0398: true for every entry collected on the SECOND walk
+        // (`collectEdgeRing`'s `sideB`) of an OPEN ring. The seed edge has
+        // opposite darts in its two incident faces (a manifold invariant), so
+        // side B's local (a,b)/(d,c) rail senses run consistently OPPOSITE to
+        // side A's for the whole of side B's chain — a FRESHLY created rail
+        // there would land at `1-t` instead of `t` relative to side A's
+        // convention. `getMids` uses this flag to mirror a fresh rail's
+        // interpolation fraction (`1-t`) so side B's rails land in side A's
+        // convention instead of the reversed one, fixing the one-vertex
+        // off-plane bug without touching face winding (a shared/cached rail
+        // ignores this flag — its position was already fixed by whichever
+        // request created it first). Always false for a CLOSED ring
+        // (`walkRingSide` returns via `closedA` before side B ever runs) and
+        // for a single-sided (boundary-seed) ring (side B is never walked).
+        bool mirror = false;
     }
 
     /// Exit-edge rule for a loop slice crossing an N-sided face (task 0250).
@@ -10477,6 +10492,11 @@ struct Mesh {
 
         bool closedB;
         auto sideB = walkRingSide(seedEdge, incFaces[1], closedB, ngon);
+        // Task 0398: side B's rail senses run opposite to side A's (the seed
+        // edge carries opposite darts in its two incident faces) — mark every
+        // side-B entry so `getMids` mirrors a FRESH rail's fraction and lands
+        // it in side A's convention (see `EdgeRingEntry.mirror`).
+        foreach (ref e; sideB) e.mirror = true;
         return sideA ~ sideB;
     }
 
@@ -10879,7 +10899,23 @@ struct Mesh {
             return len > 1e-6f ? sum * (1.0f / len) : Vec3(0, 1, 0);
         }
 
-        uint[] getMids(uint va, uint vb) {
+        // `mirror` (task 0398): true when this request originates from a
+        // side-B (`EdgeRingEntry.mirror`) entry of an OPEN ring. Only affects
+        // a FRESH creation (the `else` branch below, when the physical rail
+        // doesn't exist in `railByKey` yet) — a cache hit returns whatever
+        // was already created, unaffected by this call's own mirror value
+        // (its position was fixed by whichever request created it first).
+        // On fresh creation the fraction is flipped to `1-t`: this is an
+        // EXACT algebraic identity for the linear branch
+        // (`va+(vb-va)*(1-t) == vb+(va-vb)*t`, i.e. "t measured from vb")
+        // and, less obviously, also exact for the curvature spline
+        // (`curvatureSplinePoint(p0,p1,p2,p3,t) ==
+        //   curvatureSplinePoint(p3,p2,p1,p0,1-t)`, the standard Hermite
+        // reversal identity) — so mirroring `t` alone, without swapping
+        // va/vb or p0/p3, reproduces exactly what a canonical (vb,va)
+        // creation would have produced, regardless of which side's request
+        // happens to reach this rail first.
+        uint[] getMids(uint va, uint vb, bool mirror = false) {
             ulong k = edgeKey(va, vb);
             if (auto rp = k in railByKey) {
                 if (rails[*rp].va == va) return rails[*rp].midsVa;
@@ -10899,11 +10935,15 @@ struct Mesh {
                 // captured as VALUES so subsequent addVertex reallocations are safe.
                 Vec3 p0 = railContinuation(va, vb);
                 Vec3 p3 = railContinuation(vb, va);
-                foreach (float t; positions)
-                    mids ~= addVertex(curvatureSplinePoint(p0, va3, vb3, p3, t, curveTension));
+                foreach (float t; positions) {
+                    float tt = mirror ? 1.0f - t : t;
+                    mids ~= addVertex(curvatureSplinePoint(p0, va3, vb3, p3, tt, curveTension));
+                }
             } else {
-                foreach (float t; positions)
-                    mids ~= addVertex(va3 + (vb3 - va3) * t);
+                foreach (float t; positions) {
+                    float tt = mirror ? 1.0f - t : t;
+                    mids ~= addVertex(va3 + (vb3 - va3) * tt);
+                }
             }
             railByKey[k] = cast(uint)rails.length;
             Vec3 nrm = profileOn ? railNormal(va, vb) : Vec3(0, 1, 0);
@@ -10922,8 +10962,8 @@ struct Mesh {
         // resolves the same duplicate for a given loop side regardless of which
         // face (or traversal direction) asks — that is what keeps each side's loop
         // connected around the ring while the two sides stay disconnected.
-        uint[] railMids(uint va, uint vb, bool towardFirst) {
-            uint[] base = getMids(va, vb);        // midsVa oriented va→vb
+        uint[] railMids(uint va, uint vb, bool towardFirst, bool mirror = false) {
+            uint[] base = getMids(va, vb, mirror); // midsVa oriented va→vb
             if (!split) return base;
             ulong k = edgeKey(va, vb);
             uint rp = railByKey[k];
@@ -10961,13 +11001,16 @@ struct Mesh {
         // given its (a,b,c,d) CCW frame — shared by the 1-ring path and the
         // 2-ring fallback below.
         void emitSingleRingSplit(uint a, uint b, uint c, uint d,
-                                  ref uint[][] newFaces) {
+                                  ref uint[][] newFaces, bool mirror = false) {
             // pLo/qLo = toward the a/d corners (the loop's "first" side); pHi/qHi
             // = toward b/c. With Split off all four are the same shared rail verts
             // (byte-for-byte `getMids`); with Split on the hi verts are distinct
             // duplicates so the two sides of the loop are disconnected (task 0251).
-            uint[] pLo = railMids(a, b, true),  pHi = railMids(a, b, false);
-            uint[] qLo = railMids(d, c, true),  qHi = railMids(d, c, false);
+            // `mirror` (task 0398): the source EdgeRingEntry's side-B flag, forwarded
+            // to both this face's rails so a freshly-created p/q rail lands in side
+            // A's convention (see `EdgeRingEntry.mirror` / `getMids`).
+            uint[] pLo = railMids(a, b, true, mirror),  pHi = railMids(a, b, false, mirror);
+            uint[] qLo = railMids(d, c, true, mirror),  qHi = railMids(d, c, false, mirror);
             newFaces ~= [a, pLo[0], qLo[0], d];               // toward-a/d cap
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
             foreach (k; 1 .. positions.length) {
@@ -11004,8 +11047,10 @@ struct Mesh {
             uint c = f[xj], d = f[(xj + 1) % N];   // exit  edge c→d
             // Side-aware rails (task 0251 Split): lo = toward a/d (the S2 cap
             // side), hi = toward b/c (the S1 cap side). Split off ⇒ lo==hi==getMids.
-            uint[] pLo = railMids(a, b, true),  pHi = railMids(a, b, false);
-            uint[] qLo = railMids(d, c, true),  qHi = railMids(d, c, false);
+            // `e.mirror` (task 0398): forwarded so a freshly-created rail lands in
+            // side A's convention (see `EdgeRingEntry.mirror` / `getMids`).
+            uint[] pLo = railMids(a, b, true, e.mirror),  pHi = railMids(a, b, false, e.mirror);
+            uint[] qLo = railMids(d, c, true, e.mirror),  qHi = railMids(d, c, false, e.mirror);
 
             // S1 = the boundary chain from b (entry-edge far vertex) forward to
             // c (exit-edge near vertex); S2 = from d forward to a.
@@ -11051,7 +11096,7 @@ struct Mesh {
 
             if (entries.length == 1) {
                 auto e = entries[0];
-                emitSingleRingSplit(e.a, e.b, e.c, e.d, newFaces);
+                emitSingleRingSplit(e.a, e.b, e.c, e.d, newFaces, e.mirror);
                 return;
             }
 
@@ -11076,17 +11121,19 @@ struct Mesh {
                 // distinct rings can only cross via the two non-entry sides)
                 // — fall back to a single-ring split on the base ring only,
                 // rather than emit an inconsistent grid.
-                emitSingleRingSplit(A, B, C, D, newFaces);
+                emitSingleRingSplit(A, B, C, D, newFaces, e0.mirror);
                 return;
             }
 
             // Grid split. u runs A→B (bottom) / D→C (top); v runs B→C
             // (right) / A→D (left) — see the doc comment above for the
             // bilerp-equals-sequential-inserts derivation.
-            uint[] pU = getMids(A, B);   // bottom rail, u-direction
-            uint[] qU = getMids(D, C);   // top rail, u-direction
-            uint[] pV = getMids(B, C);   // right rail, v-direction
-            uint[] qV = getMids(A, D);   // left rail, v-direction
+            // `e0.mirror`/`e1.mirror` (task 0398): each ring's own side-B flag,
+            // forwarded so a freshly-created rail lands in side A's convention.
+            uint[] pU = getMids(A, B, e0.mirror);   // bottom rail, u-direction
+            uint[] qU = getMids(D, C, e0.mirror);   // top rail, u-direction
+            uint[] pV = getMids(B, C, e1.mirror);   // right rail, v-direction
+            uint[] qV = getMids(A, D, e1.mirror);   // left rail, v-direction
 
             size_t Pu = positions.length, Pv = positions.length;
             uint[][] grid = new uint[][](Pu + 2, Pv + 2);
@@ -21734,6 +21781,145 @@ unittest {
         // mLeft and mRight must NOT be directly connected (open ring — not a closed loop).
         assert(m.edgeIndex(mLeft, mRight) == ~0u,
                "mLeft and mRight must NOT be directly connected (open ring)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// insertEdgeLoops — task 0398 regression: OPEN-ring loop slice must land
+// every ring vertex on a CONSISTENT (planar) cut, even on the side-B-
+// exclusive rails of a two-sided open walk.
+//
+// Root cause: `collectEdgeRing` walks an OPEN ring from BOTH faces incident
+// to the seed edge (`sideA` from `incFaces[0]`, `sideB` from `incFaces[1]`).
+// The seed edge carries opposite darts in its two incident faces (a basic
+// manifold invariant), so every rail `getMids` creates FRESH from a side-B
+// entry lands at fraction `1-t` instead of `t` relative to side A's
+// convention — one ring vertex ends up off-plane (owner repro: v19 landed at
+// Y=0.4415 while the other three sat at Y=0.3085). The fix (`EdgeRingEntry.
+// mirror` + `getMids`'s `mirror` param) mirrors a FRESH side-B rail's
+// fraction so it lands in side A's convention. This test uses an asymmetric
+// t (0.234, NOT 0.5 — 0.5 is a mirror fixed point and can't distinguish a
+// mirrored result from a correct one) and checks planarity + winding
+// directly, rather than depending on the owner's specific coordinates.
+//
+// Cage: a belt of 3 quads (LEFT, BACK, FRONT) around Y=[0.25,0.5] with the
+// RIGHT quad DELETED — a quad belt sliced out of a cuboid with one side face
+// missing, exactly the construction (and asymmetry) the validated repro
+// used. Seeding from the INTERIOR rail (2,3), shared by LEFT and BACK, forces
+// `collectEdgeRing` down the two-sided walk: side A = {LEFT, FRONT}
+// (terminates at the deleted RIGHT via FRONT's own boundary rail), side B =
+// {BACK} (also terminates at the deleted RIGHT via BACK's own boundary rail)
+// — BACK's own rail is created FRESH exclusively by side B, exactly the
+// failure mode task 0398 fixed.
+// ---------------------------------------------------------------------------
+unittest {
+    // Winding-consistency scan: a well-formed manifold quad mesh has each
+    // interior undirected edge covered by at most ONE dart per direction; a
+    // repeated same-direction dart across two faces means one is inverted.
+    static int repeatedDirectionDarts(const Mesh m) {
+        int[ulong] fwd;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            foreach (k; 0 .. f.length) {
+                uint a = f[k], b = f[(k + 1) % f.length];
+                ulong dkey = (cast(ulong)a << 32) | b;
+                fwd[dkey] = (dkey in fwd ? fwd[dkey] : 0) + 1;
+            }
+        }
+        int sameDir = 0;
+        foreach (k, cnt; fwd) if (cnt > 1) ++sameDir;
+        return sameDir;
+    }
+
+    // ------------------------------------------------------------------
+    // A) OPEN ring, two-sided walk — the bug's exact failure mode.
+    // ------------------------------------------------------------------
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.5f, 0.25f,  0.5f),  // 0 L0 bottom-front
+            Vec3(-0.5f, 0.5f,   0.5f),  // 1 L1 top-front
+            Vec3(-0.5f, 0.5f,  -0.5f),  // 2 L2 top-back
+            Vec3(-0.5f, 0.25f, -0.5f),  // 3 L3 bottom-back
+            Vec3( 0.5f, 0.25f,  0.5f),  // 4 R0 bottom-front
+            Vec3( 0.5f, 0.5f,   0.5f),  // 5 R1 top-front
+            Vec3( 0.5f, 0.5f,  -0.5f),  // 6 R2 top-back
+            Vec3( 0.5f, 0.25f, -0.5f),  // 7 R3 bottom-back
+        ];
+        m.addFace([0u, 1u, 2u, 3u]);   // LEFT
+        m.addFace([3u, 2u, 6u, 7u]);   // BACK
+        m.addFace([0u, 4u, 5u, 1u]);   // FRONT
+        // RIGHT [4,7,6,5] intentionally OMITTED — the ring is OPEN.
+        m.rebuildEdges();
+        m.buildLoops();
+
+        uint seed = m.edgeIndex(2, 3);   // interior rail shared by LEFT/BACK
+        assert(seed != ~0u, "seed rail (2,3) must exist");
+
+        bool closed;
+        auto ring = m.collectEdgeRing(seed, closed);
+        assert(!closed, "sanity: this belt's ring must be OPEN");
+        assert(ring.length == 3, "sanity: ring crosses LEFT+FRONT (side A) + BACK (side B)");
+
+        bool ok = m.insertEdgeLoops(seed, [0.234f]);
+        assert(ok, "open-ring insertEdgeLoops must succeed");
+        assert(m.vertices.length == 12, "4 distinct rails (seed + 3 exit rails) get one midpoint each");
+
+        float ymin = 1e9f, ymax = -1e9f;
+        foreach (vi; 8 .. m.vertices.length) {
+            float y = m.vertices[vi].y;
+            if (y < ymin) ymin = y;
+            if (y > ymax) ymax = y;
+        }
+        assert(ymax - ymin < 1e-4f,
+               "task 0398: all 4 ring vertices must be coplanar (one loop, one height)");
+        assert(repeatedDirectionDarts(m) == 0,
+               "task 0398 fix must not invert any face's winding");
+    }
+
+    // ------------------------------------------------------------------
+    // B) CLOSED ring sanity — the mirror flag must NEVER fire here.
+    // `walkRingSide` returns via `closedA` before side B is ever walked
+    // (mesh.d, `collectEdgeRing`), so this must stay byte-for-byte with the
+    // pre-0398 behaviour. Uses an ASYMMETRIC t (0.5 is a mirror fixed point
+    // and can't tell a mirrored result from a correct one). Seed edge (0,1)
+    // on `makeCube()` is the X-aligned belt seed the existing closed-ring
+    // unittest (A, above) uses at t=0.5 — every one of the 4 belt rails
+    // (0-1, 2-3, 6-7, 4-5) runs along X, so a CONSISTENT fraction must land
+    // all 4 new vertices at the SAME X (not Y — this belt varies in Y/Z as
+    // it goes around, only X is the cut-fraction axis).
+    // ------------------------------------------------------------------
+    {
+        Mesh cube = makeCube();
+        cube.buildLoops();
+        uint eiSeed = cube.edgeIndex(0, 1);
+        assert(eiSeed != ~0u, "cube seed edge 0-1 must exist");
+
+        bool closed;
+        auto ring = cube.collectEdgeRing(eiSeed, closed);
+        assert(closed, "sanity: cube's equatorial ring must be CLOSED");
+
+        bool ok = cube.insertEdgeLoops(eiSeed, [0.234f]);
+        assert(ok, "closed-ring insertEdgeLoops must succeed");
+        assert(cube.vertices.length == 12, "closed ring: 8 + 4 belt midpoints");
+
+        float xmin = 1e9f, xmax = -1e9f;
+        foreach (vi; 8 .. cube.vertices.length) {
+            float x = cube.vertices[vi].x;
+            if (x < xmin) xmin = x;
+            if (x > xmax) xmax = x;
+        }
+        assert(xmax - xmin < 1e-4f,
+               "closed-ring belt vertices must share one X (mirror flag never fires)");
+        // Exact value (task 0398 fix must not touch this — closed rings
+        // never mirror): the walk visits F0=[0,3,2,1] first, whose local
+        // frame for edge (0,1) is the dart 1->0 (a=1,b=0), so the vertex
+        // sits at v1 + (v0-v1)*t = 0.5 + (-1.0)*0.234 = 0.266. A mirrored
+        // (1-t) result would instead land at -0.266.
+        assert(abs(cube.vertices[8].x - 0.266f) < 1e-3f,
+               "closed-ring belt X must be the UNMIRRORED t=0.234 fraction (byte-for-byte pre-0398)");
+        assert(repeatedDirectionDarts(cube) == 0,
+               "closed-ring cut must not invert any face winding");
     }
 }
 
