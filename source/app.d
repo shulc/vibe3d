@@ -214,10 +214,14 @@ import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
+import commands.ui.copilot_panel   : UiCopilotPanelCommand, g_copilotPanelShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
+import commands.copilot.analyze        : CopilotAnalyzeCommand;
+import commands.copilot.select_finding : CopilotSelectFindingCommand;
+import copilot_panel : CopilotPanel;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
 import commands.path.define    : PathDefineCommand;
@@ -2508,6 +2512,12 @@ void main(string[] args) {
     auto aiAdvisor     = new AiAdvisor(() => aiState.enabled);
     setHandleAiAdvisor(aiAdvisor);
 
+    // AI Modeling Copilot (task 0402 Phase 2): the passive findings-list
+    // panel. Owns only its own display state (Finding[] + active row) —
+    // the copilot.analyze / copilot.selectFinding commands below are the
+    // only writers, see copilot_panel.d's doc comment.
+    auto copilotPanel = new CopilotPanel();
+
     // Opt-in model-backed handle decision provider (task 0028). Enabled only
     // when a model path is configured (--ai-model wins, else VIBE3D_AI_MODEL);
     // OFF when both unset, in which case the adapter is NOT constructed and the
@@ -3537,6 +3547,26 @@ void main(string[] args) {
         reg.commandFactories["ai.toggle"]  = makeAiFactory(AiToggleAction.toggle);
         reg.commandFactories["ai.enable"]  = makeAiFactory(AiToggleAction.enable);
         reg.commandFactories["ai.disable"] = makeAiFactory(AiToggleAction.disable);
+    }
+    {
+        // AI Modeling Copilot (task 0402 Phase 2): copilot.analyze is a pure
+        // read (repopulates copilotPanel's findings list); copilot.selectFinding
+        // is the ONLY act-on and wraps the SAME "mesh.select" factory app.d
+        // registers below (lazy lookup — evaluated when the wrapper's own
+        // apply() runs, well after every factory is registered, so
+        // registration order here does not matter) so it inherits that
+        // factory's promoteGeometryType hook + resolved-viewport provider.
+        // See commands/copilot/*.d doc comments.
+        reg.commandFactories["copilot.analyze"] = () => cast(Command)
+            new CopilotAnalyzeCommand(&mesh(), cameraView, editMode, copilotPanel);
+        reg.commandFactories["copilot.selectFinding"] = () => cast(Command)
+            new CopilotSelectFindingCommand(&mesh(), cameraView, editMode,
+                copilotPanel, aiState,
+                () => reg.commandFactories["mesh.select"]());
+        // Test-only visibility flip (idiom: commands.ui.layer_list /
+        // g_layerListShown) — see commands/ui/copilot_panel.d.
+        reg.commandFactories["ui.copilotPanel"] = () => cast(Command)
+            new UiCopilotPanelCommand(&mesh(), cameraView, editMode);
     }
     {
         import commands.symmetry.toggle : SymmetryToggleCommand;
@@ -9782,6 +9812,18 @@ void main(string[] args) {
         // Hidden in --test by default; opt-in via `ui.viewportProps show`.
         if (!command.g_testMode || g_viewportPropsShown)
             drawViewportPropsPanel();
+
+        // ---- AI Findings (floating; task 0402 Phase 2) ----
+        // Same imgui-determinism idiom as Layers/Viewport Properties above:
+        // hidden by default in --test, opt-in via `ui.copilotPanel show:true`.
+        // The panel is a passive list (copilot_panel.d) — every interaction
+        // dispatches through commandHandlerDelegate, never touching mesh /
+        // document / selection state directly.
+        if (!command.g_testMode || g_copilotPanelShown) {
+            pushPanelChromeStyle();
+            copilotPanel.draw(aiState.enabled, commandHandlerDelegate);
+            popPanelChromeStyle();
+        }
 
         // ---- Perf HUD (task 0198, perf build only) ----
         // Built HERE (in the panel-build region, before ImGui.Render()) and
