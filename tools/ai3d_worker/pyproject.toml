@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "vibe3d-ai3d-worker"
 version = "0.1.0"
 description = "Optional Vibe3D image-to-mesh worker protocol implementation"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 
 [project.scripts]
 vibe3d_ai3d_worker = "vibe3d_ai3d_worker.server:main"
