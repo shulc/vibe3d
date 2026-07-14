@@ -74,6 +74,19 @@ fi
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/microsoft/TRELLIS.git}"
 
+# GPU preflight thresholds. REQUIRED_CUDA is derived from the torch wheel index
+# (cu128 -> 12.8) so it tracks TORCH_INDEX_URL; MIN_VRAM_MB is the FP16 mesh-only
+# TRELLIS floor (~5 GB, +headroom). Both overridable via env; the whole check is
+# skippable with --skip-gpu-check / VIBE3D_SKIP_GPU_CHECK=1.
+_cutag="$(printf '%s' "$TORCH_INDEX_URL" | grep -oE 'cu[0-9]+' | grep -oE '[0-9]+' | head -1)"
+if [ -n "$_cutag" ] && [ "${#_cutag}" -ge 3 ]; then
+    REQUIRED_CUDA="${VIBE3D_REQUIRED_CUDA:-${_cutag:0:2}.${_cutag:2}}"
+else
+    REQUIRED_CUDA="${VIBE3D_REQUIRED_CUDA:-12.8}"
+fi
+MIN_VRAM_MB="${VIBE3D_MIN_VRAM_MB:-6000}"
+SKIP_GPU_CHECK="${VIBE3D_SKIP_GPU_CHECK:-0}"
+
 DEFAULT_LOCATION="${XDG_DATA_HOME:-$HOME/.local/share}/vibe3d/ai3d"
 CONFIG_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/vibe3d"
 CONFIG_PATH="$CONFIG_DIR/ai3d.json"
@@ -100,7 +113,12 @@ Options:
                         one to <location>/TRELLIS.
   --dry-run             Print the plan and exit 0. Creates, downloads, and
                         writes NOTHING. Fully offline-safe.
+  --skip-gpu-check      Proceed even if the NVIDIA GPU / CUDA / VRAM preflight
+                        fails (also VIBE3D_SKIP_GPU_CHECK=1).
   --help                Show this message and exit 0.
+
+Env: PYTHON, TORCH_INDEX_URL, TRELLIS_REPO_URL, VIBE3D_REQUIRED_CUDA,
+     VIBE3D_MIN_VRAM_MB, VIBE3D_SKIP_GPU_CHECK.
 EOF
 }
 
@@ -114,6 +132,8 @@ while [ $# -gt 0 ]; do
             TRELLIS_ROOT_ARG="$2"; shift 2 ;;
         --dry-run)
             DRY_RUN=1; shift ;;
+        --skip-gpu-check)
+            SKIP_GPU_CHECK=1; shift ;;
         --help|-h)
             usage; exit 0 ;;
         *)
@@ -163,6 +183,51 @@ fi
 # editor's Install confirmation popup and the streamed log both show exactly
 # what is about to happen before any of it happens.
 # ---------------------------------------------------------------------------
+gpu_fail() {
+    if [ "$DRY_RUN" -eq 1 ] || [ "$SKIP_GPU_CHECK" -eq 1 ]; then
+        echo "WARNING: $1"
+    else
+        echo "error: $1" >&2
+        echo "       (override with --skip-gpu-check, or VIBE3D_SKIP_GPU_CHECK=1)" >&2
+        exit 4
+    fi
+}
+
+# Preflight: refuse the multi-GB install if there is no usable NVIDIA GPU, the
+# driver is too old for the torch CUDA build, or VRAM is below the TRELLIS
+# FP16 floor — before any download happens.
+preflight_gpu() {
+    echo "-- GPU preflight (need NVIDIA + driver CUDA >= $REQUIRED_CUDA + >= $MIN_VRAM_MB MiB VRAM)"
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        gpu_fail "no NVIDIA driver found (nvidia-smi missing). TRELLIS needs an NVIDIA GPU with CUDA."
+        return
+    fi
+    if ! nvidia-smi >/dev/null 2>&1; then
+        gpu_fail "nvidia-smi is present but failed to run — NVIDIA driver problem (reboot / reinstall the driver?)."
+        return
+    fi
+    local name cuda vram
+    name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+    cuda="$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    # largest VRAM across GPUs, in MiB
+    vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' | grep -E '^[0-9]+$' | sort -n | tail -1)"
+    echo "   detected: ${name:-unknown GPU}, driver CUDA ${cuda:-?}, ${vram:-?} MiB VRAM"
+    if [ -n "$cuda" ]; then
+        if [ "$(printf '%s\n%s\n' "$REQUIRED_CUDA" "$cuda" | sort -V | head -1)" != "$REQUIRED_CUDA" ]; then
+            gpu_fail "NVIDIA driver supports CUDA $cuda, but torch ($TORCH_INDEX_URL) needs CUDA >= $REQUIRED_CUDA. Update the NVIDIA driver."
+        fi
+    else
+        gpu_fail "could not read the driver's CUDA version from nvidia-smi (need >= $REQUIRED_CUDA)."
+    fi
+    if [ -n "$vram" ]; then
+        if [ "$vram" -lt "$MIN_VRAM_MB" ]; then
+            gpu_fail "GPU has ${vram} MiB VRAM, but TRELLIS (FP16, mesh-only) needs ~$MIN_VRAM_MB MiB and will likely OOM."
+        fi
+    else
+        gpu_fail "could not read GPU VRAM from nvidia-smi (need >= $MIN_VRAM_MB MiB)."
+    fi
+}
+
 print_plan() {
     echo "vibe3d AI-3D runtime install plan"
     echo "=================================="
@@ -181,6 +246,8 @@ print_plan() {
     echo "  config written to:   $CONFIG_PATH"
     echo
     echo "Steps:"
+    echo "  0. GPU preflight: NVIDIA driver present, driver CUDA >= $REQUIRED_CUDA,"
+    echo "     >= $MIN_VRAM_MB MiB VRAM (skip with --skip-gpu-check)"
     echo "  1. mkdir -p '$LOCATION'"
     echo "  2. $PYTHON -m venv '$VENV_DIR'   (skipped if it already exists)"
     echo "  3. '$VENV_PYTHON' -m pip install --upgrade pip setuptools wheel"
@@ -205,6 +272,9 @@ print_plan() {
 }
 
 print_plan
+
+echo
+preflight_gpu
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo
