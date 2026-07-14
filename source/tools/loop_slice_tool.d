@@ -701,6 +701,23 @@ public:
         return active && armed_;
     }
 
+    // Task 0400 (captured reference — see the task doc): interactive Ctrl+Z
+    // during an active Loop Slice never drops the tool, in ANY state —
+    // undo always operates on mesh-edit history and the tool stays live,
+    // ready for another cut. Reported while ARMED (hasUncommittedEdit()),
+    // navHistory()'s whole-edit-cancel branch calls cancelUncommittedEdit()
+    // (== cancelLiveEdit(), reverting to the pre-arm/pre-scrub baseline with
+    // no history side effect) and then checks THIS hook before dropping —
+    // `active` alone is enough: as long as the tool is active at all, a
+    // cancelled preview is a normal idle-armable state, not a reason to
+    // exit. (The post-commit state was already correct: commitEdit() clears
+    // armed_, so hasUncommittedEdit() is false there and navHistory falls
+    // straight through to the plain history.undo() + resyncSession() path,
+    // which never touches activeTool.)
+    public override bool survivesEditCancel() const {
+        return active;
+    }
+
     public override void resyncSession() {
         if (!active) return;
         // An armed standing preview must never be silently wiped by a

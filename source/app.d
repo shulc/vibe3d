@@ -6492,7 +6492,12 @@ void main(string[] args) {
         if (activeTool !is null && activeTool.hasUncommittedEdit()
             && (isUndo || activeTool.cancelsOnRedo())) {
             activeTool.cancelUncommittedEdit();
-            if (activeTool !is null && !activeTool.hasUncommittedEdit()) {
+            // Task 0400: a standing-preview tool (survivesEditCancel()==true —
+            // LoopSliceTool/EdgeSliceTool) is never dropped by this cancel; the
+            // reference editor's interactive undo never drops an active tool.
+            // Every other tool keeps the pre-0400 cancel-then-drop behavior.
+            if (activeTool !is null && !activeTool.hasUncommittedEdit()
+                && !activeTool.survivesEditCancel()) {
                 setActiveTool(null);
                 activeToolId = "";
             }

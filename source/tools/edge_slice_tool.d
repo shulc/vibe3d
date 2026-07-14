@@ -350,6 +350,19 @@ public:
         return active && (armed_ || latchedPoints_.length > 0);
     }
 
+    // Task 0400 (see LoopSliceTool's identical override + the task doc):
+    // EdgeSliceTool shares LoopSliceTool's standing-preview architecture
+    // (armed_ sits on the mesh across arbitrary frames, re-armable after
+    // commit/cancel — the same family that opts into cancelsOnRedo() above),
+    // so an interactive Ctrl+Z that reaches navHistory()'s whole-edit-cancel
+    // branch (only when tryUndoStepInSession() below has nothing left to
+    // peel) must not drop the tool either. In practice tryUndoStepInSession()
+    // absorbs almost every Ctrl+Z while any chain state is live, so this
+    // guard mainly covers the residual armed_-but-no-latched-points case.
+    public override bool survivesEditCancel() const {
+        return active;
+    }
+
     // Mid-chain per-click undo peel (task 0321, D1). Reached from the app's
     // navHistory() chokepoint BEFORE its whole-edit cancel branch: while a
     // live latched chain exists, Ctrl+Z peels exactly the LAST latched point

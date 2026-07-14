@@ -280,6 +280,25 @@ class Tool : ParamProvider {
     // other tool keeps the pre-0232 redo-steps-the-stack behavior.
     bool cancelsOnRedo() const { return false; }
 
+    // Task 0400: whether cancelling this tool's open uncommitted edit (via
+    // cancelUncommittedEdit(), reached from navHistory()'s whole-edit-cancel
+    // branch below) leaves the tool with a still-meaningful session to stay
+    // in, versus nothing further to do. The reference editor's interactive
+    // Ctrl+Z NEVER drops an active interactive tool — undo always operates on
+    // mesh-edit history and the tool stays live. For most tools here, an
+    // uncommitted edit IS the tool's whole reason to be active (a one-shot
+    // create/drag gesture — Box, Pen, a primitive's live resize), so
+    // navHistory's default of cancel-then-drop mirrors Esc and matches the
+    // pre-0400, still-correct behavior for that shape. A STANDING-PREVIEW
+    // tool is a different shape: the preview sits on the mesh across
+    // arbitrary frames and is re-armable after every commit/cancel
+    // (LoopSliceTool/EdgeSliceTool — the same family that already opts into
+    // cancelsOnRedo() above), so cancelling its live preview is a normal step
+    // WITHIN an ongoing session, not the end of the tool's usefulness — those
+    // tools override this to true. Default false ⇒ every other tool keeps
+    // its pre-0400 cancel-then-drop behavior byte-for-byte.
+    bool survivesEditCancel() const { return false; }
+
     // Mid-session per-step undo peel (task 0321). The app's navHistory()
     // chokepoint calls this FIRST, before its own hasUncommittedEdit()
     // whole-edit-cancel branch: a tool holding some internal sequence of
