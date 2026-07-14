@@ -5011,6 +5011,18 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // AI Modeling Copilot Phase 1 (task 0402, doc/ai_copilot_plan.md):
+        // GET /api/ai/analyze runs the whole-mesh analysis engine over the
+        // live mesh and returns the resulting Finding[] as JSON. Read-only,
+        // no side effects, available regardless of aiState.enabled (the
+        // toggle gates later UI phases, not this raw analysis read).
+        // Marshaled onto the main thread via aiAnalyzeBridge (see
+        // http_server.d) so it never races the main thread's own mesh edits.
+        httpServer.setAiAnalyzeProvider(() {
+            import ai.analysis : analyzeMesh, findingsToJson;
+            return findingsToJson(analyzeMesh(mesh()));
+        });
+
         // Phase 7.3a: /api/snap query bridge. Lets unit tests probe
         // the snap math directly with explicit cursor world pos +
         // screen pixel + excludeVerts, without driving an interactive

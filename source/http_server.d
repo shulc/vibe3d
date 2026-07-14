@@ -149,6 +149,17 @@ class HttpServer {
     // for a given selection without needing to drive the actual tool.
     private alias ToolPipeEvalProvider = string delegate();
     private ToolPipeEvalProvider toolpipeEvalProvider;
+    // GET /api/ai/analyze — AI Modeling Copilot Phase 1 (task 0402): runs
+    // `ai.analysis.analyzeMesh` over the live mesh and returns the resulting
+    // `Finding[]` as JSON. Read-only, no side effects, available regardless
+    // of the AI master toggle (this is a raw analysis read; the toggle only
+    // gates the later UI phases). Marshaled onto the main thread via
+    // analyzeBridge — same hazard as /api/model (risk #4, ai_copilot_plan.md):
+    // a raw HTTP-thread provider would read the live Mesh while the main
+    // thread mutates it, so this follows the toolpipeEvalProvider bridge
+    // pattern, NOT the direct-read snapLastProvider one.
+    private alias AiAnalyzeProvider = string delegate();
+    private AiAnalyzeProvider aiAnalyzeProvider;
     // /api/snap — POST. Body is the snap-query JSON ({cursor, sx, sy,
     // excludeVerts}); response is the SnapResult JSON. Used by the
     // 7.3 unit tests to probe snap math directly without driving an
@@ -419,6 +430,14 @@ class HttpServer {
     struct ToolPipeResp { string result; string error; }
     private MainThreadBridge!(ToolPipeReq, ToolPipeResp) toolpipeBridge;
 
+    // GET /api/ai/analyze — own bridge/epoch pair (MUST NOT share
+    // pipeEvalBridge's or toolpipeBridge's, same rule as pathBridge/
+    // toolpipeBridge above). No request payload (whole-mesh analysis takes
+    // no parameters in Phase 1).
+    struct AiAnalyzeReq  { }
+    struct AiAnalyzeResp { string result; string error; }
+    private MainThreadBridge!(AiAnalyzeReq, AiAnalyzeResp) aiAnalyzeBridge;
+
     public this(ushort port = 8080) {
         this.port = port;
         this.isRunning = false;
@@ -469,6 +488,18 @@ class HttpServer {
                         resp.result = toolpipeProvider();
                     else
                         resp.error = "toolpipe provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        aiAnalyzeBridge = new MainThreadBridge!(AiAnalyzeReq, AiAnalyzeResp)(this,
+            (ref AiAnalyzeReq req, ref AiAnalyzeResp resp) {
+                try {
+                    if (aiAnalyzeProvider !is null)
+                        resp.result = aiAnalyzeProvider();
+                    else
+                        resp.error = "ai analyze provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -731,6 +762,14 @@ class HttpServer {
     /// toolpipeEvalProvider — NOT the direct-read snapLastProvider).
     public void setPathQueryProvider(PathQueryProvider provider) {
         this.pathQueryProvider = provider;
+    }
+
+    /// GET /api/ai/analyze — AI Modeling Copilot Phase 1 (task 0402). Marshaled
+    /// onto the main thread via aiAnalyzeBridge (same epoch-handshake shape as
+    /// toolpipeEvalProvider) so `ai.analysis.analyzeMesh` always sees a
+    /// consistent mesh snapshot, never a torn concurrent-edit read.
+    public void setAiAnalyzeProvider(AiAnalyzeProvider provider) {
+        this.aiAnalyzeProvider = provider;
     }
 
     /// Phase 7.3 — `/api/snap` query endpoint. Provider takes the raw
@@ -1371,6 +1410,29 @@ class HttpServer {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\""
                                    ~ toolpipeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                }
+            }
+        } else if (request.path == "/api/ai/analyze" && request.method == "GET") {
+            response.headers["Content-Type"] = "application/json";
+            if (aiAnalyzeProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"ai analyze provider not set"}`;
+            } else {
+                // Marshal onto the main thread via its own bridge/epoch pair
+                // (see aiAnalyzeBridge decl) so this read-only analysis never
+                // races the main thread's own mesh mutations (risk #4,
+                // ai_copilot_plan.md Phase 1).
+                aiAnalyzeBridge.resp.result = "";
+                aiAnalyzeBridge.resp.error  = "";
+                if (!aiAnalyzeBridge.submitAndWait())
+                    aiAnalyzeBridge.resp.error = "timeout waiting for main thread";
+                if (aiAnalyzeBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = aiAnalyzeBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"ai analyze provider failed\",\"message\":\""
+                                   ~ aiAnalyzeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
                 }
             }
         } else if (request.path.startsWith("/api/registry") && request.method == "GET") {
