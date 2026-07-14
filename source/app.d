@@ -221,7 +221,9 @@ import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 import commands.copilot.analyze        : CopilotAnalyzeCommand;
 import commands.copilot.select_finding : CopilotSelectFindingCommand;
+import commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
 import copilot_panel : CopilotPanel;
+import copilot_overlay : drawCopilotFindingOverlay;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
 import commands.path.define    : PathDefineCommand;
@@ -3561,6 +3563,15 @@ void main(string[] args) {
             new CopilotAnalyzeCommand(&mesh(), cameraView, editMode, copilotPanel);
         reg.commandFactories["copilot.selectFinding"] = () => cast(Command)
             new CopilotSelectFindingCommand(&mesh(), cameraView, editMode,
+                copilotPanel, aiState,
+                () => reg.commandFactories["mesh.select"]());
+        // copilot.cycleFinding (task 0402 Phase 3): panel Prev/Next + Up/Down
+        // both dispatch this. It computes only the new index and delegates
+        // the actual select-only act-on to a CopilotSelectFindingCommand it
+        // builds internally (see cycle_finding.d) — same meshSelectFactory
+        // lazy lookup as copilot.selectFinding above.
+        reg.commandFactories["copilot.cycleFinding"] = () => cast(Command)
+            new CopilotCycleFindingCommand(&mesh(), cameraView, editMode,
                 copilotPanel, aiState,
                 () => reg.commandFactories["mesh.select"]());
         // Test-only visibility flip (idiom: commands.ui.layer_list /
@@ -9127,6 +9138,29 @@ void main(string[] args) {
                 if (auto p = vts.get!FalloffPacket()) fp = *p;
                 if (fp.enabled)
                     pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool(), visualOnly);
+            }
+        }
+
+        // ---- AI Modeling Copilot: ghost highlight of the active finding
+        // (task 0402 Phase 3, doc/ai_copilot_plan.md) ----
+        // Passive-only: this draws, nothing else — see copilot_overlay.d's
+        // doc comment. Gated on all three: the AI master switch, the
+        // "AI Findings" panel actually being shown (same visibility
+        // predicate as the panel's own draw call below — a hidden panel's
+        // stale active index shouldn't paint a ghost nobody can see the
+        // list for), and a valid `active()` index into the CURRENT findings
+        // list (out-of-range/-1, e.g. right after copilot.analyze before
+        // any row was clicked, draws nothing). AI-off (or modeling-noai,
+        // where the master switch never turns on) ⇒ byte-identical to
+        // before this phase — same discipline as every other AI-gated draw
+        // in this codebase (doc/ai_model_adapter_live_wiring_plan.md).
+        {
+            immutable bool panelShown = !command.g_testMode || g_copilotPanelShown;
+            if (aiState.enabled && panelShown) {
+                immutable int activeIdx = copilotPanel.active();
+                const findings = copilotPanel.findings();
+                if (activeIdx >= 0 && activeIdx < cast(int) findings.length)
+                    drawCopilotFindingOverlay(mesh(), findings[activeIdx], vp, shader.program);
             }
         }
 

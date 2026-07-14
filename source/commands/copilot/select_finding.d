@@ -38,6 +38,7 @@ class CopilotSelectFindingCommand : Command {
     private Command delegate() meshSelectFactory;
     private int                index_ = -1;
     private MeshSelect         inner;
+    private int                prevActive_ = -1; // panel.active() before this act-on; restored on revert
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          CopilotPanel panel, EditorAiState aiState,
@@ -100,13 +101,21 @@ class CopilotSelectFindingCommand : Command {
         inner.setIndices(indices);
         if (!inner.apply()) return false;
 
+        prevActive_ = panel.active(); // remember pre-act-on row (still the old one — setActive below hasn't run)
         panel.setActive(index_);
         return true;
     }
 
     override bool revert() {
         if (inner is null) return false;
-        return inner.revert();
+        const ok = inner.revert();
+        // Restore the panel's active row too — reverting the selection alone
+        // left active_ pointing at the just-selected row. Fixes the undo
+        // highlight/ghost desync AND makes copilot.cycleFinding redo-idempotent
+        // (its apply() recomputes the next index from panel.active(), so the
+        // active row must be back to its pre-apply value after an undo).
+        if (panel !is null) panel.restoreActive(prevActive_);
+        return ok;
     }
 }
 

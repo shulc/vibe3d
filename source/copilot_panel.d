@@ -76,6 +76,14 @@ class CopilotPanel {
         active_ = i;
     }
 
+    /// Restore the active row to `i` on act-on undo (commands/copilot/
+    /// select_finding.d revert()). Unlike setActive, accepts -1 (no active
+    /// row) and degrades an out-of-range index (e.g. after a re-analyze
+    /// shrank the list) to -1 — never leaves active_ dangling past the list.
+    void restoreActive(int i) {
+        active_ = (i >= 0 && i < cast(int) findings_.length) ? i : -1;
+    }
+
     /// Drop finding `index` from the list. Local UI housekeeping only —
     /// NOT mesh/document/selection state, so (unlike act-on) this is a
     /// plain local mutation, not a dispatched command.
@@ -110,11 +118,33 @@ class CopilotPanel {
             if (dispatch !is null) dispatch("copilot.analyze", "{}");
         }
         ImGui.SameLine();
+        // Cycle (task 0402 Phase 3, Phase-0 Q3: panel up/down + click, NOT
+        // a global viewport key — Tab stays subpatch-toggle). Prev/Next
+        // dispatch the SAME `copilot.cycleFinding` command the Up/Down-key
+        // handling below dispatches — one code path, two input surfaces.
+        if (ImGui.SmallButton("Prev")) {
+            if (dispatch !is null) dispatch("copilot.cycleFinding", `{"dir":-1}`);
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Next")) {
+            if (dispatch !is null) dispatch("copilot.cycleFinding", `{"dir":1}`);
+        }
+        ImGui.SameLine();
         // TextUnformatted (not Text) — Text treats its arg as a printf fmt
         // (ImFormatStringToTempBufferV); feed the already-formatted string raw
         // to stay inside the codebase's printf-hazard convention.
         ImGui.TextUnformatted(format("%d finding(s)", findings_.length));
         ImGui.Separator();
+
+        // Up/Down-while-focused key cycling was considered too (Phase-0 Q3's
+        // "panel up/down" half) but the vendored D-ImGui binding pinned in
+        // dub.selections.json exposes only a small hand-picked `ImGuiKey`
+        // subset (Tab/Delete/Backspace/Space/Enter/Escape/Y/Z — see
+        // imgui_h.d) with no UpArrow/DownArrow and no `IsWindowFocused`
+        // wrapper at all; extending that pinned third-party dependency is
+        // out of scope here. The Prev/Next buttons above already satisfy
+        // Phase-0 Q3 ("panel up/down + click") — clicking a row is the
+        // "+ click" half (Selectable below, unchanged from Phase 2).
 
         if (findings_.length == 0) {
             ImGui.TextDisabled("No findings — click Analyze.");
