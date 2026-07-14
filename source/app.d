@@ -8988,6 +8988,37 @@ void main(string[] args) {
                     }
                 }
                 gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
+
+                // Task 0399: Loop Slice ring-preview in Polygons mode. The
+                // Edges-mode branch above previews the ring through
+                // `hoveredEdge` (`wantsEdgeLoopHover` + `rebuildLoopHoverMask`),
+                // but Polygons mode never sets a hovered EDGE — only
+                // hovered/selected FACES — so that seed doesn't exist here.
+                // Loop Slice's Polygons activation instead seeds from the
+                // shared/interior edge(s) of the selected faces (task 0245:
+                // `activationSeeds`/`interiorEdgesOfSelectedFaces`), so the
+                // preview is built from THAT via the tool's own
+                // `selectionRingPreviewMask()` helper (mirrors
+                // `rebuildLoopHoverMask`'s sliceRing branch, but unioned over
+                // every seed instead of a single hovered edge). Same
+                // arm/drag suppression as the Edges branch —
+                // `wantsEdgeLoopHover()` goes false while armed, and
+                // `isDragging()`/`hasUncommittedEdit()` belt-and-suspenders
+                // it — the live cut geometry already shows the result once
+                // armed; a stale ring overlay would just be noise. Gated on
+                // `hasAnySelectedFaces()` so an empty selection draws
+                // nothing extra (no wasted redraw pass). Other Polygons-mode
+                // tools are unaffected: `wantsEdgeLoopHover()` defaults false
+                // on the `Tool` base, so this block is a no-op for them.
+                if (activeTool !is null
+                    && activeTool.wantsEdgeLoopHover()
+                    && !(activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                    && mesh.hasAnySelectedFaces()) {
+                    if (auto lst = cast(LoopSliceTool) activeTool) {
+                        const(bool)[] loopSelMask = lst.selectionRingPreviewMask();
+                        gpu.drawEdges(shader.locColor, -1, mesh.selectedEdges, loopSelMask);
+                    }
+                }
             } else if (showEdgeHover && hoveredEdge >= 0) {
                 const bool[] loopMask =
                     (activeTool !is null && activeTool.wantsEdgeLoopHover())

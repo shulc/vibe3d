@@ -480,6 +480,20 @@ public:
         JSONValue[] ringArr;
         foreach (ei; ringEdges) ringArr ~= JSONValue(ei);
         root["sliceRing"] = JSONValue(ringArr);
+
+        // Task 0399: the Polygons-mode counterpart to `sliceRing` above.
+        // `sliceRing` is hover-driven (`g_hoveredEdge`) and stays EMPTY in
+        // Polygons mode (there is no hovered edge there) — this field
+        // reports the SAME ring app.d's Polygons-mode draw branch now
+        // previews, seeded from the SELECTION instead
+        // (`selectionRingPreviewMask` / `activationSeeds`), so a headless
+        // test can assert the fix without a screenshot: empty before this
+        // task's fix (the draw path didn't exist), non-empty once two
+        // adjacent selected faces are seeding a ring.
+        JSONValue[] selRingArr;
+        foreach (ei, on; selectionRingPreviewMask())
+            if (on) selRingArr ~= JSONValue(cast(int)ei);
+        root["selectionRing"] = JSONValue(selRingArr);
         return root;
     }
 
@@ -569,6 +583,30 @@ public:
     public const(float)[] positionsArray() const { return positions_; }
     public Edit  edit()     const { return edit_; }
     public Mode  mode()     const { return mode_; }
+
+    // Task 0399: Polygons-mode ring-preview mask. Edges mode previews the
+    // ring through `g_hoveredEdge` (app.d's `rebuildLoopHoverMask`), but
+    // Polygons mode has no hovered EDGE to seed from — only hovered/selected
+    // FACES. This reuses `activationSeeds()` (the single source of truth for
+    // "which ring(s) does the current selection cut", shared with
+    // `applyHeadless`/`onMouseButtonDown`) and unions each seed's
+    // `loopSliceRingEdges` (the SLICE ring — seed + quad-ring exit rails —
+    // not the classic edge loop; this tool always wants that, see
+    // `edgeLoopHoverSliceRing`), mirroring `rebuildLoopHoverMask`'s
+    // sliceRing branch but over every seed instead of a single hovered edge.
+    // Returns a cage-indexed bool[] (length == mesh.edges.length); an empty
+    // selection (or Edges mode, where `activationSeeds()` only seeds from an
+    // edge selection, never from here) yields an all-false mask.
+    public const(bool)[] selectionRingPreviewMask() const {
+        auto res = new bool[](mesh.edges.length);
+        foreach (seed; activationSeeds()) {
+            if (seed >= mesh.edges.length) continue;
+            foreach (ei; mesh.loopSliceRingEdges(seed))
+                if (ei >= 0 && ei < cast(int)res.length)
+                    res[ei] = true;
+        }
+        return res;
+    }
 
     /// HUD marker-select (task 0239 M5): choose WHICH slice a subsequent
     /// drag/scrub targets, without touching the mesh (mirrors the
@@ -1017,7 +1055,7 @@ private:
     //     yields nothing.
     //   • Anything else → empty (the interactive path then tries a hover seed;
     //     the headless path treats empty as a no-op).
-    uint[] activationSeeds() {
+    uint[] activationSeeds() const {
         if (*editMode == EditMode.Edges && mesh.hasAnySelectedEdges()) {
             uint[] s;
             foreach (i, sel; mesh.selectedEdges)
