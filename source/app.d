@@ -255,6 +255,8 @@ import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
 import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
 import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces;
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+    Ai3dInstallState, ai3dDefaultInstallLocation;
 import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
@@ -1267,6 +1269,18 @@ void main(string[] args) {
             _Exit(0);
         }
     }
+
+    // AI3D worker LIFECYCLE manager (task 0403, source/ai3d/worker_manager.d)
+    // — Install/Start/Stop for the optional TRELLIS worker subprocess, so
+    // the end user never runs `python -m ... serve` by hand. Distinct from
+    // ai3dController above: that owns the HTTP/curl transport to WHATEVER
+    // worker URL is configured (manual or spawned); this owns the
+    // subprocess itself (a plain OS process, no thread — same "crash-
+    // isolated subprocess, non-blocking per-frame poll" shape as
+    // remeshJob below). Shutdown kills only a worker/install step THIS
+    // manager spawned — never a foreign process on the configured port.
+    auto ai3dWorkerManager = new Ai3dWorkerManager();
+    scope(exit) ai3dWorkerManager.shutdown();
 
     // Quad-remesh job (source/remesh/remesh_job.d) — a crash-isolated
     // SUBPROCESS (the external autoremesher_cli helper), polled once per
@@ -2492,6 +2506,21 @@ void main(string[] args) {
     // right after the widget below, and `ai3dController.start()` threads it
     // to `stageArtifact`, whose `clampMaxFaces` is the real authority.
     int ai3dMaxFaces = Ai3dDefaultRequestedFaces;
+
+    // AI worker lifecycle UI state (task 0403). ai3dWorkerStarting bridges
+    // Start's "spawned the process" moment to the health probe confirming
+    // it actually came up: while true, the modal re-triggers
+    // ai3dController.probeHealth() at a throttled cadence (never every
+    // frame — that would spawn a health-probe thread per frame) and reads
+    // the result through the SAME ai3dModal.health* snapshot the manual
+    // health line already uses. ai3dInstallConfirmOpen/PendingOpen mirror
+    // ai3dModalOpen/ai3dModalPendingOpen's own nested-popup convention.
+    import core.time : MonoTime;
+    bool     ai3dWorkerStarting;
+    MonoTime ai3dWorkerStartDeadline;
+    MonoTime ai3dWorkerNextHealthProbe;
+    bool     ai3dInstallConfirmOpen;
+    bool     ai3dInstallConfirmPendingOpen;
 
     // Quad Remesh modal (source/remesh/remesh_job.d). No health-check /
     // event-queue snapshot needed like ai3dModal above — RemeshJob is polled
@@ -9299,6 +9328,13 @@ void main(string[] args) {
             // delegate invoke — ai3d.event_queue).
             ai3dController.drain(&onAi3dEvent);
 
+            // AI3D worker lifecycle (task 0403) per-frame poll — non-
+            // blocking (tryWait() on whatever process this manager itself
+            // spawned, if any). Same "always outside httpServer.running"
+            // reasoning as the ai3d drain above.
+            ai3dWorkerManager.pollWorker();
+            ai3dWorkerManager.pollInstall();
+
             // Quad Remesh (source/remesh/remesh_job.d) per-frame poll —
             // same "always outside httpServer.running" reasoning as the
             // ai3d drain above: a normal editor run with HTTP off must still
@@ -9638,6 +9674,112 @@ void main(string[] args) {
                     ImGui.CloseCurrentPopup();
                     ai3dModalOpen = false;
                 }
+
+                // ---- AI worker lifecycle (task 0403) ---------------------------
+                // Ai3dWorkerManager tracks ONLY the subprocess the editor itself
+                // spawned (worker_manager.d's module doc) — Start/Stop here can
+                // never touch a worker some other process started. The manual
+                // "Worker URL" field below stays live for advanced users who
+                // point the editor at an externally-managed worker instead; a
+                // successful Start overwrites it with the spawned worker's URL.
+                {
+                    import core.time : seconds;
+
+                    final switch (ai3dWorkerManager.state()) {
+                        case Ai3dWorkerState.notInstalled:
+                            ImGui.Text("AI worker: not installed");
+                            if (ai3dWorkerManager.installBusy()) {
+                                ImGui.Text(ai3dWorkerManager.installState() == Ai3dInstallState.runningInstall
+                                    ? "Installing runtime..." : "Downloading model...");
+                                ImGui.BeginChild("ai3dInstallLog", ImVec2(360, 90), true);
+                                ImGui.TextUnformatted(ai3dWorkerManager.installLogTail(2000));
+                                ImGui.SetScrollHereY(1.0f);
+                                ImGui.EndChild();
+                                if (ImGui.Button("Cancel Install")) ai3dWorkerManager.cancelInstall();
+                            } else {
+                                if (ai3dWorkerManager.installState() == Ai3dInstallState.failed)
+                                    ImGui.TextUnformatted("Install failed: " ~ ai3dWorkerManager.installMessage());
+                                if (ImGui.Button("Install")) {
+                                    ai3dWorkerManager.clearInstall();
+                                    ai3dInstallConfirmOpen        = true;
+                                    ai3dInstallConfirmPendingOpen = true;
+                                }
+                            }
+                            break;
+                        case Ai3dWorkerState.installedStopped:
+                            ImGui.Text(ai3dWorkerManager.modelPresent()
+                                ? "AI worker: installed, not running"
+                                : "AI worker: installed (model not downloaded yet), not running");
+                            if (ImGui.Button("Start")) {
+                                if (ai3dWorkerManager.startWorker()) {
+                                    ai3dWorkerStarting        = true;
+                                    ai3dWorkerStartDeadline   = MonoTime.currTime + 90.seconds;
+                                    ai3dWorkerNextHealthProbe = MonoTime.currTime;
+                                    const spawnedUrl = ai3dWorkerManager.workerUrl();
+                                    ai3dWorkerUrlBuf[] = 0;
+                                    ai3dWorkerUrlBuf[0 .. spawnedUrl.length] = spawnedUrl;
+                                }
+                            }
+                            break;
+                        case Ai3dWorkerState.running:
+                            ImGui.Text("AI worker: running (" ~ ai3dWorkerManager.workerUrl() ~ ")");
+                            if (ImGui.Button("Stop")) {
+                                ai3dWorkerManager.stopWorker();
+                                ai3dWorkerStarting = false;
+                            }
+                            break;
+                    }
+
+                    // Post-Start health poll: throttled to ~1/s (never
+                    // per-frame — probeHealth() spawns a short-lived thread
+                    // per call) against the SAME ai3dModal.health* snapshot
+                    // the manual health line below reads.
+                    if (ai3dWorkerStarting) {
+                        ImGui.Text("Waiting for the worker to become ready...");
+                        if (MonoTime.currTime >= ai3dWorkerNextHealthProbe) {
+                            ai3dController.probeHealth(ai3dWorkerManager.workerUrl());
+                            ai3dWorkerNextHealthProbe = MonoTime.currTime + 1.seconds;
+                        }
+                        if (ai3dModal.healthChecked && ai3dModal.healthOk) {
+                            ai3dWorkerStarting = false;
+                        } else if (MonoTime.currTime >= ai3dWorkerStartDeadline) {
+                            ai3dWorkerStarting     = false;
+                            ai3dModal.errorCode    = "worker_start_timeout";
+                            ai3dModal.errorMessage = "AI worker did not become ready in time";
+                        }
+                    }
+                }
+
+                // Install confirmation — nested popup, same pendingOpen
+                // convention as the Generate 3D modal itself (ai3dModalOpen /
+                // ai3dModalPendingOpen above).
+                if (ai3dInstallConfirmOpen) {
+                    if (ai3dInstallConfirmPendingOpen) {
+                        ImGui.OpenPopup("Install AI Worker?");
+                        ai3dInstallConfirmPendingOpen = false;
+                    }
+                    if (ImGui.BeginPopupModal("Install AI Worker?", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                        ImGui.TextUnformatted(format(
+                            "Installs the AI generation runtime to\n%s (~6-8 GB)\n"
+                            ~ "and downloads the ~4 GB model afterwards. Continue?",
+                            ai3dDefaultInstallLocation()));
+                        if (ImGui.Button("Install")) {
+                            ai3dWorkerManager.runInstall();
+                            ImGui.CloseCurrentPopup();
+                            ai3dInstallConfirmOpen = false;
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Cancel")) {
+                            ImGui.CloseCurrentPopup();
+                            ai3dInstallConfirmOpen = false;
+                        }
+                        ImGui.EndPopup();
+                    } else {
+                        ai3dInstallConfirmOpen = false; // closed via ESC
+                    }
+                }
+
+                ImGui.Separator();
 
                 ImGui.Text("Image: " ~ ai3dPickedImagePath);
 
