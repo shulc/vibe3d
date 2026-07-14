@@ -271,8 +271,18 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test D — shared-face config: select all 12 edges → guard skips all
-//           (every edge shares a face with a neighbor), mesh stays manifold.
+// Test D — shared-face / fully-connected config (task 0391 Phase 1/2): select
+// ALL 12 edges of the cube. Pre-0391, the old face-disjoint / endpoint-
+// disjoint guards rejected any selection where 2 edges shared a face or
+// endpoint, so this whole-cube selection was silently skipped. Task 0391
+// LIFTS those guards specifically to support this "bevel every edge"
+// gesture (a standard "chamfer box" operation): every one of the cube's 8
+// corners is now a full K==valence(3) junction, so EVERY corner is replaced
+// by 3 hub vertices + 1 triangle cap (exactly the edge_bevel_corner.json
+// cap topology, applied at all 8 corners simultaneously) — 8*3=24 hub
+// verts (0 originals survive — every corner is fully consumed), 6 original
+// faces shrink to smaller quads (each of their 4 corners now a hub), + 12
+// per-edge chamfer quads + 8 corner-hub triangles.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -286,19 +296,25 @@ unittest {
     postSelect("edges", allEdgeIdx);
     // (postSelect "edges" enters Edges mode automatically)
 
-    // Every edge shares faces with neighbors → face-disjoint guard rejects all.
     auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"width":0.05}}`);
-    // Either error (all skipped) or unchanged mesh (0 processed).
-    auto m = getModel();
-    // Either status:error or mesh unchanged (both are acceptable documented behavior).
-    bool meshUnchanged = (m["vertexCount"].integer == 8 && m["faceCount"].integer == 6);
-    bool statusError   = (r["status"].str == "error");
-    assert(meshUnchanged || statusError,
-        "D: shared-face config should leave mesh unchanged or return error; got status=" ~
-        r["status"].str ~ " v=" ~ m["vertexCount"].integer.to!string);
+    assert(r["status"].str == "ok",
+        "D: bevel-all-edges should now succeed (task 0391 lifts the face-disjoint guard), got " ~
+        r["status"].str);
 
-    // In either case the mesh must still be manifold.
-    assert(isHoleFree(m), "D: mesh not hole-free after shared-face skip");
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 24,
+        "D: expected 24 hub verts (8 corners x 3 hubs, 0 originals survive), got " ~
+        m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 26,
+        "D: expected 26 faces (6 shrunk originals + 12 chamfers + 8 corner-hub caps), got " ~
+        m["faceCount"].integer.to!string);
+    auto fvd = fvDist(m);
+    assert(fvd.get(4, 0) == 18, "D: expected 18 quads (6 shrunk originals + 12 chamfers)");
+    assert(fvd.get(3, 0) == 8,  "D: expected 8 triangles (one hub cap per corner)");
+
+    assert(isHoleFree(m),           "D: mesh not hole-free after the full-cube bevel");
+    assert(noCoincidentVerts(m),    "D: no coincident vertices expected");
+    assert(orphanVerts(m).length == 0, "D: no orphaned (unreferenced) vertices expected");
 }
 
 // ---------------------------------------------------------------------------

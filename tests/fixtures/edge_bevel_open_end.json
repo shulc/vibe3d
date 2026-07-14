@@ -1,0 +1,43 @@
+{
+  "name": "edge_bevel_open_end",
+  "description": "Edge Bevel on a BOUNDARY edge of an OPEN mesh (only 1 adjacent face, not 2) -- the open-mesh end-cap case. A 2x1 open grid (6 verts, 2 quads sharing one interior edge); the selected edge is fully on the boundary (both endpoints valence-2 boundary corners, not touching the shared interior edge). Reference topology: 6v/2f -> 7v/2f, the touched quad becomes a pentagon, the untouched quad is unchanged. SURPRISING, VERIFIED-REPRODUCIBLE finding: the reference splits the 2 endpoints of the SAME boundary edge ASYMMETRICALLY -- one endpoint gets 2 new vertices, the other gets only 1 (net +1 vertex per boundary edge bevel, vs. the +2 a closed-mesh isolated edge gets, see edge_bevel_single.json). Confirmed on TWO independent open-mesh layouts (this 2-quad grid AND a degenerate single open quad, both gave the same 1-vs-2 split); the endpoint that comes SECOND in the bordering face's own winding-order traversal of the edge is the one that gets 2 replacements. This is real, reproducible reference behavior, not a capture artifact -- vibe3d's bevelEdgesByMask has no boundary-edge path at all today (its valence-3 guard requires a closed manifold vertex on BOTH endpoints, so a boundary edge is silently skipped/no-op), so this fixture is establishing brand-new target geometry, including this asymmetry, for the cap fix.",
+  "source": "Frozen reference-editor capture via the private capture harness's edge_bevel op (task 0391), case edge_bevel_open_grid_w01.json (raw_mesh setup, 2x1 open grid), width=0.1.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-07-14T00:00:00Z",
+    "harness": "private capture harness (reference-editor edge-bevel tool + raw-mesh setup, driven headlessly, mode=inset)",
+    "task": "0391",
+    "notes": "Cross-checked against a second, more degenerate open-mesh layout (a single open quad, edge_bevel_open_quad_w01.json capture, not committed as its own fixture) which reproduced the SAME asymmetric 1-vs-2 endpoint split -- rules out a single-face artifact. vibe3d has no boundary-edge bevel path today (valence-3-both-endpoints guard); this is new target geometry, not a regression lock."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "boundary_edge_w01",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [
+              [-1.0, 0.0, -0.5], [0.0, 0.0, -0.5], [1.0, 0.0, -0.5],
+              [-1.0, 0.0, 0.5],  [0.0, 0.0, 0.5],   [1.0, 0.0, 0.5]
+            ],
+            "faces": [ [0, 1, 4, 3], [1, 2, 5, 4] ]
+        } },
+        { "select": { "mode": "edges", "coords": [
+          [[-1.0, 0.0, 0.5], [-1.0, 0.0, -0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel", "params": { "width": 0.1 } } }
+      ],
+      "expected_before": { "verts": 6, "faces": 2 },
+      "expected_after":  { "verts": 7, "faces": 2 },
+      "expected_vertices": [
+        [0.0, 0.0, -0.5], [1.0, 0.0, -0.5], [0.0, 0.0, 0.5], [1.0, 0.0, 0.5],
+        [-0.9, 0.0, -0.5], [-1.0, 0.0, -0.4], [-0.9, 0.0, 0.5]
+      ]
+    }
+  ]
+}

@@ -105,6 +105,16 @@ enum string kUvMapName = "uv";
 /// one definition both sides read (task 0365 P1 relocation).
 enum int MAX_SWEEP_SIDES = 1024;
 
+/// DoS backstops for `bevelEdgesByMask`'s Round Level (`2^L+1` arc points,
+/// exponential) and `bevelFacesByMask`'s Segments (`N` linear rings) —
+/// shared between the kernel (authoritative, clamps any caller including a
+/// direct/scripted one) and the command/tool layer's Param `.max()` hint
+/// (shallower, UI/HTTP-only). Same relocation rationale as
+/// `MAX_SWEEP_SIDES` above (task 0365 P1) — `mesh.d` must not import
+/// `commands/*`/`tools/*`, so this is the one definition both sides read.
+enum int MAX_ROUND_LEVEL     = 10;  // 2^10+1 = 1025 arc pts/endpoint
+enum int MAX_BEVEL_SEGMENTS  = 64;
+
 /// A generic named, typed per-element float attribute channel — the single
 /// reusable home for continuous per-element data (UV, vertex weight, edge
 /// crease, vertex color, …) so each such attribute does NOT become a bespoke
@@ -8091,26 +8101,143 @@ struct Mesh {
     /// the coincident corners and drops any face that falls below 3
     /// distinct vertices (the fully-collapsed cap), leaving the ring
     /// quads as valid triangles instead of coincident-vertex / zero-area
-    /// geometry.
-    size_t bevelFacesByMask(const bool[] mask, float inset, float shift) {
+    /// geometry. (Overshoot clamping is NOT applied to `group`'s shared
+    /// corners below — untested combination, documented gap.)
+    ///
+    /// `group` (task 0391 Phase 4, `capture-verified` default TRUE at the
+    /// command/tool layer — see `commands/mesh/bevel.d`): when true and ≥2
+    /// selected faces are mutually adjacent, their SHARED corners collapse
+    /// to ONE new vertex instead of each face computing its own independent
+    /// corner there, and the ring quad for any EDGE shared by 2 selected
+    /// faces ("internal") is suppressed entirely (no bridge — it dissolves
+    /// into the merged interior). Two corner laws, both `capture-verified`
+    /// against `poly_bevel_corner.json`'s 3-face cube-corner case:
+    ///   - a vertex with EXACTLY 1 internal edge touching it ("half-shared",
+    ///     on the group's own outer boundary but shared by the 2 faces
+    ///     either side of that internal edge): `orig + Σ(shift·faceNormal
+    ///     over every selected face incident to it) + inset·dir(orig → the
+    ///     internal edge's other endpoint)`.
+    ///   - a vertex with EVERY incident edge internal (fully enclosed by
+    ///     the group, no boundary edge left — the group's own analog of
+    ///     edge-bevel's N-way junction hub): `orig + Σ(shift·faceNormal)`,
+    ///     no inset term (there is no boundary edge left to inset against).
+    ///   - a vertex with 0 internal edges (standalone) uses today's
+    ///     unshared per-face formula unchanged.
+    ///   - a vertex with ≥2 internal edges AND ≥1 remaining boundary edge
+    ///     (a partial, "some but not all" enclosure) is NOT fixture-tested;
+    ///     falls back to the standalone per-face formula (documented gap,
+    ///     not silent — a cube's faces never exercise this shape).
+    /// `group=false` (default) is byte-identical to the pre-0391 kernel.
+    ///
+    /// `segments` (task 0391 Phase 5, `capture-verified` LINEAR staircase —
+    /// `vibe3d-divergence` from edge.bevel's Round Level, which is a TRUE
+    /// circular arc, see `bevelEdgesByMask`'s own doc comment): `N ≥ 1`
+    /// interpolates `N` EQUAL linear steps from the original boundary to
+    /// the final (inset+shift, or group-shared) corner, emitting `N` ring
+    /// quads per boundary edge instead of 1 (`N-1` new intermediate rings).
+    /// `segments<=1` (the default 0, or 1) is byte-identical to the flat
+    /// single-ring result above. Intermediate (non-endpoint) ring vertices
+    /// are computed PER-FACE even under `group` (only the t=0 original and
+    /// t=N final corners are shared) — the captured segments law is
+    /// verified only on single-face selections, where grouping is moot.
+    /// KNOWN-UNTESTED: `group=true && segments>1` together (the combined
+    /// code path compiles and each half is independently verified, but no
+    /// fixture/unittest exercises the combination) — a cube face selection
+    /// large enough to test both simultaneously wasn't captured.
+    ///
+    /// Two-layer DoS clamp: `segments` is hard-capped to
+    /// `MAX_BEVEL_SEGMENTS` HERE (kernel-side, authoritative for any
+    /// caller) since it scales ring-quad allocation linearly per selected
+    /// face; the command/tool Param's `.min(0).max(MAX_BEVEL_SEGMENTS)
+    /// .enforceBounds()` hint is a shallower UI/HTTP-only second line of
+    /// defense.
+    size_t bevelFacesByMask(const bool[] mask, float inset, float shift,
+                             bool group = false, int segments = 0) {
         import std.math : abs;
         if (abs(inset) < 1e-6f && abs(shift) < 1e-6f) return 0;
+
+        int segN = segments;
+        if (segN < 0) segN = 0;
+        if (segN > MAX_BEVEL_SEGMENTS) segN = MAX_BEVEL_SEGMENTS;
+        immutable int Nseg = (segN < 1) ? 1 : segN; // segs=0 == segs=1 == flat
+
         size_t processed = 0;
         bool anyClamped = false;
         const size_t nFaces = faces.length;
+
+        // --- group=true pre-pass: classify edges internal/boundary and
+        // pre-compute each shared-corner vertex's target position. ---
+        bool[ulong] internalEdgeSet;  // edgeKeyOrdered → true(internal)/false(boundary), only for edges bordering >=1 selected face
+        Vec3[uint]  sharedCornerPos;  // orig vertex idx → shared new position (half-shared or apex)
+        if (group) {
+            auto edgeFacesMap = buildEdgeFaces();
+            foreach (fi; 0 .. nFaces) {
+                if (fi >= mask.length || !mask[fi]) continue;
+                auto f = faces[fi];
+                immutable int Nf = cast(int)f.length;
+                foreach (k; 0 .. Nf) {
+                    uint a = f[k], b = f[(k + 1) % Nf];
+                    immutable ulong key = edgeKeyOrdered(a, b);
+                    if (key in internalEdgeSet) continue;
+                    auto fp = key in edgeFacesMap;
+                    bool internal = false;
+                    if (fp !is null && (*fp)[0] >= 0 && (*fp)[1] >= 0) {
+                        immutable uint fa = cast(uint)(*fp)[0], fb = cast(uint)(*fp)[1];
+                        internal = (fa < mask.length && mask[fa]) && (fb < mask.length && mask[fb]);
+                    }
+                    internalEdgeSet[key] = internal;
+                }
+            }
+
+            // Per-vertex shift accumulator: once per (vertex, selected face
+            // it corners) pair, regardless of how many of its edges are
+            // internal — used only for vertices that end up shared.
+            Vec3[uint] shiftSum;
+            foreach (fi; 0 .. nFaces) {
+                if (fi >= mask.length || !mask[fi]) continue;
+                immutable Vec3 fn = faceNormal(cast(uint)fi);
+                foreach (v; faces[fi]) {
+                    if (auto p = v in shiftSum) *p = *p + fn * shift;
+                    else shiftSum[v] = fn * shift;
+                }
+            }
+
+            foreach (v, sSum; shiftSum) {
+                uint internalCnt = 0, lastInternalOther = uint.max;
+                bool anyBoundary = false;
+                foreach (ei; edgesAroundVertex(v)) {
+                    immutable uint w = edgeOtherVertex(ei, v);
+                    immutable ulong key = edgeKeyOrdered(v, w);
+                    auto ip = key in internalEdgeSet;
+                    if (ip is null) continue; // doesn't border any selected face — irrelevant
+                    if (*ip) { ++internalCnt; lastInternalOther = w; }
+                    else     { anyBoundary = true; }
+                }
+                if (internalCnt == 0) continue; // standalone — default formula below
+                if (internalCnt == 1) {
+                    sharedCornerPos[v] = vertices[v] + sSum +
+                        safeNormalize(vertices[lastInternalOther] - vertices[v]) * inset;
+                } else if (!anyBoundary) {
+                    sharedCornerPos[v] = vertices[v] + sSum; // fully-enclosed apex, no inset term
+                }
+                // else: partial (>=2 internal, boundary remains) — deferred, falls through.
+            }
+        }
+        uint[uint] sharedVertIdx; // orig vertex idx → already-created shared mesh vertex (memoized once)
+
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
             const uint[] origFaceVerts = faces[fi].dup;
-            const int    N             = cast(int)origFaceVerts.length;
-            if (N < 3) continue;
-            Vec3[] origPos = new Vec3[](N);
-            foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
+            const int    Nc            = cast(int)origFaceVerts.length;
+            if (Nc < 3) continue;
+            Vec3[] origPos = new Vec3[](Nc);
+            foreach (i; 0 .. Nc) origPos[i] = vertices[origFaceVerts[i]];
             const Vec3 n = faceNormal(cast(uint)fi);
 
             float effInset = inset;
             if (inset > 0) {
-                Vec3[] probe = new Vec3[](N);
-                foreach (i; 0 .. N) probe[i] = insetCorner(origPos, i, n, 1.0f) - origPos[i];
+                Vec3[] probe = new Vec3[](Nc);
+                foreach (i; 0 .. Nc) probe[i] = insetCorner(origPos, i, n, 1.0f) - origPos[i];
                 const float capT = maxSafeUniformInset(origPos, probe);
                 // Landing AT the cap exactly (inset == capT) already collapses a
                 // ring edge to zero length (its two corners coincide) — trigger
@@ -8118,19 +8245,56 @@ struct Mesh {
                 if (capT <= effInset) { effInset = capT; anyClamped = true; }
             }
 
-            uint[] newVerts = new uint[](N);
-            foreach (i; 0 .. N)
-                newVerts[i] = addVertex(insetCorner(origPos, i, n, effInset) + n * shift);
-            faces[fi] = newVerts.dup;
+            // Final (t=Nseg) corner per index — group-aware: a shared
+            // corner is created ONCE and reused across every face it touches.
+            uint[] finalVerts = new uint[](Nc);
+            Vec3[] finalPos   = new Vec3[](Nc);
+            foreach (i; 0 .. Nc) {
+                immutable uint origV = origFaceVerts[i];
+                auto shP = group ? (origV in sharedCornerPos) : null;
+                if (shP !is null) {
+                    finalPos[i] = *shP;
+                    if (auto p = origV in sharedVertIdx) finalVerts[i] = *p;
+                    else {
+                        immutable uint nv = addVertex(finalPos[i]);
+                        sharedVertIdx[origV] = nv;
+                        finalVerts[i] = nv;
+                    }
+                } else {
+                    finalPos[i]  = insetCorner(origPos, i, n, effInset) + n * shift;
+                    finalVerts[i] = addVertex(finalPos[i]);
+                }
+            }
+
+            // Intermediate segment rings: t=0 is the original boundary,
+            // t=Nseg is finalVerts; t=1..Nseg-1 are new equal-lerp rings
+            // (computed per-face even for a shared corner — see doc comment).
+            uint[][] ringVerts = new uint[][](Nseg + 1);
+            ringVerts[0]    = origFaceVerts.dup;
+            ringVerts[Nseg] = finalVerts;
+            foreach (t; 1 .. Nseg) {
+                uint[] ring = new uint[](Nc);
+                immutable float f = cast(float)t / cast(float)Nseg;
+                foreach (i; 0 .. Nc)
+                    ring[i] = addVertex(origPos[i] + (finalPos[i] - origPos[i]) * f);
+                ringVerts[t] = ring;
+            }
+
+            faces[fi] = finalVerts.dup;
             // Task 0389: read the source face's Subpatch bit BEFORE the ring
             // quads below grow `faceMarks` (addFace does not grow it itself —
             // `fi`'s own bit is unaffected by the in-place replace above).
             immutable bool srcSub  = isFaceSubpatch(fi);
             immutable size_t ringStart = faces.length;
-            foreach (i; 0 .. N) {
-                const int next = (i + 1) % N;
-                addFace([origFaceVerts[i], origFaceVerts[next],
-                         newVerts[next],   newVerts[i]]);
+            foreach (i; 0 .. Nc) {
+                const int next = (i + 1) % Nc;
+                if (group) {
+                    immutable ulong key = edgeKeyOrdered(origFaceVerts[i], origFaceVerts[next]);
+                    if (internalEdgeSet.get(key, false)) continue; // internal — dissolves, no bridge
+                }
+                foreach (t; 0 .. Nseg)
+                    addFace([ringVerts[t][i],     ringVerts[t][next],
+                             ringVerts[t+1][next], ringVerts[t+1][i]]);
             }
             // Ring quads inherit Subpatch from the beveled source face.
             resizeSubpatch();
@@ -8144,6 +8308,12 @@ struct Mesh {
             // that all clamped onto the same centroid) stay in `vertices[]`
             // as now-unreferenced orphans unless compacted away here too.
             weldCoincidentVertices(1e-10);
+        }
+        if (anyClamped || group) {
+            // group's fully-enclosed apex vertices (every incident edge
+            // internal) are never referenced by any surviving face or ring
+            // quad once every incident face's corner has moved to the
+            // shared apex — compact them away.
             compactUnreferenced();
         }
         rebuildEdges();
@@ -8253,231 +8423,392 @@ struct Mesh {
         return processed;
     }
 
-    /// Edge bevel (Candidate A — slide-along-adjacent-edge): replace each
-    /// qualifying selected edge with a flat 4-vertex chamfer strip.
+    /// Edge bevel (Candidate A — slide-along-adjacent-edge, generalized).
     ///
-    /// v1 scope (face-disjoint): a selected edge is processed only when ALL
-    /// hold: interior (exactly 2 incident faces); each endpoint valence-3;
-    /// no other selected edge at either endpoint (endpoint-disjoint); none
-    /// of its incident faces claimed by another selected edge (face-disjoint);
-    /// and the two endpoints' third faces are distinct. Conflicting edges are
-    /// silently skipped.
+    /// Replaces every qualifying selected edge with a chamfer strip (a flat
+    /// quad at `roundLevel==0`, or `2^roundLevel` quad rings sampling a true
+    /// circular arc when `roundLevel>0` — task 0391 Phase 3). Unlike the v1
+    /// kernel, selected edges may share endpoints: the per-VERTEX cap
+    /// topology (bare end / loop-turn miter / N-way junction hub-fill) is
+    /// derived generically from the half-edge ring around each touched
+    /// vertex, not hardcoded per case. See doc/bevel_full_plan.md Phases 1-3
+    /// and the private algorithm-grounding reference distilled there
+    /// (clean-room design, NOT ported GPL code — see the bevel clean-room
+    /// rewrite history for provenance).
+    ///
+    /// **Algorithm** (per affected vertex V, walking `facesAroundVertex(V)` /
+    /// `edgesAroundVertex(V)` in their proven-lockstep half-edge ring order —
+    /// face `f_k` borders edge `e_k` (V's SUCCESSOR side within `f_k`) and
+    /// edge `e_(k+1)` (V's PREDECESSOR side within `f_k`)):
+    ///   - `f_k` bordered by 2 SELECTED edges → MITER: one new vertex via
+    ///     `offsetMeet` (both-bevel meet, matches `insetCorner`'s convention).
+    ///     If ALL of V's edges are selected (K == valence), the per-face
+    ///     miters trace a closed K-gon boundary (each selected edge's own
+    ///     chamfer quad already threads a rail between 2 consecutive miters)
+    ///     that needs exactly ONE new cap face to fill — the "hub" cap.
+    ///   - `f_k` bordered by exactly 1 selected edge → SLIDE: one new vertex
+    ///     = V + width·dir(the OTHER, unselected edge) — identical formula
+    ///     to the original v1 kernel's per-endpoint corner, so a lone
+    ///     selected edge (K==1 at both ends) reproduces v1's output exactly.
+    ///   - `f_k` bordered by 2 UNSELECTED edges: if BOTH are "active" (each
+    ///     itself borders a selected edge via its OTHER incident face) →
+    ///     SPLIT into the 2 already-computed slide vertices (the classic
+    ///     bare-end pentagon); if exactly one is active → SPLIT into
+    ///     [that slide vertex, V] (V retained on the inactive side — a
+    ///     partial notch, not fixture-tested but topologically sound for
+    ///     valence > 3); if neither is active → untouched.
+    /// A selected edge's own chamfer strip always bridges the per-(vertex,
+    /// face) corner already resolved above for its 2 bordering faces at
+    /// each endpoint — so the strip is well-defined for EVERY case (bare
+    /// end, loop turn, junction) without per-case branching at the edge
+    /// level.
+    ///
+    /// v1's guards this generalizes away (task 0391 Phase 1/2): the blanket
+    /// endpoint-disjoint guard and the valence-3-both-endpoints guard are
+    /// GONE — a vertex may have any number of selected edges (K) at any
+    /// valence. STILL required: each selected edge must be interior
+    /// (exactly 2 incident faces) — boundary edges are silently skipped
+    /// (open-boundary bevel is task 0391 Phase 6, deferred/XFAIL).
+    ///
+    /// `roundLevel` (Round Level — `2^L+1` evenly-angled points on the TRUE
+    /// circular arc of radius `width`, task 0391 Phase 3,
+    /// `capture-verified`; DIFFERENT law from poly.bevel's linear-staircase
+    /// Segments, see `bevelFacesByMask`) rounds a selected edge's
+    /// cross-section ONLY when BOTH endpoints are a "clean" bare end: both
+    /// bordering corners SLIDE (not MITER) AND the endpoint's LOCAL valence
+    /// is exactly 3 AND neither corner hit the overshoot clamp. This is the
+    /// only topology where the arc's interior vertices can be PROVABLY
+    /// shared with the endpoint's "back face" (the third, neither-edge-
+    /// selected face) and stay manifold — see the `arcInterior` doc comment
+    /// below for the hole this guards against. If EITHER endpoint fails
+    /// that test (a loop-turn/junction MITER corner, a valence>3 endpoint,
+    /// or an overshoot-clamped one), the WHOLE SPAN stays flat regardless
+    /// of `roundLevel` — a documented gap, not a silent bug: partially-
+    /// rounding one endpoint while leaving the other flat was tried and
+    /// found to ALSO create an unshared (non-manifold) rail at whichever
+    /// endpoint's corners aren't fixture/topology-provable, so this kernel
+    /// does not attempt it. `roundLevel==0` is byte-identical to the flat
+    /// behavior described above.
+    ///
+    /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
+    /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
+    /// authoritative for any caller including a direct/scripted one) since
+    /// it scales allocation exponentially (`2^L` quad rings per rounded
+    /// endpoint); the command/tool Param's `.min(0).max(MAX_ROUND_LEVEL)
+    /// .enforceBounds()` hint is a shallower, UI/HTTP-only second line of
+    /// defense.
     ///
     /// Returns the count of edges actually processed (0 ⇒ no-op, all skipped).
-    size_t bevelEdgesByMask(const bool[] mask, float width) {
+    size_t bevelEdgesByMask(const bool[] mask, float width, int roundLevel = 0) {
         if (width < 1e-6f) return 0;
         if (mask.length != edges.length) return 0;
+
+        if (roundLevel < 0) roundLevel = 0;
+        if (roundLevel > MAX_ROUND_LEVEL) roundLevel = MAX_ROUND_LEVEL;
+
+        // A "return 0 ⇒ no-op" contract callers rely on (they discard their
+        // pre-op snapshot on failure WITHOUT restoring it into the mesh —
+        // see commands/mesh/bevel.d's evaluate()). The per-vertex corner
+        // pass below can call addVertex for a vertex whose chamfer span is
+        // later discarded (e.g. a boundary-adjacent asymmetric endpoint,
+        // see the regression unittest above) — truncate back to this
+        // snapshot on every post-corner-pass 0-return so a "no-op" never
+        // leaks orphaned vertices into the mesh.
+        immutable size_t savedVertCount = vertices.length;
 
         // Edge→(≤2 faces) adjacency, one pass (same idiom as extrudeEdgesByMask).
         auto edgeFaces = buildEdgeFaces();
 
-        // Per-endpoint: count of selected edges incident at that vertex.
-        int[uint] selEndpt;
-        foreach (i; 0 .. edges.length) {
-            if (i < mask.length && mask[i]) {
-                selEndpt.update(edges[i][0], () => 1, (ref int c) { ++c; });
-                selEndpt.update(edges[i][1], () => 1, (ref int c) { ++c; });
-            }
-        }
-
-        // Utility: count faces around vertex (for valence-3 guard).
-        uint vertexFaceCount(uint vi) const {
-            uint n = 0;
-            foreach (_; facesAroundVertex(vi)) ++n;
-            return n;
-        }
-
-        // Utility: find face ring successor of v in face fi.
-        uint succInFace(uint fi, uint v) const {
-            auto f = faces[fi];
-            foreach (k; 0..f.length)
-                if (f[k] == v) return f[(k+1)%f.length];
-            return uint.max;
-        }
-
-        // Utility: find face ring predecessor of v in face fi.
-        uint predInFace(uint fi, uint v) const {
-            auto f = faces[fi];
-            foreach (k; 0..f.length)
-                if (f[k] == v) return f[(k + f.length - 1)%f.length];
-            return uint.max;
-        }
-
-        // Utility: does face fi contain vertex v?
-        bool faceHasVert(uint fi, uint v) const {
-            foreach (w; faces[fi]) if (w == v) return true;
-            return false;
-        }
-
-        // Collect qualified edges.
-        struct QEdge {
-            uint v0, v1;     // endpoints (v0 as-stored in edges[])
-            uint fL, fR;     // fL traverses v1→v0; fR traverses v0→v1
-            uint g0, g1;     // third face at v0, third face at v1
-            uint ipLv0, ipRv0, ipLv1, ipRv1; // new corner vert indices (filled later)
-        }
-        QEdge[] qEdges;
-
+        // Step 1: qualifying selected edges — interior (exactly 2 incident
+        // faces) only. Boundary edges are silently skipped (Phase 6).
+        bool[] qualifies = new bool[](edges.length);
+        size_t nQual = 0;
         foreach (i; 0 .. edges.length) {
             if (!mask[i]) continue;
             uint v0 = edges[i][0], v1 = edges[i][1];
-
-            // Interior edge (exactly 2 incident faces).
             auto fp = edgeKeyOrdered(v0, v1) in edgeFaces;
             if (fp is null) continue;
-            int fa = (*fp)[0], fb = (*fp)[1];
-            if (fa < 0 || fb < 0) continue;
+            if ((*fp)[0] < 0 || (*fp)[1] < 0) continue;
+            qualifies[i] = true;
+            ++nQual;
+        }
+        if (nQual == 0) return 0;
 
-            // Each endpoint valence-3.
-            if (vertexFaceCount(v0) != 3) continue;
-            if (vertexFaceCount(v1) != 3) continue;
-
-            // Endpoint-disjoint: no other selected edge at either endpoint.
-            { auto cp = v0 in selEndpt; if (cp is null || *cp != 1) continue; }
-            { auto cp = v1 in selEndpt; if (cp is null || *cp != 1) continue; }
-
-            // Determine fL (traverses v1→v0) and fR (traverses v0→v1).
-            uint fL, fR;
-            bool found = false;
-            foreach (k; 0..faces[fa].length) {
-                uint u = faces[fa][k], w = faces[fa][(k+1)%faces[fa].length];
-                if (u == v1 && w == v0) { fL = fa; fR = fb; found = true; break; }
-                if (u == v0 && w == v1) { fR = fa; fL = fb; found = true; break; }
-            }
-            if (!found) continue;
-
-            // Third face at v0 (not fL, not fR, valence-3 so exactly one).
-            uint g0 = uint.max;
-            foreach (fi; facesAroundVertex(v0))
-                if (fi != fL && fi != fR) { g0 = fi; break; }
-            if (g0 == uint.max) continue;
-
-            // Third face at v1 (not fL, not fR).
-            uint g1 = uint.max;
-            foreach (fi; facesAroundVertex(v1))
-                if (fi != fL && fi != fR) { g1 = fi; break; }
-            if (g1 == uint.max) continue;
-
-            // Distinct third faces.
-            if (g0 == g1) continue;
-
-            qEdges ~= QEdge(v0, v1, fL, fR, g0, g1);
+        // Step 2: affected vertices = endpoints of any qualifying edge.
+        bool[] affected = new bool[](vertices.length);
+        foreach (i; 0 .. edges.length) {
+            if (!qualifies[i]) continue;
+            affected[edges[i][0]] = true;
+            affected[edges[i][1]] = true;
         }
 
-        if (qEdges.length == 0) return 0;
-
-        // Face-disjoint guard (greedy first-come-first-served).
-        // An ok edge's four incident faces (fL, fR, g0, g1) must not be
-        // claimed by any previously accepted ok edge.
-        bool[] faceUsed = new bool[](faces.length);
-        bool[] edgeOk   = new bool[](qEdges.length);
-        foreach (qi; 0 .. qEdges.length) {
-            auto q = qEdges[qi];
-            if (faceUsed[q.fL] || faceUsed[q.fR] ||
-                faceUsed[q.g0] || faceUsed[q.g1]) {
-                edgeOk[qi] = false;
-            } else {
-                edgeOk[qi] = true;
-                faceUsed[q.fL] = faceUsed[q.fR] =
-                faceUsed[q.g0] = faceUsed[q.g1] = true;
-            }
-        }
-
-        size_t processed = 0;
-        foreach (qi; 0 .. qEdges.length) if (edgeOk[qi]) ++processed;
-        if (processed == 0) return 0;
-
-        // Add the four corner verts for each ok edge.
-        // Candidate A: p[face][v] = v + width * normalize(w - v)
-        //   where w is v's neighbor in `face` OTHER than the bevel-edge partner.
-        //
         // Overshoot guard (mirrors the edge-extrude face-aware inset clamp,
         // mesh.d ~2520 — "the reference bumps the inset into the far vertex
-        // and stops... does NOT overshoot and self-intersect"): the chamfer
-        // corner cannot travel past the far end `w` of its non-bevel
-        // neighbor edge, so `width` is capped per-direction to that edge's
-        // own length. Landing exactly on `w` at the cap makes the new
-        // corner coincide with an EXISTING mesh vertex — `anyClamped` gates
-        // a `weldCoincidentVertices` pass after the topology rebuild below,
-        // which reuses that existing vertex (merging the new one into it)
-        // and collapses the consecutive-duplicate corner it creates in the
-        // face ring instead of leaving a coincident-vertex / zero-area mesh.
+        // and stops... does NOT overshoot and self-intersect"): a SLIDE
+        // corner cannot travel past the far end of its non-bevel neighbor
+        // edge, so `width` is capped per-direction to that edge's own
+        // length. Landing exactly on the far vertex makes the new corner
+        // coincide with an EXISTING mesh vertex — `anyClamped` gates a
+        // `weldCoincidentVertices` pass after the topology rebuild below.
         bool anyClamped = false;
         float clampedWidth(uint from, uint to) {
             const float farLen = (vertices[to] - vertices[from]).length;
-            // Landing AT the far vertex exactly (width == farLen) already makes
-            // the new corner coincide with an EXISTING mesh vertex — trigger the
-            // weld cleanup below even when the returned width doesn't move.
             if (farLen > 1e-9f && width >= farLen) { anyClamped = true; return farLen; }
             return width;
         }
-        foreach (qi; 0 .. qEdges.length) {
-            if (!edgeOk[qi]) continue;
-            auto ref q = qEdges[qi];
-            uint v0 = q.v0, v1 = q.v1;
 
-            // Neighbor of v0 in fL along the non-bevel edge (fL traverses v1→v0,
-            // so the edge at v0 in fL is v0→succInFace(fL,v0) — that successor
-            // is the non-bevel neighbor).
-            // In fL (traverses v1→v0→w), the non-bevel neighbor of v0 is
-            // succInFace(fL, v0) (the vert after v0 in fL's ring). In fR
-            // (traverses ...→v0→v1→...), the vert after v0 is v1 (the bevel
-            // partner), so the non-bevel neighbor is predInFace(fR, v0).
-            uint wLv0 = succInFace(q.fL, v0);  // fL: v1→v0→wLv0
-            uint wRv0 = predInFace(q.fR, v0);  // fR: wRv0→v0→v1
-
-            uint wLv1 = predInFace(q.fL, v1);  // fL: wLv1→v1→v0
-            uint wRv1 = succInFace(q.fR, v1);  // fR: v0→v1→wRv1
-
-            Vec3 pLv0 = vertices[v0] + clampedWidth(v0, wLv0) * safeNormalize(vertices[wLv0] - vertices[v0]);
-            Vec3 pRv0 = vertices[v0] + clampedWidth(v0, wRv0) * safeNormalize(vertices[wRv0] - vertices[v0]);
-            Vec3 pLv1 = vertices[v1] + clampedWidth(v1, wLv1) * safeNormalize(vertices[wLv1] - vertices[v1]);
-            Vec3 pRv1 = vertices[v1] + clampedWidth(v1, wRv1) * safeNormalize(vertices[wRv1] - vertices[v1]);
-
-            q.ipLv0 = addVertex(pLv0);
-            q.ipRv0 = addVertex(pRv0);
-            q.ipLv1 = addVertex(pLv1);
-            q.ipRv1 = addVertex(pRv1);
+        pragma(inline, true) static ulong vfKey(uint v, uint f) {
+            return (cast(ulong)v << 32) | cast(ulong)f;
         }
 
-        // Build vertex-substitution map: face_index → (old_vert → new_verts[]).
-        // Each face can be touched by at most one ok edge (face-disjoint guard).
+        // Per-(vertex,face) corner resolution. `dir` is only meaningful for
+        // SLIDE corners (isMiter==false) — the unit direction from V toward
+        // the unselected neighbor, needed to reconstruct a Round Level arc.
+        // `roundEligible` (SLIDE corners only) is true iff this corner's
+        // endpoint is a "clean" bare end — locally valence==3 (so the
+        // back-face split below is GUARANTEED to exist and be threadable)
+        // and not overshoot-clamped (so the arc's fixed `width` radius
+        // actually matches this corner's real, possibly-shorter, distance
+        // from V) — see the manifold-hole fix note on `arcInterior` below.
+        struct CornerInfo { uint vert; bool isMiter; Vec3 dir; bool roundEligible; }
+        CornerInfo[ulong] cornerAtVF;
+
+        // face_index → (old_vert → new_verts[]), same substitution-table
+        // idiom as bevelVerticesByMask / extrudeFacesByMask. A face can now
+        // legitimately receive substitution entries for MULTIPLE distinct
+        // vertices (e.g. a loop's shared "inside" face gets one per corner).
         struct VertSub { uint oldV; uint[] newVs; }
         VertSub[][uint] faceSubs;
 
-        foreach (qi; 0 .. qEdges.length) {
-            if (!edgeOk[qi]) continue;
-            auto q = qEdges[qi];
-            uint v0 = q.v0, v1 = q.v1;
+        // Full-ring ("hub cap") bookkeeping: vertex → ordered miter-corner
+        // ring (only populated when K == valence, i.e. every incident edge
+        // of V is selected — Phase 2's N-way junction).
+        uint[][uint] hubCapRing;
+        uint[uint]   hubCapSrc;
 
-            // fL: single replacement for both v0 and v1.
-            faceSubs.require(q.fL) ~= VertSub(v0, [q.ipLv0]);
-            faceSubs.require(q.fL) ~= VertSub(v1, [q.ipLv1]);
+        // Round Level arc-manifold fix (post-review hardening): a rounded
+        // chamfer strip subdivides its cross-section rail into `2^L - 1`
+        // NEW interior vertices at each endpoint. At a bare-end vertex V,
+        // that SAME rail is also a direct chord edge in V's "back face"
+        // (the third, neither-selected-edge face — the `activeSucc &&
+        // activePred` branch below), which the flat (roundLevel==0) kernel
+        // shares correctly (chord used once by the chamfer quad, once by
+        // the back face). If the chamfer strip subdivides that rail but the
+        // back face keeps the plain 2-vertex chord, the chord edge — and
+        // EVERY interior arc edge — ends up bordering only ONE face: a
+        // non-manifold hole (lune-shaped gap between the arc and the old
+        // straight chord) at BOTH ends of every rounded bare edge. Fix:
+        // BOTH the back-face split AND the chamfer strip call this SAME
+        // memoized helper, so there is only ever ONE physical arc computed
+        // per span — its interior vertices are shared, not duplicated, and
+        // every sub-edge along the rail is used by exactly 2 faces.
+        // Scoped conservatively to vertices with LOCAL valence==3 (see
+        // `roundEligible` above) — the only topology where this back face
+        // is provably unique and unambiguous; a loop-turn/junction (MITER-
+        // adjacent) or valence>3 endpoint keeps its ENTIRE chamfer span
+        // flat instead (documented gap, not a silent bug — see the
+        // `roundLevel` doc comment above `bevelEdgesByMask`).
+        uint[][ulong] arcInteriorMemo; // canonical pairKey(a,b), a<b → interior verts in a→b order
+        static ulong pairKey(uint a, uint b) {
+            return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+        }
+        uint[] arcInterior(uint a, uint b, Vec3 center, Vec3 dirA, Vec3 dirB) {
+            import std.algorithm : reverse;
+            immutable ulong key = pairKey(a, b);
+            uint[] stored;
+            if (auto p = key in arcInteriorMemo) {
+                stored = *p;
+            } else {
+                immutable int n = 1 << roundLevel;
+                Vec3[] pts = (a < b) ? bevelArcPoints(center, dirA, dirB, width, roundLevel)
+                                      : bevelArcPoints(center, dirB, dirA, width, roundLevel);
+                uint[] interior = new uint[](n - 1);
+                foreach (t; 1 .. n) interior[t - 1] = addVertex(pts[t]);
+                arcInteriorMemo[key] = interior;
+                stored = interior;
+            }
+            if (a < b) return stored;
+            auto rev = stored.dup;
+            reverse(rev);
+            return rev;
+        }
 
-            // fR: single replacement for both v0 and v1.
-            faceSubs.require(q.fR) ~= VertSub(v0, [q.ipRv0]);
-            faceSubs.require(q.fR) ~= VertSub(v1, [q.ipRv1]);
+        foreach (V; 0 .. cast(uint)vertices.length) {
+            if (V >= affected.length || !affected[V]) continue;
 
-            // g0: split-into-two at v0. Insertion order depends on predecessor.
-            // If pred of v0 in g0 is in fL → insert [ipLv0, ipRv0]; else [ipRv0, ipLv0].
-            {
-                uint pred = predInFace(q.g0, v0);
-                bool predInFL = faceHasVert(q.fL, pred);
-                uint[] order = predInFL ? [q.ipLv0, q.ipRv0] : [q.ipRv0, q.ipLv0];
-                faceSubs.require(q.g0) ~= VertSub(v0, order);
+            uint[] vFaces, vEdges, vNbrs;
+            foreach (fi; facesAroundVertex(V)) vFaces ~= fi;
+            foreach (ei; edgesAroundVertex(V)) vEdges ~= ei;
+            immutable int d = cast(int)vFaces.length;
+            if (d < 2 || vEdges.length != d) continue; // malformed/non-manifold guard
+            vNbrs.length = d;
+            foreach (k; 0 .. d) vNbrs[k] = edgeOtherVertex(vEdges[k], V);
+
+            bool[] selE = new bool[](d);
+            int K = 0;
+            foreach (k; 0 .. d) {
+                selE[k] = (vEdges[k] < qualifies.length) && qualifies[vEdges[k]];
+                if (selE[k]) ++K;
+            }
+            if (K == 0) continue;
+
+            // An unselected edge is "active" iff it is immediately adjacent
+            // (in the vertex's cyclic ring) to a selected edge — i.e. it
+            // needs its own slide vertex (shared by both faces bordering it).
+            bool[] active = new bool[](d);
+            foreach (k; 0 .. d) {
+                if (selE[k]) continue;
+                immutable int km1 = (k - 1 + d) % d, kp1 = (k + 1) % d;
+                active[k] = selE[km1] || selE[kp1];
             }
 
-            // g1: split-into-two at v1.
-            {
-                uint pred = predInFace(q.g1, v1);
-                bool predInFL = faceHasVert(q.fL, pred);
-                uint[] order = predInFL ? [q.ipLv1, q.ipRv1] : [q.ipRv1, q.ipLv1];
-                faceSubs.require(q.g1) ~= VertSub(v1, order);
+            immutable Vec3 vpos = vertices[V];
+            uint[int] slideVert;    // local edge-slot k → new vertex (memoized per V)
+            bool[int] slideClamped; // local edge-slot k → did the overshoot guard clamp it?
+            uint getSlide(int k) {
+                if (auto p = k in slideVert) return *p;
+                Vec3 dir = safeNormalize(vertices[vNbrs[k]] - vpos);
+                immutable float w = clampedWidth(V, vNbrs[k]);
+                uint nv = addVertex(vpos + dir * w);
+                slideVert[k]    = nv;
+                slideClamped[k] = (w < width);
+                return nv;
+            }
+            Vec3 slideDir(int k) { return safeNormalize(vertices[vNbrs[k]] - vpos); }
+
+            foreach (k; 0 .. d) {
+                immutable int kr = (k + 1) % d;    // face f_k's PRED-side edge slot
+                immutable uint fi = vFaces[k];
+                immutable bool selSucc = selE[k];   // edge k: V's succ-side in f_k
+                immutable bool selPred = selE[kr];  // edge kr: V's pred-side in f_k
+
+                if (selSucc && selPred) {
+                    // MITER: both bordering edges selected (loop turn, or one
+                    // face of an N-way junction). ePrev/eNext match
+                    // insetCorner's own prev/next-in-face convention.
+                    Vec3 ePrev = safeNormalize(vertices[vNbrs[kr]] - vpos);
+                    Vec3 eNext = safeNormalize(vertices[vNbrs[k]]  - vpos);
+                    Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), width, width);
+                    uint nv = addVertex(m);
+                    cornerAtVF[vfKey(V, fi)] = CornerInfo(nv, true, Vec3(0,0,0), false);
+                    faceSubs.require(fi) ~= VertSub(V, [nv]);
+                } else if (selSucc != selPred) {
+                    // SLIDE: exactly one bordering edge selected — corner
+                    // slides along the OTHER (unselected) one.
+                    immutable int unselK = selSucc ? kr : k;
+                    uint nv = getSlide(unselK);
+                    immutable bool eligible = (d == 3) && !slideClamped[unselK];
+                    cornerAtVF[vfKey(V, fi)] = CornerInfo(nv, false, slideDir(unselK), eligible);
+                    faceSubs.require(fi) ~= VertSub(V, [nv]);
+                } else {
+                    // Neither bordering edge selected — split iff at least
+                    // one side is "active" (touches a selected edge via its
+                    // OTHER face). Order is [pred-side, succ-side] to match
+                    // f_k's own ring-traversal direction at V.
+                    immutable bool activeSucc = active[k];
+                    immutable bool activePred = active[kr];
+                    if (activeSucc && activePred) {
+                        uint predSide = getSlide(kr);
+                        uint succSide = getSlide(k);
+                        // Only a LOCAL-valence-3 bare end guarantees this is
+                        // THE unique back face for the rounding endpoint(s)
+                        // that will reuse `arcInterior`'s memo below (see
+                        // the fix note above) — d>3 back faces (a chain of
+                        // possibly-partial splits) are out of scope, kept
+                        // flat via `roundEligible=false` on their SLIDE
+                        // corners, so this branch's own arc attempt would
+                        // simply go unused (harmless) but is skipped anyway
+                        // for clarity/cost.
+                        if (roundLevel > 0 && d == 3 &&
+                            !slideClamped[kr] && !slideClamped[k]) {
+                            uint[] interior = arcInterior(
+                                predSide, succSide, vpos, slideDir(kr), slideDir(k));
+                            faceSubs.require(fi) ~= VertSub(V, [predSide] ~ interior ~ [succSide]);
+                        } else {
+                            faceSubs.require(fi) ~= VertSub(V, [predSide, succSide]);
+                        }
+                    } else if (activeSucc) {
+                        // KNOWN-UNTESTED partial notch (valence>3 only — a
+                        // cube corner is always valence 3, so no fixture
+                        // exercises this branch): V retained on the
+                        // inactive side, a single slide vertex on the
+                        // active side. No arc/rounding is ever attempted
+                        // here (roundEligible requires d==3, which this
+                        // branch structurally cannot reach — d==3 with a
+                        // single active side would already be the
+                        // `activeSucc && activePred` case above).
+                        faceSubs.require(fi) ~= VertSub(V, [V, getSlide(k)]);
+                    } else if (activePred) {
+                        faceSubs.require(fi) ~= VertSub(V, [getSlide(kr), V]);
+                    }
+                    // else: untouched — this face doesn't reach V's bevel.
+                }
+            }
+
+            if (K == d && d >= 3) {
+                // Full ring: every face at V is a MITER — its per-face
+                // corners trace a closed K-gon needing exactly one cap face.
+                // KNOWN-UNTESTED: only d==3 (the cube-corner junction, K=3)
+                // is fixture/unittest-covered; d>3 (a higher-valence full
+                // hub, e.g. from a subdivided mesh) exercises this same
+                // general N-gon-fill code path but has no golden or
+                // manifold-check coverage of its own.
+                uint[] ring = new uint[](d);
+                foreach (k; 0 .. d) ring[k] = cornerAtVF[vfKey(V, vFaces[k])].vert;
+                hubCapRing[V] = ring;
+                hubCapSrc[V]  = vFaces[0];
             }
         }
 
-        // Apply substitutions per face, then collect chamfer faces.
-        // Rebuild face arrays using the extrudeFacesByMask idiom.
+        if (cornerAtVF.length == 0) {
+            vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass
+            return 0;
+        }
+
+        // Pre-rebuild pass: for each qualifying selected edge, resolve its
+        // fL (traverses v1→v0)/fR (traverses v0→v1) faces from the ORIGINAL
+        // (pre-substitution) face array, and its 4 chamfer/arc-rail corners.
+        struct ChamferSpan { uint v0, v1, fL, fR; }
+        ChamferSpan[] spans;
+        foreach (i; 0 .. edges.length) {
+            if (!qualifies[i]) continue;
+            uint v0 = edges[i][0], v1 = edges[i][1];
+            auto fp = edgeKeyOrdered(v0, v1) in edgeFaces;
+            int fa = (*fp)[0], fb = (*fp)[1];
+            uint fL = uint.max, fR = uint.max;
+            foreach (k; 0 .. faces[fa].length) {
+                uint u = faces[fa][k], w = faces[fa][(k + 1) % faces[fa].length];
+                if (u == v1 && w == v0) { fL = fa; fR = fb; break; }
+                if (u == v0 && w == v1) { fR = fa; fL = fb; break; }
+            }
+            if (fL == uint.max) continue;
+            // Defensive: both endpoints must have a resolved corner at BOTH
+            // fL and fR. This can legitimately be missing when an endpoint
+            // is a BOUNDARY vertex elsewhere in its own fan — its
+            // `edgesAroundVertex`/`facesAroundVertex` ring lengths differ
+            // (the half-edge walk emits one extra "open" edge at a
+            // boundary vertex, per `VertexEdgeRange`'s own doc comment),
+            // which trips the per-vertex loop's `vEdges.length != d` guard
+            // above and leaves that vertex's `cornerAtVF` entries
+            // unpopulated. Rather than crash on a missing-key AA lookup,
+            // skip just this span — same "silently skipped" contract as
+            // v1's guards (open-boundary bevel is task 0391 Phase 6,
+            // deferred/XFAIL, not yet reachable via `qualifies` since Step 1
+            // only admits 2-face interior edges — but this guard also
+            // protects a FUTURE Phase 6 caller from a partially-resolved
+            // boundary-adjacent vertex).
+            if (vfKey(v0, fL) !in cornerAtVF || vfKey(v1, fL) !in cornerAtVF ||
+                vfKey(v0, fR) !in cornerAtVF || vfKey(v1, fR) !in cornerAtVF)
+                continue;
+            spans ~= ChamferSpan(v0, v1, fL, fR);
+        }
+        if (spans.length == 0) {
+            vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass
+            return 0;
+        }
+        immutable size_t processed = spans.length;
+
+        // Apply substitutions per face (unaffected faces copy through as-is).
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
@@ -8488,17 +8819,15 @@ struct Mesh {
             auto orig = faces[fi];
             auto subsP = cast(uint)fi in faceSubs;
             if (subsP is null) {
-                // Face untouched by any ok edge — copy as-is.
                 newFaces ~= orig.dup;
             } else {
-                // Build a lookup: old vert → replacement list.
                 uint[][uint] repl;
                 foreach (s; *subsP) repl[s.oldV] = s.newVs;
                 uint[] rebuilt;
                 foreach (v; orig) {
                     auto rp = v in repl;
                     if (rp is null) rebuilt ~= v;
-                    else           rebuilt ~= *rp;
+                    else            rebuilt ~= *rp;
                 }
                 newFaces ~= rebuilt;
             }
@@ -8508,18 +8837,95 @@ struct Mesh {
             newSub  ~= isFaceSubpatch(fi);
         }
 
-        // Emit one chamfer quad per ok edge. Task 0389: the chamfer has TWO
-        // sources — the two faces adjacent to the beveled edge — so it
-        // inherits Subpatch via OR (subdiv if EITHER neighbour was).
+        // Emit the chamfer strip per qualifying edge: a flat quad at
+        // roundLevel==0, or `2^roundLevel` quad rings sampling a circular
+        // arc when BOTH endpoints are round-eligible — task 0391 Phase 3.
+        // Post-review hardening: arc rounding requires ALL FOUR corners
+        // (`roundEligible`, set above — local valence==3, not overshoot-
+        // clamped) to be eligible, i.e. BOTH endpoints must be clean bare
+        // ends, not just one. If either endpoint is MITER-adjacent (loop
+        // turn / junction) or higher-valence, the ENTIRE SPAN stays flat —
+        // there is no longer a per-endpoint linear-lerp fallback: that
+        // fallback used to create its OWN brand-new, unshared interior
+        // vertices at a non-eligible endpoint, which (like the arc) would
+        // leave that endpoint's rail bordering only one face — the exact
+        // non-manifold hole class this hardening pass fixes. A whole-span
+        // flat fallback is always safe; a partially-rounded one was not.
+        // Every interior vertex used below comes from `arcInterior`'s
+        // memo — the SAME calls the per-vertex "back face" split made
+        // above for this identical span, so the rail is shared, not
+        // duplicated. Task 0389: Subpatch inherits via OR of the two faces
+        // adjacent to the beveled edge.
         size_t chamferStart = newFaces.length;
-        foreach (qi; 0 .. qEdges.length) {
-            if (!edgeOk[qi]) continue;
-            auto q = qEdges[qi];
-            newFaces ~= [q.ipLv0, q.ipLv1, q.ipRv1, q.ipRv0];
-            newMat   ~= 0u;
-            newPart  ~= 0u;
-            newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(q.fL) || isFaceSubpatch(q.fR);
+        foreach (ref sp; spans) {
+            auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
+            auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
+            auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
+            auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
+            immutable bool sub = isFaceSubpatch(sp.fL) || isFaceSubpatch(sp.fR);
+
+            immutable bool canRound = roundLevel > 0 &&
+                cV0L.roundEligible && cV0R.roundEligible &&
+                cV1L.roundEligible && cV1R.roundEligible;
+
+            if (!canRound) {
+                newFaces ~= [cV0L.vert, cV1L.vert, cV1R.vert, cV0R.vert];
+                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newSub ~= sub;
+                continue;
+            }
+
+            immutable int n = 1 << roundLevel;
+            // r0 walks V0's cross-section from the fL corner to the fR
+            // corner; r1 walks V1's, in the SAME fL→fR direction so
+            // consecutive rings bridge into consistent quads. Both reuse
+            // (never re-create) the arc's interior vertices via the shared
+            // memo — see the doc note above.
+            uint[] r0Interior = arcInterior(cV0L.vert, cV0R.vert, vertices[sp.v0], cV0L.dir, cV0R.dir);
+            uint[] r1Interior = arcInterior(cV1L.vert, cV1R.vert, vertices[sp.v1], cV1L.dir, cV1R.dir);
+
+            uint[] r0 = new uint[](n + 1), r1 = new uint[](n + 1);
+            r0[0] = cV0L.vert; r0[n] = cV0R.vert;
+            r1[0] = cV1L.vert; r1[n] = cV1R.vert;
+            foreach (t; 1 .. n) r0[t] = r0Interior[t - 1];
+            foreach (t; 1 .. n) r1[t] = r1Interior[t - 1];
+
+            foreach (t; 0 .. n) {
+                newFaces ~= [r0[t], r1[t], r1[t + 1], r0[t + 1]];
+                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newSub ~= sub;
+            }
+        }
+
+        // Emit one hub cap N-gon per full-ring (K==valence) vertex — Phase 2.
+        // Outward-winding check via Newell's formula vs the averaged
+        // ORIGINAL incident-face normal, same idiom as bevelVerticesByMask.
+        size_t capStart = newFaces.length;
+        foreach (V, ring_; hubCapRing) {
+            uint[] ring = ring_.dup;
+            immutable int Ncap = cast(int)ring.length;
+            Vec3 newellN = Vec3(0, 0, 0);
+            foreach (k; 0 .. Ncap) {
+                Vec3 a = vertices[ring[k]];
+                Vec3 b = vertices[ring[(k + 1) % Ncap]];
+                newellN.x += (a.y - b.y) * (a.z + b.z);
+                newellN.y += (a.z - b.z) * (a.x + b.x);
+                newellN.z += (a.x - b.x) * (a.y + b.y);
+            }
+            Vec3 avgFaceN = Vec3(0, 0, 0);
+            foreach (fi; facesAroundVertex(V)) {
+                Vec3 fn = faceNormal(cast(uint)fi);
+                avgFaceN.x += fn.x; avgFaceN.y += fn.y; avgFaceN.z += fn.z;
+            }
+            if (dot(newellN, avgFaceN) < 0) {
+                for (int lo = 0, hi = Ncap - 1; lo < hi; ++lo, --hi) {
+                    uint tmp = ring[lo]; ring[lo] = ring[hi]; ring[hi] = tmp;
+                }
+            }
+            uint srcFi = hubCapSrc[V];
+            newFaces ~= ring;
+            newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+            newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
+            newOrd  ~= 0;
+            newSub  ~= isFaceSubpatch(srcFi);
         }
 
         // Assign reconstructed arrays.
@@ -8534,7 +8940,7 @@ struct Mesh {
         foreach (fi, s; newSub)
             if (s) faceMarks[fi] |= Marks.Subpatch;
 
-        // New selection = chamfer faces; clear vertex + edge selections.
+        // New selection = chamfer + hub-cap faces; clear vertex/edge selections.
         faceSelectionOrderCounter = 0;
         foreach (fi; chamferStart .. faces.length)
             selectFace(cast(int)fi);
@@ -8542,18 +8948,14 @@ struct Mesh {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
-        // Overshoot clamping (`clampedWidth` above) can land a new corner
-        // exactly on an EXISTING mesh vertex — weld it into that vertex and
-        // collapse the resulting duplicate corner in the face ring instead
-        // of leaving a coincident-vertex / zero-area mesh behind. Safe to
-        // run here: the chamfer quads occupy the array tail (chamferStart
-        // onward) so a fully-collapsed one only shortens the tail, and the
-        // reused-vertex case only shrinks an original face's corner count
-        // (quad -> triangle) without removing it, so no earlier face index
-        // shifts under the selection/material arrays touched above.
+        // Overshoot clamping (`clampedWidth` above) can land a SLIDE corner
+        // exactly on an EXISTING mesh vertex — weld it in and collapse the
+        // resulting duplicate corner instead of leaving a coincident-vertex
+        // / zero-area mesh behind. Safe here: new faces occupy the array
+        // tail, so a fully-collapsed one only shortens the tail.
         if (anyClamped) weldCoincidentVertices(1e-10);
 
-        // Tail: rebuild topology + compact orphaned original endpoints.
+        // Tail: rebuild topology + compact orphaned original vertices.
         rebuildEdges();
         buildLoops();
         compactUnreferenced();
@@ -17940,6 +18342,132 @@ unittest { // bevelFacesByMask: overshoot guard (task 0304, fuzz-found) —
     }
 }
 
+unittest { // bevelFacesByMask: group=true shared-corner accumulator manifold
+           // cleanliness backstop (task 0391 Phase 4) — the 3-face
+           // cube-corner grouped case (topology-diff-golden-verified via
+           // test_fixture_poly_bevel_corner.d; this adds the winding/
+           // manifold check the fixture harness cannot see, plus an exact
+           // apex-position law check).
+    import std.conv : to;
+
+    void assertClean(ref Mesh m, string tag) {
+        foreach (i; 0 .. m.vertices.length)
+            foreach (j; i + 1 .. m.vertices.length)
+                assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+                    tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
+        int[ulong] edgeUse;
+        static ulong ekey(uint a, uint b) {
+            return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+        }
+        foreach (f; m.faces) {
+            bool[uint] distinct;
+            foreach (v; f) distinct[v] = true;
+            assert(distinct.length >= 3, tag ~ ": degenerate face");
+            foreach (k; 0 .. f.length) edgeUse[ekey(f[k], f[(k + 1) % f.length])]++;
+        }
+        foreach (key, count; edgeUse)
+            assert(count == 2, tag ~ ": non-manifold edge (used by " ~
+                count.to!string ~ " faces, expected 2)");
+    }
+
+    // +X, +Y, +Z faces of makeCube() all share corner 6=(0.5,0.5,0.5).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[3] = true; // +X = [1,2,6,5]
+    mask[4] = true; // +Y = [3,7,6,2]
+    mask[1] = true; // +Z = [4,5,6,7]
+    size_t n = m.bevelFacesByMask(mask, 0.15f, 0.1f, true, 0);
+    assert(n == 3, "should process all 3 grouped faces");
+    assert(m.vertices.length == 14, "expected 14 verts (8-1 orphaned apex-source+7 new)");
+    assert(m.faces.length    == 12, "expected 12 faces");
+    int[int] fvd;
+    foreach (f; m.faces) fvd[cast(int)f.length]++;
+    assert(fvd.get(4, 0) == 12, "grouped cap should be ALL quads (no triangle/pentagon)");
+    assertClean(m, "grouped poly-bevel corner");
+
+    // Exact apex-position law: orig corner + shift along EACH of the 3
+    // group faces' own normals (NOT the averaged/normalized diagonal) —
+    // capture-verified (0.5,0.5,0.5) + (0.1,0.1,0.1) = (0.6,0.6,0.6).
+    bool foundApex = false;
+    foreach (v; m.vertices)
+        if ((v - Vec3(0.6f, 0.6f, 0.6f)).length < 1e-4f) foundApex = true;
+    assert(foundApex, "grouped shared apex should sit at orig + per-face shift sum (0.6,0.6,0.6)");
+}
+
+unittest { // bevelFacesByMask: group=false is byte-identical to the pre-0391
+           // kernel on the SAME 3-face-corner selection — the shared-corner
+           // accumulator is opt-in only (task 0391 Phase 4 back-compat gate).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[3] = true; mask[4] = true; mask[1] = true;
+    size_t n = m.bevelFacesByMask(mask, 0.15f, 0.1f); // group defaults false, segments 0
+    assert(n == 3);
+    // Ungrouped: each face computes its OWN 4 independent corners — no
+    // vertex is shared, so no orphaning, and no ring quad is suppressed.
+    assert(m.vertices.length == 8 + 3 * 4, "ungrouped should add 4 new verts per face, no sharing/orphaning");
+    assert(m.faces.length    == 6 + 3 * 4, "ungrouped should add 4 ring quads per face, none suppressed");
+}
+
+unittest { // bevelFacesByMask: Segments — LINEAR staircase law (task 0391
+           // Phase 5, `vibe3d-divergence` from edge.bevel's Round Level TRUE
+           // ARC — plain equal-lerp rings, not a circle). N=3 on a lone
+           // face's pure inset (no shift) should land intermediate rings at
+           // EXACTLY 1/3 and 2/3 of the final inset.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true; // +Y top face
+    size_t n = m.bevelFacesByMask(mask, 0.3f, 0.0f, false, 3);
+    assert(n == 1);
+    // +4 verts per extra segment (2 intermediate rings of 4 corners each) +
+    // the final ring (4) = +12 total; +4 ring quads per segment (3 segs ×
+    // 4 edges = 12) vs. the flat case's 4.
+    assert(m.vertices.length == 8 + 12, "expected 8+12=20 verts at segments=3");
+    assert(m.faces.length    == 6 + 12, "expected 6+12=18 faces at segments=3 (3 rings x 4 edges)");
+    // Top face corners start at y=0.5, x/z=±0.5; pure inset (no shift) pulls
+    // each corner toward the centroid by 0.3 total over 3 equal steps —
+    // 0.1 per step along BOTH in-plane axes (a 90° corner's offsetMeet is
+    // additive per axis, verified above). Ring 1 (t=1/3) should land a
+    // corner near (0.4, 0.5, 0.4); ring 2 (t=2/3) near (0.3, 0.5, 0.3).
+    bool foundStep1 = false, foundStep2 = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(0.4f, 0.5f, 0.4f)).length < 1e-4f) foundStep1 = true;
+        if ((v - Vec3(0.3f, 0.5f, 0.3f)).length < 1e-4f) foundStep2 = true;
+    }
+    assert(foundStep1, "segments=3 should land an intermediate ring at exactly 1/3 inset");
+    assert(foundStep2, "segments=3 should land an intermediate ring at exactly 2/3 inset");
+}
+
+unittest { // bevelFacesByMask: segments<=1 is byte-identical to the flat
+           // (pre-0391) single-ring result — segs=0 == segs=1 == today.
+    auto m0 = makeCube();
+    auto m1 = makeCube();
+    auto mF = makeCube();
+    bool[] mask; mask.length = m0.faces.length; mask[] = false; mask[4] = true;
+    assert(m0.bevelFacesByMask(mask, 0.1f, 0.2f, false, 0) == 1);
+    assert(m1.bevelFacesByMask(mask, 0.1f, 0.2f, false, 1) == 1);
+    assert(mF.bevelFacesByMask(mask, 0.1f, 0.2f)            == 1); // pre-0391 2-arg call site
+    assert(m0.vertices.length == m1.vertices.length && m1.vertices.length == mF.vertices.length);
+    assert(m0.faces.length    == m1.faces.length    && m1.faces.length    == mF.faces.length);
+    foreach (i; 0 .. m0.vertices.length) {
+        assert((m0.vertices[i] - m1.vertices[i]).length < 1e-6f, "segments=0 must equal segments=1");
+        assert((m0.vertices[i] - mF.vertices[i]).length < 1e-6f, "segments=0 must equal the pre-0391 2-arg call");
+    }
+}
+
+unittest { // bevelFacesByMask: segments DoS clamp — an absurd segment count
+           // must clamp to MAX_BEVEL_SEGMENTS, not allocate N linear rings
+           // (task 0391 Phase 5). A direct/scripted caller can reach this
+           // kernel without the command/tool Param's `.max()` hint, which
+           // is UI/HTTP-only and does not clamp this path.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
+    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.0f, false, 1_000_000);
+    assert(n == 1, "should still process (segments clamped, not rejected)");
+    // MAX_BEVEL_SEGMENTS=64 → 64 rings x 4 edges = 256 ring quads for this
+    // one face — bounded, not the 1,000,000 the raw request would imply.
+    assert(m.faces.length > 10 && m.faces.length < 400,
+        "ring-quad count should reflect the CLAMPED segment count, not the raw request");
+}
+
 unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0.1
     import std.math : abs, sqrt;
     // Cube verts: 6=(0.5,0.5,0.5), 7=(-0.5,0.5,0.5).
@@ -18059,6 +18587,306 @@ unittest { // bevelEdgesByMask: overshoot guard (task 0304, fuzz-found) —
     assert(m2.bevelEdgesByMask(mask2, 0.1f) == 1);
     assert(m2.vertices.length == 10, "normal width must be unaffected by the overshoot guard");
     assert(m2.faces.length    == 7);
+}
+
+// Task 0391 Phase 1/2 winding-backstop helper: `runTopologyDiffSuite` only
+// checks vertex-SET + face-COUNT (fixture_helpers.d:890), NOT face-vertex
+// correspondence — a topologically-broken but position-correct cap (e.g.
+// the old edge-bevel branch's per-face-independent junction caps, which
+// double-welded / left non-manifold edges at the shared corner — the exact
+// defect that opened this task) could still pass the fixture. This asserts
+// true manifold cleanliness: every edge shared by EXACTLY 2 faces (no
+// cracks, no non-manifold fans), no coincident vertices, no degenerate
+// (zero-area or <3-distinct-vertex) faces, and the Euler characteristic
+// V-E+F==2 (closed genus-0 — bevel must not change the mesh's topological
+// genus, only add detail).
+private void assertBevelManifoldClean(ref Mesh m, string tag) {
+    import std.conv : to;
+
+    foreach (i; 0 .. m.vertices.length)
+        foreach (j; i + 1 .. m.vertices.length)
+            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+                tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
+
+    foreach (fi, f; m.faces) {
+        bool[uint] distinct;
+        foreach (v; f) distinct[v] = true;
+        assert(distinct.length >= 3,
+            tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+        Vec3 nsum = Vec3(0, 0, 0);
+        foreach (k; 0 .. f.length) {
+            Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
+            nsum.x += (a.y - b.y) * (a.z + b.z);
+            nsum.y += (a.z - b.z) * (a.x + b.x);
+            nsum.z += (a.x - b.x) * (a.y + b.y);
+        }
+        assert(nsum.length * 0.5f > 1e-9f,
+            tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
+    }
+
+    // Every physical edge must border EXACTLY 2 faces — a non-manifold
+    // (0/1/3+) count here is precisely the double-weld / cracked-junction
+    // defect class this backstop exists to catch.
+    int[ulong] edgeUse;
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    foreach (f; m.faces)
+        foreach (k; 0 .. f.length)
+            edgeUse[ekey(f[k], f[(k + 1) % f.length])]++;
+    size_t edgeCount = 0;
+    foreach (key, count; edgeUse) {
+        assert(count == 2, tag ~ ": non-manifold edge (used by " ~
+            count.to!string ~ " faces, expected 2)");
+        ++edgeCount;
+    }
+
+    // Euler characteristic: V - E + F == 2 for a closed genus-0 mesh (a
+    // beveled cube stays genus-0 — bevel only adds detail, never a handle).
+    immutable long V = cast(long)m.vertices.length;
+    immutable long E = cast(long)edgeCount;
+    immutable long F = cast(long)m.faces.length;
+    assert(V - E + F == 2,
+        tag ~ ": Euler characteristic V-E+F=" ~ (V - E + F).to!string ~ " != 2");
+}
+
+unittest { // bevelEdgesByMask: LOOP cap manifold-cleanliness backstop
+           // (task 0391 Phase 1) — the 4-edge top-face-perimeter loop.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    // The +Z face's own perimeter in makeCube()'s vertex numbering (verts
+    // 4,5,6,7 all sit at z=0.5) — structurally the same "one face's own
+    // 4-edge boundary, every corner a K==2 loop turn" shape as the public
+    // edge_bevel_loop.json fixture (which uses the +Y face instead).
+    foreach (pair; [[4u,7u], [7u,6u], [6u,5u], [5u,4u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0, "loop perimeter edge not found");
+        mask[ei] = true;
+    }
+    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    assert(n == 4, "should process all 4 loop edges");
+    assert(m.vertices.length == 12, "expected 12 verts");
+    assert(m.faces.length    == 10, "expected 10 faces");
+    int[int] fvd;
+    foreach (f; m.faces) fvd[cast(int)f.length]++;
+    assert(fvd.get(4, 0) == 10, "loop cap should be ALL quads (no triangle/pentagon)");
+    assertBevelManifoldClean(m, "loop cap");
+}
+
+unittest { // bevelEdgesByMask: 3-WAY JUNCTION cap manifold-cleanliness
+           // backstop (task 0391 Phase 2, highest-risk) — all 3 edges at one
+           // cube corner selected together (hub-fill + 3 independent
+           // bare-end pentagons in the SAME case).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    // Corner 6=(0.5,0.5,0.5); its 3 edges go to 5=(0.5,0.5,-0.5),
+    // 2=(0.5,-0.5,0.5), 7=(-0.5,0.5,0.5).
+    foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0, "junction edge not found");
+        mask[ei] = true;
+    }
+    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    assert(n == 3, "should process all 3 junction edges");
+    assert(m.vertices.length == 13, "expected 13 verts (3 hubs + 6 bare-end + 4 untouched)");
+    assert(m.faces.length    == 10, "expected 10 faces");
+    int[int] fvd;
+    foreach (f; m.faces) fvd[cast(int)f.length]++;
+    assert(fvd.get(4, 0) == 6 && fvd.get(5, 0) == 3 && fvd.get(3, 0) == 1,
+        "fv-dist should be {quad:6, pentagon:3, triangle:1}");
+    assertBevelManifoldClean(m, "junction cap");
+}
+
+unittest { // bevelEdgesByMask: roundLevel DoS clamp — an absurd roundLevel
+           // must clamp to MAX_ROUND_LEVEL, not allocate 2^L points (task
+           // 0391 Phase 3). A direct/scripted caller can reach this kernel
+           // without going through the command/tool Param's `.max()` hint,
+           // which is UI/HTTP-only and does not clamp this path.
+    auto m = makeCube();
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    size_t n = m.bevelEdgesByMask(mask, 0.1f, 1_000_000);
+    assert(n == 1, "should still process (roundLevel clamped, not rejected)");
+    // MAX_ROUND_LEVEL=10 → 2^10=1024 quad rings for this one edge — bounded,
+    // not the ~2^1000000 the unclamped request would imply.
+    assert(m.faces.length > 7 && m.faces.length < 2100,
+        "chamfer ring count should reflect the CLAMPED level, not the raw request");
+}
+
+unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on
+           // an open-mesh boundary must NOT crash — the boundary endpoint's
+           // half-edge ring has a mismatched edge/face count (one extra
+           // "open" edge, per VertexEdgeRange's own doc comment), tripping
+           // the per-vertex loop's ring-length guard and leaving that
+           // endpoint's corners unresolved while the OTHER (fully interior)
+           // endpoint resolves normally — the exact asymmetric-resolution
+           // shape that would RangeError on an unguarded `cornerAtVF[key]`
+           // lookup in the chamfer-span pass. Silently skips instead
+           // (matches v1's "silently skipped" contract; full open-boundary
+           // support is task 0391 Phase 6, deferred).
+    //   0   1   2
+    //   3   4   5     <- 2x2 quad grid; vertex 4 is fully interior (valence
+    //   6   7   8        4); vertex 1 is a top-boundary vertex (valence 3,
+    //                     only 2 faces) — selecting edge (1,4) is interior
+    //                     (shared by the 2 top faces) but asymmetric.
+    Mesh m;
+    m.vertices = [
+        Vec3(-1, 1, 0), Vec3(0, 1, 0), Vec3(1, 1, 0),
+        Vec3(-1, 0, 0), Vec3(0, 0, 0), Vec3(1, 0, 0),
+        Vec3(-1,-1, 0), Vec3(0,-1, 0), Vec3(1,-1, 0),
+    ];
+    m.addFace([0, 3, 4, 1]);
+    m.addFace([1, 4, 5, 2]);
+    m.addFace([3, 6, 7, 4]);
+    m.addFace([4, 7, 8, 5]);
+    m.buildLoops();
+
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 1 && b == 4) || (a == 4 && b == 1)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "edge (1,4) not found");
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+
+    // Must return gracefully (0, silently-skipped) — NOT throw RangeError.
+    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    assert(n == 0, "boundary-adjacent asymmetric span should silently skip, not crash");
+    assert(m.vertices.length == 9, "no-op should leave the mesh untouched");
+    assert(m.faces.length    == 4);
+}
+
+unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
+           // single isolated-edge case rounded to a true circular arc (task
+           // 0391 Phase 3 law, `doc/bevel_full_plan.md`: 2^L+1 evenly-angled
+           // points on radius=width). Cross-checked analytically: at vertex
+           // 6=(0.5,0.5,0.5), edge (6,7) width=0.1's 2 flat L0 corners are
+           // (0.5,0.5,0.4) and (0.5,0.4,0.5) (existing L0 unittest above);
+           // their directions from vertex 6 are the unit vectors (0,0,-1)
+           // and (0,-1,0) — perpendicular, so the L=1 arc midpoint sits at
+           // the exact 45° bisector: 6 + 0.1*normalize((0,-1,-1)) =
+           // (0.5, 0.5 - 0.1/sqrt(2), 0.5 - 0.1/sqrt(2)).
+    import std.math : SQRT1_2, abs;
+    import std.conv : to;
+    auto m = makeCube();
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 1);
+    // +1 new interior arc vertex per endpoint (t=1 of 2); the single flat
+    // chamfer quad splits into 2 quad rings (+1 face).
+    assert(m.vertices.length == 12, "expected 10+2=12 verts at roundLevel=1");
+    assert(m.faces.length    == 8,  "expected 7+1=8 faces at roundLevel=1");
+    immutable float off = 0.1f * SQRT1_2;
+    immutable Vec3 wantV6 = Vec3(0.5f, 0.5f - off, 0.5f - off);
+    immutable Vec3 wantV7 = Vec3(-0.5f, 0.5f - off, 0.5f - off);
+    bool foundV6 = false, foundV7 = false;
+    foreach (v; m.vertices) {
+        if ((v - wantV6).length < 1e-4f) foundV6 = true;
+        if ((v - wantV7).length < 1e-4f) foundV7 = true;
+    }
+    assert(foundV6, "L=1 arc midpoint at vertex 6's end not found");
+    assert(foundV7, "L=1 arc midpoint at vertex 7's end not found");
+
+    // MANDATORY manifold backstop (post-review hardening): a rounded
+    // chamfer strip subdivides its cross-section rail at BOTH endpoints;
+    // the "back face" at each bare end must thread that SAME arc (not a
+    // stale straight chord) or the rail's edges border only one face — a
+    // non-manifold hole. Positions/counts alone (asserted above) do NOT
+    // catch this — see the sibling loop/junction tests' own manifold
+    // checks above, which this test was previously missing.
+    assertBevelManifoldClean(m, "round L1");
+    int[int] fvd;
+    foreach (f; m.faces) fvd[cast(int)f.length]++;
+    // Each back face (g0 at v0, g1 at v1) had V replaced by [predSide, 1
+    // shared interior arc vertex, succSide] (n-1=1 interior point at L=1)
+    // instead of the flat [predSide, succSide] pair — a quad losing 1
+    // corner but gaining 3 gains a net +2 sides: 4→6 (hexagon), not a
+    // pentagon (that's the L=0/flat 2-vertex-split shape).
+    assert(fvd.get(6, 0) == 2,
+        "both back faces should now be hexagons (quad -1 corner +3: predSide/interior/succSide), got " ~
+        fvd.to!string);
+    assert(fvd.get(4, 0) == 6,
+        "4 untouched/fL/fR quads + 2 rounded chamfer-strip quads, got " ~ fvd.to!string);
+}
+
+unittest { // bevelEdgesByMask: roundLevel arc-manifold hardening gate — a
+           // LOOP selection (every corner MITER-adjacent) with roundLevel>0
+           // must stay FLAT (not attempt a partial/unshareable arc) —
+           // exactly the "documented gap, not a silent bug" scoping in the
+           // kernel's own doc comment (post-review hardening: rounding is
+           // ONLY attempted when BOTH endpoints of a span are a clean
+           // local-valence-3 bare end).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    foreach (pair; [[4u,7u], [7u,6u], [6u,5u], [5u,4u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    // Flat (roundLevel=0) reference on an identical mesh/selection.
+    auto mFlat = makeCube();
+    bool[] maskFlat = mask.dup;
+    assert(mFlat.bevelEdgesByMask(maskFlat, 0.1f, 0) == 4);
+
+    assert(m.bevelEdgesByMask(mask, 0.1f, 3) == 4,
+        "loop selection should still process (rounding request silently no-ops to flat)");
+    assert(m.vertices.length == mFlat.vertices.length,
+        "roundLevel>0 on a loop (MITER-adjacent everywhere) must stay byte-identical to flat");
+    assert(m.faces.length == mFlat.faces.length);
+    foreach (i; 0 .. m.vertices.length)
+        assert((m.vertices[i] - mFlat.vertices[i]).length < 1e-6f,
+            "loop + roundLevel>0 must reproduce the flat vertex positions exactly (whole-span flat gate)");
+    assertBevelManifoldClean(m, "loop + roundLevel=3 (should be flat, manifold)");
+}
+
+unittest { // bevelEdgesByMask: roundLevel==0 is byte-identical to the flat
+           // (Phase 0-2) chamfer — arc rounding must be strictly additive.
+    auto mFlat = makeCube();
+    auto mL0   = makeCube();
+    int ei = -1;
+    foreach (i; 0 .. mFlat.edges.length) {
+        uint a = mFlat.edges[i][0], b = mFlat.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    bool[] mask; mask.length = mFlat.edges.length; mask[] = false; mask[ei] = true;
+    assert(mFlat.bevelEdgesByMask(mask, 0.1f) == 1);
+    assert(mL0.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(mFlat.vertices.length == mL0.vertices.length);
+    assert(mFlat.faces.length    == mL0.faces.length);
+    foreach (i; 0 .. mFlat.vertices.length)
+        assert((mFlat.vertices[i] - mL0.vertices[i]).length < 1e-6f,
+            "roundLevel=0 must reproduce the flat-chamfer vertex positions exactly");
 }
 
 unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op

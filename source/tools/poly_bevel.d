@@ -50,8 +50,10 @@ private:
     CommandHistory       history;
     PolyBevelEditFactory factory;
 
-    float inset_ = 0.0f;
-    float shift_ = 0.0f;
+    float inset_    = 0.0f;
+    float shift_    = 0.0f;
+    bool  group_    = true;
+    int   segments_ = 0;
 
     bool         active;
     bool         built;
@@ -108,9 +110,13 @@ public:
     override EditMode[] supportedModes() const { return [EditMode.Polygons]; }
 
     override Param[] params() {
+        import mesh : MAX_BEVEL_SEGMENTS;
         return [
             Param.float_("inset", "Inset", &inset_, 0.0f),
             Param.float_("shift", "Shift", &shift_, 0.0f),
+            Param.bool_("group", "Group Polygons", &group_, true),
+            Param.int_("segments", "Segments", &segments_, 0)
+                .min(0).max(MAX_BEVEL_SEGMENTS).enforceBounds(),
         ];
     }
 
@@ -165,7 +171,7 @@ public:
         if (mesh.faces.length == 0) return false;
         if (inset_ == 0.0f && shift_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_);
+        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -298,7 +304,7 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_);
+        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_);
         built = (n != 0);
         refreshCaches();
     }

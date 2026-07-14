@@ -1356,6 +1356,98 @@ unittest { // offsetMeet: 90° corner, both bev — meets at the diagonal
     assert(isClose(r.z, 0.0f, 1e-5));
 }
 
+// bevelArcPoints: Edge Bevel Round Level — TRUE CIRCULAR ARC generator
+// (task 0391, capture-verified law: edge.bevel spec `behavior.round_level_law`).
+//
+// Given a cross-section root `center` (the ORIGINAL, un-beveled edge vertex)
+// and two unit directions `dirA`/`dirB` (the flat L=0 chamfer-corner
+// directions, e.g. the two adjacent-edge slide directions already used by
+// `Mesh.bevelEdgesByMask`), returns `2^level + 1` points evenly spaced BY
+// ANGLE on the circle of radius `radius` centered at `center`, sweeping from
+// `center + dirA*radius` (t=0) to `center + dirB*radius` (t=2^level).
+// `level == 0` returns exactly the 2 flat endpoints (today's straight-chord
+// behavior — byte-identical, no rounding).
+//
+// Deliberately NOT the same law as poly.bevel's Segments (see
+// `Mesh.bevelFacesByMask`'s segment-ring loop): Segments is a LINEAR lerp
+// staircase, this is a geodesic angular sweep on a true circle — the two
+// tools were independently capture-verified to use DIFFERENT laws
+// (`vibe3d-divergence` note, doc/bevel_full_plan.md Phase 3).
+//
+// Degenerate fallback (dirA/dirB parallel or antiparallel, cross product
+// too small to define a rotation axis): falls back to a linear lerp between
+// the 2 endpoints (matches offsetMeetDir's own parallel-edge fallback
+// convention above) rather than dividing by a near-zero axis length.
+Vec3[] bevelArcPoints(Vec3 center, Vec3 dirA, Vec3 dirB, float radius, int level)
+    @safe pure nothrow {
+    import std.math : acos, sin, cos;
+    immutable int n = 1 << level;   // segment count; n+1 points
+    auto pts = new Vec3[](n + 1);
+
+    Vec3 axis = cross(dirA, dirB);
+    immutable float axisLen = axis.length;
+    if (axisLen < 1e-9f) {
+        // Parallel/antiparallel — no well-defined rotation plane; degrade to
+        // a linear lerp between the two flat endpoints (never divides by
+        // the near-zero axis length).
+        foreach (t; 0 .. n + 1) {
+            immutable float f = cast(float)t / cast(float)n;
+            pts[t] = center + (dirA * (1.0f - f) + dirB * f) * radius;
+        }
+        return pts;
+    }
+    axis = axis / axisLen;
+
+    float cosTheta = dot(dirA, dirB);
+    if (cosTheta > 1.0f)  cosTheta = 1.0f;
+    if (cosTheta < -1.0f) cosTheta = -1.0f;
+    immutable float theta = acos(cosTheta);
+
+    foreach (t; 0 .. n + 1) {
+        immutable float ang = theta * (cast(float)t / cast(float)n);
+        immutable float ct  = cos(ang), st = sin(ang);
+        // Rodrigues' rotation of dirA about `axis` by `ang`; the third term
+        // (axis * dot(axis,v) * (1-cosθ)) drops out because axis ⟂ dirA by
+        // construction (axis = normalize(cross(dirA,dirB))).
+        Vec3 rotated = dirA * ct + cross(axis, dirA) * st;
+        pts[t] = center + rotated * radius;
+    }
+    return pts;
+}
+
+unittest { // bevelArcPoints: level=0 returns exactly the 2 flat endpoints
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.1f, 0);
+    assert(pts.length == 2);
+    assert(isClose(pts[0].x, 0.1f, 1e-5, 1e-5) && isClose(pts[0].y, 0.0f, 1e-5, 1e-5));
+    assert(isClose(pts[1].x, 0.0f, 1e-5, 1e-5) && isClose(pts[1].y, 0.1f, 1e-5, 1e-5));
+}
+
+unittest { // bevelArcPoints: level=1, 90° sweep — midpoint lands EXACTLY at
+           // the 45° bisector, at radius=width from center (capture-verified law).
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.1f, 1);
+    assert(pts.length == 3);
+    import std.math : SQRT1_2;
+    immutable float s = 0.1f * SQRT1_2;
+    assert(isClose(pts[1].x, s, 1e-5, 1e-5) && isClose(pts[1].y, s, 1e-5, 1e-5),
+        "level=1 midpoint should sit at the 45° bisector, radius 0.1");
+    // Every point must sit at exactly `radius` from `center`.
+    foreach (p; pts) assert(isClose(p.length, 0.1f, 1e-5, 1e-5));
+}
+
+unittest { // bevelArcPoints: level=2, 90° sweep — 5 points at 0/22.5/45/67.5/90°
+    import std.math : PI, cos, sin;
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.2f, 2);
+    assert(pts.length == 5);
+    foreach (i, p; pts) {
+        immutable float ang = (PI / 2.0f) * (cast(float)i / 4.0f);
+        assert(isClose(p.x, 0.2f * cos(ang), 1e-4, 1e-5));
+        assert(isClose(p.y, 0.2f * sin(ang), 1e-4, 1e-5));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

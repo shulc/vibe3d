@@ -1,0 +1,41 @@
+{
+  "name": "edge_bevel_corner",
+  "description": "Edge Bevel at a 3-WAY JUNCTION -- THE key cap case for task 0391. All 3 edges meeting at one cube corner are selected together (a cube vertex has valence 3, the max an unsubdivided cube can offer). The 3 far endpoints of those edges are each a 'bare end' (only 1 selected edge touches them), so this single case exercises BOTH the N-way-junction cap AND 3 bare-end caps at once. Reference topology: 8v/6f -> 13v/10f, face-size distribution {quad:6, pentagon:3, triangle:1}. The junction vertex is replaced by 3 new 'hub' vertices (one per incident original face); The reference editor fills the resulting gap with exactly ONE small triangle connecting the 3 hub vertices, PLUS 3 quads bridging each hub-vertex pair out to the corresponding chamfer-strip ends -- i.e. 4 NEW polygons beyond the naive per-edge chamfer+bare-end-pentagon pattern (see edge_bevel_single.json for that simpler pattern with no junction). Each of the 3 far ends independently gets its own pentagon exactly like the isolated-edge case (its one untouched incident face absorbs both new corner verts) -- no special-casing needed there. vibe3d's CURRENT bevelEdgesByMask refuses this input entirely (endpoint-disjoint guard); this fixture freezes the TARGET geometry for the fix. NOTE: The reference editor's 'Sharp Corner' toggle (default OFF, which is what this fixture captures) would produce a DIFFERENT, simpler mitred topology when ON, but that could not be captured headlessly (tool.attr readback confirms the attribute IS set before tool.doApply, yet the resulting geometry is byte-identical to sharp=OFF regardless (a live interactive-drag-only attribute, same class of reference-editor headless-capture limitation as ACEN/several xfrm attrs already documented in this project). Sharp=ON topology is `capture: manual` (would need a live VNC drag) and is NOT part of this fixture; sharp=OFF is the factory default (confirmed via a live tool.attr readback probe) so it is the correct v1 target regardless.",
+  "source": "Frozen reference-editor capture via the private capture harness's edge_bevel op (task 0391), case edge_bevel_corner3_sharp0.json: the 3 edges meeting at cube corner (0.5,0.5,0.5), width=0.1, sharp=false (factory default).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-07-14T00:00:00Z",
+    "harness": "private capture harness (reference-editor edge-bevel tool, driven headlessly, mode=inset, sharp=false)",
+    "task": "0391",
+    "notes": "Target geometry for a currently-unsupported gesture (vibe3d's bevelEdgesByMask endpoint-disjoint guard skips connected selections) -- expect this fixture to FAIL until the cap fix lands. The sharp=true alternate topology (fewer polygons, mitred corner per the reference-editor's own help docs) could not be captured headlessly (attribute readback confirms it is set, but tool.doApply ignores it -- identical output to sharp=false); flagged for a future manual/interactive capture if the implementation ever needs to model that toggle."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "corner3_w01_sharp_default",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "edges", "coords": [
+          [[0.5, 0.5, 0.5], [0.5, 0.5, -0.5]],
+          [[0.5, 0.5, 0.5], [0.5, -0.5, 0.5]],
+          [[0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel", "params": { "width": 0.1 } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 13, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, -0.5],
+        [0.5, -0.5, 0.4], [0.4, -0.5, 0.5],
+        [0.4, 0.5, -0.5],  [0.5, 0.4, -0.5],
+        [0.4, 0.5, 0.4], [0.4, 0.4, 0.5], [0.5, 0.4, 0.4],
+        [-0.5, 0.5, 0.4], [-0.5, 0.4, 0.5]
+      ]
+    }
+  ]
+}

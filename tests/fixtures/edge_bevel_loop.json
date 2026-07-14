@@ -1,0 +1,42 @@
+{
+  "name": "edge_bevel_loop",
+  "description": "Edge Bevel on a CLOSED LOOP of 4 edges (a cube face's own perimeter -- the closest 'support-loop-like' selection an unsubdivided cube can offer). Each of the 4 corners has exactly 2 selected edges meeting it (valence-2 in the selection): a continuous 90-degree-turning ring, no bare ends, no 3-way junction. Reference topology: 8v/6f -> 12v/10f, ALL 10 faces are quads (fv-dist {4:10}) -- each turn gets exactly ONE miter quad bridging the two adjacent chamfer strips, no pentagon/triangle needed (contrast with edge_bevel_corner.json, where a 3rd selected edge at the SAME kind of corner forces a triangle+3 quads instead of a plain miter quad). vibe3d's CURRENT bevelEdgesByMask explicitly refuses this input (its 'endpoint-disjoint' guard in mesh.d skips any edge whose endpoint touches another selected edge, so mesh.bevel currently returns status:error / no-op on this whole selection) -- this fixture freezes the TARGET geometry for task 0391's cap fix, not a regression lock on already-working behavior.",
+  "source": "Frozen reference-editor capture via the private capture harness's edge_bevel op (task 0391), case edge_bevel_loop_top_w01.json: the +Y top face's own perimeter edges on a unit cube, width=0.1.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-07-14T00:00:00Z",
+    "harness": "private capture harness (reference-editor edge-bevel tool, driven headlessly, mode=inset)",
+    "task": "0391",
+    "notes": "Target geometry for a currently-unsupported gesture (vibe3d's bevelEdgesByMask endpoint-disjoint guard skips connected selections) -- expect this fixture to FAIL until the cap fix lands; frozen now so the fix has a real target."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "top_face_perimeter_w01",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "edges", "coords": [
+          [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5]],
+          [[-0.5, 0.5, 0.5],  [0.5, 0.5, 0.5]],
+          [[0.5, 0.5, 0.5],   [0.5, 0.5, -0.5]],
+          [[0.5, 0.5, -0.5],  [-0.5, 0.5, -0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel", "params": { "width": 0.1 } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 12, "faces": 10 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.4, -0.5], [-0.4, 0.5, -0.4],
+        [0.5, 0.4, -0.5],  [0.4, 0.5, -0.4],
+        [0.5, 0.4, 0.5],   [0.4, 0.5, 0.4],
+        [-0.5, 0.4, 0.5],  [-0.4, 0.5, 0.4]
+      ]
+    }
+  ]
+}

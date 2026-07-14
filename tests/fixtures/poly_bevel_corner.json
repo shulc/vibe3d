@@ -1,0 +1,42 @@
+{
+  "name": "poly_bevel_corner",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) at a 3-FACE CORNER JUNCTION -- the poly-bevel analog of edge_bevel_corner.json. The three cube faces (+X, +Y, +Z) that all meet at one corner are beveled together (grouped/shared-corner accumulator), inset=0.15, shift=0.1. Reference topology: 8v/6f -> 14v/12f, ALL 12 faces are quads -- the shared corner collapses to ONE new apex vertex (pushed OUTWARD along the diagonal by the shift, e.g. (0.5,0.5,0.5) -> (0.6,0.6,0.6) for these params) with 3 clean bridging quads closing the gap; NO extra triangle/pentagon fill is needed here, unlike edge_bevel_corner.json's edge-junction cap (triangle+3 quads) -- a genuine, verified CONTRAST between how the two bevel kinds close a 3-way corner. IMPORTANT GAP found while preparing this fixture: vibe3d's CURRENT bevelFacesByMask (source/mesh.d ~8039) processes each selected face STRICTLY INDEPENDENTLY (own inset/shift from its own corners only) -- there is no shared-corner accumulator in the current kernel, and mesh.bevel's params() does not even expose a `group` toggle for Polygons mode. This CONTRADICTS the private capture harness's own README claim that vibe3d's grouped poly-bevel already matches the reference bit-for-bit (solve3x3LeastSquares accumulator) -- that description evidently describes an EARLIER/GPL implementation that predates the clean-room bevel rewrite and has not been reinstated. This fixture's `op` step therefore uses an ASPIRATIONAL `group` param (not yet wired) as the specification for what the command should accept once the accumulator is (re)implemented -- do not expect it to run correctly against today's command surface.",
+  "source": "Frozen reference-editor capture via the private capture harness's existing polygon-bevel op (already used by other grouped-poly-bevel cases), task 0391 addition case poly_bevel_three_faces_corner_grouped.json: the +X/+Y/+Z cube faces sharing corner (0.5,0.5,0.5), insert=0.15, shift=0.1, group=true.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-07-14T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, driven headlessly)",
+    "task": "0391",
+    "notes": "vibe3d's bevelFacesByMask has NO shared-corner accumulator today (per-face independent only) and mesh.bevel's params() does not expose `group` for Polygons mode -- this fixture's op step names the future param as a spec, not a working call against the current command surface. Expect FAIL until both the accumulator and the param wiring land."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "three_faces_corner_grouped",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+          [[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[0.5,-0.5,0.5]],
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.15, "shift": 0.1, "group": true } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 14, "faces": 12 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
+        [0.6, 0.6, 0.6], [-0.5, 0.5, 0.5],
+        [0.6, -0.35, -0.35], [0.6, -0.35, 0.6], [-0.35, -0.35, 0.6],
+        [-0.35, 0.6, -0.35], [0.6, 0.6, -0.35], [-0.35, 0.6, 0.6]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "name": "edge_bevel_single",
+  "description": "Edge Bevel (mesh.bevel, edit-mode Edges, param `width`) on a SINGLE ISOLATED interior edge of a unit cube -- the simplest case, both endpoints are bare (only one selected edge touches each). Topology-diff parity against a frozen reference-editor capture: 8v/6f cube -> 10v/7f (5 quads + 2 pentagons), no extra cap polygon needed for a lone bare end on a closed mesh (the vertex's one untouched incident face absorbs both new corner vertices as a pentagon). Two cases pin the per-vertex law scales linearly with `width` (width=0.1 and width=0.2 on the SAME edge). This is the baseline vibe3d's bevelEdgesByMask already reproduces today (task 0304/existing mesh.d unittest); kept here as a topology-diff regression lock and as the anchor case for the harder cap cases in edge_bevel_loop/edge_bevel_corner/edge_bevel_open_end (task 0391).",
+  "source": "Frozen reference-editor capture via the private capture harness's edge_bevel op (task 0391), cases edge_bevel_single_interior_w01/w02.json. Selected edge matches vibe3d's own makeCube() vertices 6=(0.5,0.5,0.5)/7=(-0.5,0.5,0.5) (mesh.d's bevelEdgesByMask unittest uses the identical edge) so this fixture doubles as an independent reference cross-check of that unittest's expected chamfer centroid (0,0.45,0.45) for width=0.1.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-07-14T00:00:00Z",
+    "harness": "private capture harness (reference-editor edge-bevel tool, driven headlessly, mode=inset)",
+    "task": "0391",
+    "notes": "mode=inset was the correct reference-editor edge-bevel mode to match vibe3d's `width` param 1:1 (offset=value exactly) -- the reference editor's Width mode instead produces offset=value*sqrt(2) for a 90-degree cube corner, an easy trap; verified against mesh.d's existing bevelEdgesByMask unittest (chamfer centroid 0,0.45,0.45) bit-for-bit before freezing."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "width_01",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "edges", "coords": [
+          [[0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel", "params": { "width": 0.1 } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 10, "faces": 7 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.4], [0.5, 0.4, 0.5], [-0.5, 0.5, 0.4], [-0.5, 0.4, 0.5]
+      ]
+    },
+    {
+      "name": "width_02",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "edges", "coords": [
+          [[0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel", "params": { "width": 0.2 } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 10, "faces": 7 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.3], [0.5, 0.3, 0.5], [-0.5, 0.5, 0.3], [-0.5, 0.3, 0.5]
+      ]
+    }
+  ]
+}

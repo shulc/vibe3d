@@ -49,7 +49,8 @@ private:
     CommandHistory      history;
     EdgeBevelEditFactory factory;
 
-    float width_ = 0.0f;
+    float width_      = 0.0f;
+    int   roundLevel_ = 0;
 
     bool         active;
     bool         built;
@@ -100,7 +101,12 @@ public:
     override EditMode[] supportedModes() const { return [EditMode.Edges]; }
 
     override Param[] params() {
-        return [Param.float_("width", "Width", &width_, 0.0f)];
+        import mesh : MAX_ROUND_LEVEL;
+        return [
+            Param.float_("width", "Width", &width_, 0.0f),
+            Param.int_("roundLevel", "Round Level", &roundLevel_, 0)
+                .min(0).max(MAX_ROUND_LEVEL).enforceBounds(),
+        ];
     }
 
     override void activate() {
@@ -153,7 +159,7 @@ public:
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_);
+        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -282,7 +288,7 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_);
+        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_);
         built = (n != 0);
         refreshCaches();
     }
