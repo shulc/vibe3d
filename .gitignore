@@ -39,6 +39,10 @@ vibe3d-*.zip
 vibe3d-windows-render/
 vibe3d-linux-render/
 vibe3d-macos-render/
+# Self-contained Linux AppImage + its build cache (downloaded packaging tools,
+# staged AppDir) — produced by tools/release/bundle_linux_appimage.sh.
+*.AppImage
+/tools/release/.appimage-build/
 
 # Per-test wall-clock timing cache used by run_test.d's LPT scheduler.
 # Machine-specific (durations depend on the host), so not published.
