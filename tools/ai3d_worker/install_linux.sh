@@ -77,6 +77,8 @@ fi
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 TORCH_VERSION="${TORCH_VERSION:-2.4.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.19.0}"
+# xformers build matched to torch 2.4.0 (per TRELLIS setup.sh's own table).
+XFORMERS_VERSION="${XFORMERS_VERSION:-0.0.27.post2}"
 TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/microsoft/TRELLIS.git}"
 
 # GPU preflight thresholds. REQUIRED_CUDA is derived from the torch wheel index
@@ -263,10 +265,11 @@ print_plan() {
         echo "  5. (using existing checkout)"
     fi
     echo "     + git submodule update --init --recursive   (flexicubes)"
-    echo "  6. TRELLIS setup.sh --basic --xformers --spconv --kaolin  (in the venv)"
-    echo "     — version-matches xformers/spconv/kaolin to torch $TORCH_VERSION +"
-    echo "     the mesh-only basic deps; NOT nvdiffrast/diffoctreerast/mipgaussian"
-    echo "     (worker only requests formats=['mesh']). + fast-simplification."
+    echo "  6. TRELLIS setup.sh --basic --spconv (in the venv) for the basic deps"
+    echo "     + spconv; then xformers $XFORMERS_VERSION + kaolin pinned to torch"
+    echo "     $TORCH_VERSION explicitly (setup.sh's exact-version match skips the"
+    echo "     +cuXXX suffix). NOT nvdiffrast/diffoctreerast/mipgaussian (worker"
+    echo "     only requests formats=['mesh']). + fast-simplification."
     echo "  7. '$VENV_PYTHON' -m pip install -e '$SCRIPT_DIR'"
     echo "  8. write $CONFIG_PATH"
     echo
@@ -332,8 +335,20 @@ git -C "$TRELLIS_ROOT" submodule update --init --recursive
 # (gaussian / radiance-field outputs the worker never requests — it only ever asks
 # formats=['mesh'], see server.py TrellisBackend). Run with the venv on PATH so
 # setup.sh's bare `pip` / `python` resolve to it.
-echo "-- installing TRELLIS runtime deps via setup.sh (--basic --xformers --spconv --kaolin)"
-( cd "$TRELLIS_ROOT" && PATH="$VENV_DIR/bin:$PATH" VIRTUAL_ENV="$VENV_DIR" bash setup.sh --basic --xformers --spconv --kaolin )
+echo "-- installing TRELLIS basic + spconv deps via setup.sh (--basic --spconv)"
+( cd "$TRELLIS_ROOT" && PATH="$VENV_DIR/bin:$PATH" VIRTUAL_ENV="$VENV_DIR" bash setup.sh --basic --spconv )
+
+# setup.sh's --xformers / --kaolin match torch by an EXACT version string and skip
+# our "$TORCH_VERSION+cuXXX" (the +cuXXX local-version suffix breaks its `case` and
+# prints "Unsupported PyTorch version"), so install them EXPLICITLY here, pinned to
+# the torch / cuda we installed above. This is exactly what closed the owner's
+# "No module named 'kaolin'" generation failure.
+CU_TAG="$(printf '%s' "$TORCH_INDEX_URL" | grep -oE 'cu[0-9]+' | head -1)"
+echo "-- installing xformers $XFORMERS_VERSION (index: $TORCH_INDEX_URL)"
+"$VENV_PYTHON" -m pip install "xformers==$XFORMERS_VERSION" --index-url "$TORCH_INDEX_URL"
+echo "-- installing kaolin (torch-${TORCH_VERSION}_${CU_TAG} wheel index)"
+"$VENV_PYTHON" -m pip install kaolin \
+    -f "https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-${TORCH_VERSION}_${CU_TAG}.html"
 
 # fast_simplification: the worker's quadric decimate (server.py TrellisBackend),
 # not part of TRELLIS setup.sh's basic set.
