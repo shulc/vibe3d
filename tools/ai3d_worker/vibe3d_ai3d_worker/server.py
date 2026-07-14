@@ -252,16 +252,16 @@ class TrellisBackend:
                     "model_missing",
                     _model_missing_message(self.model_name_or_path, self.cache_dir),
                 )
-            # Belt-and-suspenders hard network kill-switch. TRELLIS'
-            # from_pretrained(path) takes NO local_files_only kwarg and calls
-            # huggingface_hub's hf_hub_download() internally; the only
-            # API-agnostic way to guarantee it never reaches the network is
-            # HF_HUB_OFFLINE, which makes hf_hub_download raise a
-            # LocalEntryNotFoundError on a cache-miss instead of fetching. So
-            # even if the presence probe above false-positives on a partial
-            # cache, no download can happen here.
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            # We deliberately do NOT force HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE
+            # here. The presence check above already guarantees the MAIN model
+            # (jetx/TRELLIS-image-large) is fully cached, so from_pretrained
+            # loads it from disk with no network fetch — the ~4 GB weights are
+            # never silently pulled. But the pipeline ALSO loads secondary
+            # models at build/generation time (the DINOv2 image-conditioning
+            # model via torch.hub, plus other small HF models), and a blanket
+            # offline kill-switch blocks those with a RepositoryNotFoundError.
+            # Leaving the network reachable lets those small, one-time fetches
+            # succeed while the big model stays gated by the presence check.
             # TRELLIS reads these at import time to pick attention / sparse-conv
             # backends. 'xformers' avoids the flash-attn source build; 'native'
             # skips spconv's first-call autotune. setdefault so an operator can
@@ -460,13 +460,21 @@ class JobStore:
                 job.updated_at = time.time()
                 return
             except Exception as exc:
+                # Log the full traceback to stderr (-> worker.log) so a
+                # generation failure is diagnosable; the sanitized job error
+                # only carries the exception type + a truncated message.
+                import traceback
+                traceback.print_exc()
                 job.state = "failed"
                 job.stage = "done"
                 job.error = ProtocolError(
                     500,
                     "backend_failed",
                     "Backend failed during mesh generation",
-                    details={"type": exc.__class__.__name__},
+                    details={
+                        "type": exc.__class__.__name__,
+                        "message": str(exc)[:500],
+                    },
                 ).body()
                 job.updated_at = time.time()
                 return

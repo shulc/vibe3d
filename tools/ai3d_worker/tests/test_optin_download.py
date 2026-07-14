@@ -4,11 +4,12 @@ Covers two guarantees added in task 0403:
 
 (a) ``download_model.sh`` is a thin pass-through wrapper around the worker's
     ``fetch-model`` subcommand (args forwarded verbatim).
-(b) The TRELLIS backend NEVER auto-downloads at generation time: when the
-    weights are absent it raises a clear, actionable ``model_missing`` error
-    naming the download command; when present it forces huggingface_hub fully
-    offline BEFORE building the pipeline. Both branches are exercised without
-    torch / huggingface_hub installed (mock/stub the pipeline import).
+(b) The TRELLIS backend NEVER auto-downloads the MAIN model at generation time:
+    when the weights are absent it raises a clear, actionable ``model_missing``
+    error naming the download command; when present it loads them from the local
+    cache. It does NOT force a global offline mode (that would break the small
+    secondary models the pipeline pulls at build time). Both branches are
+    exercised without torch / huggingface_hub installed (mock/stub the import).
 """
 
 from __future__ import annotations
@@ -121,10 +122,11 @@ class TrellisModelGuardCase(unittest.TestCase):
         self.assertIn("download_model.sh", msg)
         self.assertIn("fetch-model", msg)
 
-    def test_present_model_forces_offline_before_pipeline_build(self) -> None:
+    def test_present_model_loads_from_cache_no_forced_offline(self) -> None:
         # Stub torch + trellis.pipelines so the present-model path runs with no
-        # torch, no network. Assert HF_HUB_OFFLINE is set BEFORE from_pretrained
-        # (proving no lazy download can leak out) and the model path is passed.
+        # torch, no network. Assert the model path is passed to from_pretrained
+        # and that we do NOT force HF_HUB_OFFLINE (the presence check is the
+        # main-model guard; secondaries must stay reachable).
         seen: dict[str, object] = {}
 
         fake_torch = types.ModuleType("torch")
@@ -166,8 +168,12 @@ class TrellisModelGuardCase(unittest.TestCase):
         self.assertIs(torch_mod, fake_torch)
         self.assertIsInstance(pipe, FakePipe)
         self.assertEqual(seen["path"], MODEL)
-        # offline kill-switch was ON at the moment from_pretrained ran
-        self.assertEqual(seen["offline"], "1")
+        # We deliberately do NOT force HF_HUB_OFFLINE anymore: the presence check
+        # gates the ~4 GB main model (so it never silently downloads), while
+        # secondary models the pipeline needs at build time (DINOv2 via
+        # torch.hub, other small HF models) must stay reachable — a blanket
+        # offline kill-switch broke them with RepositoryNotFoundError.
+        self.assertNotEqual(seen.get("offline"), "1")
 
 
 if __name__ == "__main__":
