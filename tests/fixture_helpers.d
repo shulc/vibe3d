@@ -74,16 +74,25 @@ double asDouble(JSONValue v) {
 //   { "endpoint": "...", "body": { ... } }      → POST the JSON body
 //   { "endpoint": "command", "argstring": "..." } → POST the raw argstring
 //   { "endpoint": "reset" }                       → POST with empty body
-// Mutating endpoints answer {"status":"ok"|"error"}; "error" aborts.
+// Mutating endpoints answer {"status":"ok"|"error"}; "error" aborts, UNLESS
+// the step carries `"allowError": true` — an escape hatch (task 0395) for a
+// captured case whose op is a DELIBERATE no-op at the command layer (e.g. a
+// headless tool's applyHeadless() legitimately returning false because there
+// is genuinely nothing to do — commands.mesh.bridge's/mesh.bridgeTool's
+// single-open-chain case — which the /api/command bridge reports as
+// `{"status":"error","message":"command '...' did not apply"}`, same as any
+// other rejected command). Default (absent/false) preserves every existing
+// fixture's strict behavior byte-for-byte.
 private void postStep(JSONValue step, string name, string phase, size_t i) {
     string ep = step["endpoint"].str;
     string body = ("argstring" in step) ? step["argstring"].str
                 : ("body"      in step) ? step["body"].toString
                 : "";
+    bool allowError = ("allowError" in step) && step["allowError"].type == JSONType.true_;
     auto resp = cast(string) post(endpointPath(ep), body);
     if (resp.length && resp[0] == '{') {
         auto j = parseJSON(resp);
-        if ("status" in j && j["status"].str == "error")
+        if (!allowError && "status" in j && j["status"].str == "error")
             assert(false, format("%s: %s step %d (%s) failed: %s",
                                  name, phase, i, ep, resp));
     }

@@ -236,6 +236,87 @@ unittest { // selecting only one cap's rim is not bridgeable
 }
 
 // ---------------------------------------------------------------------------
+// task 0395: mesh.bridge COMMAND accepts OPEN edge rows (owner repro) +
+// single-open-chain no-op. See tests/fixtures/bridge_open_rows.json for the
+// same contract driven through mesh.bridgeTool; this exercises the
+// PRE-EXISTING one-shot mesh.bridge command entry point, which reported the
+// original bug (:9000, 2026-07-14): the edge-mode branch used to require
+// exactly 2 CLOSED edge cycles and silently no-op'd on open rows.
+// ---------------------------------------------------------------------------
+
+// find the edge index whose endpoints are the unordered vertex-index pair (a,b).
+int findEdgeIdx(JSONValue m, int a, int b) {
+    foreach (i, e; m["edges"].array) {
+        int ea = cast(int)e.array[0].integer, eb = cast(int)e.array[1].integer;
+        if ((ea == a && eb == b) || (ea == b && eb == a)) return cast(int)i;
+    }
+    return -1;
+}
+
+// cube minus 2 adjacent faces (right x=+0.5, back y=+0.5): 8v/4f/11e.
+void loadOpenHoleCube() {
+    auto r = postCmd("/api/load-mesh", `{
+        "vertices": [
+            [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+            [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]
+        ],
+        "faces": [
+            [0,3,2,1],
+            [4,5,6,7],
+            [0,4,7,3],
+            [0,1,5,4]
+        ]
+    }`);
+    assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
+}
+
+unittest { // owner repro: two 2-edge open arcs -> mesh.bridge reconstructs
+           // the 2 deleted faces on EXISTING verts (8v/4f -> 8v/6f).
+    loadOpenHoleCube();
+    auto m0 = model();
+    assert(m0["faces"].array.length == 4, "owner repro fixture starts with 4 faces");
+    assert(m0["vertexCount"].integer == 8, "owner repro fixture has 8 verts");
+
+    int e32 = findEdgeIdx(m0, 3, 2), e21 = findEdgeIdx(m0, 2, 1);
+    int e56 = findEdgeIdx(m0, 5, 6), e67 = findEdgeIdx(m0, 6, 7);
+    assert(e32 >= 0 && e21 >= 0 && e56 >= 0 && e67 >= 0,
+        "owner repro: all 4 boundary edges must exist");
+
+    setSelection("edges", []);  // switch to edge mode
+    setSelection("edges", [e32, e21, e56, e67]);
+
+    runCmd("mesh.bridge");
+
+    auto m1 = model();
+    assert(m1["faces"].array.length == 6,
+        "owner repro: expected 6 faces (8v/4f -> 8v/6f), got " ~
+        m1["faces"].array.length.to!string);
+    assert(m1["vertexCount"].integer == 8, "owner repro: no new verts");
+    assert(fvDist(m1).get(4, 0) == 6, "owner repro: all 6 faces must be quads");
+    assert(orphanVerts(m1).length == 0, "owner repro: no orphan vertices");
+
+    runCmd("history.undo");
+    auto m2 = model();
+    assert(m2["faces"].array.length == 4, "owner repro: undo restores 4 faces");
+    assert(m2["vertexCount"].integer == 8, "owner repro: undo restores 8 verts");
+}
+
+unittest { // single open chain, nothing else selected -> mesh.bridge command is a no-op
+    loadOpenHoleCube();
+    auto m0 = model();
+    int e32 = findEdgeIdx(m0, 3, 2), e21 = findEdgeIdx(m0, 2, 1);
+    assert(e32 >= 0 && e21 >= 0, "single-chain no-op: boundary edges must exist");
+
+    setSelection("edges", []);
+    setSelection("edges", [e32, e21]);  // one open chain only, no second group
+
+    postCmd("/api/command", `{"id":"mesh.bridge"}`);
+    auto m1 = model();
+    assert(m1["faces"].array.length == 4, "single open chain: mesh.bridge must be a no-op");
+    assert(m1["vertexCount"].integer == 8, "single open chain: vertex count unchanged");
+}
+
+// ---------------------------------------------------------------------------
 // opposite-handed winding: auto-heuristic produces consistent outward normals
 // ---------------------------------------------------------------------------
 //

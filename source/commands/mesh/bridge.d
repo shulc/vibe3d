@@ -16,8 +16,12 @@ import snapshot : MeshSnapshot;
 /// Polygon mode: requires exactly 2 selected polygons; their ordered vertex
 /// rings become the two loops.
 ///
-/// Edge mode: selected edges must form exactly 2 disjoint simple closed vertex
-/// cycles (each participating vertex has exactly 2 selected-edge neighbours).
+/// Edge mode: selected edges must form exactly 2 disjoint chains — EITHER
+/// both closed simple vertex cycles (each participating vertex has exactly
+/// 2 selected-edge neighbours) OR both OPEN rows (task 0395; pairing is by
+/// nearest-endpoint proximity, not selection order, with unequal-length
+/// rows fanned/triangulated — see `mesh.bridgeOpenRows`). A mix of one open
+/// + one closed chain is a no-op (deferred).
 ///
 /// Parameter `flip` (bool, default false): reverse the B-loop pairing
 /// direction, overriding the auto nearest-vertex + minimum-distance choice.
@@ -86,12 +90,21 @@ class MeshBridge : Command, Operator {
                 return false;
             }
         } else if (editMode == EditMode.Edges) {
-            // Edge mode: selected edges must form exactly 2 closed cycles.
-            auto loops = mesh.extractSelectedEdgeCycles();
-            if (loops.length != 2) return false;
+            // Edge mode: selected edges must form exactly 2 disjoint chains
+            // — either both closed cycles or both OPEN rows (task 0395).
+            // extractSelectedEdgeChains generalizes the pre-existing
+            // extractSelectedEdgeCycles (closed-only, left untouched) to
+            // also recognize open rows.
+            auto chains = mesh.extractSelectedEdgeChains();
+            if (chains.length != 2) return false;
+            immutable bool bothClosed = chains[0].closed && chains[1].closed;
+            immutable bool bothOpen   = !chains[0].closed && !chains[1].closed;
+            if (!bothClosed && !bothOpen) return false;   // mixed open+closed: no-op, deferred
 
             snap = MeshSnapshot.capture(*mesh);
-            size_t n = mesh.bridgeLoops(loops[0], loops[1], flip_);
+            size_t n = bothOpen
+                ? mesh.bridgeOpenRows(chains[0].verts, chains[1].verts, flip_, 1u, 0.0f)
+                : mesh.bridgeLoops(chains[0].verts, chains[1].verts, flip_);
             if (n == 0) {
                 snap = MeshSnapshot.init;
                 return false;

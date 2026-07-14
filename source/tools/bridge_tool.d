@@ -61,17 +61,21 @@ struct BridgeParams {
 // (unconditional, matching commands.mesh.bridge's existing Polygon-mode
 // behaviour when remove is on).
 //
-// Edge mode: selected edges must form exactly 2 disjoint simple closed
-// vertex cycles (mesh.extractSelectedEdgeCycles); capFaces = whatever
-// EXISTING faces (0, 1, or 2) are exactly bounded by one of the two loops
-// (facesMatchingLoop) — task 0357 generalizes commands.mesh.bridge's
-// Polygon-only Remove Polygons to Edge mode: most edge-mode bridges bound
-// no face at all (an open hole), in which case this is an empty, safe
-// no-op, exactly matching vibe3d's pre-existing edge-mode behaviour.
+// Edge mode: selected edges must form exactly 2 disjoint chains — EITHER
+// both closed simple vertex cycles OR both OPEN rows (task 0395; a mix of
+// one open + one closed is a no-op, deferred — see task 0395 plan).
+// capFaces = whatever EXISTING faces (0, 1, or 2) are exactly bounded by
+// one of the two loops (facesMatchingLoop) — task 0357 generalizes
+// commands.mesh.bridge's Polygon-only Remove Polygons to Edge mode: most
+// edge-mode bridges bound no face at all (an open hole, OR any open-row
+// bridge — an open chain never bounds a face), in which case this is an
+// empty, safe no-op, exactly matching vibe3d's pre-existing edge-mode
+// behaviour.
 // ---------------------------------------------------------------------------
 struct BridgeSelectionResolved {
     bool   valid;
     bool   polygonMode;
+    bool   openRows;      // task 0395: true when both chains are OPEN rows
     uint[] loopA, loopB;
     uint[] capFaces;
 }
@@ -89,10 +93,17 @@ BridgeSelectionResolved resolveBridgeSelection(ref Mesh m, EditMode editMode) {
         r.polygonMode = true;
         r.valid       = true;
     } else if (editMode == EditMode.Edges) {
-        auto loops = m.extractSelectedEdgeCycles();
-        if (loops.length != 2) return r;
-        r.loopA       = loops[0];
-        r.loopB       = loops[1];
+        // extractSelectedEdgeChains (task 0395) generalizes the pre-existing
+        // extractSelectedEdgeCycles (closed-only) to also recognize OPEN
+        // rows — extractSelectedEdgeCycles itself is left untouched.
+        auto chains = m.extractSelectedEdgeChains();
+        if (chains.length != 2) return r;
+        immutable bool bothClosed = chains[0].closed && chains[1].closed;
+        immutable bool bothOpen   = !chains[0].closed && !chains[1].closed;
+        if (!bothClosed && !bothOpen) return r;   // mixed open+closed: no-op, deferred (task 0395)
+        r.loopA       = chains[0].verts;
+        r.loopB       = chains[1].verts;
+        r.openRows    = bothOpen;
         r.capFaces    = facesMatchingLoop(m, r.loopA) ~ facesMatchingLoop(m, r.loopB);
         r.polygonMode = false;
         r.valid       = true;
@@ -135,11 +146,18 @@ struct BridgeApplyResult {
 /// Polygons) onto `m`. `capFaces` is only consulted when `p.remove` is
 /// true; an empty `capFaces` (the common Edge-mode "no bounding face"
 /// case) is a safe no-op for the deletion step regardless.
+///
+/// `openRows` (task 0395) selects the kernel: closed loops / polygon rings
+/// use the pre-existing `bridgeLoopsSpans`; two OPEN edge rows use
+/// `bridgeOpenRows` (proximity pairing, fan on unequal length, no wrap).
 BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] loopB,
-                                const(uint)[] capFaces, in BridgeParams p) {
+                                const(uint)[] capFaces, in BridgeParams p,
+                                bool openRows = false) {
     BridgeApplyResult r;
     uint spans = (p.segments < 1) ? 1u : cast(uint)p.segments;
-    r.added = m.bridgeLoopsSpans(loopA, loopB, p.flip, spans, p.twist);
+    r.added = openRows
+        ? m.bridgeOpenRows(loopA, loopB, p.flip, spans, p.twist)
+        : m.bridgeLoopsSpans(loopA, loopB, p.flip, spans, p.twist);
     if (r.added == 0) return r;
 
     if (p.remove && capFaces.length > 0) {
@@ -161,10 +179,10 @@ BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] l
 /// rings on top of each other.
 void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
                           in uint[] loopA, in uint[] loopB, in uint[] capFaces,
-                          in BridgeParams params_) {
+                          in BridgeParams params_, bool openRows = false) {
     baseSnap.restore(previewMesh);
     if (loopA.length == 0 || loopB.length == 0) return;
-    applyBridgeOp(previewMesh, loopA, loopB, capFaces, params_);
+    applyBridgeOp(previewMesh, loopA, loopB, capFaces, params_, openRows);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +225,7 @@ private:
     // never calls activate()).
     bool   valid_;
     bool   polygonMode_;
+    bool   openRows_;      // task 0395: true when both selected chains are OPEN rows
     uint[] loopA_, loopB_, capFaces_;
 
     MeshSnapshot baseSnap_;
@@ -263,6 +282,7 @@ public:
         auto resolved = resolveBridgeSelection(*mesh, editModeVal());
         valid_       = resolved.valid;
         polygonMode_ = resolved.polygonMode;
+        openRows_    = resolved.openRows;
         loopA_       = resolved.loopA;
         loopB_       = resolved.loopB;
         capFaces_    = resolved.capFaces;
@@ -282,7 +302,7 @@ public:
 
         size_t inserted = 0;
         if (willCommit) {
-            auto res = applyBridgeOp(*mesh, loopA_, loopB_, capFaces_, params_);
+            auto res = applyBridgeOp(*mesh, loopA_, loopB_, capFaces_, params_, openRows_);
             inserted = res.added;
             if (inserted > 0) gpu.upload(*mesh);
         }
@@ -310,6 +330,7 @@ public:
         auto resolved = resolveBridgeSelection(*mesh, editModeVal());
         valid_       = resolved.valid;
         polygonMode_ = resolved.polygonMode;
+        openRows_    = resolved.openRows;
         loopA_       = resolved.loopA;
         loopB_       = resolved.loopB;
         capFaces_    = resolved.capFaces;
@@ -352,7 +373,7 @@ public:
         auto resolved = resolveBridgeSelection(*mesh, editModeVal());
         if (!resolved.valid) return false;
         auto res = applyBridgeOp(*mesh, resolved.loopA, resolved.loopB,
-                                 resolved.capFaces, params_);
+                                 resolved.capFaces, params_, resolved.openRows);
         if (res.added == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -365,6 +386,7 @@ public:
         root["tool"]        = JSONValue("mesh.bridgeTool");
         root["valid"]       = JSONValue(valid_);
         root["polygonMode"] = JSONValue(polygonMode_);
+        root["openRows"]    = JSONValue(openRows_);
         root["engaged"]     = JSONValue(engaged);
         root["segments"]    = JSONValue(params_.segments);
         root["twist"]       = JSONValue(params_.twist);
@@ -376,7 +398,7 @@ public:
     // ----- Live preview ---------------------------------------------------
 
     private void rebuildPreviewMesh() {
-        rebuildBridgePreview(baseSnap_, previewMesh_, loopA_, loopB_, capFaces_, params_);
+        rebuildBridgePreview(baseSnap_, previewMesh_, loopA_, loopB_, capFaces_, params_, openRows_);
     }
 
     override void evaluate() {
@@ -621,4 +643,103 @@ unittest { // rebuildBridgePreview is NON-CUMULATIVE — 5 repeat calls land
                 "preview accumulated faces on repeat #" ~ i.to!string);
         }
     }
+}
+
+unittest { // Edge mode OPEN rows (task 0395 owner repro): cube minus 2
+           // adjacent faces (8v/4f), select the 4 boundary edges away from
+           // the two connector edges (two 2-edge open arcs) — resolve must
+           // be valid + openRows=true + capFaces EMPTY (an open chain never
+           // bounds an existing face), and applyBridgeOp(spans=1) must
+           // reconstruct the 2 deleted faces bit-for-bit: 8v/4f -> 8v/6f,
+           // reusing the existing boundary vertices (no new verts).
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (ei; 0 .. m.edges.length) {
+            auto e = m.edges[ei];
+            if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return cast(int)ei;
+        }
+        return -1;
+    }
+
+    Mesh m;
+    m.addVertex(Vec3(-0.5,-0.5,-0.5)); m.addVertex(Vec3(0.5,-0.5,-0.5));
+    m.addVertex(Vec3(0.5,0.5,-0.5));   m.addVertex(Vec3(-0.5,0.5,-0.5));
+    m.addVertex(Vec3(-0.5,-0.5,0.5));  m.addVertex(Vec3(0.5,-0.5,0.5));
+    m.addVertex(Vec3(0.5,0.5,0.5));    m.addVertex(Vec3(-0.5,0.5,0.5));
+    m.addFace([0u,3u,2u,1u]);
+    m.addFace([4u,5u,6u,7u]);
+    m.addFace([0u,4u,7u,3u]);
+    m.addFace([0u,1u,5u,4u]);
+    m.buildLoops();
+    m.faceMarks.length = m.faces.length;
+    m.edgeMarks.length = m.edges.length;
+    m.faceSelectionOrder.length = m.faces.length;
+    m.edgeSelectionOrder.length = m.edges.length;
+
+    int e32 = findEdge(m, 3, 2), e21 = findEdge(m, 2, 1);
+    int e56 = findEdge(m, 5, 6), e67 = findEdge(m, 6, 7);
+    assert(e32 >= 0 && e21 >= 0 && e56 >= 0 && e67 >= 0,
+        "owner repro: all 4 boundary edges must exist on the fixture mesh");
+    m.selectEdge(e32); m.selectEdge(e21);
+    m.selectEdge(e56); m.selectEdge(e67);
+
+    auto sel = resolveBridgeSelection(m, EditMode.Edges);
+    assert(sel.valid, "owner repro: two open rows must resolve valid (was a silent no-op pre-0395)");
+    assert(sel.openRows, "owner repro: must be detected as openRows");
+    assert(!sel.polygonMode, "owner repro: edge mode is not polygonMode");
+    assert(sel.capFaces.length == 0,
+        "owner repro: open rows never bound an existing face, expected empty capFaces, got "
+        ~ sel.capFaces.length.to!string);
+
+    BridgeParams p; p.segments = 1; p.remove = true;
+    size_t facesBefore = m.faces.length, vertsBefore = m.vertices.length;
+    auto r = applyBridgeOp(m, sel.loopA, sel.loopB, sel.capFaces, p, sel.openRows);
+    assert(r.added == 2, "owner repro: expected 2 new quads, got " ~ r.added.to!string);
+    assert(!r.removed, "owner repro: capFaces empty, nothing to remove");
+    assert(m.faces.length == facesBefore + 2,
+        "owner repro: expected 8v/6f (4+2 quads), got " ~ m.faces.length.to!string ~ " faces");
+    assert(m.vertices.length == vertsBefore,
+        "owner repro: bridge must reuse existing boundary verts, no new verts");
+
+    // Winding-consistency (task 0395 rr-refinement): each new bridge face
+    // must traverse any edge it shares with a PRE-EXISTING face in the
+    // OPPOSITE direction — the same half-edge manifold invariant
+    // `orientFaceConsistent` enforces for `makePolygonFromVerts` (task
+    // 0394), now reused by `bridgeStripPaired`/`bridgeFanRows`. A
+    // same-direction shared edge would corrupt the half-edge fan there —
+    // this is exactly the connected-topology case the owner repro exercises
+    // (both new quads border two of the cube's 4 remaining original faces).
+    bool sharesEdgeSameDirection(const(uint)[] a, const(uint)[] b) {
+        foreach (i; 0 .. a.length) {
+            uint u = a[i], v = a[(i + 1) % a.length];
+            foreach (k; 0 .. b.length) {
+                uint p = b[k], q = b[(k + 1) % b.length];
+                if (u == p && v == q) return true;
+            }
+        }
+        return false;
+    }
+    foreach (nfi; facesBefore .. m.faces.length)
+        foreach (ofi; 0 .. facesBefore)
+            assert(!sharesEdgeSameDirection(m.faces[nfi], m.faces[ofi]),
+                "owner repro: new face " ~ nfi.to!string ~ " traverses a shared edge in the "
+                ~ "SAME direction as pre-existing face " ~ ofi.to!string ~ " (winding corruption)");
+}
+
+unittest { // Edge mode: mixed open+closed selection is a safe no-op
+           // (deferred, task 0395) — resolve must report invalid, not crash
+           // or silently pick one interpretation.
+    Mesh m;
+    // Open chain: verts 0-1-2.
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0)); m.addVertex(Vec3(2,0,0));
+    // Closed cycle: verts 3-4-5-6.
+    m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0));
+    m.addVertex(Vec3(1,2,0)); m.addVertex(Vec3(0,2,0));
+    m.addEdge(0, 1); m.addEdge(1, 2);
+    m.addEdge(3, 4); m.addEdge(4, 5); m.addEdge(5, 6); m.addEdge(6, 3);
+    m.buildLoops();
+    m.resizeEdgeSelection();
+    foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+    auto sel = resolveBridgeSelection(m, EditMode.Edges);
+    assert(!sel.valid, "mixed open+closed selection must resolve invalid (no-op), not pick a side");
 }

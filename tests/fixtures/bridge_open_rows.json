@@ -1,0 +1,218 @@
+{
+  "name": "bridge_open_edge_rows",
+  "description": "mesh.bridgeTool (task 0395) — EDGE-selection Bridge contract when the selected edges form OPEN chains/rows instead of exactly 2 closed cycles. Reported bug: a cube with 2 adjacent faces deleted (8v/4f/11e), selecting the 4 boundary edges away from the two connector edges (two 2-edge open arcs) makes Bridge silently no-op in vibe3d (bridge.d:91 requires exactly 2 CLOSED cycles via extractSelectedEdgeCycles). Reference-editor capture (task 0395, live, worker_id=31) shows the reference tool accepts open rows directly: it pairs the two chains by NEAREST-ENDPOINT PROXIMITY (not creation/selection order — verified via an asymmetric mesh where index-order pairing and proximity pairing predict different geometry, see 'pairing_proximity' case), applies the SAME Segments interior-ring law already verified for closed-loop/polygon-mode Bridge (spans=max(1,segments), interior rings lerped at t=i/spans), fans/triangulates when the two rows have unequal edge counts (excess edges on the longer row are trimmed into end-triangles toward the shorter row's near endpoint; the aligned middle edges bridge 1:1), and no-ops on a single open chain with nothing else selected (not an error, not a self-close).",
+  "source": "live reference-editor capture, task 0395 (private capture harness: tools/local/modo_diff/atlas/bridge_openrows_build.py + bridge_openrows_capture.py, worker_id=31)",
+  "provenance": {
+    "schema": 1,
+    "source": "live",
+    "reference": "reference-editor headless capture",
+    "method": "live-capture",
+    "captured_utc": "2026-07-14",
+    "harness": "atlas capture (private, tools/local/modo_diff/atlas/bridge_openrows_build.py + bridge_openrows_capture.py)",
+    "task": "0395",
+    "notes": "Explicit-geometry construction (item.create mesh -> geo.vertices.new/geo.polygons.new -> geo.setMeshEdits(), the proven bridge_ngon_build.py recipe) with edges selected by POSITION match (not index, since index stability across a mesh-edit commit is not guaranteed by the Python API). Every case's expected_vertices/expected_after below is copied verbatim from the captured post-tool dump, not hand-derived. NOTE (not encoded as a fixture, needs a 'connect'/Auto-Connection attribute vibe3d does not have yet): on the reported-bug's specific topology (an internal hole in an otherwise-closed box), the reference tool's Auto Connection default (connect=true) silently OVERRIDES an explicit Segments>1 request back down to spans=1 to keep the patch flush with the surrounding surface; with connect=false (or on a non-enclosed/disjoint topology, e.g. this fixture's other cases) the requested Segments value is honored exactly. Deferred — flagged for whoever implements Auto Connection, not required for the reported bug (which uses the default segments=1)."
+  },
+  "tolerance": 1e-4,
+  "cases": [
+    {
+      "name": "reported_bug_two_open_arcs_equal",
+      "description": "Exact owner repro (:9000, 2026-07-14): cube minus 2 adjacent faces (right x=+0.5, back y=+0.5), select the 4 boundary edges away from the two connector edges -- two 2-edge open arcs of EQUAL length. Reference tool bridges them into 2 new quads reusing the EXISTING boundary vertices (span=1, no interior rings) -- it literally reconstructs the two deleted faces. This is the case vibe3d's edge.bridge command currently no-ops on (extractSelectedEdgeCycles requires 2 CLOSED cycles); this fixture is the must-pass regression for the bug report.",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+            [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]
+          ],
+          "faces": [
+            [0,3,2,1],
+            [4,5,6,7],
+            [0,4,7,3],
+            [0,1,5,4]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[-0.5,0.5,-0.5],[0.5,0.5,-0.5]],
+          [[0.5,0.5,-0.5],[0.5,-0.5,-0.5]],
+          [[0.5,-0.5,0.5],[0.5,0.5,0.5]],
+          [[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+        ] } }
+      ],
+      "expected_before": { "verts": 8, "faces": 4 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 8, "faces": 6 },
+      "expected_vertices": [
+        [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+        [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]
+      ]
+    },
+    {
+      "name": "two_open_rows_disjoint_default",
+      "description": "Two open 2-edge/3-vertex rows on a DISJOINT (non-enclosed) topology -- a different shape than the cube-hole case above, confirming open-row bridging is general and not an artifact of the specific hole geometry. Default segments=1: span=1, no interior rings, 2 new quads connecting the rows' existing vertices 1:1 by position (0<->0, 1<->1, 2<->2 along x).",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+            [0,1,0],[1,1,0],[2,1,0],[0,1,-0.4],[1,1,-0.4],[2,1,-0.4]
+          ],
+          "faces": [
+            [3,4,1,0],
+            [4,5,2,1],
+            [9,10,7,6],
+            [10,11,8,7]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[0,0,0],[1,0,0]],
+          [[1,0,0],[2,0,0]],
+          [[0,1,0],[1,1,0]],
+          [[1,1,0],[2,1,0]]
+        ] } }
+      ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 12, "faces": 6 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+        [0,1,0],[1,1,0],[2,1,0],[0,1,-0.4],[1,1,-0.4],[2,1,-0.4]
+      ]
+    },
+    {
+      "name": "two_open_rows_segments2",
+      "description": "Same disjoint 2-row mesh as above, Segments=2 -- the closed-form Segments law already verified for polygon-mode/closed-loop Bridge (spans=max(1,segments); interior rings linearly interpolated at t=i/spans) applies IDENTICALLY to open-row edge-mode bridging: 1 interior ring at t=0.5 (y=0.5, lerped between the y=0 and y=1 rows), 3 new vertices, 4 new quads (2 spans x 2 row-edges).",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+            [0,1,0],[1,1,0],[2,1,0],[0,1,-0.4],[1,1,-0.4],[2,1,-0.4]
+          ],
+          "faces": [
+            [3,4,1,0],
+            [4,5,2,1],
+            [9,10,7,6],
+            [10,11,8,7]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[0,0,0],[1,0,0]],
+          [[1,0,0],[2,0,0]],
+          [[0,1,0],[1,1,0]],
+          [[1,1,0],[2,1,0]]
+        ] } }
+      ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 2, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 15, "faces": 8 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+        [0,1,0],[1,1,0],[2,1,0],[0,1,-0.4],[1,1,-0.4],[2,1,-0.4],
+        [2,0.5,0],[1,0.5,0],[0,0.5,0]
+      ]
+    },
+    {
+      "name": "pairing_proximity_not_selection_order",
+      "description": "DISCRIMINATING case (task 0395): row A's 2 edges are selected in natural x-increasing order (0->1->2); row B's 2 edges are on the SAME x positions but row B's vertices were built/selected in the SPATIALLY REVERSED order (b0 at x=2, b1 at x=1, b2 at x=0), walked b0->b1->b2. A naive creation/selection-INDEX pairing (A's i-th selected edge endpoint <-> B's i-th) would pair a0(x=0) with b0(x=2) and a2(x=2) with b0's far end at x=0 -- for THIS symmetric-about-x=1 layout that degenerate rule collapses ALL 3 interior-ring (segments=2) vertices onto x=1 (midpoint of 0&2 is 1, midpoint of 1&1 is 1, midpoint of 2&0 is 1). The reference tool instead pairs by NEAREST-ENDPOINT PROXIMITY regardless of creation/selection order (auto-detecting each chain's correct walk direction) -- the captured interior-ring vertices sit at x=0, x=1, x=2 (three DISTINCT positions, not collapsed), proving proximity pairing. A vibe3d port that pairs by raw index/selection order instead of endpoint proximity will fail this fixture's expected_vertices (collapsed-to-x=1 interior ring) even though it may pass the index-aligned cases above.",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+            [2,1,0],[1,1,0],[0,1,0],[2,1,-0.4],[1,1,-0.4],[0,1,-0.4]
+          ],
+          "faces": [
+            [3,4,1,0],
+            [4,5,2,1],
+            [9,10,7,6],
+            [10,11,8,7]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[0,0,0],[1,0,0]],
+          [[1,0,0],[2,0,0]],
+          [[2,1,0],[1,1,0]],
+          [[1,1,0],[0,1,0]]
+        ] } }
+      ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 2, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 15, "faces": 8 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],
+        [2,1,0],[1,1,0],[0,1,0],[2,1,-0.4],[1,1,-0.4],[0,1,-0.4],
+        [2,0.5,0],[1,0.5,0],[0,0.5,0]
+      ]
+    },
+    {
+      "name": "unequal_length_rows_fan",
+      "description": "Row A = 3 edges/4 verts (x=0,1,2,3, y=0); row B = 1 edge/2 verts (x=0,3, y=1), same total span. Reference tool does NOT refuse and does NOT require equal edge counts: it fans/triangulates -- the two OUTER edges of the longer row (a0-a1 and a2-a3) each become a triangle with the nearest endpoint of the shorter row (b0 at x=0, b1 at x=3 respectively), and the MIDDLE edge of the longer row (a1-a2) bridges as a quad against the shorter row's full single edge (b0-b1). No new vertices; 3 new faces (2 triangles + 1 quad) replace the would-be 'need equal counts' refusal. Symmetric under swapping which row is longer (unequal_A1_B3 companion capture, not separately fixture'd here, reproduces the mirror image bit-for-bit).",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],[3,0,-0.4],
+            [0,1,0],[3,1,0],[0,1,-0.4],[3,1,-0.4]
+          ],
+          "faces": [
+            [4,5,1,0],
+            [5,6,2,1],
+            [6,7,3,2],
+            [10,11,9,8]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[0,0,0],[1,0,0]],
+          [[1,0,0],[2,0,0]],
+          [[2,0,0],[3,0,0]],
+          [[0,1,0],[3,1,0]]
+        ] } }
+      ],
+      "expected_before": { "verts": 12, "faces": 4 },
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 12, "faces": 7 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4],[3,0,-0.4],
+        [0,1,0],[3,1,0],[0,1,-0.4],[3,1,-0.4]
+      ]
+    },
+    {
+      "name": "single_open_chain_noop",
+      "description": "A SINGLE open 2-edge chain selected, nothing else -- the reference tool leaves geometry completely UNCHANGED (no error, no self-closing into a loop, no new faces). Contrast with the 2-open-arc cases above: Bridge needs a SECOND selected group to bridge to; one group alone is a legitimate no-op, not a bug. (Distinguishes from the reported bug, where TWO groups were selected but vibe3d's closed-cycle-only gate rejected them anyway.)",
+      "input": [
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4]
+          ],
+          "faces": [
+            [3,4,1,0],
+            [4,5,2,1]
+          ]
+        }},
+        { "select": { "mode": "edges", "coords": [
+          [[0,0,0],[1,0,0]],
+          [[1,0,0],[2,0,0]]
+        ] } }
+      ],
+      "expected_before": { "verts": 6, "faces": 2 },
+      "op": [
+        { "endpoint": "command", "allowError": true, "body": { "id": "mesh.bridgeTool",
+          "params": { "segments": 1, "twist": 0, "flip": false } } }
+      ],
+      "expected_after": { "verts": 6, "faces": 2 },
+      "expected_vertices": [
+        [0,0,0],[1,0,0],[2,0,0],[0,0,-0.4],[1,0,-0.4],[2,0,-0.4]
+      ]
+    }
+  ]
+}
