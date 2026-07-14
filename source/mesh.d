@@ -1508,6 +1508,64 @@ struct Mesh {
         }
     }
 
+    /// Read-only: the "lowest surviving index wins" grid-based coincidence
+    /// search `weldCoincidentVertices` uses to decide which vertices would
+    /// merge into which, WITHOUT applying it. `remap[i] == i` means vertex
+    /// `i` survives as a representative (or has no coincident partner);
+    /// `remap[i] == r` (`r != i`) means `i` would be welded into
+    /// representative `r`. By construction every representative satisfies
+    /// `remap[r] == r` and every follower's remap points directly at its
+    /// representative — no multi-hop chains form (the scan only ever claims
+    /// an unclaimed root), so grouping vertices by `remap[]` value alone is
+    /// enough to recover clusters. Shared by the mutating weld and the
+    /// read-only Cleanup detector (`mesh_analysis.coincidentVertexClusters`,
+    /// task 0402 Phase 4 risk #2) so the two can never drift apart — see
+    /// `weldCoincidentVertices`'s doc comment for the full search rationale
+    /// and `epsSq`/`protectBelow` semantics.
+    int[] computeWeldRemap(double epsSq = 1e-12, size_t protectBelow = 0) const {
+        int[] remap;
+        remap.length = vertices.length;
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+        if (vertices.length < 2 || epsSq <= 0.0) return remap;
+
+        import std.math : floor, isFinite;
+        immutable double cellFloor = 1e-6;
+        double cellSize = sqrt(epsSq);
+        if (!isFinite(cellSize) || cellSize < cellFloor) cellSize = cellFloor;
+        immutable double invCell = 1.0 / cellSize;
+
+        long[] cx, cy, cz;
+        cx.length = vertices.length;
+        cy.length = vertices.length;
+        cz.length = vertices.length;
+        size_t[][long[3]] buckets;
+        foreach (i, ref v; vertices) {
+            cx[i] = cast(long)floor(cast(double)v.x * invCell);
+            cy[i] = cast(long)floor(cast(double)v.y * invCell);
+            cz[i] = cast(long)floor(cast(double)v.z * invCell);
+            long[3] key = [cx[i], cy[i], cz[i]];
+            buckets[key] ~= i;
+        }
+
+        foreach (i; 0 .. vertices.length) {
+            if (remap[i] != cast(int)i) continue;
+            foreach (dx; -1 .. 2) foreach (dy; -1 .. 2) foreach (dz; -1 .. 2) {
+                long[3] key = [cx[i] + dx, cy[i] + dy, cz[i] + dz];
+                auto bucket = key in buckets;
+                if (bucket is null) continue;
+                foreach (j; *bucket) {
+                    if (j <= i) continue;
+                    if (remap[j] != cast(int)j) continue;
+                    if (i < protectBelow && j < protectBelow) continue;
+                    Vec3 d = vertices[i] - vertices[j];
+                    if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+                        remap[j] = cast(int)i;
+                }
+            }
+        }
+        return remap;
+    }
+
     /// `protectBelow`: vertex-index pairs where BOTH indices are strictly
     /// less than this bound are never merged with each other, no matter how
     /// large `epsSq` is. Default 0 disables the guard (every existing caller
@@ -1525,65 +1583,7 @@ struct Mesh {
     /// with each other is not).
     size_t weldCoincidentVertices(double epsSq = 1e-12, size_t protectBelow = 0) {
         if (vertices.length < 2) return 0;
-        int[] remap;
-        remap.length = vertices.length;
-        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
-
-        // Coincidence search: spatial hash instead of the former O(V²)
-        // all-pairs scan (task 0396 — a 25k-vert ai3d-import mesh hung
-        // here). Bucket every vertex once by its quantized position (cell
-        // size = the weld distance, sqrt(epsSq)); for a candidate `i`, any
-        // vertex within epsSq of it must land in `i`'s own cell or one of
-        // its 26 neighbors — the standard uniform-grid guarantee holds as
-        // long as cellSize >= search radius. Positions never change during
-        // this pass (only `remap` mutates), so the buckets are built once
-        // up front. The outer/inner loop STRUCTURE below is unchanged from
-        // the naive version — same ascending-index representative scan,
-        // same "already claimed" skip, same protectBelow guard — only the
-        // candidate enumeration for the inner loop is accelerated, so the
-        // exact "lowest unclaimed index wins" representative-selection
-        // order (and its non-transitive chaining quirk) is preserved bit
-        // for bit. `cellFloor` keeps the cell size (and bucket index range)
-        // sane for a near-zero epsSq; epsSq<=0 can never weld anything
-        // (squared distance is never negative) so the search is skipped
-        // outright, matching the naive loop's result without running it.
-        if (epsSq > 0.0) {
-            import std.math : floor, isFinite;
-            immutable double cellFloor = 1e-6;
-            double cellSize = sqrt(epsSq);
-            if (!isFinite(cellSize) || cellSize < cellFloor) cellSize = cellFloor;
-            immutable double invCell = 1.0 / cellSize;
-
-            long[] cx, cy, cz;
-            cx.length = vertices.length;
-            cy.length = vertices.length;
-            cz.length = vertices.length;
-            size_t[][long[3]] buckets;
-            foreach (i, ref v; vertices) {
-                cx[i] = cast(long)floor(cast(double)v.x * invCell);
-                cy[i] = cast(long)floor(cast(double)v.y * invCell);
-                cz[i] = cast(long)floor(cast(double)v.z * invCell);
-                long[3] key = [cx[i], cy[i], cz[i]];
-                buckets[key] ~= i;
-            }
-
-            foreach (i; 0 .. vertices.length) {
-                if (remap[i] != cast(int)i) continue;
-                foreach (dx; -1 .. 2) foreach (dy; -1 .. 2) foreach (dz; -1 .. 2) {
-                    long[3] key = [cx[i] + dx, cy[i] + dy, cz[i] + dz];
-                    auto bucket = key in buckets;
-                    if (bucket is null) continue;
-                    foreach (j; *bucket) {
-                        if (j <= i) continue;
-                        if (remap[j] != cast(int)j) continue;
-                        if (i < protectBelow && j < protectBelow) continue;
-                        Vec3 d = vertices[i] - vertices[j];
-                        if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
-                            remap[j] = cast(int)i;
-                    }
-                }
-            }
-        }
+        int[] remap = computeWeldRemap(epsSq, protectBelow);
 
         size_t welded = 0;
         foreach (i; 0 .. vertices.length)
@@ -1652,12 +1652,21 @@ struct Mesh {
     /// the number of vertices removed.
     /// Useful after topology mutations (e.g. bevel arc miter) that leave
     /// stale BoundVerts or cap mids unreferenced.
-    size_t compactUnreferenced() {
+    /// Read-only: which vertices are referenced by at least one face — the
+    /// exact test `compactUnreferenced` uses to decide which vertices
+    /// survive. Shared with the read-only Cleanup detector
+    /// (`mesh_analysis.orphanVertexIndices`, task 0402 Phase 4 risk #2).
+    bool[] computeReferencedVertexMask() const {
         bool[] referenced;
         referenced.length = vertices.length;
         foreach (ref face; faces)
             foreach (vid; face)
                 if (vid < referenced.length) referenced[vid] = true;
+        return referenced;
+    }
+
+    size_t compactUnreferenced() {
+        bool[] referenced = computeReferencedVertexMask();
         // Build old→new index map
         uint[] remap;
         remap.length = vertices.length;
@@ -9299,6 +9308,41 @@ struct Mesh {
         return m;
     }
 
+    /// Full per-edge incident-face count, indexed like `edges[]` — NOT
+    /// capped at 2, unlike `buildEdgeFaces`'s `int[2]` slots which silently
+    /// cannot witness a 3rd+ incident face (task 0402 Phase 4 risk #3: a
+    /// non-manifold edge shared by ≥3 faces must be detectable, not just
+    /// "has a 2nd face"). O(F) using the already-built `edgeIndexMap`.
+    /// PRECONDITION: `edgeIndexMap` must already reflect the current
+    /// `faces` (i.e. `buildLoops()` has been called since the last topology
+    /// edit) — same precondition as `buildEdgeFaces`/`boundaryLoops`. A face
+    /// edge whose key is absent from `edgeIndexMap` (stale precondition) is
+    /// silently skipped rather than indexing out of bounds.
+    uint[] edgeFaceUseCounts() const {
+        auto counts = new uint[](edges.length);
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                if (auto p = key in edgeIndexMap)
+                    if (*p < counts.length) counts[*p]++;
+            }
+        }
+        return counts;
+    }
+
+    /// Vertex degree — the number of edges incident on `vi`. O(degree(vi))
+    /// via the half-edge ring (`edgesAroundVertex`), so summing this over
+    /// every vertex costs O(V + E) total, not O(V²) (task 0402 Phase 4 risk
+    /// #1). No existing API exposed this directly before task 0402.
+    /// PRECONDITION: same as `edgesAroundVertex` — `buildLoops()` must have
+    /// been called since the last topology edit.
+    uint vertexValence(uint vi) const {
+        uint n = 0;
+        foreach (ei; edgesAroundVertex(vi)) ++n;
+        return n;
+    }
+
     /// Return, for each edge, the indices of every OTHER edge that shares one
     /// of its two endpoint vertices (relation A: edge→edges-sharing-a-vertex).
     /// Result length == `edges.length`. No dedup pass — two distinct edges
@@ -13374,20 +13418,12 @@ struct Mesh {
     /// duplicates are removed. Winding order is ignored — two faces with the same
     /// vertices in reversed order are considered duplicates. Returns the number of
     /// faces removed, or 0 if the mesh had no duplicate faces.
-    size_t unifyFaces() {
-        if (faces.length < 2) return 0;
-        // Canonical key = the face's vertex indices sorted ascending. Two
-        // faces are duplicates iff they carry the same UNORDERED vertex
-        // multiset — sorting captures that regardless of winding direction
-        // (reversed order) or starting corner, matching
-        // makePolyVertexSetMatch_'s semantics exactly (same idiom as the
-        // `bool[immutable(uint)[]]` sorted-key dedup used by
-        // collectEdgeRing's seenRingKey above). Faces are grouped by key in
-        // one O(F log k) pass (k = per-face arity) instead of the former
-        // O(F²) pairwise makePolyVertexSetMatch_ scan — task 0396, a 50k-face
-        // ai3d-import mesh hung here. Visiting faces in ascending index order
-        // means the first occurrence of a key is always the lowest index,
-        // preserving the documented "first occurrence kept" contract.
+    /// Read-only: which faces are a LATER occurrence of an earlier face's
+    /// unordered vertex set (see `unifyFaces`'s doc comment for the
+    /// canonical-key / "first occurrence kept" contract). Shared by the
+    /// mutating dedup pass and the read-only Cleanup detector
+    /// (`mesh_analysis.duplicateFaceIndices`, task 0402 Phase 4 risk #2).
+    bool[] computeDuplicateFaceMask() const {
         import std.algorithm.sorting : sort;
         bool[] mask;
         mask.length = faces.length;
@@ -13402,6 +13438,24 @@ struct Mesh {
                 seen[ikey] = true;
             }
         }
+        return mask;
+    }
+
+    size_t unifyFaces() {
+        if (faces.length < 2) return 0;
+        // Canonical key = the face's vertex indices sorted ascending. Two
+        // faces are duplicates iff they carry the same UNORDERED vertex
+        // multiset — sorting captures that regardless of winding direction
+        // (reversed order) or starting corner, matching
+        // makePolyVertexSetMatch_'s semantics exactly (same idiom as the
+        // `bool[immutable(uint)[]]` sorted-key dedup used by
+        // collectEdgeRing's seenRingKey above). Faces are grouped by key in
+        // one O(F log k) pass (k = per-face arity) instead of the former
+        // O(F²) pairwise makePolyVertexSetMatch_ scan — task 0396, a 50k-face
+        // ai3d-import mesh hung here. Visiting faces in ascending index order
+        // means the first occurrence of a key is always the lowest index,
+        // preserving the documented "first occurrence kept" contract.
+        bool[] mask = computeDuplicateFaceMask();
         bool anyMarked = false;
         foreach (b; mask) if (b) { anyMarked = true; break; }
         if (!anyMarked) return 0;
@@ -13418,6 +13472,65 @@ struct Mesh {
     /// commitChange — no spurious topology version bump on a clean mesh.
     /// Otherwise rebuilds edges/loops/selection and issues a Geometry commit.
     /// Returns: faces removed + faces rewritten (both count as affected).
+    /// Result of collapsing face `fi`'s consecutive-duplicate (+ wrap-around
+    /// dup) vertex indices, and testing whether the collapsed face would be
+    /// DROPPED by `cleanDegenerateFaces` (fewer than 3 distinct entries, or
+    /// a near-zero Newell-normal magnitude < 1e-6). `srcCorner[k]` is the
+    /// ORIGINAL corner index that produced `collapsed[k]` (needed by the
+    /// mutating pass's PolyVertex/UV remap).
+    private struct CollapsedFace_ {
+        uint[] collapsed;
+        uint[] srcCorner;
+        bool   degenerate;
+    }
+
+    /// Shared by the mutating `cleanDegenerateFaces` and the read-only
+    /// Cleanup detector (`mesh_analysis.degenerateFaceIndices`, task 0402
+    /// Phase 4 risk #2) so the two can never drift apart — this is exactly
+    /// the per-face collapse + degenerate test `cleanDegenerateFaces` used
+    /// to inline, unchanged.
+    private CollapsedFace_ computeCollapsedFace_(uint fi) const {
+        const uint[] face = faces[fi];
+        uint[] f;
+        uint[] srcCorner;
+        f.reserve(face.length);
+        srcCorner.reserve(face.length);
+        foreach (k, vid; face) {
+            if (f.length == 0 || f[$ - 1] != vid) {
+                f ~= vid;
+                srcCorner ~= cast(uint)k;
+            }
+        }
+        while (f.length >= 2 && f[$ - 1] == f[0]) {
+            f = f[0 .. $ - 1];
+            if (srcCorner.length > 0) srcCorner = srcCorner[0 .. $ - 1];
+        }
+
+        if (f.length < 3) return CollapsedFace_(f, srcCorner, true);
+
+        // Newell normal magnitude test (identical to makePolygonFromVerts
+        // step 4 — NOT faceNormal(), which normalizes and can't distinguish
+        // zero-area from finite-area faces).
+        float nx = 0, ny = 0, nz = 0;
+        foreach (i; 0 .. f.length) {
+            Vec3 a = vertices[f[i]];
+            Vec3 b = vertices[f[(i + 1) % f.length]];
+            nx += (a.y - b.y) * (a.z + b.z);
+            ny += (a.z - b.z) * (a.x + b.x);
+            nz += (a.x - b.x) * (a.y + b.y);
+        }
+        float len = sqrt(nx*nx + ny*ny + nz*nz);
+        return CollapsedFace_(f, srcCorner, len < 1e-6f);
+    }
+
+    /// Read-only: true when face `fi` would be DROPPED by
+    /// `cleanDegenerateFaces` — fewer than 3 distinct vertices after
+    /// consecutive-duplicate collapse, or a near-zero Newell-normal area.
+    /// Does not mutate the mesh.
+    bool isFaceDegenerate(uint fi) const {
+        return computeCollapsedFace_(fi).degenerate;
+    }
+
     size_t cleanDegenerateFaces() {
         if (faces.length == 0) return 0;
 
@@ -13440,46 +13553,18 @@ struct Mesh {
         size_t fixed   = 0;
 
         foreach (fi, ref face; faces) {
-            // Collapse consecutive duplicate vertex indices (+ wrap-around dup).
-            uint[] f;
-            uint[] srcCorner;  // original corner index for each kept entry
-            f.reserve(face.length);
-            if (remapUv) srcCorner.reserve(face.length);
-            foreach (k, vid; face) {
-                if (f.length == 0 || f[$ - 1] != vid) {
-                    f ~= vid;
-                    if (remapUv) srcCorner ~= cast(uint)k;
-                }
-            }
-            // Wrap-around dup: last vertex equals first.
-            while (f.length >= 2 && f[$ - 1] == f[0]) {
-                f = f[0 .. $ - 1];
-                if (remapUv && srcCorner.length > 0)
-                    srcCorner = srcCorner[0 .. $ - 1];
-            }
+            // Collapse consecutive duplicate vertex indices (+ wrap-around
+            // dup) and test degeneracy via the shared helper (task 0402
+            // Phase 4 risk #2 — the read-only Cleanup detector calls the
+            // SAME `computeCollapsedFace_`/`isFaceDegenerate`, so this
+            // mutating pass and that detector can never drift apart).
+            auto cf = computeCollapsedFace_(cast(uint)fi);
+            uint[] f         = cf.collapsed;
+            uint[] srcCorner = cf.srcCorner;  // original corner index for each kept entry
 
-            // Drop: fewer than 3 distinct vertex entries after dedup.
-            if (f.length < 3) {
+            if (cf.degenerate) {
                 ++removed;
                 continue;
-            }
-
-            // Drop zero-area faces: raw Newell normal magnitude test
-            // (identical to makePolygonFromVerts step 4 — NOT faceNormal()).
-            {
-                float nx = 0, ny = 0, nz = 0;
-                foreach (i; 0 .. f.length) {
-                    Vec3 a = vertices[f[i]];
-                    Vec3 b = vertices[f[(i + 1) % f.length]];
-                    nx += (a.y - b.y) * (a.z + b.z);
-                    ny += (a.z - b.z) * (a.x + b.x);
-                    nz += (a.x - b.x) * (a.y + b.y);
-                }
-                float len = sqrt(nx*nx + ny*ny + nz*nz);
-                if (len < 1e-6f) {
-                    ++removed;
-                    continue;
-                }
             }
 
             // Face is kept; count it as fixed if its arity changed.
@@ -13598,14 +13683,43 @@ struct Mesh {
     /// case, so the mesh is left byte-identical, not just semantically equal.
     size_t fixFaceOrientation() {
         buildLoops();   // ensure loops/twin/faceLoop reflect the current faces[]
-        const size_t nf = faces.length;
-        if (nf == 0) return 0;
+        if (faces.length == 0) return 0;
+        return flipFacesByMask(computeOrientationFlipMask());
+    }
 
-        const bool restrictToSelection = hasAnySelectedFaces();
+    /// Read-only: passes 1-3 of `fixFaceOrientation` — connected-component
+    /// (manifold-BFS) partition, area-weighted-centroid/farthest-corner
+    /// seed, and BFS-propagated flip parity — WITHOUT applying the flip.
+    /// Returns a per-face mask: `true` at `fi` means `fixFaceOrientation`
+    /// would reverse that face's winding. Shared by the mutating fix and the
+    /// read-only Topology detector (`mesh_analysis.inconsistentWindingFaces`,
+    /// task 0402 Phase 4 risk #2) so the two can never drift apart. See
+    /// `fixFaceOrientation`'s doc comment for the full algorithm rationale.
+    /// PRECONDITION: `loops`/`faceLoop`/`vertLoop` must already reflect the
+    /// current `faces` (i.e. `buildLoops()` has been called since the last
+    /// topology edit) — same precondition as `computeEdgeSharpness`/
+    /// `boundaryLoops`/`buildEdgeFaces`. Does NOT call `buildLoops()` itself
+    /// (that would require a non-`const` `this`); `fixFaceOrientation` calls
+    /// it explicitly before reaching here.
+    bool[] computeOrientationFlipMask() const {
+        // Mutating fixFaceOrientation() historically restricts to the selection
+        // when faces are selected. The read-only Topology detector wants the
+        // WHOLE mesh regardless of selection, so it calls the bool overload
+        // with restrictToSelection=false (task 0402 Phase 4, review S2).
+        return computeOrientationFlipMask(hasAnySelectedFaces());
+    }
+
+    /// ditto, with an explicit selection-restriction flag: `fixFaceOrientation`
+    /// passes `hasAnySelectedFaces()` (its historical behavior); the Phase-4
+    /// Topology detector passes `false` so an analyze under an active selection
+    /// still reports winding problems in unselected components.
+    bool[] computeOrientationFlipMask(bool restrictToSelection) const {
+        const size_t nf = faces.length;
+        bool[] flipMask = new bool[](nf); // final flip decision
+        if (nf == 0) return flipMask;
 
         bool[] partitioned   = new bool[](nf); // assigned to a component yet?
         bool[] flipComputed  = new bool[](nf); // flip parity decided?
-        bool[] flipMask      = new bool[](nf); // final flip decision
 
         uint[] compQueue, bfsQueue;
 
@@ -13698,12 +13812,13 @@ struct Mesh {
             }
         }
 
-        return flipFacesByMask(flipMask);
+        return flipMask;
     }
 
     // Newell-method face area (magnitude of the Newell normal sum halved).
     // `faceNormal()` normalizes this away, so it can't be reused directly;
-    // kept private since `fixFaceOrientation` is its only consumer.
+    // kept private — only `computeOrientationFlipMask` (and transitively
+    // `fixFaceOrientation`) consumes it.
     private float faceAreaApprox_(uint fi) const {
         const uint[] face = faces[fi];
         if (face.length < 3) return 0;

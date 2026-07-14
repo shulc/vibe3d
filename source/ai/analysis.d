@@ -10,11 +10,16 @@ module ai.analysis;
 // ranking of findings is a later phase, mirroring how `ai.onnx_backend`
 // sits behind `ai.advisor`'s heuristic fallback today).
 //
-// Phase 1 wires exactly ONE category — SubdivReadiness — by mapping each
+// Phase 1 wired exactly ONE category — SubdivReadiness — by mapping each
 // `SupportLoopCandidate` the A0 generator already produces onto a `Finding`.
-// Cleanup / Topology / Retopo are declared in `FindingCategory` (so the
-// schema is stable across phases) but `analyzeMesh` does not populate them
-// yet; Phase 4 adds their detectors.
+// Phase 4 (task 0402) adds the remaining three: Cleanup, Topology, Retopo,
+// via the read-only detector predicates in `mesh_analysis` (extracted from
+// the fix-coupled mutating passes in mesh.d — see that module's doc comment
+// for the fidelity-guard approach, plan risk #2). All four categories share
+// ONE `mesh_analysis.AnalyzeContext`, built ONCE per `analyzeMesh` call
+// (plan risk #1) — Phase 1's single SubdivReadiness detector did not need
+// this seam, since `generateSupportLoopCandidates` builds its own small
+// internal scratch and nothing else in Phase 1 read it.
 //
 // A `Finding` NEVER carries an executable command — `suggestedOp` is a
 // neutral hint string for UI/text display only (e.g. "loop.slice"), never
@@ -30,6 +35,10 @@ import std.math      : isFinite;
 import mesh : Mesh;
 import ai.support_loop_candidates : SupportLoopCandidate,
     generateSupportLoopCandidates;
+import mesh_analysis : AnalyzeContext, buildAnalyzeContext,
+    coincidentVertexClusters, degenerateFaceIndices, duplicateFaceIndices,
+    orphanVertexIndices, inconsistentWindingFaces, nonManifoldEdgeIndices,
+    nakedBoundaryLoopEdges, retopoHotspotClusters;
 
 enum int findingSchemaVersion = 1;
 
@@ -39,9 +48,9 @@ enum int findingSchemaVersion = 1;
 /// feature groups) don't need a breaking enum change later.
 enum FindingCategory {
     SubdivReadiness,   // sharp edges that will visibly round under Catmull-Clark
-    Cleanup,           // degenerate/duplicate faces, coincident verts, orphans (Phase 4)
-    Topology,          // non-manifold edges, inconsistent winding, naked boundaries (Phase 4)
-    Retopo,            // tri/n-gon clusters, high-valence poles, thin faces (Phase 4)
+    Cleanup,           // degenerate/duplicate faces, coincident verts, orphans
+    Topology,          // non-manifold edges, inconsistent winding, naked boundaries
+    Retopo,            // tri/n-gon clusters, poles, thin faces — hotspot clusters
 }
 
 /// How strongly a `Finding` is being surfaced. Purely advisory — severity
@@ -101,8 +110,190 @@ Finding[] analyzeMesh(const ref Mesh mesh, AnalyzeOptions o = AnalyzeOptions.ini
 
     Finding[] result;
     result ~= analyzeSubdivReadiness(mesh, o.dihedralThresholdDeg, cap);
-    // Cleanup / Topology / Retopo: Phase 4.
+
+    if (mesh.vertices.length > 0) {
+        // Built ONCE, shared by Cleanup/Topology/Retopo (plan risk #1) —
+        // SubdivReadiness above does not need it (its own producer builds a
+        // small internal scratch via generateSupportLoopCandidates).
+        const ctx = buildAnalyzeContext(mesh);
+        result ~= analyzeCleanup(mesh, ctx, cap);
+        result ~= analyzeTopology(mesh, ctx, cap);
+        result ~= analyzeRetopo(mesh, ctx, cap);
+    }
     return result;
+}
+
+// ---------------------------------------------------------------------
+// Neutral suggestedOp hints — existing command ids, advisory text only,
+// NEVER dispatched by this module (see the module doc comment's "no
+// auto-apply" constraint).
+// ---------------------------------------------------------------------
+private enum string opCleanup       = "mesh.cleanup";
+private enum string opFixOrientation = "mesh.fixOrientation";
+private enum string opBridge        = "mesh.bridge";
+private enum string opRemesh        = "mesh.remesh";
+
+// Normalization scales for the Phase-4 categories' heuristic scores — same
+// "divide-and-clamp-to-[0,1]" convention `ai.support_loop_candidates` uses.
+private enum float cleanupClusterSizeScale = 8.0f;
+private enum float cleanupCountScale       = 32.0f;
+private enum float topologyCountScale      = 32.0f;
+private enum float boundaryLoopLengthScale = 32.0f;
+private enum float retopoClusterSizeScale  = 16.0f;
+
+private float clamp01(float x) pure nothrow @safe @nogc {
+    return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
+}
+
+private string pluralS(size_t n) pure nothrow @safe {
+    return n == 1 ? "" : "s";
+}
+
+// ---------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------
+
+private Finding[] analyzeCleanup(const ref Mesh mesh, const ref AnalyzeContext ctx, int cap) {
+    Finding[] findings;
+
+    auto clusters = coincidentVertexClusters(mesh);
+    foreach (i, c; clusters) {
+        Finding f;
+        f.id          = "cleanup.weld." ~ i.to!string;
+        f.category    = FindingCategory.Cleanup;
+        f.severity    = FindingSeverity.Suggest;
+        f.message     = c.length.to!string ~ " vertices are coincident and can be welded into one";
+        f.verts       = c.dup;
+        f.suggestedOp = opCleanup;
+        f.score       = clamp01(cast(float)c.length / cleanupClusterSizeScale);
+        findings ~= f;
+    }
+
+    auto degenerate = degenerateFaceIndices(mesh);
+    if (degenerate.length > 0) {
+        Finding f;
+        f.id          = "cleanup.degenerate";
+        f.category    = FindingCategory.Cleanup;
+        f.severity    = FindingSeverity.Warn;
+        f.message     = degenerate.length.to!string ~ " degenerate (zero-area) face" ~
+            pluralS(degenerate.length) ~ " found";
+        f.faces       = degenerate;
+        f.suggestedOp = opCleanup;
+        f.score       = clamp01(cast(float)degenerate.length / cleanupCountScale);
+        findings ~= f;
+    }
+
+    auto duplicate = duplicateFaceIndices(mesh);
+    if (duplicate.length > 0) {
+        Finding f;
+        f.id          = "cleanup.duplicate";
+        f.category    = FindingCategory.Cleanup;
+        f.severity    = FindingSeverity.Warn;
+        f.message     = duplicate.length.to!string ~ " duplicate face" ~ pluralS(duplicate.length) ~ " found";
+        f.faces       = duplicate;
+        f.suggestedOp = opCleanup;
+        f.score       = clamp01(cast(float)duplicate.length / cleanupCountScale);
+        findings ~= f;
+    }
+
+    auto orphan = orphanVertexIndices(mesh);
+    if (orphan.length > 0) {
+        Finding f;
+        f.id          = "cleanup.orphan";
+        f.category    = FindingCategory.Cleanup;
+        f.severity    = FindingSeverity.Info;
+        f.message     = orphan.length.to!string ~ " unreferenced vertex" ~
+            (orphan.length == 1 ? "" : "es") ~ " found";
+        f.verts       = orphan;
+        f.suggestedOp = opCleanup;
+        f.score       = clamp01(cast(float)orphan.length / cleanupCountScale);
+        findings ~= f;
+    }
+
+    findings.sort!((a, b) => a.score > b.score);
+    if (findings.length > cast(size_t)cap) findings = findings[0 .. cap];
+    return findings;
+}
+
+// ---------------------------------------------------------------------
+// Topology / manifold
+// ---------------------------------------------------------------------
+
+private Finding[] analyzeTopology(const ref Mesh mesh, const ref AnalyzeContext ctx, int cap) {
+    Finding[] findings;
+
+    auto winding = inconsistentWindingFaces(mesh);
+    if (winding.length > 0) {
+        Finding f;
+        f.id          = "topology.orientation";
+        f.category    = FindingCategory.Topology;
+        f.severity    = FindingSeverity.Warn;
+        f.message     = winding.length.to!string ~ " face" ~ pluralS(winding.length) ~
+            " have inconsistent winding — fix orientation";
+        f.faces       = winding;
+        f.suggestedOp = opFixOrientation;
+        f.score       = clamp01(cast(float)winding.length / topologyCountScale);
+        findings ~= f;
+    }
+
+    auto nonManifold = nonManifoldEdgeIndices(ctx);
+    if (nonManifold.length > 0) {
+        Finding f;
+        f.id          = "topology.nonManifold";
+        f.category    = FindingCategory.Topology;
+        f.severity    = FindingSeverity.Warn;
+        f.message     = nonManifold.length.to!string ~ " non-manifold edge" ~
+            pluralS(nonManifold.length) ~ " found (shared by 3+ faces)";
+        f.edges       = nonManifold;
+        f.suggestedOp = opCleanup;
+        f.score       = clamp01(cast(float)nonManifold.length / topologyCountScale);
+        findings ~= f;
+    }
+
+    auto boundaryLoops = nakedBoundaryLoopEdges(mesh);
+    foreach (i, loop; boundaryLoops) {
+        Finding f;
+        f.id          = "topology.boundary." ~ i.to!string;
+        f.category    = FindingCategory.Topology;
+        f.severity    = FindingSeverity.Suggest;
+        f.message     = "open boundary loop of " ~ loop.length.to!string ~
+            " edge" ~ pluralS(loop.length) ~ " — bridge or fill the hole";
+        f.edges       = loop.dup;
+        f.suggestedOp = opBridge;
+        f.score       = clamp01(cast(float)loop.length / boundaryLoopLengthScale);
+        findings ~= f;
+    }
+
+    findings.sort!((a, b) => a.score > b.score);
+    if (findings.length > cast(size_t)cap) findings = findings[0 .. cap];
+    return findings;
+}
+
+// ---------------------------------------------------------------------
+// Retopo — `vibe3d-original` heuristic hotspot clustering (no reference
+// analog; see the plan's provenance section).
+// ---------------------------------------------------------------------
+
+private Finding[] analyzeRetopo(const ref Mesh mesh, const ref AnalyzeContext ctx, int cap) {
+    Finding[] findings;
+
+    auto clusters = retopoHotspotClusters(mesh, ctx);
+    foreach (i, c; clusters) {
+        Finding f;
+        f.id          = "retopo.hotspot." ~ i.to!string;
+        f.category    = FindingCategory.Retopo;
+        f.severity    = FindingSeverity.Suggest;
+        f.message     = c.length.to!string ~ " face" ~ pluralS(c.length) ~
+            " in a hotspot (mixed tri/n-gon topology and/or poles) — consider a local remesh";
+        f.faces       = c.dup;
+        f.suggestedOp = opRemesh;
+        f.score       = clamp01(cast(float)c.length / retopoClusterSizeScale);
+        findings ~= f;
+    }
+
+    findings.sort!((a, b) => a.score > b.score);
+    if (findings.length > cast(size_t)cap) findings = findings[0 .. cap];
+    return findings;
 }
 
 private Finding[] analyzeSubdivReadiness(const ref Mesh mesh, float dihedralThresholdDeg,
@@ -255,12 +446,18 @@ unittest {
 }
 
 unittest {
-    // A flat grid has no sharp edges — analyzeMesh must return [] cleanly,
-    // not crash and not spam suggestions on a smooth surface.
+    // A flat grid has no sharp edges (dihedral 0 everywhere) — analyzeMesh
+    // must not crash and must not spam SubdivReadiness suggestions on a
+    // smooth surface. It DOES legitimately surface a Phase-4 Topology
+    // naked-boundary finding, since `makeGridPlane` is an OPEN rim — that is
+    // a correct finding, not a false positive, so this only asserts on the
+    // category this test actually cares about.
     import mesh : makeGridPlane;
     auto m = makeGridPlane(4);
     auto findings = analyzeMesh(m);
-    assert(findings.length == 0, "a flat grid should yield zero findings");
+    foreach (ref f; findings)
+        assert(f.category != FindingCategory.SubdivReadiness,
+            "a flat grid must not surface a SubdivReadiness finding");
 }
 
 unittest {

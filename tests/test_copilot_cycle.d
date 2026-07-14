@@ -143,15 +143,16 @@ unittest { // AI-off: cycle is inert (no selection change, no auto-apply)
 unittest { // cycling with an empty findings list is a safe no-op, not a crash
     // CopilotPanel.findings_ is an on-demand, app-global list (Phase-0 Q6) --
     // it is NOT cleared by /api/reset, only replaced by the next
-    // copilot.analyze call. So "empty findings" must be produced by
-    // actually analyzing a mesh with zero SubdivReadiness findings (a flat
-    // grid -- see test_ai_analysis.d), not by merely skipping the analyze
-    // call (a prior test's findings would otherwise still be sitting there).
-    resetGrid(4);
+    // copilot.analyze call. So "empty findings" must be produced by actually
+    // analyzing a mesh with zero findings. An EMPTY mesh is the one input that
+    // yields zero across ALL Phase-4 detector categories -- a flat grid now
+    // legitimately reports a naked-boundary Topology finding (Phase 4 changed
+    // the Phase-1 "flat grid = 0 findings" contract), so load empty instead.
+    postJson("/api/load-mesh", `{"vertices":[],"faces":[]}`);
     runCmd("ai.enable");
     runCmd("copilot.analyze");
     assert(getJson("/api/ai/analyze").array.length == 0,
-        "a flat grid must yield zero findings (Phase 1 contract)");
+        "an empty mesh must yield zero findings");
 
     auto before = selection();
     runCmdIgnoringError("copilot.cycleFinding dir:1");
