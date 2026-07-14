@@ -11197,18 +11197,66 @@ struct Mesh {
             if (makePolyVertexSetMatch_(f[], idx[])) return -1;
         }
 
-        // --- 5.5. manifold-safety guard: reject if any boundary edge of the
+        // --- 5.5. adjacency-driven auto-orient + manifold-safety guard.
+        // Build edge→incident-faces once; reused for both.
+        auto edgeFaces = buildEdgeFaces();
+
+        // --- 5.6. auto-orient by adjacency (task 0394; majority-vote refined
+        // for Blender parity — `bmesh_construct.cc:265-288`,
+        // `BM_face_create_ngon_verts`): a hand-picked vertex order (or
+        // `flip`) can traverse a shared edge the SAME direction as an
+        // already-existing neighbor face, corrupting the half-edge fan at
+        // that edge's endpoints (facesAroundEdge / collectEdgeRing then see
+        // nothing there — the bug this task fixes). Reference-editor parity
+        // (owner): Make Polygon has no flip prompt at all — it just orients
+        // correctly from context. So: scan EVERY boundary edge of the new
+        // face already used by an existing face and tally same-direction vs.
+        // opposite-direction votes (a manifold requires the two faces
+        // sharing an edge to traverse it in OPPOSITE directions, so a
+        // same-direction neighbor is a vote to flip). After the full scan,
+        // reverse `idx` once iff same-direction votes strictly outnumber
+        // opposite — one reversal fixes every shared edge at once, since
+        // winding is a whole-cycle property, not per-edge. A TIE (including
+        // 0-0, i.e. no shared edge at all — a free-floating polygon) keeps
+        // `idx` exactly as `orderedIdx` + `flip` produced it: strictly more
+        // robust than "first edge decides" when the new face bridges two
+        // neighbors that already disagree with each other (pre-existing
+        // mesh corruption — see the `EdgeFaceRange` consumer-side retry
+        // below for graceful degradation on already-corrupt meshes), and it
+        // degrades to the exact same single-edge behavior when only one
+        // boundary edge has a neighbor.
+        {
+            int sameDirVotes = 0, oppositeDirVotes = 0;
+            foreach (i; 0 .. idx.length) {
+                uint u = idx[i], v = idx[(i + 1) % idx.length];
+                auto p = edgeKeyOrdered(u, v) in edgeFaces;
+                if (p is null) continue;                 // brand-new edge, no neighbor yet
+                int nbrFi = (*p)[0];
+                if (nbrFi < 0 || nbrFi >= cast(int)faces.length) continue;
+                auto nf = faces[nbrFi];
+                foreach (k; 0 .. nf.length) {
+                    uint a = nf[k], b = nf[(k + 1) % nf.length];
+                    if (a == u && b == v) { ++sameDirVotes;     break; }
+                    if (a == v && b == u) { ++oppositeDirVotes; break; }
+                }
+            }
+            if (sameDirVotes > oppositeDirVotes) {
+                foreach (j; 0 .. idx.length / 2) {
+                    uint tmp = idx[j]; idx[j] = idx[$ - 1 - j]; idx[$ - 1 - j] = tmp;
+                }
+            }
+        }
+
+        // --- 5.7. manifold-safety guard: reject if any boundary edge of the
         // new face is already shared by 2 existing faces — adding a 3rd
         // would exceed the ≤2-faces-per-edge manifold invariant (e.g. a new
         // face reusing an edge already shared by two faces of a closed
-        // solid). Fuzz-found: task 0316.
-        {
-            auto edgeFaces = buildEdgeFaces();
-            foreach (i; 0 .. idx.length) {
-                ulong key = edgeKeyOrdered(idx[i], idx[(i + 1) % idx.length]);
-                auto p = key in edgeFaces;
-                if (p !is null && (*p)[1] != -1) return -1;
-            }
+        // solid). Fuzz-found: task 0316. (Orientation-independent — reject
+        // check is unaffected by the auto-orient reversal above.)
+        foreach (i; 0 .. idx.length) {
+            ulong key = edgeKeyOrdered(idx[i], idx[(i + 1) % idx.length]);
+            auto p = key in edgeFaces;
+            if (p !is null && (*p)[1] != -1) return -1;
         }
 
         // --- 6. append face + rebuild ---
@@ -12605,6 +12653,182 @@ struct Mesh {
         if (o.dissolve2Valent) r.dissolved    = dissolveDegree2Verts();
         if (o.removeOrphans)   r.finalOrphans = compactUnreferenced();
         return r;
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix Orientation — winding-consistency repair (task 0394 Part B)
+    // -----------------------------------------------------------------------
+
+    /// Heal inconsistently-wound faces (already-corrupt imports/old saves, or
+    /// hand-built geometry from before `makePolygonFromVerts`' adjacency
+    /// auto-orient) by making every manifold-adjacent face pair traverse their
+    /// shared edge in OPPOSITE directions, propagated outward from a
+    /// per-component seed. Mirrors Blender's Recalculate Normals
+    /// (`bmo_recalc_face_normals` / `bmo_normals.cc`):
+    ///
+    ///   1. Partition faces into connected components, crossing ONLY manifold
+    ///      edges (an edge with exactly 2 incident faces — `twin != ~0u`
+    ///      after `buildLoops`, which also excludes non-manifold ≥3-face
+    ///      edges via the existing Treatment-A boundary-like reset).
+    ///      Boundary and non-manifold edges are hard component borders —
+    ///      never crossed, so a locally-inconsistent OTHER component can't
+    ///      poison this one.
+    ///   2. Seed each component outward: area-weighted centroid over the
+    ///      component's faces; the CORNER (not just vertex — a specific
+    ///      face's loop) farthest from that centroid anchors the seed face.
+    ///      Using the outermost corner rather than a face centroid survives
+    ///      thin spikes / concave components. `loopNormal = cross(edge to
+    ///      next corner, edge to prev corner)`; the seed is flagged
+    ///      already-inverted when that local normal points back toward the
+    ///      centroid (`dot(corner − centroid, loopNormal) < 0`).
+    ///   3. BFS outward from the seed across manifold edges. For a shared
+    ///      edge between the current face and a neighbor, `sameDirShared`
+    ///      is true when the two faces' loops on that edge start at the SAME
+    ///      vertex (`loops[twin(li)].vert == loops[li].vert`) — the exact
+    ///      corruption signature from the `makePolygonFromVerts` bug and the
+    ///      `EdgeFaceRange` consumer-hardening fix above. The neighbor's flip
+    ///      bit is `sameDirShared XOR currentFlip`: reversing exactly one of
+    ///      two same-direction-sharing faces restores the opposite-direction
+    ///      manifold invariant; reversing neither or both leaves it as-is.
+    ///   4. Apply via `flipFacesByMask`, which already reverses each flagged
+    ///      face's vertex cycle AND remaps any PolyVertex (UV) per-corner
+    ///      data to follow the new corner order, then rebuilds loops. Face
+    ///      SLOTS are never added/removed/reordered — only `faces[fi]`'s
+    ///      internal vertex order changes — so `faceMarks` (subpatch/select),
+    ///      `faceMaterial`, and `facePart`, all indexed by face slot, stay
+    ///      correctly aligned across the flip with no remapping needed.
+    ///
+    /// If any face is currently selected, only the components CONTAINING a
+    /// selected face are processed — components with no selected face are
+    /// left completely untouched, mirroring Blender's selection-restricted
+    /// Recalculate Normals. With no selection anywhere, every component in
+    /// the mesh is processed.
+    ///
+    /// Returns the number of faces whose winding was reversed (0 = no-op).
+    /// A well-formed mesh (every manifold pair already opposite-direction,
+    /// every seed already outward-facing) returns 0; `flipFacesByMask`
+    /// short-circuits before its own `buildLoops()`/`commitChange()` in that
+    /// case, so the mesh is left byte-identical, not just semantically equal.
+    size_t fixFaceOrientation() {
+        buildLoops();   // ensure loops/twin/faceLoop reflect the current faces[]
+        const size_t nf = faces.length;
+        if (nf == 0) return 0;
+
+        const bool restrictToSelection = hasAnySelectedFaces();
+
+        bool[] partitioned   = new bool[](nf); // assigned to a component yet?
+        bool[] flipComputed  = new bool[](nf); // flip parity decided?
+        bool[] flipMask      = new bool[](nf); // final flip decision
+
+        uint[] compQueue, bfsQueue;
+
+        foreach (startFi; 0 .. nf) {
+            if (partitioned[cast(uint)startFi]) continue;
+
+            // --- Pass 1: discover the connected component (manifold BFS). ---
+            uint[] component;
+            compQueue.length = 0;
+            compQueue ~= cast(uint)startFi;
+            partitioned[cast(uint)startFi] = true;
+            size_t compQi = 0;
+            while (compQi < compQueue.length) {
+                uint fi = compQueue[compQi++];
+                component ~= fi;
+                const uint base = faceLoop[fi];
+                const uint n    = cast(uint)faces[fi].length;
+                foreach (k; 0 .. n) {
+                    uint tw = loops[base + k].twin;
+                    if (tw == ~0u) continue;          // boundary/non-manifold: hard border
+                    uint nfi = loops[tw].face;
+                    if (partitioned[nfi]) continue;
+                    partitioned[nfi] = true;
+                    compQueue ~= nfi;
+                }
+            }
+
+            if (restrictToSelection) {
+                bool anySel = false;
+                foreach (fi; component) if (isFaceSelected(fi)) { anySel = true; break; }
+                if (!anySel) continue;   // untouched: flipComputed/flipMask stay false
+            }
+
+            // --- Pass 2: seed — area-weighted centroid, farthest corner. ---
+            Vec3   wCentroid = Vec3(0, 0, 0);
+            double wSum      = 0;
+            foreach (fi; component) {
+                float area = faceAreaApprox_(fi);
+                wCentroid  = wCentroid + faceCentroid(fi) * area;
+                wSum      += area;
+            }
+            Vec3 centroid = wSum > 1e-12
+                ? wCentroid * cast(float)(1.0 / wSum)
+                : faceCentroid(component[0]);
+
+            uint  seedFi = component[0], seedK = 0;
+            float bestSq = -1;
+            foreach (fi; component) {
+                const uint[] f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    Vec3  d  = vertices[f[k]] - centroid;
+                    float sq = d.x*d.x + d.y*d.y + d.z*d.z;
+                    if (sq > bestSq) { bestSq = sq; seedFi = fi; seedK = cast(uint)k; }
+                }
+            }
+
+            bool seedFlip;
+            {
+                const uint[] sf = faces[seedFi];
+                const uint   sn = cast(uint)sf.length;
+                Vec3 pCur  = vertices[sf[seedK]];
+                Vec3 pNext = vertices[sf[(seedK + 1) % sn]];
+                Vec3 pPrev = vertices[sf[(seedK + sn - 1) % sn]];
+                Vec3 loopNormal = cross(pNext - pCur, pPrev - pCur);
+                seedFlip = dot(pCur - centroid, loopNormal) < 0;
+            }
+
+            // --- Pass 3: BFS-propagate flip parity across manifold edges. ---
+            flipComputed[seedFi] = true;
+            flipMask[seedFi]     = seedFlip;
+            bfsQueue.length = 0;
+            bfsQueue ~= seedFi;
+            size_t bfsQi = 0;
+            while (bfsQi < bfsQueue.length) {
+                uint fi      = bfsQueue[bfsQi++];
+                bool curFlip = flipMask[fi];
+                const uint base = faceLoop[fi];
+                const uint n    = cast(uint)faces[fi].length;
+                foreach (k; 0 .. n) {
+                    uint li = base + k;
+                    uint tw = loops[li].twin;
+                    if (tw == ~0u) continue;
+                    uint nfi = loops[tw].face;
+                    if (flipComputed[nfi]) continue;
+                    bool sameDirShared = (loops[tw].vert == loops[li].vert);
+                    flipComputed[nfi] = true;
+                    flipMask[nfi]     = sameDirShared ^ curFlip;
+                    bfsQueue ~= nfi;
+                }
+            }
+        }
+
+        return flipFacesByMask(flipMask);
+    }
+
+    // Newell-method face area (magnitude of the Newell normal sum halved).
+    // `faceNormal()` normalizes this away, so it can't be reused directly;
+    // kept private since `fixFaceOrientation` is its only consumer.
+    private float faceAreaApprox_(uint fi) const {
+        const uint[] face = faces[fi];
+        if (face.length < 3) return 0;
+        float nx = 0, ny = 0, nz = 0;
+        foreach (i; 0 .. face.length) {
+            Vec3 a = vertices[face[i]];
+            Vec3 b = vertices[face[(i + 1) % face.length]];
+            nx += (a.y - b.y) * (a.z + b.z);
+            ny += (a.z - b.z) * (a.x + b.x);
+            nz += (a.x - b.x) * (a.y + b.y);
+        }
+        return 0.5f * sqrt(nx*nx + ny*ny + nz*nz);
     }
 
     // -----------------------------------------------------------------------
@@ -14761,17 +14985,37 @@ struct EdgeFaceRange {
         _count = 0; _i = 0;
         if (ei >= edges.length) return;
         uint va = edges[ei][0], vb = edges[ei][1];
-        if (va >= vertLoop.length || vertLoop[va] == ~0u) return;
-        // Walk darts from va; find the one whose next vertex is vb.
-        foreach (li; VertexDartRange(loops, vertLoop[va])) {
-            if (loops[loops[li].next].vert == vb) {
+        if (_tryFrom(loops, vertLoop, va, vb)) return;
+        // task 0394 (consumer hardening): an inconsistently-wound patch
+        // elsewhere in the mesh (e.g. a same-direction shared edge — see the
+        // `makePolygonFromVerts` auto-orient fix, which now prevents this
+        // going forward, but does nothing for already-corrupt imports/old
+        // saves) can corrupt the dart fan at ONE endpoint of an otherwise
+        // perfectly fine edge while leaving the OTHER endpoint's fan clean.
+        // Retrying from vb before giving up recovers the incident faces in
+        // that case instead of silently reporting none (which made Loop
+        // Slice's `collectEdgeRing` a silent no-op). On a well-formed mesh
+        // the first attempt always succeeds, so this retry never fires
+        // there — inert by construction.
+        _tryFrom(loops, vertLoop, vb, va);
+    }
+
+    /// Walk darts from `from`, looking for the one whose next vertex is
+    /// `to`; on a hit, fills `_faces`/`_count` and returns true.
+    private bool _tryFrom(const(Loop)[] loops, const(uint)[] vertLoop,
+                           uint from, uint to)
+    {
+        if (from >= vertLoop.length || vertLoop[from] == ~0u) return false;
+        foreach (li; VertexDartRange(loops, vertLoop[from])) {
+            if (loops[loops[li].next].vert == to) {
                 _faces[_count++] = loops[li].face;
                 uint twin = loops[li].twin;
                 if (twin != ~0u)
                     _faces[_count++] = loops[twin].face;
-                break;
+                return true;
             }
         }
+        return false;
     }
 
     @property bool empty() const { return _i >= _count; }
@@ -18745,6 +18989,138 @@ unittest { // non-convex (concave) click order is ACCEPTED as-is (trust click or
 }
 
 // ---------------------------------------------------------------------------
+// makePolygonFromVerts — adjacency auto-orient (task 0394)
+// ---------------------------------------------------------------------------
+
+unittest { // adjacent polygon auto-orients to match a neighbor's winding, even
+           // when the hand-picked vertex order would traverse the shared edge
+           // in the SAME direction as the existing face (the exact corruption
+           // that broke facesAroundEdge/collectEdgeRing/Loop Slice in task 0394).
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0), // 0..3: quad A
+        Vec3(2, 1, 0), Vec3(2, 0, 0),                               // 4,5: quad B's extra corners
+    ];
+    m.buildLoops();
+    int fiA = m.makePolygonFromVerts([0, 1, 2, 3], false);
+    assert(fiA == 0, "quad A must be created");
+    // Quad A traverses the shared edge as 1→2. The correctly-wound neighbor
+    // quad (the simple, non-self-intersecting square spanning x=1..2) is the
+    // cycle [1,5,4,2] (or any rotation) — traversing the shared edge as 2→1,
+    // opposite A. Entering it as [1,2,4,5] instead (a rotation of the
+    // REVERSED cycle) is still the same simple quad shape, but now traverses
+    // the shared edge 1→2 — same direction as A, which a manifold forbids.
+    // The kernel must flip it back to a rotation of the correct cycle.
+    int fiB = m.makePolygonFromVerts([1, 2, 4, 5], false);
+    assert(fiB == 1, "adjacent quad B must be created");
+    assert(m.faces[fiB][] == [5u, 4u, 2u, 1u],
+        "B must be auto-flipped to [5,4,2,1] so the shared edge (1,2) is "
+        ~ "traversed opposite A's direction, not left as the literal [1,2,4,5] click order");
+
+    // No same-direction shared edge should exist between A and B afterward.
+    auto fA = m.faces[fiA], fB = m.faces[fiB];
+    bool sameDirFound = false;
+    foreach (ka; 0 .. fA.length) {
+        uint au = fA[ka], av = fA[(ka + 1) % fA.length];
+        foreach (kb; 0 .. fB.length) {
+            uint bu = fB[kb], bv = fB[(kb + 1) % fB.length];
+            if (au == bu && av == bv) sameDirFound = true;
+        }
+    }
+    assert(!sameDirFound,
+        "adjacent faces must not traverse their shared edge in the same direction");
+}
+
+unittest { // free-floating polygon (no shared edge with ANY existing face) still
+           // honors orderedIdx + flip exactly as before -- auto-orient only
+           // engages when there's an adjacent face to key off of. A DISTANT,
+           // unrelated face already exists in the mesh to prove the adjacency
+           // scan correctly finds nothing relevant, not merely "mesh is empty".
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0), // 0..3: unrelated distant tri lives elsewhere
+        Vec3(10, 0, 0), Vec3(11, 0, 0), Vec3(11, 1, 0), Vec3(10, 1, 0), // 4..7: the free-floating quad
+    ];
+    m.buildLoops();
+    int fiFar = m.makePolygonFromVerts([0, 1, 2], false);
+    assert(fiFar == 0, "unrelated distant triangle must be created");
+
+    // flip=false: winding must follow click order verbatim.
+    int fi1 = m.makePolygonFromVerts([4, 5, 6, 7], false);
+    assert(fi1 == 1);
+    assert(m.faces[fi1][] == [4u, 5u, 6u, 7u], "free-floating: no-flip must follow click order exactly");
+
+    // flip=true on a SECOND free-floating quad: must reverse exactly as before.
+    m.vertices ~= [Vec3(20, 0, 0), Vec3(21, 0, 0), Vec3(21, 1, 0), Vec3(20, 1, 0)];
+    m.buildLoops();
+    int fi2 = m.makePolygonFromVerts([8, 9, 10, 11], true);
+    assert(fi2 == 2);
+    assert(m.faces[fi2][] == [11u, 10u, 9u, 8u], "free-floating: flip=true must reverse click order exactly");
+}
+
+unittest { // ONE-vs-ONE tie (pre-existing mesh corruption, out of scope for
+           // this fix): equal same-direction / opposite-direction vote counts
+           // keep `idx` exactly as entered, honoring `orderedIdx` + `flip`
+           // rather than arbitrarily picking a side. Under the old "first
+           // edge decides" rule this happened to match too (P is checked
+           // first and wants no flip) -- this test now documents the TIE
+           // rule specifically, since majority-vote (task 0394) no longer
+           // cares about scan order, only the final tally.
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0), // 0..3: the new quad F
+        Vec3(2, -1, 0),   // 4: P's extra corner
+        Vec3(2, 2, 0),    // 5: Q's extra corner
+    ];
+    m.buildLoops();
+    // P traverses the shared edge (0,1) as 1→0 -- OPPOSITE of F's future [0,1,2,3]
+    // (0→1) -- an "opposite" vote (no flip wanted).
+    m.addFace([1, 0, 4]);
+    // Q traverses the shared edge (2,3) as 2→3 -- the SAME direction F's
+    // [0,1,2,3] would use (2→3) -- a "same-direction" vote (flip wanted).
+    m.addFace([2, 3, 5]);
+
+    int fiF = m.makePolygonFromVerts([0, 1, 2, 3], false);
+    assert(fiF >= 0, "F must be created (neither shared edge is already 2-faced)");
+    // 1 same-direction vote (Q) vs 1 opposite-direction vote (P) -- a tie.
+    // Majority vote requires STRICTLY more same-direction votes to flip, so
+    // a tie keeps the literal click order.
+    assert(m.faces[fiF][] == [0u, 1u, 2u, 3u],
+        "a 1-vs-1 vote tie must keep F's literal click order unflipped, not "
+        ~ "flip just because SOME neighbor disagrees");
+}
+
+unittest { // genuine 2-vs-1 MAJORITY (Blender parity, task 0394): a clear
+           // majority of same-direction votes must flip the new face even
+           // though the FIRST boundary edge checked (in idx order) is an
+           // opposite-direction vote that alone would want no flip -- this
+           // is exactly where "first edge decides" and "majority vote" (this
+           // fix) diverge.
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0), // 0..3: the new quad F
+        Vec3(2, -1, 0),    // 4: P's extra corner (opposite-direction vote)
+        Vec3(2, 0.5, 0),   // 5: Q1's extra corner (same-direction vote)
+        Vec3(-1, 0.5, 0),  // 6: Q2's extra corner (same-direction vote)
+    ];
+    m.buildLoops();
+    // P: shared edge (0,1) as 1→0 -- OPPOSITE of F's future (0→1) -- opposite vote.
+    m.addFace([1, 0, 4]);
+    // Q1: shared edge (1,2) as 1→2 -- SAME as F's future (1→2) -- same-direction vote.
+    m.addFace([1, 2, 5]);
+    // Q2: shared edge (2,3) as 2→3 -- SAME as F's future (2→3) -- same-direction vote.
+    m.addFace([2, 3, 6]);
+
+    int fiF = m.makePolygonFromVerts([0, 1, 2, 3], false);
+    assert(fiF >= 0, "F must be created (no shared edge is already 2-faced)");
+    // 2 same-direction votes (Q1, Q2) beat 1 opposite-direction vote (P) --
+    // majority says flip, even though P (checked first, at i=0) wanted none.
+    assert(m.faces[fiF][] == [3u, 2u, 1u, 0u],
+        "2-vs-1 same-direction majority must flip F, overriding the "
+        ~ "first-checked edge's opposite-direction vote");
+}
+
+// ---------------------------------------------------------------------------
 // unifyFaces unittests
 // ---------------------------------------------------------------------------
 
@@ -18969,6 +19345,146 @@ unittest { // all-stages-off + orphan: true no-op, topology version unchanged
     assert(m.vertices.length == 4, "orphan must not be removed with all stages off");
     assert(m.topologyVersion == verBefore,
         "topology version must not change on a true no-op (no-op contract)");
+}
+
+// ---------------------------------------------------------------------------
+// fixFaceOrientation unittests (task 0394 Part B — Fix Orientation repair op)
+// ---------------------------------------------------------------------------
+
+unittest { // well-formed mesh: no-op, byte-identical
+    import std.algorithm : map;
+    import std.array : array;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto before = m.faces.dup.map!(f => f.dup).array;
+    const verBefore = m.topologyVersion;
+    size_t n = m.fixFaceOrientation();
+    assert(n == 0, "consistently-wound cube must report 0 flips");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi][] == before[fi][], "well-formed mesh: face " ~ uintToStr(fi) ~ " must be unchanged");
+    assert(m.topologyVersion == verBefore,
+        "well-formed mesh: topologyVersion must not change (flipFacesByMask short-circuits on an all-false mask)");
+}
+
+unittest { // single corrupted face on a closed cube: exactly 1 flip, restores
+           // the original (outward-consistent) winding exactly
+    import std.algorithm : map;
+    import std.array : array;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto original = m.faces.dup.map!(f => f.dup).array;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[2] = true;
+    size_t nFlipped = m.flipFacesByMask(mask);
+    assert(nFlipped == 1, "sanity: corrupting setup must flip exactly face 2");
+    assert(m.faces[2][] != original[2][], "sanity: face 2 must now differ from its original winding");
+
+    size_t n = m.fixFaceOrientation();
+    assert(n == 1, "exactly 1 face (the corrupted one) must be flipped back");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi][] == original[fi][],
+            "fixFaceOrientation must restore the cube's original outward-consistent winding exactly, face "
+            ~ uintToStr(fi) ~ " differs");
+
+    // No same-direction shared edge remains anywhere in the mesh.
+    foreach (fi; 0 .. m.faces.length) {
+        const uint[] f = m.faces[fi];
+        foreach (k; 0 .. f.length) {
+            uint u = f[k], v = f[(k + 1) % f.length];
+            foreach (fj; 0 .. m.faces.length) {
+                if (fj == fi) continue;
+                const uint[] g = m.faces[fj];
+                foreach (kk; 0 .. g.length) {
+                    if (g[kk] == u && g[(kk + 1) % g.length] == v)
+                        assert(false, "same-direction shared edge (" ~ uintToStr(u) ~ "," ~ uintToStr(v)
+                            ~ ") remains between faces " ~ uintToStr(fi) ~ " and " ~ uintToStr(fj));
+                }
+            }
+        }
+    }
+}
+
+unittest { // multiple same-direction shared edges (several faces wound
+           // backwards, mimicking a corrupted import) are ALL healed in one pass
+    import std.algorithm : map;
+    import std.array : array;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto original = m.faces.dup.map!(f => f.dup).array;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[0] = true; mask[3] = true; mask[5] = true; // flip 3 of 6 faces
+    m.flipFacesByMask(mask);
+
+    size_t n = m.fixFaceOrientation();
+    assert(n > 0, "expected at least 1 corrective flip");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi][] == original[fi][],
+            "fixFaceOrientation must restore the original winding for face " ~ uintToStr(fi)
+            ~ " even when multiple faces started corrupted");
+}
+
+unittest { // subpatch + material survive the flip -- reversing a face's
+           // vertex cycle is index-order only; the face SLOT is never
+           // added/removed/reordered, so faceMarks/faceMaterial (both
+           // indexed by face slot) must stay aligned across the flip.
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    m.faceMarks[2] |= Mesh.Marks.Subpatch;
+    m.faceMaterial.length = m.faces.length;
+    m.faceMaterial[2] = 7;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[2] = true;
+    m.flipFacesByMask(mask);
+
+    size_t n = m.fixFaceOrientation();
+    assert(n == 1, "expected exactly 1 corrective flip");
+    assert(m.isFaceSubpatch(2), "face 2's subpatch flag must survive the flip");
+    assert(m.faceMaterial[2] == 7, "face 2's material index must survive the flip");
+}
+
+unittest { // selection-restricted: with an active face selection, only the
+           // connected COMPONENT containing a selected face is healed;
+           // components with no selected face are left completely untouched
+           // (mirrors Blender's selection-restricted Recalculate Normals)
+    import std.algorithm : map;
+    import std.array : array;
+    Mesh a = makeCube();
+    Mesh b = makeCube();
+    foreach (ref v; b.vertices) v = v + Vec3(10, 0, 0); // disjoint component, far away
+
+    Mesh m;
+    m.vertices = a.vertices.dup ~ b.vertices.dup;
+    foreach (f; a.faces) m.addFace(f.dup);
+    const uint offset = cast(uint)a.vertices.length;
+    foreach (f; b.faces) {
+        uint[] nf;
+        foreach (vi; f) nf ~= vi + offset;
+        m.addFace(nf);
+    }
+    m.buildLoops();
+    m.resetSelection();
+    auto originalA = m.faces[0 .. a.faces.length].dup.map!(f => f.dup).array;
+    auto originalB = m.faces[a.faces.length .. $].dup.map!(f => f.dup).array;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[1]                     = true; // corrupt a face in component A
+    mask[a.faces.length + 1]    = true; // corrupt a face in component B
+    m.flipFacesByMask(mask);
+
+    m.faceMarks[0] |= Mesh.Marks.Select; // select a face ONLY in component A
+
+    size_t n = m.fixFaceOrientation();
+    assert(n == 1, "only component A's single corrupted face should be flipped back");
+    foreach (fi; 0 .. a.faces.length)
+        assert(m.faces[fi][] == originalA[fi][], "component A (selected) must be fully healed, face " ~ uintToStr(fi));
+    bool bStillCorrupt = false;
+    foreach (fi; 0 .. b.faces.length)
+        if (m.faces[a.faces.length + fi][] != originalB[fi][]) bStillCorrupt = true;
+    assert(bStillCorrupt, "component B (not selected) must be left untouched -- still corrupted");
 }
 
 // ---------------------------------------------------------------------------
@@ -20610,6 +21126,98 @@ unittest {
     assert(!okAll, "all-degenerate seed set must return false");
     assert(m2.vertices.length == vBefore && m2.edges.length == eBefore
            && m2.faces.length == fBefore, "all-degenerate call must not mutate the mesh");
+}
+
+// ---------------------------------------------------------------------------
+// EdgeFaceRange — other-endpoint retry on a corrupted half-edge fan (task 0394)
+// ---------------------------------------------------------------------------
+//
+// Reproduces the observed symptom (a real user model, see task 0394): a
+// same-direction shared edge SOMEWHERE in a vertex's fan corrupts the
+// half-edge rotation anchored at that vertex (vertLoop[v] can end up
+// pointing at a dart that doesn't even belong to v — buildLoops' anchor
+// walk follows twin(cur) directly instead of twin(prev(cur)), so a
+// mispaired twin at the corrupted edge derails it). A perfectly ordinary,
+// uncorrupted edge elsewhere in the SAME fan can then have its default
+// (edges[ei][0]-first) facesAroundEdge lookup walk straight into the dead
+// end and find nothing — exactly what turned Loop Slice into a silent
+// no-op. The retry from the OTHER endpoint (whose own fan is untouched)
+// recovers the correct, verified-against-ground-truth face set.
+
+unittest { // corrupted fan elsewhere in the SAME hub vertex recovers a clean
+           // bystander edge's incident faces via the other-endpoint retry
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,2,0), Vec3(-1,1,0), Vec3(-1,-1,0),
+        Vec3(1,-1,0), Vec3(9,9,0),
+    ];
+    m.faces = [
+        [0u,1u,2u],   // face0 -- query edge (0,1) lives here
+        [0u,2u,3u],   // face1
+        [0u,3u,4u],   // face2
+        [0u,4u,5u],   // face3
+        [0u,5u,6u],   // face4
+        [0u,6u,1u],   // face5 -- closes the fan back to vertex1
+        [3u,0u,7u],   // faceBad -- reuses spoke (0,3) in the SAME direction (3→0)
+                      // as face1's (3,0): a genuine same-direction shared edge,
+                      // corrupting the vertex-0 half-edge fan elsewhere.
+    ];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    uint ei01 = m.edgeIndex(0, 1);
+    assert(ei01 != ~0u, "edge (0,1) must exist");
+    assert(m.edges[ei01][] == [0u, 1u], "sanity: default direction is va=0, vb=1");
+
+    // Non-vacuous: the OLD single-direction lookup (default endpoint only,
+    // no retry) genuinely fails on this corrupted fan -- the bug this fixes.
+    {
+        EdgeFaceRange pOld;
+        bool okOld = pOld._tryFrom(m.loops, m.vertLoop, m.edges[ei01][0], m.edges[ei01][1]);
+        assert(!okOld, "sanity: single-direction lookup from the default endpoint "
+            ~ "must fail on this corrupted fan -- otherwise this test proves nothing");
+    }
+
+    // The retry-equipped public API must recover both true incident faces.
+    uint[] found;
+    foreach (fi; m.facesAroundEdge(ei01)) found ~= fi;
+    import std.algorithm : sort, canFind;
+    sort(found);
+    assert(found == [0u, 5u],
+        "facesAroundEdge must recover both faces incident on edge (0,1) via the "
+        ~ "other-endpoint retry, not silently report zero");
+
+    // collectEdgeRing (the direct cause of the Loop Slice no-op) is a thin
+    // wrapper over facesAroundEdge (mesh.d ~9949) -- it inherits this fix
+    // automatically. Not separately re-derived here: constructing a corrupted
+    // fan where the retry ALSO recovers a clean quad-quad ring (rather than
+    // just triangle incidence) needs a larger fixture without adding coverage
+    // over what's proven above; see the follow-up note in the task file.
+}
+
+unittest { // well-formed mesh: retry is inert (never fires; the default
+           // single-direction lookup always succeeds on its own, so
+           // facesAroundEdge's result is byte-identical to before this fix)
+    Mesh m = makeCube();
+    m.buildLoops();
+    foreach (ei; 0 .. cast(uint)m.edges.length) {
+        EdgeFaceRange direct;
+        bool okDirect = direct._tryFrom(m.loops, m.vertLoop, m.edges[ei][0], m.edges[ei][1]);
+        assert(okDirect, "well-formed mesh: default single-direction lookup must "
+            ~ "already succeed on every edge -- the retry must never be needed here");
+
+        uint[] viaPublicApi;
+        foreach (fi; m.facesAroundEdge(ei)) viaPublicApi ~= fi;
+        import std.algorithm : sort;
+        auto direct2 = direct._faces[0 .. direct._count].dup;
+        sort(direct2);
+        auto viaSorted = viaPublicApi.dup;
+        sort(viaSorted);
+        assert(direct2 == viaSorted,
+            "well-formed mesh: facesAroundEdge result must match the plain "
+            ~ "single-direction lookup exactly -- the retry must not alter it");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -23410,3 +24018,12 @@ unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
             ~ "reproduce R(srcNormal), not its negation)");
     }
 }
+
+
+
+
+
+
+
+
+

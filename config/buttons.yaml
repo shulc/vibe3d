@@ -210,6 +210,7 @@ panels:
           - { label: Faceted,    action: { kind: command, id: mesh.subdivide_faceted } }
           - { label: Subpatch,   action: { kind: command, id: mesh.subpatch_toggle } }
           - { label: "Clean Up", action: { kind: command, id: mesh.cleanup } }
+          - { label: "Fix Orientation", action: { kind: command, id: mesh.fixOrientation } }
           - { label: "Remesh (Quad)…", action: { kind: command, id: "mesh.remesh.open" } }
       - title: Clipboard
         buttons:

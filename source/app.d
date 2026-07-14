@@ -169,6 +169,7 @@ import commands.mesh.vertex_split  : MeshVertexSplit;
 import commands.mesh.reduce        : MeshReduce;
 import commands.mesh.unify         : MeshUnify;
 import commands.mesh.cleanup       : MeshCleanup;
+import commands.mesh.fix_orientation : MeshFixOrientation;
 import commands.mesh.make_polygon  : MeshMakePolygon;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
@@ -3843,6 +3844,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.cleanup"] = () => cast(Command)
         new MeshCleanup(&mesh(), cameraView, editMode, &gpu,
                         &vertexCache(), &edgeCache(), &faceCache());
+    reg.commandFactories["mesh.fixOrientation"] = () => cast(Command)
+        new MeshFixOrientation(&mesh(), cameraView, editMode, &gpu,
+                               &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["vert.join"] = () => cast(Command)
         new MeshVertJoin(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache(), &edgeCache(), &faceCache());
