@@ -98,6 +98,16 @@ class Subdivide : Command, Operator {
                 return false;
             }
             *mesh = sub;
+            // `catmullClarkOsd` propagates the Subpatch bit from each cage
+            // face to its child faces (task 0389 audit) — that propagation
+            // is meant for SubpatchPreview's transient refine-mesh, not for
+            // this command's baked result. An explicit Subdivide bakes real
+            // geometry; leaving it marked Subpatch would make the ALREADY
+            // -smoothed result subdivide again on the next preview pass.
+            // resetSelection() no longer clears subpatch on its own (task
+            // 0389), so clear it explicitly here to keep this command's
+            // long-standing "bake produces plain polygons" behavior.
+            mesh.clearSubpatch();
             mesh.resetSelection();
             foreach (k, parentFi; faceOrigin) {
                 if (parentFi < prevSelectedFaces.length

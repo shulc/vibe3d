@@ -589,13 +589,23 @@ struct Mesh {
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
+    //
+    // Deliberately does NOT clear subpatch (task 0389): this is a
+    // SELECTION reset, not a subpatch reset — a topology-editing command
+    // that rebuilds `faces` and then calls resetSelection() to re-sync the
+    // selection arrays should not, as a side effect, revert every
+    // untouched face back to plain polygons. Callers that DO want the
+    // result to start non-subpatch (e.g. subdivide's Catmull-Clark bake,
+    // which deliberately extinguishes the flag on its baked geometry) call
+    // `clearSubpatch()` explicitly at their own call site.
     void resetSelection() {
         resizeVertexSelection();
         resizeEdgeSelection();
         resizeFaceSelection();
         // resizeFaceSelection only touches the bit array; resetSelection also
         // brings the per-face pick-order / subpatch / material arrays in sync
-        // (e.g. after an import grew `faces`).
+        // (e.g. after an import grew `faces`). resizeSubpatch is grow/shrink
+        // ONLY (zero-fill on grow) — it does not clear pre-existing bits.
         faceSelectionOrder.length   = faces.length;
         resizeSubpatch();
         faceMaterial.length         = faces.length;
@@ -603,7 +613,6 @@ struct Mesh {
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
-        clearSubpatch();
         // NOTE: do not wipe `faceMaterial`. resetSelection is also called
         // after LWO import to bring selection arrays in sync with the
         // imported geometry; the import populates `faceMaterial` before
@@ -3745,8 +3754,14 @@ struct Mesh {
             faceSelectionOrder ~= 0;
         }
         resizeSubpatch();
-        foreach (fi; firstBridge .. faces.length)
-            setFaceSubpatch(fi, false);
+        // Task 0389: each bridge/cap wall inherits Subpatch from the same
+        // neighbour face `bridgeMaterialSrc` already resolves its material
+        // from, instead of a blanket false — a subdiv model stays subdiv
+        // after an edge extrude.
+        foreach (bi; 0 .. faces.length - firstBridge) {
+            uint fi = cast(uint)(firstBridge + bi);
+            setFaceSubpatch(fi, isFaceSubpatch(bridgeMaterialSrc[bi]));
+        }
 
         // Tracker: the bridge/cap faces were appended via `faces ~=` (NOT addFace),
         // so they are NOT auto-logged. Record them as one AddFaces([F0..F1)) entry
@@ -4874,8 +4889,22 @@ struct Mesh {
             }
         }
         resizeSubpatch();
-        foreach (fi; firstBridge .. faces.length)
-            setFaceSubpatch(fi, false);
+        // Task 0389: each stacked bridge inherits Subpatch from the SAME
+        // orienting face the material/part loop above already resolves from
+        // — same nested iteration order as the face-emission loop, so a
+        // running cursor maps 1:1 onto the just-appended bridge tail
+        // [firstBridge .. $).
+        {
+            size_t cursor = firstBridge;
+            foreach (bi, ref e; exEdges) {
+                int orientFace = orientFaceOf(e);
+                bool sub = isFaceSubpatch(orientFace);
+                foreach (k; 1 .. N + 1) {
+                    setFaceSubpatch(cursor, sub);
+                    ++cursor;
+                }
+            }
+        }
 
         // Tracker: the bridge faces were appended via `faces ~=` (NOT addFace), so
         // they are NOT auto-logged. Record them as one AddFaces([F0..F1)) entry.
@@ -6325,7 +6354,9 @@ struct Mesh {
             newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
             newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
             newOrd  ~= 0;
-            newSub  ~= false;
+            // Task 0389: side wall inherits Subpatch from the extruded source
+            // face it skirts, same as its material/part above.
+            newSub  ~= isFaceSubpatch(be.selFi);
         }
 
         // Assign reconstructed arrays.
@@ -6843,7 +6874,11 @@ struct Mesh {
                 newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
                 newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
                 newOrd   ~= 0;
-                newSub   ~= false;   // retained skin is not part of any subpatch cage
+                // Task 0389: the retained skin is a reversed duplicate of the
+                // source face at its ORIGINAL position — inherit its Subpatch
+                // bit rather than always dropping it, so a Thicken on a
+                // subdiv-marked face keeps both shells subdiv.
+                newSub   ~= isFaceSubpatch(fi);
             }
         }
 
@@ -6867,7 +6902,9 @@ struct Mesh {
             newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
             newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
             newOrd  ~= 0;
-            newSub  ~= false;
+            // Task 0389: skin wall inherits Subpatch from the source face it
+            // skirts, same as its material/part above.
+            newSub  ~= isFaceSubpatch(be.selFi);
         }
 
         faces              = newFaces;
@@ -7919,15 +7956,23 @@ struct Mesh {
             foreach (i; 0 .. N)
                 newVerts[i] = addVertex(insetCornerCentroid(origPos[i], centroid, inset));
             // Replace the original face with the inner (inset) face.
-            // The face slot index is unchanged, so faceMarks[fi] (select mark)
-            // carries over to the inner face automatically.
+            // The face slot index is unchanged, so faceMarks[fi] (select mark
+            // AND subpatch mark) carries over to the inner face automatically.
             faces[fi] = newVerts.dup;
+            // Task 0389: read the source face's Subpatch bit BEFORE the ring
+            // quads below grow `faceMarks` (addFace does not grow it itself —
+            // `fi`'s own bit is unaffected by the in-place replace above).
+            immutable bool srcSub  = isFaceSubpatch(fi);
+            immutable size_t ringStart = faces.length;
             // Emit N ring quads bridging original boundary to inner boundary.
             foreach (i; 0 .. N) {
                 const int next = (i + 1) % N;
                 addFace([origFaceVerts[i], origFaceVerts[next],
                          newVerts[next],   newVerts[i]]);
             }
+            // Ring quads inherit Subpatch from the inset source face.
+            resizeSubpatch();
+            foreach (rfi; ringStart .. faces.length) setFaceSubpatch(rfi, srcSub);
             ++processed;
         }
         if (processed == 0) return 0;
@@ -8021,11 +8066,19 @@ struct Mesh {
             foreach (i; 0 .. N)
                 newVerts[i] = addVertex(insetCorner(origPos, i, n, effInset) + n * shift);
             faces[fi] = newVerts.dup;
+            // Task 0389: read the source face's Subpatch bit BEFORE the ring
+            // quads below grow `faceMarks` (addFace does not grow it itself —
+            // `fi`'s own bit is unaffected by the in-place replace above).
+            immutable bool srcSub  = isFaceSubpatch(fi);
+            immutable size_t ringStart = faces.length;
             foreach (i; 0 .. N) {
                 const int next = (i + 1) % N;
                 addFace([origFaceVerts[i], origFaceVerts[next],
                          newVerts[next],   newVerts[i]]);
             }
+            // Ring quads inherit Subpatch from the beveled source face.
+            resizeSubpatch();
+            foreach (rfi; ringStart .. faces.length) setFaceSubpatch(rfi, srcSub);
             ++processed;
         }
         if (processed == 0) return 0;
@@ -8399,7 +8452,9 @@ struct Mesh {
             newSub  ~= isFaceSubpatch(fi);
         }
 
-        // Emit one chamfer quad per ok edge.
+        // Emit one chamfer quad per ok edge. Task 0389: the chamfer has TWO
+        // sources — the two faces adjacent to the beveled edge — so it
+        // inherits Subpatch via OR (subdiv if EITHER neighbour was).
         size_t chamferStart = newFaces.length;
         foreach (qi; 0 .. qEdges.length) {
             if (!edgeOk[qi]) continue;
@@ -8408,7 +8463,7 @@ struct Mesh {
             newMat   ~= 0u;
             newPart  ~= 0u;
             newOrd   ~= 0;
-            newSub   ~= false;
+            newSub   ~= isFaceSubpatch(q.fL) || isFaceSubpatch(q.fR);
         }
 
         // Assign reconstructed arrays.
@@ -10467,6 +10522,14 @@ struct Mesh {
 
         uint[][] newFaces;
         newFaces.reserve(faces.length + rings.length * positions.length * 4);
+        // Parallel to `newFaces` (task 0389): every entry pushed to `newFaces`
+        // gets a matching Subpatch bit pushed here in lock-step, so `faceMarks`
+        // can be rebuilt (Template A) once `faces = newFaces` lands below.
+        // `faces = newFaces` is a whole-array rebuild — without this,
+        // `faceMarks` would stay aligned to the OLD `faces` slot indices and
+        // every bit would land on the wrong (or a nonexistent) face.
+        bool[] newSub;
+        newSub.reserve(faces.length + rings.length * positions.length * 4);
 
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
@@ -10601,6 +10664,20 @@ struct Mesh {
                 }
         }
 
+        // Subpatch-tracking wrapper around `splitFace` (task 0389): every
+        // sub-face `splitFace(fi)` emits — single-ring, n-gon, or a 2-ring
+        // grid — inherits the SOURCE ring face `fi`'s Subpatch bit. Rather
+        // than threading `fi` through emitSingleRingSplit/emitNgonRingSplit/
+        // the grid-split branch individually, record `newFaces.length`
+        // before/after the call and backfill `newSub` for whatever range
+        // `splitFace` just appended.
+        void splitFaceTracked(uint fi) {
+            immutable size_t before = newFaces.length;
+            splitFace(fi);
+            immutable bool sub = isFaceSubpatch(fi);
+            foreach (i; before .. newFaces.length) newSub ~= sub;
+        }
+
         // Read-only rail lookup for the absorb pass — returns the existing
         // midpoints on edge va→vb (in that direction) if it was split by a
         // neighbouring face, else null. NEVER creates a rail (unlike getMids).
@@ -10634,8 +10711,8 @@ struct Mesh {
             // Whole-ring path — UNCHANGED (byte-for-byte): one pass in face
             // index order, dup non-ring faces, split ring faces.
             foreach (uint fi; 0 .. cast(uint)faces.length) {
-                if (fi in perFaceRings) splitFace(fi);
-                else                    newFaces ~= faces[fi].dup;
+                if (fi in perFaceRings) splitFaceTracked(fi);
+                else { newFaces ~= faces[fi].dup; newSub ~= isFaceSubpatch(fi); }
             }
         } else {
             // Slice-Selected / Keep-Quads path — TWO passes. Pass 1 splits the
@@ -10646,7 +10723,7 @@ struct Mesh {
             // non-quad border (that neighbour becomes an n-gon; a face
             // untouched by the cut re-emits identically).
             foreach (uint fi; 0 .. cast(uint)faces.length)
-                if (fi in perFaceRings) splitFace(fi);
+                if (fi in perFaceRings) splitFaceTracked(fi);
             foreach (uint fi; 0 .. cast(uint)faces.length) {
                 if (fi in perFaceRings) continue;   // already split in pass 1
                 auto f = faces[fi];
@@ -10657,6 +10734,7 @@ struct Mesh {
                     foreach (m; absorbMids(va, vb)) nf ~= m;
                 }
                 newFaces ~= nf;
+                newSub ~= isFaceSubpatch(fi);
             }
         }
 
@@ -10683,6 +10761,16 @@ struct Mesh {
             bool[uint] loSet, hiSet;
             foreach (pr; splitSeams) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
 
+            // Subpatch for a cap face (task 0389): a cap seals a WHOLE shell's
+            // boundary loop, which can be stitched together from more than one
+            // original ring face — there is no single "source face" the way
+            // there is for a split sub-quad. Fall back to the OR-across-sources
+            // rule used elsewhere for multi-source new faces (chamfer/bridge):
+            // the cap is Subpatch if ANY ring face this cut passed through was.
+            bool anyRingSubpatch = false;
+            foreach (fi, _; perFaceRings)
+                if (isFaceSubpatch(fi)) { anyRingSubpatch = true; break; }
+
             // Chain each shell's incidence-1 boundary edges into reversed cap
             // polygons via the shared `capShellCycles` helper (same geometry the
             // Slice split-caps path uses — task 0274). Interior lo–lo / hi–hi
@@ -10692,6 +10780,7 @@ struct Mesh {
                 foreach (cyc; capShellCycles(newFaces, set)) {
                     newFaces ~= cyc;
                     newFaceIndices ~= cast(uint)(newFaces.length - 1);
+                    newSub ~= anyRingSubpatch;
                 }
             }
             capBoundaryLoops(loSet);
@@ -10744,6 +10833,20 @@ struct Mesh {
         if (splitPairsOut !is null) *splitPairsOut = splitSeams;
 
         faces = newFaces;
+        // Rebuild faceMarks in lock-step with the just-replaced `faces`
+        // (task 0389 — Template A, mirrors bevelEdgesByMask): `newSub` was
+        // populated 1:1 with every `newFaces` append above (dup'd untouched
+        // faces keep their own bit; ring-split sub-faces and section caps
+        // inherit from their source ring face(s)). resetSelection() below no
+        // longer clears subpatch on its own, so this is the only place the
+        // new mesh's Subpatch bits get set — without it every face would
+        // silently default to non-subpatch (faceMarks zero-fills on resize).
+        assert(newSub.length == faces.length,
+               "insertEdgeLoopsMulti: newSub/newFaces length mismatch");
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
         rebuildEdges();
         buildLoops();
         resetSelection();   // resizes + clears all selection; calls commitChange
@@ -11189,12 +11292,38 @@ struct Mesh {
     /// paired 1:1 with A (no heuristic — exact correspondence assumed).
     /// Returns N on success, 0 if lengths differ or loop is too short.
     /// Does NOT call buildLoops — the caller must do so after all mutations.
+    ///
+    /// Task 0389: each bridge quad inherits Subpatch via OR from the
+    /// PRE-EXISTING adjacent face(s) of its two bridged edges (A[i]-A[i+1]
+    /// and pairedB[i]-pairedB[i+1]), looked up BEFORE any of this call's own
+    /// `addFace`s run. A boundary-loop edge (the common case — bridging two
+    /// open holes) has exactly one adjacent face; a freshly interpolated
+    /// edge (bridgeLoopsSpans' interior twist rings, which reference brand
+    /// new verts with no pre-existing edge at all) has none in a standalone
+    /// call, so it contributes `false`. NOTE: bridgeLoopsSpans calls this once
+    /// per span and each call rebuilds buildEdgeFaces(), so a later span's
+    /// edges can see an earlier span's just-added bridge quads as adjacent and
+    /// inherit transitively — a subdiv boundary therefore yields an all-subdiv
+    /// multi-span bridge, which is the intended behavior.
     size_t bridgeLoopsPaired(const(uint)[] loopA, const(uint)[] pairedB) {
         if (loopA.length != pairedB.length || loopA.length < 3) return 0;
         const N = loopA.length;
-        foreach (i; 0 .. N)
-            addFace([cast(uint)loopA[i], cast(uint)loopA[(i + 1) % N],
-                     cast(uint)pairedB[(i + 1) % N], cast(uint)pairedB[i]]);
+        auto edgeFaces = buildEdgeFaces();
+        bool edgeAdjSubpatch(uint va, uint vb) {
+            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            if (p is null) return false;
+            return ((*p)[0] >= 0 && isFaceSubpatch((*p)[0]))
+                || ((*p)[1] >= 0 && isFaceSubpatch((*p)[1]));
+        }
+        foreach (i; 0 .. N) {
+            uint a0 = cast(uint)loopA[i],    a1 = cast(uint)loopA[(i + 1) % N];
+            uint b0 = cast(uint)pairedB[i],  b1 = cast(uint)pairedB[(i + 1) % N];
+            bool sub = edgeAdjSubpatch(a0, a1) || edgeAdjSubpatch(b0, b1);
+            uint newFi = cast(uint)faces.length;
+            addFace([a0, a1, b1, b0]);
+            resizeSubpatch();
+            setFaceSubpatch(newFi, sub);
+        }
         return N;
     }
 
@@ -11439,12 +11568,20 @@ struct Mesh {
         }
 
         // Step 4 — inner faces with reversed winding (inner skin faces −normal).
+        // Task 0389: each shell face mirrors exactly one front face `fi` — it
+        // inherits that face's Subpatch bit (rim quads, bridged below, then
+        // pick this up automatically via bridgeLoopsPaired's own adjacency
+        // OR — the rim is bounded by one front edge and its mirrored shell
+        // edge, so it ORs this same bit with the front face's).
         foreach (fi; 0 .. F0) {
             uint[] of = new uint[](faces[fi].length);
             foreach (k; 0 .. faces[fi].length)
                 of[k] = off[faces[fi][k]];
             reverse(of);
+            uint newFi = cast(uint)faces.length;
             addFace(of);
+            resizeSubpatch();
+            setFaceSubpatch(newFi, isFaceSubpatch(cast(uint)fi));
         }
 
         // Step 5 — bridge each stored boundary loop to its offset counterpart.
@@ -12059,7 +12196,10 @@ struct Mesh {
             newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
             newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
             newOrd  ~= 0;
-            newSub  ~= false;
+            // Task 0389: revolve wall quads inherit Subpatch from their source
+            // profile edge's face, like extrudeFacesByMask — so revolving a
+            // subdiv profile keeps the swept surface subdiv (bounds-guarded).
+            newSub  ~= isFaceSubpatch(be.selFi);
         }
 
         faces              = newFaces;
@@ -20201,6 +20341,217 @@ unittest {
     assert(cast(int)grid.vertices.length - cast(int)grid.edges.length
            + cast(int)grid.faces.length == 2,
            "grid-split result must still satisfy Euler's formula (closed manifold)");
+}
+
+// Task 0389: insertEdgeLoopsMulti (loop_slice's kernel) must not drop the
+// per-face Subpatch bit — neither on faces it dups untouched nor on the new
+// sub-quads a ring split emits. Uses the SAME closed-ring cube fixture as
+// unittest (A) above (seed edge 0-1), but this time with ONE ring face
+// marked Subpatch and its immediate ring neighbour left plain, so the test
+// proves per-source INHERITANCE (not just a blanket true/false leak).
+unittest {
+    import std.math : abs;
+
+    static bool hasFace(const Mesh m, uint[] vs) {
+        outer: foreach (const f; m.faces) {
+            if (f.length != vs.length) continue;
+            foreach (v; vs) {
+                bool found = false;
+                foreach (fv; f) if (fv == v) { found = true; break; }
+                if (!found) continue outer;
+            }
+            return true;
+        }
+        return false;
+    }
+    static uint findFaceIndexBySet(const Mesh m, uint[] vs) {
+        outer: foreach (fi, const f; m.faces) {
+            if (f.length != vs.length) continue;
+            foreach (v; vs) {
+                bool found = false;
+                foreach (fv; f) if (fv == v) { found = true; break; }
+                if (!found) continue outer;
+            }
+            return cast(uint)fi;
+        }
+        return ~0u;
+    }
+    static uint findVertNear(const Mesh m, float x, float y, float z,
+                             float eps = 1e-4f) {
+        foreach (uint i; 0 .. cast(uint)m.vertices.length) {
+            auto v = m.vertices[i];
+            if (abs(v.x - x) < eps && abs(v.y - y) < eps && abs(v.z - z) < eps)
+                return i;
+        }
+        return ~0u;
+    }
+
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();   // size faceMarks — makeCube/addFace leave it empty
+
+    // F0 = faces[0] = [0,3,2,1] (bottom) marked Subpatch; every other face
+    // (including its ring neighbour F5 = faces[5] = [0,1,5,4], sharing the
+    // seed edge 0-1) is left plain.
+    m.setFaceSubpatch(0, true);
+    assert(m.isFaceSubpatch(0), "F0 must be marked Subpatch before the cut");
+    assert(!m.isFaceSubpatch(5), "F5 must start plain");
+
+    uint eiSeed = m.edgeIndex(0, 1);
+    assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
+    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+    assert(ok, "insertEdgeLoops must succeed on cube");
+    assert(m.faces.length == 10, "cube ring cut must still produce 10 faces");
+
+    // Untouched cap faces F2=[0,4,7,3] and F3=[1,2,6,5] (outside the ring,
+    // dup'd as-is) must keep their own (unset) bit.
+    uint f2i = findFaceIndexBySet(m, [0u, 4u, 7u, 3u]);
+    uint f3i = findFaceIndexBySet(m, [1u, 2u, 6u, 5u]);
+    assert(f2i != ~0u && f3i != ~0u, "cap faces F2/F3 must survive the cut unchanged");
+    assert(!m.isFaceSubpatch(f2i), "untouched cap face F2 must stay non-subpatch");
+    assert(!m.isFaceSubpatch(f3i), "untouched cap face F3 must stay non-subpatch");
+
+    // Rail midpoints — same geometry as unittest (A) above.
+    uint mA = findVertNear(m, 0.0f, -0.5f, -0.5f); // mid of edge 0-1 (shared F0/F5 rail)
+    uint mB = findVertNear(m, 0.0f,  0.5f, -0.5f); // mid of edge 2-3 (F0's other rail)
+    uint mD = findVertNear(m, 0.0f, -0.5f,  0.5f); // mid of edge 4-5 (F5's other rail)
+    assert(mA != ~0u && mB != ~0u && mD != ~0u, "rail midpoints must exist");
+
+    // F0's two sub-quads must BOTH inherit F0's Subpatch=true.
+    assert(hasFace(m, [0u, mA, mB, 3u]) && hasFace(m, [mA, 1u, 2u, mB]),
+           "F0 must split into its two expected sub-quads");
+    uint f0aI = findFaceIndexBySet(m, [0u, mA, mB, 3u]);
+    uint f0bI = findFaceIndexBySet(m, [mA, 1u, 2u, mB]);
+    assert(m.isFaceSubpatch(f0aI) && m.isFaceSubpatch(f0bI),
+           "both of F0's new sub-quads must inherit Subpatch=true from F0");
+
+    // F5's two sub-quads (its neighbour across the shared rail, plain) must
+    // BOTH stay Subpatch=false — proves inheritance is per-SOURCE-face, not
+    // a blanket flip from the one marked ring face.
+    assert(hasFace(m, [0u, mA, mD, 4u]) && hasFace(m, [mA, 1u, 5u, mD]),
+           "F5 must split into its two expected sub-quads");
+    uint f5aI = findFaceIndexBySet(m, [0u, mA, mD, 4u]);
+    uint f5bI = findFaceIndexBySet(m, [mA, 1u, 5u, mD]);
+    assert(!m.isFaceSubpatch(f5aI) && !m.isFaceSubpatch(f5bI),
+           "both of F5's new sub-quads must stay Subpatch=false (F5 was plain)");
+}
+
+// Task 0389: bevelEdgesByMask — the chamfer quad inherits Subpatch via OR
+// of the TWO faces adjacent to the beveled edge. Same cube-edge (6,7)
+// fixture as the bevelEdgesByMask cube-edge unittest elsewhere in this file:
+// edge (6,7) is shared by faces[1]=[4,5,6,7] (+Z) and faces[4]=[3,7,6,2] (+Y).
+unittest {
+    static int findEdge(ref Mesh m, uint va, uint vb) {
+        foreach (i; 0 .. m.edges.length) {
+            uint a = m.edges[i][0], b = m.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    static uint firstSelectedFace(ref Mesh m) {
+        foreach (fi; 0 .. m.faces.length) if (m.isFaceSelected(fi)) return cast(uint)fi;
+        return uint.max;
+    }
+
+    // Neither adjacent face marked ⇒ the chamfer must stay non-subpatch.
+    {
+        Mesh m = makeCube();
+        m.buildLoops();
+        m.resetSelection();
+        int ei = findEdge(m, 6, 7);
+        assert(ei >= 0, "edge (6,7) must exist");
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+        uint chamferFi = firstSelectedFace(m);
+        assert(chamferFi != uint.max, "chamfer face must be selected after bevel");
+        assert(!m.isFaceSubpatch(chamferFi),
+               "chamfer must stay non-subpatch when neither neighbour was marked");
+    }
+
+    // Exactly ONE adjacent face marked (faces[1] = [4,5,6,7], the +Z
+    // neighbour) ⇒ OR still produces a Subpatch chamfer, proving inheritance
+    // is per-source (not requiring both sides marked).
+    {
+        Mesh m = makeCube();
+        m.buildLoops();
+        m.resetSelection();
+        m.setFaceSubpatch(1, true);   // faces[1] = [4,5,6,7], the +Z neighbour
+        assert(!m.isFaceSubpatch(4), "faces[4] (+Y neighbour) must start plain");
+        int ei = findEdge(m, 6, 7);
+        assert(ei >= 0, "edge (6,7) must exist");
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+        uint chamferFi = firstSelectedFace(m);
+        assert(chamferFi != uint.max, "chamfer face must be selected after bevel");
+        assert(m.isFaceSubpatch(chamferFi),
+               "chamfer must inherit Subpatch via OR when only ONE neighbour was marked");
+    }
+}
+
+// Task 0389: insetFacesByMask — the inner face already kept its bit
+// in-place (faces[fi] reassigned, not the marks word); the new ring quads
+// must ALSO inherit Subpatch from the inset source face, in both directions
+// (not a blanket true/false leak).
+unittest {
+    static Mesh makeFlatQuad() {
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.5f, 0f, -0.5f), Vec3(0.5f, 0f, -0.5f),
+            Vec3(0.5f, 0f,  0.5f),  Vec3(-0.5f, 0f, 0.5f),
+        ];
+        m.addFace([0, 1, 2, 3]);
+        m.buildLoops();
+        return m;
+    }
+    bool[] allOne = [true];
+
+    // Source marked Subpatch=true ⇒ inner AND all 4 ring quads inherit true.
+    {
+        Mesh m = makeFlatQuad();
+        m.resetSelection();
+        m.setFaceSubpatch(0, true);
+        assert(m.insetFacesByMask(allOne, 0.1f) == 1, "must process 1 face");
+        assert(m.faces.length == 5, "expected 1 inner + 4 ring quads");
+        foreach (fi; 0 .. m.faces.length)
+            assert(m.isFaceSubpatch(fi),
+                   "every face (inner + ring) must be Subpatch when the source was");
+    }
+
+    // Source left plain ⇒ inner AND ring quads all stay non-subpatch.
+    {
+        Mesh m = makeFlatQuad();
+        m.resetSelection();
+        assert(m.insetFacesByMask(allOne, 0.1f) == 1, "must process 1 face");
+        assert(m.faces.length == 5, "expected 1 inner + 4 ring quads");
+        foreach (fi; 0 .. m.faces.length)
+            assert(!m.isFaceSubpatch(fi),
+                   "no face should be Subpatch when the source was plain");
+    }
+}
+
+// Task 0389: extrudeFacesByMask — the cap already inherited (pre-existing);
+// the 4 side walls must ALSO inherit Subpatch from the extruded source face.
+// Same single-face-extrude fixture as the extrudeFacesByMask unittest
+// elsewhere in this file (cube face 0, distance 0.5 → 5 orig + 1 cap + 4
+// walls = 10 faces).
+unittest {
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    m.setFaceSubpatch(0, true);
+    bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
+    size_t n = m.extrudeFacesByMask(mask, 0.5f);
+    assert(n > 0, "extrudeFacesByMask must succeed");
+    assert(m.faces.length == 10, "expected 10 faces after single-face extrude");
+
+    size_t subCount = 0, plainCount = 0;
+    foreach (fi; 0 .. m.faces.length) {
+        if (m.isFaceSubpatch(fi)) ++subCount; else ++plainCount;
+    }
+    // 5 non-selected originals stay plain; cap + 4 walls (all derived from
+    // the ONE Subpatch-marked source face) all become Subpatch.
+    assert(subCount == 5, "cap + 4 walls (5 faces) must all inherit Subpatch");
+    assert(plainCount == 5, "the 5 untouched original faces must stay plain");
 }
 
 // (e) Degenerate seed among valid ones: a seed whose collectEdgeRing is
