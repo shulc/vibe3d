@@ -619,6 +619,194 @@ class WorkerServer(ThreadingHTTPServer):
         self.store = JobStore(data_dir, backend or FakeBackend(), phase_delay_s)
 
 
+# ---------------------------------------------------------------------------
+# fetch-model subcommand
+#
+# Makes the TRELLIS weight download EXPLICIT and user-driven, replacing the old
+# silent ~4 GB pull that happened inside the first `serve` job (TRELLIS'
+# `from_pretrained` at _load()). The base worker stays stdlib-only: everything
+# here imports `huggingface_hub` LAZILY, and the `--check` path never needs it
+# (it falls back to a filesystem probe of the HF cache) and never hits the
+# network. Only the default download action reaches out — and only if the
+# operator explicitly runs it.
+# ---------------------------------------------------------------------------
+
+# Exit codes (distinct so scripts / callers can branch, and tests can assert).
+EXIT_OK = 0                # download succeeded, or --check found the model
+EXIT_MODEL_ABSENT = 3      # --check: model is NOT in the cache
+EXIT_HF_HUB_MISSING = 4    # download requested but huggingface_hub not installed
+EXIT_DOWNLOAD_FAILED = 5   # huggingface_hub present but the download errored
+
+
+def _import_hf_snapshot_download():
+    """Lazily import ``huggingface_hub.snapshot_download``.
+
+    Raises ``ImportError`` with an actionable message if the AI-generation
+    runtime (``huggingface_hub``, a TRELLIS-runtime dep — NOT a base worker
+    dep) is not provisioned.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise ImportError(
+            "huggingface_hub is not installed - install the AI-generation "
+            "runtime first (run tools/ai3d_worker/install_linux.sh, or "
+            "`pip install huggingface_hub`), then re-run `fetch-model`."
+        ) from exc
+    return snapshot_download
+
+
+def _resolve_cache_dir(cache_dir: str | None) -> str:
+    """Resolve the HuggingFace hub cache directory, mirroring huggingface_hub's
+    own precedence: explicit ``--cache-dir`` > ``$HF_HUB_CACHE`` >
+    ``$HF_HOME/hub`` > ``$XDG_CACHE_HOME/huggingface/hub`` > ``~/.cache/huggingface/hub``.
+    """
+    if cache_dir:
+        return str(cache_dir)
+    hub = os.environ.get("HF_HUB_CACHE")
+    if hub:
+        return hub
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return str(Path(hf_home) / "hub")
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".cache"
+    return str(base / "huggingface" / "hub")
+
+
+def _fs_find_snapshot(cache_dir: str | None, model: str) -> Path | None:
+    """Filesystem-only probe of the HF cache for ``model`` (no network, no
+    huggingface_hub needed). Returns the first non-empty snapshot directory or
+    None. This is a heuristic (a partial download could false-positive); when
+    huggingface_hub is installed, `_model_cache_present` prefers its
+    authoritative `local_files_only` lookup instead.
+    """
+    cache = Path(_resolve_cache_dir(cache_dir))
+    repo_folder = "models--" + model.replace("/", "--")
+    snapshots = cache / repo_folder / "snapshots"
+    if not snapshots.is_dir():
+        return None
+    for snap in sorted(snapshots.iterdir()):
+        if snap.is_dir() and any(p.is_file() for p in snap.rglob("*")):
+            return snap
+    return None
+
+
+def _model_cache_present(
+    model: str, cache_dir: str | None, revision: str | None
+) -> Path | None:
+    """Return the cached snapshot path for ``model`` if present, else None.
+
+    NEVER hits the network. Prefers huggingface_hub's authoritative
+    ``local_files_only`` lookup when installed; falls back to a filesystem
+    probe when it is not (so `--check` works in a base, stdlib-only env).
+    """
+    try:
+        snapshot_download = _import_hf_snapshot_download()
+    except ImportError:
+        return _fs_find_snapshot(cache_dir, model)
+    try:
+        path = snapshot_download(
+            repo_id=model,
+            revision=revision or None,
+            cache_dir=cache_dir or None,
+            local_files_only=True,  # cache-only; raises if not fully present
+        )
+        return Path(path)
+    except Exception:
+        # LocalEntryNotFoundError / FileNotFoundError / etc. => not cached.
+        # A --check must never crash, so any lookup failure reads as "absent".
+        return None
+
+
+def _human_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024.0 or unit == "TiB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024.0
+    return f"{n} B"
+
+
+def _snapshot_report(path: Path) -> dict[str, Any]:
+    """Summarize a downloaded snapshot dir: file count, total bytes (following
+    symlinks into the blob store), and a stable fingerprint = sha256 over the
+    sorted ``relpath:size`` manifest. A lightweight sanity check on top of the
+    per-blob hashes huggingface_hub already verifies during download.
+    """
+    files: list[tuple[str, int]] = []
+    total = 0
+    for p in sorted(path.rglob("*")):
+        if not p.is_file():  # is_file() follows symlinks to the blob store
+            continue
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        files.append((p.relative_to(path).as_posix(), size))
+        total += size
+    manifest = "\n".join(f"{name}:{size}" for name, size in files)
+    return {
+        "files": len(files),
+        "bytes": total,
+        "human": _human_bytes(total),
+        "fingerprint": hashlib.sha256(manifest.encode("utf-8")).hexdigest(),
+    }
+
+
+def _download_model(
+    model: str, cache_dir: str | None, revision: str | None
+) -> int:
+    """Explicitly download ``model`` from HuggingFace with progress, then print
+    a size/hash sanity report. Returns an EXIT_* code.
+    """
+    try:
+        snapshot_download = _import_hf_snapshot_download()
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_HF_HUB_MISSING
+    ref = f"@{revision}" if revision else ""
+    print(f"Downloading {model}{ref} from HuggingFace ...", flush=True)
+    try:
+        # huggingface_hub shows a tqdm progress bar by default and verifies
+        # each blob's hash as it downloads; the download is resumable.
+        path = snapshot_download(
+            repo_id=model,
+            revision=revision or None,
+            cache_dir=cache_dir or None,
+        )
+    except Exception as exc:  # network / auth / repo errors
+        print(f"error: download of {model} failed: {exc}", file=sys.stderr)
+        return EXIT_DOWNLOAD_FAILED
+    report = _snapshot_report(Path(path))
+    print(f"Downloaded {model}{ref}")
+    print(f"  snapshot:    {path}")
+    print(f"  files:       {report['files']}")
+    print(f"  total size:  {report['bytes']} bytes ({report['human']})")
+    print(f"  fingerprint: sha256(name:size) {report['fingerprint']}")
+    return EXIT_OK
+
+
+def _cmd_fetch_model(args: argparse.Namespace) -> int:
+    model = args.model
+    cache_dir = args.cache_dir or None
+    revision = args.revision or None
+    resolved = _resolve_cache_dir(cache_dir)
+    if args.check:
+        ref = f"@{revision}" if revision else ""
+        path = _model_cache_present(model, cache_dir, revision)
+        if path is not None:
+            print(f"present: {model}{ref}")
+            print(f"  cache:    {resolved}")
+            print(f"  snapshot: {path}")
+            return EXIT_OK
+        print(f"not present: {model}{ref}")
+        print(f"  cache: {resolved}")
+        print("  run `vibe3d_ai3d_worker fetch-model` (without --check) to download it.")
+        return EXIT_MODEL_ABSENT
+    return _download_model(model, cache_dir, revision)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vibe3d_ai3d_worker")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -662,6 +850,28 @@ def main(argv: list[str] | None = None) -> int:
     # collapsing every such test into the queued-cancel path. Ignored by
     # the triposr backend (real GPU inference sets its own pace).
     serve.add_argument("--delay", type=int, default=20)
+
+    # --- fetch-model: explicit, user-driven HuggingFace weight download ---
+    # Replaces the silent ~4 GB pull that used to happen inside the first
+    # `serve` job. Weights are NEVER bundled; the user runs this on demand.
+    fetch = sub.add_parser(
+        "fetch-model",
+        help="explicitly download the TRELLIS model weights from HuggingFace "
+             "(or --check whether they are already cached, offline)",
+    )
+    fetch.add_argument("--model", default="jetx/TRELLIS-image-large",
+                       help="HuggingFace model id to fetch (default: %(default)s)")
+    fetch.add_argument("--cache-dir", default="",
+                       help="HuggingFace cache directory (default: the standard "
+                            "HF cache, honoring $HF_HUB_CACHE / $HF_HOME)")
+    fetch.add_argument("--revision", default="",
+                       help="pin a specific commit / tag / branch for "
+                            "reproducibility (default: the model's main branch)")
+    fetch.add_argument("--check", action="store_true",
+                       help="report whether the model is already cached WITHOUT "
+                            "downloading (offline-safe; exit 0 if present, "
+                            "3 if absent)")
+
     args = parser.parse_args(argv)
     if args.command == "serve":
         if args.backend == "triposr":
@@ -702,6 +912,8 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             server.server_close()
         return 0
+    elif args.command == "fetch-model":
+        return _cmd_fetch_model(args)
     return 2
 
 

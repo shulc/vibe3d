@@ -45,11 +45,38 @@ TRELLIS decodes `formats=['mesh']` only, so the worker needs just the prebuilt
 wheels + the pure-PyTorch flexicubes extractor — none of the CUDA source-build
 extensions (nvdiffrast / diff_gaussian_rasterization / diffoctreerast). The raw
 mesh is ~600k faces; the worker Z-up→Y-up rotates it and quadric-decimates down
-to `--trellis-max-faces` (default 50000) before export. The first job lazily
-downloads `jetx/TRELLIS-image-large` (~4 GB) into the Hugging Face cache and
-FP16-loads it (~30–60 s warm); inference itself is ~10 s at the default 12/12
-sampler steps. Raise `--trellis-ss-steps` / `--trellis-slat-steps` for finer
-detail at the cost of speed. `--trellis-precision full` needs ~16 GB VRAM.
+to `--trellis-max-faces` (default 50000) before export. FP16-loading the model
+takes ~30–60 s warm; inference itself is ~10 s at the default 12/12 sampler
+steps. Raise `--trellis-ss-steps` / `--trellis-slat-steps` for finer detail at
+the cost of speed. `--trellis-precision full` needs ~16 GB VRAM.
+
+## Download the model — `fetch-model`
+
+The `jetx/TRELLIS-image-large` weights (~4 GB) are **user-downloaded, not
+distributed with Vibe3D**. Pull them explicitly, once, with the `fetch-model`
+subcommand — this replaces the old silent ~4 GB pull that used to happen inside
+the first `serve` job:
+
+```sh
+# Check whether the model is already cached (offline; no download, no network).
+# Exit 0 = present, exit 3 = absent.
+python3 -m vibe3d_ai3d_worker fetch-model --check
+
+# Download it explicitly, with progress + a size/hash sanity report on finish.
+# Needs the AI-generation runtime (huggingface_hub) installed.
+python3 -m vibe3d_ai3d_worker fetch-model
+```
+
+Flags: `--model` (default `jetx/TRELLIS-image-large`), `--cache-dir`
+(HuggingFace cache path; defaults to the standard cache, honoring `$HF_HUB_CACHE`
+/ `$HF_HOME`), `--revision` (pin a commit/tag/branch for reproducibility), and
+`--check` (report cached-or-not without downloading). `fetch-model` imports
+`huggingface_hub` lazily: `--check` works in the base, stdlib-only worker env
+(it falls back to a filesystem probe of the cache), while the actual download
+exits with a clear "install the AI-generation runtime first" message if
+`huggingface_hub` is not installed. The equivalent manual fallback is
+`huggingface-cli download jetx/TRELLIS-image-large`. **Weights are never
+bundled.**
 
 Scripted editor MVP path, with the editor already running in its normal test
 HTTP mode:
