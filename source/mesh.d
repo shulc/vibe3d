@@ -782,7 +782,7 @@ struct Mesh {
             if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
             if (f.length >= 3) {
                 newFaces    ~= f;
-                newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                newSubpatch ~= isFaceSubpatch(fi);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
                 newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
@@ -1914,7 +1914,7 @@ struct Mesh {
                     reshapeAfter  ~= kept.dup;
                 }
                 newFaces    ~= kept;
-                newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                newSubpatch ~= isFaceSubpatch(fi);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
                 newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
@@ -2141,7 +2141,7 @@ struct Mesh {
             // face in the component (arbitrary but deterministic).
             int firstFi = cast(int)comp[0];
             newPolyList      ~= poly;
-            newPolySubpatch  ~= (firstFi < cast(int)isSubpatch.length        ? isSubpatch[firstFi]        : false);
+            newPolySubpatch  ~= isFaceSubpatch(firstFi);
             newPolyOrder     ~= (firstFi < cast(int)faceSelectionOrder.length ? faceSelectionOrder[firstFi] : 0);
             newPolyMaterial  ~= (firstFi < cast(int)faceMaterial.length      ? faceMaterial[firstFi]      : 0u);
             newPolyPart      ~= (firstFi < cast(int)facePart.length          ? facePart[firstFi]          : 0u);
@@ -2190,7 +2190,7 @@ struct Mesh {
                 continue;
             }
             keptFaces ~= faces[fi];
-            keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+            keptSubpatch ~= isFaceSubpatch(fi);
             keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
             keptPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
@@ -3969,7 +3969,7 @@ struct Mesh {
                     faceRemap[fi] = cast(int)newIdx;
                     ++newIdx;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
                     keptPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
@@ -5118,7 +5118,7 @@ struct Mesh {
         faceSelectionOrderCounter = 0;
         foreach (idx; newFaceIndices) {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
-            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
@@ -5153,7 +5153,7 @@ struct Mesh {
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
@@ -5260,7 +5260,7 @@ struct Mesh {
         // recover the source via modulo.
         foreach (idx; newFaceIndices) {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
-            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
@@ -5300,7 +5300,7 @@ struct Mesh {
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
@@ -5568,7 +5568,7 @@ struct Mesh {
         faceSelectionOrderCounter = 0;
         foreach (idx; newFaceIndices) {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
-            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
@@ -5611,7 +5611,7 @@ struct Mesh {
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
@@ -5729,7 +5729,7 @@ struct Mesh {
         faceSelectionOrderCounter = 0;
         foreach (k, fi; toClone) {
             size_t newFi = origFaceCount + k;
-            setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
+            setFaceSubpatch(newFi, isFaceSubpatch(fi));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
             facePart[newFi]     = (fi < facePart.length     ? facePart[fi]     : 0u);
             selectFace(cast(int)newFi);
@@ -5838,7 +5838,7 @@ struct Mesh {
                 foreach (fi, ref f; faces) {
                     if (dropFace[fi]) continue;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
@@ -5898,7 +5898,7 @@ struct Mesh {
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
                     keptFaces    ~= f;
-                    keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                    keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
@@ -6040,7 +6040,7 @@ struct Mesh {
         faceSelectionOrderCounter = 0;
         foreach (k, fi; toClone) {
             size_t newFi = origFaceCount + k;
-            setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
+            setFaceSubpatch(newFi, isFaceSubpatch(fi));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
             facePart[newFi]     = (fi < facePart.length     ? facePart[fi]     : 0u);
             selectFace(cast(int)newFi);
