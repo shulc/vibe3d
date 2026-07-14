@@ -202,10 +202,16 @@ class TrellisBackend:
         slat_steps: int = 12,
         seed: int = 1,
         max_faces: int = DEFAULT_MAX_FACES,
+        cache_dir: str | None = None,
     ) -> None:
         self.trellis_root = trellis_root
         self.model_name_or_path = model
         self.device = device
+        # HuggingFace cache to look the weights up in. None == the standard HF
+        # cache (honoring $HF_HUB_CACHE / $HF_HOME), which is exactly what
+        # TRELLIS' from_pretrained -> hf_hub_download resolves to, so the
+        # presence check and the actual load agree.
+        self.cache_dir = cache_dir
         self.precision = precision
         self.ss_steps = ss_steps
         self.slat_steps = slat_steps
@@ -234,6 +240,28 @@ class TrellisBackend:
                 return self._torch, self._pipeline
             if not self.trellis_root.exists():
                 raise ProtocolError(503, "model_missing", "TRELLIS root does not exist")
+            # --- NEVER auto-download the ~4 GB weights at generation time ---
+            # The model must be fetched EXPLICITLY beforehand (download_model.sh
+            # / `fetch-model`). Verify the HF snapshot is already in the local
+            # cache BEFORE importing torch or building the pipeline, so a
+            # missing model surfaces as a clean, actionable error through the
+            # normal job-error path instead of a silent multi-GB pull.
+            if _model_cache_present(self.model_name_or_path, self.cache_dir, None) is None:
+                raise ProtocolError(
+                    503,
+                    "model_missing",
+                    _model_missing_message(self.model_name_or_path, self.cache_dir),
+                )
+            # Belt-and-suspenders hard network kill-switch. TRELLIS'
+            # from_pretrained(path) takes NO local_files_only kwarg and calls
+            # huggingface_hub's hf_hub_download() internally; the only
+            # API-agnostic way to guarantee it never reaches the network is
+            # HF_HUB_OFFLINE, which makes hf_hub_download raise a
+            # LocalEntryNotFoundError on a cache-miss instead of fetching. So
+            # even if the presence probe above false-positives on a partial
+            # cache, no download can happen here.
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
             # TRELLIS reads these at import time to pick attention / sparse-conv
             # backends. 'xformers' avoids the flash-attn source build; 'native'
             # skips spconv's first-call autotune. setdefault so an operator can
@@ -674,6 +702,23 @@ def _resolve_cache_dir(cache_dir: str | None) -> str:
     return str(base / "huggingface" / "hub")
 
 
+TRELLIS_DEFAULT_MODEL = "jetx/TRELLIS-image-large"
+
+
+def _model_missing_message(model: str, cache_dir: str | None) -> str:
+    """The single, actionable 'you must download the model first' message, used
+    both by the trellis backend (missing-model job error) and the `serve`
+    startup check. Names the exact command so the operator knows what to run.
+    """
+    resolved = _resolve_cache_dir(cache_dir)
+    return (
+        f"TRELLIS model '{model}' is not in the local cache ({resolved}) and "
+        "auto-download is disabled. Download it first, once, with "
+        "`tools/ai3d_worker/download_model.sh` (or "
+        "`python -m vibe3d_ai3d_worker fetch-model`), then start the worker."
+    )
+
+
 def _fs_find_snapshot(cache_dir: str | None, model: str) -> Path | None:
     """Filesystem-only probe of the HF cache for ``model`` (no network, no
     huggingface_hub needed). Returns the first non-empty snapshot directory or
@@ -823,6 +868,11 @@ def main(argv: list[str] | None = None) -> int:
                        help="path to the TRELLIS checkout (added to sys.path)")
     serve.add_argument("--trellis-model", default="jetx/TRELLIS-image-large",
                        help="HuggingFace model id for the TRELLIS pipeline")
+    serve.add_argument("--trellis-cache-dir", default="",
+                       help="HuggingFace cache dir to look the (pre-downloaded) "
+                            "weights up in; default = the standard HF cache. "
+                            "The weights are NEVER auto-downloaded — fetch them "
+                            "first with tools/ai3d_worker/download_model.sh.")
     serve.add_argument("--trellis-precision", choices=["half", "full"], default="half",
                        help="'half' (FP16) fits 8 GB VRAM; 'full' needs ~16 GB")
     serve.add_argument("--trellis-ss-steps", type=int, default=12,
@@ -889,6 +939,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.backend == "trellis":
             if not args.trellis_root:
                 parser.error("--backend trellis requires --trellis-root")
+            trellis_cache_dir = args.trellis_cache_dir or None
             backend = TrellisBackend(
                 Path(args.trellis_root),
                 args.trellis_model,
@@ -898,7 +949,26 @@ def main(argv: list[str] | None = None) -> int:
                 slat_steps=args.trellis_slat_steps,
                 seed=args.trellis_seed,
                 max_faces=args.trellis_max_faces,
+                cache_dir=trellis_cache_dir,
             )
+            # Fail-loud (but still boot) startup check: the weights are NEVER
+            # auto-downloaded, so warn up front — naming the download command —
+            # if they are not already cached. The server still starts so health
+            # checks work; any generation request will return a clean
+            # model_missing error until the operator downloads the model.
+            snapshot = _model_cache_present(args.trellis_model, trellis_cache_dir, None)
+            if snapshot is None:
+                print(
+                    "WARNING: " + _model_missing_message(args.trellis_model, trellis_cache_dir),
+                    file=sys.stderr, flush=True,
+                )
+                print(
+                    "         Starting anyway (health checks OK); generation "
+                    "requests will fail until the model is downloaded.",
+                    file=sys.stderr, flush=True,
+                )
+            else:
+                print(f"TRELLIS model present: {snapshot}", flush=True)
         else:
             backend = FakeBackend()
         server = WorkerServer(
