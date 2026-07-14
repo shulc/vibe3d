@@ -60,7 +60,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON="${PYTHON:-python3}"
+# spconv-cu120 (a mesh-path TRELLIS dep) publishes wheels ONLY for Python
+# 3.10-3.11. The system default python3 on recent distros (e.g. Fedora 43 =
+# 3.14) is too new -> pip aborts with "No matching distribution found for
+# spconv-cu120" ~6-8 GB into the install. Auto-pick a supported interpreter
+# unless PYTHON was set explicitly.
+if [ -z "${PYTHON:-}" ]; then
+    PYTHON=python3
+    for _cand in python3.11 python3.10; do
+        if command -v "$_cand" >/dev/null 2>&1; then PYTHON="$_cand"; break; fi
+    done
+fi
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/microsoft/TRELLIS.git}"
 
@@ -116,6 +126,29 @@ done
 LOCATION="${LOCATION:-$DEFAULT_LOCATION}"
 VENV_DIR="$LOCATION/venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
+
+# Refuse an unsupported Python up front (actionable message) rather than a deep
+# pip failure many GB in. spconv-cu120 wheels exist only for 3.10-3.11.
+PYVER="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '?')"
+case "$PYVER" in
+    3.10|3.11) : ;;
+    *)
+        PYMSG="$PYTHON is Python $PYVER — unsupported. TRELLIS's spconv-cu120 ships wheels only for Python 3.10-3.11. Install python3.11 (e.g. 'sudo dnf install python3.11') or set PYTHON=python3.11 and re-run."
+        if [ "$DRY_RUN" -eq 1 ]; then echo "WARNING: $PYMSG"
+        else echo "error: $PYMSG" >&2; exit 3; fi ;;
+esac
+
+# A venv left over from a previous run on a DIFFERENT Python (e.g. the too-new
+# system default) would be silently reused and fail the same way. Detect the
+# mismatch and tell the user to remove it.
+if [ "$DRY_RUN" -ne 1 ] && [ -x "$VENV_PYTHON" ]; then
+    EXISTING_PYVER="$("$VENV_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '?')"
+    if [ "$EXISTING_PYVER" != "$PYVER" ]; then
+        echo "error: existing venv at $VENV_DIR is Python $EXISTING_PYVER, but this run uses $PYVER." >&2
+        echo "       Remove the stale venv and re-run:  rm -rf '$VENV_DIR'" >&2
+        exit 3
+    fi
+fi
 
 if [ -n "$TRELLIS_ROOT_ARG" ]; then
     TRELLIS_ROOT="$TRELLIS_ROOT_ARG"
