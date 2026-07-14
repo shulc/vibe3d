@@ -51,13 +51,15 @@ public:
 
     override string name() const { return "Radial Align"; }
 
+    // Task 0393: headlessMode/headlessSide/headlessRotate/headlessAngle/
+    // headlessWeight are STICKY tool-defaults (this tool has no interactive
+    // gesture — they're the whole "setting" surface), already restored onto
+    // these fields by applyStickyToolDefaults() (tool_presets.d, called from
+    // app.d activateToolById) BEFORE activate() runs — don't reset them back
+    // to the constructor defaults here. A brand-new (never-activated) tool
+    // still gets "circle"/4/0/0/1.0 from the field initializers above.
     override void activate() {
         super.activate();
-        headlessMode   = "circle";
-        headlessSide   = 4;
-        headlessRotate = 0.0f;
-        headlessAngle  = 0.0f;
-        headlessWeight = 1.0f;
     }
 
     // `radius` / `centerX/Y/Z` are deliberately NOT exposed here: the

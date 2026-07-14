@@ -47,11 +47,15 @@ public:
 
     override string name() const { return "Linear Align"; }
 
+    // Task 0393: headlessMode/headlessUniform/headlessWeight are STICKY
+    // tool-defaults (this tool has no interactive gesture — they're the
+    // whole "setting" surface), already restored onto these fields by
+    // applyStickyToolDefaults() (tool_presets.d, called from app.d
+    // activateToolById) BEFORE activate() runs — don't reset them back to
+    // the constructor defaults here. A brand-new (never-activated) tool
+    // still gets "line"/false/1.0 from the field initializers above.
     override void activate() {
         super.activate();
-        headlessMode    = "line";
-        headlessUniform = false;
-        headlessWeight  = 1.0f;
     }
 
     override Param[] params() {

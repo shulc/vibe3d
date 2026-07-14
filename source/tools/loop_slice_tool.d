@@ -591,29 +591,37 @@ public:
         scrubbing_      = false;
         built_          = false;
         seeds_          = [];
-        edit_           = Edit.Move;
-        mode_           = Mode.Uniform;
-        count_          = 1;
-        current_        = 0;
-        positions_      = [0.5f];
-        positionProxy_  = 0.5f;
+        armedSelFaces_  = [];
         insertAt_       = 0.5f;
         removeTrigger_  = false;
-        selectNew_      = true;
-        sliceSelected_  = false;
-        keepQuads_      = false;
-        sliceNgon_      = false;
-        sliceSplit_     = false;
-        sliceCaps_      = true;   // reference default ON; no-op while Split is off
-        gap_            = 0.0f;   // factory default 0 (coincident) — no-op unless Split
-        curvature_      = false;  // linear placement (byte-for-byte prior behaviour)
-        curveTension_   = 1.0f;   // full Catmull-Rom bulge (0255 "Tension" scales this)
-        profile_        = LoopProfile.Flat;   // null-profile (byte-for-byte flat cut)
-        depth_          = 0.0f;   // Inset — reference default 0 (no displacement)
-        reverseX_       = false;  // 0257 hook
-        reverseY_       = false;  // 0258 hook
-        aspect_         = false;  // 0259 hook
-        armedSelFaces_  = [];
+        // Settings fields (edit_/mode_/count_/selectNew_/sliceSelected_/
+        // keepQuads_/sliceNgon_/sliceSplit_/sliceCaps_/gap_/curvature_/
+        // curveTension_/profile_/depth_/reverseX_/reverseY_/aspect_) are
+        // STICKY tool-defaults (task 0393): applyStickyToolDefaults()
+        // (tool_presets.d) already restores them onto a freshly built tool's
+        // fields BEFORE activate() runs (app.d activateToolById), so
+        // reinitSession must NOT reset them back to the constructor defaults
+        // here — doing so silently clobbered the restore (the 0393 bug). A
+        // brand-new (never-activated) tool still gets correct defaults
+        // straight from the field initializers above, mirroring
+        // ArrayTool.activate() / EdgeBevelTool.reinitSession(), which
+        // likewise touch only session/gesture state.
+        //
+        // current_/positions_ ARE reset — they're transient gesture proxies
+        // (see the `.transient()` "current"/"position" Params), not
+        // remembered settings — but they must stay CONSISTENT with
+        // count_/mode_, which may now be sticky-restored past the count_==1
+        // constructor default. syncPositionsToCount() re-derives positions_
+        // by padding/truncating to count_ and re-laying via the (possibly
+        // sticky) mode_ law, instead of hardcoding a length-1 `[0.5f]` that
+        // would silently truncate a sticky Count>1 back down to one slice
+        // (positions_ isn't itself a Param, so it can't self-restore — it
+        // must be re-derived from the now-correct count_/mode_ instead).
+        // For a fresh/no-sticky tool this is byte-for-byte the old hardcoded
+        // reset: count_==1 so syncPositionsToCount() is a no-op past the
+        // early-return in applyModeLaw(), leaving positions_ == [0.5f].
+        current_ = 0;
+        syncPositionsToCount();
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
         before_    = MeshSnapshot.capture(*mesh);

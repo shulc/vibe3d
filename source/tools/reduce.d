@@ -88,8 +88,12 @@ public:
 
     override void activate() {
         active = true;
-        ratio_ = 0.5f;
-        pb_    = true;
+        // Task 0393: ratio_/pb_ are STICKY tool-defaults, already restored
+        // onto these fields by applyStickyToolDefaults() (tool_presets.d,
+        // called from app.d activateToolById) BEFORE activate() runs —
+        // don't reset them back to the constructor defaults here. A
+        // brand-new (never-activated) tool still gets 0.5/true from the
+        // field initializers above.
         built  = false;
         before = MeshSnapshot.capture(*mesh);
     }

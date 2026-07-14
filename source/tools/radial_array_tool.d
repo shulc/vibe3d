@@ -209,15 +209,16 @@ public:
         reinitSession();
     }
 
+    // Task 0393: only session/gesture state resets here — count_/axis_/
+    // center_/angle_/offset_/weld_ are STICKY tool-defaults, already
+    // restored onto these fields by applyStickyToolDefaults()
+    // (tool_presets.d, called from app.d activateToolById) BEFORE
+    // activate() runs. Resetting them here would clobber that restore. A
+    // brand-new (never-activated) tool still gets the captured defaults
+    // above (24/"Y"/origin/0/0/0) straight from the field initializers.
     private void reinitSession() {
         built     = false;
         dragPart  = -1;
-        count_    = 24;
-        axis_     = "Y";
-        center_   = Vec3(0, 0, 0);
-        angle_    = 0.0f;
-        offset_   = 0.0f;
-        weld_     = 0.0f;
         before    = MeshSnapshot.capture(*mesh);
         toolHandles.clearHaul();
     }
