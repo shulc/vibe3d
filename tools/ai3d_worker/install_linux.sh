@@ -71,7 +71,12 @@ if [ -z "${PYTHON:-}" ]; then
         if command -v "$_cand" >/dev/null 2>&1; then PYTHON="$_cand"; break; fi
     done
 fi
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
+# torch 2.4.0 / cu121 — the version TRELLIS's whole CUDA stack (kaolin, xformers,
+# spconv) publishes wheels for. cu121 runtime runs fine on any driver whose CUDA
+# is >= 12.1 (backward compatible), so newer drivers (e.g. 13.x) are OK.
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
+TORCH_VERSION="${TORCH_VERSION:-2.4.0}"
+TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.19.0}"
 TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/microsoft/TRELLIS.git}"
 
 # GPU preflight thresholds. REQUIRED_CUDA is derived from the torch wheel index
@@ -251,18 +256,17 @@ print_plan() {
     echo "  1. mkdir -p '$LOCATION'"
     echo "  2. $PYTHON -m venv '$VENV_DIR'   (skipped if it already exists)"
     echo "  3. '$VENV_PYTHON' -m pip install --upgrade pip setuptools wheel"
-    echo "  4. '$VENV_PYTHON' -m pip install torch torchvision --index-url '$TORCH_INDEX_URL'"
+    echo "  4. '$VENV_PYTHON' -m pip install torch==$TORCH_VERSION torchvision==$TORCHVISION_VERSION --index-url '$TORCH_INDEX_URL'"
     if [ "$TRELLIS_IS_CLONE_TARGET" -eq 1 ]; then
-        echo "  5. git clone '$TRELLIS_REPO_URL' '$TRELLIS_ROOT'   (skipped if it already exists)"
+        echo "  5. git clone --recursive '$TRELLIS_REPO_URL' '$TRELLIS_ROOT'   (skipped if present)"
     else
-        echo "  5. (skipped: --trellis-root points at an existing checkout)"
+        echo "  5. (using existing checkout)"
     fi
-    echo "  6. '$VENV_PYTHON' -m pip install <TRELLIS mesh-only runtime deps>"
-    echo "     (xformers, spconv, easydict, plyfile, trimesh, huggingface_hub,"
-    echo "      pillow, opencv-python-headless, rembg, onnxruntime, tqdm, scipy,"
-    echo "      utils3d; deliberately NOT nvdiffrast / diffoctreerast /"
-    echo "      diff-gaussian-rasterization — the worker only ever requests"
-    echo "      formats=['mesh'], see vibe3d_ai3d_worker/server.py)"
+    echo "     + git submodule update --init --recursive   (flexicubes)"
+    echo "  6. TRELLIS setup.sh --basic --xformers --spconv --kaolin  (in the venv)"
+    echo "     — version-matches xformers/spconv/kaolin to torch $TORCH_VERSION +"
+    echo "     the mesh-only basic deps; NOT nvdiffrast/diffoctreerast/mipgaussian"
+    echo "     (worker only requests formats=['mesh']). + fast-simplification."
     echo "  7. '$VENV_PYTHON' -m pip install -e '$SCRIPT_DIR'"
     echo "  8. write $CONFIG_PATH"
     echo
@@ -297,15 +301,15 @@ fi
 echo "-- upgrading pip/setuptools/wheel"
 "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
 
-echo "-- installing torch (index: $TORCH_INDEX_URL)"
-"$VENV_PYTHON" -m pip install torch torchvision --index-url "$TORCH_INDEX_URL"
+echo "-- installing torch $TORCH_VERSION / torchvision $TORCHVISION_VERSION (index: $TORCH_INDEX_URL)"
+"$VENV_PYTHON" -m pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" --index-url "$TORCH_INDEX_URL"
 
 if [ "$TRELLIS_IS_CLONE_TARGET" -eq 1 ]; then
     if [ -d "$TRELLIS_ROOT/.git" ]; then
         echo "-- TRELLIS checkout already present at $TRELLIS_ROOT, reusing"
     else
-        echo "-- cloning TRELLIS ($TRELLIS_REPO_URL) -> $TRELLIS_ROOT"
-        git clone "$TRELLIS_REPO_URL" "$TRELLIS_ROOT"
+        echo "-- cloning TRELLIS ($TRELLIS_REPO_URL, --recursive) -> $TRELLIS_ROOT"
+        git clone --recursive "$TRELLIS_REPO_URL" "$TRELLIS_ROOT"
     fi
 else
     if [ ! -d "$TRELLIS_ROOT" ]; then
@@ -315,30 +319,26 @@ else
     echo "-- using existing TRELLIS checkout at $TRELLIS_ROOT"
 fi
 
-# Mesh-only runtime dependency set (task 0403). Deliberately excludes the
-# CUDA source-build extensions TRELLIS' setup.sh normally builds for its
-# gaussian-splat / radiance-field output formats (nvdiffrast,
-# diff-gaussian-rasterization, diffoctreerast) — the worker only ever
-# requests formats=['mesh'] (server.py TrellisBackend.generate), so none of
-# those are needed. Pin/adjust versions for your CUDA toolkit as needed;
-# these are unpinned to stay portable across CUDA 12.x builds.
-echo "-- installing TRELLIS mesh-only runtime dependencies"
-"$VENV_PYTHON" -m pip install \
-    "xformers" \
-    "spconv-cu120" \
-    "easydict" \
-    "plyfile" \
-    "trimesh" \
-    "huggingface_hub" \
-    "pillow" \
-    "opencv-python-headless" \
-    "rembg" \
-    "onnxruntime" \
-    "tqdm" \
-    "scipy" \
-    "numpy" \
-    "fast-simplification" \
-    "utils3d @ git+https://github.com/EasternJournalist/utils3d.git"
+# flexicubes (the mesh extractor on the worker's formats=['mesh'] decode path) is
+# a git submodule; populate it whether we cloned fresh or reused a checkout.
+echo "-- initializing TRELLIS submodules (flexicubes)"
+git -C "$TRELLIS_ROOT" submodule update --init --recursive
+
+# Install the TRELLIS runtime deps via TRELLIS' OWN setup.sh, which version-matches
+# xformers / spconv / kaolin to the installed torch. A hand-picked list drifts:
+# kaolin is required by the flexicubes mesh extractor, and the whole CUDA stack
+# only ships wheels for torch 2.4.x. Mesh-only flags: --basic --xformers --spconv
+# --kaolin; deliberately NOT --nvdiffrast / --diffoctreerast / --mipgaussian
+# (gaussian / radiance-field outputs the worker never requests — it only ever asks
+# formats=['mesh'], see server.py TrellisBackend). Run with the venv on PATH so
+# setup.sh's bare `pip` / `python` resolve to it.
+echo "-- installing TRELLIS runtime deps via setup.sh (--basic --xformers --spconv --kaolin)"
+( cd "$TRELLIS_ROOT" && PATH="$VENV_DIR/bin:$PATH" VIRTUAL_ENV="$VENV_DIR" bash setup.sh --basic --xformers --spconv --kaolin )
+
+# fast_simplification: the worker's quadric decimate (server.py TrellisBackend),
+# not part of TRELLIS setup.sh's basic set.
+echo "-- installing fast-simplification (worker mesh decimate)"
+"$VENV_PYTHON" -m pip install fast-simplification
 
 echo "-- installing vibe3d_ai3d_worker (editable) from $SCRIPT_DIR"
 "$VENV_PYTHON" -m pip install -e "$SCRIPT_DIR"
