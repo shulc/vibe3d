@@ -1899,3 +1899,79 @@ unittest {
                        ~ quads.stringof);
     assert(pentas == 4, "expected 4 widened pentagons (one per side face)");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0401 — SubpatchPreview.rebuildIfStale must not serve a stale
+// (pre-edit) preview after a VERSION-SILENT position edit. An interactive
+// gizmo Move/Rotate/Scale updates cage vertices via `mesh.noteChange(Position)`
+// WITHOUT ever bumping `mutationVersion` — both on drag AND on commit (see
+// the warning above `SubpatchPreview.deactivate()` in mesh.d for why that is
+// deliberate). Reproduces that exact version-silent path directly (no
+// `commitChange`/`++mutationVersion` anywhere) rather than the scripted
+// `/api/transform` path, which DOES bump mutationVersion and so cannot see
+// this bug (that's why `tests/test_subpatch_move.d` stayed green while the
+// interactive gizmo path was broken).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : SubpatchPreview;
+    import change_bus : MeshEditScope;
+
+    Mesh cage = makeCube();
+    cage.resizeSubpatch();
+    foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+
+    SubpatchPreview preview;
+    preview.rebuildIfStale(cage, 1, null, false);
+    assert(preview.active, "preview should activate on a fully-subpatched cube");
+    Vec3[] before = preview.mesh.vertices.dup;
+    ulong topoVerBefore = cage.topologyVersion;
+    ulong mutVerBefore  = cage.mutationVersion;
+
+    // Version-silent edit: exactly what an interactive gizmo drag/commit
+    // does — mutate a vertex, note the Position change class, never bump
+    // mutationVersion.
+    cage.vertices[0] = cage.vertices[0] + Vec3(0.75f, 0, 0);
+    cage.noteChange(MeshEditScope.Position);
+    assert(cage.mutationVersion == mutVerBefore,
+        "test setup must stay version-silent to mirror the gizmo path");
+
+    bool previewMoved() {
+        foreach (i; 0 .. preview.mesh.vertices.length)
+            if (preview.mesh.vertices[i] != before[i]) return true;
+        return false;
+    }
+
+    // OLD behaviour (positionsDirty=false, the pre-fix default): the
+    // (address, mutationVersion, depth) key is unchanged, so the preview
+    // stays frozen at the pre-edit shape. Asserting this first proves the
+    // repro is real (guards against the test accidentally becoming a
+    // no-op if the cube/depth stop triggering the fast path).
+    preview.rebuildIfStale(cage, 1, null, false);
+    assert(!previewMoved(),
+        "sanity: positionsDirty=false must reproduce the historical "
+        ~ "stale-preview bug (mutationVersion alone cannot see a "
+        ~ "version-silent position edit)");
+
+    // NEW behaviour (positionsDirty=true — what app.d's bus flush now
+    // passes whenever meshChangedFlags carries Position this frame):
+    // preview must re-derive from the moved cage.
+    preview.rebuildIfStale(cage, 1, null, true);
+    assert(previewMoved(),
+        "task 0401: positionsDirty=true must re-derive the preview from "
+        ~ "the moved cage instead of returning the frozen pre-edit shape");
+
+    // Topology must be untouched by a pure position edit or by the fix:
+    // topologyVersion only advances on a Geometry-class change, and the
+    // CAGE's own mutationVersion must stay exactly as version-silent as
+    // the interactive-gizmo contract requires — the fix must not "solve"
+    // staleness by quietly bumping the very counter it was designed
+    // around (that would re-trip the transform tool's mutation-boundary
+    // poll and cancel an in-session falloff re-grade, mesh.d:17393-17399).
+    assert(cage.topologyVersion == topoVerBefore,
+        "position-only edit must not bump the cage's topologyVersion "
+        ~ "(would spuriously invalidate topology-keyed caches: adjacency "
+        ~ "CSR, actcenter clusters, falloff selWeights)");
+    assert(cage.mutationVersion == mutVerBefore,
+        "rebuildIfStale must not mutate the CAGE's mutationVersion — only "
+        ~ "the preview's own internal mesh may bump its own version");
+}

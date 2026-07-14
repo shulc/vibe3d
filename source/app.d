@@ -10472,7 +10472,8 @@ void main(string[] args) {
                     vertVbo:        gpu.vertVbo,
                     vertCount:      gpu.vertCount,
                 };
-                subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
+                subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets,
+                    (meshChangedFlags & MeshEditScope.Position) != 0);
             }
         }
 
@@ -10653,6 +10654,31 @@ void main(string[] args) {
             // superseded VBO; the key remains the correctness backstop.
             if (meshChangedFlags & (MeshEditScope.Position | MeshEditScope.Geometry))
                 gpuSelect.invalidate();
+
+            // Change-notification bus, Stage 3 addendum (task 0401) —
+            // symmetry pairing + snap candidate-grid proactive invalidation.
+            // Both cache on (address, mutationVersion, ...), same as the
+            // subpatch preview above and gpu_select just above. An
+            // interactive gizmo Move/Rotate/Scale is deliberately
+            // version-silent on Position — mutationVersion never bumps for
+            // a drag or its commit (see the warning above
+            // SubpatchPreview.deactivate() in mesh.d) — so those raw-
+            // mutationVersion keys alone would keep serving the pre-edit
+            // mirror pairing / snap candidates forever. Force both stale
+            // the instant a Position edit lands this frame; the version
+            // keys remain the correctness backstop for every other change
+            // class (topology, marks, layer switch).
+            if (meshChangedFlags & MeshEditScope.Position) {
+                import toolpipe.pipeline        : g_pipeCtx;
+                import toolpipe.stage           : TaskCode;
+                import toolpipe.stages.symmetry : SymmetryStage;
+                import snap                     : invalidateSnapGrids;
+                if (g_pipeCtx !is null)
+                    if (auto sym = cast(SymmetryStage)
+                                   g_pipeCtx.pipeline.findByTask(TaskCode.Symm))
+                        sym.invalidatePairingCache();
+                invalidateSnapGrids();
+            }
         }
         // Consume this frame's mesh-change flags. Stage 2 subscriber = the
         // screen-space pick caches; Stage 3 adds gpu_select (above) and gates

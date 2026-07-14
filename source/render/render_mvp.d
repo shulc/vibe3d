@@ -971,7 +971,15 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     const(Mesh)* sourceMesh = m;
     bool anySubpatch = m.hasAnySubpatch();
     if (anySubpatch) {
-        g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null);
+        // Task 0401: `g.modelChangedSinceApplied` is the render-side bus
+        // accumulator (initIPR, above) — it already carries the Position
+        // bit whenever a gizmo drag/commit moved vertices without bumping
+        // mutationVersion, so pass it straight through instead of the
+        // stale-by-default `false`.
+        import change_bus : MeshEditScope;
+        const bool positionsDirty =
+            (g.modelChangedSinceApplied & MeshEditScope.Position) != 0;
+        g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null, positionsDirty);
         sourceMesh = &g.iprSubpatch.mesh;
     }
 

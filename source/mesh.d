@@ -16028,6 +16028,48 @@ unittest {
         ~ "share adjacency — each Mesh owns its own CSR cache");
 }
 
+// ---------------------------------------------------------------------------
+// Task 0401 — negative/regression check: a TOPOLOGY-keyed cache must NOT
+// rebuild on a position-only edit. vertexAdjacencyCSR keys purely on
+// `mutationVersion` by design (topology never changed by a vertex move) —
+// unlike the 3 caches this task fixes (subpatch preview / symmetry pairing /
+// snap grid), which needed a Position-bus-driven invalidation ON TOP of
+// their existing mutationVersion key. This test proves the fix did not
+// widen — the version-silent noteChange(Position) contract stays exactly as
+// silent to mutationVersion as before, so vertexAdjacencyCSR provably does
+// not thrash on every gizmo drag frame.
+// ---------------------------------------------------------------------------
+unittest {
+    import change_bus : MeshEditScope;
+
+    Mesh m = makeCube();
+    const(size_t)[] offA;
+    const(uint)[]    nbA;
+    m.vertexAdjacencyCSR(offA, nbA);
+    ulong csrVerAfterBuild = m._adjCsrVer;
+    ulong mutVerBefore     = m.mutationVersion;
+
+    // Version-silent edit — exactly what an interactive gizmo drag/commit
+    // does: mutate a vertex, note the Position change class, never bump
+    // mutationVersion.
+    m.vertices[0] = m.vertices[0] + Vec3(0.5f, 0, 0);
+    m.noteChange(MeshEditScope.Position);
+    assert(m.mutationVersion == mutVerBefore,
+        "test setup must stay version-silent to mirror the gizmo path");
+
+    const(size_t)[] offB;
+    const(uint)[]    nbB;
+    m.vertexAdjacencyCSR(offB, nbB);
+    assert(m._adjCsrVer == csrVerAfterBuild,
+        "task 0401: a position-only edit must NOT force the adjacency CSR "
+        ~ "to rebuild — it stays topology-keyed by design and must be "
+        ~ "unaffected by the Position-bus invalidation this task adds to "
+        ~ "the subpatch preview / symmetry pairing / snap grid caches");
+    assert(offA is offB && nbA is nbB,
+        "no rebuild occurred ⇒ vertexAdjacencyCSR must hand back the "
+        ~ "exact same cached arrays, not freshly rebuilt ones");
+}
+
 Mesh makeCube() {
     Mesh m;
     m.vertices = [
@@ -17476,12 +17518,28 @@ struct SubpatchPreview {
     /// in order, only doing the CPU readback fallback for the
     /// pieces that didn't make it onto GPU. Caller (app.d main loop)
     /// supplies gpu.{face,edge,vert}Vbo + matching counts.
+    ///
+    /// `positionsDirty` (task 0401): set true when the caller's
+    /// change-notification bus flush saw a Position edit since the last
+    /// call. An interactive gizmo Move/Rotate/Scale updates
+    /// `source.vertices` WITHOUT bumping `source.mutationVersion` — both on
+    /// drag AND on commit (see the warning above `deactivate()`) — so the
+    /// (address, mutationVersion, depth) key just below can be, and after a
+    /// committed drag IS, unchanged even though the cage moved. Skipping
+    /// that raw-version early-out on a dirty signal lets the call fall
+    /// through to the position-only fast path a few lines down (still
+    /// gated on an UNCHANGED `source.topologyVersion`, so it never masks a
+    /// real topology change) or, failing that, a full `rebuild`. Defaults
+    /// to `false` so a caller with no bus signal in scope (the IPR path)
+    /// keeps the original version-only behaviour.
     void rebuildIfStale(ref const Mesh source, int d,
-                         const(GpuFanOutTargets)* targets = null) {
+                         const(GpuFanOutTargets)* targets = null,
+                         bool positionsDirty = false) {
         lastRefreshFannedOut    = false;
         lastRefreshSkipNonFace  = false;
         const srcAddr = cast(size_t)&source;
-        if (sourceMeshAddr == srcAddr
+        if (!positionsDirty
+            && sourceMeshAddr == srcAddr
             && sourceVersion == source.mutationVersion && depth == d)
             return;
         // Position-only fast path: SAME source mesh, cage topology + depth

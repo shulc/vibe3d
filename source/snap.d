@@ -1194,3 +1194,85 @@ private void clearExcludeMembership(const(uint)[] exclude) {
     foreach (e; exclude)
         if (e < g_excludeScratch.length) g_excludeScratch[e] = false;
 }
+
+// ---------------------------------------------------------------------------
+// Task 0401 — the vertex candidate grid must not serve a stale (pre-edit)
+// bucket layout after a VERSION-SILENT position edit. An interactive gizmo
+// Move/Rotate/Scale mutates vertex positions via `mesh.noteChange(Position)`
+// WITHOUT ever bumping `mutationVersion` — both on drag AND on commit (see
+// the warning above SubpatchPreview.deactivate() in mesh.d for why that is
+// deliberate) — so the grid's (meshAddr, meshVersion, ...) staleness key
+// alone cannot see the edit. Reproduces that exact version-silent path
+// directly rather than the scripted `/api/transform` path (which DOES bump
+// mutationVersion).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh                      : makeCube;
+    import change_bus                : MeshEditScope;
+    import math                      : lookAt, perspectiveMatrix;
+    import std.math                  : PI;
+    import std.algorithm.searching   : canFind;
+
+    Mesh cube = makeCube();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float px0, py0, ndc0;
+    assert(projectToWindowFull(cube.vertices[0], vp, px0, py0, ndc0),
+        "vertex 0 should project on-screen");
+
+    // Build + populate the grid at vertex 0's ORIGINAL screen position.
+    auto cands0 = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+                                     cast(int)px0, cast(int)py0, 40.0f, null);
+    assert(cands0.canFind(0),
+        "sanity: vertex 0 should be a candidate at its own screen position");
+
+    ulong mutVerBefore = cube.mutationVersion;
+
+    // Version-silent edit — exactly what an interactive gizmo drag/commit
+    // does: move the vertex well clear of its old screen bucket, note the
+    // Position change class, never bump mutationVersion.
+    cube.vertices[0] = cube.vertices[0] + Vec3(2.0f, 0, 0);
+    cube.noteChange(MeshEditScope.Position);
+    assert(cube.mutationVersion == mutVerBefore,
+        "test setup must stay version-silent to mirror the gizmo path");
+
+    float px1, py1, ndc1;
+    assert(projectToWindowFull(cube.vertices[0], vp, px1, py1, ndc1),
+        "moved vertex 0 should still project on-screen");
+    float dpx = px1 - px0, dpy = py1 - py0;
+    assert(dpx * dpx + dpy * dpy > 100.0f * 100.0f,
+        "test setup must move the vertex well clear of its old screen bucket");
+
+    // OLD behaviour: without invalidateSnapGrids(), the grid's
+    // (meshAddr, meshVersion, ...) key is unchanged, so querying at the
+    // vertex's NEW screen position misses it — the grid is still bucketed
+    // by the pre-edit projection. Asserting this first proves the repro is
+    // real (guards against the test silently becoming a no-op).
+    auto candsStale = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+                                         cast(int)px1, cast(int)py1, 40.0f, null);
+    assert(!candsStale.canFind(0),
+        "sanity: without invalidateSnapGrids() the grid must reproduce the "
+        ~ "historical stale-after-position-edit bug");
+
+    // NEW behaviour: app.d's bus flush calls invalidateSnapGrids() whenever
+    // meshChangedFlags carries Position this frame (task 0401) — simulate
+    // that call directly.
+    invalidateSnapGrids();
+    auto candsFresh = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+                                         cast(int)px1, cast(int)py1, 40.0f, null);
+    assert(candsFresh.canFind(0),
+        "task 0401: invalidateSnapGrids() must force a rebuild against the "
+        ~ "moved vertex");
+
+    assert(cube.mutationVersion == mutVerBefore,
+        "invalidateSnapGrids()/queryCandidateGrid must never mutate the "
+        ~ "mesh's mutationVersion (that counter's version-silence on a "
+        ~ "position edit is the intentional contract this fix works "
+        ~ "around, not papers over)");
+}
