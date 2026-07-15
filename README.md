@@ -41,8 +41,10 @@ Prebuilt binaries for **Linux, Windows and macOS** are on the releases page:
 
 ### → [Download the latest release](https://github.com/shulc/vibe3d/releases)
 
-Each archive extracts to a single self-contained folder — unzip and run `vibe3d`
-(no installer, no extra dependencies to stage). Or [build from source](#build-from-source).
+Downloads are self-contained per platform — Linux **AppImage** (`chmod +x` and
+run), Windows zip or installer, macOS `.app` — with no extra dependencies to
+stage. See **[INSTALL.md](INSTALL.md)** for per-platform steps (and the optional
+Linux AI-generation add-on). Or [build from source](#build-from-source).
 
 ## Highlights
 
