@@ -258,7 +258,7 @@ print_plan() {
         echo "  TRELLIS checkout:    using existing $TRELLIS_ROOT"
     fi
     echo "  torch index:         $TORCH_INDEX_URL"
-    echo "  worker package:      pip install -e $SCRIPT_DIR"
+    echo "  worker package:      pip install $SCRIPT_DIR   (copy; set VIBE3D_AI3D_WORKER_EDITABLE=1 for -e)"
     echo "  config written to:   $CONFIG_PATH"
     echo
     echo "Steps:"
@@ -279,7 +279,7 @@ print_plan() {
     echo "     $TORCH_VERSION explicitly (setup.sh's exact-version match skips the"
     echo "     +cuXXX suffix). NOT nvdiffrast/diffoctreerast/mipgaussian (worker"
     echo "     only requests formats=['mesh']). + fast-simplification."
-    echo "  7. '$VENV_PYTHON' -m pip install -e '$SCRIPT_DIR'"
+    echo "  7. '$VENV_PYTHON' -m pip install '$SCRIPT_DIR'   (copy; -e if VIBE3D_AI3D_WORKER_EDITABLE=1)"
     echo "  8. write $CONFIG_PATH"
     echo
     echo "The model weights (jetx/TRELLIS-image-large, ~4 GB) are NOT downloaded"
@@ -364,8 +364,20 @@ echo "-- installing kaolin (torch-${TORCH_VERSION}_${CU_TAG} wheel index)"
 echo "-- installing fast-simplification (worker mesh decimate)"
 "$VENV_PYTHON" -m pip install fast-simplification
 
-echo "-- installing vibe3d_ai3d_worker (editable) from $SCRIPT_DIR"
-"$VENV_PYTHON" -m pip install -e "$SCRIPT_DIR"
+# Non-editable (copying) install by default. A packaged editor (AppImage) runs
+# THIS script from a read-only, EPHEMERAL mount ($APPDIR under /tmp/.mount_XXXXX)
+# that changes every launch and disappears on exit; `pip install -e` records that
+# path in the venv, so `python -m vibe3d_ai3d_worker serve` (Start) would break on
+# the next run. A plain copying install lands the package in the venv's
+# site-packages, making it independent of where these sources lived. Set
+# VIBE3D_AI3D_WORKER_EDITABLE=1 for a dev checkout you want to edit in place.
+if [ "${VIBE3D_AI3D_WORKER_EDITABLE:-0}" = "1" ]; then
+    echo "-- installing vibe3d_ai3d_worker (editable) from $SCRIPT_DIR"
+    "$VENV_PYTHON" -m pip install -e "$SCRIPT_DIR"
+else
+    echo "-- installing vibe3d_ai3d_worker (copy) from $SCRIPT_DIR"
+    "$VENV_PYTHON" -m pip install "$SCRIPT_DIR"
+fi
 
 echo "-- writing config: $CONFIG_PATH"
 mkdir -p "$CONFIG_DIR"

@@ -233,6 +233,23 @@ cp -r "$REPO_ROOT/config" "$APPDIR/config"
 [[ -f "$REPO_ROOT/LICENSE" ]]                 && cp "$REPO_ROOT/LICENSE"                 "$APPDIR/LICENSE"
 [[ -f "$REPO_ROOT/THIRD_PARTY_LICENSES.md" ]] && cp "$REPO_ROOT/THIRD_PARTY_LICENSES.md" "$APPDIR/THIRD_PARTY_LICENSES.md"
 
+# Opt-in AI-generation provisioning, shipped NEXT TO THE BINARY. The editor's
+# in-app "Install AI generation" button (source/ai3d/worker_manager.d) resolves
+# the installer at dirName(thisExePath())/tools/ai3d_worker/install_linux.sh;
+# the AppRun exec's $APPDIR/usr/bin/vibe3d, so thisExePath() is there and the
+# worker must sit under usr/bin/tools/. Ship only what install_linux.sh needs
+# (it `pip install`s this dir — non-editable — and spawns download_model.sh):
+# the two scripts, pyproject.toml, and the package. No tests/ or __pycache__.
+log "staging opt-in AI worker (tools/ai3d_worker) under usr/bin/tools/"
+WORKER_SRC="$REPO_ROOT/tools/ai3d_worker"
+WORKER_DST="$APPDIR/usr/bin/tools/ai3d_worker"
+mkdir -p "$WORKER_DST"
+cp "$WORKER_SRC/install_linux.sh" "$WORKER_SRC/download_model.sh" \
+   "$WORKER_SRC/pyproject.toml" "$WORKER_DST/"
+cp -r "$WORKER_SRC/vibe3d_ai3d_worker" "$WORKER_DST/vibe3d_ai3d_worker"
+find "$WORKER_DST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+chmod +x "$WORKER_DST/install_linux.sh" "$WORKER_DST/download_model.sh"
+
 # --- Custom AppRun -----------------------------------------------------------
 # Replaces linuxdeploy's default AppRun. It still sources the gtk plugin's env
 # hooks (apprun-hooks/*.sh set GDK_PIXBUF_MODULE_FILE / GTK_PATH / GIO_MODULE_DIR)
