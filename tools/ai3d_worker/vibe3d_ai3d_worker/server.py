@@ -280,9 +280,15 @@ class TrellisBackend:
                 pipeline.to(torch.float16)  # halves resident VRAM for the 8 GB path
                 if "image_cond_model" in pipeline.models:
                     pipeline.models["image_cond_model"].half()
-            # Deliberately NO pipeline.cuda(): the fork moves each sub-model to
-            # the GPU only for its stage inside run() (dynamic offload). Forcing
-            # everything resident here would blow the 8 GB budget.
+            # Deliberately NO pipeline.cuda(): the StableProjectorz TRELLIS fork
+            # (IgorAherne/trellis-stable-projectorz — the checkout this worker
+            # targets) patches run() to move each sub-model onto the GPU only for
+            # its stage and back off afterwards (per-stage CPU<->GPU offload).
+            # That per-stage offload + FP16 is exactly what fits the pipeline into
+            # 8 GB. It is NOT present in upstream microsoft/TRELLIS, whose run()
+            # leaves every op on pipeline.device — so pointing this worker at
+            # upstream instead of the fork runs the whole thing on the CPU and
+            # cascades into xformers "device=cpu" / half-vs-float dtype errors.
             self._torch = torch
             self._pipeline = pipeline
             return torch, pipeline

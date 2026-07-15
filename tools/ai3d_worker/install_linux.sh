@@ -79,7 +79,16 @@ TORCH_VERSION="${TORCH_VERSION:-2.4.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.19.0}"
 # xformers build matched to torch 2.4.0 (per TRELLIS setup.sh's own table).
 XFORMERS_VERSION="${XFORMERS_VERSION:-0.0.27.post2}"
-TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/microsoft/TRELLIS.git}"
+# The StableProjectorz TRELLIS fork, NOT upstream microsoft/TRELLIS. The fork
+# patches the pipeline with per-stage CPU<->GPU offload (each sub-model rides to
+# the GPU only for its stage), which is what lets FP16 TRELLIS fit an 8 GB card —
+# exactly the budget this add-on targets. Upstream keeps every stage resident on
+# one device, so it needs ~16 GB and, without an explicit .cuda(), silently runs
+# the whole pipeline on the CPU (xformers then dies with "device=cpu"). The
+# worker's TrellisBackend is written against the fork's offload contract. Its
+# setup.sh takes the same --basic/--spconv/--xformers/--kaolin flags as upstream,
+# so the rest of this installer is unchanged.
+TRELLIS_REPO_URL="${TRELLIS_REPO_URL:-https://github.com/IgorAherne/trellis-stable-projectorz.git}"
 
 # GPU preflight thresholds. REQUIRED_CUDA is derived from the torch wheel index
 # (cu128 -> 12.8) so it tracks TORCH_INDEX_URL; MIN_VRAM_MB is the FP16 mesh-only
