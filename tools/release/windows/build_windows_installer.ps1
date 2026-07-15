@@ -123,6 +123,13 @@ Write-Host "[installer] payload   : $Payload"
 # We stage into <OutputDir>\_stage so we can add vibe3d.ico + LICENSE without
 # mutating the caller's payload. A .zip is expanded here; a directory is copied.
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+# Make OutputDir absolute so the /D paths handed to iscc (PayloadDir, OutputDir,
+# AppIcon, LicenseFile — all derived from it below) are absolute. Inno Setup
+# resolves RELATIVE Source/SetupIconFile/LicenseFile paths against the .iss file's
+# own directory (SourcePath), NOT the current directory — so a relative ".\dist"
+# breaks whenever the .iss lives elsewhere than the build cwd (e.g. in CI the .iss
+# is tools\release\windows\ but dist is the repo root).
+$OutputDir = (Resolve-Path $OutputDir).Path
 $stage = Join-Path $OutputDir '_stage'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage | Out-Null
