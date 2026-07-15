@@ -1,5 +1,10 @@
 module commands.ui.copilot_panel;
 
+// version(WithAI)-only — see copilot_panel.d's matching gate. Includes
+// g_copilotPanelShown: every app.d reference to it is likewise wrapped in
+// version(WithAI).
+version (WithAI):
+
 import command;
 import mesh;
 import view;

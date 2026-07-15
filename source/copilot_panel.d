@@ -1,5 +1,12 @@
 module copilot_panel;
 
+// The whole AI Modeling Copilot findings panel is version(WithAI)-only — the
+// owner wants it entirely ABSENT (no symbols, not just unreachable UI) from
+// the `modeling-noai` (Windows 7) build. Same one-line gate as
+// `ai.onnx_backend`'s `version (WithAI):`. app.d's every reference to
+// `CopilotPanel` is likewise wrapped in `version (WithAI)`.
+version (WithAI):
+
 // ===========================================================================
 // copilot_panel — CopilotPanel: the ImGui renderer for the AI Modeling
 // Copilot's passive findings list (task 0402 Phase 2, doc/ai_copilot_plan.md).

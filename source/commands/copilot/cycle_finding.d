@@ -1,5 +1,8 @@
 module commands.copilot.cycle_finding;
 
+// version(WithAI)-only — see copilot_panel.d's matching gate.
+version (WithAI):
+
 import command;
 import mesh;
 import view;

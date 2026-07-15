@@ -1,5 +1,9 @@
 module copilot_overlay;
 
+// version(WithAI)-only — see copilot_panel.d's matching gate. app.d's only
+// call to drawCopilotFindingOverlay is likewise wrapped in version(WithAI).
+version (WithAI):
+
 // ===========================================================================
 // copilot_overlay — a lightweight, decoupled ghost-overlay drawer for the
 // AI Modeling Copilot's ACTIVE finding (task 0402 Phase 3,

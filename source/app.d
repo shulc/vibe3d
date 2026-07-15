@@ -214,16 +214,27 @@ import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
+version (WithAI)
 import commands.ui.copilot_panel   : UiCopilotPanelCommand, g_copilotPanelShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
-import commands.copilot.analyze        : CopilotAnalyzeCommand;
-import commands.copilot.select_finding : CopilotSelectFindingCommand;
-import commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
-import copilot_panel : CopilotPanel;
-import copilot_overlay : drawCopilotFindingOverlay;
+// AI Modeling Copilot findings panel (task 0402): the whole feature —
+// panel, overlay, and copilot.* commands — is version(WithAI)-only. The
+// underlying modules (copilot_panel.d, ai/analysis.d, etc.) are plain D and
+// COULD compile under modeling-noai too, but the owner wants the feature
+// entirely absent from the Windows-7 (noai) build, not just inert. Gating
+// every import + call site here (rather than touching the modules) means
+// dub's `-i` never pulls them into the noai compile at all. See every
+// `version (WithAI)` block below tagged "copilot" for the matching sites.
+version (WithAI) {
+    import commands.copilot.analyze        : CopilotAnalyzeCommand;
+    import commands.copilot.select_finding : CopilotSelectFindingCommand;
+    import commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
+    import copilot_panel : CopilotPanel;
+    import copilot_overlay : drawCopilotFindingOverlay;
+}
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
 import commands.path.define    : PathDefineCommand;
@@ -629,13 +640,45 @@ private extern(C) @nogc nothrow {
 // Private imgui dock-node flag (imgui_internal.h:1993) — internal-only bit,
 // not part of the public `ImGuiDockNodeFlags` enum bound in d_imgui/imgui_h.d,
 // so declared locally. Value confirmed against the vendored cimgui.h copy in
-// ~/Code/D-ImGui. (The former `kDockFlagHiddenTabBar` shim bit is gone —
-// superseded by the public `AutoHideTabBar` SharedFlag, task 0211 Phase 4.
-// The sibling `kDockFlagDockSpace` bit — "a DockSpace() node", used to mark
-// the nested `viewportDockId` root — is gone too: task 0223 dropped that
-// inner dockspace entirely, so nothing declares a nested DockSpace node
-// anymore.)
+// ~/Code/D-ImGui. (The sibling `kDockFlagDockSpace` bit — "a DockSpace() node",
+// used to mark the nested `viewportDockId` root — is gone too: task 0223
+// dropped that inner dockspace entirely, so nothing declares a nested
+// DockSpace node anymore.)
 private enum int kDockFlagCentralNode  = 1 << 11;
+
+// Private imgui dock-node flag (imgui_internal.h:1995, `HiddenTabBar`).
+// task 0211 Phase 4 deleted the OLD per-cell `kDockFlagHiddenTabBar` shim in
+// favor of the public `AutoHideTabBar` SharedFlag alone — correct for every
+// LATER transition (viewport.layout switches, a user later docking a 2nd
+// window into a node, an ini-restored session) because `AutoHideTabBar`'s
+// event-driven toggle (imgui.cpp's `DockNodeUpdateFlagsAndCollapse`,
+// `WantHiddenTabBarUpdate`) fires correctly whenever `DockNodeAddWindow` runs
+// AFTER the node's `SharedFlags` already carry `AutoHideTabBar`.
+//
+// But the VERY FIRST DockBuilder-seeded frame (no ini yet — this file's
+// `!testMode` seed block below) violates that precondition every time: our
+// per-frame `ImGui.DockSpace(dockspaceId, …, AutoHideTabBar)` call (which
+// sets the ROOT's SharedFlags and cascades it to descendants) runs BEFORE
+// `DockBuilderAddNode(dockspaceId, 0)` recreates the root with
+// SharedFlags=0 and BEFORE `DockBuilderSplitNode` creates leftId/topId/
+// botId/vpRegion — so those children are born with SharedFlags=0 (inherited
+// from the just-reset root at split time), and no cascade pass ever revisits
+// them again with `AutoHideTabBar` set while `WantHiddenTabBarUpdate` is
+// simultaneously true (empirically confirmed via a fresh-launch Xvfb capture
+// task 0404 follow-up: single-window nodes keep a visible one-tab strip for
+// the ENTIRE session — hundreds of frames, not a one-frame flash — until the
+// user manually re-docks a window or restarts from the now-saved ini, which
+// takes the ini-restore path where children exist BEFORE the first
+// DockSpace() cascade and so converge correctly on frame 1).
+//
+// Fix: directly bake `HiddenTabBar` onto each single-window leaf node right
+// after seeding (see the `!testMode` DockBuilder block below) — this ONLY
+// corrects the known-broken INITIAL state; `AutoHideTabBar` stays on the
+// dockspace and remains the live mechanism for every subsequent layout
+// change, so this does not reintroduce the old shim's re-application burden
+// (task 0211 deleted the shim because it needed manual upkeep on every
+// layout change, not because a one-time seed-time bake was wrong).
+private enum int kDockFlagHiddenTabBar = 1 << 13;
 
 /// Dock Viewport##0..3 into `parentNodeId`, split according to the layout
 /// preset `p` (V5: the per-preset viewport-cell split existed twice —
@@ -917,6 +960,35 @@ void drawPerfHud() {
         ImGui.End();
     }
 }
+
+// ---------------------------------------------------------------------------
+// AI entry-point availability (compile-time gates for two UI affordances)
+// ---------------------------------------------------------------------------
+// Two DIFFERENT gates, deliberately not the same flag:
+//
+//   kAiToggleAvailable — the statusline "AI" master-switch button
+//     (ai.toggle / aiState / the copilot findings panel). Backed by
+//     onnxruntime, which ships on every `modeling` build (Linux/Windows/
+//     macOS) and is omitted only from `modeling-noai` (Win7). So this is
+//     WithAI, full stop.
+//
+//   kGenerateAiAvailable — the "Generate 3D…" (ai3d.generate.open) File-menu
+//     entry, which drives the TRELLIS worker via install_linux.sh — a
+//     Linux-only platform dependency independent of onnxruntime. A
+//     `modeling` (WithAI) build on macOS or Windows still has no TRELLIS,
+//     so this additionally requires `version (linux)`.
+//
+// Both are plain compile-time bools (not runtime checks) so the greyed-out
+// state in a `modeling-noai` build is provably static, not a code path that
+// could be flipped by a stray env var.
+version (linux) {
+    version (WithAI) enum bool kGenerateAiAvailable = true;
+    else              enum bool kGenerateAiAvailable = false;
+} else {
+    enum bool kGenerateAiAvailable = false;
+}
+version (WithAI) enum bool kAiToggleAvailable = true;
+else              enum bool kAiToggleAvailable = false;
 
 // ---------------------------------------------------------------------------
 // Main
@@ -2547,6 +2619,9 @@ void main(string[] args) {
     // panel. Owns only its own display state (Finding[] + active row) —
     // the copilot.analyze / copilot.selectFinding commands below are the
     // only writers, see copilot_panel.d's doc comment.
+    // version(WithAI)-only (compiled out of modeling-noai) — see the import
+    // block's doc comment near the top of this file.
+    version (WithAI)
     auto copilotPanel = new CopilotPanel();
 
     // Opt-in model-backed handle decision provider (task 0028). Enabled only
@@ -3579,6 +3654,9 @@ void main(string[] args) {
         reg.commandFactories["ai.enable"]  = makeAiFactory(AiToggleAction.enable);
         reg.commandFactories["ai.disable"] = makeAiFactory(AiToggleAction.disable);
     }
+    // AI Modeling Copilot findings-panel commands: version(WithAI)-only,
+    // compiled out of modeling-noai entirely (see import block doc comment).
+    version (WithAI)
     {
         // AI Modeling Copilot (task 0402 Phase 2): copilot.analyze is a pure
         // read (repopulates copilotPanel's findings list); copilot.selectFinding
@@ -5088,6 +5166,10 @@ void main(string[] args) {
         // toggle gates later UI phases, not this raw analysis read).
         // Marshaled onto the main thread via aiAnalyzeBridge (see
         // http_server.d) so it never races the main thread's own mesh edits.
+        // version(WithAI)-only — modeling-noai never sets the provider, so
+        // http_server.d's existing `aiAnalyzeProvider is null` guard serves
+        // the 404/unavailable response (see http_server.d:1417).
+        version (WithAI)
         httpServer.setAiAnalyzeProvider(() {
             import ai.analysis : analyzeMesh, findingsToJson;
             return findingsToJson(analyzeMesh(mesh()));
@@ -8028,7 +8110,13 @@ void main(string[] args) {
                     modeBlocked = reg.isModeBlocked("command", action.id, editMode);
                 else if (action.kind == ActionKind.tool)
                     modeBlocked = reg.isModeBlocked("tool", action.id, editMode);
-                bool effDisabled = btn.disabled || modeBlocked;
+                // "Generate 3D…" (ai3d.generate.open, task 0404 follow-up):
+                // TRELLIS is Linux-only and requires WithAI — grey the entry
+                // rather than hide it on every other build (see
+                // kGenerateAiAvailable's doc comment near `main`).
+                bool aiGateBlocked = action.kind == ActionKind.command
+                    && action.id == "ai3d.generate.open" && !kGenerateAiAvailable;
+                bool effDisabled = btn.disabled || modeBlocked || aiGateBlocked;
                 if (renderStyledButton(label, sc, on, isCommand,
                                        ImVec2(-1, 0), effDisabled)) {
                     if (action.kind == ActionKind.popup)
@@ -8036,6 +8124,8 @@ void main(string[] args) {
                     else
                         dispatchAction(action);
                 }
+                if (aiGateBlocked && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Not available in this build");
                 // Render BeginPopup for EVERY popup variant the button
                 // declares, regardless of which one is currently
                 // active. Without this, a popup opened via alt-click
@@ -8275,8 +8365,14 @@ void main(string[] args) {
                         float need = ts.x + 18.0f;
                         if (need > effW) effW = need;
                     }
+                    // "AI" master-switch button: greyed (not hidden) in
+                    // modeling-noai — see kAiToggleAvailable's doc comment
+                    // near `main`. Every OTHER status-line button stays as
+                    // today (no other action id is gated here).
+                    bool aiGateBlocked = action.kind == ActionKind.command
+                        && action.id == "ai.toggle" && !kAiToggleAvailable;
                     if (renderStyledButton(label, sc, on, /*isCommand=*/true,
-                                           ImVec2(effW, 0))) {
+                                           ImVec2(effW, 0), aiGateBlocked)) {
                         final switch (action.kind) {
                             case ActionKind.tool:
                                 activateToolById(action.id);
@@ -8310,6 +8406,8 @@ void main(string[] args) {
                                 break;
                         }
                     }
+                    if (aiGateBlocked && ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Not available in this build");
                     // Render BeginPopup for EVERY popup variant the
                     // button declares, regardless of which is currently
                     // active under the live modifier state. Without
@@ -9183,6 +9281,9 @@ void main(string[] args) {
         // where the master switch never turns on) ⇒ byte-identical to
         // before this phase — same discipline as every other AI-gated draw
         // in this codebase (doc/ai_model_adapter_live_wiring_plan.md).
+        // version(WithAI)-only — the whole findings panel/overlay is
+        // compiled out of modeling-noai (see import block doc comment).
+        version (WithAI)
         {
             immutable bool panelShown = !command.g_testMode || g_copilotPanelShown;
             if (aiState.enabled && panelShown) {
@@ -9564,9 +9665,22 @@ void main(string[] args) {
                         auto vpRegionNode = ImGui.DockBuilderGetNode(vpRegion);
                         if (vpRegionNode !is null) {
                             int f = cast(int) ImGuiDockNodeFlags.NoUndocking
-                                  | (ImGuiDockNode_IsCentralNode(vpRegionNode) ? kDockFlagCentralNode : 0);
+                                  | (ImGuiDockNode_IsCentralNode(vpRegionNode) ? kDockFlagCentralNode : 0)
+                                  | kDockFlagHiddenTabBar;
                             ImGuiDockNode_SetLocalFlags(vpRegionNode, f);
                         }
+                    }
+                    // Bake HiddenTabBar directly onto the other three
+                    // single-window leaf nodes too — see kDockFlagHiddenTabBar's
+                    // doc comment for why AutoHideTabBar's own event-driven
+                    // toggle never fires for THESE specific seed-time nodes.
+                    // rightId (Layers/Tool Properties/Viewport Properties) is
+                    // deliberately excluded — it's the one genuine multi-tab
+                    // node and must keep its tab bar.
+                    foreach (id; [leftId, topId, botId]) {
+                        auto n = ImGui.DockBuilderGetNode(id);
+                        if (n !is null)
+                            ImGuiDockNode_SetLocalFlags(n, kDockFlagHiddenTabBar);
                     }
                 } else {
                     // --test: minimal seed (Layers + Viewport##0 only, both
@@ -10001,6 +10115,9 @@ void main(string[] args) {
         // The panel is a passive list (copilot_panel.d) — every interaction
         // dispatches through commandHandlerDelegate, never touching mesh /
         // document / selection state directly.
+        // version(WithAI)-only — compiled out of modeling-noai entirely
+        // (see import block doc comment near the top of this file).
+        version (WithAI)
         if (!command.g_testMode || g_copilotPanelShown) {
             pushPanelChromeStyle();
             copilotPanel.draw(aiState.enabled, commandHandlerDelegate);
