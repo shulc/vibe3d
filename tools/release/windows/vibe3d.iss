@@ -40,11 +40,14 @@
 ;   differ for a noai installer: pass a payload without onnxruntime.dll, and set
 ;   MinVersion=6.1 (see the MinVersion note in [Setup]). No script edit needed.
 ;
-; AI GENERATION ADDON is intentionally OUT OF SCOPE here: the TRELLIS/ai3d
-;   worker is Linux-only today (Windows support is a later "Phase 2"). This
-;   installer ships the EDITOR ONLY — tools/ai3d_worker/ is never staged. A
-;   future Windows AI addon would need its own PowerShell provisioner plus a
-;   bundled/downloaded Python runtime, NOT the Linux install_linux.sh bash flow.
+; OPT-IN AI GENERATION (TRELLIS) is shipped as provisioning, not runtime: when
+;   the payload carries tools\ai3d_worker (the CI Windows zip does), it is
+;   installed to {app}\tools\ai3d_worker so the editor's in-app "Install AI
+;   generation" can run install_windows.ps1 on first use (clones the fork, makes
+;   a Python venv under %LOCALAPPDATA%, downloads the model). The heavy runtime
+;   (torch/CUDA/model, several GB) is NOT bundled — it is provisioned on demand
+;   and needs an NVIDIA GPU + Python 3.11. An editor-only payload (no
+;   tools\ai3d_worker) still installs cleanly (skipifsourcedoesntexist).
 ; =============================================================================
 
 
@@ -206,8 +209,12 @@ Source: "{#AppIcon}"; DestDir: "{app}"; DestName: "vibe3d.ico"; Flags: ignorever
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\THIRD_PARTY_LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
-; NOTE(windows): tools/ai3d_worker/ (the Linux-only AI generation backend) is
-; intentionally NOT staged/installed — the editor ships alone here (see header).
+; Opt-in AI image->3D (TRELLIS) provisioning. The editor's in-app "Install AI
+; generation" runs {app}\tools\ai3d_worker\install_windows.ps1 to build the
+; Python worker environment on first use (clones the fork, makes a venv under
+; %LOCALAPPDATA%). Shipped only if the payload carries tools\ai3d_worker (the CI
+; Windows zip does); skipifsourcedoesntexist keeps an editor-only payload valid.
+Source: "{#PayloadDir}\tools\ai3d_worker\*"; DestDir: "{app}\tools\ai3d_worker"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 
 [Icons]

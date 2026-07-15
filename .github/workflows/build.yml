@@ -273,9 +273,17 @@ jobs:
 
       # ---- Zip ----
 
-      - name: Zip artifact (Linux)
+      # Linux: a self-contained, broad-glibc (>= 2.30) AppImage built + launch-
+      # verified INSIDE an Ubuntu-20.04 container (podman rootless), which floors
+      # the glibc far below the runner's own. Replaces vibe3d-linux.zip (which
+      # needed a system SDL2 + GTK3 and floored at the runner's glibc). The
+      # container does its own `dub build`, so the matrix Build step above is
+      # redundant on Linux (kept for simplicity; a later optimization can skip it).
+      # Requires podman/docker on the self-hosted Linux runner (+ network for the
+      # first image build). Ships the opt-in AI worker under usr/bin/tools/.
+      - name: Build self-contained AppImage (Linux)
         if: runner.os == 'Linux'
-        run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config assets
+        run: tools/release/build_linux_appimage_container.sh --verify
 
       - name: Zip artifact (macOS)
         if: runner.os == 'macOS'
@@ -327,16 +335,43 @@ jobs:
           $crtDlls | ForEach-Object { Copy-Item $_.FullName -Destination $_.Name -Force }
           Write-Host "[zip] bundled VC++ runtime: $(($crtDlls | ForEach-Object { $_.Name }) -join ', ')"
 
-          $zipItems = @('${{ matrix.binary }}','SDL2.dll','onnxruntime.dll') + ($crtDlls | ForEach-Object { $_.Name }) + @('config','assets')
-          Compress-Archive -Path $zipItems -DestinationPath vibe3d-${{ matrix.name }}.zip -Force
+          # Stage into a folder before zipping so the opt-in AI worker keeps its
+          # tools\ai3d_worker path (Compress-Archive flattens loose -Path items to
+          # their leaf name, which would drop the "tools\" prefix the editor needs).
+          $stage = 'win-stage'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item '${{ matrix.binary }}','SDL2.dll','onnxruntime.dll' "$stage\"
+          $crtDlls | ForEach-Object { Copy-Item $_.FullName "$stage\" }
+          Copy-Item -Recurse config "$stage\config"
+          Copy-Item -Recurse assets "$stage\assets"
 
-      # ---- Upload zip as artifact for the release job ----
+          # Opt-in AI image->3D (TRELLIS) provisioning, shipped next to the exe so
+          # the editor's in-app "Install AI generation" resolves
+          # tools\ai3d_worker\install_windows.ps1 (dirName(thisExePath())\tools\...).
+          # install_windows.ps1 clones the fork + provisions the venv on first use.
+          New-Item -ItemType Directory -Path "$stage\tools" | Out-Null
+          Copy-Item -Recurse tools\ai3d_worker "$stage\tools\ai3d_worker"
+          Get-ChildItem -Path "$stage\tools\ai3d_worker" -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "[zip] bundled opt-in AI worker (tools\ai3d_worker) for Windows TRELLIS"
 
-      - name: Upload zip
+          Compress-Archive -Path "$stage\*" -DestinationPath vibe3d-${{ matrix.name }}.zip -Force
+
+      # ---- Upload artifacts for the release job ----
+
+      - name: Upload zip (non-Linux)
+        if: runner.os != 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: zip-${{ matrix.name }}
           path: vibe3d-${{ matrix.name }}.zip
+
+      - name: Upload AppImage (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-linux
+          path: Vibe3D-x86_64.AppImage
 
       # ---- Windows 7 variant -------------------------------------------------
       # A second Windows artifact built from the `modeling-noai` config: the AI
@@ -389,6 +424,47 @@ jobs:
         with:
           name: zip-windows-win7
           path: vibe3d-windows-win7.zip
+
+      # ---- Windows installer (Inno Setup) ------------------------------------
+      # Wrap the self-contained modeling payload (the vibe3d-windows.zip built
+      # above, which now also carries tools\ai3d_worker for the opt-in Windows
+      # TRELLIS add-on) into vibe3d-setup-<tag>.exe. Inno Setup (iscc) is fetched
+      # + silently installed on demand so the runner needs no pre-provisioning
+      # (installing to Program Files assumes the self-hosted runner service is
+      # elevated — as with the CRT/UCRT SDK steps above).
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (Test-Path $iscc) { Write-Host "Inno Setup already present"; exit 0 }
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe'
+          curl.exe -L -o "$env:TEMP\innosetup.exe" $url
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup download failed" }
+          & "$env:TEMP\innosetup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS | Out-Null
+          if (-not (Test-Path $iscc)) { throw "Inno Setup install failed (iscc not at $iscc)" }
+          Write-Host "Inno Setup 6.7.3 installed"
+
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ver = "${{ needs.check.outputs.tag }}" -replace '^v',''
+          if (-not $ver) { $ver = "0.0.0-dev" }
+          # Use the just-built self-contained modeling zip as the installer payload
+          # (exe + DLLs + config + assets + tools\ai3d_worker).
+          $payload = Join-Path $env:TEMP 'vibe3d-payload'
+          if (Test-Path $payload) { Remove-Item $payload -Recurse -Force }
+          Expand-Archive -Path vibe3d-${{ matrix.name }}.zip -DestinationPath $payload -Force
+          .\tools\release\windows\build_windows_installer.ps1 -Version $ver -Payload $payload -OutputDir .\dist
+          if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: dist/vibe3d-setup-*.exe
 
   # Heavy with-render variant. Builds D-Cycles (Blender LFS submodule
   # ~5 GB + CMake compile of Cycles) + bundles the Cycles + RPR runtime
@@ -542,8 +618,20 @@ jobs:
           pattern: zip-*
           merge-multiple: true
 
+      - name: Download Linux AppImage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: appimage-*
+          merge-multiple: true
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+
       - name: List artifacts (debug)
-        run: ls -lh *.zip || true
+        run: ls -lh *.zip *.AppImage *.exe 2>/dev/null || true
 
       - name: Create GitHub release
         env:
@@ -552,9 +640,13 @@ jobs:
           TAG:     ${{ needs.check.outputs.tag }}
           NIGHTLY: ${{ needs.check.outputs.nightly }}
         run: |
-          ASSETS=( vibe3d-linux.zip vibe3d-macos-arm64.zip vibe3d-macos-x64.zip vibe3d-windows.zip )
+          # Linux ships as the broad-glibc (>=2.30) AppImage, replacing the old
+          # vibe3d-linux.zip (which needed a system SDL2/GTK3).
+          ASSETS=( Vibe3D-x86_64.AppImage vibe3d-macos-arm64.zip vibe3d-macos-x64.zip vibe3d-windows.zip )
           # Win7 (modeling-noai) variant — built alongside the Windows modeling zip.
           [[ -f vibe3d-windows-win7.zip   ]] && ASSETS+=( vibe3d-windows-win7.zip )
+          # Windows installer (Inno Setup) — its filename carries the tag.
+          for f in vibe3d-setup-*.exe; do [[ -f "$f" ]] && ASSETS+=( "$f" ); done
           # Append with-render assets only if their build job actually ran.
           [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
           [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
