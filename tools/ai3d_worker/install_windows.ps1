@@ -12,9 +12,10 @@
 
     Verified end-to-end on real hardware (Win10 + RTX 3070 Ti, driver
     560.94 / CUDA 12.6) -- the earlier "UNTESTED, written on Linux" banner
-    is gone along with the four first-real-run bugs it warned about; see
-    the notes on the GPU preflight, the Python floor, and the install.py
-    delegation below for what each of them was.
+    is gone, along with the six first-real-run bugs it warned about. Each
+    is documented at the code that fixes it: the GPU preflight's driver
+    floor, the Python 3.11 floor, the on-demand Python install, the
+    install.py delegation, and the torch/xformers pins.
 
     What this script does:
       1. Locates a Python 3.11 interpreter, INSTALLING one (winget, or a
@@ -23,7 +24,7 @@
          run the torch wheel index below under CUDA minor version
          compatibility, and enough VRAM.
       3. Creates a Python venv at <Location>\venv.
-      4. Installs a CUDA build of torch/torchvision into that venv.
+      4. Installs a PINNED CUDA build of torch/torchvision into that venv.
       5. Clones the TRELLIS fork (--recursive) to <Location>\TRELLIS (or
          reuses -TrellisRoot).
       6. Installs the fork's dependency set into the venv -- the same steps
@@ -31,7 +32,10 @@
          delegate to install.py" note below.
       7. Installs this worker package itself (`pip install`, non-editable)
          so `python -m vibe3d_ai3d_worker serve` resolves inside the venv.
-      8. Writes the config handshake file the editor reads:
+      8. VERIFIES the result -- imports every compiled extension, launches a
+         real GPU kernel, runs a real xformers attention -- and aborts
+         WITHOUT writing the config if any of it fails.
+      9. Writes the config handshake file the editor reads:
          $env:LOCALAPPDATA\vibe3d\ai3d.json
 
     What this script deliberately does NOT do:
