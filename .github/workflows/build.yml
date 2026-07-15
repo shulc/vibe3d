@@ -428,22 +428,20 @@ jobs:
       # ---- Windows installer (Inno Setup) ------------------------------------
       # Wrap the self-contained modeling payload (the vibe3d-windows.zip built
       # above, which now also carries tools\ai3d_worker for the opt-in Windows
-      # TRELLIS add-on) into vibe3d-setup-<tag>.exe. Inno Setup (iscc) is fetched
-      # + silently installed on demand so the runner needs no pre-provisioning
-      # (installing to Program Files assumes the self-hosted runner service is
-      # elevated — as with the CRT/UCRT SDK steps above).
-      - name: Install Inno Setup (Windows)
+      # TRELLIS add-on) into vibe3d-setup-<tag>.exe. Inno Setup (iscc) is a
+      # one-time runner PREREQUISITE, pre-installed on the self-hosted Windows
+      # runner like LDC / the Windows SDK (installing on demand would need an
+      # elevated runner service). Provision once with:
+      #   winget install JRSoftware.InnoSetup   (or https://jrsoftware.org/isdl.php)
+      - name: Check Inno Setup present (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          if (Test-Path $iscc) { Write-Host "Inno Setup already present"; exit 0 }
-          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe'
-          curl.exe -L -o "$env:TEMP\innosetup.exe" $url
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup download failed" }
-          & "$env:TEMP\innosetup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS | Out-Null
-          if (-not (Test-Path $iscc)) { throw "Inno Setup install failed (iscc not at $iscc)" }
-          Write-Host "Inno Setup 6.7.3 installed"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup not found at $iscc. Install it on the runner once: winget install JRSoftware.InnoSetup (or https://jrsoftware.org/isdl.php)."
+          }
+          Write-Host "Inno Setup present: $iscc"
 
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
