@@ -6302,6 +6302,12 @@ void main(string[] args) {
                 import ai.debug_trace : clearLatestAiDebugTraces;
                 clearLatestAiDebugTraces();
             }
+            // A scene reset returns the editor to its known-good default state;
+            // the AI master switch is off by default, so clear it too. Without
+            // this, an earlier session (or an earlier test on the shared --test
+            // instance) that enabled AI would leave `aiState.enabled` stuck on
+            // across the reset (the test_ai_toggle "AI must default off" failure).
+            aiState.setEnabled(false);
             // selTypeOrder is kept in lockstep with editMode by the
             // promoteGeometryType hook installed on the scene.reset factory — no
             // manual re-sync needed here (the old reverse-sync is deleted).
