@@ -25,7 +25,15 @@ final class Ai3dGenerate : Command {
     private string imageArg;
     private string workerUrlArg = "http://127.0.0.1:47831";
     private string nameArg;
-    private int timeoutMsArg = 120_000;
+    // Default = the 10-min hard ceiling (Ai3dMaxGenerationDeadlineMs). The FIRST
+    // generation after a worker starts is a cold start — it loads the ~5 GB
+    // TRELLIS model AND JIT-compiles the spconv / flexicubes CUDA kernels on
+    // their first call, which together can exceed several minutes on a fresh
+    // install / cold disk. A 2-min default made that first job time out client
+    // side (BrokenPipe) even though the worker went on to finish the mesh.
+    // Warm jobs still return in ~15-35 s, so a high ceiling costs steady-state
+    // nothing; it only stops the cold start from being cut off.
+    private int timeoutMsArg = Ai3dMaxGenerationDeadlineMs;
     private int maxFacesArg = Ai3dDefaultRequestedFaces;
     private Ai3dImportResult importer;
 
@@ -54,7 +62,7 @@ final class Ai3dGenerate : Command {
             // `clampGenerationDeadlineMs`) ALSO hard-caps this at the kernel
             // regardless of how the field got written, so the authoritative
             // bound doesn't depend on this Param's opt-in.
-            Param.int_("timeoutMs", "Timeout (ms)", &timeoutMsArg, 120_000)
+            Param.int_("timeoutMs", "Timeout (ms)", &timeoutMsArg, Ai3dMaxGenerationDeadlineMs)
                 .min(1).max(Ai3dMaxGenerationDeadlineMs).enforceBounds(),
             // Two-layer clamp (same convention as timeoutMs above):
             // `.enforceBounds()` is the UI/injection-path clamp;

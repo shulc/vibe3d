@@ -253,7 +253,7 @@ version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
 import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
 import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces;
+import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
     Ai3dInstallState, ai3dDefaultInstallLocation;
@@ -9838,9 +9838,15 @@ void main(string[] args) {
                         ai3dModal.errorCode    = null;
                         ai3dModal.errorMessage = null;
                         const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
+                        // Cold-start budget: the first generation after a worker
+                        // launch loads the ~5 GB model AND JIT-compiles the spconv /
+                        // flexicubes CUDA kernels, which can run several minutes — a
+                        // 2-min cap cut that off client-side (BrokenPipe) even though
+                        // the worker finished the mesh. Warm jobs still return in
+                        // ~15-35 s, so the 10-min ceiling costs steady-state nothing.
                         ai3dController.start(ai3dPickedImagePath,
                             workerUrl.length ? workerUrl : "http://127.0.0.1:47831",
-                            120_000, ai3dMaxFaces);
+                            Ai3dMaxGenerationDeadlineMs, ai3dMaxFaces);
                     }
                     if (!healthy) ImGui.EndDisabled();
                     ImGui.SameLine();
