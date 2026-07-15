@@ -198,9 +198,36 @@ void saveAi3dConfig(ref const Ai3dInstallConfig c, string path) {
 // thread (panel refresh), so it must be fast and non-blocking.
 // ---------------------------------------------------------------------------
 
+/// The user's home directory, resolved the way PYTHON resolves `~` -- which
+/// is what matters here, because every path this module derives from it is
+/// really "wherever huggingface_hub (a python library) put the weights".
+///
+/// On Windows that is CPython's ntpath.expanduser: %USERPROFILE%, then
+/// %HOMEDRIVE%%HOMEPATH%. Emphatically NOT $HOME -- that is a POSIX-ism
+/// Windows does not set (only a Git-Bash/MSYS shell injects one). Reading
+/// $HOME here used to leave the cache path RELATIVE ("" joined with
+/// ".cache"), so the editor probed `.cache\huggingface\hub` under its own
+/// CWD while python downloaded to `C:\Users\<you>\.cache\huggingface\hub`:
+/// the ~4 GB of weights were on disk and the panel reported them missing,
+/// forever.
+private string userHomeDir() {
+    version (Windows) {
+        if (auto up = environment.get("USERPROFILE"))
+            if (up.length) return up;
+        const drive = environment.get("HOMEDRIVE", "");
+        const path  = environment.get("HOMEPATH", "");
+        if (path.length) return drive ~ path;
+        return "";
+    } else {
+        return environment.get("HOME", "");
+    }
+}
+
 /// Resolve the HuggingFace hub cache directory the same way
 /// huggingface_hub itself does: explicit override > $HF_HUB_CACHE >
 /// $HF_HOME/hub > $XDG_CACHE_HOME/huggingface/hub > ~/.cache/huggingface/hub.
+/// (huggingface_hub honors $XDG_CACHE_HOME on every platform, Windows
+/// included -- see its constants.py -- so that step is NOT posix-only.)
 string resolveModelCacheDir(string explicitOverride) {
     if (explicitOverride.length) return explicitOverride;
     if (auto hub = environment.get("HF_HUB_CACHE"))
@@ -210,7 +237,7 @@ string resolveModelCacheDir(string explicitOverride) {
     string base;
     if (auto xdg = environment.get("XDG_CACHE_HOME"))
         if (xdg.length) base = xdg;
-    if (base.length == 0) base = buildPath(environment.get("HOME", ""), ".cache");
+    if (base.length == 0) base = buildPath(userHomeDir(), ".cache");
     return buildPath(base, "huggingface", "hub");
 }
 
@@ -720,6 +747,70 @@ unittest {
 
     auto q = loadAi3dConfig(path);
     assert(q.modelCacheDir.length == 0);
+}
+
+// resolveModelCacheDir must always yield an ABSOLUTE path, on every host.
+// The regression this pins is Windows-specific and was silent: the home
+// fallback read $HOME (unset on Windows outside a Git-Bash shell), so the
+// path came out relative -- `.cache\huggingface\hub` off the editor's CWD --
+// and modelPresent() reported a downloaded model as missing forever. Written
+// host-agnostically (no env writes, no platform assumptions beyond the one
+// the code makes) so it holds on Linux and CI too.
+unittest {
+    import std.path : isAbsolute;
+
+    // An explicit override wins and is returned verbatim.
+    version (Windows) const over = `D:\hf-cache`;
+    else               const over = "/opt/hf-cache";
+    assert(resolveModelCacheDir(over) == over);
+
+    // userHomeDir itself: non-empty and absolute. This is the actual
+    // regression site, and it is env-independent to assert -- USERPROFILE
+    // (Windows) / HOME (posix) are set by the OS on any host that can run
+    // this test. The $HOME-on-Windows bug made this "".
+    const home = userHomeDir();
+    assert(home.length > 0, "userHomeDir must resolve on every supported host");
+    assert(home.isAbsolute, "userHomeDir must be absolute, got: " ~ home);
+
+    // Windows: pin the SOURCE, not just the shape -- and pin it against a
+    // HOSTILE $HOME rather than whatever the ambient shell happens to have.
+    // Without that, this test is a no-op for the very bug it exists to catch:
+    // run from Git Bash, $HOME is injected and equals %USERPROFILE%, so the
+    // broken code passes here and still fails for the editor (launched from
+    // Explorer, where no $HOME exists at all). Planting a $HOME that must NOT
+    // be chosen makes the assertion bite in every environment.
+    version (Windows) {
+        const userProfile = environment.get("USERPROFILE", "");
+        if (userProfile.length) {
+            const savedHome = environment.get("HOME", "");
+            environment["HOME"] = `Z:\not-the-home-dir`;
+            scope(exit) {
+                if (savedHome.length) environment["HOME"] = savedHome;
+                else                  environment.remove("HOME");
+            }
+            assert(userHomeDir() == userProfile,
+                   "on Windows the home dir must come from %USERPROFILE% (" ~
+                   userProfile ~ ") like python's Path.home() -- never $HOME; got: " ~
+                   userHomeDir());
+        }
+    }
+
+    // The derived cache path must be absolute -- buildPath("", ".cache")
+    // silently yields a relative one, which is how the bug hid. Asserted only
+    // when no HF_* / XDG_ override is in play: those are the operator's own
+    // paths, and asserting their SHAPE would make this test fail on a host
+    // that legitimately points its cache elsewhere (the env-dependent-unittest
+    // trap this module has been bitten by before).
+    const noOverride = environment.get("HF_HUB_CACHE", "").length == 0
+                    && environment.get("HF_HOME", "").length == 0
+                    && environment.get("XDG_CACHE_HOME", "").length == 0;
+    if (noOverride) {
+        const derived = resolveModelCacheDir("");
+        assert(derived.isAbsolute,
+               "resolved HF cache dir must be absolute, got: " ~ derived);
+        import std.algorithm.searching : canFind;
+        assert(derived.canFind("huggingface"), derived);
+    }
 }
 
 // Ai3dWorkerManager.state(): notInstalled (no config file) ->

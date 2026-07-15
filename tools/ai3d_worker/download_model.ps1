@@ -4,9 +4,6 @@
     HuggingFace cache -- the Windows counterpart of download_model.sh.
 
 .DESCRIPTION
-    TODO(windows): UNTESTED -- written on Linux, never run on a real
-    Windows box. See install_windows.ps1's banner for the same caveat.
-
     The Vibe3D AI-3D worker NEVER auto-downloads the model at generation
     time. Run this script ONCE, explicitly, before you start the `trellis`
     backend. It is a thin wrapper around the worker's `fetch-model`
@@ -44,8 +41,12 @@
 
 .NOTES
     Environment: the actual download needs `huggingface_hub` installed, so
-    run this using the AI-generation venv's python (or set $env:VIBE3D_PYTHON
-    to that interpreter). -Check works even in a bare stdlib-only env (it
+    this runs the AI-generation venv's python -- taken from the install
+    handshake config ($env:LOCALAPPDATA\vibe3d\ai3d.json) that
+    install_windows.ps1 writes, or from $env:VIBE3D_PYTHON, which overrides
+    it. Only if neither is available does it fall back to a bare `python`
+    off PATH (which will almost certainly lack huggingface_hub -- hence the
+    warning it prints). -Check works even in a bare stdlib-only env (it
     falls back to a filesystem probe of the cache). $env:PYTHONPATH is set
     to this directory so `-m vibe3d_ai3d_worker` resolves without an
     install, whether or not a venv is active.
@@ -61,7 +62,37 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = if ($env:VIBE3D_PYTHON) { $env:VIBE3D_PYTHON } else { "python" }
+
+# Resolve the interpreter: explicit override, else the venv install_windows.ps1
+# recorded in the handshake config, else a bare `python`. That last one is a
+# near-certain failure for a real download (no huggingface_hub in a system
+# python), so it warns rather than failing later with an opaque ImportError --
+# the editor's own Install chain never lands here (worker_manager.d calls the
+# venv python directly, see the note above), so this path only ever runs for
+# someone at a terminal, who deserves to be told which python they got.
+function Resolve-Python {
+    if ($env:VIBE3D_PYTHON) { return $env:VIBE3D_PYTHON }
+
+    $cfg = Join-Path $env:LOCALAPPDATA "vibe3d\ai3d.json"
+    if (Test-Path $cfg) {
+        try {
+            $json = Get-Content -Raw -Path $cfg | ConvertFrom-Json
+            # -notin on a PSCustomObject's properties: guard both a missing
+            # key and a null/empty value before trusting the path.
+            if ($json.PSObject.Properties.Name -contains "python" -and $json.python) {
+                if (Test-Path $json.python) { return $json.python }
+                Write-Warning "config $cfg points at a python that does not exist: $($json.python)"
+            }
+        } catch {
+            Write-Warning "could not read $cfg ($($_.Exception.Message)) -- falling back to PATH"
+        }
+    }
+
+    Write-Warning "no AI-generation venv found (is the add-on installed?) -- using 'python' from PATH, which probably lacks huggingface_hub. Set `$env:VIBE3D_PYTHON to override."
+    return "python"
+}
+
+$Python = Resolve-Python
 
 $env:PYTHONPATH = if ($env:PYTHONPATH) { "$ScriptDir;$env:PYTHONPATH" } else { $ScriptDir }
 

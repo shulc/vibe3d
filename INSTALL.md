@@ -83,24 +83,31 @@ Linux-only); its buttons appear greyed out.
 
 ---
 
-## Optional: AI image→3D generation (Linux)
+## Optional: AI image→3D generation (Linux + Windows)
 
 An opt-in add-on turns a reference image into a mesh. It is **not part of the
 base download** — you install it from inside the editor, and it downloads a
 ~several-GB model from Hugging Face on first setup.
 
-**Requirements (Linux only):**
-- An **NVIDIA GPU** with a recent driver (the installer preflights driver +
-  CUDA version and **≥ 6 GB VRAM**).
-- **Python 3.11** (or 3.10) on `PATH`.
+**Requirements:**
+- An **NVIDIA GPU** with **≥ 6 GB VRAM** and a driver from the **CUDA 12.x**
+  era (the installer preflights both). You do **not** need to install the CUDA
+  Toolkit — the PyTorch wheels bundle the CUDA runtime, so a driver is all it
+  takes. A driver older than the wheels' own CUDA is fine (CUDA 12.x minor
+  version compatibility); the installer says so and carries on.
+- **Python 3.11** — required exactly, because the prebuilt CUDA extension
+  wheels are 3.11-only. On **Windows** the installer installs it for you (per
+  user, no admin, your `PATH` untouched) if it is missing. On **Linux** it must
+  already be on `PATH` (`python3.11`).
 - Several GB of disk for the Python environment + the model weights.
 - Network access for the first-time model + dependency download.
 
 **How to install:** open **Generate 3D** in the editor and click **Install AI
-generation**. That runs `tools/ai3d_worker/install_linux.sh` (shipped next to the
-editor), which builds an isolated environment and provisions the generation
-backend; then use **Start** / **Stop** to run it. Model download is a separate,
-explicit step (`Download model`, or `tools/ai3d_worker/download_model.sh`).
+generation**. That runs the installer shipped next to the editor
+(`tools/ai3d_worker/install_linux.sh`, or `install_windows.ps1` on Windows),
+which builds an isolated environment and provisions the generation backend;
+then use **Start** / **Stop** to run it. Model download is a separate, explicit
+step (`Download model`, or `download_model.sh` / `download_model.ps1`).
 
 The first generation after starting the worker is slow (it loads the model and
 compiles GPU kernels — up to a few minutes); subsequent runs take ~15–35 s.
