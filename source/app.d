@@ -973,17 +973,20 @@ void drawPerfHud() {
 //     WithAI, full stop.
 //
 //   kGenerateAiAvailable — the "Generate 3D…" (ai3d.generate.open) File-menu
-//     entry, which drives the TRELLIS worker via install_linux.sh — a
-//     Linux-only platform dependency independent of onnxruntime. A
-//     `modeling` (WithAI) build on macOS or Windows still has no TRELLIS,
-//     so this additionally requires `version (linux)`.
+//     entry, which drives the TRELLIS worker via install_linux.sh /
+//     install_windows.ps1 (source/ai3d/worker_manager.d) — a platform
+//     dependency independent of onnxruntime, gated on TRELLIS needing an
+//     NVIDIA CUDA GPU: available on Linux and Windows, never on macOS (no
+//     NVIDIA/CUDA there). So this is WithAI on Linux/Windows, `false`
+//     unconditionally on macOS regardless of WithAI.
 //
 // Both are plain compile-time bools (not runtime checks) so the greyed-out
 // state in a `modeling-noai` build is provably static, not a code path that
 // could be flipped by a stray env var.
-version (linux) {
-    version (WithAI) enum bool kGenerateAiAvailable = true;
-    else              enum bool kGenerateAiAvailable = false;
+version (OSX) {
+    enum bool kGenerateAiAvailable = false;
+} else version (WithAI) {
+    enum bool kGenerateAiAvailable = true;
 } else {
     enum bool kGenerateAiAvailable = false;
 }

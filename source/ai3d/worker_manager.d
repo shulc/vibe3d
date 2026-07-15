@@ -5,20 +5,23 @@ module ai3d.worker_manager;
 // (TRELLIS) worker subprocess (task 0403). Before this module existed, the
 // end user had to run `python -m vibe3d_ai3d_worker serve` by hand in a
 // terminal before opening the Generate 3D panel. This module lets the
-// editor do that itself: Install (spawn install_linux.sh, then
-// download_model.sh), Start (spawn the worker, then the caller polls
-// /v1/health via ai3d.stage_artifact.probeHealthCheck — the SAME call the
-// Generate 3D modal's health line already drives through
+// editor do that itself: Install (spawn install_linux.sh on Linux /
+// install_windows.ps1 on Windows, then chain into the model-download stage
+// — see downloadStageArgs()), Start (spawn the worker, then the caller
+// polls /v1/health via ai3d.stage_artifact.probeHealthCheck — the SAME call
+// the Generate 3D modal's health line already drives through
 // Ai3dJobController.probeHealth(), so no new health-check code path exists),
 // and Stop (signal + reap the worker WE spawned).
 //
-// Config handshake: a small versioned JSON file written by install_linux.sh
-// and read here — see Ai3dInstallConfig / loadAi3dConfig / saveAi3dConfig.
-// Format follows prefs.d's convention (versioned, tolerant parseJSON read,
-// std.json write — never dyaml, this file is machine-written +
-// machine-read). Default location honors XDG_DATA_HOME (this is desired-
-// state DATA the editor manages, not user config preferences, hence
-// XDG_DATA_HOME rather than prefs.d's XDG_CONFIG_HOME).
+// Config handshake: a small versioned JSON file written by the platform
+// install script (install_linux.sh / install_windows.ps1) and read here —
+// see Ai3dInstallConfig / loadAi3dConfig / saveAi3dConfig. Format follows
+// prefs.d's convention (versioned, tolerant parseJSON read, std.json write
+// — never dyaml, this file is machine-written + machine-read). Default
+// location honors XDG_DATA_HOME on Linux / %LOCALAPPDATA% on Windows (see
+// ai3dConfigDir()) — this is desired-state DATA the editor manages, not
+// user config preferences, hence the XDG_DATA_HOME-style location rather
+// than prefs.d's XDG_CONFIG_HOME-style one.
 //
 // Process ownership: this class tracks ONLY processes IT spawned (its own
 // `Pid`). It never discovers or touches a worker running on the configured
@@ -84,14 +87,25 @@ private int clampPort(int p) {
 
 /// Directory holding `ai3d.json`. Resolution order:
 ///   1. $VIBE3D_AI3D_CONFIG_DIR  (tests, multi-instance debugging — highest)
-///   2. $XDG_DATA_HOME/vibe3d else ~/.local/share/vibe3d
+///   2. Windows: %LOCALAPPDATA%\vibe3d
+///      else:    $XDG_DATA_HOME/vibe3d else ~/.local/share/vibe3d
 string ai3dConfigDir() {
     if (auto over = environment.get("VIBE3D_AI3D_CONFIG_DIR"))
         if (over.length > 0) return over;
-    if (auto xdg = environment.get("XDG_DATA_HOME"))
-        if (xdg.length > 0) return buildPath(xdg, "vibe3d");
-    const home = environment.get("HOME", "");
-    return buildPath(home, ".local", "share", "vibe3d");
+    version (Windows) {
+        // %LOCALAPPDATA%\vibe3d -- LOCALAPPDATA (not the roaming %APPDATA%
+        // prefs.d itself uses) matches the module doc comment's framing:
+        // this is desired-state DATA the editor manages (mirrors XDG_DATA_HOME
+        // on Linux), not roaming user config/preferences. Matches
+        // install_windows.ps1's own default location.
+        const local = environment.get("LOCALAPPDATA", "");
+        return buildPath(local, "vibe3d");
+    } else {
+        if (auto xdg = environment.get("XDG_DATA_HOME"))
+            if (xdg.length > 0) return buildPath(xdg, "vibe3d");
+        const home = environment.get("HOME", "");
+        return buildPath(home, ".local", "share", "vibe3d");
+    }
 }
 
 /// Full path to the config handshake file the editor reads and
@@ -418,10 +432,12 @@ final class Ai3dWorkerManager {
         }
     }
 
-    /// Spawn install_linux.sh (non-blocking); on its success, chain into
-    /// download_model.sh (unless `downloadModel` is false); pollInstall()
-    /// drives both stages and reloads the config once the chain finishes.
-    /// No-op (false) if a prior install/download stage is still running.
+    /// Spawn the platform install script (install_linux.sh /
+    /// install_windows.ps1, non-blocking); on its success, chain into the
+    /// model-download stage (unless `downloadModel` is false; see
+    /// downloadStageArgs()); pollInstall() drives both stages and reloads
+    /// the config once the chain finishes. No-op (false) if a prior
+    /// install/download stage is still running.
     bool runInstall(string installLocation = "", string trellisRoot = "",
                      bool downloadModel = true) {
         if (installBusy()) return false;
@@ -429,17 +445,33 @@ final class Ai3dWorkerManager {
         auto script = locateInstallScript();
         if (script is null) {
             installState_   = Ai3dInstallState.failed;
-            installMessage_ = "install_linux.sh not found "
+            installMessage_ = installScriptName() ~ " not found "
                              ~ "(set VIBE3D_AI3D_INSTALL_SCRIPT)";
             return false;
         }
+        // Linux-path only: Windows' pollInstall() builds its own fetch-model
+        // invocation directly off config_.python (see downloadStageArgs()),
+        // no wrapper script needed there.
         downloadScriptPath_       = buildPath(dirName(script), "download_model.sh");
         downloadModelAfterInstall_ = downloadModel;
         installLogPath_            = null; // fresh log for this run
 
-        string[] args = [script];
-        if (installLocation.length) args ~= ["--location", installLocation];
-        if (trellisRoot.length)     args ~= ["--trellis-root", trellisRoot];
+        string[] args;
+        version (Windows) {
+            // .ps1 files have no exec-bit/shebang mechanism on Windows --
+            // spawnProcess can't run one directly the way it runs the Linux
+            // shell script. -NoProfile skips a possibly slow/broken user
+            // profile script; -ExecutionPolicy Bypass sidesteps the default
+            // Restricted policy rejecting an unsigned script, scoped to just
+            // this one process (never touches the user's persistent policy).
+            args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script];
+            if (installLocation.length) args ~= ["-Location", installLocation];
+            if (trellisRoot.length)     args ~= ["-TrellisRoot", trellisRoot];
+        } else {
+            args = [script];
+            if (installLocation.length) args ~= ["--location", installLocation];
+            if (trellisRoot.length)     args ~= ["--trellis-root", trellisRoot];
+        }
 
         return spawnInstallStage(args, Ai3dInstallState.runningInstall);
     }
@@ -490,11 +522,14 @@ final class Ai3dWorkerManager {
         }
 
         if (installState_ == Ai3dInstallState.runningInstall) {
-            refresh(); // install_linux.sh just wrote the config
-            if (downloadModelAfterInstall_ && exists(downloadScriptPath_)) {
-                if (spawnInstallStage([downloadScriptPath_], Ai3dInstallState.runningDownload))
-                    return;
-                return; // spawnInstallStage already set failed
+            refresh(); // the install script just wrote the config
+            if (downloadModelAfterInstall_) {
+                auto dlArgs = downloadStageArgs();
+                if (dlArgs.length) {
+                    if (spawnInstallStage(dlArgs, Ai3dInstallState.runningDownload))
+                        return;
+                    return; // spawnInstallStage already set failed
+                }
             }
             installState_ = Ai3dInstallState.succeeded;
             return;
@@ -503,6 +538,28 @@ final class Ai3dWorkerManager {
         // runningDownload finished successfully.
         refresh();
         installState_ = Ai3dInstallState.succeeded;
+    }
+
+    /// Args to spawn the model-download stage chained right after a
+    /// successful install (see pollInstall()). Platform-dependent:
+    ///   Linux:   download_model.sh next to the install script (a thin
+    ///            PYTHONPATH-setting wrapper around `fetch-model`).
+    ///   Windows: the just-installed venv python (config_.python -- valid
+    ///            here because refresh() already reloaded the config the
+    ///            install script wrote) running the cross-platform
+    ///            `fetch-model` subcommand directly. No wrapper script is
+    ///            needed: fetch-model is a stdlib-only argparse subcommand
+    ///            (see vibe3d_ai3d_worker/server.py), so there is nothing
+    ///            a .ps1 wrapper would add here that spawnProcess can't
+    ///            already do by invoking the venv python.
+    /// Empty (no chaining) if the required piece isn't there.
+    private string[] downloadStageArgs() const {
+        version (Windows) {
+            if (!pythonLooksUsable(config_.python)) return null;
+            return [config_.python, "-m", "vibe3d_ai3d_worker", "fetch-model"];
+        } else {
+            return exists(downloadScriptPath_) ? [downloadScriptPath_] : null;
+        }
     }
 
     /// Cooperative cancel of an in-flight install/download stage: SIGKILL +
@@ -531,23 +588,36 @@ final class Ai3dWorkerManager {
         installMessage_ = null;
     }
 
-    /// Locate install_linux.sh: env override first (tests, non-standard
-    /// layouts), then relative to the running executable's directory (a
-    /// packaged install that ships `tools/` alongside the binary), then the
-    /// repo-relative path resolved from THIS module's own source location
-    /// at compile time (dev convenience — works for a freshly built binary
-    /// run from any cwd against its own source tree).
+    /// The platform installer script's filename inside tools/ai3d_worker/:
+    /// install_linux.sh on Linux (and any other non-Windows target -- macOS
+    /// never actually reaches this in practice, since kGenerateAiAvailable
+    /// gates the whole Generate-3D feature off there in app.d, TRELLIS
+    /// needing an NVIDIA CUDA GPU Macs don't have), install_windows.ps1 on
+    /// Windows.
+    private static string installScriptName() {
+        version (Windows) return "install_windows.ps1";
+        else               return "install_linux.sh";
+    }
+
+    /// Locate the platform install script: env override first (tests,
+    /// non-standard layouts), then relative to the running executable's
+    /// directory (a packaged install that ships `tools/` alongside the
+    /// binary), then the repo-relative path resolved from THIS module's own
+    /// source location at compile time (dev convenience — works for a
+    /// freshly built binary run from any cwd against its own source tree).
     private static string locateInstallScript() {
         if (auto over = environment.get("VIBE3D_AI3D_INSTALL_SCRIPT"))
             if (over.length && exists(over)) return over;
 
+        const name = installScriptName();
+
         try {
-            auto exeRel = buildPath(dirName(thisExePath()), "tools", "ai3d_worker", "install_linux.sh");
+            auto exeRel = buildPath(dirName(thisExePath()), "tools", "ai3d_worker", name);
             if (exists(exeRel)) return exeRel;
         } catch (Exception) {}
 
         enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-        auto devPath = buildPath(repoRoot, "tools", "ai3d_worker", "install_linux.sh");
+        auto devPath = buildPath(repoRoot, "tools", "ai3d_worker", name);
         if (exists(devPath)) return devPath;
 
         return null;
