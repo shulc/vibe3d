@@ -127,9 +127,8 @@ PrivilegesRequired=admin
 
 ; 64-bit only. "x64compatible" (Inno Setup 6.3+) also permits ARM64 Windows
 ; running the x64 build under emulation, and makes {autopf} resolve to the real
-; 64-bit "Program Files" (not the x86 one).
-; TODO(windows): if the maintainer's Inno Setup is OLDER than 6.3, replace both
-;   values below with plain "x64" (the pre-6.3 identifier).
+; 64-bit "Program Files" (not the x86 one). Verified compiling with Inno Setup
+; 6.7.3; the build helper enforces >= 6.3. (Pre-6.3 would need plain "x64".)
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -137,13 +136,22 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; which imports Win8+ apisets, and relies on the in-box Universal CRT that ships
 ; with Windows 10+. (The noai payload ships its own UCRT and would set 6.1 for
 ; Windows 7 — see the noai note in the header.)
-; TODO(windows): verify the minimum OS the modeling build actually launches on.
+; Verified: the modeling/WithAI build installs + launches on Windows 10.
 MinVersion=10.0
 
 ; Compression + wizard look.
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+
+; In-place upgrade over a running editor: use the Restart Manager to detect +
+; close a running vibe3d.exe (and any process holding an installed file) so the
+; new version can overwrite it, instead of failing with "file in use". We do NOT
+; auto-restart the app afterwards (RestartApplications=no) — the user relaunches.
+; Verified: reinstalling over an existing install upgrades in place (same AppId,
+; same dir); user settings (prefs/imgui.ini, not shipped files) are preserved.
+CloseApplications=yes
+RestartApplications=no
 
 ; Setup .exe icon + the icon shown in Add/Remove Programs.
 SetupIconFile={#AppIcon}
@@ -205,10 +213,12 @@ Source: "{#PayloadDir}\THIRD_PARTY_LICENSES.md"; DestDir: "{app}"; Flags: ignore
 [Icons]
 ; WorkingDir is set to {app} so the editor resolves its relative config/ and
 ; assets/ paths from the install folder regardless of where the shortcut is
-; launched from.
-; TODO(windows): confirm vibe3d looks up config/ + assets/ relative to the
-; working directory (this WorkingDir={app} guarantees it) rather than only
-; relative to the exe path.
+; launched from. Verified: launching from {app} (Program Files) resolves config/
+; and starts the editor. Note: the editor also WRITES runtime files (imgui.ini,
+; prefs, event log) to its CWD = {app}; on a standard (non-admin) account those
+; writes land in the per-user VirtualStore or are skipped — settings persistence
+; from Program Files is imperfect. A future editor change should read config/
+; from the exe dir and write user data under %APPDATA% (tracked as a follow-up).
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\vibe3d.ico"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\vibe3d.ico"; Tasks: desktopicon
