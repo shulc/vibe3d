@@ -733,8 +733,13 @@ unittest {
 
     auto mgr = new Ai3dWorkerManager(path);
     assert(mgr.state() == Ai3dWorkerState.notInstalled);
-    assert(mgr.modelPresent() == true, "non-installed config defaults backend=trellis but "
-        ~ "an absent model must not crash the probe -- it just reports false/true safely");
+    // The default (no config file) backend is trellis, so modelPresent() probes
+    // the real HF model cache during construction. Whether the model is actually
+    // there is HOST-DEPENDENT — present on a dev box that ran a generation, absent
+    // on a clean CI runner — so assert only that constructing + probing ran
+    // WITHOUT THROWING (the old `== true` asserted the cache-hit value and was a
+    // latent CI-only failure). modelPresent() itself is a pure getter.
+    cast(void) mgr.modelPresent();
 
     Ai3dInstallConfig c;
     c.installed = true;
