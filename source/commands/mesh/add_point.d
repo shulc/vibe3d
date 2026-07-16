@@ -1,13 +1,12 @@
 module commands.mesh.add_point;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 
@@ -20,21 +19,12 @@ import snapshot : MeshSnapshot;
 /// sweep is a deliberate non-goal (one point per command call, see plan §Scope).
 class MeshAddPoint : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private float t_ = 0.5f;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.addPoint"; }
@@ -77,14 +67,14 @@ class MeshAddPoint : Command, Operator {
 
         // Leave selection as-is — consistent with the loop-insert family
         // (mesh.addLoop / mesh.loopSlice do not reset selection either).
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

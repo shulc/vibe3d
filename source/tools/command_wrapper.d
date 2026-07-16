@@ -732,7 +732,7 @@ final class XfrmJitterTool : CommandWrapperTool {
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        inner_ = new MeshJitter(mesh, view, editMode, gpu, vc, ec, fc);
+        inner_ = new MeshJitter(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;

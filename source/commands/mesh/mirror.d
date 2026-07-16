@@ -1,12 +1,11 @@
 module commands.mesh.mirror_;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math    : Vec3;
 import params  : Param;
 import snapshot : MeshSnapshot;
@@ -23,10 +22,6 @@ import snapshot : MeshSnapshot;
 /// MeshDuplicate; mirror touches both `vertices` and `faces`.
 class MeshMirror : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     // Param-backed schema fields. Stored as plain T so &field works.
@@ -35,13 +30,8 @@ class MeshMirror : Command, Operator {
     private float  weld_         = 0.001f;
     private bool   flipNormals_  = true;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.mirror"; }
@@ -101,6 +91,6 @@ class MeshMirror : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

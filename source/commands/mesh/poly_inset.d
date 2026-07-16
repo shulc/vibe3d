@@ -1,12 +1,11 @@
 module commands.mesh.poly_inset;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 
@@ -40,20 +39,11 @@ private bool[] allTrue(size_t n) {
 /// applied — see PolyInsetTool's class doc-comment).
 class MeshPolygonInset : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
     private float            inset_ = 0.1f;   // safe non-zero default (task 0359 review)
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.poly_inset"; }
@@ -92,6 +82,6 @@ class MeshPolygonInset : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

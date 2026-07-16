@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import geometry_clipboard : geometryClipboard, GeometryClip;
 
 /// Snapshot the currently selected faces into the global geometry clipboard.
@@ -16,18 +15,9 @@ import geometry_clipboard : geometryClipboard, GeometryClip;
 /// in vibe3d's face-derived edge model.
 class MeshCopy : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.copy"; }

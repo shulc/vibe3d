@@ -1,12 +1,11 @@
 module commands.mesh.remove_;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
@@ -33,10 +32,6 @@ private bool[] allTrue(size_t n) {
 /// kernel batchless from the restored pre-op selection.
 class MeshRemove : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     // Phase 3 delta path — see MeshDelete for the rationale. Vertex/face
@@ -54,13 +49,8 @@ class MeshRemove : Command, Operator {
     // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
     private EditMode appliedMode_;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu         = gpu;
-        this.vc          = vc;
-        this.ec          = ec;
-        this.fc          = fc;
         this.appliedMode_ = editMode;   // stable default before apply() runs
     }
 
@@ -173,6 +163,6 @@ class MeshRemove : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

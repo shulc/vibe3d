@@ -1,11 +1,10 @@
 module commands.mesh.jitter;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -26,10 +25,6 @@ import std.math   : sqrt, cos, sin, PI;
 /// reorder happens until topology mutates), the same script twice
 /// gives the same output. This is a vibe3d-original deformer.
 class MeshJitter : Command, Operator, IFalloffAware {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     // Per-axis jitter amplitude (`rangeX/Y/Z`).
     private float            rangeX_ = 0.1f;
     private float            rangeY_ = 0.1f;
@@ -52,13 +47,8 @@ class MeshJitter : Command, Operator, IFalloffAware {
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.jitter"; }
@@ -165,7 +155,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -174,7 +164,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

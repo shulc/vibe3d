@@ -3855,7 +3855,6 @@ void main(string[] args) {
                               () => setActiveTool(null));
     reg.commandFactories["mesh.mergeFaces"] = () => cast(Command)
         new MeshMergeFaces(&mesh(), cameraView, editMode,
-                           &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                            () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
@@ -3867,8 +3866,7 @@ void main(string[] args) {
         new MeshSplitEdge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.addPoint"] = () => cast(Command)
-        new MeshAddPoint(&mesh(), cameraView, editMode, &gpu,
-                         &vertexCache(), &edgeCache(), &faceCache());
+        new MeshAddPoint(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.splitFace"] = () => cast(Command)
         new MeshSplitFace(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache(), &edgeCache(), &faceCache());
@@ -3890,16 +3888,13 @@ void main(string[] args) {
         new MeshVertexBevel(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
-        new MeshPolygonInset(&mesh(), cameraView, editMode, &gpu,
-                             &vertexCache(), &edgeCache(), &faceCache());
+        new MeshPolygonInset(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.spikey"] = () => cast(Command)
-        new MeshSpikey(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSpikey(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.bevel"] = () => cast(Command)
         new MeshBevel(&mesh(), cameraView, editMode);
     reg.commandFactories["poly.extrude"] = () => cast(Command)
-        new MeshFaceExtrude(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshFaceExtrude(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.bridge"] = () => cast(Command)
         new MeshBridge(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.axisSlice"] = () => cast(Command)
@@ -3925,8 +3920,7 @@ void main(string[] args) {
         new MeshSmoothShift(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
-        new MeshEdgeExtend(&mesh(), cameraView, editMode, &gpu,
-                           &vertexCache(), &edgeCache(), &faceCache());
+        new MeshEdgeExtend(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.addVertex"] = () => cast(Command)
@@ -3941,35 +3935,28 @@ void main(string[] args) {
     reg.commandFactories["mesh.delete"] = () => cast(Command)
         new MeshDelete(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.remove"] = () => cast(Command)
-        new MeshRemove(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache());
+        new MeshRemove(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.flip"] = () => cast(Command)
         new MeshFlip(&mesh(), cameraView, editMode, &gpu,
                      &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.duplicate"] = () => cast(Command)
-        new MeshDuplicate(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+        new MeshDuplicate(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.copy"] = () => cast(Command)
-        new MeshCopy(&mesh(), cameraView, editMode, &gpu,
-                     &vertexCache(), &edgeCache(), &faceCache());
+        new MeshCopy(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.paste"] = () => cast(Command)
         new MeshPaste(&mesh(), cameraView, editMode, &gpu,
                       &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.cut"] = () => cast(Command)
-        new MeshCut(&mesh(), cameraView, editMode, &gpu,
-                    &vertexCache(), &edgeCache(), &faceCache());
+        new MeshCut(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.mirror"] = () => cast(Command)
-        new MeshMirror(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache());
+        new MeshMirror(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.symmetrize"] = () => cast(Command)
         new MeshSymmetrize(&mesh(), cameraView, editMode, &gpu,
                            &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.array"] = () => cast(Command)
-        new MeshArray(&mesh(), cameraView, editMode, &gpu,
-                      &vertexCache(), &edgeCache(), &faceCache());
+        new MeshArray(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.clone"] = () => cast(Command)
-        new MeshClone(&mesh(), cameraView, editMode, &gpu,
-                      &vertexCache(), &edgeCache(), &faceCache());
+        new MeshClone(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.radial_array"] = () => cast(Command)
         new MeshRadialArray(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.sweep"] = () => cast(Command)
@@ -4032,8 +4019,7 @@ void main(string[] args) {
         new MeshQuantize(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.jitter"] = () => cast(Command)
-        new MeshJitter(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache());
+        new MeshJitter(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.magnet"] = () => cast(Command)
         new MeshMagnet(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache(), &edgeCache(), &faceCache());
