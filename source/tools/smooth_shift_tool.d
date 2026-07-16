@@ -13,17 +13,17 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.smooth_shift_edit : MeshSmoothShiftEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-/// The interactive tool reuses the dedicated MeshSmoothShiftEdit record
+/// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool /
 /// PolyBevelTool's pattern.
-alias SmoothShiftEditFactory = MeshSmoothShiftEdit delegate();
+alias SmoothShiftEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // SmoothShiftTool — interactive Smooth Shift + Thicken (factory id

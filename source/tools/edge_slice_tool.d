@@ -16,7 +16,7 @@ import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
@@ -24,9 +24,9 @@ import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 
 // The interactive commit reuses the generic before/after snapshot edit command
-// (the same MeshBevelEdit the mirror / tack / Slice tools reuse for their
+// (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
 // one-shot snapshot undo), labelled "Edge Slice".
-alias EdgeSliceEditFactory = MeshBevelEdit delegate();
+alias EdgeSliceEditFactory = MeshSessionEdit delegate();
 
 /// The `t = %` HUD readout string — mirrors `loopSliceHudLabel`
 /// (loop_slice_tool.d) so both slice-family tools print the same shape.
@@ -370,7 +370,7 @@ public:
     // dropping the tool. Returns false once the chain is empty (committed or
     // never started), so navHistory falls through to the ordinary
     // hasUncommittedEdit()/history.undo() path — the post-commit whole-chain
-    // undo (chainBefore_ + the single MeshBevelEdit at commitChain) is
+    // undo (chainBefore_ + the single MeshSessionEdit at commitChain) is
     // completely unaffected: dropArmedPreview() has already cleared
     // latchedPoints_ by the time a commit lands.
     override bool tryUndoStepInSession() {

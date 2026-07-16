@@ -13,7 +13,7 @@ import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
@@ -27,7 +27,7 @@ import std.math : sin, cos, PI, abs, sqrt;
 
 // Reuses the generic snapshot-pair edit factory (same convention as
 // BoxTool / SphereTool).
-alias CylinderEditFactory = MeshBevelEdit delegate();
+alias CylinderEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // CylinderParams — wire schema for prim.cylinder headless invocation.

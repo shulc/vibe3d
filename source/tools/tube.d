@@ -13,7 +13,7 @@ import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
                               mostFacingAxis,
@@ -24,7 +24,7 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : sin, cos, PI, abs, sqrt, fmax, fmin;
 
-alias TubeEditFactory = MeshBevelEdit delegate();
+alias TubeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // TubeParams — wire schema for prim.tube headless invocation.

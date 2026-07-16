@@ -8,14 +8,14 @@ import math;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
 
-alias VertexEditFactory = MeshBevelEdit delegate();
+alias VertexEditFactory = MeshSessionEdit delegate();
 
 // Pixel pick radius for DragWeldTool source/target vertex selection.
 // A vertex must project within this many pixels of the mouse to be

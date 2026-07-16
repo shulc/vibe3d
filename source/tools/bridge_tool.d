@@ -10,7 +10,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader;
 import std.json : JSONValue;
@@ -18,10 +18,10 @@ import std.json : JSONValue;
 version (unittest) import std.conv : to;
 
 // Reuses the same generic (pre, post) MeshSnapshot pair as Mirror/Tack
-// (MeshBevelEdit / bevelEditFactory) — see tools/mirror.d's
+// (MeshSessionEdit / bevelEditFactory) — see tools/mirror.d's
 // MirrorEditFactory doc comment. Despite the name, it's a fully generic
 // snapshot-diff undo command, not bevel-specific.
-alias BridgeEditFactory = MeshBevelEdit delegate();
+alias BridgeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // BridgeParams — single source of truth for the Bridge tool (task 0357),
@@ -190,7 +190,7 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // `mesh.bridgeTool`). A generator tool (Mirror/Tack precedent, project
 // memory project_radial_sweep_tool.md): own preview Mesh/GpuMesh that is
 // NEVER the document mesh during interaction; committed once in
-// deactivate() via the generic MeshBevelEdit snapshot-diff undo path.
+// deactivate() via the generic MeshSessionEdit snapshot-diff undo path.
 //
 // No gizmo/handle (task 0357 toolcard: the reference tool is ACTR-class,
 // same family as edge.slide/sweep — a click-drag single-numeric-value

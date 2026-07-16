@@ -10,12 +10,12 @@ import editmode : EditMode;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.stroke_extrude_edit : MeshStrokeExtrudeEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-alias StrokeExtrudeEditFactory = MeshStrokeExtrudeEdit delegate();
+alias StrokeExtrudeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // StrokeExtrudeTool — interactive port of the reference editor's "Sketch
@@ -61,7 +61,7 @@ alias StrokeExtrudeEditFactory = MeshStrokeExtrudeEdit delegate();
 //                    law RadialArrayTool/PolyExtrudeTool use for
 //                    topology-creating previews).
 //   deactivate() — if a built stroke is pending: commit
-//                    MeshStrokeExtrudeEdit as ONE undo entry.
+//                    MeshSessionEdit as ONE undo entry.
 //
 // Headless path: NONE, faithfully. The toolcard's own
 // `gesture_model.no_headless_path` finding is unambiguous: none of the
@@ -72,7 +72,7 @@ alias StrokeExtrudeEditFactory = MeshStrokeExtrudeEdit delegate();
 // this operation is the one-shot `mesh.strokeExtrude` command instead
 // (explicit path-point list param), which this tool's own commit path
 // also drives (via the kernel, wrapped in the record-flavor
-// MeshStrokeExtrudeEdit rather than the one-shot command itself).
+// MeshSessionEdit rather than the one-shot command itself).
 // ---------------------------------------------------------------------------
 class StrokeExtrudeTool : Tool {
 private:

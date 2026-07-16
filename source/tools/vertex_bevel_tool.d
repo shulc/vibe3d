@@ -13,19 +13,19 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-// Reuses the generic before/after-snapshot record command (MeshBevelEdit),
+// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/edge_bevel.d and tools/poly_bevel.d — see those modules'
 // comments. The undo LABEL is set per-session via setSnapshots(...,
 // "Vertex Bevel"), so the history entry reads distinctly even though the
 // underlying command class name stays "mesh.bevel_edit".
-alias VertexBevelEditFactory = MeshBevelEdit delegate();
+alias VertexBevelEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // VertexBevelTool — interactive Vertex Bevel (factory id `mesh.vertexBevel`,

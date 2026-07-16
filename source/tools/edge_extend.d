@@ -11,7 +11,7 @@ import editmode : EditMode;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
@@ -23,11 +23,11 @@ import tools.move : MoveTool;
 import tools.rotate : RotateTool;
 import tools.scale : ScaleTool;
 
-/// The interactive tool reuses the dedicated MeshEdgeExtendEdit record command
+/// The interactive tool reuses the dedicated MeshSessionEdit record command
 /// (a before/after MeshSnapshot pair OR an operation-log MeshEditDelta) — the
-/// same plumbing EdgeExtrudeTool uses for MeshEdgeExtrudeEdit. A dedicated class
+/// same plumbing EdgeExtrudeTool uses for MeshSessionEdit. A dedicated class
 /// keeps the undo label reading "Edge Extend".
-alias EdgeExtendEditFactory = MeshEdgeExtendEdit delegate();
+alias EdgeExtendEditFactory = MeshSessionEdit delegate();
 
 // The VIBE3D_UNDO_TRACKER toggle (`undoTrackerEnabled`/`setUndoTrackerEnabled`)
 // lives in `mesh_edit_delta` — one definition shared with edge_extrude.d,
@@ -51,7 +51,7 @@ alias EdgeExtendEditFactory = MeshEdgeExtendEdit delegate();
 //                 `offset` param, then rebuildPreview() (revert to `before` →
 //                 re-run extendEdgesByMask from the clean cage → refreshCaches).
 //   deactivate() — if any geometry was built, capture `after`, build a
-//                 MeshEdgeExtendEdit via the injected factory, and push it onto
+//                 MeshSessionEdit via the injected factory, and push it onto
 //                 history as ONE undo step (snapshot or delta path).
 //
 // Interactive surface (doc/edge_extend_plan.md §4) — EMBED, do NOT clone gizmos.

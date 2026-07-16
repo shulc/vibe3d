@@ -13,20 +13,20 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-alias EdgeBevelEditFactory = MeshBevelEdit delegate();
+alias EdgeBevelEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
 //
 // Topology-creating tool, modelled on PolyExtrudeTool. One snapshot undo entry
-// per gesture (MeshBevelEdit before/after pair, via bevelEditFactory).
+// per gesture (MeshSessionEdit before/after pair, via bevelEditFactory).
 //
 // Single handle:
 //   PART_WIDTH = BLUE Arrow along the averaged adjacent-face normal.

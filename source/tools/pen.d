@@ -12,7 +12,7 @@ import handler : BoxHandler, gizmoSize, ToolHandles;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
@@ -35,7 +35,7 @@ import std.math : abs;
 private enum uint guideBits =
     SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
-alias PenEditFactory = MeshBevelEdit delegate();
+alias PenEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // PenParams — vibe3d's pen tool wire schema.

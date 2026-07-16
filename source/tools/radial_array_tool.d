@@ -13,17 +13,17 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.radial_array_edit : MeshRadialArrayEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : sin, cos, atan2, PI;
 
-/// The interactive tool reuses the dedicated MeshRadialArrayEdit record
+/// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool's
 /// pattern.
-alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
+alias RadialArrayEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // RadialArrayTool — interactive port of the reference editor's "Radial
@@ -106,7 +106,7 @@ alias RadialArrayEditFactory = MeshRadialArrayEdit delegate();
 //                  EdgeExtendTool / PolyExtrudeTool use for topology-
 //                  creating previews.
 //   deactivate() — if a non-empty preview was built: commit
-//                  MeshRadialArrayEdit as ONE undo entry.
+//                  MeshSessionEdit as ONE undo entry.
 //
 // Headless path: `tool.set mesh.radialArrayTool on; tool.attr
 // mesh.radialArrayTool count 4; ...; tool.doApply` drives through

@@ -13,20 +13,20 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-alias PolyBevelEditFactory = MeshBevelEdit delegate();
+alias PolyBevelEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // PolyBevelTool — interactive Polygon Bevel (factory id `poly.bevel`).
 //
 // Topology-creating tool, modelled on PolyExtrudeTool. One snapshot undo entry
-// per gesture (MeshBevelEdit before/after pair, via bevelEditFactory).
+// per gesture (MeshSessionEdit before/after pair, via bevelEditFactory).
 //
 // Two handles:
 //   PART_SHIFT = BLUE Arrow along the region face normal.

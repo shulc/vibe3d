@@ -10,7 +10,7 @@ import math;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : currentWorkplaneFrame, WorkplaneFrame, transformPoint;
 import editmode : EditMode;
@@ -19,7 +19,7 @@ import std.math : sin, cos, PI;
 
 // Reuses the generic snapshot-pair edit factory (same convention as
 // CylinderTool / SphereTool).
-alias ArcEditFactory = MeshBevelEdit delegate();
+alias ArcEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // ArcParams — wire schema for prim.arc headless invocation.

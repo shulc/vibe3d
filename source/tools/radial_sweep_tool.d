@@ -11,7 +11,7 @@ import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
@@ -54,7 +54,7 @@ version (unittest) import std.conv : to;
 //     profile-preset library in vibe3d).
 // ---------------------------------------------------------------------------
 
-alias RadialSweepEditFactory = MeshBevelEdit delegate();
+alias RadialSweepEditFactory = MeshSessionEdit delegate();
 
 /// RadialSweepParams — single source of truth for the tool (mirrors
 /// MirrorParams, tools/mirror.d). Every handle drag and panel edit writes

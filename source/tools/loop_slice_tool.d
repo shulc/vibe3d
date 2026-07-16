@@ -13,12 +13,12 @@ import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.loop_slice_edit : MeshLoopSliceEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-alias LoopSliceEditFactory = MeshLoopSliceEdit delegate();
+alias LoopSliceEditFactory = MeshSessionEdit delegate();
 
 /// The Loop Slice Slider HUD readout string. `position` is the authoritative
 /// 0..1 slice offset; the slider shows it as a TRUE PERCENT (0.13 -> "13.00 %",
@@ -158,7 +158,7 @@ unittest {
 // `seeds_[]` and immediately materialises the default-position cut) →
 // SCRUB (mesh drag / HUD marker / panel edit, all converging on
 // `scrubPosition()`) → COMMIT (Enter, or tool-drop while armed+built, one
-// `MeshLoopSliceEdit` undo entry, then RE-ARMS) → CANCEL (Esc/RMB, restores
+// `MeshSessionEdit` undo entry, then RE-ARMS) → CANCEL (Esc/RMB, restores
 // `before_`, no undo entry). See doc/loop_slice_slider_hud_impl_plan.md for
 // the full mechanism-by-mechanism rationale (navHistory redo-cancel,
 // scene.reset/onActiveLayerChanged `dropArmedPreview()` calls, `armedKey_`

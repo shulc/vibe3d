@@ -11,13 +11,13 @@ import params : Param;
 import display_sync : refreshDisplay;
 import shader : LitShader;
 import command_history : CommandHistory;
-import commands.mesh.reduce_edit : MeshReduceEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 
 import std.math : lround;
 
-alias MeshReduceEditFactory = MeshReduceEdit delegate();
+alias MeshReduceEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // ReductionTool — interactive polygon reduction (factory id `mesh.reduceTool`).

@@ -11,17 +11,17 @@ import params : Param;
 import handler : gizmoSize, getGizmoPixels;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-// Reuses the generic before/after-snapshot record command (MeshBevelEdit),
+// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/mirror.d and tools/tack.d — see those modules' comments.
 // The undo LABEL is set per-session via setSnapshots(..., "Inset"), so the
 // history entry reads "Inset" even though the underlying command class name
 // stays "mesh.bevel_edit".
-alias PolyInsetEditFactory = MeshBevelEdit delegate();
+alias PolyInsetEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // PolyInsetTool — interactive Polygon Inset (factory id `mesh.polyInsetTool`,

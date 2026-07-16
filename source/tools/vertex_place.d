@@ -8,7 +8,7 @@ import math;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
@@ -21,7 +21,7 @@ import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import operator : VectorStack;
 
-alias VertexEditFactory = MeshBevelEdit delegate();
+alias VertexEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.

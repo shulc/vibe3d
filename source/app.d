@@ -118,28 +118,22 @@ import commands.mesh.split_face  : MeshSplitFace;
 import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
-import commands.mesh.loop_slice_edit : MeshLoopSliceEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.vertex_extrude : MeshVertexExtrude;
 import commands.mesh.vertex_bevel   : MeshVertexBevel;
-import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
 import commands.mesh.spikey : MeshSpikey;
 import commands.mesh.bevel : MeshBevel;
 import commands.mesh.face_extrude : MeshFaceExtrude;
-import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
 import commands.mesh.bridge : MeshBridge;
 import commands.mesh.thicken : MeshThicken;
 import commands.mesh.smooth_shift : MeshSmoothShift;
-import commands.mesh.smooth_shift_edit : MeshSmoothShiftEdit;
 import commands.mesh.edge_extend : MeshEdgeExtend;
-import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
 import commands.mesh.vertex_new    : MeshVertexNew;
 import commands.mesh.vertex_center : MeshCenterVertices;
 import commands.mesh.vertex_set    : MeshSetPosition;
-import commands.mesh.bevel_edit : MeshBevelEdit;
-import commands.mesh.reduce_edit : MeshReduceEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
 import commands.mesh.flip    : MeshFlip;
@@ -151,13 +145,9 @@ import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
 import commands.mesh.clone_       : MeshClone;
-import commands.mesh.clone_edit   : MeshCloneEdit;
-import commands.mesh.array_edit   : MeshArrayEdit;
 import commands.mesh.radial_array_ : MeshRadialArray;
-import commands.mesh.radial_array_edit : MeshRadialArrayEdit;
 import commands.mesh.sweep         : MeshSweep;
 import commands.mesh.stroke_extrude      : MeshStrokeExtrude;
-import commands.mesh.stroke_extrude_edit : MeshStrokeExtrudeEdit;
 import commands.mesh.vert_merge        : MeshVertMerge;
 import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
 import commands.mesh.vert_join         : MeshVertJoin;
@@ -2774,43 +2764,65 @@ void main(string[] args) {
     // start and commitEdit() at drag end; one undo entry per drag.
     auto vxEditFactory = () => new MeshVertexEdit(&mesh(), cameraView, editMode,
                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto bevelEditFactory = () => new MeshBevelEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto loopSliceEditFactory = () => new MeshLoopSliceEdit(&mesh(), cameraView, editMode,
-                                                             &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto reduceEditFactory = () => new MeshReduceEdit(&mesh(), cameraView, editMode,
-                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto cloneEditFactory = () => new MeshCloneEdit(&mesh(), cameraView, editMode,
-                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto arrayEditFactory = () => new MeshArrayEdit(&mesh(), cameraView, editMode,
-                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    // The eleven `*EditFactory` closures below all build the same generic
+    // MeshSessionEdit (task 0408 / campaign 0407 §A.D1) — a (pre, post)
+    // MeshSnapshot-pair record command — differing only in wireName /
+    // defaultLabel / editScope. wireName MUST stay byte-identical to each
+    // class's former hardcoded name() string: undo history / event-log
+    // replay / macros dispatch on it.
+    import mesh_edit_delta : MeshEditScope;
+    enum sessionGeomMarks = MeshEditScope.Geometry | MeshEditScope.Marks;
+    auto bevelEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.bevel_edit", "Bevel");
+    auto loopSliceEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                             &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                             "mesh.loop_slice_edit", "Loop Slice");
+    auto reduceEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                      &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                      "mesh.reduce_edit", "Reduce");
+    auto cloneEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                    "mesh.clone_edit", "Clone");
+    auto arrayEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                    &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                    "mesh.array_edit", "Array");
+    auto edgeExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.edge_extrude_edit", "Edge Extrude", sessionGeomMarks);
     // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
     // one-shot mesh.edge_extend command undoes via its own MeshSnapshot; this
     // factory exists now so the Phase-4 EdgeExtendTool can bind it, mirroring
     // edgeExtrudeEditFactory.
-    auto edgeExtendEditFactory = () => new MeshEdgeExtendEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
-    auto polyExtrudeEditFactory = () => new MeshFaceExtrudeEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    auto edgeExtendEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.edge_extend_edit", "Edge Extend", sessionGeomMarks);
+    auto polyExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.face_extrude_edit", "Face Extrude", sessionGeomMarks);
     // Radial Array's typed edit factory (interactive-tool consumer). The
     // one-shot mesh.radial_array command undoes via its own MeshSnapshot;
     // this factory exists so RadialArrayTool can bind it, mirroring
     // polyExtrudeEditFactory / edgeExtendEditFactory.
-    auto radialArrayEditFactory = () => new MeshRadialArrayEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    auto radialArrayEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.radial_array_edit", "Radial Array", sessionGeomMarks);
     // Smooth Shift + Thicken's typed edit factory (task 0358 interactive tool
     // consumer), mirroring polyExtrudeEditFactory. The one-shot mesh.smooth_shift
     // / mesh.thicken commands keep undoing via their own MeshSnapshot.
-    auto smoothShiftEditFactory = () => new MeshSmoothShiftEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    auto smoothShiftEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.smooth_shift_edit", "Smooth Shift");
     // Stroke Extrude's typed edit factory (task 0323 interactive tool
     // consumer). The one-shot mesh.strokeExtrude command undoes via its
     // own MeshSnapshot; this factory exists so StrokeExtrudeTool can bind
-    // it, mirroring radialArrayEditFactory / smoothShiftEditFactory.
-    auto strokeExtrudeEditFactory = () => new MeshStrokeExtrudeEdit(&mesh(), cameraView, editMode,
-                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache());
+    // it, mirroring radialArrayEditFactory / smoothShiftEditFactory. Wire
+    // name is "mesh.strokeExtrude_edit" (camelCase, NOT snake_case like its
+    // siblings) — a pre-existing irregularity, preserved byte-for-byte since
+    // undo history / replay dispatch on it.
+    auto strokeExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     &gpu, &vertexCache(), &edgeCache(), &faceCache(),
+                                                     "mesh.strokeExtrude_edit", "Stroke Extrude", sessionGeomMarks);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -2970,7 +2982,7 @@ void main(string[] args) {
     // pre-existing `mesh.sweep` one-shot command to a drag/handle tool.
     // Generator-preview architecture identical to mesh.mirrorTool above
     // (own preview mesh, commits once at deactivate()); reuses the same
-    // generic bevelEditFactory/MeshBevelEdit snapshot-diff undo path.
+    // generic bevelEditFactory/MeshSessionEdit snapshot-diff undo path.
     // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
     // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
     // Extrude port, the natural claimant of the bare "sweep" name since it
@@ -2986,7 +2998,7 @@ void main(string[] args) {
                                 "mesh.radialSweepTool", reg.toolFactories["mesh.radialSweepTool"]);
 
     // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
-    // mesh.mirrorTool block above: same generic MeshBevelEdit/bevelEditFactory
+    // mesh.mirrorTool block above: same generic MeshSessionEdit/bevelEditFactory
     // undo path, same ToolHeadlessCommand one-shot wiring.
     reg.toolFactories["mesh.tack"] = () {
         auto t = new TackTool(() => &mesh(), &gpu, litShader);
@@ -2999,7 +3011,7 @@ void main(string[] args) {
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
 
     // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
-    // from the one-shot mesh.bridge command. Same generic MeshBevelEdit/
+    // from the one-shot mesh.bridge command. Same generic MeshSessionEdit/
     // bevelEditFactory undo path, same ToolHeadlessCommand one-shot wiring
     // as Mirror/Tack above.
     reg.toolFactories["mesh.bridgeTool"] = () {
@@ -3133,7 +3145,7 @@ void main(string[] args) {
 
     // Edge Extrude — interactive (drag → extrude/width) + headless
     // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
-    // tool: own typed edit factory (MeshEdgeExtrudeEdit, not vxEditFactory),
+    // tool: own typed edit factory (MeshSessionEdit, not vxEditFactory),
     // wired via the prim.cube registration template. Gated to Edges mode by
     // EdgeExtrudeTool.supportedModes().
     reg.toolFactories["edge.extrude"] = () {
@@ -3145,7 +3157,7 @@ void main(string[] args) {
 
     // Face Extrude — interactive (drag → distance along region normal) + headless
     // (tool.attr poly.extrude distance <v>; tool.doApply). Topology-creating
-    // tool: own typed edit factory (MeshFaceExtrudeEdit, snapshot-only undo).
+    // tool: own typed edit factory (MeshSessionEdit, snapshot-only undo).
     // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
     reg.toolFactories["poly.extrude"] = () {
         auto t = new PolyExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
@@ -3160,7 +3172,7 @@ void main(string[] args) {
     // Reuses the shared Mesh.radialArrayFaces kernel (same-mesh clone
     // insertion, no new layers) already exercised by the one-shot
     // mesh.radial_array command. Topology-creating tool: own typed edit
-    // factory (MeshRadialArrayEdit, snapshot-only undo).
+    // factory (MeshSessionEdit, snapshot-only undo).
     reg.toolFactories["mesh.radialArrayTool"] = () {
         auto t = new RadialArrayTool(() => &mesh(), &gpu, &editMode, litShader,
                                      &vertexCache(), &edgeCache(), &faceCache());
@@ -3174,7 +3186,7 @@ void main(string[] args) {
     // (explicit path-point param — the interactive tool itself has NO
     // headless path, matching the captured reference finding). Task 0323,
     // basic/captured scope. Topology-creating tool: own typed edit factory
-    // (MeshStrokeExtrudeEdit, snapshot-only undo). Gated to Polygons mode
+    // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode
     // by StrokeExtrudeTool.supportedModes().
     reg.toolFactories["tool.strokeExtrude"] = () {
         auto t = new StrokeExtrudeTool(() => &mesh(), &gpu, litShader,
@@ -3186,7 +3198,7 @@ void main(string[] args) {
     // Edge Extend — interactive (drag → world-axis Offset via the embedded
     // transform gizmo's Move bank) + headless (tool.attr edge.extend offsetX...;
     // tool.doApply). Topology-creating tool: own typed edit factory
-    // (MeshEdgeExtendEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
+    // (MeshSessionEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
     reg.toolFactories["edge.extend"] = () {
         auto t = new EdgeExtendTool(() => &mesh(), &gpu, &editMode, litShader,
                                     &vertexCache(), &edgeCache(), &faceCache());
@@ -3196,7 +3208,7 @@ void main(string[] args) {
     };
 
     // Poly Bevel — interactive + headless (inset, shift params). Topology-creating
-    // tool: reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Polygons.
+    // tool: reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Polygons.
     reg.toolFactories["poly.bevel"] = () {
         auto t = new PolyBevelTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
@@ -3206,7 +3218,7 @@ void main(string[] args) {
     // Polygon Inset — interactive (task 0359 promotion of the one-shot
     // mesh.poly_inset command). One attribute (inset), always per-polygon,
     // no drawn gizmo (toolcard-confirmed) — a generic viewport click+drag
-    // hauls the value. Reuses the generic MeshBevelEdit/bevelEditFactory
+    // hauls the value. Reuses the generic MeshSessionEdit/bevelEditFactory
     // before/after-snapshot undo path, same as mesh.mirrorTool/mesh.tack
     // above. Gated to Polygons.
     reg.toolFactories["mesh.polyInsetTool"] = () {
@@ -3219,7 +3231,7 @@ void main(string[] args) {
     // Smooth Shift + Thicken — interactive (2 handles: Offset, Scale) + headless
     // (tool.attr mesh.smoothShiftTool shift/scale/maxAngle/thicken/sharp <v>;
     // tool.doApply). Topology-creating tool: own typed edit factory
-    // (MeshSmoothShiftEdit, snapshot-only undo). Gated to Polygons mode by
+    // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode by
     // SmoothShiftTool.supportedModes(). The reference editor's Thicken toolbar
     // button is confirmed (task 0358) to be THIS SAME tool with thicken=1
     // forced, not a separate tool — see config/buttons.yaml.
@@ -3237,7 +3249,7 @@ void main(string[] args) {
     };
 
     // Edge Bevel — interactive + headless (width param). Topology-creating tool:
-    // reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Edges mode.
+    // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.
     reg.toolFactories["edge.bevel"] = () {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
@@ -3248,7 +3260,7 @@ void main(string[] args) {
     // Vertex Bevel — interactive (task 0360 promotion of the one-shot
     // mesh.vertexBevel command). Single-handle Inset, ACTR-anchored,
     // mirrors EdgeBevelTool one element type down. Reuses bevelEditFactory
-    // (MeshBevelEdit snapshot undo) and the SAME id as the pre-existing
+    // (MeshSessionEdit snapshot undo) and the SAME id as the pre-existing
     // one-shot command (reg.commandFactories["mesh.vertexBevel"] below,
     // untouched) — separate registries, same precedent as poly.extrude/
     // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
@@ -3262,7 +3274,7 @@ void main(string[] args) {
     // Vertex Extrude — interactive (task 0360 promotion of the one-shot
     // mesh.vertexExtrude command). Two independent handles (Extrude/shift,
     // Width) mirroring PolyBevelTool's Shift/Inset pair. Reuses
-    // bevelEditFactory (MeshBevelEdit snapshot undo); same id as the
+    // bevelEditFactory (MeshSessionEdit snapshot undo); same id as the
     // pre-existing one-shot command, separate registries (see
     // mesh.vertexBevel above). Gated to Vertices mode.
     reg.toolFactories["mesh.vertexExtrude"] = () {
@@ -3274,7 +3286,7 @@ void main(string[] args) {
 
     // Vertex Merge — interactive (task 0360 promotion of the one-shot
     // vert.merge command). No drawn handle — a generic viewport haul, same
-    // family as mesh.polyInsetTool. Reuses bevelEditFactory (MeshBevelEdit
+    // family as mesh.polyInsetTool. Reuses bevelEditFactory (MeshSessionEdit
     // snapshot undo); same id as the pre-existing one-shot command (which
     // keeps its own range/keep/morph params, untouched — see
     // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
@@ -3288,7 +3300,7 @@ void main(string[] args) {
     // Loop Slice — hover-seeded interactive edge-loop cut. Topology-creating
     // tool: reuses the SAME collectEdgeRing/insertEdgeLoops kernel as the
     // mesh.loopSlice/mesh.addLoop commands (untouched); mutate/revert preview,
-    // one MeshLoopSliceEdit undo entry PER committed cut. Gated to Edges mode.
+    // one MeshSessionEdit undo entry PER committed cut. Gated to Edges mode.
     reg.toolFactories["mesh.loopSliceTool"] = () {
         auto t = new LoopSliceTool(() => &mesh(), &gpu, &editMode, litShader,
                                    &vertexCache(), &edgeCache(), &faceCache());
@@ -3313,7 +3325,7 @@ void main(string[] args) {
     // second edge latches edge B + tB and previews the cut live -> commit on
     // Enter / tool-drop / a third click. Reuses the EXISTING
     // Mesh.edgeSlice(edgeA, edgeB, tA, tB, splitPolygons) kernel; one
-    // MeshBevelEdit undo entry per committed cut (reuses the generic
+    // MeshSessionEdit undo entry per committed cut (reuses the generic
     // bevelEditFactory snapshot command, labelled "Edge Slice"). The one-shot
     // mesh.edgeSlice command stays registered below for headless/scripting.
     // Gated to Edges mode.
@@ -3325,7 +3337,7 @@ void main(string[] args) {
     };
 
     // Mesh Reduction — interactive + headless (ratio, preserveBoundary params).
-    // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshReduceEdit.
+    // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshSessionEdit.
     // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
     reg.toolFactories["mesh.reduceTool"] = () {
         auto t = new ReductionTool(() => &mesh(), &gpu, &editMode, litShader,
@@ -3336,7 +3348,7 @@ void main(string[] args) {
 
     // Clone — interactive drag-place a single copy of the selection (offset
     // by the drag delta on the most-facing screen plane).  Snapshot undo via
-    // MeshCloneEdit; gated to Polygons mode.  Drag→offset feel is a
+    // MeshSessionEdit; gated to Polygons mode.  Drag→offset feel is a
     // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
     reg.toolFactories["mesh.clone"] = () {
         auto t = new CloneTool(() => &mesh(), &gpu, &editMode,
@@ -3347,7 +3359,7 @@ void main(string[] args) {
 
     // Array — interactive 3-axis grid array (task 0355), promoting the
     // one-shot mesh.array command's 1D line kernel to Mesh.arrayFacesGrid.
-    // Snapshot undo via MeshArrayEdit; edit-mode-orthogonal (same face-
+    // Snapshot undo via MeshSessionEdit; edit-mode-orthogonal (same face-
     // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
     reg.toolFactories["mesh.arrayTool"] = () {
         auto t = new ArrayTool(() => &mesh(), &gpu, &editMode,
@@ -3973,7 +3985,7 @@ void main(string[] args) {
     // One-shot, headlessly-testable path-follow extrude (task 0323 —
     // explicit world-space path-point param; see MeshStrokeExtrude's doc
     // comment). The interactive tool.strokeExtrude drives its own commit
-    // through the separate record-flavor MeshStrokeExtrudeEdit instead of
+    // through the separate record-flavor MeshSessionEdit instead of
     // this factory.
     reg.commandFactories["mesh.strokeExtrude"] = () => cast(Command)
         new MeshStrokeExtrude(&mesh(), cameraView, editMode, &gpu,
@@ -4102,8 +4114,9 @@ void main(string[] args) {
         new MeshVertexEdit(&mesh(), cameraView, editMode, &gpu,
                            &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
-        new MeshBevelEdit(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSessionEdit(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache(), &edgeCache(), &faceCache(),
+                          "mesh.bevel_edit", "Bevel");
     reg.commandFactories["scene.reset"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache(), &edgeCache(), &faceCache(),

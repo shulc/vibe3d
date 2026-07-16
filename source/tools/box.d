@@ -13,7 +13,7 @@ import drag;
 import shader : Shader, LitShader;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
@@ -30,11 +30,12 @@ import d_imgui.imgui_h;
 
 import std.math : abs, sqrt, sin, cos, PI;
 
-// Reuses the BevelTool factory type — both tools record a generic
-// (pre, post) MeshSnapshot pair via MeshBevelEdit, just with a different
-// label. The class is bevel-named for legacy reasons; rename once a third
-// caller appears.
-alias BoxEditFactory = MeshBevelEdit delegate();
+// Reuses the generic session-edit command — both tools record a (pre, post)
+// MeshSnapshot pair via MeshSessionEdit, just with a different label. (This
+// alias predates MeshSessionEdit: the class used to be bevel-named for
+// legacy reasons with a "rename once a third caller appears" TODO — task
+// 0408 / campaign 0407 §A.D1 completed that rename.)
+alias BoxEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // BoxParams — wire schema for prim.cube headless invocation.
@@ -1886,7 +1887,7 @@ private:
     // Phase C-followup: undo plumbing. Pre-commit mesh state is captured
     // in deactivate() right before commitBase / commitCuboid mutates the
     // cage; post-state is captured immediately after, and one
-    // MeshBevelEdit lands on history. Both nullable for legacy / tests.
+    // MeshSessionEdit lands on history. Both nullable for legacy / tests.
     CommandHistory  history;
     BoxEditFactory  boxEditFactory;
 

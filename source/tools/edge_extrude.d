@@ -14,7 +14,7 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
@@ -23,12 +23,12 @@ import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
 
 import std.math : abs, sqrt;
 
-/// The interactive tool reuses the dedicated MeshEdgeExtrudeEdit record
+/// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — analogous to how BoxTool
-/// reuses MeshBevelEdit via `alias BoxEditFactory = MeshBevelEdit delegate();`.
+/// reuses MeshSessionEdit via `alias BoxEditFactory = MeshSessionEdit delegate();`.
 /// A dedicated class (rather than reusing the bevel edit) keeps the undo label
 /// reading "Edge Extrude".
-alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
+alias EdgeExtrudeEditFactory = MeshSessionEdit delegate();
 
 // The VIBE3D_UNDO_TRACKER toggle (`undoTrackerEnabled`/`setUndoTrackerEnabled`)
 // lives in `mesh_edit_delta` — one definition shared with edge_extend.d,
@@ -56,7 +56,7 @@ alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
 //                 Mesh.extrudeEdgesByMask on the restored selection, then
 //                 gpu.upload + cache refresh.
 //   deactivate() — if any geometry was built (extrude or width nonzero),
-//                 capture `after`, build a MeshEdgeExtrudeEdit via the injected
+//                 capture `after`, build a MeshSessionEdit via the injected
 //                 factory, setSnapshots(before, after, "Edge Extrude"), and push
 //                 it onto history as ONE undo step.
 //

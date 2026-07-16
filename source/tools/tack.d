@@ -12,7 +12,7 @@ import math;
 import change_bus : MeshEditScope;
 import params : Param;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader;
 import hover_state : g_hoveredFace;
@@ -21,9 +21,9 @@ import eventlog : queryMouse;
 version (unittest) import std.conv : to;
 
 // Reuses the same generic (pre, post) MeshSnapshot pair as Mirror/Box
-// (MeshBevelEdit / bevelEditFactory) — see tools/mirror.d's
+// (MeshSessionEdit / bevelEditFactory) — see tools/mirror.d's
 // MirrorEditFactory doc comment.
-alias TackEditFactory = MeshBevelEdit delegate();
+alias TackEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // computeTackTransform / applyTackTransform — the captured alignment rule

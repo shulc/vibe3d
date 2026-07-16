@@ -13,16 +13,16 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-/// The interactive tool reuses the dedicated MeshFaceExtrudeEdit record command
+/// The interactive tool reuses the dedicated MeshSessionEdit record command
 /// (a before/after MeshSnapshot pair) — mirroring EdgeExtrudeTool's pattern.
-alias FaceExtrudeEditFactory = MeshFaceExtrudeEdit delegate();
+alias FaceExtrudeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
@@ -34,7 +34,7 @@ alias FaceExtrudeEditFactory = MeshFaceExtrudeEdit delegate();
 // Session model (matches EdgeExtrudeTool):
 //   activate()   — snapshot cage+selection; reset distance to 0; build gizmo.
 //   drag         — restore cage, reapply extrudeFacesByMask(mask, distance_).
-//   deactivate() — if built && distance != 0: commit MeshFaceExtrudeEdit.
+//   deactivate() — if built && distance != 0: commit MeshSessionEdit.
 //
 // Single handle:
 //   PART_EXTRUDE = BLUE Arrow along averaged region normal. Dragging changes

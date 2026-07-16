@@ -13,16 +13,16 @@ import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 
-// Reuses the generic before/after-snapshot record command (MeshBevelEdit),
+// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/poly_bevel.d and tools/vertex_bevel_tool.d.
-alias VertexExtrudeEditFactory = MeshBevelEdit delegate();
+alias VertexExtrudeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // VertexExtrudeTool — interactive Vertex Extrude (factory id
@@ -51,7 +51,7 @@ alias VertexExtrudeEditFactory = MeshBevelEdit delegate();
 //   PART_WIDTH = RED CubicArrow along an in-plane axis ("Width").
 //
 // Session lifecycle mirrors PolyBevelTool (topology-creating, own
-// before/after snapshot undo via the shared MeshBevelEdit/bevelEditFactory).
+// before/after snapshot undo via the shared MeshSessionEdit/bevelEditFactory).
 // ---------------------------------------------------------------------------
 class VertexExtrudeTool : Tool {
 private:

@@ -11,12 +11,12 @@ import drag : planeDragDelta;
 import params : Param, IntEnumEntry;
 import shader : Shader;
 import command_history : CommandHistory;
-import commands.mesh.array_edit : MeshArrayEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-alias ArrayEditFactory = MeshArrayEdit delegate();
+alias ArrayEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // ArrayTool — interactive Array (factory id `mesh.arrayTool`, task 0355).

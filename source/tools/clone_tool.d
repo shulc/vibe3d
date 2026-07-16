@@ -10,18 +10,18 @@ import editmode : EditMode;
 import drag : planeDragDelta;
 import shader : Shader;
 import command_history : CommandHistory;
-import commands.mesh.clone_edit : MeshCloneEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-alias MeshCloneEditFactory = MeshCloneEdit delegate();
+alias MeshCloneEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // CloneTool — interactive drag-clone (factory id `mesh.clone`).
 //
 // One drag gesture = one copy of the selected faces offset by the screen drag
-// delta, recorded as a single undo entry (MeshCloneEdit before/after pair).
+// delta, recorded as a single undo entry (MeshSessionEdit before/after pair).
 //
 // Behavior:
 //   - On activate: capture a baseline MeshSnapshot from the current mesh.
@@ -30,7 +30,7 @@ alias MeshCloneEditFactory = MeshCloneEdit delegate();
 //   - Each motion frame: restore the baseline → arrayFaces(mask,2,delta,0)
 //     where delta is the ABSOLUTE world displacement from the anchor to the
 //     current mouse position (never accumulate across frames).
-//   - LMB release: commit one MeshCloneEdit entry; recapture baseline from
+//   - LMB release: commit one MeshSessionEdit entry; recapture baseline from
 //     the post-clone state so the next drag is independent.
 //   - Deactivate: if a preview is live, commit first.
 //   - RMB: cancel live preview (restore baseline without recording).

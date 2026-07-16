@@ -11,7 +11,7 @@ import math;
 import params : Param, IntEnumEntry;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
@@ -22,9 +22,9 @@ import eventlog : queryMouse;
 version (unittest) import std.conv : to;
 
 // Reuses the BevelTool factory type — a generic (pre, post) MeshSnapshot
-// pair via MeshBevelEdit, matching BoxTool/SphereTool's commit path
+// pair via MeshSessionEdit, matching BoxTool/SphereTool's commit path
 // (box.d's BoxEditFactory alias).
-alias MirrorEditFactory = MeshBevelEdit delegate();
+alias MirrorEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // rebuildMirrorPreview — the non-cumulative preview recompute (impl plan

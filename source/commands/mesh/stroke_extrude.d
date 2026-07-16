@@ -19,8 +19,9 @@ import snapshot : MeshSnapshot;
 /// list.
 ///
 /// The interactive tool (`tool.strokeExtrude`) samples this list live from
-/// a drawn viewport stroke and feeds it through the record-flavor
-/// `MeshStrokeExtrudeEdit` on commit; a caller driving THIS command
+/// a drawn viewport stroke and feeds it through the generic record-flavor
+/// `MeshSessionEdit` (wire name "mesh.strokeExtrude_edit") on commit; a
+/// caller driving THIS command
 /// directly (HTTP `/api/command`, `dub test`) supplies the path list
 /// verbatim — decoupling the topology kernel from the drag/raycast
 /// heuristics (see StrokeExtrudeTool's doc comment for what there is

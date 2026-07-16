@@ -12,16 +12,16 @@ import handler : gizmoSize, getGizmoPixels;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
-// Reuses the generic before/after-snapshot record command (MeshBevelEdit),
+// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/poly_inset_tool.d / tools/mirror.d / tools/tack.d — see
 // those modules' comments. The undo LABEL is set per-session via
 // setSnapshots(..., "Merge Vertices").
-alias VertMergeEditFactory = MeshBevelEdit delegate();
+alias VertMergeEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // VertexMergeTool — interactive Vertex Merge (factory id `vert.merge`,
@@ -57,7 +57,7 @@ alias VertMergeEditFactory = MeshBevelEdit delegate();
 //     one-shot/menu path, untouched by this tool).
 //
 // Session lifecycle mirrors PolyInsetTool (one attribute, no drawn handle,
-// generic viewport haul, topology-mutating via a shared MeshBevelEdit
+// generic viewport haul, topology-mutating via a shared MeshSessionEdit
 // before/after snapshot).
 // ---------------------------------------------------------------------------
 class VertexMergeTool : Tool {

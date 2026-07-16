@@ -14,7 +14,7 @@ import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
@@ -28,9 +28,9 @@ import tools.create_common : currentWorkplaneFrame, pickWorkplaneFrame, Workplan
 import tools.move : chooseConstraintAxis;
 
 // The interactive Slice commit reuses the generic before/after snapshot edit
-// command (the same MeshBevelEdit the mirror / tack / primitive tools reuse for
+// command (the same MeshSessionEdit the mirror / tack / primitive tools reuse for
 // their one-shot snapshot undo), labelled "Slice".
-alias SliceEditFactory = MeshBevelEdit delegate();
+alias SliceEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // SliceAxis (task 0269, S3; owner-revised task 0284) — the OVERRIDE that sets the
@@ -547,7 +547,7 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // baseline (restore baseline → `cutByPlane` once), so the mesh always shows
 // EXACTLY ONE slice at the current line — dragging endpoints refines the SAME
 // slice, it never spawns another. The cut is baked into ONE
-// MeshBevelEdit(before, after) history entry when the tool is DEACTIVATED /
+// MeshSessionEdit(before, after) history entry when the tool is DEACTIVATED /
 // dropped (see `deactivate` → `commitCurrentSlice`), never on mouse-up. A
 // session whose final line touches no face (or was never drawn) commits
 // nothing. `armedKey_` guards the deferred commit against a mesh swapped out

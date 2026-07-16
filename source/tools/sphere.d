@@ -13,7 +13,7 @@ import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
@@ -26,7 +26,7 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import std.math : sin, cos, acos, PI, abs, sqrt;
 
 // Reuses the generic snapshot-pair edit factory used by BoxTool / BevelTool.
-alias SphereEditFactory = MeshBevelEdit delegate();
+alias SphereEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // SphereParams — wire schema for prim.sphere headless invocation.
