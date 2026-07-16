@@ -23,6 +23,17 @@
 // This test also confirms the volumetric-vs-flat preview gate's DOWNSTREAM
 // effect (final committed vertex/face counts match the Globe builder
 // exactly, same numbers test_primitive_sphere.d's headless path asserts).
+//
+// Post-Phase-0 correction (still against the SAME oracle -- unmodified
+// main reproduces the pre-fix symptom identically, confirmed by live
+// probing, so this was a hand-trace bug in how Stage 2 clicks, not a
+// 0414 regression): Stage 2's mousedown must not land exactly on Stage
+// 1's own click point, or it silently grabs a degenerate zero-height
+// size handle instead of starting the height drag. See dragHeightStage()
+// below for the full mechanism and task 0414's log for how it was traced
+// (live server probing via tests/drag_helpers.d against a `run_test.d
+// --keep`-held instance, comparing screen-projected handle positions
+// against the click point).
 
 import std.conv : to;
 import std.json;
@@ -196,6 +207,35 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
     dragPixels(x0, y0, x1, y1, steps);
 }
 
+// Stage 2 (BaseSet -> DrawingHeight) must NOT click exactly at (cx, cy).
+// After Stage 1 the disc's plane-normal-axis size is EXACTLY 0, so
+// updateSizeHandlers() places that axis's size-handle PAIR (and the
+// mover's centerBox) at the disc's own center -- i.e. exactly (cx, cy),
+// since Stage 1's flat ellipse is centered on its own click point (the
+// world origin, per projectOrDie below). onMouseButtonDown's
+// `state >= BaseSet` branch tries tryGrabHandles() BEFORE the
+// state==BaseSet branch that starts the real height drag -- a mousedown
+// dead-center on that degenerate (sub-pixel) handle silently grabs it
+// instead of transitioning to DrawingHeight, so `state` never leaves
+// BaseSet. This is invisible for cylinder/cone/capsule (buildInto is a
+// pure function of sizeX/Y/Z there, so a stray handle-grab that still
+// raises the matching axis produces identical final geometry) but NOT
+// for sphere, whose buildInto is gated on isVolumetricEligible()
+// (state >= DrawingHeight || dragUniform): a state stuck at BaseSet means
+// deactivate() commits the flat n-gon branch instead of buildByMethod().
+// Confirmed empirically (live server probing) against BOTH this branch
+// and unmodified main -- same click sequence produces the same wrong
+// flat 24-vert/1-face commit on both, so this was a Phase-0
+// test-authorship bug (the interactive tests were hand-traced without
+// ever running, see the task's Phase-0 log), not a 0414 regression. A
+// small clearance in a direction empirically clear of the mover's own
+// arrow-shaft hit-boxes (-X measured safe; +X and -Y graze arrowX's /
+// arrowY's pick geometry) is enough, since the degenerate handle's own
+// screen hit-box is sub-pixel.
+void dragHeightStage(int cx, int cy, int dy = 100) {
+    dragPixels(cx - 15, cy, cx - 15, cy - dy);
+}
+
 unittest { // Two-stage construction drag + the two Idle/DrawingHeight divergences
     resetForSphere();
 
@@ -223,7 +263,9 @@ unittest { // Two-stage construction drag + the two Idle/DrawingHeight divergenc
     Vec3 centerAfterStage1 = center();
 
     // Stage 2: DrawingHeight -> HeightSet (extrude the ellipse into a sphere).
-    dragPixels(cx, cy, cx, cy - 100);
+    // See dragHeightStage()'s doc comment for why this must NOT click at
+    // (cx, cy) itself.
+    dragHeightStage(cx, cy);
     double h1 = sizeAlong(f.normal);
     assert(h1 > 0.25, "height drag should create normal-axis radius, got " ~ h1.to!string);
 
@@ -257,7 +299,7 @@ unittest { // Radius-handle drag is SYMMETRIC (no anchored-opposite) + mover mov
     int cx, cy;
     projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
     dragPixels(cx, cy, cx + 150, cy + 140);
-    dragPixels(cx, cy, cx, cy - 100);   // BaseSet -> HeightSet, tool stays active
+    dragHeightStage(cx, cy);   // BaseSet -> HeightSet, tool stays active
 
     // axis stays "y" (divergence (a)) so worldAxisToOrig is the identity
     // permutation -- radius handles sit at fixed WORLD +-X/+-Y/+-Z, same as
@@ -337,7 +379,7 @@ unittest { // Undo ladder: preview-only through the whole session; commit happen
     assert(approx(sizeAlong(f.normal), 0.0), "base should start flat before height undo test");
     assert(undoLen() == 0, "base construction (BaseSet) is preview-only -- no undo entry yet");
 
-    dragPixels(cx, cy, cx, cy - 100);
+    dragHeightStage(cx, cy);
     assert(sizeAlong(f.normal) > 0.25, "height drag should create height before undo");
     assert(undoLen() == 0, "height construction (HeightSet) is still preview-only");
 
