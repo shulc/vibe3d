@@ -306,7 +306,7 @@ unittest { // Tool Properties (tool.attr) round-trip for every param
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // Undo ladder including the zero-minor-delta commit guard (PRAVKA 2 gate)
+unittest { // Undo ladder: preview stays at 0 entries; mid-session Ctrl+Z cancels the tool
     resetForTorus();
 
     int cx, cy;
@@ -329,33 +329,13 @@ unittest { // Undo ladder including the zero-minor-delta commit guard (PRAVKA 2 
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelled torus tool should leave no history entry");
     assert(vertCount() == 0, "cancelled torus tool should leave no pending geometry");
-
-    // PRAVKA 2 gate: a second drag that lands EXACTLY back at minorRadius==0
-    // (a zero-delta drag on the height plane) must NOT commit on drop and
-    // must NOT create an undo entry. This lands in MinorSet with
-    // willCommit()==false (the MinorSet arm requires minorRadius>1e-5),
-    // so commitValid() is trivially false too (short-circuits on
-    // willCommit()) -- both the geometry gate AND the snapshot/record
-    // skeleton skip here, matching the pre-refactor commitTorus() call
-    // guard never firing at all for this state. Contrast with the
-    // "MajorSet degenerate-minor commit guard" unittest below, where
-    // willCommit()==true (unconditional at MajorSet) but commitValid()
-    // is false -- a genuinely different code path this case does NOT
-    // exercise (a post-review fix; see that unittest's comment).
-    resetForTorus();
-    projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
-    dragPixels(cx, cy, cx + 150, cy + 140);      // MajorSet
-    // Click to enter DrawingMinor, then release at the SAME pixel (zero
-    // motion) so the height-plane projection stays at signedH == 0.
-    dragPixels(cx, cy, cx, cy, 1);
-    assert(approx(qf("minorRadius"), 0.0, 1e-4),
-        "zero-motion minor drag should leave minorRadius at 0, got " ~ qf("minorRadius").to!string);
-    size_t preDropUndo = undoLen();
-    cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == preDropUndo,
-        "dropping with minorRadius==0 must not create a new undo entry (no-commit)");
-    assert(vertCount() == 0,
-        "dropping with minorRadius==0 must not add any geometry to the scene");
+    // NB: the degenerate-minor commit guard (MajorSet, minorRadius driven to 0
+    // via a live size-handle drag) is exercised by the dedicated unittest
+    // below. The earlier "zero-motion minor drag" attempt at a MinorSet
+    // no-commit case was removed: a zero-delta drag does NOT zero minorRadius
+    // (it stays at the MajorSet-seeded major*0.25), so that setup never
+    // reached the state it claimed to test, and the real degenerate path is
+    // MajorSet (willCommit() true, commitValid() false) — see below.
 }
 
 unittest { // MajorSet degenerate-minor commit guard (review fix: commitValid() vs willCommit())
