@@ -632,6 +632,149 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// parseInto / stringifyParam — Param value <-> wire-token string. Moved here
+// from toolpipe/stage.d (task 0409 / 0407 D3): this is generic Param
+// mechanics with no toolpipe dependency — Stage.setAttr/listAttrs
+// (toolpipe/stage.d's defaultStageSetAttr/defaultStageListAttrs) are just one
+// caller, alongside tool_presets.d's sticky-tool-default restore and app.d's
+// sticky-tool-default capture. Living in `params.d` (the home of Param)
+// instead of toolpipe/stage.d means every caller now imports the SAME
+// function instead of the module that happens to define Stage.
+// ---------------------------------------------------------------------------
+
+// Parse `value` per `p.kind` and write into the Param's typed pointer.
+// Returns false on parse failure (caller surfaces as "rejected attr").
+// Public so the sticky tool-default path (prefs) can re-apply a stored
+// value-string onto a freshly built tool's Param[] — same string→param
+// machinery as the stage attr setter, no logic change beyond visibility.
+bool parseInto(ref Param p, string value) {
+    import std.conv   : to;
+    import std.string : split, strip;
+    final switch (p.kind) {
+        case Param.Kind.Bool:
+            if (value == "true"  || value == "1") { *p.bptr = true;  return true; }
+            if (value == "false" || value == "0") { *p.bptr = false; return true; }
+            return false;
+        case Param.Kind.Int:
+            try { *p.iptr = value.strip.to!int; return true; }
+            catch (Exception) { return false; }
+        case Param.Kind.Float:
+            try { *p.fptr = value.strip.to!float; return true; }
+            catch (Exception) { return false; }
+        case Param.Kind.Enum:
+            // Accept the wire tag exactly as listed in p.enumValues[i][0].
+            foreach (ref ev; p.enumValues)
+                if (ev[0] == value) { *p.sptr = value; return true; }
+            return false;
+        case Param.Kind.IntEnum:
+            foreach (ref ev; p.intEnumValues)
+                if (ev.wireTag == value) { *p.iePtr = ev.value; return true; }
+            return false;
+        case Param.Kind.String:
+            *p.sptr = value;
+            return true;
+        case Param.Kind.Vec3_:
+            auto parts = value.split(",");
+            if (parts.length != 3) return false;
+            try {
+                p.vptr.x = parts[0].strip.to!float;
+                p.vptr.y = parts[1].strip.to!float;
+                p.vptr.z = parts[2].strip.to!float;
+                return true;
+            } catch (Exception) { return false; }
+        case Param.Kind.IntArray:   return false;   // out of scope
+        case Param.Kind.Vec3Array:  return false;   // out of scope
+    }
+}
+
+// Stringify a Param's typed pointer-target to the same wire form `parseInto`
+// accepts. Public so the sticky tool-default capture path (prefs) can snapshot
+// a dropped tool's tool-level params — no logic change beyond visibility.
+//
+// Vec3-as-string format: "x,y,z" (matches `tool.pipe.attr falloff start
+// 0,0.5,0` from the existing HTTP tests). Enum kind matches by wireTag
+// (string for Param.Kind.Enum, intEnumValues.wireTag for IntEnum). Bool
+// accepts true/false/1/0. Unknown attr name → return false (parseInto).
+string stringifyParam(ref Param p) {
+    import std.format : format;
+    final switch (p.kind) {
+        case Param.Kind.Bool:    return *p.bptr ? "true" : "false";
+        case Param.Kind.Int:     return format("%d", *p.iptr);
+        case Param.Kind.Float:   return format("%g", *p.fptr);
+        case Param.Kind.Enum:    return *p.sptr;
+        case Param.Kind.IntEnum:
+            foreach (ref ev; p.intEnumValues)
+                if (ev.value == *p.iePtr) return ev.wireTag;
+            return format("%d", *p.iePtr);
+        case Param.Kind.String:    return *p.sptr;
+        case Param.Kind.Vec3_:     return format("%g,%g,%g", p.vptr.x, p.vptr.y, p.vptr.z);
+        case Param.Kind.IntArray:  return "";
+        case Param.Kind.Vec3Array: return "";
+    }
+}
+
+unittest {
+    // parseInto / stringifyParam round-trip for the kinds that support a
+    // scalar string token (moved here verbatim from toolpipe/stage.d, which
+    // had no dedicated unit coverage of its own — this is fresh coverage,
+    // not a relocation of an existing test).
+    bool  b = false;
+    int   i = 0;
+    float f = 0.0f;
+    string mode = "offset";
+    int   ie = 0;
+    string s = "";
+    Vec3  v = Vec3(0, 0, 0);
+
+    auto pb  = Param.bool_ ("b", "B", &b, false);
+    auto pi  = Param.int_  ("i", "I", &i, 0);
+    auto pf  = Param.float_("f", "F", &f, 0.0f);
+    auto pe  = Param.enum_ ("mode", "Mode", &mode,
+                            [["offset","Offset"],["width","Width"]], "offset");
+    auto pie = Param.intEnum_("ie", "IE", &ie,
+        [IntEnumEntry(0, "off", "Off"), IntEnumEntry(1, "on", "On")], 0);
+    auto ps  = Param.string_("s", "S", &s, "");
+    auto pv  = Param.vec3_  ("v", "V", &v, Vec3(0, 0, 0));
+
+    assert(parseInto(pb, "true"));   assert(b == true);
+    assert(stringifyParam(pb) == "true");
+    assert(parseInto(pb, "0"));      assert(b == false);
+    assert(!parseInto(pb, "nope"));  // unrecognized bool token -> false, b unchanged
+    assert(b == false);
+
+    assert(parseInto(pi, "42"));     assert(i == 42);
+    assert(stringifyParam(pi) == "42");
+    assert(!parseInto(pi, "abc"));   assert(i == 42);   // unchanged on parse failure
+
+    assert(parseInto(pf, "0.5"));    assert(f == 0.5f);
+    assert(stringifyParam(pf) == "0.5");
+
+    assert(parseInto(pe, "width")); assert(mode == "width");
+    assert(stringifyParam(pe) == "width");
+    assert(!parseInto(pe, "bogus")); assert(mode == "width");
+
+    assert(parseInto(pie, "on"));   assert(ie == 1);
+    assert(stringifyParam(pie) == "on");
+    assert(!parseInto(pie, "bogus")); assert(ie == 1);
+
+    assert(parseInto(ps, "hello")); assert(s == "hello");
+    assert(stringifyParam(ps) == "hello");
+
+    assert(parseInto(pv, "1,2,3"));
+    assert(v.x == 1 && v.y == 2 && v.z == 3);
+    assert(stringifyParam(pv) == "1,2,3");
+    assert(!parseInto(pv, "1,2"));   // wrong arity -> false, v unchanged
+    assert(v.x == 1 && v.y == 2 && v.z == 3);
+
+    // Array kinds are out of scope for the string wire form (JSON injection
+    // is their canonical path) — parseInto rejects, stringifyParam is inert.
+    uint[] arr;
+    auto pa = Param.intArray_("arr", "Arr", &arr);
+    assert(!parseInto(pa, "1,2,3"));
+    assert(stringifyParam(pa) == "");
+}
+
+// ---------------------------------------------------------------------------
 // paramToJson — read the live typed-pointer value of a Param and box it as a
 // JSONValue. The dual of injectParamsInto's per-kind write: this is the READ
 // side used by the forms-engine query path (`tool.attr <id> <attr> ?`).

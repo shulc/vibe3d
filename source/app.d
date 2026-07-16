@@ -2214,8 +2214,7 @@ void main(string[] args) {
     void captureStickyToolDefaults() {
         if (!prefsActive) return;
         if (activeTool is null || activeToolId.length == 0) return;
-        import toolpipe.stage : stringifyParam;
-        import params : isStickyCapturable;
+        import params : stringifyParam, isStickyCapturable;
         string[string] attrs;
         foreach (ref p; activeTool.params()) {
             // Array kinds, read-only, and transient (gesture geometry /

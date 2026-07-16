@@ -1,10 +1,6 @@
 module toolpipe.stage;
 
-import params : Param, ParamProvider;
-import math   : Vec3;
-import std.conv   : to;
-import std.format : format;
-import std.string : split, strip;
+import params : Param, ParamProvider, parseInto, stringifyParam;
 
 // ---------------------------------------------------------------------------
 // Tool pipe task codes.
@@ -232,6 +228,11 @@ class NopStage : Stage {
 // default impls. Walk the params() registry, parse `value` per Param.kind
 // for setAttr, stringify each Param's pointer-target for listAttrs.
 //
+// The actual Param<->string wire mechanics (parseInto/stringifyParam) live in
+// `params.d` (task 0409 / 0407 D3) — they are generic Param mechanics with no
+// toolpipe dependency; this Stage glue is just one of several callers (see
+// params.d's doc comment on parseInto/stringifyParam for the others).
+//
 // Vec3-as-string format: "x,y,z" (matches `tool.pipe.attr falloff start
 // 0,0.5,0` from the existing HTTP tests). Enum kind matches by wireTag
 // (string for Param.Kind.Enum, intEnumValues.wireTag for IntEnum). Bool
@@ -253,67 +254,4 @@ string[2][] defaultStageListAttrs(Stage s) {
     foreach (ref p; s.fullParams())
         out_ ~= [p.name, stringifyParam(p)];
     return out_;
-}
-
-// Parse `value` per `p.kind` and write into the Param's typed pointer.
-// Returns false on parse failure (caller surfaces as "rejected attr").
-// Public so the sticky tool-default path (prefs) can re-apply a stored
-// value-string onto a freshly built tool's Param[] — same string→param
-// machinery as the stage attr setter, no logic change beyond visibility.
-bool parseInto(ref Param p, string value) {
-    final switch (p.kind) {
-        case Param.Kind.Bool:
-            if (value == "true"  || value == "1") { *p.bptr = true;  return true; }
-            if (value == "false" || value == "0") { *p.bptr = false; return true; }
-            return false;
-        case Param.Kind.Int:
-            try { *p.iptr = value.strip.to!int; return true; }
-            catch (Exception) { return false; }
-        case Param.Kind.Float:
-            try { *p.fptr = value.strip.to!float; return true; }
-            catch (Exception) { return false; }
-        case Param.Kind.Enum:
-            // Accept the wire tag exactly as listed in p.enumValues[i][0].
-            foreach (ref ev; p.enumValues)
-                if (ev[0] == value) { *p.sptr = value; return true; }
-            return false;
-        case Param.Kind.IntEnum:
-            foreach (ref ev; p.intEnumValues)
-                if (ev.wireTag == value) { *p.iePtr = ev.value; return true; }
-            return false;
-        case Param.Kind.String:
-            *p.sptr = value;
-            return true;
-        case Param.Kind.Vec3_:
-            auto parts = value.split(",");
-            if (parts.length != 3) return false;
-            try {
-                p.vptr.x = parts[0].strip.to!float;
-                p.vptr.y = parts[1].strip.to!float;
-                p.vptr.z = parts[2].strip.to!float;
-                return true;
-            } catch (Exception) { return false; }
-        case Param.Kind.IntArray:   return false;   // out of scope
-        case Param.Kind.Vec3Array:  return false;   // out of scope
-    }
-}
-
-// Stringify a Param's typed pointer-target to the same wire form `parseInto`
-// accepts. Public so the sticky tool-default capture path (prefs) can snapshot
-// a dropped tool's tool-level params — no logic change beyond visibility.
-string stringifyParam(ref Param p) {
-    final switch (p.kind) {
-        case Param.Kind.Bool:    return *p.bptr ? "true" : "false";
-        case Param.Kind.Int:     return format("%d", *p.iptr);
-        case Param.Kind.Float:   return format("%g", *p.fptr);
-        case Param.Kind.Enum:    return *p.sptr;
-        case Param.Kind.IntEnum:
-            foreach (ref ev; p.intEnumValues)
-                if (ev.value == *p.iePtr) return ev.wireTag;
-            return format("%d", *p.iePtr);
-        case Param.Kind.String:    return *p.sptr;
-        case Param.Kind.Vec3_:     return format("%g,%g,%g", p.vptr.x, p.vptr.y, p.vptr.z);
-        case Param.Kind.IntArray:  return "";
-        case Param.Kind.Vec3Array: return "";
-    }
 }

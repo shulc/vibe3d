@@ -6,8 +6,7 @@ import std.json : JSONValue;
 import registry         : Registry;
 import tool             : Tool, ToolFlag;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.stage   : parseInto;
-import params : Param, ParamProvider, injectParamsInto;
+import params : Param, ParamProvider, injectParamsInto, parseInto;
 import prefs  : g_prefs, Prefs;
 
 // ---------------------------------------------------------------------------
