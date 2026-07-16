@@ -6,7 +6,7 @@ import std.string : toStringz;
 
 import view;
 import math;
-import mesh : Surface;
+import mesh : Surface, GpuMesh;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -450,6 +450,39 @@ class LitShader {
         glUseProgram(program);
         glUniform1f(locDim, dim);
     }
+}
+
+// Shared "lit preview" draw: solid shaded faces (LitShader — identity
+// model, fixed key light, flat ambient/spec) followed by wireframe edges
+// (plain Shader). Used by every primitive/incremental create-tool (box,
+// bridge, capsule, cone, cylinder, mirror, radial-sweep, sphere, tack,
+// torus, tube) to render its in-progress preview mesh — lifted verbatim
+// from the `draw()` GL block every one of them repeated (task 0410, dedup
+// 0407 §A.D6). `previewGpu` is `ref` (not `const`) because
+// GpuMesh.drawFaces/drawEdges are not const-qualified.
+void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
+                     const ref Viewport vp, ref GpuMesh previewGpu) {
+    immutable float[16] identity = identityMatrix;
+    Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+
+    // Solid faces.
+    glUseProgram(litShader.program);
+    glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
+    glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
+    glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
+    glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
+    glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
+    glUniform1f(litShader.locAmbient,  0.20f);
+    glUniform1f(litShader.locSpecStr,  0.25f);
+    glUniform1f(litShader.locSpecPow,  32.0f);
+    previewGpu.drawFaces(litShader);
+
+    // Wireframe edges.
+    glUseProgram(shader.program);
+    glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identity.ptr);
+    glUniformMatrix4fv(shader.locView,  1, GL_FALSE, vp.view.ptr);
+    glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
+    previewGpu.drawEdges(shader.locColor, -1, []);
 }
 
 class GridShader {

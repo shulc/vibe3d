@@ -13,7 +13,7 @@ import params : Param, IntEnumEntry;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import shader : Shader, LitShader;
+import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta;
 import eventlog : queryMouse;
@@ -483,25 +483,7 @@ public:
         if (!visualOnly) cachedVp = vp;
 
         if (validProfile_) {
-            immutable float[16] identity = identityMatrix;
-            Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
-
-            glUseProgram(litShader.program);
-            glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
-            glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
-            glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
-            glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
-            glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
-            glUniform1f(litShader.locAmbient,  0.20f);
-            glUniform1f(litShader.locSpecStr,  0.25f);
-            glUniform1f(litShader.locSpecPow,  32.0f);
-            previewGpu.drawFaces(litShader);
-
-            glUseProgram(shader.program);
-            glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identity.ptr);
-            glUniformMatrix4fv(shader.locView,  1, GL_FALSE, vp.view.ptr);
-            glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
-            previewGpu.drawEdges(shader.locColor, -1, []);
+            drawLitPreview(litShader, shader, vp, previewGpu);
         }
 
         // --- Handle positions, derived fresh every frame from params_ ---
