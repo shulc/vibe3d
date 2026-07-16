@@ -1029,3 +1029,586 @@ void drawLayerListPanel(EditorApp app) {
     popPanelChromeStyle();
     }
 }
+
+// =============================================================================
+// Phase 5 -- CTX popup-cluster + side/status, moved TOGETHER (they are
+// mutually coupled: dispatchAction is called from renderFalloffStackItems/
+// renderPopupItems/drawSidePanel's renderButton; renderPopupItems recurses
+// into itself and is called from renderDynamicPopupItems + both
+// drawSidePanel's and drawStatusBar's nested renderVariantPopup). The four
+// CTX-helpers each become app-taking free functions; every cross-call between
+// them (8 sites) gets an explicit `app,` argument -- bare-call syntax no
+// longer resolves since these are no longer sibling nested functions sharing
+// one enclosing scope.
+// =============================================================================
+
+void dispatchAction(EditorApp app, ref Action action) {
+    with (app) {
+    import argstring : parseArgstring;
+    final switch (action.kind) {
+        case ActionKind.tool:
+            activateToolById(action.id);
+            break;
+        case ActionKind.command:
+            if (!tryOpenArgsDialog(action.id))
+                runCommand(reg.commandFactories[action.id]());
+            break;
+        case ActionKind.script:
+            foreach (line; action.scriptLines) {
+                auto parsed = parseArgstring(line);
+                if (parsed.isEmpty) continue;
+                if (commandHandlerDelegate !is null)
+                    commandHandlerDelegate(parsed.commandId,
+                                           parsed.params.toString());
+            }
+            break;
+        case ActionKind.popup:
+            // Nested popup not supported.
+            break;
+    }
+    }
+}
+
+// popupItemChecked / popupActionNeedsAssimp relocated to
+// source/ui/panels.d (task 0419 Phase 1 -- pure helpers). Both are used
+// bare below (renderPopupItems, drawSidePanel's renderButton) and
+// resolve via this import.
+import ui.panels : popupItemChecked, popupActionNeedsAssimp;
+
+// Live falloff-stack rows for the Falloff button's Alt popup. Lists
+// every contributing FalloffStage instance; clicking one removes it
+// from the queue. The primary ("falloff") is the compat anchor and
+// can't be deleted — clicking it instead resets its type to none
+// (the equivalent "drop from the active set"). Stacked extras
+// ("falloff#N") dispatch falloff.remove <id>.
+//
+// Defined BEFORE renderPopupItems: these are nested functions, and
+// D processes in-function declarations in order — renderPopupItems
+// (the caller) must see this name already declared.
+void renderFalloffStackItems(EditorApp app) {
+    with (app) {
+    if (g_pipeCtx is null) {
+        ImGui.TextDisabled("(no pipeline)");
+        return;
+    }
+    import toolpipe.stage          : TaskCode;
+    import toolpipe.stages.falloff : FalloffStage;
+    // Defer dispatch until after the loop — removing a stage mutates
+    // the pipeline; collect the chosen command line and run it once
+    // the menu walk is complete.
+    string pending;
+    int    shown = 0;
+    foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght)) {
+        auto fo = cast(FalloffStage) s;
+        if (fo is null) continue;
+        bool primary = fo.isPrimary();
+        // The anchor only counts as "active" when it carries a type;
+        // a stacked extra always has one (add requires it) — list it
+        // regardless so a degenerate none-typed extra is still
+        // removable.
+        if (primary && !fo.isActive()) continue;
+        ++shown;
+        string label = primary
+                     ? fo.displayName()
+                     : fo.displayName() ~ "  (" ~ fo.id() ~ ")";
+        if (ImGui.MenuItem(label, "", /*selected=*/false)) {
+            pending = primary
+                    ? "tool.pipe.attr falloff type none"
+                    : "falloff.remove " ~ fo.id();
+        }
+    }
+    if (shown == 0)
+        ImGui.TextDisabled("(no active falloff)");
+    if (pending.length > 0) {
+        Action a;
+        a.kind        = ActionKind.script;
+        a.scriptLines = [pending];
+        dispatchAction(app, a);
+    }
+    }
+}
+
+// Expand a `kind: dynamic` popup item into runtime-generated rows.
+// The config declares only the provider key (dynamicKind:); the
+// actual rows depend on live state the YAML can't enumerate. New
+// providers add a branch here. Unknown keys render a disabled hint
+// rather than throwing mid-frame.
+void renderDynamicPopupItems(EditorApp app, string kind) {
+    with (app) {
+    switch (kind) {
+        case "falloffStack":
+            renderFalloffStackItems(app);
+            break;
+        default:
+            ImGui.TextDisabled("(unknown dynamic '%s')", kind);
+            break;
+    }
+    }
+}
+
+// Render the body of a popup (between `BeginPopup` and `EndPopup`).
+// Action items dispatch via `dispatchAction`; dividers/headers are
+// non-interactive.
+void renderPopupItems(EditorApp app, ref PopupItem[] items) {
+    with (app) {
+    foreach (ref it; items) {
+        final switch (it.kind) {
+            case PopupItemKind.divider:
+                ImGui.Separator();
+                break;
+            case PopupItemKind.header:
+                // Pass D string directly — d_imgui's varargs path
+                // segfaults when %s + toStringz (immutable char*)
+                // are combined; the rest of the codebase passes D
+                // strings as %s args (see lines 3202 / 3218).
+                ImGui.TextDisabled("%s", it.label);
+                break;
+            case PopupItemKind.action:
+                bool checked = popupItemChecked(it.checked);
+                // Availability gating (asset-I/O Phase 6): grey out
+                // Import/Export items that route through assimp when the
+                // dynamic libassimp isn't loaded. Native .v3d and LWO are
+                // pure D and always enabled. The id encodes the target
+                // ext (file.import.obj / file.export.gltf / ...).
+                bool blocked = false;
+                if (it.action.kind == ActionKind.command)
+                    blocked = popupActionNeedsAssimp(it.action.id)
+                              && !isAssimpAvailable();
+                if (blocked) ImGui.BeginDisabled(true);
+                if (ImGui.MenuItem(it.label, "", checked) && !blocked)
+                    dispatchAction(app, it.action);
+                if (blocked) {
+                    ImGui.EndDisabled();
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                        ImGui.SetTooltip("Requires libassimp — not loaded");
+                }
+                break;
+            case PopupItemKind.submenu:
+                if (ImGui.BeginMenu(it.label)) {
+                    renderPopupItems(app, it.subItems);
+                    ImGui.EndMenu();
+                }
+                break;
+            case PopupItemKind.dynamic:
+                renderDynamicPopupItems(app, it.dynamicKind);
+                break;
+        }
+    }
+    }
+}
+
+// firstCheckedLabel / pushPopupStyle / popPopupStyle / drawSectionHeader
+// / pushPanelChromeStyle / popPanelChromeStyle / pushButtonBarStyle /
+// popButtonBarStyle relocated to source/ui/panels.d (task 0419 Phase 1
+// -- pure helpers, including the two cross-boundary style pairs). All
+// are used bare below and in main-body code well past this point
+// (chrome: 6 call sites; popup: 12 call sites; see the plan doc's Б3)
+// -- resolve via this import instead of a sibling nested-function
+// declaration.
+import ui.panels : firstCheckedLabel, pushPopupStyle, popPopupStyle,
+    drawSectionHeader, pushPanelChromeStyle, popPanelChromeStyle,
+    pushButtonBarStyle, popButtonBarStyle;
+
+void drawSidePanel(EditorApp app) {
+    with (app) {
+    pushPanelChromeStyle();
+    // In --test: fixed rect + immovable flags reproduce today's exact
+    // layout (picking rect unchanged → byte-identical).
+    // Interactive: no fixed pos/size → floats/docks freely.
+    if (testMode) {
+        ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
+    }
+    int sidePanelFlags = ImGuiWindowFlags.NoCollapse;
+    if (testMode) sidePanelFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
+    {
+        pushButtonBarStyle();
+        scope(exit) popButtonBarStyle();
+        void renderButton(ref Button btn) {
+            // Pick which (label, action) to show based on the live
+            // modifier state. Priority: ctrl > alt > shift, single
+            // modifier only (combinations not supported yet). Each
+            // variant has its own popup ID so a popup opened via
+            // alt-click survives the user releasing Alt — see the
+            // BeginPopup loop at the end.
+            SDL_Keymod mods = SDL_GetModState();
+            string label   = btn.label;
+            Action action  = btn.action;
+            string variant = "";
+            if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
+                label = btn.ctrl.label;  action = btn.ctrl.action;
+                variant = "_ctrl";
+            }
+            else if (btn.alt.present   && (mods & KMOD_ALT))   {
+                label = btn.alt.label;   action = btn.alt.action;
+                variant = "_alt";
+            }
+            else if (btn.shift.present && (mods & KMOD_SHIFT)) {
+                label = btn.shift.label; action = btn.shift.action;
+                variant = "_shift";
+            }
+
+            string sc;
+            if (action.kind == ActionKind.tool) {
+                if (auto sp = action.id in shortcuts.byToolId)
+                    sc = sp.display();
+            } else if (action.kind == ActionKind.command) {
+                if (auto sp = action.id in shortcuts.byCommandId)
+                    sc = sp.display();
+            }
+            // Visual "pressed" state. Button-level `checked:` wins
+            // (works for any action kind — used by toggle buttons
+            // like Snap whose state lives off in the pipeline).
+            // Otherwise fall back to legacy logic: tool-id match,
+            // or the popup action's own `checked:`.
+            bool on;
+            if (btn.checked.present)
+                on = popupItemChecked(btn.checked);
+            else
+                on = (action.kind == ActionKind.tool &&
+                      activeToolId == action.id)
+                  || (action.kind == ActionKind.popup
+                      && action.checked.present
+                      && popupItemChecked(action.checked));
+            // Scripts share the command's pale-blue palette (they're a
+            // sequence of commands, not a sticky-tool activation).
+            bool isCommand = (action.kind == ActionKind.command
+                           || action.kind == ActionKind.script);
+            // Auto-grey rows whose target action declares
+            // restricted `supportedModes()` excluding the current
+            // edit mode. `btn.disabled` (explicit YAML flag) wins
+            // when set. Script / popup actions aren't checked —
+            // their target isn't a single id.
+            bool modeBlocked = false;
+            if (action.kind == ActionKind.command)
+                modeBlocked = reg.isModeBlocked("command", action.id, editMode);
+            else if (action.kind == ActionKind.tool)
+                modeBlocked = reg.isModeBlocked("tool", action.id, editMode);
+            // "Generate 3D…" (ai3d.generate.open, task 0404 follow-up):
+            // TRELLIS is Linux-only and requires WithAI — grey the entry
+            // rather than hide it on every other build (see
+            // kGenerateAiAvailable's doc comment near `main`).
+            bool aiGateBlocked = action.kind == ActionKind.command
+                && action.id == "ai3d.generate.open" && !kGenerateAiAvailable;
+            bool effDisabled = btn.disabled || modeBlocked || aiGateBlocked;
+            if (renderStyledButton(label, sc, on, isCommand,
+                                   ImVec2(-1, 0), effDisabled)) {
+                if (action.kind == ActionKind.popup)
+                    ImGui.OpenPopup("##popup" ~ variant ~ "_" ~ btn.label);
+                else
+                    dispatchAction(app, action);
+            }
+            if (aiGateBlocked && ImGui.IsItemHovered())
+                ImGui.SetTooltip("Not available in this build");
+            // Render BeginPopup for EVERY popup variant the button
+            // declares, regardless of which one is currently
+            // active. Without this, a popup opened via alt-click
+            // would close the moment the user releases Alt — the
+            // BeginPopup branch below was previously gated on the
+            // current variant's kind == popup, so on the first
+            // post-release frame ImGui sees no BeginPopup for the
+            // open ID and treats it as closed.
+            void renderVariantPopup(string suf, ref Action a) {
+                if (a.kind != ActionKind.popup) return;
+                pushPopupStyle();
+                scope(exit) popPopupStyle();
+                if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                    renderPopupItems(app, a.popupItems);
+                    ImGui.EndPopup();
+                }
+            }
+            renderVariantPopup("",       btn.action);
+            if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
+            if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
+            if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
+        }
+
+        if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
+            Panel* p = &panels[activePanelIdx];
+            bool prevWasGroup = false;
+            bool first        = true;
+            foreach (ref item; p.items) {
+                bool curIsGroup = item.isGroup;
+                if (!first && (prevWasGroup || curIsGroup))
+                    ImGui.Dummy(ImVec2(0, 10));  // LW inter-group gap = 10px
+                if (curIsGroup) {
+                    if (item.group.title.length > 0)
+                        drawSectionHeader(item.group.title);
+                    foreach (ref b; item.group.buttons)
+                        renderButton(b);
+                } else {
+                    renderButton(item.button);
+                }
+                prevWasGroup = curIsGroup;
+                first = false;
+            }
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Info");
+        // selectedN / totalN. The *SelectionOrderCounter fields
+        // are MONOTONIC (incremented on each pick, never
+        // decremented on deselect or selection-clear), so they
+        // can't be used as a live "how many are selected right
+        // now" readout. Walk the bool[] masks via countSelected.
+        //
+        // FUTURE perf note — countSelected is a linear walk
+        // (1 byte per `bool` entry, likely auto-vectorised). At
+        // typical mesh sizes the per-frame cost is:
+        //     cube      :  ~26 bytes  → < 1 µs  (0.006 % frame)
+        //     subdiv ×4 :  ~9 KB      → ~2 µs   (0.012 % frame)
+        //     24 K cage :  ~96 KB     → ~25 µs  (0.18 %  frame)
+        //     1 M poly  :  ~4 MB      → ~900 µs (5-6 %  frame)
+        // So fine up to ~100 K elements; only worth optimising
+        // when 1 M+ poly imports become a typical workflow. The
+        // O(1) path is straightforward — add `int selectedXCount`
+        // fields on `Mesh`, bump/decrement in `selectVertex /
+        // deselectVertex / clearVertexSelection` (and the
+        // matching edge / face variants), and read those here
+        // directly. Risk is drift if a new selection mutator
+        // forgets to maintain the counter; the linear walk is
+        // the more robust default until perf demands otherwise.
+        ImGui.LabelText("V", "%d/%d",
+            mesh.countSelectedVertices(),
+            cast(int) mesh.vertices.length);
+        ImGui.LabelText("E", "%d/%d",
+            mesh.countSelectedEdges(),
+            cast(int) mesh.edges.length);
+        ImGui.LabelText("F", "%d/%d",
+            mesh.countSelectedFaces(),
+            cast(int) mesh.faces.length);
+    }
+    ImGui.End();
+    popPanelChromeStyle();
+    }
+}
+
+void drawStatusBar(EditorApp app) {
+    with (app) {
+    pushPanelChromeStyle();
+    if (testMode) {
+        ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
+    }
+    int statusFlags = ImGuiWindowFlags.NoCollapse;
+    if (testMode) statusFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    if (ImGui.Begin("Status line", null, statusFlags))
+    {
+        pushButtonBarStyle();
+        scope(exit) popButtonBarStyle();
+
+        // Render the YAML-driven status row. Buttons live in groups
+        // (`Group.title` is grouping-only — never rendered in the
+        // status bar; an inter-group ImGui.Dummy gap visually
+        // separates concerns). Each entry's first script line
+        // determines (a) the keyboard shortcut hint via byEditMode
+        // and (b) the "active" highlight, by parsing
+        // `select.typeFrom <vertex|edge|polygon>` and matching
+        // against the live editMode.
+        import argstring : parseArgstring;
+        enum float btnW         = 85.0f;
+        enum float interGroupGap = 8.0f;
+        bool firstButton = true;
+        foreach (gi, ref grp; statusLineGroups) {
+            if (gi > 0) {
+                // Inter-group breathing room. Dummy + SameLine
+                // sandwich keeps the next button on the same row.
+                ImGui.SameLine();
+                ImGui.Dummy(ImVec2(interGroupGap, 0));
+            }
+            foreach (bi, ref btn; grp.buttons) {
+                if (!firstButton) ImGui.SameLine();
+                firstButton = false;
+
+                // ImGui derives widget IDs from label text, so when
+                // modifier overrides give all three buttons the
+                // same label (e.g. "Convert" while Alt is held) the
+                // second and third would collapse onto the first's
+                // ID and stop clicking. Use group-title + button
+                // index as the PushID for stability across YAML
+                // reorders.
+                import std.format : format;
+                ImGui.PushID(format("%s/%d", grp.title, bi));
+                scope(exit) ImGui.PopID();
+
+                // Variant select (ctrl/alt/shift) — same convention
+                // as side-panel buttons. Each variant gets a unique
+                // popup-id suffix so the popup outlives the user
+                // releasing the modifier (see the BeginPopup loop
+                // at the end of this block).
+                SDL_Keymod mods = SDL_GetModState();
+                string label   = btn.label;
+                Action action  = btn.action;
+                string variant = "";
+                if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
+                    label = btn.ctrl.label;  action = btn.ctrl.action;
+                    variant = "_ctrl";
+                }
+                else if (btn.alt.present   && (mods & KMOD_ALT))   {
+                    label = btn.alt.label;   action = btn.alt.action;
+                    variant = "_alt";
+                }
+                else if (btn.shift.present && (mods & KMOD_SHIFT)) {
+                    label = btn.shift.label; action = btn.shift.action;
+                    variant = "_shift";
+                }
+
+                // "Popup face" behaviour. When a popup action sets
+                // `dynamicLabel: true`, swap the
+                // static button label for whichever item's `checked:`
+                // currently resolves true. The swap only fires when
+                // the BUTTON-level `checked:` resolves true — so e.g.
+                // ACEN's button (checked.notEquals "none") shows the
+                // active mode name when pressed and falls back to
+                // "Action Center" when state == none.
+                if (action.kind == ActionKind.popup && action.dynamicLabel) {
+                    bool pressed = !action.checked.present
+                                   || popupItemChecked(action.checked);
+                    if (pressed) {
+                        string s = firstCheckedLabel(action.popupItems);
+                        if (s.length > 0) label = s;
+                    }
+                }
+                // Button-level dynamicLabel — works for ANY action
+                // kind (command/script/popup). Reads a state path
+                // directly; if non-empty, replaces the static label.
+                // No modifier-variant override (alt/ctrl/shift) —
+                // those carry their own static labels that always win.
+                if (btn.dynamicLabelPath.length > 0 && variant.length == 0) {
+                    import popup_state : getStatePath;
+                    string dyn = getStatePath(btn.dynamicLabelPath);
+                    if (dyn.length > 0) label = dyn;
+                }
+
+                // Detect edit-mode actions for shortcut display +
+                // on-highlight. New status-line buttons use dedicated
+                // command ids; legacy script buttons are still supported
+                // through select.typeFrom's first argstring line.
+                string editModeId;
+                if (action.kind == ActionKind.command) {
+                    if      (action.id == "select.vertex")  editModeId = "vertices";
+                    else if (action.id == "select.edge")    editModeId = "edges";
+                    else if (action.id == "select.polygon") editModeId = "polygons";
+                } else if (action.kind == ActionKind.script
+                           && action.scriptLines.length > 0) {
+                    auto parsed = parseArgstring(action.scriptLines[0]);
+                    if (!parsed.isEmpty
+                        && parsed.commandId == "select.typeFrom"
+                        && "_positional" in parsed.params
+                        && parsed.params["_positional"].type == JSONType.array
+                        && parsed.params["_positional"].array.length > 0
+                        && parsed.params["_positional"].array[0].type == JSONType.string)
+                    {
+                        string t = parsed.params["_positional"].array[0].str;
+                        if      (t == "vertex")  editModeId = "vertices";
+                        else if (t == "edge")    editModeId = "edges";
+                        else if (t == "polygon") editModeId = "polygons";
+                    }
+                }
+                string sc;
+                if (editModeId.length > 0) {
+                    if (auto sp = editModeId in shortcuts.byEditMode) sc = sp.display();
+                }
+                // Visual "pressed" state. Button-level `btn.checked`
+                // wins (works for any action kind — used by toggle
+                // buttons whose state lives in the pipeline, e.g.
+                // Snap reflecting `snap/enabled`). Otherwise fall
+                // back to: editmode match, or popup action's own
+                // `checked:`.
+                bool on;
+                if (btn.checked.present) {
+                    on = popupItemChecked(btn.checked);
+                } else {
+                    on = (editModeId == "vertices" && editMode == EditMode.Vertices)
+                      || (editModeId == "edges"    && editMode == EditMode.Edges)
+                      || (editModeId == "polygons" && editMode == EditMode.Polygons)
+                      || (action.kind == ActionKind.popup
+                          && action.checked.present
+                          && popupItemChecked(action.checked));
+                }
+
+                string popupId = "##popup" ~ variant ~ "_" ~ btn.label;
+                // Auto-grow the button when the (possibly dynamic)
+                // label is wider than the default 85-px slot —
+                // otherwise long ACEN modes like "Selection Center
+                // Auto Axis" get clipped. CalcTextSize uses the
+                // current font, plus 18 px for FramePadding (×2)
+                // and a hair of slack so the text doesn't kiss the
+                // border.
+                float effW = btnW;
+                {
+                    ImVec2 ts = ImGui.CalcTextSize(label);
+                    float need = ts.x + 18.0f;
+                    if (need > effW) effW = need;
+                }
+                // "AI" master-switch button: greyed (not hidden) in
+                // modeling-noai — see kAiToggleAvailable's doc comment
+                // near `main`. Every OTHER status-line button stays as
+                // today (no other action id is gated here).
+                bool aiGateBlocked = action.kind == ActionKind.command
+                    && action.id == "ai.toggle" && !kAiToggleAvailable;
+                if (renderStyledButton(label, sc, on, /*isCommand=*/true,
+                                       ImVec2(effW, 0), aiGateBlocked)) {
+                    final switch (action.kind) {
+                        case ActionKind.tool:
+                            activateToolById(action.id);
+                            break;
+                        case ActionKind.command:
+                            if (!tryOpenArgsDialog(action.id))
+                                runCommand(reg.commandFactories[action.id]());
+                            if (editModeId.length > 0)
+                                setActiveTool(null);
+                            break;
+                        case ActionKind.script:
+                            // typeFrom doesn't go through the args
+                            // dialog — dispatch each line via the
+                            // same path as /api/command argstring
+                            // bodies.
+                            foreach (line; action.scriptLines) {
+                                auto p2 = parseArgstring(line);
+                                if (p2.isEmpty) continue;
+                                if (commandHandlerDelegate !is null)
+                                    commandHandlerDelegate(p2.commandId,
+                                                            p2.params.toString());
+                            }
+                            // Activating an edit mode is conceptually
+                            // a tool change — drop any sticky tool
+                            // too.
+                            if (editModeId.length > 0)
+                                setActiveTool(null);
+                            break;
+                        case ActionKind.popup:
+                            ImGui.OpenPopup(popupId);
+                            break;
+                    }
+                }
+                if (aiGateBlocked && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Not available in this build");
+                // Render BeginPopup for EVERY popup variant the
+                // button declares, regardless of which is currently
+                // active under the live modifier state. Without
+                // this, an alt-opened popup vanishes the moment
+                // the user releases Alt — BeginPopup wouldn't be
+                // called for that variant on the first post-
+                // release frame and ImGui closes the popup.
+                void renderVariantPopup(string suf, ref Action a) {
+                    if (a.kind != ActionKind.popup) return;
+                    pushPopupStyle();
+                    scope(exit) popPopupStyle();
+                    if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                        renderPopupItems(app, a.popupItems);
+                        ImGui.EndPopup();
+                    }
+                }
+                renderVariantPopup("",       btn.action);
+                if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
+                if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
+                if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
+            }
+        }
+    }
+    ImGui.End();
+    popPanelChromeStyle();
+    }
+}
