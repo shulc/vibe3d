@@ -23,13 +23,25 @@ required for redistribution.
 | [D-OpenSubdiv](https://github.com/shulc/D-OpenSubdiv) | ~main | BSL-1.0 (wrapper) | Alexander Shagarov; bundles **OpenSubdiv** (modified Apache 2.0) © Pixar |
 | [assimp](https://github.com/assimp/assimp) | 6.0.x (minimal: OBJ/glTF/FBX) | BSD-3-Clause | assimp team; **statically linked** into the executable |
 | [bindbc-assimp6](https://github.com/shulc/bindbc-assimp6) | ~master | BSL-1.0 (wrapper) | Alexander Shagarov; D bindings to the assimp C API |
-| [lwo2-writer](https://github.com/shulc/D-Lwo2Writer) | ~master | MIT | Alexander Shagarov; clean-room LWO2 writer |
+| [lwo2-writer](https://github.com/shulc/D-Lwo2Writer) | ~master | MIT | Alexander Shagarov; clean-room LWO2 reader/writer |
+| [D-BVH](https://github.com/shulc/D-BVH) | ~main | MIT (wrapper) | Alexander Shagarov; bundles **nanort** (MIT) © Light Transport Entertainment, Inc., **statically linked** into the executable for ray picking |
+| [D-OnnxRuntime](https://github.com/shulc/D-OnnxRuntime) | ~master | MIT (wrapper) | Alexander Shagarov; bundles **ONNX Runtime** (MIT) © Microsoft Corporation — the AI candidate ranker, `WithAI` builds only |
+| [Inter](https://rsms.me/inter/) (UI font) | 4.x | OFL-1.1 | The Inter Project Authors; `Inter-Regular.ttf` embedded into the executable |
 
 `assimp` is built as a **minimal static library** (only the OBJ / glTF / FBX
 importers + exporters — see `bindbc-assimp6`'s `tools/build_assimp_min.sh`)
 and linked into the vibe3d binary; BSD-3-Clause permits static linking and
 binary redistribution with the attribution in this file. No separate assimp
 shared library is shipped.
+
+`nanort` (a single-header C++ BVH) is compiled through `D-BVH`'s C shim and
+**statically linked** into every build. `ONNX Runtime` backs the optional AI
+candidate ranker and is present only in `WithAI` builds (the default `modeling`
+config and `with-render`); it is dropped from the `modeling-noai` /
+Windows-7 build. Where it ships, `onnxruntime.dll` is redistributed app-local
+in the Windows zip. Both are MIT-licensed (see below). The Inter UI font
+(`Inter-Regular.ttf`) is embedded into the executable as a string import in all
+builds and is covered by the SIL Open Font License 1.1 reproduced below.
 
 ### Render build (`with-render` only)
 
@@ -347,7 +359,8 @@ Copyright (c) 2006-2024, assimp team. All rights reserved.
 
 ## MIT License
 
-Applies to: Dear ImGui (vendored via `d_imgui`), lwo2-writer.
+Applies to: Dear ImGui (vendored via `d_imgui`), lwo2-writer, D-BVH (wrapper)
+and its bundled nanort, D-OnnxRuntime (wrapper) and its bundled ONNX Runtime.
 
 ```
 Copyright (c) 2014-2024 Omar Cornut
@@ -369,6 +382,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+### MIT copyright notices
+
+```
+Dear ImGui
+Copyright (c) 2014-2024 Omar Cornut
+
+lwo2-writer, D-BVH, D-OnnxRuntime (D wrappers)
+Copyright (c) 2024-2026 Alexander Shagarov
+
+nanort
+Copyright (c) 2015-2018 Light Transport Entertainment, Inc.
+
+ONNX Runtime
+Copyright (c) Microsoft Corporation
 ```
 
 ---
@@ -440,6 +469,23 @@ FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
+
+---
+
+## SIL Open Font License 1.1
+
+The Inter UI font (`assets/fonts/Inter-Regular.ttf`, embedded into the
+executable) is licensed under the SIL Open Font License, Version 1.1.
+
+Copyright © The Inter Project Authors (<https://github.com/rsms/inter>).
+"Inter" is a Reserved Font Name under the license.
+
+The complete OFL-1.1 text is redistributed verbatim alongside the font in
+[`assets/fonts/LICENSE-Inter.txt`](assets/fonts/LICENSE-Inter.txt). In brief,
+the license permits embedding the font in — and redistributing it as part of —
+the vibe3d binary; it forbids selling the font on its own and requires that the
+above copyright notice and the license accompany the font. The canonical
+license text is published at <https://openfontlicense.org/>.
 
 ---
 
