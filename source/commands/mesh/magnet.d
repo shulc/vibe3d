@@ -1,11 +1,10 @@
 module commands.mesh.magnet;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -28,10 +27,6 @@ import deform_magnet : applyMagnet;
 /// Interactive surface: `xfrm.magnet` tool.
 class MeshMagnet : Command, Operator, IFalloffAware {
 private:
-    GpuMesh*         gpu;
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     Vec3         target_   = Vec3(0, 0, 0);
     float        strength_ = 1.0f;
@@ -48,13 +43,8 @@ private:
     Vec3[] touchedPrev_;
 
 public:
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.magnet"; }
@@ -92,7 +82,7 @@ public:
             if (touchedIdx_[k] < mesh.vertices.length)
                 mesh.vertices[touchedIdx_[k]] = touchedPrev_[k];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -165,7 +155,7 @@ private:
         if (touchedIdx_.length == 0) return false;
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

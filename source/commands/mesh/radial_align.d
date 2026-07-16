@@ -1,12 +1,11 @@
 module commands.mesh.radial_align;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -26,10 +25,6 @@ import tools.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
 /// shares this same kernel) — `weight` here is a plain uniform blend.
 class MeshRadialAlign : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
 
@@ -39,13 +34,8 @@ class MeshRadialAlign : Command, Operator {
     private float  angle_  = 0.0f;
     private float  weight_ = 1.0f;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.radial_align"; }
@@ -91,7 +81,7 @@ class MeshRadialAlign : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -100,7 +90,7 @@ class MeshRadialAlign : Command, Operator {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

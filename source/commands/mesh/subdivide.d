@@ -1,12 +1,11 @@
 module commands.mesh.subdivide;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import subpatch_osd : catmullClarkOsd;
 import change_bus : MeshEditScope;
@@ -15,22 +14,13 @@ import commands.mesh.subdivide_faceted : runFacetedFamily;
 
 class Subdivide : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*        gpu;
-    private VertexCache*    vc;
-    private EdgeCache*      ec;
-    private FaceBoundsCache* fc;
     private void delegate() onTopologyChange;
     private MeshSnapshot snap;
     private string mode_ = "ccsds";
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          void delegate() onTopologyChange) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
         this.onTopologyChange = onTopologyChange;
     }
 
@@ -133,6 +123,6 @@ class Subdivide : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

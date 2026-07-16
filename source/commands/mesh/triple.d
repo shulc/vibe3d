@@ -1,12 +1,11 @@
 module commands.mesh.triple;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import change_bus : MeshEditScope;
 
@@ -22,21 +21,12 @@ import change_bus : MeshEditScope;
 /// Undo via MeshSnapshot (whole-mesh snapshot — topology-replacing op).
 class MeshTriple : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private void delegate()  onTopologyChange;
     private MeshSnapshot     snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          void delegate() onTopologyChange) {
         super(mesh, view, editMode);
-        this.gpu              = gpu;
-        this.vc               = vc;
-        this.ec               = ec;
-        this.fc               = fc;
         this.onTopologyChange = onTopologyChange;
     }
 
@@ -89,7 +79,7 @@ class MeshTriple : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }
 

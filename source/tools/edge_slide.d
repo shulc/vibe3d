@@ -29,7 +29,7 @@ final class EdgeSlideTool : CommandWrapperTool {
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        inner_ = new MeshEdgeSlide(mesh, view, editMode, gpu, vc, ec, fc);
+        inner_ = new MeshEdgeSlide(mesh, view, editMode);
         inner    = inner_;
         meshPtr  = mesh;
         viewRef  = view;

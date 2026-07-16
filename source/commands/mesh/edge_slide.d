@@ -1,11 +1,10 @@
 module commands.mesh.edge_slide;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -23,22 +22,13 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 ///     requested side (graceful degradation: touchedIdx is empty, the
 ///     recorded undo entry's revert() is a no-op, caller gets "ok").
 class MeshEdgeSlide : Command, Operator {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private float            t_ = 0.0f;
     // Positional snapshot for revert (jitter.d pattern).
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.edge_slide"; }
@@ -89,7 +79,7 @@ class MeshEdgeSlide : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         // Always true for a non-empty edge selection — even if no rail existed
         // on the requested side (touchedIdx is empty, undo is a no-op).
         return true;
@@ -100,7 +90,7 @@ class MeshEdgeSlide : Command, Operator {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }
