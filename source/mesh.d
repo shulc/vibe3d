@@ -9,6 +9,7 @@ import shader;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import change_bus : SelDomain;
+import mesh_ops.cut : MeshCutOps;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -14238,6 +14239,12 @@ struct Mesh {
 
         return collapses;
     }
+
+    // Plane-cut kernel family (cutByPlane / cutByPlaneRestricted / planeCutCore /
+    // cutByPlaneClipped / PlaneCutLoops / cutByPlaneEx / deleteComponentsInSlab /
+    // cutByPlaneSplitGap / extractCutLoops / splitAlongCutLoop) — see
+    // source/mesh_ops/cut.d (task 0412, 0407 §B.V2 pilot).
+    mixin MeshCutOps;
 
     /// Cut the whole mesh with the infinite plane {x : dot(n, x-p) == 0}.
     ///
