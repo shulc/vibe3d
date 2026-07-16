@@ -11751,8 +11751,7 @@ struct Mesh {
         auto edgeFaces = buildEdgeFaces();
 
         // --- 5.6. auto-orient by adjacency (task 0394; majority-vote refined
-        // for Blender parity — `bmesh_construct.cc:265-288`,
-        // `BM_face_create_ngon_verts`): a hand-picked vertex order (or
+        // for reference-editor parity): a hand-picked vertex order (or
         // `flip`) can traverse a shared edge the SAME direction as an
         // already-existing neighbor face, corrupting the half-edge fan at
         // that edge's endpoints (facesAroundEdge / collectEdgeRing then see
@@ -13635,8 +13634,8 @@ struct Mesh {
     /// hand-built geometry from before `makePolygonFromVerts`' adjacency
     /// auto-orient) by making every manifold-adjacent face pair traverse their
     /// shared edge in OPPOSITE directions, propagated outward from a
-    /// per-component seed. Mirrors Blender's Recalculate Normals
-    /// (`bmo_recalc_face_normals` / `bmo_normals.cc`):
+    /// per-component seed — the same connected-component / BFS-propagation
+    /// shape reference-editor "Recalculate Normals" repairs use:
     ///
     ///   1. Partition faces into connected components, crossing ONLY manifold
     ///      edges (an edge with exactly 2 incident faces — `twin != ~0u`
@@ -13672,9 +13671,9 @@ struct Mesh {
     ///
     /// If any face is currently selected, only the components CONTAINING a
     /// selected face are processed — components with no selected face are
-    /// left completely untouched, mirroring Blender's selection-restricted
-    /// Recalculate Normals. With no selection anywhere, every component in
-    /// the mesh is processed.
+    /// left completely untouched — the same selection-restricted behavior
+    /// reference-editor Recalculate Normals repairs use. With no selection
+    /// anywhere, every component in the mesh is processed.
     ///
     /// Returns the number of faces whose winding was reversed (0 = no-op).
     /// A well-formed mesh (every manifold pair already opposite-direction,
@@ -20897,7 +20896,7 @@ unittest { // ONE-vs-ONE tie (pre-existing mesh corruption, out of scope for
         ~ "flip just because SOME neighbor disagrees");
 }
 
-unittest { // genuine 2-vs-1 MAJORITY (Blender parity, task 0394): a clear
+unittest { // genuine 2-vs-1 MAJORITY (reference-editor parity, task 0394): a clear
            // majority of same-direction votes must flip the new face even
            // though the FIRST boundary edge checked (in idx order) is an
            // opposite-direction vote that alone would want no flip -- this
@@ -21438,7 +21437,8 @@ unittest { // subpatch + material survive the flip -- reversing a face's
 unittest { // selection-restricted: with an active face selection, only the
            // connected COMPONENT containing a selected face is healed;
            // components with no selected face are left completely untouched
-           // (mirrors Blender's selection-restricted Recalculate Normals)
+           // (matches reference-editor selection-restricted Recalculate
+           // Normals behavior)
     import std.algorithm : map;
     import std.array : array;
     Mesh a = makeCube();
