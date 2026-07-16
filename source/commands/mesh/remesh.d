@@ -14,14 +14,13 @@ module commands.mesh.remesh;
 import std.algorithm.iteration : map;
 import std.array : array;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import math : Vec3;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import change_bus : MeshEditScope;
 import params : Param;
@@ -30,10 +29,6 @@ import remesh.remesh_job : RemeshJob, RemeshParams,
 
 final class Remesh : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*        gpu;
-    private VertexCache*    vc;
-    private EdgeCache*      ec;
-    private FaceBoundsCache* fc;
     private void delegate() onTopologyChange;
     private RemeshJob job;
     private MeshSnapshot snap;
@@ -51,13 +46,8 @@ final class Remesh : Command, Operator {
     bool applied() const { return applied_; }
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          void delegate() onTopologyChange, RemeshJob job) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
         this.onTopologyChange = onTopologyChange;
         this.job = job;
     }
@@ -134,7 +124,7 @@ final class Remesh : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }
 

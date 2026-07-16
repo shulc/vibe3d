@@ -1,11 +1,10 @@
 module commands.mesh.quantize;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -23,10 +22,6 @@ import std.math : floor;
 /// edges/faces. Empty selection falls through to the whole mesh —
 /// "no selection ⇒ act on everything".
 class MeshQuantize : Command, Operator, IFalloffAware {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     // Per-axis grid spacing (`X/Y/Z` attrs). vibe3d used a single
     // isotropic `step` earlier — hard rename, no back-compat alias.
     private float            stepX_ = 0.1f;
@@ -41,13 +36,8 @@ class MeshQuantize : Command, Operator, IFalloffAware {
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.quantize"; }
@@ -137,7 +127,7 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -146,7 +136,7 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

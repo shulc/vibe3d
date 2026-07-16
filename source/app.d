@@ -2983,7 +2983,6 @@ void main(string[] args) {
     };
     reg.commandFactories["mesh.mirrorTool"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.mirrorTool", reg.toolFactories["mesh.mirrorTool"]);
 
     // Radial Sweep — interactive revolve/lathe (task 0326), promoting the
@@ -3002,7 +3001,6 @@ void main(string[] args) {
     };
     reg.commandFactories["mesh.radialSweepTool"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.radialSweepTool", reg.toolFactories["mesh.radialSweepTool"]);
 
     // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
@@ -3015,7 +3013,6 @@ void main(string[] args) {
     };
     reg.commandFactories["mesh.tack"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
 
     // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
@@ -3029,7 +3026,6 @@ void main(string[] args) {
     };
     reg.commandFactories["mesh.bridgeTool"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "mesh.bridgeTool", reg.toolFactories["mesh.bridgeTool"]);
 
     reg.toolFactories["prim.cube"] = () {
@@ -3039,7 +3035,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.cube"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.cube", reg.toolFactories["prim.cube"]);
 
     reg.toolFactories["prim.sphere"] = () {
@@ -3049,7 +3044,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.sphere"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.sphere", reg.toolFactories["prim.sphere"]);
 
     reg.toolFactories["prim.ellipsoid"] = () {
@@ -3059,7 +3053,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.ellipsoid"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.ellipsoid", reg.toolFactories["prim.ellipsoid"]);
 
     reg.toolFactories["prim.cylinder"] = () {
@@ -3069,7 +3062,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.cylinder"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.cylinder", reg.toolFactories["prim.cylinder"]);
 
     reg.toolFactories["prim.tube"] = () {
@@ -3079,7 +3071,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.tube"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.tube", reg.toolFactories["prim.tube"]);
 
     reg.toolFactories["prim.cone"] = () {
@@ -3089,7 +3080,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.cone"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.cone", reg.toolFactories["prim.cone"]);
 
     reg.toolFactories["prim.capsule"] = () {
@@ -3099,7 +3089,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.capsule"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.capsule", reg.toolFactories["prim.capsule"]);
 
     reg.toolFactories["prim.torus"] = () {
@@ -3109,7 +3098,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.torus"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.torus", reg.toolFactories["prim.torus"]);
 
     reg.toolFactories["prim.arc"] = () {
@@ -3119,7 +3107,6 @@ void main(string[] args) {
     };
     reg.commandFactories["prim.arc"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "prim.arc", reg.toolFactories["prim.arc"]);
 
     // Pen has no headless path — interactive only. Tool factory
@@ -3411,7 +3398,6 @@ void main(string[] args) {
         new ToolAttrCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.doApply"] = () => cast(Command)
         new ToolDoApplyCommand(&mesh(), cameraView, editMode, toolHost,
-                               &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                history);
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh(), cameraView, editMode, toolHost);
@@ -3828,7 +3814,6 @@ void main(string[] args) {
         new RemeshStart(&mesh(), cameraView, editMode, remeshJob);
     reg.commandFactories["mesh.remesh"] = () => cast(Command)
         new Remesh(&mesh(), cameraView, editMode,
-                   &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                    () => setActiveTool(null), remeshJob);
     reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
         new RemeshOpen(&mesh(), cameraView, editMode, () {
@@ -3845,7 +3830,6 @@ void main(string[] args) {
                        () => setActiveTool(null));
     reg.commandFactories["mesh.quadruple"] = () => cast(Command)
         new MeshQuadruple(&mesh(), cameraView, editMode,
-                          &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                           () => setActiveTool(null));
     reg.commandFactories["mesh.detriangulate"] = () => cast(Command)
         new MeshDetriangulate(&mesh(), cameraView, editMode,
@@ -3860,8 +3844,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.setPart"] = () => cast(Command)
         new MeshSetPart(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
-        new MeshSplitEdge(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSplitEdge(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.addPoint"] = () => cast(Command)
         new MeshAddPoint(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.splitFace"] = () => cast(Command)
@@ -3908,8 +3891,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.edgeSlice"] = () => cast(Command)
         new MeshEdgeSlice(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.thicken"] = () => cast(Command)
-        new MeshThicken(&mesh(), cameraView, editMode, &gpu,
-                        &vertexCache(), &edgeCache(), &faceCache());
+        new MeshThicken(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
         new MeshSmoothShift(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache(), &edgeCache(), &faceCache());
@@ -3952,8 +3934,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.radial_array"] = () => cast(Command)
         new MeshRadialArray(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.sweep"] = () => cast(Command)
-        new MeshSweep(&mesh(), cameraView, editMode, &gpu,
-                      &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSweep(&mesh(), cameraView, editMode);
     // One-shot, headlessly-testable path-follow extrude (task 0323 —
     // explicit world-space path-point param; see MeshStrokeExtrude's doc
     // comment). The interactive tool.strokeExtrude drives its own commit
@@ -3969,18 +3950,15 @@ void main(string[] args) {
         new MeshVertMerge(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache(), &edgeCache(), &faceCache());
     reg.commandFactories["mesh.weldVertexPair"] = () => cast(Command)
-        new MeshWeldVertexPair(&mesh(), cameraView, editMode, &gpu,
-                               &vertexCache(), &edgeCache(), &faceCache());
+        new MeshWeldVertexPair(&mesh(), cameraView, editMode);
     reg.commandFactories["poly.unify"] = () => cast(Command)
-        new MeshUnify(&mesh(), cameraView, editMode, &gpu,
-                      &vertexCache(), &edgeCache(), &faceCache());
+        new MeshUnify(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.cleanup"] = () => cast(Command)
         new MeshCleanup(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.fixOrientation"] = () => cast(Command)
         new MeshFixOrientation(&mesh(), cameraView, editMode);
     reg.commandFactories["vert.join"] = () => cast(Command)
-        new MeshVertJoin(&mesh(), cameraView, editMode, &gpu,
-                         &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertJoin(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.collapse"] = () => cast(Command)
         new MeshCollapse(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.vertexSplit"] = () => cast(Command)
@@ -3989,8 +3967,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.reduce"] = () => cast(Command)
         new MeshReduce(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
-        new MeshMakePolygon(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshMakePolygon(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.select"] = () {
         auto c = new MeshSelect(&mesh(), cameraView, editMode, &editMode);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
@@ -4006,8 +3983,7 @@ void main(string[] args) {
         return cast(Command) c;
     };
     reg.commandFactories["mesh.quantize"] = () => cast(Command)
-        new MeshQuantize(&mesh(), cameraView, editMode, &gpu,
-                         &vertexCache(), &edgeCache(), &faceCache());
+        new MeshQuantize(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.jitter"] = () => cast(Command)
         new MeshJitter(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.magnet"] = () => cast(Command)
@@ -4047,29 +4023,24 @@ void main(string[] args) {
     reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
         new MeshEdgeSlide(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.smooth"] = () => cast(Command)
-        new MeshSmooth(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSmooth(&mesh(), cameraView, editMode);
     // Headless aliases for the Convolve tools — same shape
     // as prim.cube above: tool.set <id> on; tool.attr <id> ...;
     // tool.doApply. The command form bundles the activation pair so
     // headless callers don't have to manage the tool lifecycle.
     reg.commandFactories["xfrm.smooth"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "xfrm.smooth", reg.toolFactories["xfrm.smooth"]);
     reg.commandFactories["xfrm.jitter"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "xfrm.jitter", reg.toolFactories["xfrm.jitter"]);
     reg.commandFactories["xfrm.quantize"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                 "xfrm.quantize", reg.toolFactories["xfrm.quantize"]);
     reg.commandFactories["mesh.linear_align"] = () => cast(Command)
         new MeshLinearAlign(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.align"] = () => cast(Command)
-        new MeshAlign(&mesh(), cameraView, editMode, &gpu,
-                      &vertexCache(), &edgeCache(), &faceCache());
+        new MeshAlign(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.radial_align"] = () => cast(Command)
         new MeshRadialAlign(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)

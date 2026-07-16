@@ -700,7 +700,7 @@ final class XfrmSmoothTool : CommandWrapperTool {
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        inner_ = new MeshSmooth(mesh, view, editMode, gpu, vc, ec, fc);
+        inner_ = new MeshSmooth(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;
@@ -764,7 +764,7 @@ final class XfrmQuantizeTool : CommandWrapperTool {
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        inner_ = new MeshQuantize(mesh, view, editMode, gpu, vc, ec, fc);
+        inner_ = new MeshQuantize(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;

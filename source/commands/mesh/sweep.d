@@ -1,12 +1,11 @@
 module commands.mesh.sweep;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math    : Vec3;
 import params  : Param;
 import snapshot : MeshSnapshot;
@@ -33,10 +32,6 @@ import snapshot : MeshSnapshot;
 ///       mesh.radial_array.
 class MeshSweep : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private int    count_  = 8;
@@ -45,13 +40,8 @@ class MeshSweep : Command, Operator {
     // 2π in radians — full 360° revolve (default).
     private float  angle_  = 6.2831853f;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.sweep"; }
@@ -128,6 +118,6 @@ class MeshSweep : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

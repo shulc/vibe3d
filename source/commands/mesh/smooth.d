@@ -1,11 +1,10 @@
 module commands.mesh.smooth;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -23,10 +22,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 /// centroid analytically (see tests/test_mesh_smooth.d), which is the
 /// practical check.
 class MeshSmooth : Command, Operator, IFalloffAware {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private float            strn_ = 1.0f;   // `strn` (strength) attr — reference default 1.0
     private int              iter_ = 1;      // `iter` (iterations) attr
     private bool             lockBound_ = false;  // `lockBound` —
@@ -62,13 +57,8 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.smooth"; }
@@ -335,7 +325,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -344,7 +334,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

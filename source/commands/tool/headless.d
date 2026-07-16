@@ -1,11 +1,10 @@
 module commands.tool.headless;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import tool : Tool;
 import registry : ToolFactory;
 import params : Param;
@@ -28,10 +27,6 @@ import snapshot : MeshSnapshot;
 // ---------------------------------------------------------------------------
 class ToolHeadlessCommand : Command {
 private:
-    GpuMesh*         gpu;
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
     string           toolId_;
     ToolFactory      factory;
     Tool             toolInstance;   // lazily created on first params()/apply()
@@ -39,14 +34,9 @@ private:
 
 public:
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          string toolId, ToolFactory factory)
     {
         super(mesh, view, editMode);
-        this.gpu     = gpu;
-        this.vc      = vc;
-        this.ec      = ec;
-        this.fc      = fc;
         this.toolId_ = toolId;
         this.factory = factory;
     }
@@ -86,6 +76,6 @@ public:
 
 private:
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

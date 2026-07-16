@@ -1,11 +1,10 @@
 module commands.tool.do_apply;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import commands.tool.host : ToolHost;
 import command_history : CommandHistory;
@@ -35,24 +34,15 @@ import command_history : CommandHistory;
 // ---------------------------------------------------------------------------
 class ToolDoApplyCommand : Command {
     private ToolHost         toolHost;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
     private string           appliedToolId;   // captured at apply() for label()
     private CommandHistory   history;         // for classAwareStepping flag
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          CommandHistory history)
     {
         super(mesh, view, editMode);
         this.toolHost = host;
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
         this.history = history;
     }
 
@@ -88,6 +78,6 @@ class ToolDoApplyCommand : Command {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }
