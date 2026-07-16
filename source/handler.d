@@ -1085,6 +1085,37 @@ class MoveHandler : Handler {
         arrowY.draw(shader, vp);
         arrowZ.draw(shader, vp);
     }
+
+    // Hit-test the mover rig (centerBox + 3 axis arrows): 3=centerBox,
+    // 0/1/2=arrowX/Y/Z, -1=miss. Lifted verbatim (task 0410, dedup 0407
+    // §A.D5) from the private `moverHitTest` idiom every primitive
+    // create-tool (cylinder.d, capsule.d, cone.d, torus.d, tube.d, sphere.d,
+    // box.d) repeated — diff-confirmed byte-identical bodies.
+    //
+    // `alias hitTest = Handler.hitTest;` is required: this overload has the
+    // same name+params as the inherited `protected bool hitTest(int, int,
+    // const ref Viewport)` but a different (non-covariant) return type,
+    // which D treats as hiding the base method — a hard compile error
+    // ("is hidden by ...") unless the base overload is explicitly
+    // re-introduced. Harmless here: MoveHandler is never registered whole
+    // into ToolHandles (only its sub-handles are), so the base bool
+    // hitTest is never reached polymorphically through a MoveHandler.
+    alias hitTest = Handler.hitTest;
+    int hitTest(int mx, int my, const ref Viewport vp) {
+        if (centerBox.hitTest(mx, my, vp)) return 3;
+        Arrow[3] arrows = [arrowX, arrowY, arrowZ];
+        foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
+            float sax, say, ndcZa, sbx, sby, ndcZb;
+            if (!projectToWindowFull(arrow.start, vp, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   vp, sbx, sby, ndcZb)) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
+    }
 }
 
 // ---------------------------------------------------------------------------

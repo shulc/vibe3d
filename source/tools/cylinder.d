@@ -895,20 +895,10 @@ private:
         rebuildPreview();
     }
 
+    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
+    // §A.D5) — was a verbatim inline copy of the same 3=centerBox,
+    // 0/1/2=arrowX/Y/Z, -1=miss test.
     int moverHitTest(int mx, int my) {
-        import handler : Arrow;
-        if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
-        Arrow[3] arrows = [mover.arrowX, mover.arrowY, mover.arrowZ];
-        foreach (i, arrow; arrows) {
-            if (!arrow.isVisible()) continue;
-            float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
-            float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < 8.0f)
-                return cast(int)i;
-        }
-        return -1;
+        return mover.hitTest(mx, my, cachedVp);
     }
 }
