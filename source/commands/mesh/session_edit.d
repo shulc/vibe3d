@@ -1,12 +1,11 @@
 module commands.mesh.session_edit;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
@@ -45,10 +44,6 @@ import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 /// shape and intentionally stay as their own classes.
 class MeshSessionEdit : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     private MeshSnapshot before;
     private MeshSnapshot after;
@@ -68,14 +63,9 @@ class MeshSessionEdit : Command, Operator {
     private bool          useDelta_;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          string wireName, string defaultLabel,
          MeshEditScope editScope = MeshEditScope.None) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
         this.wireName_     = wireName;
         this.defaultLabel_ = defaultLabel;
         this.editScope_    = editScope;
@@ -130,7 +120,7 @@ class MeshSessionEdit : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }
 
@@ -141,21 +131,17 @@ class MeshSessionEdit : Command, Operator {
 // contract the ctor establishes).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh      : Mesh, GpuMesh;
+    import mesh      : Mesh;
     import view       : View;
     import editmode   : EditMode;
-    import viewcache  : VertexCache, EdgeCache, FaceBoundsCache;
 
     Mesh mesh;
     View view = new View(0, 0, 1, 1);
-    GpuMesh gpu;
-    VertexCache vc; EdgeCache ec; FaceBoundsCache fc;
 
     // Plain form (editScope omitted): matches array/bevel/clone/loop_slice/
     // reduce/smooth_shift — no override before the merge, so the base
     // Command.editScope() default (None) must still come through.
     auto plain = new MeshSessionEdit(&mesh, view, EditMode.Vertices,
-                                      &gpu, &vc, &ec, &fc,
                                       "mesh.bevel_edit", "Bevel");
     assert(plain.name()  == "mesh.bevel_edit");
     assert(plain.label() == "Bevel", "label falls back to defaultLabel before setSnapshots");
@@ -173,7 +159,6 @@ unittest {
     // Union form (editScope supplied): matches edge_extrude/edge_extend/
     // face_extrude/radial_array/stroke_extrude.
     auto scoped = new MeshSessionEdit(&mesh, view, EditMode.Vertices,
-                                       &gpu, &vc, &ec, &fc,
                                        "mesh.edge_extrude_edit", "Edge Extrude",
                                        MeshEditScope.Geometry | MeshEditScope.Marks);
     assert(scoped.name()      == "mesh.edge_extrude_edit");
@@ -193,7 +178,6 @@ unittest {
     // snake_case every sibling uses. Preserved byte-for-byte, not
     // normalized, since undo history / replay dispatch on it.
     auto stroke = new MeshSessionEdit(&mesh, view, EditMode.Vertices,
-                                       &gpu, &vc, &ec, &fc,
                                        "mesh.strokeExtrude_edit", "Stroke Extrude",
                                        MeshEditScope.Geometry | MeshEditScope.Marks);
     assert(stroke.name() == "mesh.strokeExtrude_edit");

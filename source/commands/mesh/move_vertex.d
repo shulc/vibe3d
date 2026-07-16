@@ -1,13 +1,12 @@
 module commands.mesh.move_vertex;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -17,20 +16,11 @@ import change_bus : MeshEditScope;
 /// a non-default cube geometry without adding a new primitive.
 class MeshMoveVertex : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private Vec3             from_ = Vec3(0, 0, 0);
     private Vec3             to_   = Vec3(0, 0, 0);
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.move_vertex"; }
@@ -70,7 +60,7 @@ class MeshMoveVertex : Command, Operator {
         // the counters, so the bus sees the move while the version stays put.
         mesh.noteChange(MeshEditScope.Position);
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -78,7 +68,7 @@ class MeshMoveVertex : Command, Operator {
         if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) return false;
         mesh.vertices[movedIdx] = origPos;
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

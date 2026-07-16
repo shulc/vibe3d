@@ -5,7 +5,7 @@ import std.path : baseName;
 import ai3d.scene_validator : validateImportedSceneForAi3d;
 import change_bus : MeshChangeAll, LayerChange, noteLayerChange;
 import command;
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import document : Document, Layer;
 import editmode;
 import io.scene_import : importViaAssimp;
@@ -14,14 +14,9 @@ import log : logWarn;
 import mesh;
 import params : Param;
 import view;
-import viewcache;
 
 final class Ai3dImportResult : Command {
     private Document* doc;
-    private GpuMesh* gpu;
-    private VertexCache* vc;
-    private EdgeCache* ec;
-    private FaceBoundsCache* fc;
     private void delegate(size_t prev, size_t next) onSwitch;
 
     private string pathArg;
@@ -45,14 +40,9 @@ final class Ai3dImportResult : Command {
     string failureMessage() const { return failMessage_; }
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          void delegate(size_t, size_t) onSwitch) {
         super(mesh, view, editMode);
         this.doc = doc;
-        this.gpu = gpu;
-        this.vc = vc;
-        this.ec = ec;
-        this.fc = fc;
         this.onSwitch = onSwitch;
     }
 
@@ -137,7 +127,7 @@ final class Ai3dImportResult : Command {
         inserted.mesh.syncSelection();
         inserted.mesh.noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Added);
-        refreshDisplay(&inserted.mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(&inserted.mesh);
         fireSwitchIfChanged(prevLayer, prevIndex);
         applied = true;
         return true;
@@ -159,7 +149,7 @@ final class Ai3dImportResult : Command {
         auto active = doc.activeMesh();
         active.noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Removed);
-        refreshDisplay(active, gpu, vc, ec, fc);
+        refreshDisplayActive(active);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;
     }

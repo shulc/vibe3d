@@ -1,6 +1,6 @@
 module commands.mesh.vertex_edit;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import std.conv : to;
 
 import command;
@@ -10,7 +10,6 @@ import params : Param;
 import change_bus : MeshEditScope;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3;
 
 /// Records a vertex-position edit that has ALREADY happened (the
@@ -22,10 +21,6 @@ import math : Vec3;
 /// Tool Properties slider release) on the undo stack as one entry.
 class MeshVertexEdit : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     private uint[] indices;
     private Vec3[] before;
@@ -40,13 +35,8 @@ class MeshVertexEdit : Command, Operator {
     private void delegate() onApplyHook;
     private void delegate() onRevertHook;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.vertex_edit"; }
@@ -168,14 +158,14 @@ class MeshVertexEdit : Command, Operator {
     ///     construction, so all labels agree; the first is canonical)
     ///   - hooks = first.onRevertHook (restore to run-start) +
     ///     last.onApplyHook  (run-end)
-    /// Context (mesh/view/editMode + gpu/caches) is cloned from the first
-    /// entry so the merged edit's apply()/revert() route through the same
-    /// mesh + GPU upload the gathered entries did.
+    /// Context (mesh/view/editMode) is cloned from the first entry so the
+    /// merged edit's apply()/revert() route through the same mesh; the GPU
+    /// upload target comes from `refreshDisplayActive`'s app-installed
+    /// resolver (task 0413), not a per-entry captured pointer.
     ///
     /// Lives HERE (not in command_history) because it reads each entry's
-    /// private indices/before/after and the merged entry's private gpu/cache
-    /// pointers, all module-scoped to vertex_edit. Pure: it does NOT mutate
-    /// any mesh — it only builds a fresh command object.
+    /// private indices/before/after, module-scoped to vertex_edit. Pure: it
+    /// does NOT mutate any mesh — it only builds a fresh command object.
     static MeshVertexEdit mergeRun(MeshVertexEdit[] entries) {
         assert(entries.length > 0, "mergeRun requires at least one entry");
         auto first = entries[0];
@@ -208,10 +198,9 @@ class MeshVertexEdit : Command, Operator {
             outAfter  ~= afterLatest[vid];
         }
 
-        // Clone context + GPU/cache pointers from the first entry.
+        // Clone context from the first entry.
         auto merged = new MeshVertexEdit(
-            first.meshPtr, first.viewRef, first.editModeVal,
-            first.gpu, first.vc, first.ec, first.fc);
+            first.meshPtr, first.viewRef, first.editModeVal);
         merged.setEdit(outIdx, outBefore, outAfter,
                        first.editLabel.length ? first.editLabel : "Edit");
         // Hooks: revert to run-start (first), redo to run-end (last).
@@ -236,7 +225,7 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = after[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         if (onApplyHook !is null) onApplyHook();
         return true;
     }
@@ -247,7 +236,7 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = before[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         if (onRevertHook !is null) onRevertHook();
         return true;
     }

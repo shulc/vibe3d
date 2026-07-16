@@ -1,12 +1,11 @@
 module commands.mesh.axis_slice;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 import math : Vec3;
@@ -33,19 +32,13 @@ private enum int MAX_AXIS_SLICE_COUNT = 256;
 // ---------------------------------------------------------------------------
 class MeshAxisSlice : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private int axis_  = 1; // 0=X 1=Y 2=Z
     private int count_ = 1;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
     }
 
     override string name()  const { return "mesh.axisSlice"; }
@@ -100,14 +93,14 @@ class MeshAxisSlice : Command, Operator {
             return false;
         }
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }
@@ -123,10 +116,6 @@ class MeshAxisSlice : Command, Operator {
 // ---------------------------------------------------------------------------
 class MeshJulienne : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private int axisA_  = 0; // 0=X 1=Y 2=Z
@@ -134,10 +123,8 @@ class MeshJulienne : Command, Operator {
     private int axisB_  = 2; // 0=X 1=Y 2=Z
     private int countB_ = 1;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
     }
 
     override string name()  const { return "mesh.julienne"; }
@@ -180,14 +167,14 @@ class MeshJulienne : Command, Operator {
             return false;
         }
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 

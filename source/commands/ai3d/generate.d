@@ -11,15 +11,10 @@ import editmode;
 import mesh;
 import params : Param;
 import view;
-import viewcache;
 import log : logWarn;
 
 final class Ai3dGenerate : Command {
     private Document* doc;
-    private GpuMesh* gpu;
-    private VertexCache* vc;
-    private EdgeCache* ec;
-    private FaceBoundsCache* fc;
     private void delegate(size_t prev, size_t next) onSwitch;
 
     private string imageArg;
@@ -38,14 +33,9 @@ final class Ai3dGenerate : Command {
     private Ai3dImportResult importer;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          void delegate(size_t, size_t) onSwitch) {
         super(mesh, view, editMode);
         this.doc = doc;
-        this.gpu = gpu;
-        this.vc = vc;
-        this.ec = ec;
-        this.fc = fc;
         this.onSwitch = onSwitch;
     }
 
@@ -92,7 +82,7 @@ final class Ai3dGenerate : Command {
             return false;
         }
 
-        importer = new Ai3dImportResult(mesh, view, editMode, doc, gpu, vc, ec, fc, onSwitch);
+        importer = new Ai3dImportResult(mesh, view, editMode, doc, onSwitch);
         importer.setInput(staged.objPath, nameArg);
         return importer.apply();
     }

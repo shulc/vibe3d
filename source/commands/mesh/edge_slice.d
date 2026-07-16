@@ -1,12 +1,11 @@
 module commands.mesh.edge_slice;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 
@@ -31,21 +30,15 @@ import snapshot : MeshSnapshot;
 // ---------------------------------------------------------------------------
 class MeshEdgeSlice : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private uint[] edges_; // IntArray: the two edge indices
     private float  tA_   = 0.5f;
     private float  tB_   = 0.5f;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc)
+    this(Mesh* mesh, ref View view, EditMode editMode)
     {
         super(mesh, view, editMode);
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
     }
 
     override string name()  const { return "mesh.edgeSlice"; }
@@ -79,14 +72,14 @@ class MeshEdgeSlice : Command, Operator {
             return false;
         }
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

@@ -1,13 +1,12 @@
 module commands.mesh.loop_slice;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 
@@ -18,18 +17,12 @@ import snapshot : MeshSnapshot;
 // ---------------------------------------------------------------------------
 class MeshAddLoop : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private float position_ = 0.5f;  // `position` attr — 0 = start, 1 = end
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
     }
 
     override string name()  const { return "mesh.addLoop"; }
@@ -66,14 +59,14 @@ class MeshAddLoop : Command, Operator {
         bool ok = mesh.insertEdgeLoops(cast(uint)ei, [position_]);
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }
@@ -85,18 +78,12 @@ class MeshAddLoop : Command, Operator {
 // ---------------------------------------------------------------------------
 class MeshLoopSlice : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private int count_ = 3;  // `count` attr — number of loops to insert
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
     }
 
     override string name()  const { return "mesh.loopSlice"; }
@@ -139,14 +126,14 @@ class MeshLoopSlice : Command, Operator {
         bool ok = mesh.insertEdgeLoops(cast(uint)ei, pos);
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

@@ -1,12 +1,11 @@
 module commands.mesh.delete_;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
@@ -36,10 +35,6 @@ private bool[] allTrue(size_t n) {
 /// the kernel is the forward authority and the delta inverts undo only).
 class MeshDelete : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     // Phase 3 delta path (env-gated). When `useDelta_` is set the undo entry
@@ -77,13 +72,8 @@ class MeshDelete : Command, Operator {
     // reflects exactly what ran — even for a cross-mode redirect.
     private EditMode appliedMode_;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu         = gpu;
-        this.vc          = vc;
-        this.ec          = ec;
-        this.fc          = fc;
         this.appliedMode_ = editMode;   // stable default before apply() runs
     }
 
@@ -216,6 +206,6 @@ class MeshDelete : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

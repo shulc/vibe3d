@@ -1,12 +1,11 @@
 module commands.mesh.bevel;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import params : Param;
 import snapshot : MeshSnapshot;
 
@@ -37,10 +36,6 @@ private bool[] allTrue(size_t n) {
 ///         DIFFERENT law from edge's Round Level arc).
 class MeshBevel : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
     private float            inset_      = 0.1f;
     private float            shift_      = 0.0f;
@@ -49,13 +44,8 @@ class MeshBevel : Command, Operator {
     private float            width_      = 0.1f;
     private int              roundLevel_ = 0;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.bevel"; }
@@ -112,6 +102,6 @@ class MeshBevel : Command, Operator {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }

@@ -1,12 +1,11 @@
 module commands.mesh.fix_orientation;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 
@@ -14,12 +13,12 @@ import mesh_edit_delta : MeshEditScope;
 /// heals inconsistently-wound faces (already-corrupt imports, old saves, or
 /// hand-built geometry) by making every manifold-adjacent face pair traverse
 /// their shared edge in OPPOSITE directions, seeded outward per connected
-/// component. Mirrors Blender's Recalculate Normals. See
+/// component. Mirrors a reference open-source DCC's Recalculate Normals. See
 /// `Mesh.fixFaceOrientation` (mesh.d) for the full algorithm.
 ///
 /// Operates on the whole mesh, EXCEPT: if any face is currently selected,
 /// only the connected component(s) containing a selected face are touched
-/// (mirrors Blender's selection-restricted Recalculate Normals) -- this is
+/// (mirrors that operation's selection-restricted behavior) -- this is
 /// automatic, not a parameter, so no dialog is needed.
 ///
 /// Rejections (no-op, no snapshot, no undo entry):
@@ -27,19 +26,10 @@ import mesh_edit_delta : MeshEditScope;
 ///     component(s) already were)
 class MeshFixOrientation : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.fixOrientation"; }
@@ -60,14 +50,14 @@ class MeshFixOrientation : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

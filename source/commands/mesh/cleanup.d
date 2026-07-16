@@ -1,12 +1,11 @@
 module commands.mesh.cleanup;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params : Param;
@@ -19,10 +18,6 @@ import params : Param;
 /// Undo via MeshSnapshot.
 class MeshCleanup : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     // Parameter backing fields — defaults match CleanupOptions.init.
@@ -33,13 +28,8 @@ class MeshCleanup : Command, Operator {
     private bool  mergeVerts_      = true;
     private float dist_            = 1e-5f;  // linear weld distance
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.cleanup"; }
@@ -85,14 +75,14 @@ class MeshCleanup : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

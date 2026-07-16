@@ -1,6 +1,6 @@
 module commands.file.load;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import std.path : extension;
 import std.uni  : toLower;
 
@@ -19,7 +19,6 @@ import io.formats;
 import io.doc_state : setCurrentDocPath;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
-import viewcache;
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChangeAll;
 
@@ -33,10 +32,6 @@ enum FileLoadMode { open, importSingle }
 
 class FileLoad : Command {
     private Document*        document;      // layered source of truth for native .v3d
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private string           explicitPath;  // set via setPath() to skip the dialog
     private MeshSnapshot     snap;          // interchange path: single-mesh undo
     // Native .v3d load replaces the whole layer list in place; undo restores
@@ -48,14 +43,9 @@ class FileLoad : Command {
     private FileLoadMode     mode = FileLoadMode.open;
     private string           singleExt;     // import-single target ext (e.g. ".obj")
 
-    this(Mesh* mesh, ref View view, EditMode editMode, Document* document,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* document) {
         super(mesh, view, editMode);
         this.document = document;
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name() const { return "file.load"; }
@@ -241,6 +231,6 @@ class FileLoad : Command {
     }
 
     private void refreshActive(Mesh* active) {
-        refreshDisplay(active, gpu, vc, ec, fc);
+        refreshDisplayActive(active);
     }
 }

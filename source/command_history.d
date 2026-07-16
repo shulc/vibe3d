@@ -1562,10 +1562,9 @@ unittest { // record→undo bumps undoEpoch by 1; redo does NOT bump
 }
 
 unittest { // consolidate does NOT bump undoEpoch
-    import mesh    : Mesh, GpuMesh;
+    import mesh    : Mesh;
     import view    : View;
     import editmode : EditMode;
-    import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
     import commands.mesh.vertex_edit : MeshVertexEdit;
     import math : Vec3;
 
@@ -1576,14 +1575,12 @@ unittest { // consolidate does NOT bump undoEpoch
     auto run = h.nextRun();
     Mesh mesh;
     View view = new View(0, 0, 1, 1);
-    GpuMesh gpu;
-    VertexCache vc; EdgeCache ec; FaceBoundsCache fc;
 
-    auto e1 = new MeshVertexEdit(&mesh, view, EditMode.Vertices, &gpu, &vc, &ec, &fc);
+    auto e1 = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
     e1.setEdit([0u], [Vec3(0,0,0)], [Vec3(1,0,0)], "e1");
     h.recordInSession(e1, run);
 
-    auto e2 = new MeshVertexEdit(&mesh, view, EditMode.Vertices, &gpu, &vc, &ec, &fc);
+    auto e2 = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
     e2.setEdit([0u], [Vec3(1,0,0)], [Vec3(2,0,0)], "e2");
     h.recordInSession(e2, run);
 
