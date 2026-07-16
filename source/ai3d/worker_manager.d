@@ -56,12 +56,25 @@ import ai3d.stage_artifact : normalizeLocalWorkerUrl;
 // ---------------------------------------------------------------------------
 
 enum int kAi3dConfigVersion = 1;
-enum int kAi3dDefaultPort   = 47831;
+
+/// The worker's own `serve --port` argparse default in
+/// vibe3d_ai3d_worker/server.py — kept in sync manually. `startWorker()`
+/// below always passes `--port` explicitly when THIS module spawns the
+/// worker, so the constant is inert on that path; it matters for the
+/// manually-started-worker case the module doc comment (top of file)
+/// describes (`python -m vibe3d_ai3d_worker serve` run by hand with no
+/// `--port`, so the worker binds ITS OWN default) — health-probe /
+/// "already running" detection reads `config_.port`, which falls back to
+/// this constant, so a stale value here makes vibe3d probe the wrong port
+/// and miss a manually-started worker. Cross-checked against server.py by
+/// the hermetic sync-check unittest below.
+enum int kAi3dDefaultPort = 47831;
 
 /// The model install_linux.sh provisions by default (TrellisBackend's own
 /// default in vibe3d_ai3d_worker/server.py — kept in sync manually, this is
 /// display/probe-only, never sent to the worker itself: the worker resolves
-/// its own default independently).
+/// its own default independently). Also cross-checked against server.py by
+/// the hermetic sync-check unittest below.
 enum string kAi3dDefaultModel = "jetx/TRELLIS-image-large";
 
 /// Persisted install handshake (schema v1), written by install_linux.sh and
@@ -669,6 +682,48 @@ version (unittest) {
     private void cleanScratchDir(string dir) nothrow {
         try rmdirRecurse(dir); catch (Exception) {}
     }
+}
+
+// Hermetic sync-check: kAi3dDefaultPort / kAi3dDefaultModel against the
+// python worker's own argparse defaults in
+// tools/ai3d_worker/vibe3d_ai3d_worker/server.py. This repo layout (the
+// worker checkout living alongside the editor checkout) is a dev-checkout
+// convenience, not a build dependency — worker_manager.d never reads
+// server.py at runtime (see the two enums' doc comments above) — so a
+// machine that doesn't carry tools/ai3d_worker (another dev's box, a
+// packaging/release CI image, `dub test` invoked from outside the repo
+// root) must not fail here: skip silently when the file can't be found.
+unittest {
+    import std.file  : exists, readText;
+    import std.regex : matchFirst, regex;
+
+    enum serverPyPath = "tools/ai3d_worker/vibe3d_ai3d_worker/server.py";
+    if (!exists(serverPyPath)) return;
+
+    const src = readText(serverPyPath);
+
+    auto portMatch = matchFirst(src,
+        regex(`add_argument\("--port"[^)]*?default=(\d+)`));
+    assert(!portMatch.empty,
+        "server.py's --port argparse default has changed shape — update " ~
+        "the regex above or the manual-sync comment on kAi3dDefaultPort");
+    assert(portMatch[1].to!int == kAi3dDefaultPort,
+        "kAi3dDefaultPort (" ~ kAi3dDefaultPort.to!string ~ ") no longer " ~
+        "matches server.py's --port default (" ~ portMatch[1] ~ ") — the " ~
+        "two are NOT wired together at runtime for the manually-started-" ~
+        "worker case (see the constant's doc comment), only kept in sync " ~
+        "by convention. Update kAi3dDefaultPort to match.");
+
+    auto modelMatch = matchFirst(src,
+        regex(`add_argument\("--trellis-model"[^)]*?default="([^"]+)"`));
+    assert(!modelMatch.empty,
+        "server.py's --trellis-model argparse default has changed shape " ~
+        "— update the regex above or the manual-sync comment on " ~
+        "kAi3dDefaultModel");
+    assert(modelMatch[1] == kAi3dDefaultModel,
+        "kAi3dDefaultModel (" ~ kAi3dDefaultModel ~ ") no longer matches " ~
+        "server.py's --trellis-model default (" ~ modelMatch[1] ~ "). " ~
+        "Update kAi3dDefaultModel to match.");
 }
 
 // Config round-trip: a fully populated Ai3dInstallConfig serializes and
