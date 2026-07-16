@@ -328,9 +328,10 @@ import editor_app : OverlayMode;
 // ---------------------------------------------------------------------------
 
 // edgeKey/countSelected relocated to editor_app.d (task 0419 Б1 -- used by
-// the UI-panel block now in source/ui/panels.d; imported back below since
-// edgeKey also has a call site here, in the snap-frame JIT install path).
-import editor_app : edgeKey, countSelected;
+// the UI-panel block now fully relocated to source/ui/panels.d). edgeKey
+// also has a call site here, in the snap-frame JIT install path, so it is
+// imported back; countSelected has no app.d-side reference (Phase 7 cleanup).
+import editor_app : edgeKey;
 
 // A broken stage form degrades to the legacy drawProvider every frame; the
 // log service's once-gate keeps the diagnostic to a single line per stage
@@ -865,13 +866,10 @@ void drawPerfHud() {
 // AI entry-point availability (compile-time gates for two UI affordances)
 // ---------------------------------------------------------------------------
 // kAiToggleAvailable / kGenerateAiAvailable relocated to editor_app.d (task
-// 0419 cyclic-import fix -- read ONLY by the UI-panel block, now in
-// source/ui/panels.d, via `with(app)`; see editor_app.d for the full
-// two-gates rationale). Imported back below for app.d's own remaining
-// references until the panel block itself is fully relocated (later 0419
-// phases) -- unused once that lands, at which point this import is dead
-// weight to prune, not a correctness issue.
-import editor_app : kAiToggleAvailable, kGenerateAiAvailable;
+// 0419 cyclic-import fix -- read ONLY by the UI-panel block, now fully
+// relocated to source/ui/panels.d, via `with(app)`; see editor_app.d for
+// the full two-gates rationale). No app.d-side references remain (Phase 7
+// cleanup), so no import-back is needed here.
 
 // ---------------------------------------------------------------------------
 // Main
@@ -6368,13 +6366,18 @@ void main(string[] args) {
     // nested renderVariantPopup) + renderViewportSceneToFbo (Phase 6, keeps
     // its original 6 params with `EditorApp app` prepended). All six
     // CTX-panel entry points take `EditorApp app` and are called
-    // `xxxPanel(app, ...)` below.
-    import ui.panels : drawButtonOutline, drawRaisedBevel, renderStyledButton,
-        dispatchAction, renderFalloffStackItems, renderDynamicPopupItems,
-        renderPopupItems, drawSidePanel, drawStatusBar, drawTabPanel,
-        firstCheckedLabel, pushPopupStyle, popPopupStyle, drawSectionHeader,
-        pushPanelChromeStyle, popPanelChromeStyle, pushButtonBarStyle,
-        popButtonBarStyle, renderViewportSceneToFbo;
+    // `xxxPanel(app, ...)` below. Only the symbols app.d's OWN remaining
+    // code actually references are imported here (Phase 7 cleanup) --
+    // drawButtonOutline/drawRaisedBevel/renderStyledButton/dispatchAction/
+    // renderFalloffStackItems/renderDynamicPopupItems/renderPopupItems/
+    // firstCheckedLabel/drawSectionHeader/pushButtonBarStyle/
+    // popButtonBarStyle are now purely internal to ui.panels (only called
+    // from within the panel bodies themselves, never from app.d directly).
+    // drawLayerListPanel/drawViewportPropsPanel keep their own separate
+    // local imports at their call sites, below.
+    import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
+        pushPopupStyle, popPopupStyle, pushPanelChromeStyle,
+        popPanelChromeStyle, renderViewportSceneToFbo;
 
     // -------------------------------------------------------------------------
     // Main loop
