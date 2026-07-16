@@ -24,9 +24,8 @@ import command;
 import command : CmdFlags;
 import command_history;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import mesh : Mesh, GpuMesh;
+import mesh : Mesh;
 import view : View;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import editmode : EditMode;
 import math : Vec3;
 import std.conv : to;
@@ -34,22 +33,18 @@ import std.conv : to;
 void main() {}
 
 // ----- shared scratch fixtures ---------------------------------------------
-// A scratch mesh + caches + GpuMesh whose pointers the MeshVertexEdits carry.
-// They are never mutated by the tests (we don't call apply/revert), so a
-// default-constructed set is enough.
+// A scratch mesh + view for constructing MeshVertexEdits. After task 0413 the
+// command resolves its display targets (gpu / caches) through the app-installed
+// resolver at refresh time, so the fixture no longer carries those pointers.
+// The mesh/view are never mutated by the tests (we don't call apply/revert).
 
 private struct Scratch {
     Mesh            mesh;
     View            view;
-    GpuMesh         gpu;
-    VertexCache     vc;
-    EdgeCache       ec;
-    FaceBoundsCache fc;
 
     MeshVertexEdit makeEdit(uint[] idx, Vec3[] before, Vec3[] after,
                             string label) {
-        auto cmd = new MeshVertexEdit(&mesh, view, EditMode.Vertices,
-                                      &gpu, &vc, &ec, &fc);
+        auto cmd = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
         cmd.setEdit(idx, before, after, label);
         return cmd;
     }

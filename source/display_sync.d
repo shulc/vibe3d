@@ -160,11 +160,11 @@ unittest {
 
     // The resolver's RETURN VALUE doesn't matter here (refreshDisplay's own
     // gate no-ops before ever reading it) — only that it gets CALLED, fresh,
-    // every time. `cellIsA` stands in for "which viewport cell is active";
-    // flipping it between the two calls below is the "user switched cells"
-    // half of the scenario.
+    // every time. The active viewport cell (and thus which gpu/caches the
+    // resolver would return) can change between two refreshes of the SAME
+    // command; per-call consultation is what makes undo/redo-after-cell-switch
+    // resolve the CURRENT cell rather than the one captured at construction.
     int resolveCount = 0;
-    bool cellIsA = true;
     displayTargetsResolver = () {
         ++resolveCount;
         return DisplayTargets.init;
@@ -173,10 +173,9 @@ unittest {
     refreshDisplayActive(&mTarget);
     assert(resolveCount == 1, "must consult the resolver on the first call");
 
-    // Switch the active cell WITHOUT constructing a new command/closure —
-    // exactly the undo/redo-after-cell-switch scenario the bonus-fix
-    // targets.
-    cellIsA = false;
+    // A second refresh of the same target must consult the resolver AGAIN,
+    // WITHOUT constructing a new command/closure — exactly the
+    // undo/redo-after-cell-switch scenario the bonus-fix targets.
     refreshDisplayActive(&mTarget);
     assert(resolveCount == 2,
         "must consult the resolver AGAIN on the second call — a captured-once "
