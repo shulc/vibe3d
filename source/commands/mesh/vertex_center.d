@@ -1,13 +1,12 @@
 module commands.mesh.vertex_center;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -28,10 +27,6 @@ import change_bus : MeshEditScope;
 /// requires the heavier MeshSnapshot path).
 class MeshCenterVertices : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     private string axis_ = "all";
 
@@ -39,13 +34,8 @@ class MeshCenterVertices : Command, Operator {
     private int[]  idxs;
     private Vec3[] orig;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.centerVertices"; }
@@ -90,7 +80,7 @@ class MeshCenterVertices : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -99,7 +89,7 @@ class MeshCenterVertices : Command, Operator {
         foreach (k; 0 .. idxs.length)
             mesh.vertices[idxs[k]] = orig[k];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

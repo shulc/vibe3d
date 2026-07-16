@@ -3755,7 +3755,6 @@ void main(string[] args) {
     // whatever was open before.
     reg.commandFactories["file.new"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
-                                 &gpu, &vertexCache(), &edgeCache(), &faceCache(),
                                  &editMode,
                                  () {
                                      // Task 0232 fold #1(a): a Loop Slice
@@ -3860,11 +3859,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
         new MeshEdgeExtrude(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.vertexExtrude"] = () => cast(Command)
-        new MeshVertexExtrude(&mesh(), cameraView, editMode, &gpu,
-                              &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertexExtrude(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.vertexBevel"] = () => cast(Command)
-        new MeshVertexBevel(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertexBevel(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
         new MeshPolygonInset(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.spikey"] = () => cast(Command)
@@ -3893,21 +3890,17 @@ void main(string[] args) {
     reg.commandFactories["mesh.thicken"] = () => cast(Command)
         new MeshThicken(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
-        new MeshSmoothShift(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSmoothShift(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
         new MeshEdgeExtend(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.addVertex"] = () => cast(Command)
-        new MeshVertexNew(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertexNew(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.centerVertices"] = () => cast(Command)
-        new MeshCenterVertices(&mesh(), cameraView, editMode, &gpu,
-                               &vertexCache(), &edgeCache(), &faceCache());
+        new MeshCenterVertices(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.setPosition"] = () => cast(Command)
-        new MeshSetPosition(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSetPosition(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.delete"] = () => cast(Command)
         new MeshDelete(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.remove"] = () => cast(Command)
@@ -3925,8 +3918,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.mirror"] = () => cast(Command)
         new MeshMirror(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.symmetrize"] = () => cast(Command)
-        new MeshSymmetrize(&mesh(), cameraView, editMode, &gpu,
-                           &vertexCache(), &edgeCache(), &faceCache());
+        new MeshSymmetrize(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.array"] = () => cast(Command)
         new MeshArray(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.clone"] = () => cast(Command)
@@ -3947,8 +3939,7 @@ void main(string[] args) {
     reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];
     reg.commandFactories["select.remove"] = reg.commandFactories["mesh.remove"];
     reg.commandFactories["vert.merge"] = () => cast(Command)
-        new MeshVertMerge(&mesh(), cameraView, editMode, &gpu,
-                          &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertMerge(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.weldVertexPair"] = () => cast(Command)
         new MeshWeldVertexPair(&mesh(), cameraView, editMode);
     reg.commandFactories["poly.unify"] = () => cast(Command)
@@ -3962,8 +3953,7 @@ void main(string[] args) {
     reg.commandFactories["mesh.collapse"] = () => cast(Command)
         new MeshCollapse(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.vertexSplit"] = () => cast(Command)
-        new MeshVertexSplit(&mesh(), cameraView, editMode, &gpu,
-                            &vertexCache(), &edgeCache(), &faceCache());
+        new MeshVertexSplit(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.reduce"] = () => cast(Command)
         new MeshReduce(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
@@ -3976,8 +3966,7 @@ void main(string[] args) {
         return cast(Command) c;
     };
     reg.commandFactories["mesh.transform"] = () {
-        auto c = new MeshTransform(&mesh(), cameraView, editMode, &gpu,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto c = new MeshTransform(&mesh(), cameraView, editMode);
         // Viewport camera single-source (0181): see mesh.screenSlice above.
         c.setResolvedVpProvider(() => vpm.originSnapshot());
         return cast(Command) c;
@@ -4049,8 +4038,7 @@ void main(string[] args) {
         new MeshSessionEdit(&mesh(), cameraView, editMode,
                           "mesh.bevel_edit", "Bevel");
     reg.commandFactories["scene.reset"] = () {
-        auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
-                       &vertexCache(), &edgeCache(), &faceCache(),
+        auto c = new SceneReset(&mesh(), cameraView, editMode,
                        &editMode,
                        () {
                            setActiveTool(null);
@@ -4072,8 +4060,7 @@ void main(string[] args) {
         return cast(Command) c;
     };
     reg.commandFactories["scene.loadMesh"] = () => cast(Command)
-        (new MeshLoadRaw(&mesh(), cameraView, editMode, &gpu,
-                         &vertexCache(), &edgeCache(), &faceCache(),
+        (new MeshLoadRaw(&mesh(), cameraView, editMode,
                          &editMode, &cameraView(), () => setActiveTool(null)))
         .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["history.undo"] = () => cast(Command)

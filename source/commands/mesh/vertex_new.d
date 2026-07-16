@@ -1,13 +1,12 @@
 module commands.mesh.vertex_new;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import math : Vec3;
 import params : Param;
 import snapshot : MeshSnapshot;
@@ -22,21 +21,12 @@ import snapshot : MeshSnapshot;
 /// because adding a vertex grows the vertices[] array.
 class MeshVertexNew : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
 
     private Vec3 pos_ = Vec3(0, 0, 0);
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.addVertex"; }
@@ -65,14 +55,14 @@ class MeshVertexNew : Command, Operator {
         mesh.clearVertexSelection();
         mesh.selectVertex(cast(int)vi);
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

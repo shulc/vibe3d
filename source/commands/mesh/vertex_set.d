@@ -1,13 +1,12 @@
 module commands.mesh.vertex_set;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
 import shader;
-import viewcache;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -25,10 +24,6 @@ import change_bus : MeshEditScope;
 /// Undo uses lightweight per-index position restore.
 class MeshSetPosition : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     private Vec3 pos_ = Vec3(0, 0, 0);
 
@@ -36,13 +31,8 @@ class MeshSetPosition : Command, Operator {
     private int[]  idxs;
     private Vec3[] orig;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.setPosition"; }
@@ -73,7 +63,7 @@ class MeshSetPosition : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -82,7 +72,7 @@ class MeshSetPosition : Command, Operator {
         foreach (k; 0 .. idxs.length)
             mesh.vertices[idxs[k]] = orig[k];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

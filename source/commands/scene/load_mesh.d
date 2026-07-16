@@ -1,12 +1,11 @@
 module commands.scene.load_mesh;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import math : Vec3;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
@@ -22,10 +21,6 @@ import change_bus : MeshChangeAll;
 /// Validation (degree >= 3, indices in range) happens in `apply()` BEFORE
 /// the live mesh is touched, so a bad payload leaves the scene untouched.
 class MeshLoadRaw : Command {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private EditMode*        editModePtr;
     private View*            viewPtr;
     private void delegate()  onResetTool;
@@ -42,14 +37,9 @@ class MeshLoadRaw : Command {
     private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          EditMode* editModePtr, View* viewPtr,
          void delegate() onResetTool) {
         super(mesh, view, editMode);
-        this.gpu         = gpu;
-        this.vc          = vc;
-        this.ec          = ec;
-        this.fc          = fc;
         this.editModePtr = editModePtr;
         this.viewPtr     = viewPtr;
         this.onResetTool = onResetTool;
@@ -134,7 +124,7 @@ class MeshLoadRaw : Command {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 
     // Tiny @safe int-to-string for error messages without dragging

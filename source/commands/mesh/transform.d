@@ -1,13 +1,12 @@
 module commands.mesh.transform;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import std.json;
 
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
 import change_bus : MeshEditScope;
 import toolpipe.pipeline : g_pipeCtx;
@@ -28,10 +27,6 @@ class MeshTransform : Command, Operator {
     // Phase 5 of doc/operator_refactor_plan.md.
     mixin OperatorActrCommon;
 
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     private string kind;          // "translate" / "rotate" / "scale"
     private Vec3   delta;         // for translate
@@ -45,13 +40,8 @@ class MeshTransform : Command, Operator {
     private Vec3[] touchedPrev;
     private bool   captured;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
         this.delta  = Vec3(0, 0, 0);
         this.axis   = Vec3(0, 1, 0);
         this.factor = Vec3(1, 1, 1);
@@ -224,7 +214,7 @@ class MeshTransform : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -235,7 +225,7 @@ class MeshTransform : Command, Operator {
                 mesh.vertices[vid] = touchedPrev[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

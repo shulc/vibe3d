@@ -1,12 +1,11 @@
 module commands.mesh.symmetrize;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import math   : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -42,10 +41,6 @@ import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror
 /// (avoids spurious undo stack growth on an already-symmetric mesh).
 class MeshSymmetrize : Command, Operator {
     mixin OperatorActrCommon;
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
 
     // Param-backed schema fields — plain T so &field works.
     private string axis_     = "X";
@@ -58,13 +53,8 @@ class MeshSymmetrize : Command, Operator {
     private Vec3[] prevPositions;
     private bool   captured;
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name()  const { return "mesh.symmetrize"; }
@@ -145,7 +135,7 @@ class MeshSymmetrize : Command, Operator {
 
         captured = true;
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -155,7 +145,7 @@ class MeshSymmetrize : Command, Operator {
             if (i < mesh.vertices.length)
                 mesh.vertices[i] = prevPositions[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
         return true;
     }
 }

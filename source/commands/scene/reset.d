@@ -1,11 +1,10 @@
 module commands.scene.reset;
 
-import display_sync : refreshDisplay;
+import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
 import editmode;
-import viewcache;
 import document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
@@ -17,10 +16,6 @@ import io.doc_state : clearCurrentDoc;
 /// /api/reset direct handler. Snapshots the entire pre-reset mesh so undo
 /// brings back whatever was there.
 class SceneReset : Command {
-    private GpuMesh*         gpu;
-    private VertexCache*     vc;
-    private EdgeCache*       ec;
-    private FaceBoundsCache* fc;
     private EditMode*        editModePtr;
     private void delegate()  onResetTool;
     // Viewport reset (V3): mirrors onResetTool exactly — an optional,
@@ -69,15 +64,10 @@ class SceneReset : Command {
     private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
          EditMode* editModePtr,
          void delegate() onResetTool,
          void delegate() onViewportReset = null) {
         super(mesh, view, editMode);
-        this.gpu             = gpu;
-        this.vc              = vc;
-        this.ec              = ec;
-        this.fc              = fc;
         this.editModePtr     = editModePtr;
         this.onResetTool      = onResetTool;
         this.onViewportReset  = onViewportReset;
@@ -242,6 +232,6 @@ class SceneReset : Command {
     }
 
     private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplayActive(mesh);
     }
 }
