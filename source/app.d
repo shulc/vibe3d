@@ -7200,148 +7200,9 @@ void main(string[] args) {
         popPanelChromeStyle();
     }
 
-    // -------------------------------------------------------------------------
-    // Viewport Properties panel
-    // -------------------------------------------------------------------------
-    // Dockable panel that reflects and drives the active cell's Independence
-    // flags (indCenter / indScale / indRotate) and Master selector.  Every
-    // interaction dispatches through commandHandlerDelegate (same path as
-    // /api/command) — the panel NEVER mutates vpm directly.  Also hosts the
-    // Reset Layout button.
-    //
-    // Visibility: always shown in interactive mode; hidden in --test by default
-    // (opt-in via `ui.viewportProps show` + g_viewportPropsShown) so synthetic
-    // viewport drags can never be captured by it.
-    void drawViewportPropsPanel() {
-        import commands.ui.viewport_props : g_viewportPropsShown;
-        import std.json : JSONValue;
-        import std.conv : to;
-
-        pushPanelChromeStyle();
-        if (ImGui.Begin("Viewport Properties")) {
-            auto v = vpm.views[vpm.activeId];
-
-            // Layout switcher: Single / 2-split H / 2-split V / Quad.
-            // Highlights the active preset; each button fires viewport.layout.
-            ImGui.SeparatorText("Layout");
-            {
-                import viewport : LayoutPreset;
-                static immutable string[4] lblNames = ["Single", "Split H", "Split V", "Quad"];
-                static immutable string[4] lblIds   = ["Single", "SplitH", "SplitV", "Quad"];
-                static immutable LayoutPreset[4] lblVals =
-                    [LayoutPreset.Single, LayoutPreset.SplitH,
-                     LayoutPreset.SplitV, LayoutPreset.Quad];
-                foreach (i; 0 .. 4) {
-                    if (i > 0) ImGui.SameLine();
-                    bool cur = (vpm.layout == lblVals[i]);
-                    if (cur) ImGui.PushStyleColor(ImGuiCol.Button,
-                                                  ImVec4(0.30f, 0.45f, 0.65f, 1.0f));
-                    if (ImGui.Button(lblNames[i]) && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("viewport.layout",
-                            `{"_positional":["` ~ lblIds[i] ~ `"]}`);
-                    if (cur) ImGui.PopStyleColor(1);
-                }
-            }
-
-            ImGui.Dummy(ImVec2(0, 2));
-            ImGui.SeparatorText("Active Cell Independence");
-
-            bool ic = v.indCenter;
-            if (ImGui.Checkbox("Center", &ic) && commandHandlerDelegate !is null)
-                commandHandlerDelegate("viewport.indCenter",
-                                      ic ? `{"value":"yes"}` : `{"value":"no"}`);
-
-            ImGui.SameLine();
-            bool isc = v.indScale;
-            if (ImGui.Checkbox("Scale", &isc) && commandHandlerDelegate !is null)
-                commandHandlerDelegate("viewport.indScale",
-                                      isc ? `{"value":"yes"}` : `{"value":"no"}`);
-
-            ImGui.SameLine();
-            bool ir = v.indRotate;
-            if (ImGui.Checkbox("Rotate", &ir) && commandHandlerDelegate !is null)
-                commandHandlerDelegate("viewport.indRotate",
-                                      ir ? `{"value":"yes"}` : `{"value":"no"}`);
-
-            // Master selector
-            ImGui.Dummy(ImVec2(0, 2));
-            ImGui.SeparatorText("Master");
-            int mid = v.masterId;
-            string masterLabel = mid < 0 ? "Group master" : "Cell " ~ to!string(mid);
-            ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.BeginCombo("##vpMaster", masterLabel)) {
-                bool grpSel = (mid < 0);
-                if (ImGui.Selectable("Group master", grpSel) && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("viewport.master", `{"_positional":["-1"]}`);
-                if (grpSel) ImGui.SetItemDefaultFocus();
-                foreach (ci; 0 .. vpm.cellCount) {
-                    bool csel = (mid == ci);
-                    string clabel = "Cell " ~ to!string(ci);
-                    if (ImGui.Selectable(clabel, csel) && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("viewport.master",
-                            `{"_positional":["` ~ to!string(ci) ~ `"]}`);
-                    if (csel) ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-
-            // Reset Layout button
-            ImGui.Dummy(ImVec2(0, 2));
-            ImGui.Separator();
-            if (ImGui.Button("Reset Layout")) {
-                // The shipped default ini is Single (only Viewport##0), so
-                // mirror the persisted cell preset too — otherwise a Quad
-                // user hitting Reset Layout would restore the shipped dock
-                // arrangement but keep g_prefs.viewportLayout == Quad, and a
-                // later clean-shutdown save would silently resurrect the
-                // stale multi-cell preset on the next launch. Mirrors the
-                // same assignment in the onViewportReset delegates (file.new
-                // / scene.reset) below.
-                g_prefs.viewportLayout = LayoutPreset.Single;
-                // Remove the persisted ini, then immediately re-seed it from
-                // the shipped default (config/default_layout.ini — the
-                // user's confirmed arrangement) via the same first-run copy
-                // helper. Without this, ImGui's ~5s autosave timer (or the
-                // save-on-shutdown at DestroyContext) would overwrite the
-                // freshly-copied file with the programmatic DockBuilder
-                // rebuild below before the NEXT launch ever sees it — so we
-                // pull the shipped bytes into the LIVE in-memory settings
-                // now (deferred to just before the next NewFrame — see
-                // g_pendingLayoutReloadPathZ) so this session's own eventual
-                // autosave/shutdown-save also reflects the shipped default,
-                // not the programmatic seed. The programmatic DockBuilder
-                // reseed (g_forceLayoutReseed) becomes a FALLBACK, used only
-                // when no shipped default could be re-copied (e.g. running
-                // from a location where config/default_layout.ini isn't
-                // found).
-                bool restored = false;
-                if (!command.g_testMode && g_layoutIniPathZ !is null) {
-                    import std.string : fromStringz;
-                    string p = cast(string) fromStringz(g_layoutIniPathZ);
-                    try {
-                        import std.file : remove, exists;
-                        if (exists(p)) remove(p);
-                    } catch (Exception) {}
-                    if (seedDefaultLayoutIfMissing(p)) {
-                        // Defer the reload: this button handler runs
-                        // mid-frame (between NewFrame/EndFrame), and
-                        // ImGui.LoadIniSettingsFromDisk documents that as
-                        // unsafe. g_pendingLayoutReloadPathZ is consumed
-                        // once, right before the next NewFrame().
-                        g_pendingLayoutReloadPathZ = g_layoutIniPathZ;
-                        restored = true;
-                    }
-                }
-                // Fallback only: no shipped default was available to
-                // re-copy, so fall back to the bare programmatic seed for
-                // THIS session (still won't persist past the ini-autosave,
-                // but there is no better default to persist).
-                g_forceLayoutReseed = !restored;
-            }
-        }
-        ImGui.End();
-        popPanelChromeStyle();
-    }
+    // drawViewportPropsPanel relocated to source/ui/panels.d (task 0419
+    // Phase 3 -- takes `EditorApp app`, called as `drawViewportPropsPanel(app)`
+    // below).
 
     // -------------------------------------------------------------------------
     // Phase 2 — FBO scene render
@@ -8575,8 +8436,10 @@ void main(string[] args) {
 
         // ---- Viewport Properties (floating) ----
         // Hidden in --test by default; opt-in via `ui.viewportProps show`.
-        if (!command.g_testMode || g_viewportPropsShown)
-            drawViewportPropsPanel();
+        if (!command.g_testMode || g_viewportPropsShown) {
+            import ui.panels : drawViewportPropsPanel;
+            drawViewportPropsPanel(app);
+        }
 
         // ---- AI Findings (floating; task 0402 Phase 2) ----
         // Same imgui-determinism idiom as Layers/Viewport Properties above:
