@@ -34,7 +34,7 @@ import std.conv    : to, ConvException;
 import std.string  : strip;
 import std.format  : format;
 import std.array   : join;
-import params      : Param, IntEnumEntry, isUserSet;
+import params      : Param, IntEnumEntry, isUserSet, fmtFloatWire;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -143,12 +143,14 @@ private string _quoteIfNeeded(string s)
 /// NaN/Inf edge cases: isUserSet returns false for NaN-default+NaN-current,
 /// so _fmtFloat should never be called for that case. If default != NaN but
 /// current == NaN the param is in an invalid state — emit "nan" as sentinel.
+///
+/// Thin delegate to params.fmtFloatWire (task 0409 / 0407 D3) — the single
+/// source for this exact %g-plus-NaN/Inf-sentinel format, also used by
+/// forms.fmtFloatG and stringifyParam's Float case. The NaN/Inf semantics
+/// documented above are preserved exactly (fmtFloatWire implements them).
 private string _fmtFloat(float f)
 {
-    import std.math : isNaN, isInfinity;
-    if (isNaN(f))      return "nan";
-    if (isInfinity(f)) return f > 0 ? "inf" : "-inf";
-    return format("%g", f);
+    return fmtFloatWire(f);
 }
 
 /// Format the current value of a Param as an argstring token.
@@ -393,6 +395,37 @@ version (unittest)
             Param.vec3Array_("before",  "Before",  &pts),
         ];
         assert(serializeParams(schema) == "");
+    }
+
+    unittest { // 16. Byte-identity (task 0409): _fmtFloat / fmtFloatWire /
+        // stringifyParam agree for the pinned value set. _fmtFloat is now a
+        // thin delegate to params.fmtFloatWire (the single wire-format
+        // source); params.stringifyParam's Float case uses the same helper —
+        // this locks the two call sites together instead of relying on
+        // sync-by-comment (forms.d has its own cross-check against
+        // serializeParams()).
+        import params : fmtFloatWire, stringifyParam;
+        immutable float[] vals = [0.0f, 1.0f, -1.0f, 0.5f, 1e-7f, -3.25f,
+                                   1e20f, 123456.789f, 0.1f];
+        foreach (v; vals) {
+            float f = v;
+            string tok = _fmtFloat(v);
+            assert(tok == fmtFloatWire(v), tok);
+
+            // stringifyParam formats a Float Param's CURRENT value the same
+            // way, independent of isUserSet/default (unlike serializeParams,
+            // which skips default-valued params entirely).
+            auto p = Param.float_("f", "F", &f, float.nan);
+            assert(stringifyParam(p) == tok, stringifyParam(p) ~ " vs " ~ tok);
+        }
+
+        // NaN/Inf sentinels — _fmtFloat's doc comment above documents that
+        // isUserSet gates it away from the NaN-default+NaN-current case in
+        // real serializeParams() calls, but the function itself still emits
+        // the textual sentinel if ever invoked directly on NaN/Inf.
+        assert(_fmtFloat(float.nan)       == "nan");
+        assert(_fmtFloat(float.infinity)  == "inf");
+        assert(_fmtFloat(-float.infinity) == "-inf");
     }
 }
 
