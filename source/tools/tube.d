@@ -1,30 +1,18 @@
 module tools.tube;
 
-import bindbc.opengl;
-import operator : VectorStack;
 import bindbc.sdl;
+import operator : VectorStack;
 
-import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : MoveHandler, gizmoSize, ToolHandles;
-import eventlog : queryMouse;
-import drag : axisDragDelta, planeDragDelta;
-import shader : Shader, LitShader, drawLitPreview;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit;
+import shader : LitShader;
+import tools.primitive_create_tool : PrimitiveCreateTool;
+import tools.create_common : snapLocalHit;
 import editmode : EditMode;
-import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : publishLastSnap;
 
-import std.math : sin, cos, PI, abs, sqrt, fmax, fmin;
-
-alias TubeEditFactory = MeshSessionEdit delegate();
+import std.math : sin, cos, PI, abs, sqrt;
 
 // ---------------------------------------------------------------------------
 // TubeParams — wire schema for prim.tube headless invocation.
@@ -170,18 +158,24 @@ void buildTube(Mesh* dst, const ref TubeParams p)
 
 // ---------------------------------------------------------------------------
 // TubeTool — Create-tool for prim.tube with three-stage interactive draw.
+// Direct PrimitiveCreateTool subclass (task 0414, 0407 sec A.D2 dedup): tube
+// is the one primitive with NO size handles at all, so it doesn't extend
+// HandledCreateTool — the shared mover-only default drawToolHandles rig
+// (arrowX/Y/Z=0/1/2, centerBox=10) already matches tube's pre-refactor id
+// scheme exactly, so this class doesn't even need to override draw(),
+// drawToolHandles(), destroy(), or the ctor body beyond a bare super() call.
 //
 // State machine:
-//   Idle → DrawingOuter (LMB drag → sets outerRadius)
-//   DrawingOuter → OuterSet (LMB up, valid radius)
-//   OuterSet → DrawingHeight (LMB drag → sets height)
-//   DrawingHeight → HeightSet (LMB up)
-//   HeightSet → DrawingInner (LMB drag → sets innerRadius)
-//   DrawingInner → InnerSet (LMB up)
-//   Right-click / Esc from any state → Idle
+//   Idle -> DrawingOuter (LMB drag -> sets outerRadius)
+//   DrawingOuter -> OuterSet (LMB up, valid radius)
+//   OuterSet -> DrawingHeight (LMB drag -> sets height)
+//   DrawingHeight -> HeightSet (LMB up)
+//   HeightSet -> DrawingInner (LMB drag -> sets innerRadius)
+//   DrawingInner -> InnerSet (LMB up)
+//   Right-click / Esc from any state -> Idle
 //
-// Headless path (applyHeadless) bypasses the state machine and appends
-// directly from current params_.
+// Headless path (applyHeadless, inherited default) bypasses the state
+// machine and appends directly from current params_ via buildInto().
 // ---------------------------------------------------------------------------
 
 private enum TubeState {
@@ -194,64 +188,14 @@ private enum TubeState {
     InnerSet,
 }
 
-class TubeTool : Tool {
+final class TubeTool : PrimitiveCreateTool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
-    GpuMesh*        gpu;
-    LitShader       litShader;
-
-    TubeParams      params_;
-    CommandHistory  history;
-    TubeEditFactory factory;
-
-    TubeState       state;
-    Mesh            previewMesh;
-    GpuMesh         previewGpu;
-    bool            meshChanged;
-
-    // Construction-plane frame captured at first click.
-    Vec3 planeNormal;
-    Vec3 planeAxis1;
-    Vec3 planeAxis2;
-    WorkplaneFrame frame;
-
-    // Drag anchors.
-    Vec3 startPoint;
-    Vec3 currentPoint;
-    Vec3 hpOrigin;
-    Vec3 hpn;
-    Vec3 heightDragStart;
-    Vec3 baseAnchor;
-
-    SnapResult lastSnap;
-    Viewport   cachedVp;
-
-    // Mover gizmo for cenX/Y/Z after tube is placed.
-    MoveHandler mover;
-    int         moverDragAxis = -1;
-    int         moverLastMX, moverLastMY;
-    ToolHandles toolHandles;
+    TubeParams params_;
+    TubeState  state;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
-        this.meshSrc_ = meshSrc;
-        this.gpu       = gpu;
-        this.litShader = litShader;
-        mover = new MoveHandler(Vec3(0, 0, 0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
-        toolHandles = new ToolHandles();
-    }
-
-    void destroy() {
-        mover.destroy();
-    }
-
-    void setUndoBindings(CommandHistory history, TubeEditFactory factory) {
-        this.history = history;
-        this.factory = factory;
+        super(meshSrc, gpu, litShader);
     }
 
     override string name() const { return "Tube"; }
@@ -278,48 +222,6 @@ public:
         ];
     }
 
-    override void activate() {
-        state         = TubeState.Idle;
-        meshChanged   = false;
-        moverDragAxis = -1;
-        toolHandles.clearHaul();
-        previewGpu.init();
-    }
-
-    override void deactivate() {
-        bool willCommit = state >= TubeState.HeightSet
-                       && params_.outerRadius > 1e-5f
-                       && params_.height      > 1e-5f;
-
-        MeshSnapshot pre;
-        if (willCommit) pre = MeshSnapshot.capture(*mesh);
-
-        if (willCommit)
-            commitTube();
-        state = TubeState.Idle;
-        previewGpu.destroy();
-
-        if (willCommit) commitTubeEdit(pre);
-
-        lastSnap = SnapResult.init;
-        clearLastSnap();
-    }
-
-    override void evaluate() {
-        if (state == TubeState.Idle) return;
-        rebuildPreview();
-    }
-
-    override bool applyHeadless() {
-        frame = currentWorkplaneFrame();
-        size_t firstNewVert = mesh.vertices.length;
-        buildTube(mesh, params_);
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        return true;
-    }
-
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button == SDL_BUTTON_RIGHT && state != TubeState.Idle) {
             state = TubeState.Idle;
@@ -331,13 +233,7 @@ public:
 
         // Mover drag once tube is fully placed.
         if (state == TubeState.InnerSet) {
-            int hit = moverHitTest(e.x, e.y);
-            if (hit >= 0) {
-                moverDragAxis = hit;
-                moverLastMX   = e.x;
-                moverLastMY   = e.y;
-                return true;
-            }
+            if (tryGrabMover(e.x, e.y)) return true;
         }
 
         if (state == TubeState.Idle) {
@@ -349,9 +245,9 @@ public:
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
-            startPoint         = hit;
-            currentPoint       = hit;
-            params_.axis       = worldAxisIdxOf(planeNormal);
+            startPoint          = hit;
+            currentPoint        = hit;
+            params_.axis        = worldAxisIdxOf(planeNormal);
             params_.outerRadius = 0.0f;
             params_.innerRadius = 0.0f;
             params_.height      = 0.0f;
@@ -363,7 +259,7 @@ public:
         if (state == TubeState.OuterSet) {
             // Second drag: height.
             setupHeightPlane();
-            baseAnchor = Vec3(params_.cenX, params_.cenY, params_.cenZ);
+            baseAnchor = center();
             Vec3 hit;
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
@@ -379,8 +275,7 @@ public:
             // Third drag: inner radius on the base plane.
             Vec3 hit;
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(params_.cenX, params_.cenY, params_.cenZ),
-                                   planeNormal, hit))
+                                   center(), planeNormal, hit))
                 return false;
             state = TubeState.DrawingInner;
             updateInnerRadiusFromHit(hit);
@@ -393,7 +288,7 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
-        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
+        if (tryReleaseMover()) return true;
 
         if (state == TubeState.DrawingOuter) {
             if (!(params_.outerRadius > 1e-5f)) {
@@ -416,40 +311,9 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (state == TubeState.Idle) {
-            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
-            Vec3 hit;
-            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
-                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                        *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-            } else {
-                lastSnap = SnapResult.init;
-                clearLastSnap();
-            }
-        }
+        if (state == TubeState.Idle) updateIdleSnap(e.x, e.y);
 
-        if (moverDragAxis >= 0) {
-            bool skip;
-            Vec3 delta = moverDragAxis <= 2
-                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover, cachedVp, skip)
-                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip,
-                                 mover.axisX, mover.axisY, mover.axisZ,
-                                 frame.normal);
-            if (!skip) {
-                Vec3 dl = toLocalD(delta);
-                params_.cenX += dl.x;
-                params_.cenY += dl.y;
-                params_.cenZ += dl.z;
-                rebuildPreview();
-            }
-            moverLastMX = e.x; moverLastMY = e.y;
-            return true;
-        }
+        if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == TubeState.DrawingOuter) {
             Vec3 hit;
@@ -495,8 +359,7 @@ public:
         if (state == TubeState.DrawingInner) {
             Vec3 hit;
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(params_.cenX, params_.cenY, params_.cenZ),
-                                  planeNormal, hit))
+                                  center(), planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);
@@ -509,107 +372,46 @@ public:
         return false;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        cachedVp = vp;
-        drawSnapOverlay(lastSnap, vp, *mesh);
-        if (state == TubeState.Idle) return;
-
-        drawLitPreview(litShader, shader, vp, previewGpu);
-
-        if (state == TubeState.InnerSet) {
-            mover.setPosition(toWorldP(Vec3(params_.cenX, params_.cenY, params_.cenZ)));
-            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            toolHandles.begin();
-            toolHandles.add(mover.centerBox, 10);
-            toolHandles.add(mover.arrowX,    0);
-            toolHandles.add(mover.arrowY,    1);
-            toolHandles.add(mover.arrowZ,    2);
-            if (moverDragAxis >= 0) toolHandles.setHaul(moverDragAxis <= 2 ? moverDragAxis : 10);
-            else                    toolHandles.setHaul(-1);
-            int hmx, hmy;
-            queryMouse(hmx, hmy);
-            toolHandles.update(hmx, hmy, vp);
-            mover.draw(shader, vp);
-        }
-    }
-
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
-        if (state == TubeState.Idle)
+        if (isIdle())
             ImGui.TextDisabled("Drag in viewport to set outer radius.");
-        else if (state == TubeState.OuterSet)
+        else if (isOuterSet())
             ImGui.TextDisabled("Drag again to set height.");
-        else if (state == TubeState.HeightSet)
+        else if (isHeightSet())
             ImGui.TextDisabled("Drag again to set inner radius.");
     }
 
-    // History-coordination hooks (undo/redo migration).
-    public override bool hasUncommittedEdit() const {
+protected:
+    override Vec3 center() const { return Vec3(params_.cenX, params_.cenY, params_.cenZ); }
+    override void setCenter(Vec3 c) {
+        params_.cenX = c.x; params_.cenY = c.y; params_.cenZ = c.z;
+    }
+
+    override bool isIdle() const { return state == TubeState.Idle; }
+    override bool showHandles() const { return state == TubeState.InnerSet; }
+
+    override bool willCommit() const {
         return state >= TubeState.HeightSet
             && params_.outerRadius > 1e-5f
             && params_.height      > 1e-5f;
     }
-    public override void cancelUncommittedEdit() { state = TubeState.Idle; }
-    public override void resyncSession()         { state = TubeState.Idle; }
+    override void goIdle() { state = TubeState.Idle; }
+
+    // Exposed for drawProperties() so it never needs to reach into
+    // TubeState directly.
+    bool isOuterSet()  const { return state == TubeState.OuterSet; }
+    bool isHeightSet() const { return state == TubeState.HeightSet; }
+
+    override void buildInto(Mesh* dst) { buildTube(dst, params_); }
+    override string commitLabel() const { return "Create Tube"; }
 
 private:
-    static int worldAxisIdxOf(Vec3 v) {
-        if (abs(v.x) > 0.5f) return 0;
-        if (abs(v.y) > 0.5f) return 1;
-        return 2;
-    }
-
-    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
-    }
-    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
-    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
-    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
-
-    // Copied from CylinderTool (cylinder.d:729) — NOT a shared create_common helper.
-    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
-        foreach (i; firstIdx .. m.vertices.length)
-            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
-    }
-
-    void choosePlane(const ref Viewport vp) {
-        frame = pickWorkplaneFrame(vp);
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
-            case 0:
-                planeNormal = Vec3(1, 0, 0);
-                planeAxis1  = Vec3(0, 1, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 1:
-                planeNormal = Vec3(0, 1, 0);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 2:
-                planeNormal = Vec3(0, 0, 1);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 1, 0);
-                break;
-        }
-    }
-
-    void setupHeightPlane() {
-        hpOrigin = Vec3(params_.cenX, params_.cenY, params_.cenZ);
-        Vec3 toCamera = localEye() - hpOrigin;
-        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
-        float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-        hpn = len > 1e-6f ? inPlane / len : planeAxis1;
-    }
-
     // Update innerRadius from a hit point in local workplane space,
     // measuring the distance from the tube center to the hit projected
     // onto the base plane, clamped below outerRadius.
     void updateInnerRadiusFromHit(Vec3 hit) {
-        Vec3  cen = Vec3(params_.cenX, params_.cenY, params_.cenZ);
+        Vec3  cen = center();
         Vec3  d   = hit - cen;
         // Project out the axis component (stay in the plane).
         d = d - planeNormal * dot(d, planeNormal);
@@ -619,41 +421,6 @@ private:
         if (r > maxInner) r = maxInner;
         if (r < params_.outerRadius * 1e-4f) r = params_.outerRadius * 1e-4f;
         params_.innerRadius = r;
-    }
-
-    void rebuildPreview() {
-        previewMesh.clear();
-        buildTube(&previewMesh, params_);
-        applyFrameToMeshRange(&previewMesh, 0);
-        previewMesh.buildLoops();
-        previewGpu.upload(previewMesh);
-    }
-
-    void uploadPreview() { rebuildPreview(); }
-
-    void commitTube() {
-        size_t firstNewVert = mesh.vertices.length;
-        buildTube(mesh, params_);
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        meshChanged = true;
-    }
-
-    void commitTubeEdit(MeshSnapshot pre) {
-        if (history is null || factory is null) return;
-        if (!pre.filled) return;
-        auto cmd  = factory();
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(pre, post, "Create Tube");
-        history.record(cmd);
-    }
-
-    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
-    // §A.D5) — was a verbatim inline copy of the same 3=centerBox,
-    // 0/1/2=arrowX/Y/Z, -1=miss test.
-    int moverHitTest(int mx, int my) {
-        return mover.hitTest(mx, my, cachedVp);
     }
 }
 
