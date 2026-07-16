@@ -559,3 +559,41 @@ void pushButtonBarStyle() {
 void popButtonBarStyle() {
     ImGui.PopStyleVar(2);
 }
+
+// =============================================================================
+// Phase 2 -- pilot: drawTabPanel, the smallest CTX-panel (reads testMode,
+// layout.tabPos/tabSize, panels/activePanelIdx; calls the pure
+// renderStyledButton + pushPanelChromeStyle/popPanelChromeStyle/
+// pushButtonBarStyle/popButtonBarStyle from Phase 1). No CTX-helper
+// cross-calls at this phase. Body verbatim from app.d's former nested
+// function, wrapped in `with (app) { ... }` per the 0415 seam.
+// =============================================================================
+
+void drawTabPanel(EditorApp app) {
+    with (app) {
+    pushPanelChromeStyle();
+    if (testMode) {
+        ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
+    }
+    int tabFlags = ImGuiWindowFlags.NoCollapse;
+    if (testMode) tabFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    if (ImGui.Begin("Tab bar", null, tabFlags))
+    {
+        pushButtonBarStyle();
+        scope(exit) popButtonBarStyle();
+
+        enum float btnW = 90.0f;
+        foreach (i, ref p; panels) {
+            bool on = (cast(int)i == activePanelIdx);
+            if (renderStyledButton(p.title, "", on, /*isCommand=*/true,
+                                   ImVec2(btnW, 0)))
+                activePanelIdx = cast(int)i;
+            if (i + 1 < panels.length)
+                ImGui.SameLine();
+        }
+    }
+    ImGui.End();
+    popPanelChromeStyle();
+    }
+}

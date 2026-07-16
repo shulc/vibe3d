@@ -6926,32 +6926,9 @@ void main(string[] args) {
         popPanelChromeStyle();
     }
 
-    void drawTabPanel() {
-        pushPanelChromeStyle();
-        if (testMode) {
-            ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
-            ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
-        }
-        int tabFlags = ImGuiWindowFlags.NoCollapse;
-        if (testMode) tabFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
-        if (ImGui.Begin("Tab bar", null, tabFlags))
-        {
-            pushButtonBarStyle();
-            scope(exit) popButtonBarStyle();
-
-            enum float btnW = 90.0f;
-            foreach (i, ref p; panels) {
-                bool on = (cast(int)i == activePanelIdx);
-                if (renderStyledButton(p.title, "", on, /*isCommand=*/true,
-                                       ImVec2(btnW, 0)))
-                    activePanelIdx = cast(int)i;
-                if (i + 1 < panels.length)
-                    ImGui.SameLine();
-            }
-        }
-        ImGui.End();
-        popPanelChromeStyle();
-    }
+    // drawTabPanel relocated to source/ui/panels.d (task 0419 Phase 2 --
+    // pilot CTX-panel; takes `EditorApp app`, called as `drawTabPanel(app)`
+    // below).
 
     // -------------------------------------------------------------------------
     // Layers panel (layers Stage 4)
@@ -8252,7 +8229,8 @@ void main(string[] args) {
         // ── end DockSpace host ─────────────────────────────────────────────
 
         drawSidePanel();
-        drawTabPanel();
+        import ui.panels : drawTabPanel;
+        drawTabPanel(app);
 
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
         // Same BeginPopupModal convention as ArgsDialog (args_dialog.d:48):
