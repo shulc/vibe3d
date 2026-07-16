@@ -596,6 +596,18 @@ public:
     // never needs to reach into RadialState directly.
     protected bool isBaseSet() const { return state == RadialState.BaseSet; }
 
+    // Exposed for a leaf's buildInto() override that needs to know whether
+    // the CURRENT gesture has committed to a volumetric (vs. still-flat)
+    // shape, without needing raw access to `state`/`dragUniform` (both
+    // private to this module — RadialState is intentionally not exposed
+    // outside primitive_create_tool.d). SphereTool is the one leaf that
+    // needs this: its buildInto is STATE-aware (sphere.d pre-refactor
+    // rebuildPreview's `volumetric` gate), unlike cylinder/cone/capsule's
+    // pure buildInto(params_).
+    protected bool isVolumetricEligible() const {
+        return state >= RadialState.DrawingHeight || dragUniform;
+    }
+
     // ----- HandledCreateTool hook implementations (cylinder-family default;
     // -----  SphereTool overrides both via the worldSize/setWorldSize hooks
     // -----  below — see applySizeDelta's own override there) ---------------

@@ -1,32 +1,13 @@
 module tools.sphere;
 
-import bindbc.opengl;
-import operator : VectorStack;
-import bindbc.sdl;
-
-import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
-import eventlog : queryMouse;
-import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
-import shader : Shader, LitShader, drawLitPreview;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
-                              pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit;
-import editmode : EditMode;
-import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import shader : LitShader;
+import tools.primitive_create_tool : SizedRadialCreateTool;
+import tools.create_common : currentWorkplaneFrame;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
-
-// Reuses the generic snapshot-pair edit factory used by BoxTool / BevelTool.
-alias SphereEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // SphereParams — wire schema for prim.sphere headless invocation.
@@ -467,131 +448,45 @@ private void buildEllipseBase(Mesh* dst, int sides,
 
 // ---------------------------------------------------------------------------
 // SphereTool — Create-tool for prim.sphere with two-stage interactive draw.
+// Thin-ish subclass of SizedRadialCreateTool!SphereParams (task 0414, 0407
+// sec A.D2 dedup): the shared 5-stage machine (onMouseButtonDown/Up/Motion),
+// preview/commit plumbing, mover + size-handle rig, and local<->world
+// workplane helpers all live in source/tools/primitive_create_tool.d. What
+// sphere adds on top is real: an ellipsoid axis permutation (worldSize/
+// setWorldSize), a globe/qball/tess method dispatch, and a STATE-aware
+// buildInto (unlike cylinder/cone/capsule's pure builder call) — the
+// documented divergences the task 0414 plan's sec 1a called out.
 //
-// Wire schema follows the conventional `prim.sphere` attributes. Only
-// `method:globe` is implemented; qball/tess parametrizations come in 6.3/6.4.
+// Wire schema follows the conventional `prim.sphere` attributes.
 //
-// Interaction model (mirrors BoxTool):
-//   Idle ── LMB drag on viewport ─→ DrawingBase (flat ellipse on plane)
-//   DrawingBase ── LMB up ─→ BaseSet
-//   BaseSet ── LMB drag on viewport ─→ DrawingHeight (extrudes ellipse → sphere)
-//   DrawingHeight ── LMB up ─→ HeightSet (sphere finalized)
+// Interaction model (see PrimitiveCreateTool/SizedRadialCreateTool!P docs):
+//   Idle -- LMB drag on viewport -> DrawingBase (flat ellipse on plane)
+//   DrawingBase -- LMB up -> BaseSet
+//   BaseSet -- LMB drag on viewport -> DrawingHeight (extrudes ellipse -> sphere)
+//   DrawingHeight -- LMB up -> HeightSet (sphere finalized)
 //
-// During interactive states the actual scene mesh is untouched; only
-// previewMesh is rebuilt each frame from params_. The committed sphere
-// lands in the scene mesh at deactivate(), wrapped in a snapshot pair
-// for undo.
-//
-// Headless path (applyHeadless) bypasses the state machine and replaces
-// the scene mesh directly from current params_.
+// Headless path (applyHeadless) is a FULL override, NOT routed through the
+// state-aware buildInto/appendBuildInto (task 0414 plan sec 1a / PRAVKA 1):
+// buildInto's volumetric-vs-flat gate reads live interactive state (`state
+// >= DrawingHeight || dragUniform`), which is always false headlessly
+// (state == Idle at applyHeadless-call time) -- routing through it would
+// silently emit a flat ellipse fan instead of a sphere. applyHeadless calls
+// buildByMethod() directly, exactly as it did pre-refactor.
 // ---------------------------------------------------------------------------
-
-private enum SphereState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet }
-
-class SphereTool : Tool {
+final class SphereTool : SizedRadialCreateTool!SphereParams {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
-    GpuMesh*           gpu;
-    LitShader          litShader;
-
-    SphereParams       params_;
-    CommandHistory     history;
-    SphereEditFactory  factory;
-
     // Last params_.axis value seen — used by onParamChanged("axis") to compute
     // the cyclic shift that needs to be undone before applying the new one.
-    int                axisAtLastSync = 1;
-
-    SphereState        state;
-    Mesh               previewMesh;
-    GpuMesh            previewGpu;
-    bool               meshChanged;
-
-    // Construction-plane frame chosen at first click and locked for the
-    // whole interaction. After the workplane refactor these are in LOCAL
-    // workplane coords (canonical (1,0,0)/(0,1,0)/(0,0,1) — the actual
-    // world basis is encoded in `frame`); ray-plane sites use localEye()
-    // / localRay() and produce hits in local space.
-    Vec3 planeNormal;
-    Vec3 planeAxis1;
-    Vec3 planeAxis2;
-    /// Workplane local↔world transform captured at choosePlane(). All
-    /// internal coords (params_.cen*, sphereCenter, baseAnchor, hpOrigin,
-    /// startPoint/currentPoint, radH positions) live in this frame's
-    /// local space; mesh upload / commit transforms vertices through
-    /// `frame.toWorld` immediately before they hit GPU / the scene.
-    WorkplaneFrame frame;
-
-    // Drag anchors — only valid for the matching state(s).
-    Vec3 startPoint;       // DrawingBase: first click on plane
-    Vec3 currentPoint;     // DrawingBase: current mouse hit on plane
-    Vec3 hpOrigin;         // DrawingHeight: ray-plane origin
-    Vec3 hpn;              // DrawingHeight: ray-plane normal (camera-facing)
-    Vec3 heightDragStart;  // DrawingHeight: world hit at second LMB press
-    Vec3 baseAnchor;       // DrawingHeight: sphere center captured at start
-
-    // Sticky modifier captured at LMB-down: Ctrl held at first click forces
-    // an equal-radius circle during DrawingBase; Ctrl held at second click
-    // forces all three world radii equal during DrawingHeight.
-    bool dragUniform;
-
-    Viewport cachedVp;
-
-    // Last snap query — drives the Idle-state cyan/yellow overlay.
-    SnapResult lastSnap;
-
-    // Move gizmo (axis-only).
-    MoveHandler mover;
-    int         moverDragAxis = -1;
-    int         moverLastMX, moverLastMY;
-
-    // Six radius handles on the sphere surface — outward axes:
-    //   0:+X  1:-X  2:+Y  3:-Y  4:+Z  5:-Z
-    BoxHandler[6] radH;
-    int           radDragIdx    = -1;
-    int           radLastMX, radLastMY;
-
-    // Single-source hover/capture arbiter for the radius handles + mover.
-    ToolHandles   toolHandles;
+    int  axisAtLastSync = 1;
 
     // When true, the tool presents as "Ellipsoid": globe-builder locked,
     // `method` and `order` params hidden.  Default false = Sphere.
     bool ellipsoidMode_;
 
-    static immutable Vec3[6] RAD_AXES = [
-        Vec3( 1, 0, 0), Vec3(-1, 0, 0),
-        Vec3( 0, 1, 0), Vec3( 0,-1, 0),
-        Vec3( 0, 0, 1), Vec3( 0, 0,-1),
-    ];
-
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
-        this.meshSrc_       = meshSrc;
-        this.gpu            = gpu;
-        this.litShader      = litShader;
+        super(meshSrc, gpu, litShader);
         this.ellipsoidMode_ = ellipsoidMode;
-        mover = new MoveHandler(Vec3(0, 0, 0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
-        foreach (i; 0 .. 6) {
-            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
-                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
-                               : Vec3(0.2f, 0.2f, 0.9f);
-            radH[i] = new BoxHandler(Vec3(0, 0, 0), col);
-        }
-        toolHandles = new ToolHandles();
-    }
-
-    void destroy() {
-        mover.destroy();
-        foreach (h; radH) h.destroy();
-    }
-
-    void setUndoBindings(CommandHistory history, SphereEditFactory factory) {
-        this.history = history;
-        this.factory = factory;
     }
 
     override string name() const { return ellipsoidMode_ ? "Ellipsoid" : "Sphere"; }
@@ -659,18 +554,6 @@ public:
         return true;
     }
 
-    override void activate() {
-        // Globe-lock: prevent qball/tess from slipping in via a reused instance.
-        if (ellipsoidMode_) params_.method = 0;
-        state          = SphereState.Idle;
-        meshChanged    = false;
-        moverDragAxis  = -1;
-        radDragIdx     = -1;
-        toolHandles.clearHaul();
-        axisAtLastSync = params_.axis;
-        previewGpu.init();
-    }
-
     override void onParamChanged(string name) {
         if (name != "axis") return;
         if (params_.axis == axisAtLastSync) return;
@@ -685,384 +568,143 @@ public:
         float wx = worldRadiusUnderAxis(oldAxis, 0);
         float wy = worldRadiusUnderAxis(oldAxis, 1);
         float wz = worldRadiusUnderAxis(oldAxis, 2);
-        // params_.axis is already the new value — setWorldRadius routes
+        // params_.axis is already the new value — setWorldSize routes
         // through the new permutation.
-        setWorldRadius(0, wx);
-        setWorldRadius(1, wy);
-        setWorldRadius(2, wz);
+        setWorldSize(0, wx);
+        setWorldSize(1, wy);
+        setWorldSize(2, wz);
         axisAtLastSync = params_.axis;
     }
 
-    override void deactivate() {
-        bool willCommit = (state == SphereState.BaseSet)
-                       || (state >= SphereState.DrawingHeight
-                           && currentHeight() > 1e-5f);
-
-        MeshSnapshot pre;
-        if (willCommit) pre = MeshSnapshot.capture(*mesh);
-
-        if (state == SphereState.BaseSet)
-            commitBase();
-        else if (state >= SphereState.DrawingHeight && currentHeight() > 1e-5f)
-            commitSphere();
-        state = SphereState.Idle;
-        previewGpu.destroy();
-
-        if (willCommit) commitSphereEdit(pre);
-
-        lastSnap = SnapResult.init;
-        clearLastSnap();
-    }
-
-    override void evaluate() {
-        // Slider tweak in the property panel — re-render preview if we have
-        // an active interactive state. After commit (HeightSet → deactivate),
-        // the scene mesh is the authority and the panel can't tweak further.
-        if (state == SphereState.Idle) return;
-        rebuildPreview();
-    }
-
+    // Headless FULL override — see the class doc and task 0414 plan sec 1a.
     override bool applyHeadless() {
-        // Append into the scene mesh (same convention as the interactive
-        // commitSphere). Headless prim.sphere honours the active
-        // WorkplaneStage — params_ are interpreted in LOCAL workplane
-        // space (mirroring the interactive commit path). Auto-mode falls
-        // back to identity (world XZ).
         frame = currentWorkplaneFrame();
         size_t firstNewVert = mesh.vertices.length;
-        if (params_.method == 0)      buildSphereGlobe(mesh, params_);
-        else if (params_.method == 1) buildSphereQuadBall(mesh, params_);
-        else if (params_.method == 2) buildSphereTess(mesh, params_);
-        else                          return false;
+        if (!buildByMethod(mesh)) return false;
         applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
     }
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (e.button == SDL_BUTTON_RIGHT && state != SphereState.Idle) {
-            state = SphereState.Idle;
-            return true;
-        }
-        if (e.button != SDL_BUTTON_LEFT) return false;
-        SDL_Keymod mods = SDL_GetModState();
-        // Alt / Shift remain reserved for camera. Ctrl is consumed by this
-        // tool to mean "constrain the drag to a uniform sphere".
-        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
-        bool ctrlAtClick = (mods & KMOD_CTRL) != 0;
-
-        // Radius handles take priority once a base/sphere exists.
-        if (state >= SphereState.BaseSet) {
-            foreach (i; 0 .. 6) {
-                if (radH[i].hitTest(e.x, e.y, cachedVp)) {
-                    radDragIdx = cast(int)i;
-                    radLastMX  = e.x;
-                    radLastMY  = e.y;
-                    return true;
-                }
-            }
-            int hit = moverHitTest(e.x, e.y);
-            if (hit >= 0) {
-                moverDragAxis = hit;
-                moverLastMX   = e.x;
-                moverLastMY   = e.y;
-                return true;
-            }
-        }
-
-        if (state == SphereState.Idle) {
-            choosePlane(cachedVp);
-            Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0, 0, 0), planeNormal, hit))
-                return false;
-            // Snap the click anchor to the closest pipeline-enabled
-            // target. hit is rewritten in place when a candidate is
-            // within the SnapStage's innerRange.
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
-            startPoint   = hit;
-            currentPoint = hit;
-            // Keep params_.axis at its default (Y). Auto-rotating it to the
-            // construction-plane normal would re-permute sizeX/Y/Z meanings
-            // (world X = sizeY for axis=X, etc.) which makes the world-axis
-            // handles point at the wrong sizes after the sphere is committed.
-            params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
-            // Ctrl at the first click jumps straight into a 3D uniform sphere
-            // (center = click point, drag = radius applied to all three world
-            // axes), skipping the flat ellipse phase entirely. LMB-up then
-            // commits as if the height drag had also completed.
-            dragUniform = ctrlAtClick;
-            state = SphereState.DrawingBase;
-            uploadPreview();
-            return true;
-        }
-
-        if (state == SphereState.BaseSet) {
-            // Ctrl at the second click keeps the existing sphere center and
-            // re-drives ALL three world radii from the cursor's distance to
-            // that center. Drag in/out grows or shrinks the sphere uniformly;
-            // the in-plane ellipse from the first drag is replaced.
-            if (ctrlAtClick) {
-                baseAnchor = sphereCenter();
-                Vec3 hit;
-                if (!rayPlaneIntersect(localEye(),
-                                       localRay(e.x, e.y),
-                                       baseAnchor, planeNormal, hit))
-                    return false;
-                Vec3  d = hit - baseAnchor;
-                float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-                setWorldRadius(0, r);
-                setWorldRadius(1, r);
-                setWorldRadius(2, r);
-                dragUniform = true;
-                state = SphereState.DrawingHeight;
-                uploadPreview();
-                return true;
-            }
-            // Plane-normal radius is already 0; second drag adds it.
-            setupHeightPlane();
-            baseAnchor = sphereCenter();
-            Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
-                heightDragStart = hit;
-            else
-                heightDragStart = hpOrigin;
-            dragUniform = false;
-            state = SphereState.DrawingHeight;
-            uploadPreview();
-            return true;
-        }
-        return false;
-    }
-
-    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (e.button != SDL_BUTTON_LEFT) return false;
-
-        if (radDragIdx >= 0)    { radDragIdx = -1;    toolHandles.clearHaul(); return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
-
-        if (state == SphereState.DrawingBase) {
-            // Ctrl-uniform mode: the drag fully defined a 3D sphere on its
-            // own — reject only zero-radius drags, then jump straight to
-            // the finalized state (skip the BaseSet → DrawingHeight stage).
-            if (dragUniform) {
-                if (!(sizeOnAxis(planeAxis1) > 1e-5f)) {
-                    state = SphereState.Idle;
-                    return true;
-                }
-                state = SphereState.HeightSet;
-                uploadPreview();
-                return true;
-            }
-            // Normal ellipse-then-extrude flow: reject degenerate ellipses
-            // (one radius collapsed) and otherwise wait for the second drag.
-            float r1 = sizeOnAxis(planeAxis1);
-            float r2 = sizeOnAxis(planeAxis2);
-            if (!(r1 > 1e-5f) || !(r2 > 1e-5f)) {
-                state = SphereState.Idle;
-                return true;
-            }
-            state = SphereState.BaseSet;
-            uploadPreview();
-            return true;
-        }
-        if (state == SphereState.DrawingHeight) {
-            state = SphereState.HeightSet;
-            return true;
-        }
-        return false;
-    }
-
-    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        // Idle-state live snap preview — show the cyan target where
-        // the first click would anchor the sphere. Frame isn't
-        // captured until the click; use the live workplane frame.
-        if (state == SphereState.Idle) {
-            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
-            Vec3 hit;
-            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
-                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-            } else {
-                lastSnap = SnapResult.init;
-                clearLastSnap();
-            }
-        }
-        if (radDragIdx >= 0) {
-            // screenAxisDelta consumes WORLD origin + axis; RAD_AXES
-            // entries are LOCAL outward directions (canonical ±X/±Y/±Z),
-            // so route through toWorldD before passing them in.
-            Vec3 outwardWorld = toWorldD(RAD_AXES[radDragIdx]);
-            bool skip;
-            Vec3 delta = screenAxisDelta(e.x, e.y, radLastMX, radLastMY,
-                                         radH[radDragIdx].pos, outwardWorld,
-                                         cachedVp, skip);
-            if (!skip) applyRadiusDelta(radDragIdx, delta);
-            radLastMX = e.x; radLastMY = e.y;
-            return true;
-        }
-        if (moverDragAxis >= 0) {
-            bool skip;
-            Vec3 delta = moverDragAxis <= 2
-                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover, cachedVp, skip)
-                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip,
-                                 mover.axisX, mover.axisY, mover.axisZ,
-                                 frame.normal);
-            if (!skip) {
-                // delta is in WORLD; params_ live in LOCAL workplane space.
-                Vec3 dl = toLocalD(delta);
-                params_.cenX += dl.x;
-                params_.cenY += dl.y;
-                params_.cenZ += dl.z;
-                rebuildPreview();
-            }
-            moverLastMX = e.x; moverLastMY = e.y;
-            return true;
-        }
-
-        if (state == SphereState.DrawingBase) {
-            Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(0, 0, 0), planeNormal, hit))
-            {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-                currentPoint = hit;
-                if (dragUniform) syncParamsFromUniformDrag();
-                else             syncParamsFromBaseDrag();
-                uploadPreview();
-            }
-            return true;
-        }
-        if (state == SphereState.DrawingHeight) {
-            // Ctrl-uniform: project the cursor onto the construction plane
-            // through the sphere center; cursor distance from baseAnchor
-            // becomes the new radius along all three world axes. Center
-            // stays put (Ctrl-second-click never moves it).
-            if (dragUniform) {
-                Vec3 hit;
-                if (rayPlaneIntersect(localEye(),
-                                      localRay(e.x, e.y),
-                                      baseAnchor, planeNormal, hit))
-                {
-                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                             *mesh, EditMode.Vertices);
-                    publishLastSnap(lastSnap);
-                    Vec3  d = hit - baseAnchor;
-                    float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-                    params_.cenX = baseAnchor.x;
-                    params_.cenY = baseAnchor.y;
-                    params_.cenZ = baseAnchor.z;
-                    setWorldRadius(0, r);
-                    setWorldRadius(1, r);
-                    setWorldRadius(2, r);
-                    uploadPreview();
-                }
-                return true;
-            }
-            Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
-            {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-                // Sphere center stays at baseAnchor; only the radius along
-                // planeNormal grows symmetrically as the user drags. Drag
-                // distance projected on normal == radius (sphere extends
-                // ±r above and below the disk plane).
-                float signedH = dot(hit - heightDragStart, planeNormal);
-                float r = abs(signedH);
-                params_.cenX = baseAnchor.x;
-                params_.cenY = baseAnchor.y;
-                params_.cenZ = baseAnchor.z;
-                writeSizeOnAxis(planeNormal, r);
-                uploadPreview();
-            }
-            return true;
-        }
-        return false;
-    }
-
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        cachedVp = vp;
-        // Snap overlay rendered even in Idle so the first-click target
-        // is highlighted before commit.
-        drawSnapOverlay(lastSnap, vp, *mesh);
-        if (state == SphereState.Idle) return;
-
-        drawLitPreview(litShader, shader, vp, previewGpu);
-
-        // Handles only show once base is finalized.
-        if (state >= SphereState.BaseSet) {
-            updateRadHandlers(vp);
-            // sphereCenter is in workplane local; transform through the
-            // captured frame for world rendering.
-            mover.setPosition(toWorldP(sphereCenter()));
-            // Mover gizmo aligned to the captured frame's basis — keeps
-            // the arrows along the sphere's local axes (frame.axis1,
-            // frame.normal, frame.axis2 in world).
-            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            // Single-source hover/capture: radius handles (priority) then
-            // the mover (centerBox, arrows) — same order moverHitTest/click
-            // use, so the highlighted handle is the one a click grabs. The
-            // dragged handle (radDragIdx / moverDragAxis) stays highlighted.
-            toolHandles.begin();
-            foreach (i; 0 .. 6) toolHandles.add(radH[i], cast(int)i);
-            toolHandles.add(mover.centerBox, 13);
-            toolHandles.add(mover.arrowX,    10);
-            toolHandles.add(mover.arrowY,    11);
-            toolHandles.add(mover.arrowZ,    12);
-            if      (radDragIdx >= 0)    toolHandles.setHaul(radDragIdx);
-            else if (moverDragAxis >= 0) toolHandles.setHaul(10 + moverDragAxis);
-            else                         toolHandles.setHaul(-1);
-            int hmx, hmy;
-            queryMouse(hmx, hmy);
-            toolHandles.update(hmx, hmy, vp);
-            foreach (i; 0 .. 6) radH[i].draw(shader, vp);
-            mover.draw(shader, vp);
-        }
-    }
-
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
-        if (state == SphereState.Idle)
+        if (isIdle())
             ImGui.TextDisabled("Drag in viewport to draw a circle.");
-        else if (state == SphereState.BaseSet)
+        else if (isBaseSet())
             ImGui.TextDisabled("Drag again to extrude into a sphere.");
     }
 
-private:
-    // -----------------------------------------------------------------------
-    // Helpers — params_ is the single source of truth.
-    // -----------------------------------------------------------------------
+protected:
+    // resetSession() (called from activate()/goIdle() per the base): adds
+    // the ellipsoid globe-lock + axisAtLastSync capture on top of
+    // HandledCreateTool's sizeDragIdx=-1. Order relative to the base
+    // activate()'s other resets (state=Idle / meshChanged=false /
+    // moverDragAxis=-1 / toolHandles.clearHaul() / previewGpu.init()) does
+    // not matter here -- all are independent field writes; none is read
+    // back within the same activate() call.
+    override void resetSession() {
+        super.resetSession();
+        if (ellipsoidMode_) params_.method = 0;
+        axisAtLastSync = params_.axis;
+    }
 
-    Vec3 sphereCenter() const { return Vec3(params_.cenX, params_.cenY, params_.cenZ); }
-
-    // ---- axis-aware world↔orig radius mapping ----
+    // ---- axis-aware world<->orig radius mapping [worldSize/setWorldSize --
+    // -----override, task 0414 plan sec 1] -----------------------------------
     //
     // buildSphereGlobe first builds a sphere in the axisY frame, then
-    // permutes coordinates: axis=X sends (x,y,z)→(y,z,x); axis=Z sends
-    // (x,y,z)→(z,x,y). So the world extent along world axis i comes from
+    // permutes coordinates: axis=X sends (x,y,z)->(y,z,x); axis=Z sends
+    // (x,y,z)->(z,x,y). So the world extent along world axis i comes from
     // the orig-frame size at index (i + offset) % 3, where offset = 1 / 0 / 2
     // for axis = 0 (X) / 1 (Y) / 2 (Z).
     //
-    // Without this mapping the radius handles & drag math would manipulate
-    // sizeX when the user dragged a +X handle, but the sphere's actual world
-    // X extent comes from sizeY (axis=X) or sizeZ (axis=Z) — visually the
-    // handles ended up "controlling the wrong axis".
+    // Without this mapping the radius handles & drag math (all routed
+    // through worldSize/setWorldSize in the shared base) would manipulate
+    // sizeX when the user dragged a +X handle, but the sphere's actual
+    // world X extent comes from sizeY (axis=X) or sizeZ (axis=Z) —
+    // visually the handles ended up "controlling the wrong axis".
+    override float worldSize(int worldIdx) const {
+        final switch (worldAxisToOrig(worldIdx)) {
+            case 0: return params_.sizeX;
+            case 1: return params_.sizeY;
+            case 2: return params_.sizeZ;
+        }
+    }
+
+    override void setWorldSize(int worldIdx, float v) {
+        float a = abs(v);
+        final switch (worldAxisToOrig(worldIdx)) {
+            case 0: params_.sizeX = a; break;
+            case 1: params_.sizeY = a; break;
+            case 2: params_.sizeZ = a; break;
+        }
+    }
+
+    // First click's axis alignment: sphere's Idle-click keeps params_.axis
+    // at its (sticky) value -- auto-rotating it to the construction-plane
+    // normal would re-permute sizeX/Y/Z meanings (world X = sizeY for
+    // axis=X, etc.), pointing the world-axis handles at the wrong sizes
+    // after the sphere is committed.
+    override void alignAxisOnFirstClick(Vec3 n) {}
+
+    // DrawingHeight non-uniform (second) drag [task 0414 Phase-0 finding]:
+    // unlike the cylinder family's box-style anchored-opposite (center
+    // shifts, radius = signedH/2), sphere keeps the center FIXED at
+    // baseAnchor and writes the FULL |signedH| as the radius -- the sphere
+    // extends +-r above and below the disk plane, symmetric about a fixed
+    // center. See tests/test_primitive_sphere_interactive.d's "Two-stage
+    // construction drag" unittest for the executable pin of this exact
+    // behaviour.
+    override void applyNonUniformHeightDrag(Vec3 hit) {
+        float signedH = dot(hit - heightDragStart, planeNormal);
+        float r = abs(signedH);
+        params_.cenX = baseAnchor.x;
+        params_.cenY = baseAnchor.y;
+        params_.cenZ = baseAnchor.z;
+        writeSizeOnAxis(planeNormal, r);
+    }
+
+    // STATE-aware buildInto (task 0414 plan sec 1a): volumetric as soon as
+    // any normal-axis radius is set AND the gesture has committed to 3D
+    // (isVolumetricEligible(): state >= DrawingHeight, or Ctrl-uniform mode
+    // kicked in at the first click). Serves BOTH the interactive preview
+    // (rebuildPreview, inherited from the base) and the interactive commit
+    // (appendBuildInto, likewise inherited) -- at deactivate() time `state`
+    // is still live (goIdle() runs AFTER the willCommit()-gated
+    // appendBuildInto() call), so this reproduces the pre-refactor
+    // commitBase()/commitSphere() split exactly. NEVER used by
+    // applyHeadless(), which is a full override precisely to avoid this
+    // state-dependence (state == Idle headlessly would always pick the
+    // flat-ellipse branch).
+    override void buildInto(Mesh* dst) {
+        bool volumetric = sizeOnAxis(planeNormal) > 1e-9f && isVolumetricEligible();
+        if (volumetric)
+            buildByMethod(dst);
+        else
+            buildEllipseBase(dst, ellipsePreviewSides(), center(),
+                             planeAxis1, sizeOnAxis(planeAxis1),
+                             planeAxis2, sizeOnAxis(planeAxis2));
+    }
+
+    override string commitLabel() const { return "Create Sphere"; }
+
+    // Symmetric radius-handle drag (task 0414 plan sec 1): unlike the
+    // cylinder family's anchored-opposite applySizeDelta (half the drag,
+    // center shifts, flip-through), sphere grows the radius by the FULL
+    // delta with the center fixed and clamps at 0 (no flip).
+    override void applySizeDelta(int idx, Vec3 delta) {
+        // delta is in WORLD; project onto the world image of the local
+        // outward axis to get the scalar size change.
+        Vec3 outwardWorld = toWorldD(SIZE_AXES[idx]);
+        float d = dot(delta, outwardWorld);
+        int worldIdx = idx / 2;
+        float r = worldSize(worldIdx) + d;
+        if (r < 0.0f) r = 0.0f;
+        setWorldSize(worldIdx, r);
+        rebuildPreview();
+    }
+
+private:
     int worldAxisToOrig(int worldIdx) const {
         return worldAxisToOrigWithAxis(params_.axis, worldIdx);
     }
@@ -1073,15 +715,7 @@ private:
         return (worldIdx + 2) % 3;
     }
 
-    float worldRadius(int worldIdx) const {
-        final switch (worldAxisToOrig(worldIdx)) {
-            case 0: return params_.sizeX;
-            case 1: return params_.sizeY;
-            case 2: return params_.sizeZ;
-        }
-    }
-
-    // Same as worldRadius() but with an explicit axis value — used when the
+    // Same as worldSize() but with an explicit axis value — used when the
     // current params_.axis has already been mutated and we need to read
     // extents under the previous orientation.
     float worldRadiusUnderAxis(int axisVal, int worldIdx) const {
@@ -1092,168 +726,8 @@ private:
         }
     }
 
-    void setWorldRadius(int worldIdx, float v) {
-        float a = abs(v);
-        final switch (worldAxisToOrig(worldIdx)) {
-            case 0: params_.sizeX = a; break;
-            case 1: params_.sizeY = a; break;
-            case 2: params_.sizeZ = a; break;
-        }
-    }
-
-    static int worldAxisIdxOf(Vec3 v) {
-        if (abs(v.x) > 0.5f) return 0;
-        if (abs(v.y) > 0.5f) return 1;
-        return 2;
-    }
-
-    float sizeOnAxis(Vec3 axisVec) const {
-        return worldRadius(worldAxisIdxOf(axisVec));
-    }
-
-    void writeSizeOnAxis(Vec3 axisVec, float radius) {
-        setWorldRadius(worldAxisIdxOf(axisVec), radius);
-    }
-
-    float currentHeight() const { return sizeOnAxis(planeNormal) * 2.0f; }
-
-    void choosePlane(const ref Viewport vp) {
-        // Capture the active workplane as a local↔world transform; from
-        // here on, all tool-internal coords are in local-space (workplane
-        // = identity XZ plane).
-        frame = pickWorkplaneFrame(vp);
-        // Pick the construction plane by camera, just like BoxTool /
-        // corner gizmo's most-facing-quad: the workplane basis axis
-        // (a1, n, a2) most aligned with camera-back is the plane normal,
-        // the other two span the construction plane.
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
-            case 0:
-                planeNormal = Vec3(1, 0, 0);
-                planeAxis1  = Vec3(0, 1, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 1:
-                planeNormal = Vec3(0, 1, 0);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 2:
-                planeNormal = Vec3(0, 0, 1);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 1, 0);
-                break;
-        }
-    }
-
-    // ---- Local ↔ world helpers (workplane refactor) ----------------------
-    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
-    }
-    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
-    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
-    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
-
-    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
-        foreach (i; firstIdx .. m.vertices.length)
-            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
-    }
-
-    // Update params_ from startPoint/currentPoint while drawing the base.
-    // First click anchors the sphere center; the cursor traces a point on
-    // the ellipse perimeter, so each in-plane radius equals the absolute
-    // projection of the drag onto that plane axis (no /2). Plane-normal
-    // radius stays 0 (flat ellipse).
-    void syncParamsFromBaseDrag() {
-        Vec3  d  = currentPoint - startPoint;
-        float d1 = dot(d, planeAxis1);
-        float d2 = dot(d, planeAxis2);
-        params_.cenX = startPoint.x;
-        params_.cenY = startPoint.y;
-        params_.cenZ = startPoint.z;
-        params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
-        writeSizeOnAxis(planeAxis1, abs(d1));
-        writeSizeOnAxis(planeAxis2, abs(d2));
-    }
-
-    // Ctrl-at-first-click shortcut: center stays at the click point, and the
-    // distance from start to current on the construction plane becomes the
-    // radius along all three world axes — fully volumetric uniform sphere
-    // in one drag.
-    void syncParamsFromUniformDrag() {
-        Vec3  d = currentPoint - startPoint;
-        float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-        params_.cenX = startPoint.x;
-        params_.cenY = startPoint.y;
-        params_.cenZ = startPoint.z;
-        setWorldRadius(0, r);
-        setWorldRadius(1, r);
-        setWorldRadius(2, r);
-    }
-
-    void setupHeightPlane() {
-        hpOrigin = sphereCenter();
-        // Camera direction in LOCAL space — height-drag plane sits with
-        // its normal in the workplane (perpendicular to planeNormal),
-        // pointing roughly at the camera so the user's screen-vertical
-        // mouse motion projects cleanly onto planeNormal.
-        Vec3 toCamera = localEye() - hpOrigin;
-        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
-        float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-        hpn = len > 1e-6f ? inPlane / len : planeAxis1;
-    }
-
-    void rebuildPreview() {
-        previewMesh.clear();
-        // Volumetric preview as soon as any normal-axis radius is set, OR
-        // when Ctrl-uniform mode kicked in at the first click (in which
-        // case all three radii are equal and the sphere is 3D from frame 1).
-        bool volumetric = sizeOnAxis(planeNormal) > 1e-9f
-                       && (state >= SphereState.DrawingHeight || dragUniform);
-        if (volumetric)
-            buildByMethod(&previewMesh);
-        else
-            buildEllipseBase(&previewMesh, ellipsePreviewSides(), sphereCenter(),
-                             planeAxis1, sizeOnAxis(planeAxis1),
-                             planeAxis2, sizeOnAxis(planeAxis2));
-        // Mesh built in LOCAL workplane space; transform every preview
-        // vertex through frame.toWorld so the on-screen sphere lies in
-        // its world position / orientation.
-        applyFrameToMeshRange(&previewMesh, 0);
-        previewMesh.buildLoops();
-        previewGpu.upload(previewMesh);
-    }
-
-    void uploadPreview() { rebuildPreview(); }
-
-    // Both commit helpers APPEND into the scene mesh — same convention as
-    // BoxTool.commitBase / commitCuboid. Replacing would wipe any existing
-    // geometry the user already built. Mesh is emitted in LOCAL workplane
-    // space; only the newly-appended vertex range is transformed via
-    // frame.toWorld so existing scene geometry stays put.
-    void commitBase() {
-        size_t firstNewVert = mesh.vertices.length;
-        buildEllipseBase(mesh, ellipsePreviewSides(), sphereCenter(),
-                         planeAxis1, sizeOnAxis(planeAxis1),
-                         planeAxis2, sizeOnAxis(planeAxis2));
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        meshChanged = true;
-    }
-
-    void commitSphere() {
-        size_t firstNewVert = mesh.vertices.length;
-        buildByMethod(mesh);
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        meshChanged = true;
-    }
-
     // Dispatch to the right generator based on params_.method.
-    // Returns false if method is unsupported (e.g. Tesselation in 6.3 phase).
+    // Returns false if method is unsupported.
     bool buildByMethod(Mesh* dst) {
         switch (params_.method) {
             case 0: buildSphereGlobe(dst, params_);    return true;
@@ -1269,67 +743,5 @@ private:
     int ellipsePreviewSides() const {
         if (params_.method == 0) return params_.sides;
         return 24;
-    }
-
-    // ----- History-coordination hooks (undo/redo migration P0) -------------
-    // Commit guard mirror (deactivate() :630); compound, NOT `state != Idle`
-    // (a sub-epsilon height drag commits nothing). Category B preview-only
-    // cancel: the scene mesh is untouched until commit, so reset to Idle.
-    public override bool hasUncommittedEdit() const {
-        return (state == SphereState.BaseSet)
-            || (state >= SphereState.DrawingHeight && currentHeight() > 1e-5f);
-    }
-    public override void cancelUncommittedEdit() { state = SphereState.Idle; }
-
-    // Resync (undo/redo P1): preview rebuilds from `state` each frame and no
-    // scene-mesh baseline is cached, so drop a half-drawn primitive to Idle.
-    public override void resyncSession() { state = SphereState.Idle; }
-
-    void commitSphereEdit(MeshSnapshot pre) {
-        if (history is null || factory is null) return;
-        if (!pre.filled) return;
-        auto cmd  = factory();
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(pre, post, "Create Sphere");
-        history.record(cmd);
-    }
-
-    void updateRadHandlers(const ref Viewport vp) {
-        Vec3 cen = sphereCenter();   // local
-        float rx = worldRadius(0);
-        float ry = worldRadius(1);
-        float rz = worldRadius(2);
-        // Compute handle positions in LOCAL frame, then transform to
-        // world for the on-screen gizmoSize / hit-test that work in
-        // world coords against the live viewport.
-        Vec3[6] localPts = [
-            cen + Vec3( rx, 0, 0), cen + Vec3(-rx, 0, 0),
-            cen + Vec3(0,  ry, 0), cen + Vec3(0, -ry, 0),
-            cen + Vec3(0, 0,  rz), cen + Vec3(0, 0, -rz),
-        ];
-        foreach (i; 0 .. 6) {
-            Vec3 worldPos = toWorldP(localPts[i]);
-            radH[i].pos  = worldPos;
-            radH[i].size = gizmoSize(worldPos, vp, 0.04f);
-        }
-    }
-
-    void applyRadiusDelta(int idx, Vec3 delta) {
-        // delta is in WORLD; project onto the world image of the local
-        // outward axis to get the scalar size change.
-        Vec3 outwardWorld = toWorldD(RAD_AXES[idx]);
-        float d = dot(delta, outwardWorld);
-        int worldIdx = idx / 2;
-        float r = worldRadius(worldIdx) + d;
-        if (r < 0.0f) r = 0.0f;
-        setWorldRadius(worldIdx, r);
-        rebuildPreview();
-    }
-
-    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
-    // §A.D5) — was a verbatim inline copy of the same 3=centerBox,
-    // 0/1/2=arrowX/Y/Z, -1=miss test.
-    int moverHitTest(int mx, int my) {
-        return mover.hitTest(mx, my, cachedVp);
     }
 }
