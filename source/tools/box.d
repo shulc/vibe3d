@@ -1798,6 +1798,39 @@ private enum BoxState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet }
 
 private __gshared View gBoxLiveEditView;
 
+// ---------------------------------------------------------------------------
+// BoxTool does NOT extend tools.primitive_create_tool's PrimitiveCreateTool/
+// HandledCreateTool/SizedRadialCreateTool!P hierarchy (evaluated and
+// declined, task 0418; that base was introduced by task 0414 for cylinder/
+// cone/capsule/torus/tube/sphere). The two share a family resemblance —
+// same 5-stage state-shape naming (Idle/DrawingBase/BaseSet/DrawingHeight/
+// HeightSet), same params_-as-single-source-of-truth convention, same
+// preview/commit split, same snap-overlay + ToolHandles/MoveHandler.
+// hitTest plumbing (0410) — but the mechanics diverge past the point where
+// inheriting would be more than a handful of small helpers wearing a
+// misleading "is-a":
+//   - choosePlane() below signs planeNormal by camera side and writes
+//     params_.axis as a side effect; the base's choosePlane is unsigned
+//     and never touches params_. basePlaneOrigin (snap-relocatable, set
+//     on the first click) has no counterpart in the base, which always
+//     ray-plane-tests against a fixed local origin.
+//   - the handle rig is edgeH[4] (in-plane edge midpoints, screenAxisDelta
+//     drag) + heightH[2] (top/bottom faces, ray-plane-intersect drag) with
+//     3-tier click priority and a snap query on EVERY handle type — not
+//     the base's uniform sizeH[6] outward-axis rig (screenAxisDelta only,
+//     no snap hook at all).
+//   - preview/commit dispatches on BOTH state (buildBase vs. buildCuboid)
+//     AND frame handedness (frameIsLeftHanded(), needed because
+//     choosePlane's signed normal can produce a mirrored frame); the
+//     base's buildInto()/applyFrameToMeshRange() do neither.
+//   - the per-drag live-undo ladder (recordInSession/BoxLiveEditCommand,
+//     captureLiveDragStart/recordLiveDragEnd below) is unique to this
+//     tool and predates/is orthogonal to the base's willCommit()/
+//     commitEdit() single-commit-at-deactivate skeleton.
+// Only a handful of leaf-level helpers line up byte-for-byte with the base
+// (the local<->world transforms, worldAxisIdxOf, the Idle-state snap-
+// preview shape) — see task 0418 for the full field/method comparison.
+// ---------------------------------------------------------------------------
 class BoxTool : Tool {
 private:
     Mesh* delegate() meshSrc_;

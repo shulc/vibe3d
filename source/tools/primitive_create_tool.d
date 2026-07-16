@@ -31,6 +31,24 @@ module tools.primitive_create_tool;
 // major/minor machine, own size-handle routing). TubeTool (tube.d) extends
 // PrimitiveCreateTool directly (its own 3-drag machine, no size handles at
 // all — mover-only, using the base's default drawToolHandles rig).
+//
+// BoxTool (box.d) was evaluated against this hierarchy (task 0418) and
+// stays OUTSIDE it — a deliberate exclusion, not an oversight. It shares a
+// family resemblance (same 5-stage state-shape naming, params_-as-single-
+// source-of-truth, preview/commit split, the 0410 ToolHandles/MoveHandler.
+// hitTest plumbing this base also uses) but its choosePlane signs
+// planeNormal by camera side and writes params_.axis as a side effect
+// (this base's choosePlane is unsigned and params_-agnostic); its handle
+// rig is a 3-tier edge+height split with a snap query on every drag, not
+// this base's uniform sizeH[6]; its preview/commit dispatch is BOTH state-
+// and frame-handedness-aware (this base's buildInto()/
+// applyFrameToMeshRange() are neither); and it carries its own per-drag
+// live-undo ladder (recordInSession/BoxLiveEditCommand) that predates and
+// is orthogonal to this base's willCommit()/commitEdit() skeleton. Only a
+// handful of leaf helpers line up byte-for-byte (local<->world transforms,
+// worldAxisIdxOf, the Idle-state snap-preview shape) — not enough to carry
+// an inheritance relationship without it reading as "base + override
+// almost everything". See task 0418 for the full comparison.
 // ---------------------------------------------------------------------------
 
 import bindbc.opengl;
