@@ -40,9 +40,11 @@ module forms_render;
 //   and never re-seeds (it IS the single live widget), so it has no such fight;
 //   FormsPanel queries a copy, so it needs the guard explicitly.
 //
-// Value serialization aligns with argstring %g (forms_engine_plan.md Phase 2
-// review TODO): floats are formatted with %g so a UI-originated write argstring
-// is byte-identical to what serializeParams() would emit for the same value.
+// Value serialization goes through forms.valueToArgToken, which (task 0409 /
+// 0407 D3) delegates float formatting to params.fmtFloatWire — the single
+// source also used by argstring._fmtFloat/serializeParams and stringifyParam.
+// A UI-originated write argstring is therefore byte-identical to what
+// serializeParams() would emit for the same value.
 // ===========================================================================
 
 import forms;
@@ -735,8 +737,9 @@ class FormsPanel {
     // -----------------------------------------------------------------------
 
     /// Build the write argstring by substituting the edited value for the `?`
-    /// token, then dispatch it interactively. The value is serialized to match
-    /// the argstring wire format (floats via %g) so a UI-originated write is
+    /// token, then dispatch it interactively. The value is serialized via
+    /// forms.valueToArgToken (floats via params.fmtFloatWire — the single
+    /// wire-format source, task 0409 / 0407 D3) so a UI-originated write is
     /// byte-identical to serializeParams() output.
     private void writeValue(ref Row row, JSONValue value,
                             InteractiveDispatchFn idispatch)

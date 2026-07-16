@@ -31,7 +31,7 @@ module forms;
 // can promote to a throw, so the seam is ready.
 // ===========================================================================
 
-import params : Param, ParamHints, choicesOf;
+import params : Param, ParamHints, choicesOf, fmtFloatWire;
 import argstring : parseArgstring;
 
 import std.json : JSONValue, JSONType;
@@ -567,10 +567,13 @@ private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
 // HERE (not in forms_render.d) so they stay ImGui-free and headless-unit-
 // testable: a test can import `forms` and exercise them without linking d_imgui.
 //
-// Float formatting uses %g to match argstring._fmtFloat (forms_engine_plan.md
-// Phase 2 review TODO), so a UI-originated write argstring is byte-identical to
-// what serializeParams() would emit for the same value — the existing
-// `tool.attr` write tests stay valid for forms-originated writes.
+// Float formatting delegates to params.fmtFloatWire — the single source also
+// used by argstring._fmtFloat and stringifyParam's Float case (task 0409 /
+// 0407 D3; formerly three hand-synced %g implementations, tracked only by a
+// "to match argstring._fmtFloat" comment). A UI-originated write argstring is
+// therefore byte-identical to what serializeParams() would emit for the same
+// value — the existing `tool.attr` write tests stay valid for
+// forms-originated writes.
 // ===========================================================================
 
 /// Format a value JSON as the argstring token it should occupy in the `?` slot.
@@ -592,14 +595,14 @@ string valueToArgToken(JSONValue v)
     }
 }
 
-/// %g float formatting, matching argstring._fmtFloat's [1e-4,1e5] strategy
-/// (NaN/Inf emit textual sentinels rather than the platform default).
+/// %g float formatting — thin delegate to params.fmtFloatWire (task 0409 /
+/// 0407 D3), the single source shared with argstring._fmtFloat and
+/// stringifyParam's Float case (NaN/Inf emit textual sentinels rather than
+/// the platform default; see fmtFloatWire's doc comment for the [1e-4,1e5]
+/// strategy this preserves).
 private string fmtFloatG(double f)
 {
-    import std.math : isNaN, isInfinity;
-    if (isNaN(f))      return "nan";
-    if (isInfinity(f)) return f > 0 ? "inf" : "-inf";
-    return format("%g", f);
+    return fmtFloatWire(f);
 }
 
 /// Reconstruct a `<cmd> <targetId> <attr> <value>` argstring from a parsed
@@ -1506,6 +1509,27 @@ version (unittest)
         assert(valueToArgToken(JSONValue(1.5))   == "1.5");
         assert(valueToArgToken(JSONValue(1.0))   == "1");      // %g drops .0
         assert(valueToArgToken(JSONValue(0.001)) == "0.001");
+    }
+
+    unittest { // cross-module byte-identity (task 0409): valueToArgToken vs.
+        // argstring.serializeParams for the pinned float set. Both now
+        // funnel through params.fmtFloatWire (fmtFloatG / argstring.
+        // _fmtFloat are thin delegates) — this exercises the real
+        // cross-module dependency rather than the hand-synced literals in
+        // the test just above (which stays as-is per task 0409's contract).
+        import argstring : serializeParams;
+        immutable float[] vals = [0.0f, 1.0f, -1.0f, 0.5f, 1e-7f, -3.25f,
+                                   1e20f, 123456.789f, 0.1f];
+        foreach (v; vals) {
+            float f = v;
+            // default deliberately != any pinned value so isUserSet is
+            // always true and serializeParams always emits "w:<token>".
+            auto p = Param.float_("w", "W", &f, float.nan);
+            string viaArgstring = serializeParams([p]);
+            string viaForms     = valueToArgToken(JSONValue(cast(double)v));
+            assert(viaArgstring == "w:" ~ viaForms,
+                   viaArgstring ~ " vs w:" ~ viaForms);
+        }
     }
 
     unittest { // bool / int / string tokens
