@@ -317,10 +317,9 @@ class FalloffRemoveCommand : Command {
             throw new Exception(
                 "falloff.remove: no falloff instance '" ~ targetId_ ~ "'");
 
-        // Unplug the Operator side first, then drop the Stage. removeStage
-        // matches by reference identity.
-        import operator : Operator;
-        g_pipeCtx.pipeline.unplug(cast(Operator)fo);
+        // removeStage matches by reference identity and unplugs the
+        // Operator side internally (Pipeline keeps stages_/operators_ in
+        // sync on every mutator — no separate unplug() call needed here).
         g_pipeCtx.pipeline.removeStage(fo);
         kickLiveEval(toolHost);
         return true;
@@ -357,7 +356,6 @@ class FalloffClearCommand : Command {
 /// returns the pipe to exactly one falloff stage (byte-stable baseline).
 void removeStackedFalloffs() {
     if (g_pipeCtx is null) return;
-    import operator       : Operator;
     import toolpipe.stage : TaskCode;
     // Collect first (don't mutate while iterating findAllByTask's snapshot is
     // already a fresh slice, but be explicit about the two-phase removal).
@@ -367,8 +365,6 @@ void removeStackedFalloffs() {
         if (fo !is null && !fo.isPrimary())
             extras ~= fo;
     }
-    foreach (fo; extras) {
-        g_pipeCtx.pipeline.unplug(cast(Operator)fo);
-        g_pipeCtx.pipeline.removeStage(fo);
-    }
+    // removeStage unplugs the Operator side internally.
+    foreach (fo; extras) g_pipeCtx.pipeline.removeStage(fo);
 }

@@ -32,8 +32,20 @@ private:
 
     // VectorStack-side dispatch storage. Slot-as-list: most slots hold
     // 0 or 1 operators today, but WGHT can stack (Phase 8 Mix Mode).
-    // Lives in parallel with `stages_` until Phase 6 cleanup; Phase 1
-    // wires Stages into both lists via adapter methods.
+    //
+    // Lives in parallel with `stages_` — NOT "until Phase 6 cleanup" (that
+    // was stale: doc/operator_refactor_plan.md's Phase 6, done, retired the
+    // legacy `evaluate(SubjectPacket, Viewport) → ToolState` path, never
+    // this duality). `operators_` is what `evaluate(VectorStack)` actually
+    // walks (O(1) by Task slot); `stages_` is the ordinal-sorted list every
+    // other query (findByTask/findById/all/allMut/reset) uses. Every
+    // mutator — add/addStacked/removeStage/removeByTask — keeps both in
+    // sync (plug/unplug); nothing else may write `operators_` directly.
+    // Collapsing to one structure is tracked as a follow-up
+    // (doc/tasks/work/0407-source-dedup-architecture-vectors.md §B.V6) —
+    // only safe once `evaluate`'s Task-slot walk order is proven
+    // equivalent to `stages_`'s ordinal-byte sort for every pipeline
+    // configuration; not attempted here.
     Operator[][Task.max + 1] operators_;
 
 public:
@@ -41,12 +53,12 @@ public:
     /// with the same TaskCode already exists, it is REPLACED — single-
     /// slot-per-task constraint (swap, not stack).
     ///
-    /// Phase 1 of doc/operator_refactor_plan.md: when `s` also implements
-    /// the Operator interface (every Stage subclass post-Phase-1 does),
-    /// auto-plug it into the slot-list so the new `evaluate(VectorStack)`
-    /// path stays in sync with the legacy `evaluate(SubjectPacket, Viewport)`
-    /// path. No-op for the legacy NopStage / future Stages that don't
-    /// implement Operator.
+    /// When `s` also implements the Operator interface (every concrete
+    /// Stage subclass does — only the test-only NopStage doesn't), this
+    /// unplugs any previous same-task Operator and plugs `s` into
+    /// `operators_`, the storage `evaluate(VectorStack)` actually walks
+    /// (see the `operators_` field comment). No-op on the operators_ side
+    /// for Stages that don't implement Operator.
     void add(Stage s) {
         // Replace same-task slot if present.
         foreach (i, ref existing; stages_) {
@@ -90,22 +102,30 @@ public:
     }
 
     /// Remove a stage (matched by reference identity). Returns true if
-    /// found and removed.
+    /// found and removed. Unplugs the Operator side too when `existing`
+    /// implements Operator — `stages_` and `operators_` are two indexes
+    /// over the same registration and must never diverge (see the
+    /// `operators_` field comment). Before this fix, a bare `stages_`
+    /// removal left a zombie Operator plugged in, still walked by every
+    /// `evaluate(VectorStack)` pass after the stage was supposedly gone.
     bool removeStage(Stage s) {
         foreach (i, existing; stages_) {
             if (existing is s) {
                 stages_ = stages_.remove(i);
+                if (auto op = cast(Operator)existing) unplug(op);
                 return true;
             }
         }
         return false;
     }
 
-    /// Remove the stage occupying `task`'s slot (if any).
+    /// Remove the stage occupying `task`'s slot (if any). Unplugs the
+    /// Operator side too — same fix, same reason as `removeStage`.
     bool removeByTask(TaskCode task) {
         foreach (i, existing; stages_) {
             if (existing.taskCode() == task) {
                 stages_ = stages_.remove(i);
+                if (auto op = cast(Operator)existing) unplug(op);
                 return true;
             }
         }
@@ -285,3 +305,163 @@ final class ToolPipeContext {
 }
 
 __gshared ToolPipeContext g_pipeCtx;
+
+// ---------------------------------------------------------------------------
+// Pipeline unit tests — stages_ / operators_ registration invariant.
+//
+// `evaluate(VectorStack)` walks `operators_`; every other Pipeline query
+// (findByTask/findById/all/allMut/length) walks `stages_`. The two are two
+// indexes over the same registration set and must never diverge: a Stage
+// that implements Operator appears in `operators_[its task-slot]` exactly
+// once while registered in `stages_`, and nowhere once removed. Before this
+// test (and the removeStage/removeByTask fix landed alongside it),
+// removeStage/removeByTask dropped only the `stages_` entry — a "removed"
+// stage kept a zombie Operator plugged in, silently evaluated by every
+// future `evaluate(VectorStack)` pass. `source/commands/falloff.d` used to
+// work around this by hand-calling `unplug()` before every `removeStage()`
+// call; that workaround is gone now that `removeStage` does it internally.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    import toolpipe.stage : ordAcen, ordAxis, ordSnap, ordWght;
+
+    // Minimal Stage+Operator double, shaped like every concrete Stage
+    // subclass (falloff/actcenter/axis/snap/symmetry/workplane/constrain/
+    // path all implement `: Stage, Operator`), stripped to bare identity —
+    // no real evaluate() behaviour is needed to exercise registration.
+    private final class TestOpStage : Stage, Operator {
+        TaskCode code_;
+        Task     slot_;
+        string   id_;
+        ubyte    ord_;
+
+        this(TaskCode code, Task slot, string id, ubyte ord) {
+            code_ = code; slot_ = slot; id_ = id; ord_ = ord;
+        }
+
+        override TaskCode taskCode() const pure nothrow @nogc @safe { return code_; }
+        override string   id()       const                          { return id_; }
+        override ubyte    ordinal()  const pure nothrow @nogc @safe { return ord_; }
+
+        Task         task()            const { return slot_; }
+        PacketKind[] requiredPackets() const { return []; }
+        bool         evaluate(ref VectorStack vts) { return true; }
+        override void reset() {}
+    }
+
+    // How many times `op` appears in its own task-slot of `p`.
+    private size_t slotCount(ref Pipeline p, Operator op) {
+        size_t n;
+        foreach (o; p.operatorsInSlot(op.task()))
+            if (o is op) n++;
+        return n;
+    }
+}
+
+unittest {
+    // add() plugs a fresh stage into its task slot.
+    Pipeline p;
+    auto a = new TestOpStage(TaskCode.Acen, Task.Acen, "a", ordAcen);
+    p.add(a);
+    assert(p.findByTask(TaskCode.Acen) is a);
+    assert(slotCount(p, a) == 1);
+}
+
+unittest {
+    // add() replacing a same-task stage unplugs the old Operator and
+    // plugs the new one — no duplicate, no leak (this direction already
+    // worked before the fix; verified here as the baseline the
+    // removeStage/removeByTask tests below are held to).
+    Pipeline p;
+    auto a1 = new TestOpStage(TaskCode.Acen, Task.Acen, "a1", ordAcen);
+    auto a2 = new TestOpStage(TaskCode.Acen, Task.Acen, "a2", ordAcen);
+    p.add(a1);
+    p.add(a2);
+    assert(p.findByTask(TaskCode.Acen) is a2);
+    assert(slotCount(p, a2) == 1);
+    assert(slotCount(p, a1) == 0);
+    assert(p.operatorsInSlot(Task.Acen).length == 1);
+}
+
+unittest {
+    // removeStage() unplugs the Operator side. Regression test for the
+    // bug this task fixes: it used to drop only the stages_ entry,
+    // leaving a zombie Operator plugged into operators_.
+    Pipeline p;
+    auto a = new TestOpStage(TaskCode.Acen, Task.Acen, "a", ordAcen);
+    p.add(a);
+    assert(slotCount(p, a) == 1);
+    assert(p.removeStage(a));
+    assert(p.findByTask(TaskCode.Acen) is null);
+    assert(slotCount(p, a) == 0);
+    assert(p.operatorsInSlot(Task.Acen).length == 0);
+}
+
+unittest {
+    // removeByTask() unplugs the Operator side — same class of bug as
+    // removeStage, verified independently since it re-finds by TaskCode
+    // rather than reference identity.
+    Pipeline p;
+    auto a = new TestOpStage(TaskCode.Axis, Task.Axis, "a", ordAxis);
+    p.add(a);
+    assert(slotCount(p, a) == 1);
+    assert(p.removeByTask(TaskCode.Axis));
+    assert(p.findByTask(TaskCode.Axis) is null);
+    assert(slotCount(p, a) == 0);
+    assert(p.operatorsInSlot(Task.Axis).length == 0);
+}
+
+unittest {
+    // Full invariant over a mixed add/addStacked/removeStage/removeByTask
+    // sequence across multiple task slots, including WGHT stacking (the
+    // only slot that legitimately holds >1 operator today): every stage
+    // still in stages_ that implements Operator is present in
+    // operators_[its slot] exactly once; every removed one, nowhere.
+    Pipeline p;
+
+    auto acen  = new TestOpStage(TaskCode.Acen, Task.Acen, "acen",  ordAcen);
+    auto axis  = new TestOpStage(TaskCode.Axis, Task.Axis, "axis",  ordAxis);
+    auto wght0 = new TestOpStage(TaskCode.Wght, Task.Wght, "wght0", ordWght);
+    auto wght1 = new TestOpStage(TaskCode.Wght, Task.Wght, "wght1", ordWght);
+    auto wght2 = new TestOpStage(TaskCode.Wght, Task.Wght, "wght2", ordWght);
+    auto snap  = new TestOpStage(TaskCode.Snap, Task.Snap, "snap",  ordSnap);
+
+    p.add(acen);
+    p.add(axis);
+    p.add(wght0);          // primary falloff slot
+    p.addStacked(wght1);   // stacked extra #1
+    p.addStacked(wght2);   // stacked extra #2
+    p.add(snap);
+
+    // Retire one stage through each of the three removal paths.
+    assert(p.removeStage(wght1));          // by-reference, mid-stack
+    assert(p.removeByTask(TaskCode.Snap)); // by-task, single-occupant slot
+    auto axisReplacement = new TestOpStage(TaskCode.Axis, Task.Axis, "axis2", ordAxis);
+    p.add(axisReplacement);                // add()'s own replace path
+
+    // ---- Invariant: every stage still in stages_ that implements
+    // Operator is in operators_[its slot] exactly once. ----
+    foreach (s; p.allMut()) {
+        auto op = cast(Operator)s;
+        if (op is null) continue; // no non-Operator Stage in this test
+        assert(slotCount(p, op) == 1,
+            "live stage " ~ s.id() ~ " must appear exactly once");
+    }
+
+    // ---- Invariant: every removed stage is nowhere in operators_. ----
+    assert(slotCount(p, wght1) == 0);
+    assert(slotCount(p, snap)  == 0);
+    assert(slotCount(p, axis)  == 0); // superseded by axisReplacement via add()
+
+    // ---- Shape sanity: Wght slot still stacks the two survivors in
+    // insertion order; Acen/Axis stay single-occupant. ----
+    assert(p.operatorsInSlot(Task.Wght).length == 2);
+    assert(p.operatorsInSlot(Task.Wght)[0] is wght0);
+    assert(p.operatorsInSlot(Task.Wght)[1] is wght2);
+    assert(p.operatorsInSlot(Task.Acen).length == 1);
+    assert(p.operatorsInSlot(Task.Axis).length == 1);
+    assert(p.operatorsInSlot(Task.Axis)[0] is axisReplacement);
+    assert(p.operatorsInSlot(Task.Snap).length == 0);
+
+    // stages_ agrees: 4 live stages (acen, axisReplacement, wght0, wght2).
+    assert(p.length() == 4);
+}
