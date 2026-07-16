@@ -693,10 +693,15 @@ unittest {
     // (float->double widening is exact, and %g's rounding is a function of
     // the real value, not the storage width — verified here rather than
     // assumed).
+    import std.format : format;
     immutable float[] vals = [0.0f, 1.0f, -1.0f, 0.5f, 1e-7f, -3.25f, 1e20f,
                                123456.789f, 0.1f];
+    // LHS = the pre-refactor _fmtFloat behaviour (raw %g on the float); RHS =
+    // the double-taking helper it now delegates to. Equal ⇒ the widen is
+    // observably lossless, which is the premise being verified (not assumed).
     foreach (v; vals)
-        assert(fmtFloatWire(v) == fmtFloatWire(cast(double)v));
+        assert(format("%g", v) == fmtFloatWire(v),
+               format("%g", v) ~ " vs " ~ fmtFloatWire(v));
 }
 
 // Parse `value` per `p.kind` and write into the Param's typed pointer.

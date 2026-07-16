@@ -577,8 +577,8 @@ private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
 // ===========================================================================
 
 /// Format a value JSON as the argstring token it should occupy in the `?` slot.
-/// Floats use %g (argstring._fmtFloat's strategy); bools/ints/strings pass
-/// through as their canonical token text.
+/// Floats use %g (params.fmtFloatWire, the single wire-format source);
+/// bools/ints/strings pass through as their canonical token text.
 string valueToArgToken(JSONValue v)
 {
     import std.conv : to;
