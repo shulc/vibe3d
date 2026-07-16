@@ -1,31 +1,19 @@
 module tools.torus;
 
-import bindbc.opengl;
-import operator : VectorStack;
 import bindbc.sdl;
+import operator : VectorStack;
 
-import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
-import eventlog : queryMouse;
-import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
-import shader : Shader, LitShader, drawLitPreview;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
-                              pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit;
+import handler : gizmoSize;
+import shader : LitShader;
+import tools.primitive_create_tool : HandledCreateTool;
+import tools.create_common : snapLocalHit;
 import editmode : EditMode;
-import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : publishLastSnap;
 
 import std.math : sin, cos, PI, abs, sqrt;
-
-alias TorusEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // TorusParams — vibe3d's prim.torus wire schema.
@@ -133,17 +121,23 @@ void buildTorus(Mesh* dst, const ref TorusParams p)
 }
 
 // ---------------------------------------------------------------------------
-// TorusTool — Create-tool with a two-stage interactive draw mirroring
-// CylinderTool / ConeTool / CapsuleTool.
+// TorusTool — Create-tool with a two-stage interactive draw mirroring the
+// cylinder family. Direct HandledCreateTool subclass (task 0414, 0407 sec
+// A.D2 dedup): the shared infra (preview/commit plumbing, mover + size-
+// handle rig, local<->world workplane helpers) lives in
+// source/tools/primitive_create_tool.d, but the major/minor 2-scalar model
+// and per-stage math are torus's own (not the cylinder family's sizeX/Y/Z
+// shape), so this stays a direct HandledCreateTool subclass rather than
+// going through SizedRadialCreateTool!P.
 //
-//   Idle ── LMB drag on plane ─→ DrawingMajor
-//                                  (majorRadius = |cursor − click| on plane;
+//   Idle -- LMB drag on plane --> DrawingMajor
+//                                  (majorRadius = |cursor - click| on plane;
 //                                   minorRadius preview kept at 1/4 of major)
-//   DrawingMajor ── LMB up    ─→ MajorSet
-//   MajorSet ── LMB drag      ─→ DrawingMinor
+//   DrawingMajor -- LMB up    --> MajorSet
+//   MajorSet -- LMB drag      --> DrawingMinor
 //                                  (minorRadius = |signedH| from a height
 //                                   plane through the torus center)
-//   DrawingMinor ── LMB up    ─→ MinorSet
+//   DrawingMinor -- LMB up    --> MinorSet
 //
 // Box-style anchored-opposite handle drag for the 6 size handles: +B/-B
 // and +C/-C handles drive majorRadius (no cen shift — the tube grows
@@ -154,83 +148,14 @@ void buildTorus(Mesh* dst, const ref TorusParams p)
 
 private enum TorusState { Idle, DrawingMajor, MajorSet, DrawingMinor, MinorSet }
 
-class TorusTool : Tool {
+final class TorusTool : HandledCreateTool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
-    GpuMesh*         gpu;
-    LitShader        litShader;
-
-    TorusParams      params_;
-    CommandHistory   history;
-    TorusEditFactory factory;
-
-    TorusState       state;
-    Mesh             previewMesh;
-    GpuMesh          previewGpu;
-    bool             meshChanged;
-
-    // After workplane refactor — LOCAL canonical axes.
-    Vec3 planeNormal;
-    Vec3 planeAxis1;
-    Vec3 planeAxis2;
-    /// Workplane local↔world transform captured at choosePlane().
-    WorkplaneFrame frame;
-
-    // Last snap query — drives the Idle-state cyan/yellow overlay.
-    SnapResult lastSnap;
-
-    Vec3 startPoint;
-    Vec3 currentPoint;
-    Vec3 hpOrigin;
-    Vec3 hpn;
-    Vec3 heightDragStart;
-
-    Viewport cachedVp;
-
-    MoveHandler mover;
-    int         moverDragAxis = -1;
-    int         moverLastMX, moverLastMY;
-
-    BoxHandler[6] sizeH;
-    int           sizeDragIdx    = -1;
-    int           sizeLastMX, sizeLastMY;
-
-    // Single-source hover/capture arbiter for the size handles + mover.
-    ToolHandles   toolHandles;
-
-    static immutable Vec3[6] SIZE_AXES = [
-        Vec3( 1, 0, 0), Vec3(-1, 0, 0),
-        Vec3( 0, 1, 0), Vec3( 0,-1, 0),
-        Vec3( 0, 0, 1), Vec3( 0, 0,-1),
-    ];
+    TorusParams params_;
+    TorusState  state;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
-        this.meshSrc_ = meshSrc;
-        this.gpu       = gpu;
-        this.litShader = litShader;
-        mover = new MoveHandler(Vec3(0, 0, 0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
-        foreach (i; 0 .. 6) {
-            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
-                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
-                               : Vec3(0.2f, 0.2f, 0.9f);
-            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), col);
-        }
-        toolHandles = new ToolHandles();
-    }
-
-    void destroy() {
-        mover.destroy();
-        foreach (h; sizeH) h.destroy();
-    }
-
-    void setUndoBindings(CommandHistory history, TorusEditFactory factory) {
-        this.history = history;
-        this.factory = factory;
+        super(meshSrc, gpu, litShader);
     }
 
     override string name() const { return "Torus"; }
@@ -256,50 +181,6 @@ public:
         ];
     }
 
-    override void activate() {
-        state         = TorusState.Idle;
-        meshChanged   = false;
-        moverDragAxis = -1;
-        sizeDragIdx   = -1;
-        toolHandles.clearHaul();
-        previewGpu.init();
-    }
-
-    override void deactivate() {
-        bool willCommit = (state == TorusState.MajorSet)
-                       || (state >= TorusState.DrawingMinor
-                           && params_.minorRadius > 1e-5f);
-
-        MeshSnapshot pre;
-        if (willCommit) pre = MeshSnapshot.capture(*mesh);
-
-        if (state == TorusState.MajorSet || state >= TorusState.DrawingMinor)
-            commitTorus();
-
-        state = TorusState.Idle;
-        previewGpu.destroy();
-
-        if (willCommit) commitTorusEdit(pre);
-
-        lastSnap = SnapResult.init;
-        clearLastSnap();
-    }
-
-    override void evaluate() {
-        if (state == TorusState.Idle) return;
-        rebuildPreview();
-    }
-
-    override bool applyHeadless() {
-        frame = currentWorkplaneFrame();
-        size_t firstNewVert = mesh.vertices.length;
-        buildTorus(mesh, params_);
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        return true;
-    }
-
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button == SDL_BUTTON_RIGHT && state != TorusState.Idle) {
             state = TorusState.Idle;
@@ -310,21 +191,7 @@ public:
         if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;
 
         if (state >= TorusState.MajorSet) {
-            foreach (i; 0 .. 6) {
-                if (sizeH[i].hitTest(e.x, e.y, cachedVp)) {
-                    sizeDragIdx = cast(int)i;
-                    sizeLastMX  = e.x;
-                    sizeLastMY  = e.y;
-                    return true;
-                }
-            }
-            int hit = moverHitTest(e.x, e.y);
-            if (hit >= 0) {
-                moverDragAxis = hit;
-                moverLastMX   = e.x;
-                moverLastMY   = e.y;
-                return true;
-            }
+            if (tryGrabHandles(e.x, e.y)) return true;
         }
 
         if (state == TorusState.Idle) {
@@ -365,8 +232,7 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        if (sizeDragIdx >= 0)   { sizeDragIdx = -1;   toolHandles.clearHaul(); return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
+        if (tryReleaseHandles()) return true;
 
         if (state == TorusState.DrawingMajor) {
             if (params_.majorRadius < 1e-5f) {
@@ -389,49 +255,10 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (state == TorusState.Idle) {
-            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
-            Vec3 hit;
-            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
-                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-            } else {
-                lastSnap = SnapResult.init;
-                clearLastSnap();
-            }
-        }
-        if (sizeDragIdx >= 0) {
-            Vec3 outwardWorld = toWorldD(SIZE_AXES[sizeDragIdx]);
-            bool skip;
-            Vec3 delta = screenAxisDelta(e.x, e.y, sizeLastMX, sizeLastMY,
-                                         sizeH[sizeDragIdx].pos, outwardWorld,
-                                         cachedVp, skip);
-            if (!skip) applySizeDelta(sizeDragIdx, delta);
-            sizeLastMX = e.x; sizeLastMY = e.y;
-            return true;
-        }
-        if (moverDragAxis >= 0) {
-            bool skip;
-            Vec3 delta = moverDragAxis <= 2
-                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover, cachedVp, skip)
-                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip,
-                                 mover.axisX, mover.axisY, mover.axisZ,
-                                 frame.normal);
-            if (!skip) {
-                Vec3 dl = toLocalD(delta);
-                params_.cenX += dl.x;
-                params_.cenY += dl.y;
-                params_.cenZ += dl.z;
-                rebuildPreview();
-            }
-            moverLastMX = e.x; moverLastMY = e.y;
-            return true;
-        }
+        if (state == TorusState.Idle) updateIdleSnap(e.x, e.y);
+
+        if (handleSizeDrag(e.x, e.y))  return true;
+        if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == TorusState.DrawingMajor) {
             Vec3 hit;
@@ -471,152 +298,66 @@ public:
         return false;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        cachedVp = vp;
-        drawSnapOverlay(lastSnap, vp, *mesh);
-        if (state == TorusState.Idle) return;
-
-        drawLitPreview(litShader, shader, vp, previewGpu);
-
-        if (state >= TorusState.MajorSet) {
-            updateSizeHandlers(vp);
-            mover.setPosition(toWorldP(torusCenter()));
-            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            // Single-source hover/capture: size handles (priority) then the
-            // mover (centerBox, arrows) — same order moverHitTest/click use,
-            // so the highlighted handle is the one a click grabs. The dragged
-            // handle (sizeDragIdx / moverDragAxis) stays highlighted.
-            toolHandles.begin();
-            foreach (i; 0 .. 6) toolHandles.add(sizeH[i], cast(int)i);
-            toolHandles.add(mover.centerBox, 13);
-            toolHandles.add(mover.arrowX,    10);
-            toolHandles.add(mover.arrowY,    11);
-            toolHandles.add(mover.arrowZ,    12);
-            if      (sizeDragIdx >= 0)    toolHandles.setHaul(sizeDragIdx);
-            else if (moverDragAxis >= 0)  toolHandles.setHaul(10 + moverDragAxis);
-            else                          toolHandles.setHaul(-1);
-            int hmx, hmy;
-            queryMouse(hmx, hmy);
-            toolHandles.update(hmx, hmy, vp);
-            foreach (i; 0 .. 6) sizeH[i].draw(shader, vp);
-            mover.draw(shader, vp);
-        }
-    }
-
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
-        if (state == TorusState.Idle)
+        if (isIdle())
             ImGui.TextDisabled("Drag in viewport to draw the major loop.");
-        else if (state == TorusState.MajorSet)
+        else if (isMajorSet())
             ImGui.TextDisabled("Drag again to thicken the tube.");
     }
 
-private:
-    Vec3 torusCenter() const {
-        return Vec3(params_.cenX, params_.cenY, params_.cenZ);
+protected:
+    override Vec3 center() const { return Vec3(params_.cenX, params_.cenY, params_.cenZ); }
+    override void setCenter(Vec3 c) {
+        params_.cenX = c.x; params_.cenY = c.y; params_.cenZ = c.z;
     }
 
-    static int worldAxisIdxOf(Vec3 v) {
-        if (abs(v.x) > 0.5f) return 0;
-        if (abs(v.y) > 0.5f) return 1;
-        return 2;
-    }
+    override bool isIdle() const { return state == TorusState.Idle; }
+    override bool showHandles() const { return state >= TorusState.MajorSet; }
 
-    void choosePlane(const ref Viewport vp) {
-        frame = pickWorkplaneFrame(vp);
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
-            case 0:
-                planeNormal = Vec3(1, 0, 0);
-                planeAxis1  = Vec3(0, 1, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 1:
-                planeNormal = Vec3(0, 1, 0);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 2:
-                planeNormal = Vec3(0, 0, 1);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 1, 0);
-                break;
-        }
-    }
-
-    // ---- Local ↔ world helpers (workplane refactor) ---------------------
-    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
-    }
-    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
-    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
-    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
-    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
-        foreach (i; firstIdx .. m.vertices.length)
-            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
-    }
-
-    void setupHeightPlane() {
-        hpOrigin = torusCenter();
-        Vec3 toCamera = localEye() - hpOrigin;
-        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
-        float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-        hpn = len > 1e-6f ? inPlane / len : planeAxis1;
-    }
-
-    void rebuildPreview() {
-        previewMesh.clear();
-        if (params_.majorRadius > 1e-9f && params_.minorRadius > 1e-9f) {
-            buildTorus(&previewMesh, params_);
-            applyFrameToMeshRange(&previewMesh, 0);
-            previewMesh.buildLoops();
-        }
-        previewGpu.upload(previewMesh);
-    }
-
-    void uploadPreview() { rebuildPreview(); }
-
-    void commitTorus() {
-        if (params_.majorRadius < 1e-5f || params_.minorRadius < 1e-5f) return;
-        size_t firstNewVert = mesh.vertices.length;
-        buildTorus(mesh, params_);
-        applyFrameToMeshRange(mesh, firstNewVert);
-        mesh.buildLoops();
-        gpu.upload(*mesh);
-        meshChanged = true;
-    }
-
-    // ----- History-coordination hooks (undo/redo migration P0) -------------
-    // Commit guard mirror (deactivate() :250); compound, keyed on minorRadius
-    // (NOT currentHeight, NOT `state != Idle`). Category B preview-only cancel:
-    // scene mesh untouched until commit.
-    public override bool hasUncommittedEdit() const {
+    // Commit guard: compound, keyed on minorRadius (NOT `state != Idle`).
+    // Category B preview-only cancel: the scene mesh is untouched until
+    // commit.
+    //
+    // RE-DERIVATION (task 0414 PRAVKA 2 — see the plan): pre-refactor the
+    // deactivate() CALL guard for commitTorus() (`state==MajorSet ||
+    // state>=DrawingMinor`) was WEAKER than this willCommit() (missing the
+    // `&& minorRadius>1e-5` term); commitTorus() was safe only because of
+    // its OWN internal guard (`if majorRadius<1e-5||minorRadius<1e-5
+    // return`). The shared base's deactivate() now gates appendBuildInto()
+    // on willCommit() directly (the STRONGER condition) and buildInto()
+    // below is an UNGUARDED buildTorus() call — net-safe because
+    // willCommit() ==> (major>1e-5 && minor>1e-5): at MajorSet, minor is
+    // freshly seeded to major*0.25 (>0, since MajorSet requires
+    // major>=1e-5 to have been reached) and major only grows monotonically
+    // from there; at MinorSet with minor==0, willCommit() is false, so
+    // appendBuildInto() is skipped entirely (the same net "nothing
+    // committed" outcome the old internal no-op produced, just reached by
+    // never calling the builder rather than calling it and returning
+    // early). See tests/test_primitive_torus_interactive.d's "Undo ladder"
+    // unittest for the zero-minor-delta commit-guard case this preserves.
+    override bool willCommit() const {
         return (state == TorusState.MajorSet)
             || (state >= TorusState.DrawingMinor && params_.minorRadius > 1e-5f);
     }
-    public override void cancelUncommittedEdit() { state = TorusState.Idle; }
+    override void goIdle() { state = TorusState.Idle; }
 
-    // Resync (undo/redo P1): preview rebuilds from `state` each frame and no
-    // scene-mesh baseline is cached, so drop a half-drawn primitive to Idle.
-    public override void resyncSession() { state = TorusState.Idle; }
+    // Exposed for drawProperties() so it never needs to reach into
+    // TorusState directly.
+    bool isMajorSet() const { return state == TorusState.MajorSet; }
 
-    void commitTorusEdit(MeshSnapshot pre) {
-        if (history is null || factory is null) return;
-        if (!pre.filled) return;
-        auto cmd  = factory();
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(pre, post, "Create Torus");
-        history.record(cmd);
+    override bool previewValid() const {
+        return params_.majorRadius > 1e-9f && params_.minorRadius > 1e-9f;
     }
 
+    override void buildInto(Mesh* dst) { buildTorus(dst, params_); }
+    override string commitLabel() const { return "Create Torus"; }
+
     // Place the 6 size handles at the bounding-box extremes of the torus:
-    //   ±B / ±C handles (perpendicular to axis): outer rim, distance R + r
-    //   ±A handles (along axis): top / bottom of the tube, distance r
-    void updateSizeHandlers(const ref Viewport vp) {
-        Vec3 cen = torusCenter();   // local
+    //   +-B / +-C handles (perpendicular to axis): outer rim, distance R + r
+    //   +-A handles (along axis): top / bottom of the tube, distance r
+    override void updateSizeHandlers(const ref Viewport vp) {
+        Vec3 cen = center();   // local
         int axisIdx = params_.axis;
         if (axisIdx < 0 || axisIdx > 2) axisIdx = 1;
         float R = params_.majorRadius;
@@ -649,7 +390,7 @@ private:
     // through inverts the tube into a self-intersecting shape; a clean
     // flip would require domain knowledge we don't have at the schema
     // level. Clamp to >= 0 instead.
-    void applySizeDelta(int idx, Vec3 delta) {
+    override void applySizeDelta(int idx, Vec3 delta) {
         // delta in WORLD; SIZE_AXES are LOCAL outward dirs.
         Vec3  outward = SIZE_AXES[idx];
         Vec3  deltaL  = toLocalD(delta);
@@ -664,12 +405,5 @@ private:
             if (params_.majorRadius < 0.0f) params_.majorRadius = 0.0f;
         }
         rebuildPreview();
-    }
-
-    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
-    // §A.D5) — was a verbatim inline copy of the same 3=centerBox,
-    // 0/1/2=arrowX/Y/Z, -1=miss test.
-    int moverHitTest(int mx, int my) {
-        return mover.hitTest(mx, my, cachedVp);
     }
 }
