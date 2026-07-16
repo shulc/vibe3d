@@ -150,8 +150,37 @@ public:
     /// True iff dropping the tool RIGHT NOW would commit geometry — the
     /// exact compound condition each group's deactivate()/hasUncommittedEdit
     /// tested individually pre-refactor (task 0414 risk #2). NOT
-    /// `state != Idle`.
+    /// `state != Idle`. Gates the snapshot/record SKELETON in deactivate()
+    /// (pre/post capture + commitEdit) and IS `hasUncommittedEdit()` —
+    /// do not narrow this to add a geometry-emission gate; use
+    /// `commitValid()` below for that.
     protected bool willCommit() const;
+
+    /// Whether appendBuildInto() should actually run right now — i.e.
+    /// whether the leaf's OWN builder can be trusted not to silently
+    /// degenerate. Virtual, default == willCommit(): true for every group
+    /// whose builder has no internal "reject if degenerate" guard
+    /// (cylinder/cone/capsule/tube/sphere — their pre-refactor commit
+    /// helpers called their builder unconditionally whenever the OUTER
+    /// state-guard passed, so Layer-A/B/C below all coincide).
+    ///
+    /// TorusTool is the one leaf that needs a STRICTER override (task 0414
+    /// review, post-Phase-5 fix): pre-refactor `commitTorus()` had its own
+    /// internal guard (`if majorRadius<1e-5||minorRadius<1e-5 return;`,
+    /// old torus.d:583) that `willCommit()` alone does NOT reproduce —
+    /// at `state==MajorSet`, `willCommit()` is true UNCONDITIONALLY (its
+    /// first disjunct), but minorRadius can be driven to 0 by a live
+    /// size-handle drag (or even land under 1e-5 on the very first drag,
+    /// for majorRadius in [1e-5, 4e-5) — the auto-seeded minorRadius =
+    /// major*0.25 then lands under 1e-5 too) WITHOUT leaving MajorSet
+    /// (handle drags never touch `state`). `buildTorus` itself CLAMPS
+    /// degenerate radii rather than rejecting (never a no-op), so gating
+    /// appendBuildInto() on willCommit() alone would emit a thin torus
+    /// where the pre-refactor tool committed nothing. See
+    /// tests/test_primitive_torus_interactive.d's "MajorSet degenerate-
+    /// minor commit guard" unittest for the executable pin.
+    protected bool commitValid() const { return willCommit(); }
+
     protected string commitLabel() const;
     /// Reset the leaf-group's own state enum to its Idle value. Kept
     /// abstract (rather than a shared `state = Idle` statement) because
@@ -216,7 +245,16 @@ public:
         MeshSnapshot pre;
         if (wc) pre = MeshSnapshot.capture(*mesh);
 
-        if (wc) {
+        // Geometry emission is gated on commitValid() (may be STRICTER than
+        // willCommit() — see commitValid()'s doc), not on `wc`. When a leaf
+        // has commitValid() narrower than willCommit() (torus, on a
+        // degenerate-radii commit), this reproduces the pre-refactor
+        // pattern exactly: the snapshot/record skeleton still runs (wc is
+        // true), but appendBuildInto() is skipped, so pre==post and an
+        // EMPTY undo entry gets recorded — matching commitTorus()'s own
+        // internal no-op guard byte-for-byte instead of silently emitting
+        // degenerate geometry.
+        if (commitValid()) {
             appendBuildInto();
             meshChanged = true;
         }

@@ -324,22 +324,51 @@ protected:
     // state>=DrawingMinor`) was WEAKER than this willCommit() (missing the
     // `&& minorRadius>1e-5` term); commitTorus() was safe only because of
     // its OWN internal guard (`if majorRadius<1e-5||minorRadius<1e-5
-    // return`). The shared base's deactivate() now gates appendBuildInto()
-    // on willCommit() directly (the STRONGER condition) and buildInto()
-    // below is an UNGUARDED buildTorus() call — net-safe because
-    // willCommit() ==> (major>1e-5 && minor>1e-5): at MajorSet, minor is
-    // freshly seeded to major*0.25 (>0, since MajorSet requires
-    // major>=1e-5 to have been reached) and major only grows monotonically
-    // from there; at MinorSet with minor==0, willCommit() is false, so
-    // appendBuildInto() is skipped entirely (the same net "nothing
-    // committed" outcome the old internal no-op produced, just reached by
-    // never calling the builder rather than calling it and returning
-    // early). See tests/test_primitive_torus_interactive.d's "Undo ladder"
-    // unittest for the zero-minor-delta commit-guard case this preserves.
+    // return`, old torus.d:583). willCommit() alone does NOT reproduce
+    // that internal guard — see commitValid()'s override below (task 0414
+    // review, post-Phase-5 fix) for why and how it's restored.
     override bool willCommit() const {
         return (state == TorusState.MajorSet)
             || (state >= TorusState.DrawingMinor && params_.minorRadius > 1e-5f);
     }
+
+    // Reproduces commitTorus()'s pre-refactor internal guard exactly
+    // (old torus.d:583: `if majorRadius<1e-5||minorRadius<1e-5 return;`).
+    //
+    // willCommit() ==> (major>1e-5 && minor>1e-5) is FALSE in general — the
+    // MajorSet arm of willCommit() is unconditional on minorRadius (true
+    // regardless of its live value), and minorRadius CAN be under 1e-5
+    // while state==MajorSet: either (a) a live size-handle drag on the
+    // axis-aligned handle shrinks it there (applySizeDelta clamps at 0,
+    // handle drags never touch `state`), or (b) even on the untouched
+    // MajorSet baseline, for majorRadius in [1e-5, 4e-5) the auto-seeded
+    // minorRadius = major*0.25 already lands under 1e-5. The mirror case
+    // (shrinking majorRadius via a perpendicular handle while minorRadius
+    // stays healthy, from MinorSet or later) fails the same way: the base's
+    // deactivate() only gated appendBuildInto() on willCommit() at first,
+    // which does not check majorRadius on that arm either. buildTorus
+    // itself CLAMPS degenerate radii rather than rejecting (R floors to
+    // 1e-6, r floors to R*1e-4 — never a no-op), so gating appendBuildInto()
+    // on willCommit() alone would silently commit a thin torus in exactly
+    // the cases the pre-refactor tool committed nothing.
+    //
+    // The willCommit()-gated snapshot/record skeleton in the shared
+    // deactivate() still runs in these degenerate cases (matching
+    // commitTorus() being CALLED pre-refactor) — only appendBuildInto() is
+    // skipped (matching commitTorus()'s internal early return) — so an
+    // empty (pre==post) undo entry gets recorded, byte-for-byte the same
+    // as pre-refactor. See tests/test_primitive_torus_interactive.d's
+    // "MajorSet degenerate-minor commit guard" and "Undo ladder" unittests
+    // for the executable pins (MajorSet-with-dragged-to-zero-minor, and the
+    // MinorSet-reached-with-zero-minor-delta case respectively — the two
+    // are different code paths: the former has willCommit()==true with
+    // commitValid()==false; the latter has both false).
+    override bool commitValid() const {
+        return willCommit()
+            && params_.majorRadius > 1e-5f
+            && params_.minorRadius > 1e-5f;
+    }
+
     override void goIdle() { state = TorusState.Idle; }
 
     // Exposed for drawProperties() so it never needs to reach into

@@ -17,9 +17,17 @@
 //      an accidental reuse of the cylinder-family's anchored-opposite math).
 //   3. mover-handle drag moves the center.
 //   4. Tool Properties (tool.attr) round-trip for every param.
-//   5. Undo ladder, including the ProAVKA-2 zero-minor-delta commit guard
+//   5. Undo ladder, including the PRAVKA-2 zero-minor-delta commit guard
 //      case: a second drag that ends at minorRadius == 0 must NOT commit
-//      and must NOT grow the undo stack on drop.
+//      and must NOT grow the undo stack on drop (this hits the MinorSet
+//      arm of willCommit(), which is already false there).
+//   6. MajorSet degenerate-minor commit guard (found in review after
+//      Phase 5 landed): willCommit() is UNCONDITIONALLY true at MajorSet
+//      (its first disjunct never looks at minorRadius), so a live
+//      size-handle drag that clamps minorRadius to 0 WITHOUT leaving
+//      MajorSet must still not commit a degenerate torus -- a case the
+//      zero-minor-delta case above does not exercise (that one reaches
+//      MinorSet, where willCommit() itself is false).
 
 import std.conv : to;
 import std.json;
@@ -324,9 +332,16 @@ unittest { // Undo ladder including the zero-minor-delta commit guard (PRAVKA 2 
 
     // PRAVKA 2 gate: a second drag that lands EXACTLY back at minorRadius==0
     // (a zero-delta drag on the height plane) must NOT commit on drop and
-    // must NOT create an undo entry -- the shared willCommit()-gated
-    // deactivate() fold must still skip appendBuildInto() here exactly as
-    // the pre-refactor commitTorus()-internal-guard did.
+    // must NOT create an undo entry. This lands in MinorSet with
+    // willCommit()==false (the MinorSet arm requires minorRadius>1e-5),
+    // so commitValid() is trivially false too (short-circuits on
+    // willCommit()) -- both the geometry gate AND the snapshot/record
+    // skeleton skip here, matching the pre-refactor commitTorus() call
+    // guard never firing at all for this state. Contrast with the
+    // "MajorSet degenerate-minor commit guard" unittest below, where
+    // willCommit()==true (unconditional at MajorSet) but commitValid()
+    // is false -- a genuinely different code path this case does NOT
+    // exercise (a post-review fix; see that unittest's comment).
     resetForTorus();
     projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
     dragPixels(cx, cy, cx + 150, cy + 140);      // MajorSet
@@ -341,4 +356,91 @@ unittest { // Undo ladder including the zero-minor-delta commit guard (PRAVKA 2 
         "dropping with minorRadius==0 must not create a new undo entry (no-commit)");
     assert(vertCount() == 0,
         "dropping with minorRadius==0 must not add any geometry to the scene");
+}
+
+unittest { // MajorSet degenerate-minor commit guard (review fix: commitValid() vs willCommit())
+    // Discriminates the case the zero-minor-delta case above does NOT
+    // cover. That one lands in MinorSet, where willCommit() itself is
+    // false (net-safe regardless of any internal-guard bug). THIS case
+    // stays in MajorSet, where willCommit() is TRUE UNCONDITIONALLY (its
+    // first disjunct never looks at minorRadius) -- and drives minorRadius
+    // to exactly 0 via a live size-handle drag (handle drags never touch
+    // `state`, so the tool stays in MajorSet throughout).
+    //
+    // Pre-refactor commitTorus() had its own internal guard
+    // (`if majorRadius<1e-5||minorRadius<1e-5 return;`, old torus.d:583)
+    // that caught this. A naive fold that gated appendBuildInto() on
+    // willCommit() alone would NOT -- buildTorus clamps degenerate radii
+    // rather than rejecting (R floors to 1e-6, r floors to R*1e-4), so it
+    // would silently commit a thin 288-vert torus here. commitValid()
+    // (willCommit() && majorRadius>1e-5 && minorRadius>1e-5) restores the
+    // exact pre-refactor guard -- see primitive_create_tool.d's
+    // commitValid() doc and torus.d's override for the full derivation.
+    //
+    // Undo semantics (verified against a live instance, not assumed): the
+    // per-gesture "live in-session" undo-entry mechanism visible in
+    // box_interactive.d's own Undo-ladder test is a box.d-specific feature
+    // (its own recordInSession/BoxLiveEditCommand machinery) that
+    // PrimitiveCreateTool never inherited -- /api/history stays completely
+    // static (undo:[]) for the WHOLE torus session below, construction and
+    // handle-drags alike, changing only at deactivate(). At MajorSet,
+    // willCommit()==true unconditionally, so deactivate()'s snapshot/record
+    // skeleton still runs even though commitValid()==false skips
+    // appendBuildInto() -- this records exactly ONE empty (pre==post)
+    // entry, matching commitTorus() having been CALLED pre-refactor (its
+    // internal guard just made it a no-op) rather than never called at
+    // all. This is a genuinely different outcome from the zero-minor-delta
+    // case above (no entry at all, since willCommit() itself is false
+    // there) -- do not conflate the two.
+    resetForTorus();
+
+    int cx, cy;
+    projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
+    dragPixels(cx, cy, cx + 150, cy + 140);      // Idle -> MajorSet
+    double major0 = qf("majorRadius");
+    assert(major0 > 0.1, "major drag should create a healthy majorRadius");
+    assert(undoLen() == 0, "reaching MajorSet alone should not create any undo entry");
+
+    // Drag the axis-aligned (tube-thickness) size handle fully inward so
+    // applySizeDelta's zero-floor clamp lands minorRadius at exactly 0,
+    // all while staying in MajorSet (grabbing/releasing a handle never
+    // touches `state`). -3000px vastly overshoots any reachable
+    // minorRadius at this camera distance, guaranteeing the clamp fires
+    // rather than merely shrinking the value.
+    auto f = planeFrame();
+    Vec3 cen = center();
+    double minorBefore = qf("minorRadius");
+    assert(minorBefore > 0.0, "MajorSet should auto-seed a positive minorRadius");
+    dragWorldHandle(cen + f.normal * cast(float)minorBefore, f.normal, -3000.0);
+    assert(approx(qf("minorRadius"), 0.0, 1e-4),
+        "dragging the axis handle fully inward should clamp minorRadius to 0, got "
+        ~ qf("minorRadius").to!string);
+    assert(approx(qf("majorRadius"), major0, 1e-3),
+        "the axis-handle drag must not have touched majorRadius");
+    assert(undoLen() == 0,
+        "a mouse-driven handle drag must not create any mid-session undo entry either "
+        ~ "(PrimitiveCreateTool has no per-gesture in-session recording)");
+
+    // Still in MajorSet (handle drags never change state) -> willCommit()
+    // is unconditionally true here, so dropping runs the snapshot/record
+    // skeleton (one empty entry, matching commitTorus() being CALLED
+    // pre-refactor) while commitValid()==false skips appendBuildInto()
+    // (matching commitTorus()'s internal early return) -- no geometry.
+    cmd("tool.set " ~ TOOL ~ " off");
+    assert(vertCount() == 0,
+        "dropping at MajorSet with minorRadius==0 must not add any geometry to the scene "
+        ~ "(buildTorus clamps degenerate radii rather than rejecting -- this is exactly the "
+        ~ "case the pre-refactor commitTorus() internal guard existed to catch)");
+    assert(undoLen() == 1,
+        "willCommit()==true at MajorSet means the snapshot/record skeleton still runs even "
+        ~ "though commitValid()==false skipped appendBuildInto() -- this records exactly one "
+        ~ "empty (pre==post) entry, matching commitTorus() being CALLED pre-refactor (and "
+        ~ "internally no-opping) rather than never being called at all");
+
+    // The recorded entry must be a genuine no-op: undoing it must not
+    // "destroy" a torus, it must simply leave the (already-empty) scene
+    // exactly as it was.
+    playCtrlZ();
+    assert(vertCount() == 0, "undoing the empty degenerate-commit entry must reveal no torus");
+    assert(undoLen() == 0, "the empty entry must pop cleanly like any other undo step");
 }
