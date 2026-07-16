@@ -308,7 +308,10 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 
 // Task 0206 (Quad/Split multi-cell overlays) — overlay draw mode for a
-// single viewport cell's renderViewportSceneToFbo() call:
+// single viewport cell's renderViewportSceneToFbo() call. `OverlayMode`
+// itself is now declared in editor_app.d (task 0419 cyclic-import fix --
+// renderViewportSceneToFbo's own parameter type needs it nameable without a
+// back-edge from editor_app.d to app.d; imported back below).
 //   None        — no tool/falloff active; nothing to draw.
 //   Visual      — a NON-owner cell's world-derived replica: activeTool.draw
 //                 / pipeGizmoHost.draw run with visualOnly=true, so gizmo
@@ -318,22 +321,16 @@ enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 //                 see Tool.draw's doc comment in source/tool.d).
 //   Interactive — the overlay-owner (active/origin) cell: today's full path,
 //                 visualOnly=false. Pins cachedVp + runs the arbiter cycle.
-enum OverlayMode { None, Visual, Interactive }
+import editor_app : OverlayMode;
 
 // ---------------------------------------------------------------------------
 // Module-level helpers
 // ---------------------------------------------------------------------------
 
-private ulong edgeKey(uint a, uint b) {
-    uint lo = a < b ? a : b, hi = a < b ? b : a;
-    return (cast(ulong)lo << 32) | hi;
-}
-
-private int countSelected(bool[] sel) {
-    int n = 0;
-    foreach (s; sel) if (s) n++;
-    return n;
-}
+// edgeKey/countSelected relocated to editor_app.d (task 0419 Б1 -- used by
+// the UI-panel block now in source/ui/panels.d; imported back below since
+// edgeKey also has a call site here, in the snap-frame JIT install path).
+import editor_app : edgeKey, countSelected;
 
 // A broken stage form degrades to the legacy drawProvider every frame; the
 // log service's once-gate keeps the diagnostic to a single line per stage
@@ -367,34 +364,11 @@ private string buildJsonArray(bool[] sel) {
 // Panel layout
 // ---------------------------------------------------------------------------
 
-struct Layout {
-    int sideW   = 150;
-    int statusH = 28;
-
-    ImVec2 sidePos;
-    ImVec2 sideSize;
-    ImVec2 tabPos;
-    ImVec2 tabSize;
-    ImVec2 statusPos;
-    ImVec2 statusSize;
-
-    int vpX, vpY, vpGlY, vpW, vpH;
-
-    void resize(int winW, int winH) {
-        sidePos    = ImVec2(0, 0);
-        sideSize   = ImVec2(sideW, winH);
-        tabPos     = ImVec2(sideW, 0);
-        tabSize    = ImVec2(winW - sideW, statusH);
-        statusPos  = ImVec2(sideW, winH - statusH);
-        statusSize = ImVec2(winW - sideW, statusH);
-
-        vpX   = sideW;
-        vpY   = statusH;  // screen-space top edge (Y down), below tab bar
-        vpGlY = statusH;  // OpenGL bottom edge (Y up), above status bar
-        vpW   = winW - sideW;
-        vpH   = winH - 2 * statusH;
-    }
-}
+// Layout relocated to editor_app.d (task 0419 cyclic-import fix -- see the
+// OverlayMode comment above); imported back below since `layout` the LOCAL
+// is still declared/used here (main-loop resize, ctx-wiring), just its TYPE
+// moved.
+import editor_app : Layout;
 
 /// Belt-and-suspenders dynamic-loader path augmentation for release
 /// builds. The render backends' rpath flags already include
@@ -511,61 +485,22 @@ void setWindowIcon(SDL_Window* window) {
     SDL_FreeSurface(surf);
 }
 
-/// Build the item-snap frame for one visible layer: world-space pivot +
-/// world-space AABB derived from ALL mesh vertices (whole-item bounds,
-/// independent of any active vertex sub-selection).  Called from both the
-/// render-thread per-frame install and the HTTP-thread JIT install.
-private ItemSnapFrame buildItemFrame(Layer lyr)
-{
-    ItemSnapFrame fr;
-    fr.pivot = lyr.xform.pos + lyr.xform.pivot;
-    Vec3 mn = Vec3( float.infinity,  float.infinity,  float.infinity);
-    Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
-    bool seen = false;
-    foreach (v; lyr.mesh.vertices) {
-        if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
-        if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
-        if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
-        seen = true;
-    }
-    if (seen) {
-        float[16] M = lyr.xform.composedMatrix();
-        Vec3[8] corners = [
-            Vec3(mn.x,mn.y,mn.z), Vec3(mx.x,mn.y,mn.z),
-            Vec3(mn.x,mx.y,mn.z), Vec3(mx.x,mx.y,mn.z),
-            Vec3(mn.x,mn.y,mx.z), Vec3(mx.x,mn.y,mx.z),
-            Vec3(mn.x,mx.y,mx.z), Vec3(mx.x,mx.y,mx.z),
-        ];
-        Vec3 wmn = transformPoint(M, corners[0]);
-        Vec3 wmx = wmn;
-        foreach (c; corners[1..$]) {
-            Vec3 w = transformPoint(M, c);
-            if (w.x < wmn.x) wmn.x = w.x; if (w.x > wmx.x) wmx.x = w.x;
-            if (w.y < wmn.y) wmn.y = w.y; if (w.y > wmx.y) wmx.y = w.y;
-            if (w.z < wmn.z) wmn.z = w.z; if (w.z > wmx.z) wmx.z = w.z;
-        }
-        fr.bboxMin = wmn;
-        fr.bboxMax = wmx;
-        fr.hasBBox = true;
-    }
-    return fr;
-}
+// buildItemFrame relocated to editor_app.d (task 0419 Б1 -- used by the
+// UI-panel block now in source/ui/panels.d; imported back below since it
+// also has a call site here, in the HTTP-thread JIT snap-frame install).
+import editor_app : buildItemFrame;
 
 // ---------------------------------------------------------------------------
 // Module-level globals (interactive-session state; never read by --test)
 // ---------------------------------------------------------------------------
 
-/// Backing storage for the versioned imgui.ini path.  ImGui stores the raw
-/// char* without copying, so the string must outlive the context.  Set once
-/// before the first NewFrame; null in --test (byte-identity contract).
-private __gshared const(char)* g_layoutIniPathZ = null;
-
-/// Set true by the Reset Layout button to force a full dock-tree reseed on
-/// the next frame, independently of the process-lifetime dockLayoutDone flag.
-/// Fallback-only: the button sets this iff the shipped default could NOT be
-/// re-copied (see below), so the programmatic DockBuilder rebuild is the
-/// last resort rather than the default reset path.
-private __gshared bool g_forceLayoutReseed = false;
+// g_layoutIniPathZ/g_forceLayoutReseed relocated to editor_app.d (task 0419
+// Б1 -- written/read by the UI-panel block now in source/ui/panels.d;
+// imported back below since both also have call/use sites here, in the
+// startup ImGui.IniFilename wiring and the Reset-Layout-consuming NewFrame
+// preamble). Public `__gshared` there -- the panel writes them directly as
+// globals, not through ctx.
+import editor_app : g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReloadPathZ;
 
 /// Task 0211 seed-guard primary discriminator. Computed ONCE at startup
 /// (before `io.IniFilename` is assigned — see the `!command.g_testMode`
@@ -578,41 +513,11 @@ private __gshared bool g_forceLayoutReseed = false;
 /// never touches this global; io.IniFilename is forced null there).
 private __gshared bool g_seedFreshLayout = false;
 
-/// Set by the Reset Layout button after a successful re-copy of the shipped
-/// default ini. Consumed once, right before the next `ImGui.NewFrame()`,
-/// via `ImGui.LoadIniSettingsFromDisk` — NOT called inline from the button
-/// handler because that runs mid-frame (between NewFrame/EndFrame), which
-/// the ini loader documents as unsafe. Deferring to the top of the next
-/// frame mirrors how the startup path loads (`io.IniFilename` is read by
-/// ImGui's own NewFrame-time UpdateSettings on the very first frame).
-private __gshared const(char)* g_pendingLayoutReloadPathZ = null;
-
-/// Thin app-layer wrapper over `prefs.seedLayoutIniIfMissing` (the tested
-/// unit — see its unittests in prefs.d) that fixes the source path to the
-/// shipped default panel layout, `config/default_layout.ini` (the user's
-/// confirmed arrangement). NEVER overwrites an existing user ini. Returns
-/// true iff a copy actually happened (i.e. the shipped default is now the
-/// content at `userIniPath`).
-/// Interactive-session only — callers gate on !testMode.
-private bool seedDefaultLayoutIfMissing(string userIniPath) {
-    import std.file : exists;
-    string defaultPath = "config/default_layout.ini";
-    if (!exists(defaultPath)) {
-        // cwd-relative shipped default not found — e.g. a system install
-        // (/usr/bin/vibe3d) launched from an arbitrary cwd. Fall back to
-        // resolving alongside the executable itself. (The macOS .app bundle
-        // case is unaffected: useAppBundleResourceCwd() already chdirs into
-        // Resources/ at startup, so the cwd-relative path above resolves
-        // there directly and this fallback never triggers.)
-        try {
-            import std.file : thisExePath;
-            import std.path : buildPath, dirName;
-            string exeRelative = buildPath(thisExePath().dirName, "config", "default_layout.ini");
-            if (exists(exeRelative)) defaultPath = exeRelative;
-        } catch (Exception) {}
-    }
-    return prefs.seedLayoutIniIfMissing(defaultPath, userIniPath);
-}
+// g_pendingLayoutReloadPathZ/seedDefaultLayoutIfMissing relocated to
+// editor_app.d too (task 0419 Б1; g_pendingLayoutReloadPathZ is already
+// imported above alongside its siblings). seedDefaultLayoutIfMissing also
+// has a call site here, in the startup ImGui.IniFilename wiring.
+import editor_app : seedDefaultLayoutIfMissing;
 
 import viewport : LayoutPreset;
 
@@ -959,34 +864,14 @@ void drawPerfHud() {
 // ---------------------------------------------------------------------------
 // AI entry-point availability (compile-time gates for two UI affordances)
 // ---------------------------------------------------------------------------
-// Two DIFFERENT gates, deliberately not the same flag:
-//
-//   kAiToggleAvailable — the statusline "AI" master-switch button
-//     (ai.toggle / aiState / the copilot findings panel). Backed by
-//     onnxruntime, which ships on every `modeling` build (Linux/Windows/
-//     macOS) and is omitted only from `modeling-noai` (Win7). So this is
-//     WithAI, full stop.
-//
-//   kGenerateAiAvailable — the "Generate 3D…" (ai3d.generate.open) File-menu
-//     entry, which drives the TRELLIS worker via install_linux.sh /
-//     install_windows.ps1 (source/ai3d/worker_manager.d) — a platform
-//     dependency independent of onnxruntime, gated on TRELLIS needing an
-//     NVIDIA CUDA GPU: available on Linux and Windows, never on macOS (no
-//     NVIDIA/CUDA there). So this is WithAI on Linux/Windows, `false`
-//     unconditionally on macOS regardless of WithAI.
-//
-// Both are plain compile-time bools (not runtime checks) so the greyed-out
-// state in a `modeling-noai` build is provably static, not a code path that
-// could be flipped by a stray env var.
-version (OSX) {
-    enum bool kGenerateAiAvailable = false;
-} else version (WithAI) {
-    enum bool kGenerateAiAvailable = true;
-} else {
-    enum bool kGenerateAiAvailable = false;
-}
-version (WithAI) enum bool kAiToggleAvailable = true;
-else              enum bool kAiToggleAvailable = false;
+// kAiToggleAvailable / kGenerateAiAvailable relocated to editor_app.d (task
+// 0419 cyclic-import fix -- read ONLY by the UI-panel block, now in
+// source/ui/panels.d, via `with(app)`; see editor_app.d for the full
+// two-gates rationale). Imported back below for app.d's own remaining
+// references until the panel block itself is fully relocated (later 0419
+// phases) -- unused once that lands, at which point this import is dead
+// weight to prune, not a correctness issue.
+import editor_app : kAiToggleAvailable, kGenerateAiAvailable;
 
 // ---------------------------------------------------------------------------
 // Main
@@ -1940,7 +1825,11 @@ void main(string[] args) {
     // destroyed + dropped each frame so GL handles never leak. In a single-layer
     // document this map is always empty ⇒ zero per-frame cost.
     import document : Layer;
-    struct BgGpu { GpuMesh gpu; ulong uploadedVersion = ulong.max; }
+    // BgGpu relocated to editor_app.d (task 0419 Б2 -- the UI-panel block's
+    // renderViewportSceneToFbo, now in source/ui/panels.d, needs the type
+    // nameable for a ctx field; see editor_app.d for the exact-analog-of-
+    // Ai3dModalState rationale).
+    import editor_app : BgGpu;
     BgGpu*[Layer] bgGpuByLayer;
     scope(exit) {
         foreach (k, bg; bgGpuByLayer) bg.gpu.destroy();
@@ -2871,7 +2760,11 @@ void main(string[] args) {
     // doc/tasks/done/0415-registration-app-decomp.md.
     // -------------------------------------------------------------------------
     EditorApp app;
-    app.mesh        = cast(MeshDg)&mesh;
+    // `meshDg`, not `mesh` -- task 0419 found the UI-panel block reads
+    // `mesh.foo()` bare-dot (no explicit call parens); `mesh` in EditorApp
+    // is now a `@property ref Mesh mesh()` method backed by this field
+    // (same pattern as `cameraViewDg`/`cameraView` right below).
+    app.meshDg      = cast(MeshDg)&mesh;
     app.cameraViewDg = cast(ViewDg)&cameraView;
     app.vertexCache = cast(VertexCacheDg)&vertexCache;
     app.faceCache   = cast(FaceCacheDg)&faceCache;
@@ -5404,6 +5297,52 @@ void main(string[] args) {
             g_pipeCtx.pipeline.evaluate(vts);
     }
 
+    // -------------------------------------------------------------------------
+    // Task 0419 (campaign 0407 §V1.2) LATE ctx-wiring -- the 30 new EditorApp
+    // members backing the UI-panel block (source/ui/panels.d). Placed HERE
+    // (right after buildToolVts, the last of the six hook delegates to
+    // become available) rather than in the 2873 ctx-assembly block:
+    // activateToolById/runCommand/tryOpenArgsDialog/buildToolVts are nested
+    // functions declared AFTER 2873, so wiring them there would capture
+    // nothing. Everything below is safe to wire now: every pointer-backed
+    // local is already declared, and every by-value (в) field's single
+    // assignment (grep-verified -- see editor_app.d) already happened. The
+    // main loop, well after this point, is the first panel call site, so it
+    // always sees a fully-wired `app`. Full inventory:
+    // doc/tasks/work/0419-app-decomp-panels.md.
+    // -------------------------------------------------------------------------
+    app.hoveredVertexPtr       = &hoveredVertex;
+    app.hoveredEdgePtr         = &hoveredEdge;
+    app.hoveredFacePtr         = &hoveredFace;
+    app.activePanelIdxPtr      = &activePanelIdx;
+    app.activeToolIdPtr        = &activeToolId;
+    app.layerRenameIndexPtr    = &layerRenameIndex;
+    app.layerRenameBufPtr      = &layerRenameBuf;
+    app.faceSelEdgesCachePtr   = &faceSelEdgesCache;
+    app.faceSelEdgesPrevSelPtr = &faceSelEdgesPrevSel;
+    app.layoutPtr              = &layout;
+    app.panelsPtr              = &panels;
+    app.statusLineGroupsPtr    = &statusLineGroups;
+    app.shortcutsPtr           = &shortcuts;
+    app.gridVaoPtr             = &gridVao;
+    app.gridOnlyVertCountPtr   = &gridOnlyVertCount;
+    app.bgGpuByLayerPtr        = &bgGpuByLayer;
+
+    app.shader                  = shader;
+    app.checkerShader           = checkerShader;
+    app.gridShader               = gridShader;
+    app.formsPanel                = formsPanel;
+    app.io                        = io;
+    app.commandHandlerDelegate    = commandHandlerDelegate;
+    app.formsInteractiveDispatch  = formsInteractiveDispatch;
+
+    app.runCommand           = cast(void delegate(Command))&runCommand;
+    app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
+    app.activateToolById     = cast(void delegate(string))&activateToolById;
+    app.buildToolVts         = cast(void delegate(out SubjectPacket, ref VectorStack))&buildToolVts;
+    app.anyFalloffActive     = cast(bool delegate())&anyFalloffActive;
+    app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
+
     // Interactive history-navigation chokepoint (undo/redo migration P0;
     // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call
     // from the HTTP server thread (it touches activeTool).
@@ -6416,127 +6355,12 @@ void main(string[] args) {
         g_hoveredFace   = hoveredFace;
     };
 
-    // 1-px black outline around the last ImGui item.
-    // Right and bottom edges are drawn ON rmax so adjacent buttons' top/left
-    // (drawn at their own rmin) land on the SAME pixel, producing a 1-pixel
-    // shared border rather than two abutting lines.
-    void drawButtonOutline() {
-        auto dl = ImGui.GetWindowDrawList();
-        ImVec2 rmin = ImGui.GetItemRectMin();
-        ImVec2 rmax = ImGui.GetItemRectMax();
-        uint c = IM_COL32(0, 0, 0, 255);
-        dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmax.x, rmin.y), c);  // top
-        dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmin.x, rmax.y), c);  // left
-        dl.AddLine(ImVec2(rmin.x, rmax.y), ImVec2(rmax.x, rmax.y), c);  // bottom
-        dl.AddLine(ImVec2(rmax.x, rmin.y), ImVec2(rmax.x, rmax.y), c);  // right
-    }
-
-    // Raised bevel drawn as `thickness` concentric rings just
-    // inside the 1-pixel outline.
-    void drawRaisedBevel(uint light, uint dark, bool pressed = false,
-                         int thickness = 2) {
-        auto dl = ImGui.GetWindowDrawList();
-        ImVec2 rmin = ImGui.GetItemRectMin();
-        ImVec2 rmax = ImGui.GetItemRectMax();
-        uint tl = pressed ? dark  : light;
-        uint br = pressed ? light : dark;
-        foreach (i; 0 .. thickness) {
-            float x0 = rmin.x + 1.0f + i, y0 = rmin.y + 1.0f + i;
-            float x1 = rmax.x - 2.0f - i, y1 = rmax.y - 2.0f - i;
-            dl.AddLine(ImVec2(x0, y0), ImVec2(x1, y0), tl);
-            dl.AddLine(ImVec2(x0, y0), ImVec2(x0, y1), tl);
-            dl.AddLine(ImVec2(x0, y1), ImVec2(x1, y1), br);
-            dl.AddLine(ImVec2(x1, y0), ImVec2(x1, y1), br);
-        }
-    }
-
-    // The editor's button chrome: beige palette for tools, pale blue for commands;
-    // renders as pure white when `on` (active) or `held` (mouse down).
-    // Returns true when the button is clicked this frame.
-    bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
-                            ImVec2 size, bool disabled = false) {
-        ImVec4 bgNormal, bgHover;
-        uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
-        if (isCommand) {
-            bgNormal    = ImVec4(0.635f, 0.686f, 0.749f, 1.0f);  // (162,175,191)
-            bgHover     = ImVec4(0.698f, 0.749f, 0.812f, 1.0f);  // (178,191,207)
-            bevelLightN = IM_COL32(206, 219, 235, 255);
-            bevelDarkN  = IM_COL32(143, 156, 172, 255);
-            bevelLightH = IM_COL32(222, 235, 251, 255);
-            bevelDarkH  = IM_COL32(159, 172, 188, 255);
-        } else {
-            bgNormal    = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);  // (181,181,167)
-            bgHover     = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
-            bevelLightN = IM_COL32(225, 225, 211, 255);
-            bevelDarkN  = IM_COL32(162, 162, 148, 255);
-            bevelLightH = IM_COL32(241, 241, 227, 255);
-            bevelDarkH  = IM_COL32(178, 178, 164, 255);
-        }
-
-        ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        // Disabled buttons keep the normal bg / bevel but freeze hover
-        // and active responses (disabled rows don't visually react to
-        // the cursor at all).
-        if (disabled) {
-            ImGui.PushStyleColor(ImGuiCol.Button,        bgNormal);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, bgNormal);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  bgNormal);
-        } else {
-            ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
-        }
-        ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
-        // Suppress ImGui's built-in text rendering for disabled rows —
-        // we draw the engraved label ourselves after the bevel pass.
-        // Visible text empty (everything before "##"), ID derived from
-        // the original label so ImGui's per-window ItemAdd doesn't
-        // collide when multiple disabled rows are stacked (empty ID
-        // at window root → assert).
-        string btnLabel = disabled ? ("##" ~ label) : label;
-        bool rawClicked = ImGui.Button(btnLabel, size);
-        bool clicked    = rawClicked && !disabled;
-        ImGui.PopStyleVar();
-        ImGui.PopStyleColor(3);
-
-        bool held = !disabled && ImGui.IsItemActive();
-        drawButtonOutline();
-        if (!on && !held) {
-            bool hov = !disabled && ImGui.IsItemHovered();
-            drawRaisedBevel(hov ? bevelLightH : bevelLightN,
-                            hov ? bevelDarkH  : bevelDarkN,
-                            false);
-        }
-
-        // Disabled-engrave: dark text body + 1-px (+1, +1) highlight
-        // shadow. A side-panel greyed-but-readable look — bg/bevel
-        // unchanged, only the
-        // label rendering differs.
-        if (disabled) {
-            ImVec2 rmin = ImGui.GetItemRectMin();
-            ImVec2 rmax = ImGui.GetItemRectMax();
-            ImVec2 ts   = ImGui.CalcTextSize(label);
-            ImVec2 tp   = ImVec2(rmin.x + 6.0f,
-                                 rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
-            uint shadowCol = IM_COL32(245, 245, 231, 200);
-            uint textCol   = IM_COL32( 95,  90,  78, 255);
-            ImGui.GetWindowDrawList().AddText(ImVec2(tp.x + 1, tp.y + 1),
-                                              shadowCol, label);
-            ImGui.GetWindowDrawList().AddText(tp, textCol, label);
-        }
-
-        if (shortcut.length > 0) {
-            ImVec2 rmin = ImGui.GetItemRectMin();
-            ImVec2 rmax = ImGui.GetItemRectMax();
-            ImVec2 ts   = ImGui.CalcTextSize(shortcut);
-            ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
-                                 rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
-            uint scCol = (on || held) ? IM_COL32(0, 0, 0, 255)
-                                      : IM_COL32(245, 245, 231, 255);
-            ImGui.GetWindowDrawList().AddText(tp, scCol, shortcut);
-        }
-        return clicked;
-    }
+    // drawButtonOutline / drawRaisedBevel / renderStyledButton relocated to
+    // source/ui/panels.d (task 0419 Phase 1 -- pure helpers, no EditorApp
+    // dependency). `renderButton` below (nested in drawSidePanel, not yet
+    // moved) still calls `renderStyledButton(...)` bare -- resolves via this
+    // import instead of a sibling nested-function declaration.
+    import ui.panels : drawButtonOutline, drawRaisedBevel, renderStyledButton;
 
     // Dispatch a single Action (used by `renderButton` and by popup-item
     // clicks). Tool/command/script branches mirror the inline logic in the
@@ -6568,30 +6392,11 @@ void main(string[] args) {
         }
     }
 
-    // Resolve a popup item's `checked:` block via the popup_state
-    // registry. Producers publish via setStatePath; this is the only
-    // consumer site.
-    bool popupItemChecked(ref Checked chk) {
-        import popup_state : resolveChecked;
-        return resolveChecked(chk);
-    }
-
-    // True when a File-menu Import/Export command id targets a format that
-    // routes through assimp (so it must be greyed out when libassimp is
-    // unavailable). Ids look like "file.import.obj" / "file.export.gltf";
-    // the trailing token is the extension consulted in the format registry.
-    static bool popupActionNeedsAssimp(string commandId) {
-        import std.algorithm.searching : startsWith, findSplitAfter;
-        import io.formats : formatNeedsAssimp;
-        if (!commandId.startsWith("file.import.") &&
-            !commandId.startsWith("file.export."))
-            return false;
-        // last dot-separated token = bare ext ("obj", "gltf", ...)
-        auto split = commandId.findSplitAfter("file.import.");
-        string ext = split[1].length ? split[1]
-                                     : commandId.findSplitAfter("file.export.")[1];
-        return formatNeedsAssimp(ext);
-    }
+    // popupItemChecked / popupActionNeedsAssimp relocated to
+    // source/ui/panels.d (task 0419 Phase 1 -- pure helpers). Both are used
+    // bare below (renderPopupItems, drawSidePanel's renderButton) and
+    // resolve via this import.
+    import ui.panels : popupItemChecked, popupActionNeedsAssimp;
 
     // Live falloff-stack rows for the Falloff button's Alt popup. Lists
     // every contributing FalloffStage instance; clicking one removes it
@@ -6709,120 +6514,17 @@ void main(string[] args) {
         }
     }
 
-    // Walk popup items (recursing into submenus) and return the label
-    // of the first one whose `checked:` resolves true. Powers
-    // `Action.dynamicLabel` — a "popup face" that reflects the active
-    // option. Returns "" when nothing matches.
-    string firstCheckedLabel(ref PopupItem[] items) {
-        foreach (ref it; items) {
-            final switch (it.kind) {
-                case PopupItemKind.action:
-                    if (it.checked.present && popupItemChecked(it.checked))
-                        return it.label;
-                    break;
-                case PopupItemKind.submenu:
-                    string s = firstCheckedLabel(it.subItems);
-                    if (s.length > 0) return s;
-                    break;
-                case PopupItemKind.divider:
-                case PopupItemKind.header:
-                case PopupItemKind.dynamic:
-                    break;
-            }
-        }
-        return "";
-    }
-
-    // The editor's popup chrome — extracted to source/imgui_style.d
-    // so non-app code (toolpipe stages' drawProperties) can re-use the
-    // same look. Thin wrappers retained for the existing App-side call
-    // sites; same Push/Pop balance contract as before.
-    void pushPopupStyle() {
-        import imgui_style : pushPopupStyle;
-        pushPopupStyle();
-    }
-    void popPopupStyle() {
-        import imgui_style : popPopupStyle;
-        popPopupStyle();
-    }
-
-    // Section header: dark slate-blue band with centered white
-    // text, framed by a 1-pixel black outline matching button edges.
-    void drawSectionHeader(string title) {
-        auto dl = ImGui.GetWindowDrawList();
-        ImVec2 pos = ImGui.GetCursorScreenPos();
-        // Match full-width buttons rendered with ImVec2(-1, 0) — ImGui resolves
-        // that to avail.x - 1, so subtract one here to keep right edges flush.
-        float  w   = ImGui.GetContentRegionAvail().x - 1.0f;
-        ImVec2 ts  = ImGui.CalcTextSize(title);
-        float  h   = ts.y + 4.0f;
-        ImVec2 rmax = ImVec2(pos.x + w, pos.y + h);
-        dl.AddRectFilled(pos, rmax, IM_COL32(84, 84, 94, 255));
-        uint c = IM_COL32(0, 0, 0, 255);
-        dl.AddLine(ImVec2(pos.x, pos.y),  ImVec2(rmax.x, pos.y),  c);  // top
-        dl.AddLine(ImVec2(pos.x, pos.y),  ImVec2(pos.x, rmax.y),  c);  // left
-        dl.AddLine(ImVec2(pos.x, rmax.y), ImVec2(rmax.x, rmax.y), c);  // bottom
-        dl.AddLine(ImVec2(rmax.x, pos.y), ImVec2(rmax.x, rmax.y), c);  // right
-        float tx = pos.x + (w - ts.x) * 0.5f;
-        float ty = pos.y + 2.0f;
-        dl.AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), title);
-        ImGui.Dummy(ImVec2(w, h));
-    }
-
-    // The editor's panel chrome: grey bg, black border, beige/blue button
-    // palette, black text, flat frames. Call BEFORE `ImGui.Begin` and pair with
-    // popPanelChromeStyle() AFTER `ImGui.End`.
-    void pushPanelChromeStyle() {
-        ImVec4 winBg   = ImVec4(0.561f, 0.561f, 0.561f, 1.0f);   // (143,143,143)
-        ImVec4 border  = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
-        ImVec4 btnBg   = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);   // tool beige
-        ImVec4 btnHov  = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);
-        ImVec4 btnAct  = ImVec4(1.0f,   1.0f,   1.0f,   1.0f);
-        ImVec4 black   = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
-        ImVec4 grabLo  = ImVec4(0.45f,  0.45f,  0.45f,  1.0f);
-        ImVec4 grabHi  = ImVec4(0.20f,  0.20f,  0.20f,  1.0f);
-
-        ImGui.PushStyleColor(ImGuiCol.WindowBg,         winBg);
-        ImGui.PushStyleColor(ImGuiCol.Border,           border);
-        ImGui.PushStyleColor(ImGuiCol.TitleBg,          winBg);
-        ImGui.PushStyleColor(ImGuiCol.TitleBgActive,    winBg);
-        ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, winBg);
-        ImGui.PushStyleColor(ImGuiCol.Text,             black);
-        ImGui.PushStyleColor(ImGuiCol.Button,           btnBg);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered,    btnHov);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive,     btnAct);
-        ImGui.PushStyleColor(ImGuiCol.FrameBg,          btnBg);
-        ImGui.PushStyleColor(ImGuiCol.FrameBgHovered,   btnHov);
-        ImGui.PushStyleColor(ImGuiCol.FrameBgActive,    btnAct);
-        ImGui.PushStyleColor(ImGuiCol.SliderGrab,       grabLo);
-        ImGui.PushStyleColor(ImGuiCol.SliderGrabActive, grabHi);
-        ImGui.PushStyleColor(ImGuiCol.CheckMark,        black);
-        // Dropdown / combo popups open INSIDE this chrome inherit its black Text,
-        // but PopupBg defaults to the dark StyleColorsDark value → black-on-dark,
-        // unreadable. Match PopupBg to the field background (btnBg) so an open
-        // combo reads the same as its closed state. Only popup WINDOWS use
-        // PopupBg, so CollapsingHeader section styling is unaffected.
-        ImGui.PushStyleColor(ImGuiCol.PopupBg,          btnBg);
-
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding,    0.0f);
-    }
-    void popPanelChromeStyle() {
-        ImGui.PopStyleVar(3);
-        ImGui.PopStyleColor(16);
-    }
-
-    // Packed-button-row layout (large FramePadding, zero ItemSpacing). Use inside
-    // Begin for button-only panels; skip for Tool Properties so inputs keep
-    // normal spacing. Pair with popButtonBarStyle().
-    void pushButtonBarStyle() {
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(6, 5));
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 0));
-    }
-    void popButtonBarStyle() {
-        ImGui.PopStyleVar(2);
-    }
+    // firstCheckedLabel / pushPopupStyle / popPopupStyle / drawSectionHeader
+    // / pushPanelChromeStyle / popPanelChromeStyle / pushButtonBarStyle /
+    // popButtonBarStyle relocated to source/ui/panels.d (task 0419 Phase 1
+    // -- pure helpers, including the two cross-boundary style pairs). All
+    // are used bare below and in main-body code well past this point
+    // (chrome: 6 call sites; popup: 12 call sites; see the plan doc's Б3)
+    // -- resolve via this import instead of a sibling nested-function
+    // declaration.
+    import ui.panels : firstCheckedLabel, pushPopupStyle, popPopupStyle,
+        drawSectionHeader, pushPanelChromeStyle, popPanelChromeStyle,
+        pushButtonBarStyle, popButtonBarStyle;
 
     void drawSidePanel() {
         pushPanelChromeStyle();

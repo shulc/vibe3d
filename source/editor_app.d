@@ -306,6 +306,174 @@ struct Ai3dModalState {
 }
 
 // ---------------------------------------------------------------------------
+// Task 0419 (campaign 0407 §V1.2, UI-panel decomposition) relocations --
+// these five items were module-scope (or main()-local) in app.d and are
+// moved here VERBATIM for the same reason Ai3dModalState was in 0415: the
+// UI-panel block moving to source/ui/panels.d references them, and a
+// `private` module-scoped symbol or a main()-local type isn't nameable from
+// another module. app.d imports all of them back (`import editor_app : ...`)
+// since several also have call sites OUTSIDE the panel block. Full
+// inventory/rationale: doc/tasks/work/0419-app-decomp-panels.md ("Б1"/"Б2"/
+// cyclic-import").
+// ---------------------------------------------------------------------------
+
+/// Per-cell overlay-draw mode for the N-cell viewport loop (task 0206 quad/
+/// split overlays). Was a plain top-level `enum` in app.d (cyclic-import:
+/// renderViewportSceneToFbo's own parameter type + its main-body call site
+/// both need this nameable without importing app.d back into editor_app.d).
+enum OverlayMode { None, Visual, Interactive }
+
+/// Panel layout geometry (side/tab/status window rects, viewport rect).
+/// Was a plain top-level `struct` in app.d -- relocated verbatim (leaf
+/// int/ImVec2 fields, no app.d dependencies) so it can back a ctx field's
+/// type (`layout`) without a back-edge to app.
+struct Layout {
+    int sideW   = 150;
+    int statusH = 28;
+
+    ImVec2 sidePos;
+    ImVec2 sideSize;
+    ImVec2 tabPos;
+    ImVec2 tabSize;
+    ImVec2 statusPos;
+    ImVec2 statusSize;
+
+    int vpX, vpY, vpGlY, vpW, vpH;
+
+    void resize(int winW, int winH) {
+        sidePos    = ImVec2(0, 0);
+        sideSize   = ImVec2(sideW, winH);
+        tabPos     = ImVec2(sideW, 0);
+        tabSize    = ImVec2(winW - sideW, statusH);
+        statusPos  = ImVec2(sideW, winH - statusH);
+        statusSize = ImVec2(winW - sideW, statusH);
+
+        vpX   = sideW;
+        vpY   = statusH;  // screen-space top edge (Y down), below tab bar
+        vpGlY = statusH;  // OpenGL bottom edge (Y up), above status bar
+        vpW   = winW - sideW;
+        vpH   = winH - 2 * statusH;
+    }
+}
+
+// AI entry-point availability (compile-time gates for two UI affordances) --
+// see app.d's original doc comment (preserved in the task doc's Log) for the
+// full rationale; verbatim version-gating, only the enclosing module moved.
+version (OSX) {
+    enum bool kGenerateAiAvailable = false;
+} else version (WithAI) {
+    enum bool kGenerateAiAvailable = true;
+} else {
+    enum bool kGenerateAiAvailable = false;
+}
+version (WithAI) enum bool kAiToggleAvailable = true;
+else              enum bool kAiToggleAvailable = false;
+
+/// Per-background-layer GPU mesh cache (layers Stage 5 -- background faces/
+/// edges draw). Was a struct declared LOCALLY inside main() (`struct BgGpu
+/// { ... }` right above the `bgGpuByLayer` local) -- exact analog of
+/// Ai3dModalState: relocated verbatim so `BgGpu*[Layer]` is nameable as a
+/// ctx field's type from ui.panels.
+struct BgGpu { GpuMesh gpu; ulong uploadedVersion = ulong.max; }
+
+ulong edgeKey(uint a, uint b) {
+    uint lo = a < b ? a : b, hi = a < b ? b : a;
+    return (cast(ulong)lo << 32) | hi;
+}
+
+int countSelected(bool[] sel) {
+    int n = 0;
+    foreach (s; sel) if (s) n++;
+    return n;
+}
+
+/// Build the item-snap frame for one visible layer: world-space pivot +
+/// world-space AABB derived from ALL mesh vertices (whole-item bounds,
+/// independent of any active vertex sub-selection). Called from both the
+/// render-thread per-frame install and the HTTP-thread JIT install.
+ItemSnapFrame buildItemFrame(Layer lyr)
+{
+    ItemSnapFrame fr;
+    fr.pivot = lyr.xform.pos + lyr.xform.pivot;
+    Vec3 mn = Vec3( float.infinity,  float.infinity,  float.infinity);
+    Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+    bool seen = false;
+    foreach (v; lyr.mesh.vertices) {
+        if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+        if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+        if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+        seen = true;
+    }
+    if (seen) {
+        float[16] M = lyr.xform.composedMatrix();
+        Vec3[8] corners = [
+            Vec3(mn.x,mn.y,mn.z), Vec3(mx.x,mn.y,mn.z),
+            Vec3(mn.x,mx.y,mn.z), Vec3(mx.x,mx.y,mn.z),
+            Vec3(mn.x,mn.y,mx.z), Vec3(mx.x,mn.y,mx.z),
+            Vec3(mn.x,mx.y,mx.z), Vec3(mx.x,mx.y,mx.z),
+        ];
+        Vec3 wmn = transformPoint(M, corners[0]);
+        Vec3 wmx = wmn;
+        foreach (c; corners[1..$]) {
+            Vec3 w = transformPoint(M, c);
+            if (w.x < wmn.x) wmn.x = w.x; if (w.x > wmx.x) wmx.x = w.x;
+            if (w.y < wmn.y) wmn.y = w.y; if (w.y > wmx.y) wmx.y = w.y;
+            if (w.z < wmn.z) wmn.z = w.z; if (w.z > wmx.z) wmx.z = w.z;
+        }
+        fr.bboxMin = wmn;
+        fr.bboxMax = wmx;
+        fr.hasBBox = true;
+    }
+    return fr;
+}
+
+/// Backing storage for the versioned imgui.ini path. ImGui stores the raw
+/// char* without copying, so the string must outlive the context. Set once
+/// before the first NewFrame; null in --test (byte-identity contract).
+public __gshared const(char)* g_layoutIniPathZ = null;
+
+/// Set true by the Reset Layout button to force a full dock-tree reseed on
+/// the next frame, independently of the process-lifetime dockLayoutDone flag.
+/// Fallback-only: the button sets this iff the shipped default could NOT be
+/// re-copied (see seedDefaultLayoutIfMissing), so the programmatic
+/// DockBuilder rebuild is the last resort rather than the default reset path.
+public __gshared bool g_forceLayoutReseed = false;
+
+/// Set by the Reset Layout button after a successful re-copy of the shipped
+/// default ini. Consumed once, right before the next `ImGui.NewFrame()`, via
+/// `ImGui.LoadIniSettingsFromDisk` -- NOT called inline from the button
+/// handler because that runs mid-frame (between NewFrame/EndFrame), which the
+/// ini loader documents as unsafe.
+public __gshared const(char)* g_pendingLayoutReloadPathZ = null;
+
+/// Thin app-layer wrapper over `prefs.seedLayoutIniIfMissing` (the tested
+/// unit -- see its unittests in prefs.d) that fixes the source path to the
+/// shipped default panel layout, `config/default_layout.ini` (the user's
+/// confirmed arrangement). NEVER overwrites an existing user ini. Returns
+/// true iff a copy actually happened (i.e. the shipped default is now the
+/// content at `userIniPath`).
+/// Interactive-session only -- callers gate on !testMode.
+bool seedDefaultLayoutIfMissing(string userIniPath) {
+    import std.file : exists;
+    string defaultPath = "config/default_layout.ini";
+    if (!exists(defaultPath)) {
+        // cwd-relative shipped default not found -- e.g. a system install
+        // (/usr/bin/vibe3d) launched from an arbitrary cwd. Fall back to
+        // resolving alongside the executable itself. (The macOS .app bundle
+        // case is unaffected: useAppBundleResourceCwd() already chdirs into
+        // Resources/ at startup, so the cwd-relative path above resolves
+        // there directly and this fallback never triggers.)
+        try {
+            import std.file : thisExePath;
+            import std.path : buildPath, dirName;
+            string exeRelative = buildPath(thisExePath().dirName, "config", "default_layout.ini");
+            if (exists(exeRelative)) defaultPath = exeRelative;
+        } catch (Exception) {}
+    }
+    return prefs.seedLayoutIniIfMissing(defaultPath, userIniPath);
+}
+
+// ---------------------------------------------------------------------------
 // Nested-accessor delegate aliases (category "б" in the task plan): lazy,
 // live-binding accessors. Assigned once via `&mesh` etc in main()'s ctx
 // assembly; CALLED (mesh(), &mesh()) inside factory bodies at tool/command
@@ -373,28 +541,46 @@ struct RemeshModalRefs {
 // ---------------------------------------------------------------------------
 struct EditorApp {
     // ---- (б) nested-accessor delegates: lazy, live-binding ----
-    // `mesh`/`vertexCache`/`faceCache`/`edgeCache` are ALWAYS called with an
-    // explicit `()` at their app.d call sites (mesh(), &mesh(), &vertexCache(),
-    // ...) so a plain delegate-typed field is verbatim: bare `mesh` never
-    // appears as a value-expression in either span (grep-verified).
-    MeshDg        mesh;
+    // `vertexCache`/`faceCache`/`edgeCache` are ALWAYS called with an
+    // explicit `()` at their app.d call sites (&vertexCache(), ...) so a
+    // plain delegate-typed field is verbatim: bare `vertexCache` never
+    // appears as a value-expression in Span A/B or the task-0419 panel
+    // block (grep-verified).
     VertexCacheDg vertexCache;
     FaceCacheDg   faceCache;
     EdgeCacheDg   edgeCache;
 
-    // `cameraView` is DIFFERENT: in app.d it was a nested FUNCTION
-    // (`ref View cameraView() { ... }`), and D auto-invokes a bare
-    // (parenthesis-less) reference to a no-arg function in a value context
-    // -- so app.d's original code passes it bare hundreds of times
-    // (`new Xxx(&mesh(), cameraView, editMode, ...)`). A plain delegate
-    // FIELD does NOT get that auto-invoke treatment (a bare field reference
-    // yields the delegate value itself, not its result) -- this differs
-    // from `mesh` above only because `mesh` always carries an explicit `()`
-    // at its call sites. Backing it with a `@property ref View cameraView()`
-    // method instead (same pattern as gpu/editMode/document/reg below)
-    // restores the original auto-invoke semantics for every existing bare
-    // usage with ZERO span-text edits (caught by `dub build`, not by the
-    // plan's own scratch probes -- see task doc Log).
+    // `mesh` is DIFFERENT (task 0419 finding -- same class of gotcha 0415
+    // found for `cameraView`, not caught by 0415 itself because Span A/B
+    // never used the bare-dot form): in app.d it is a nested FUNCTION, and
+    // the task-0419 UI-panel block reads it as `mesh.countSelectedVertices()`
+    // / `mesh.selectedFaces` / ... 28 TIMES with no explicit call parens
+    // (vs. exactly ONE explicit `mesh()` call, in the AI-copilot overlay
+    // draw). A plain delegate FIELD does not get D's auto-invoke treatment
+    // on a bare reference the way a nested FUNCTION does -- `field.foo()`
+    // would try to resolve `.foo` on the delegate type itself and fail to
+    // compile. Backing it with a `@property ref Mesh mesh()` method (exactly
+    // the cameraView pattern) restores auto-invoke for the panel block's
+    // bare-dot reads with zero span-text edits, while every EXISTING
+    // explicit `mesh()` / `&mesh()` call site in registration.d keeps
+    // working unchanged (a property method supports explicit-call syntax
+    // too).
+    MeshDg meshDg;
+    @property ref Mesh mesh() { return meshDg(); }
+
+    // `cameraView` is the SAME class of gotcha as `mesh` above (task 0419
+    // later found `mesh` needed the identical treatment -- see its comment):
+    // in app.d it was a nested FUNCTION (`ref View cameraView() { ... }`),
+    // and D auto-invokes a bare (parenthesis-less) reference to a no-arg
+    // function in a value context -- so app.d's original code passes it bare
+    // hundreds of times (`new Xxx(&mesh(), cameraView, editMode, ...)`). A
+    // plain delegate FIELD does NOT get that auto-invoke treatment (a bare
+    // field reference yields the delegate value itself, not its result).
+    // Backing it with a `@property ref View cameraView()` method instead
+    // (same pattern as gpu/editMode/document/reg below) restores the
+    // original auto-invoke semantics for every existing bare usage with
+    // ZERO span-text edits (caught by `dub build`, not by the plan's own
+    // scratch probes -- see task doc Log).
     ViewDg cameraViewDg;
     @property ref View cameraView() { return cameraViewDg(); }
 
@@ -472,4 +658,88 @@ struct EditorApp {
     void delegate(EditMode)     switchGeometryType;
     void delegate(size_t, size_t) onActiveLayerChanged;
     void delegate()             resetAllPipeStages;
+
+    // =========================================================================
+    // Task 0419 (campaign 0407 §V1.2): 30 new members backing the UI-panel
+    // block (source/ui/panels.d) -- drawSidePanel/drawStatusBar/drawTabPanel/
+    // drawLayerListPanel/drawViewportPropsPanel/renderViewportSceneToFbo and
+    // their nested draw-helpers. Same ROOT RULE as above: default
+    // pointer-backed `@property ref T`; by-value only for a class-ref/
+    // delegate assigned exactly once before the LATE-wiring point (app.d,
+    // right after `buildToolVts`'s closing brace, ~line 5405). Wired in that
+    // LATE block, not the 2873 ctx-assembly block -- several of these
+    // (hook delegates) are nested functions not declared until AFTER 2873.
+    // Full inventory + per-field proof: doc/tasks/work/0419-app-decomp-panels.md.
+    // =========================================================================
+
+    // ---- (a) pointer-backed: value-types mutated/reassigned by the panel
+    //      block, or address-taken (activePanelIdx via &panels[activePanelIdx]) ----
+    int* hoveredVertexPtr;
+    @property ref int hoveredVertex() { return *hoveredVertexPtr; }
+    int* hoveredEdgePtr;
+    @property ref int hoveredEdge() { return *hoveredEdgePtr; }
+    int* hoveredFacePtr;
+    @property ref int hoveredFace() { return *hoveredFacePtr; }
+    int* activePanelIdxPtr;
+    @property ref int activePanelIdx() { return *activePanelIdxPtr; }
+    string* activeToolIdPtr;
+    @property ref string activeToolId() { return *activeToolIdPtr; }
+    int* layerRenameIndexPtr;
+    @property ref int layerRenameIndex() { return *layerRenameIndexPtr; }
+    char[256]* layerRenameBufPtr;
+    @property ref char[256] layerRenameBuf() { return *layerRenameBufPtr; }
+    bool[]* faceSelEdgesCachePtr;
+    @property ref bool[] faceSelEdgesCache() { return *faceSelEdgesCachePtr; }
+    bool[]* faceSelEdgesPrevSelPtr;
+    @property ref bool[] faceSelEdgesPrevSel() { return *faceSelEdgesPrevSelPtr; }
+    Layout* layoutPtr;
+    @property ref Layout layout() { return *layoutPtr; }
+    // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --
+    // a `@property ref Panel[] panels()` auto-invokes under `&panels[i]`
+    // (scratch-verified by the plan), so the call site needs zero edits.
+    Panel[]* panelsPtr;
+    @property ref Panel[] panels() { return *panelsPtr; }
+    Group[]* statusLineGroupsPtr;
+    @property ref Group[] statusLineGroups() { return *statusLineGroupsPtr; }
+    ShortcutTable* shortcutsPtr;
+    @property ref ShortcutTable shortcuts() { return *shortcutsPtr; }
+    GLuint* gridVaoPtr;
+    @property ref GLuint gridVao() { return *gridVaoPtr; }
+    int* gridOnlyVertCountPtr;
+    @property ref int gridOnlyVertCount() { return *gridOnlyVertCountPtr; }
+    // [Б2] Reassigned-ref (`bgGpuByLayer[lyr] = bg` writes into the AA) --
+    // a by-value copy would leak the GL object every frame (the copy sees
+    // its own insert; main()'s real AA never gets it; scope(exit) in main()
+    // forever cleans up an empty map). BgGpu type relocated above (Б2).
+    BgGpu*[Layer]* bgGpuByLayerPtr;
+    @property ref BgGpu*[Layer] bgGpuByLayer() { return *bgGpuByLayerPtr; }
+
+    // ---- testMode: computed, NOT a pointer field or a global wrapper.
+    //      main()'s local `testMode` and `command.g_testMode` are ALWAYS
+    //      assigned together (app.d ~1075/1077, never diverge) -- reading
+    //      through `command.g_testMode` directly removes a LATE-wiring step
+    //      and matches the panel block's own qualified read at
+    //      `!command.g_testMode` (drawViewportPropsPanel's Reset Layout). ----
+    @property ref bool testMode() { return command.g_testMode; }
+
+    // ---- (в) by-value: class-ref/pointer/delegate locals assigned EXACTLY
+    //      ONCE in main(), all before the LATE-wiring point (grep-verified) ----
+    Shader        shader;
+    CheckerShader checkerShader;
+    GridShader    gridShader;
+    FormsPanel    formsPanel;
+    ImGuiIO*      io;
+    void delegate(string, string) commandHandlerDelegate;
+    void delegate(string, string) formsInteractiveDispatch;
+
+    // ---- (г) hook delegates: nested functions in main(), captured via
+    //      `&funcName`; ALWAYS called with explicit args/parens in the panel
+    //      block (unlike `mesh`/`cameraView` above, none of these six are
+    //      ever read bare) ----
+    void delegate(Command)      runCommand;
+    bool delegate(string)       tryOpenArgsDialog;
+    void delegate(string)       activateToolById;
+    void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
+    bool delegate()              anyFalloffActive;
+    const(bool)[] delegate(int) rebuildLoopHoverMask;
 }
