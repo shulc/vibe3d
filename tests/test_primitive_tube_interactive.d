@@ -12,11 +12,13 @@
 //   2. mover-handle drag (InnerSet only) moves the center.
 //   3. Tool Properties (tool.attr) round-trip for every param, including
 //      the bool `cap` param.
-//   4. Undo ladder: hasUncommittedEdit only becomes true at HeightSet (the
-//      first two stages establish the baseline with no live undo entry
-//      yet, mirroring the cylinder family's "first committable state is
-//      the baseline" pattern); the THIRD (inner-radius) stage is the first
-//      live undo entry; drop collapses; post-drop undo clears.
+//   4. Undo ladder: the whole construction/edit session is preview-only,
+//      including once hasUncommittedEdit() becomes true at HeightSet (no
+//      undo entries are created by any stage -- OuterSet, HeightSet, or
+//      InnerSet -- or by a live property edit); a Ctrl+Z pressed DURING an
+//      uncommitted session (HeightSet onward) cancels the tool outright
+//      instead of peeling a step; drop creates exactly one entry; post-drop
+//      undo clears it.
 
 import std.conv : to;
 import std.json;
@@ -285,7 +287,7 @@ unittest { // Tool Properties (tool.attr) round-trip for every param, incl. bool
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // Undo ladder: baseline at HeightSet, first live entry at InnerSet, drop collapses
+unittest { // Undo ladder: preview-only through every stage; commit happens at deactivate
     resetForTube();
 
     int cx, cy;
@@ -293,7 +295,7 @@ unittest { // Undo ladder: baseline at HeightSet, first live entry at InnerSet, 
     dragPixels(cx, cy, cx + 150, cy + 140);   // OuterSet: not yet committable (state<HeightSet)
     assert(undoLen() == 0, "outer-radius stage alone should create no live undo step");
 
-    dragPixels(cx, cy, cx, cy - 100);         // HeightSet: first committable state (baseline)
+    dragPixels(cx, cy, cx, cy - 100);         // HeightSet: first committable state, still preview-only
     assert(undoLen() == 0,
         "reaching the first committable state (HeightSet) should not itself create a live undo step");
     double outer0 = qf("outerRadius");
@@ -307,21 +309,22 @@ unittest { // Undo ladder: baseline at HeightSet, first live entry at InnerSet, 
     dragPixels(ix, iy, ix, iy, 1);            // InnerSet: a real change to an already-committable tube
     assert(!approx(qf("innerRadius"), innerAtBaseline, 1e-3),
         "inner-radius stage should have changed innerRadius from the HeightSet baseline");
-    assert(undoLen() == 1, "inner-radius construction should create one live undo step");
+    assert(undoLen() == 0, "inner-radius construction is still preview-only, no undo entry yet");
 
+    // hasUncommittedEdit() (== willCommit()) has been true since HeightSet
+    // (outerRadius>1e-5 && height>1e-5), so a single Ctrl+Z here cancels the
+    // WHOLE tool -- PrimitiveCreateTool has no per-gesture in-session
+    // recording to peel (that is a box.d-specific feature, never inherited
+    // here). No commit ever happened, so there is nothing in /api/history
+    // and nothing in the scene mesh either.
     playCtrlZ();
-    assert(approx(qf("innerRadius"), innerAtBaseline, 1e-3),
-        "Ctrl+Z after inner-radius creation should return to the HeightSet-seeded innerRadius");
-    assert(undoLen() == 0, "inner-radius undo should pop its live entry");
-
-    // Second Ctrl+Z (from the HeightSet baseline) cancels the whole tool.
-    playCtrlZ();
-    assert(!activeQueryOk(), "second Ctrl+Z should also deactivate " ~ TOOL);
+    assert(!activeQueryOk(), "Ctrl+Z mid-session should deactivate " ~ TOOL);
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelled tube tool should leave no history entry");
     assert(vertCount() == 0, "cancelled tube tool should leave no pending geometry");
 
-    // Redo the full sequence, then confirm drop collapses live edits.
+    // Redo the full sequence, then confirm drop collapses the whole preview
+    // session (construction stages + a live property edit) into ONE entry.
     resetForTube();
     projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
     dragPixels(cx, cy, cx + 150, cy + 140);
@@ -331,11 +334,11 @@ unittest { // Undo ladder: baseline at HeightSet, first live entry at InnerSet, 
     Vec3 target2 = cen2 + planeFrame().axis1 * cast(float)(sz * 0.3);
     projectOrDie(target2, ix, iy, "inner-radius click target 2");
     dragPixels(ix, iy, ix, iy, 1);
-    assert(undoLen() == 1, "inner-radius construction should again be one live undo step");
+    assert(undoLen() == 0, "inner-radius construction should again create no live undo step");
     cmd("tool.attr " ~ TOOL ~ " segments 6");
-    assert(undoLen() == 2, "a further live property edit should be a second active step");
+    assert(undoLen() == 0, "a live property edit mid-session should also create no undo entry");
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == 1, "drop should collapse live tube edits into one entry");
+    assert(undoLen() == 1, "drop should collapse the whole live tube session into one entry");
     assert(vertCount() > 0, "tube drop should commit mesh geometry");
     playCtrlZ();
     assert(undoLen() == 0, "post-drop Ctrl+Z should pop the single tube entry");

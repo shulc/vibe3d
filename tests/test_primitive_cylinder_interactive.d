@@ -12,10 +12,12 @@
 //      face stays fixed => center shift == size growth, exactly).
 //   3. mover-handle drag moves the center.
 //   4. Tool Properties (tool.attr) round-trip for every param.
-//   5. Undo ladder: each live construction/edit step is one undo entry;
-//      Ctrl+Z peels them one at a time; dropping the tool collapses all
-//      live steps into a single "Create Cylinder" entry; undo after drop
-//      removes the whole committed primitive.
+//   5. Undo ladder: the whole construction/edit session is preview-only
+//      (no undo entries from any stage or from live property edits);
+//      dropping the tool creates exactly one "Create Cylinder" entry;
+//      a Ctrl+Z pressed DURING an uncommitted session cancels the tool
+//      outright (no commit, no undo entry) instead of peeling a step;
+//      undo after drop removes the whole committed primitive.
 
 import std.conv : to;
 import std.json;
@@ -283,7 +285,7 @@ unittest { // Tool Properties (tool.attr) round-trip for every param
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // Undo ladder: live steps peel one at a time; drop collapses; post-drop undo clears
+unittest { // Undo ladder: preview-only through the whole session; commit happens at deactivate
     resetForCylinder();
 
     int cx, cy;
@@ -291,45 +293,33 @@ unittest { // Undo ladder: live steps peel one at a time; drop collapses; post-d
     dragPixels(cx, cy, cx + 150, cy + 140);
     auto f = planeFrame();
     assert(approx(sizeAlong(f.normal), 0.0), "base should start flat before height undo test");
+    assert(undoLen() == 0, "base construction (BaseSet) is preview-only -- no undo entry yet");
 
     dragPixels(cx, cy, cx, cy - 100);
     assert(sizeAlong(f.normal) > 0.25, "height drag should create height before undo");
-    assert(undoLen() == 1, "height construction should create one live undo step");
-    playCtrlZ();
-    assert(approx(sizeAlong(f.normal), 0.0, 1e-3),
-        "Ctrl+Z after height creation should return to the flat base");
-    assert(undoLen() == 0, "height construction undo should pop its live entry");
+    assert(undoLen() == 0, "height construction (HeightSet) is still preview-only");
 
-    dragPixels(cx, cy, cx, cy - 100);
-    size_t liveFloor = undoLen();
-    assert(liveFloor == 1, "recreated height should be one live step above base");
-
-    double sx0 = qf("sizeX");
+    // Live property edits during the session are ALSO preview-only --
+    // PrimitiveCreateTool has no per-gesture in-session recording (that is
+    // a box.d-specific feature: its own recordInSession/BoxLiveEditCommand
+    // machinery, never inherited here). /api/history stays static for the
+    // whole session, changing only at deactivate().
     cmd("tool.attr " ~ TOOL ~ " sizeX 2.25");
-    assert(approx(qf("sizeX"), 2.25), "sizeX write before undo failed");
-    assert(undoLen() == liveFloor + 1, "live property edit should create one in-session entry");
-    playCtrlZ();
-    assert(approx(qf("sizeX"), sx0), "Ctrl+Z should undo only the property edit");
-    assert(undoLen() == liveFloor, "live property undo should pop its in-session entry");
-    playCtrlShiftZ();
-    assert(approx(qf("sizeX"), 2.25), "Ctrl+Shift+Z should redo the live property edit");
-    playCtrlZ();
-    assert(approx(qf("sizeX"), sx0), "Ctrl+Z after live redo should undo the property edit");
-    assert(undoLen() == liveFloor, "post-redo-undo should be back at the live floor");
-
-    // Multiple live edits collapse into the single Create Cylinder entry on drop.
-    cmd("tool.attr " ~ TOOL ~ " sizeX 2.0");
+    assert(approx(qf("sizeX"), 2.25), "sizeX write before drop failed");
+    assert(undoLen() == 0, "a live property edit mid-session creates no undo entry");
     cmd("tool.attr " ~ TOOL ~ " sizeY 1.5");
-    assert(undoLen() == liveFloor + 2, "two live property edits should be two active steps");
+    assert(undoLen() == 0, "further live property edits still create no undo entry");
+
+    // Dropping the tool commits the whole session as exactly one undo entry.
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == 1, "drop should collapse live cylinder edits into one entry");
+    assert(undoLen() == 1, "drop should collapse the whole live cylinder session into one entry");
     assert(vertCount() > 0, "cylinder drop should commit mesh geometry");
     playCtrlZ();
     assert(undoLen() == 0, "post-drop Ctrl+Z should pop the single cylinder entry");
     assert(vertCount() == 0, "post-drop Ctrl+Z should remove the committed cylinder");
 }
 
-unittest { // Ctrl+Z ladder from a live drag straight back to no pending primitive
+unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet baseline
     resetForCylinder();
 
     int cx, cy;
@@ -337,18 +327,17 @@ unittest { // Ctrl+Z ladder from a live drag straight back to no pending primiti
     dragPixels(cx, cy, cx + 150, cy + 140);
     auto f = planeFrame();
     assert(approx(sizeAlong(f.normal), 0.0), "first drag should leave a flat base");
+    assert(undoLen() == 0, "reaching BaseSet alone should create no undo entry");
 
-    dragPixels(cx, cy, cx, cy - 100);
-    assert(sizeAlong(f.normal) > 0.25, "second drag should create height");
-    assert(undoLen() == 1, "height creation should be one active undo step");
-
+    // willCommit() is unconditionally true at BaseSet (a flat disk is
+    // already a committable primitive) -- so even here, without ever
+    // starting the height drag, a single Ctrl+Z press cancels the WHOLE
+    // tool (PrimitiveCreateTool has no per-gesture in-session recording to
+    // peel one step at a time -- see tool.d's hasUncommittedEdit()/
+    // cancelUncommittedEdit() and app.d's navHistory()).
     playCtrlZ();
-    assert(approx(sizeAlong(f.normal), 0.0, 1e-3), "first Ctrl+Z should remove height, restore base");
-    assert(undoLen() == 0, "height undo should leave no active history entry");
-
-    playCtrlZ();
-    assert(!activeQueryOk(), "second Ctrl+Z should also deactivate " ~ TOOL);
+    assert(!activeQueryOk(), "Ctrl+Z at the bare BaseSet baseline should deactivate " ~ TOOL);
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == 0, "second Ctrl+Z should cancel the base without creating history");
-    assert(vertCount() == 0, "second Ctrl+Z should leave no pending cylinder to commit");
+    assert(undoLen() == 0, "cancelling at BaseSet should leave no history entry");
+    assert(vertCount() == 0, "cancelling at BaseSet should leave no pending cylinder to commit");
 }

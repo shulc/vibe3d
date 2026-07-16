@@ -312,20 +312,20 @@ unittest { // Undo ladder including the zero-minor-delta commit guard (PRAVKA 2 
     int cx, cy;
     projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
     dragPixels(cx, cy, cx + 150, cy + 140);      // DrawingMajor -> MajorSet baseline
-    double major0 = qf("majorRadius");
-    double seededMinor = qf("minorRadius");
+    assert(undoLen() == 0, "reaching MajorSet alone should create no undo entry");
 
     dragPixels(cx, cy, cx, cy - 60);             // DrawingMinor -> MinorSet
-    assert(undoLen() == 1, "minor-thickness construction should create one live undo step");
-    playCtrlZ();
-    assert(approx(qf("minorRadius"), seededMinor, 1e-3),
-        "Ctrl+Z after minor-thickness creation should return to the MajorSet-seeded minorRadius");
-    assert(undoLen() == 0, "minor-thickness undo should pop its live entry");
+    assert(qf("minorRadius") > 0.0, "minor drag should produce a positive minorRadius");
+    assert(undoLen() == 0, "minor-thickness construction is still preview-only, no undo entry yet");
 
-    // Second Ctrl+Z (from the MajorSet baseline) cancels the whole tool --
-    // there is no earlier live entry to peel.
+    // willCommit() has been true (unconditionally) since MajorSet, so a
+    // single Ctrl+Z here cancels the WHOLE tool -- PrimitiveCreateTool has
+    // no per-gesture in-session recording to peel back to the MajorSet-
+    // seeded baseline (that is a box.d-specific feature, never inherited
+    // here; see tool.d's hasUncommittedEdit()/cancelUncommittedEdit() and
+    // app.d's navHistory()).
     playCtrlZ();
-    assert(!activeQueryOk(), "second Ctrl+Z should also deactivate " ~ TOOL);
+    assert(!activeQueryOk(), "Ctrl+Z mid-session should deactivate " ~ TOOL);
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelled torus tool should leave no history entry");
     assert(vertCount() == 0, "cancelled torus tool should leave no pending geometry");
