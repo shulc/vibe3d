@@ -158,11 +158,16 @@ unittest {
     Mesh mTarget, mOther;
     activeMeshResolver = () => &mOther; // never matches `target` ⇒ gate always no-ops before touching a real GpuMesh
 
+    // The resolver's RETURN VALUE doesn't matter here (refreshDisplay's own
+    // gate no-ops before ever reading it) — only that it gets CALLED, fresh,
+    // every time. `cellIsA` stands in for "which viewport cell is active";
+    // flipping it between the two calls below is the "user switched cells"
+    // half of the scenario.
     int resolveCount = 0;
     bool cellIsA = true;
     displayTargetsResolver = () {
         ++resolveCount;
-        return cellIsA ? DisplayTargets.init : DisplayTargets.init;
+        return DisplayTargets.init;
     };
 
     refreshDisplayActive(&mTarget);
