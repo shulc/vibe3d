@@ -640,7 +640,64 @@ unittest {
 // sticky-tool-default capture. Living in `params.d` (the home of Param)
 // instead of toolpipe/stage.d means every caller now imports the SAME
 // function instead of the module that happens to define Stage.
+//
+// fmtFloatWire below is the single source for the FLOAT-token half of this
+// format (task 0409 / 0407 D3): the exact same %g-plus-NaN/Inf-sentinel
+// logic used to be hand-duplicated three times — here, in argstring.d's
+// `_fmtFloat`, and in forms.d's `fmtFloatG` — kept in sync only by comments
+// pointing at each other ("to match argstring._fmtFloat"). Both of those are
+// now thin delegates to fmtFloatWire; stringifyParam's Float case uses it
+// directly instead of calling `format("%g", ...)` on its own.
 // ---------------------------------------------------------------------------
+
+/// Format a float value as its wire token: %g (6 significant digits) for
+/// finite values, textual sentinels for NaN/Inf. Single source for every
+/// float-token formatter in the codebase — see the section header above.
+/// Takes `double` so both a `float` (implicit widening is lossless, and
+/// produces byte-identical %g output to formatting the float directly — see
+/// the unittest below) and a `double` (e.g. unboxed from a JSONValue) can
+/// call it without a caller-side cast.
+string fmtFloatWire(double f)
+{
+    import std.math   : isNaN, isInfinity;
+    import std.format : format;
+    if (isNaN(f))      return "nan";
+    if (isInfinity(f)) return f > 0 ? "inf" : "-inf";
+    return format("%g", f);
+}
+
+unittest {
+    // fmtFloatWire — the exact value set task 0409 pins for byte-identity
+    // across argstring._fmtFloat / stringifyParam / forms.fmtFloatG.
+    assert(fmtFloatWire(0.0)              == "0");
+    assert(fmtFloatWire(1.0)              == "1");
+    assert(fmtFloatWire(-1.0)             == "-1");
+    assert(fmtFloatWire(0.5)              == "0.5");
+    assert(fmtFloatWire(1e-7)             == "1e-07");
+    assert(fmtFloatWire(-3.25)            == "-3.25");
+    assert(fmtFloatWire(1e20)             == "1e+20");
+    assert(fmtFloatWire(123456.789)       == "123457");  // %g rounds to 6 sig figs
+    assert(fmtFloatWire(cast(double)0.1f) == "0.1");
+
+    // NaN/Inf sentinels — the semantics argstring._fmtFloat's doc comment
+    // calls out as load-bearing for NaN-default params (e.g. widthR).
+    assert(fmtFloatWire(double.nan)       == "nan");
+    assert(fmtFloatWire(double.infinity)  == "inf");
+    assert(fmtFloatWire(-double.infinity) == "-inf");
+}
+
+unittest {
+    // float vs. double input produce identical tokens for every value in the
+    // pinned set — the premise that lets argstring._fmtFloat(float) delegate
+    // to this double-taking helper with no observable behaviour change
+    // (float->double widening is exact, and %g's rounding is a function of
+    // the real value, not the storage width — verified here rather than
+    // assumed).
+    immutable float[] vals = [0.0f, 1.0f, -1.0f, 0.5f, 1e-7f, -3.25f, 1e20f,
+                               123456.789f, 0.1f];
+    foreach (v; vals)
+        assert(fmtFloatWire(v) == fmtFloatWire(cast(double)v));
+}
 
 // Parse `value` per `p.kind` and write into the Param's typed pointer.
 // Returns false on parse failure (caller surfaces as "rejected attr").
@@ -700,7 +757,7 @@ string stringifyParam(ref Param p) {
     final switch (p.kind) {
         case Param.Kind.Bool:    return *p.bptr ? "true" : "false";
         case Param.Kind.Int:     return format("%d", *p.iptr);
-        case Param.Kind.Float:   return format("%g", *p.fptr);
+        case Param.Kind.Float:   return fmtFloatWire(*p.fptr);
         case Param.Kind.Enum:    return *p.sptr;
         case Param.Kind.IntEnum:
             foreach (ref ev; p.intEnumValues)
