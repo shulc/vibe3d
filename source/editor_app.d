@@ -330,27 +330,27 @@ alias EdgeCacheDg   = ref EdgeCache delegate();
 // reference the flat main()-locals directly).
 // ---------------------------------------------------------------------------
 struct Ai3dModalRefs {
-    private Ai3dModalState* ai3dModalPtr;
+    Ai3dModalState* ai3dModalPtr;
     @property ref Ai3dModalState ai3dModal() { return *ai3dModalPtr; }
-    private bool* ai3dModalOpenPtr;
+    bool* ai3dModalOpenPtr;
     @property ref bool ai3dModalOpen() { return *ai3dModalOpenPtr; }
-    private bool* ai3dModalPendingOpenPtr;
+    bool* ai3dModalPendingOpenPtr;
     @property ref bool ai3dModalPendingOpen() { return *ai3dModalPendingOpenPtr; }
-    private string* ai3dPickedImagePathPtr;
+    string* ai3dPickedImagePathPtr;
     @property ref string ai3dPickedImagePath() { return *ai3dPickedImagePathPtr; }
-    private char[256]* ai3dWorkerUrlBufPtr;
+    char[256]* ai3dWorkerUrlBufPtr;
     @property ref char[256] ai3dWorkerUrlBuf() { return *ai3dWorkerUrlBufPtr; }
 }
 
 /// Quad-remesh modal field cluster -- symmetric to Ai3dModalRefs above.
 struct RemeshModalRefs {
-    private bool* remeshModalOpenPtr;
+    bool* remeshModalOpenPtr;
     @property ref bool remeshModalOpen() { return *remeshModalOpenPtr; }
-    private bool* remeshModalPendingOpenPtr;
+    bool* remeshModalPendingOpenPtr;
     @property ref bool remeshModalPendingOpen() { return *remeshModalPendingOpenPtr; }
-    private string* remeshLastErrorPtr;
+    string* remeshLastErrorPtr;
     @property ref string remeshLastError() { return *remeshLastErrorPtr; }
-    private string* remeshLastSummaryPtr;
+    string* remeshLastSummaryPtr;
     @property ref string remeshLastSummary() { return *remeshLastSummaryPtr; }
 }
 
@@ -373,38 +373,57 @@ struct RemeshModalRefs {
 // ---------------------------------------------------------------------------
 struct EditorApp {
     // ---- (б) nested-accessor delegates: lazy, live-binding ----
+    // `mesh`/`vertexCache`/`faceCache`/`edgeCache` are ALWAYS called with an
+    // explicit `()` at their app.d call sites (mesh(), &mesh(), &vertexCache(),
+    // ...) so a plain delegate-typed field is verbatim: bare `mesh` never
+    // appears as a value-expression in either span (grep-verified).
     MeshDg        mesh;
-    ViewDg        cameraView;
     VertexCacheDg vertexCache;
     FaceCacheDg   faceCache;
     EdgeCacheDg   edgeCache;
 
+    // `cameraView` is DIFFERENT: in app.d it was a nested FUNCTION
+    // (`ref View cameraView() { ... }`), and D auto-invokes a bare
+    // (parenthesis-less) reference to a no-arg function in a value context
+    // -- so app.d's original code passes it bare hundreds of times
+    // (`new Xxx(&mesh(), cameraView, editMode, ...)`). A plain delegate
+    // FIELD does NOT get that auto-invoke treatment (a bare field reference
+    // yields the delegate value itself, not its result) -- this differs
+    // from `mesh` above only because `mesh` always carries an explicit `()`
+    // at its call sites. Backing it with a `@property ref View cameraView()`
+    // method instead (same pattern as gpu/editMode/document/reg below)
+    // restores the original auto-invoke semantics for every existing bare
+    // usage with ZERO span-text edits (caught by `dub build`, not by the
+    // plan's own scratch probes -- see task doc Log).
+    ViewDg cameraViewDg;
+    @property ref View cameraView() { return cameraViewDg(); }
+
     // ---- (а) pointer-backed core locals: address-taken in the spans
     //      (Edit-class 1: &x -> &x() at the call site) ----
-    private GpuMesh* gpuPtr;
+    GpuMesh* gpuPtr;
     @property ref GpuMesh gpu() { return *gpuPtr; }
-    private EditMode* editModePtr;
+    EditMode* editModePtr;
     @property ref EditMode editMode() { return *editModePtr; }
-    private Document* documentPtr;
+    Document* documentPtr;
     @property ref Document document() { return *documentPtr; }
-    private Registry* regPtr;
+    Registry* regPtr;
     @property ref Registry reg() { return *regPtr; }
 
     // ---- (а) pointer-backed critical locals: value-type mutated OR
     //      reassigned-reference read by Span B closures (silent-bug class
     //      #1/#2/#3/#4 the opponent caught -- see task doc) ----
-    private SubpatchPreview* subpatchPreviewPtr;
+    SubpatchPreview* subpatchPreviewPtr;
     @property ref SubpatchPreview subpatchPreview() { return *subpatchPreviewPtr; }
-    private Tool* activeToolPtr;
+    Tool* activeToolPtr;
     @property ref Tool activeTool() { return *activeToolPtr; }
-    private bool* runningPtr;
+    bool* runningPtr;
     @property ref bool running() { return *runningPtr; }
-    private bool* showHistoryPanelPtr;
+    bool* showHistoryPanelPtr;
     @property ref bool showHistoryPanel() { return *showHistoryPanelPtr; }
 
     // ---- (а) pointer-backed, wired AFTER the ToolHost block in main()
     //      (Span A precedes ToolHost's declaration and never touches it) ----
-    private ToolHost* toolHostPtr;
+    ToolHost* toolHostPtr;
     @property ref ToolHost toolHost() { return *toolHostPtr; }
 
     // ---- modal clusters (grouped sub-structs, see above) ----

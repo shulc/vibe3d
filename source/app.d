@@ -234,6 +234,11 @@ import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
 
 import command;
 import registry;
+// Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
+// host the command/tool factory registration moved out of main() below,
+// parameterized by the EditorApp ctx bag.
+import editor_app;
+import registration : registerTools, registerCommands;
 import shortcuts;
 import buttonset;
 import ai.debug_trace : latestHandleDebugTraceJson;
@@ -2558,21 +2563,10 @@ void main(string[] args) {
     // near runCommand) from drained immutable Ai3dEvent copies. The Phase 3
     // modal reads this to render health/progress/error without ever
     // touching the controller or its queue directly.
-    static struct Ai3dModalState {
-        bool   healthChecked;
-        bool   healthOk;
-        int    healthProtocol;
-        string healthBackend;
-        bool   healthObjCapable;
-        string healthMessage;
-
-        string jobId;
-        string state;    // ""|"submitted"|"queued"|"running"|"succeeded"|"failed"|"cancelled"
-        string stage;
-        double progress = 0;
-        string errorCode;
-        string errorMessage;
-    }
+    // (task 0415: Ai3dModalState relocated to editor_app.d -- a `static
+    // struct` nested in a function has no closure over enclosing state in D,
+    // so this is behavior-preserving; the type needs to be nameable from
+    // registration.d's EditorApp ctx bag. See editor_app.d's doc comment.)
     Ai3dModalState ai3dModal;
     // Modal open/popup-pending state (Phase 3) — mirrors ArgsDialog's
     // pendingOpen convention (source/args_dialog.d). Set by
@@ -2865,6 +2859,77 @@ void main(string[] args) {
     bool running = true;
 
     Registry reg;
+
+    // -------------------------------------------------------------------------
+    // EditorApp ctx assembly (task 0415, campaign 0407 §B.V1 step 1) -- every
+    // field below is wired from a main()-local declared above this point,
+    // except `toolHostPtr` (ToolHost is declared further down; its wiring
+    // sits right after the ToolHost block, before registerCommands(app) is
+    // called). Passed BY VALUE into registerTools/registerCommands, which
+    // open `with (app) { ... }` so the moved factory-registration text below
+    // reads verbatim. Full inventory + categorization rationale:
+    // doc/tasks/done/0415-registration-app-decomp.md.
+    // -------------------------------------------------------------------------
+    EditorApp app;
+    app.mesh        = cast(MeshDg)&mesh;
+    app.cameraViewDg = cast(ViewDg)&cameraView;
+    app.vertexCache = cast(VertexCacheDg)&vertexCache;
+    app.faceCache   = cast(FaceCacheDg)&faceCache;
+    app.edgeCache   = cast(EdgeCacheDg)&edgeCache;
+
+    app.gpuPtr      = &gpu;
+    app.editModePtr = &editMode;
+    app.documentPtr = &document;
+    app.regPtr      = &reg;
+
+    app.subpatchPreviewPtr  = &subpatchPreview;
+    app.activeToolPtr       = &activeTool;
+    app.runningPtr          = &running;
+    app.showHistoryPanelPtr = &showHistoryPanel;
+
+    app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
+    app.ai3dRefs.ai3dModalOpenPtr        = &ai3dModalOpen;
+    app.ai3dRefs.ai3dModalPendingOpenPtr = &ai3dModalPendingOpen;
+    app.ai3dRefs.ai3dPickedImagePathPtr  = &ai3dPickedImagePath;
+    app.ai3dRefs.ai3dWorkerUrlBufPtr     = &ai3dWorkerUrlBuf;
+
+    app.remeshRefs.remeshModalOpenPtr        = &remeshModalOpen;
+    app.remeshRefs.remeshModalPendingOpenPtr = &remeshModalPendingOpen;
+    app.remeshRefs.remeshLastErrorPtr        = &remeshLastError;
+    app.remeshRefs.remeshLastSummaryPtr      = &remeshLastSummary;
+
+    app.history         = history;
+    app.vpm             = vpm;
+    app.litShader       = litShader;
+    app.pipeGizmoHost   = pipeGizmoHost;
+    app.macroRecorder   = macroRecorder;
+    app.ai3dController  = ai3dController;
+    app.remeshJob       = remeshJob;
+    app.aiState         = aiState;
+    version (WithAI) app.copilotPanel = copilotPanel;
+    app.aiExplore       = aiExplore;
+    app.aiLogWriter     = aiLogWriter;
+
+    app.vxEditFactory            = vxEditFactory;
+    app.bevelEditFactory         = bevelEditFactory;
+    app.loopSliceEditFactory     = loopSliceEditFactory;
+    app.reduceEditFactory        = reduceEditFactory;
+    app.cloneEditFactory         = cloneEditFactory;
+    app.arrayEditFactory         = arrayEditFactory;
+    app.edgeExtrudeEditFactory   = edgeExtrudeEditFactory;
+    app.edgeExtendEditFactory    = edgeExtendEditFactory;
+    app.polyExtrudeEditFactory   = polyExtrudeEditFactory;
+    app.radialArrayEditFactory   = radialArrayEditFactory;
+    app.smoothShiftEditFactory   = smoothShiftEditFactory;
+    app.strokeExtrudeEditFactory = strokeExtrudeEditFactory;
+
+    app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
+    app.switchToItemType     = cast(void delegate())&switchToItemType;
+    app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
+    app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;
+    app.onActiveLayerChanged = onActiveLayerChanged;
+    app.resetAllPipeStages   = cast(void delegate())&resetAllPipeStages;
+
     // `move` / `rotate` / `scale` build XfrmTransformTool with the
     // matching T/R/S single-flag preset — they share one engine, like
     // the TransformMove / TransformRotate / TransformScale presets all
@@ -2873,495 +2938,10 @@ void main(string[] args) {
     // back the wrapper as sub-tools (composition) and will be
     // deleted in Step 6 once dependents (xfrm.softMove, xfrm.taper,
     // etc.) have moved off them.
-    reg.toolFactories["move"]   = () {
-        import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
-        t.flagT = true; t.flagR = false; t.flagS = false;
-        t.handleFamily = 0;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["rotate"] = () {
-        import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
-        t.flagT = false; t.flagR = true; t.flagS = false;
-        t.handleFamily = 1;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["scale"]  = () {
-        import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
-        t.flagT = false; t.flagR = false; t.flagS = true;
-        t.handleFamily = 2;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.transform"] = () {
-        import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.push"] = () {
-        auto t = new PushTool(() => &mesh(), &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.bend"] = () {
-        auto t = new BendTool(() => &mesh(), &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        return cast(Tool)t;
-    };
-    // Align deform-tools batch (task 0361) — same headless-attr-driven
-    // family as xfrm.push/xfrm.bend above (params()+applyHeadless() only,
-    // no gizmo drag; driven via `tool.attr ... ; tool.doApply` from the
-    // panel). Neutral tool ids per the task's public-repo naming rule.
-    reg.toolFactories["xfrm.linearAlignTool"] = () {
-        auto t = new LinearAlignTool(() => &mesh(), &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.radialAlignTool"] = () {
-        auto t = new RadialAlignTool(() => &mesh(), &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        return cast(Tool)t;
-    };
-    // Convolve sub-tools (Deform → Smooth / Jitter / Quantize) —
-    // exposed as tools so the side-panel buttons use the same
-    // `tool.set xfrm.smooth on` activation shape. The
-    // underlying math reuses MeshSmooth / MeshJitter / MeshQuantize
-    // (one-shot, not brush-interactive). Brush interactivity is a
-    // follow-up; the tool surface is the prerequisite.
-    reg.toolFactories["xfrm.smooth"] = () {
-        auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu,
-                                    &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.jitter"] = () {
-        auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu,
-                                    &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["edge.slide"] = () {
-        auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.quantize"] = () {
-        auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu,
-                                      &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["mesh.mirrorTool"] = () {
-        auto t = new MirrorTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["mesh.mirrorTool"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "mesh.mirrorTool", reg.toolFactories["mesh.mirrorTool"]);
-
-    // Radial Sweep — interactive revolve/lathe (task 0326), promoting the
-    // pre-existing `mesh.sweep` one-shot command to a drag/handle tool.
-    // Generator-preview architecture identical to mesh.mirrorTool above
-    // (own preview mesh, commits once at deactivate()); reuses the same
-    // generic bevelEditFactory/MeshSessionEdit snapshot-diff undo path.
-    // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
-    // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
-    // Extrude port, the natural claimant of the bare "sweep" name since it
-    // shares the same `Mesh.revolveProfile`/`revolveProfileEx` kernel.
-    reg.toolFactories["mesh.radialSweepTool"] = () {
-        auto t = new RadialSweepTool(() => &mesh(), &gpu, &editMode, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["mesh.radialSweepTool"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "mesh.radialSweepTool", reg.toolFactories["mesh.radialSweepTool"]);
-
-    // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
-    // mesh.mirrorTool block above: same generic MeshSessionEdit/bevelEditFactory
-    // undo path, same ToolHeadlessCommand one-shot wiring.
-    reg.toolFactories["mesh.tack"] = () {
-        auto t = new TackTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["mesh.tack"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "mesh.tack", reg.toolFactories["mesh.tack"]);
-
-    // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
-    // from the one-shot mesh.bridge command. Same generic MeshSessionEdit/
-    // bevelEditFactory undo path, same ToolHeadlessCommand one-shot wiring
-    // as Mirror/Tack above.
-    reg.toolFactories["mesh.bridgeTool"] = () {
-        auto t = new BridgeTool(() => &mesh(), &gpu, litShader, &editMode);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["mesh.bridgeTool"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "mesh.bridgeTool", reg.toolFactories["mesh.bridgeTool"]);
-
-    reg.toolFactories["prim.cube"] = () {
-        auto t = new BoxTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.cube"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.cube", reg.toolFactories["prim.cube"]);
-
-    reg.toolFactories["prim.sphere"] = () {
-        auto t = new SphereTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.sphere"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.sphere", reg.toolFactories["prim.sphere"]);
-
-    reg.toolFactories["prim.ellipsoid"] = () {
-        auto t = new SphereTool(() => &mesh(), &gpu, litShader, /*ellipsoidMode=*/true);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.ellipsoid"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.ellipsoid", reg.toolFactories["prim.ellipsoid"]);
-
-    reg.toolFactories["prim.cylinder"] = () {
-        auto t = new CylinderTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.cylinder"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.cylinder", reg.toolFactories["prim.cylinder"]);
-
-    reg.toolFactories["prim.tube"] = () {
-        auto t = new TubeTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.tube"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.tube", reg.toolFactories["prim.tube"]);
-
-    reg.toolFactories["prim.cone"] = () {
-        auto t = new ConeTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.cone"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.cone", reg.toolFactories["prim.cone"]);
-
-    reg.toolFactories["prim.capsule"] = () {
-        auto t = new CapsuleTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.capsule"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.capsule", reg.toolFactories["prim.capsule"]);
-
-    reg.toolFactories["prim.torus"] = () {
-        auto t = new TorusTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.torus"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.torus", reg.toolFactories["prim.torus"]);
-
-    reg.toolFactories["prim.arc"] = () {
-        auto t = new ArcTool(() => &mesh(), &gpu, litShader);
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    reg.commandFactories["prim.arc"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "prim.arc", reg.toolFactories["prim.arc"]);
-
-    // Pen has no headless path — interactive only. Tool factory
-    // only; no commandFactories entry. See doc/pen_plan.md.
-    reg.toolFactories["pen"] = () {
-        auto t = new PenTool(() => &mesh(), &gpu, litShader,
-                             &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Vertex placement — interactive only; one click = one isolated vertex.
-    // No commandFactories entry: headless geometry creation uses mesh.addVertex
-    // (task 0131).
-    reg.toolFactories["prim.vertex"] = () {
-        auto t = new VertexTool(() => &mesh(), &gpu, litShader,
-                                &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Drag Weld — drag a source vertex onto a target vertex to weld them.
-    // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
-    // entry per completed gesture. Gated to Vertices mode.
-    reg.toolFactories["mesh.dragWeld"] = () {
-        auto t = new DragWeldTool(() => &mesh(), &gpu, litShader,
-                                  &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Edge Extrude — interactive (drag → extrude/width) + headless
-    // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
-    // tool: own typed edit factory (MeshSessionEdit, not vxEditFactory),
-    // wired via the prim.cube registration template. Gated to Edges mode by
-    // EdgeExtrudeTool.supportedModes().
-    reg.toolFactories["edge.extrude"] = () {
-        auto t = new EdgeExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, edgeExtrudeEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Face Extrude — interactive (drag → distance along region normal) + headless
-    // (tool.attr poly.extrude distance <v>; tool.doApply). Topology-creating
-    // tool: own typed edit factory (MeshSessionEdit, snapshot-only undo).
-    // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
-    reg.toolFactories["poly.extrude"] = () {
-        auto t = new PolyExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, polyExtrudeEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Radial Array — interactive (angle-cube haul → End Angle; axis-arrow haul
-    // → Offset; off-handle click → reposition Center) + headless (tool.attr
-    // mesh.radialArrayTool count/axis/center/angle/offset/weld; tool.doApply).
-    // Reuses the shared Mesh.radialArrayFaces kernel (same-mesh clone
-    // insertion, no new layers) already exercised by the one-shot
-    // mesh.radial_array command. Topology-creating tool: own typed edit
-    // factory (MeshSessionEdit, snapshot-only undo).
-    reg.toolFactories["mesh.radialArrayTool"] = () {
-        auto t = new RadialArrayTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, radialArrayEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Stroke Extrude — interactive (click-drag draws a camera-raycast
-    // world-space path, selected polygons extrude along it in bands) +
-    // headless via the separate one-shot mesh.strokeExtrude command
-    // (explicit path-point param — the interactive tool itself has NO
-    // headless path, matching the captured reference finding). Task 0323,
-    // basic/captured scope. Topology-creating tool: own typed edit factory
-    // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode
-    // by StrokeExtrudeTool.supportedModes().
-    reg.toolFactories["tool.strokeExtrude"] = () {
-        auto t = new StrokeExtrudeTool(() => &mesh(), &gpu, litShader,
-                                       &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, strokeExtrudeEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Edge Extend — interactive (drag → world-axis Offset via the embedded
-    // transform gizmo's Move bank) + headless (tool.attr edge.extend offsetX...;
-    // tool.doApply). Topology-creating tool: own typed edit factory
-    // (MeshSessionEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
-    reg.toolFactories["edge.extend"] = () {
-        auto t = new EdgeExtendTool(() => &mesh(), &gpu, &editMode, litShader,
-                                    &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, edgeExtendEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return cast(Tool)t;
-    };
-
-    // Poly Bevel — interactive + headless (inset, shift params). Topology-creating
-    // tool: reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Polygons.
-    reg.toolFactories["poly.bevel"] = () {
-        auto t = new PolyBevelTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-    // Polygon Inset — interactive (task 0359 promotion of the one-shot
-    // mesh.poly_inset command). One attribute (inset), always per-polygon,
-    // no drawn gizmo (toolcard-confirmed) — a generic viewport click+drag
-    // hauls the value. Reuses the generic MeshSessionEdit/bevelEditFactory
-    // before/after-snapshot undo path, same as mesh.mirrorTool/mesh.tack
-    // above. Gated to Polygons.
-    reg.toolFactories["mesh.polyInsetTool"] = () {
-        auto t = new PolyInsetTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Smooth Shift + Thicken — interactive (2 handles: Offset, Scale) + headless
-    // (tool.attr mesh.smoothShiftTool shift/scale/maxAngle/thicken/sharp <v>;
-    // tool.doApply). Topology-creating tool: own typed edit factory
-    // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode by
-    // SmoothShiftTool.supportedModes(). The reference editor's Thicken toolbar
-    // button is confirmed (task 0358) to be THIS SAME tool with thicken=1
-    // forced, not a separate tool — see config/buttons.yaml.
-    reg.toolFactories["mesh.smoothShiftTool"] = () {
-        auto t = new SmoothShiftTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, smoothShiftEditFactory);
-        return cast(Tool)t;
-    };
-    reg.toolFactories["xfrm.magnet"] = () {
-        auto t = new MagnetTool(() => &mesh(), &gpu, &editMode,
-                                &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, vxEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Edge Bevel — interactive + headless (width param). Topology-creating tool:
-    // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.
-    reg.toolFactories["edge.bevel"] = () {
-        auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Vertex Bevel — interactive (task 0360 promotion of the one-shot
-    // mesh.vertexBevel command). Single-handle Inset, ACTR-anchored,
-    // mirrors EdgeBevelTool one element type down. Reuses bevelEditFactory
-    // (MeshSessionEdit snapshot undo) and the SAME id as the pre-existing
-    // one-shot command (reg.commandFactories["mesh.vertexBevel"] below,
-    // untouched) — separate registries, same precedent as poly.extrude/
-    // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
-    reg.toolFactories["mesh.vertexBevel"] = () {
-        auto t = new VertexBevelTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Vertex Extrude — interactive (task 0360 promotion of the one-shot
-    // mesh.vertexExtrude command). Two independent handles (Extrude/shift,
-    // Width) mirroring PolyBevelTool's Shift/Inset pair. Reuses
-    // bevelEditFactory (MeshSessionEdit snapshot undo); same id as the
-    // pre-existing one-shot command, separate registries (see
-    // mesh.vertexBevel above). Gated to Vertices mode.
-    reg.toolFactories["mesh.vertexExtrude"] = () {
-        auto t = new VertexExtrudeTool(() => &mesh(), &gpu, &editMode, litShader,
-                                       &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Vertex Merge — interactive (task 0360 promotion of the one-shot
-    // vert.merge command). No drawn handle — a generic viewport haul, same
-    // family as mesh.polyInsetTool. Reuses bevelEditFactory (MeshSessionEdit
-    // snapshot undo); same id as the pre-existing one-shot command (which
-    // keeps its own range/keep/morph params, untouched — see
-    // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
-    reg.toolFactories["vert.merge"] = () {
-        auto t = new VertexMergeTool(() => &mesh(), &gpu, &editMode, litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Loop Slice — hover-seeded interactive edge-loop cut. Topology-creating
-    // tool: reuses the SAME collectEdgeRing/insertEdgeLoops kernel as the
-    // mesh.loopSlice/mesh.addLoop commands (untouched); mutate/revert preview,
-    // one MeshSessionEdit undo entry PER committed cut. Gated to Edges mode.
-    reg.toolFactories["mesh.loopSliceTool"] = () {
-        auto t = new LoopSliceTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, loopSliceEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Slice (plane/line) — interactive Start→End line cut with a plane
-    // PERPENDICULAR to the work plane (mesh.sliceTool, task 0266 S0). Reuses
-    // Mesh.cutByPlane; one MeshSnapshot undo entry per committed slice
-    // (reuses the generic bevelEditFactory snapshot command, labelled "Slice").
-    // Distinct from the camera-plane one-shot mesh.screenSlice command.
-    reg.toolFactories["mesh.sliceTool"] = () {
-        auto t = new SliceTool(() => &mesh(), &gpu, &editMode, litShader,
-                               &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Edge Slice — interactive two-edge strip cut (mesh.edgeSliceTool):
-    // hover an edge -> click latches edge A + tA -> drag scrubs tA -> click a
-    // second edge latches edge B + tB and previews the cut live -> commit on
-    // Enter / tool-drop / a third click. Reuses the EXISTING
-    // Mesh.edgeSlice(edgeA, edgeB, tA, tB, splitPolygons) kernel; one
-    // MeshSessionEdit undo entry per committed cut (reuses the generic
-    // bevelEditFactory snapshot command, labelled "Edge Slice"). The one-shot
-    // mesh.edgeSlice command stays registered below for headless/scripting.
-    // Gated to Edges mode.
-    reg.toolFactories["mesh.edgeSliceTool"] = () {
-        auto t = new EdgeSliceTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, bevelEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Mesh Reduction — interactive + headless (ratio, preserveBoundary params).
-    // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshSessionEdit.
-    // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
-    reg.toolFactories["mesh.reduceTool"] = () {
-        auto t = new ReductionTool(() => &mesh(), &gpu, &editMode, litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, reduceEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Clone — interactive drag-place a single copy of the selection (offset
-    // by the drag delta on the most-facing screen plane).  Snapshot undo via
-    // MeshSessionEdit; gated to Polygons mode.  Drag→offset feel is a
-    // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
-    reg.toolFactories["mesh.clone"] = () {
-        auto t = new CloneTool(() => &mesh(), &gpu, &editMode,
-                               &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, cloneEditFactory);
-        return cast(Tool)t;
-    };
-
-    // Array — interactive 3-axis grid array (task 0355), promoting the
-    // one-shot mesh.array command's 1D line kernel to Mesh.arrayFacesGrid.
-    // Snapshot undo via MeshSessionEdit; edit-mode-orthogonal (same face-
-    // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
-    reg.toolFactories["mesh.arrayTool"] = () {
-        auto t = new ArrayTool(() => &mesh(), &gpu, &editMode,
-                               &vertexCache(), &edgeCache(), &faceCache());
-        t.setUndoBindings(history, arrayEditFactory);
-        return cast(Tool)t;
-    };
+    // Task 0415 Phase 1: former Span A (move/rotate/scale through the
+    // mesh.*Tool generator-preview family + prim.* + their paired
+    // ToolHeadlessCommand wrappers) now lives in registration.d.
+    registerTools(app);
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands
@@ -3391,6 +2971,10 @@ void main(string[] args) {
         setActiveTool(null);
         activeToolId = "";
     };
+    // task 0415 Phase 1: wire the ctx's toolHostPtr now that `toolHost` is
+    // fully assembled -- Span A (registerTools, above) never touches it;
+    // Span B below (registerCommands, Phase 2) does.
+    app.toolHostPtr = &toolHost;
 
     reg.commandFactories["tool.set"] = () => cast(Command)
         new ToolSetCommand(&mesh(), cameraView, editMode, toolHost);
