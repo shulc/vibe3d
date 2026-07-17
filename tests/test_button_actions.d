@@ -109,6 +109,19 @@ unittest {
     void checkButton(string ctx, ref const(Button) btn) {
         // Disabled placeholders skip resolution — same rule as the startup validator.
         if (btn.disabled) return;
+        // The ai.* master-switch (ai.toggle/enable/disable) buttons are registered
+        // only in a WithAI build with the copilot enabled (kCopilotEnabled, task
+        // 0422); app.d marks them disabled otherwise so the startup id-validator
+        // skips them. Mirror that here (this test loads raw YAML, before app.d's
+        // runtime disabling pass runs).
+        {
+            import ai.copilot_gate : kCopilotEnabled;
+            bool aiSwitchLive = false;
+            version (WithAI) { static if (kCopilotEnabled) aiSwitchLive = true; }
+            if (!aiSwitchLive && btn.action.kind == ActionKind.command
+                && btn.action.id.length >= 3 && btn.action.id[0 .. 3] == "ai.")
+                return;
+        }
         checkAction(ctx ~ "/" ~ btn.label, btn.action);
         if (btn.ctrl.present)  checkAction(ctx ~ "/" ~ btn.label ~ "/ctrl",  btn.ctrl.action);
         if (btn.alt.present)   checkAction(ctx ~ "/" ~ btn.label ~ "/alt",   btn.alt.action);
