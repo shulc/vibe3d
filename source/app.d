@@ -1829,8 +1829,17 @@ void main(string[] args) {
     // now-background owner from ever being re-uploaded).
     uint  displayEnsured_     = 0;
     Mesh* displayEnsuredMesh_ = null;
+    // A5 (post-gate fix): while the transform family drags, the VBO is
+    // tool-owned (baseline + live u_model) — re-uploading LIVE verts would
+    // double-apply the drag delta for any reader that renders with the tool
+    // matrix. Late-bound predicate (lifecycleRecordHook pattern: null until
+    // wired after `activeTool` is declared below); when it fires, readers
+    // keep the pre-bus mid-drag semantics (VBO as the tool left it) and the
+    // flags stay pending for the frame drain.
+    bool delegate() displayVboOwnedByTool_ = null;
     void ensureDisplayCurrent() {
         import display_sync : refreshDisplay, DisplayRefreshMask;
+        if (displayVboOwnedByTool_ !is null && displayVboOwnedByTool_()) return;
         Mesh* am = &mesh();
         if (displayEnsuredMesh_ !is am && displayEnsured_ != 0) {
             displayEnsuredMesh_.pendingChanges_ |= displayEnsured_;
@@ -2820,6 +2829,9 @@ void main(string[] args) {
 
     app.subpatchPreviewPtr  = &subpatchPreview;
     app.activeToolPtr       = &activeTool;
+    // A5: wire the guard's tool-owns-VBO predicate now that `activeTool`
+    // is lexically visible (the guard itself is declared far earlier).
+    displayVboOwnedByTool_  = () => activeTool !is null && activeTool.isDragging();
     app.runningPtr          = &running;
     app.showHistoryPanelPtr = &showHistoryPanel;
 
@@ -7892,7 +7904,18 @@ void main(string[] args) {
             {
                 import display_sync : DisplayRefreshMask;
                 const uint activeFlags = mesh.pendingChanges_;
-                if (activeFlags & DisplayRefreshMask)
+                // A5 (post-gate fix): mid-gesture the transform family owns
+                // the VBO — baseline verts with the live drag delta applied
+                // via u_model on top (per-frame edits publish Position while
+                // the tool draws matrix-composed). A full upload here would
+                // bake LIVE verts under a LIVE matrix and double-apply the
+                // delta (gpu_fold_parity / far_pivot_fold / chained_drag).
+                // Skip while dragging: only XfrmTransformTool overrides
+                // isDragging, and its mouseUp bake + commit publish resync
+                // the VBO at gesture end. Flags still drain to subscribers.
+                const bool toolOwnsVbo =
+                    activeTool !is null && activeTool.isDragging();
+                if ((activeFlags & DisplayRefreshMask) && !toolOwnsVbo)
                     gpu.upload(mesh);
             }
 
