@@ -62,6 +62,7 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
+import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
@@ -93,7 +94,7 @@ alias PrimitiveEditFactory = MeshSessionEdit delegate();
 // adds those) — draw()'s default handle rig is mover-only, matching
 // TubeTool's id scheme (arrowX/Y/Z=0/1/2, centerBox=10).
 // ---------------------------------------------------------------------------
-abstract class PrimitiveCreateTool : Tool {
+abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel {
 protected:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -325,9 +326,42 @@ public:
     // see the hook doc above. cancelUncommittedEdit/resyncSession both drop
     // to Idle: Category B preview-only cancel (the scene mesh is untouched
     // until commit), and no scene-mesh baseline is cached to resync from.
+    // Since task 0430 (keep-alive below) the post-cancel/post-resync state
+    // is LIVED-IN rather than a stop on the way to deactivate(), so both
+    // paths also sanitize the transient interaction state back to
+    // fresh-armed — see cancelToIdle().
     public override bool hasUncommittedEdit() const { return willCommit(); }
-    public override void cancelUncommittedEdit() { goIdle(); }
-    public override void resyncSession()         { goIdle(); }
+    public override void cancelUncommittedEdit() { cancelToIdle(); }
+    public override void resyncSession()         { cancelToIdle(); }
+
+    // KeepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2):
+    // an interactive undo that cancels the open create gesture leaves the
+    // tool armed for a fresh gesture instead of dropping it; the NEXT
+    // navigate() finds no open edit and steps prior history. Unconditional
+    // `true` — no `active` guard, unlike the slices' overrides: EditSession
+    // consults this only by cast on the ACTIVE tool (its tool_() delegate),
+    // so the guard would be dead here; the slices need theirs because of
+    // the cross-activation state they keep across tool switches.
+    public override bool survivesEditCancel() const { return true; }
+
+    // Full-cancel sanitization (task 0430 D3): with keep-alive, the state
+    // after a cancel/resync must equal fresh-armed (activate()) for every
+    // interaction field — a Ctrl+Z is reachable mid-drag (willCommit() is
+    // true while LMB is held), and a redo can reach resyncSession() on a
+    // live edit. Mirrors activate() minus previewGpu.init(); previewGpu is
+    // deliberately NOT touched (draw() Idle-gates the preview,
+    // rebuildPreview() clears before upload, destroy stays in
+    // deactivate()). The lastSnap drop mirrors deactivate()'s overlay drop
+    // so a cancelled gesture's snap overlay doesn't linger on the armed
+    // tool.
+    private void cancelToIdle() {
+        goIdle();
+        moverDragAxis = -1;
+        resetSession();
+        toolHandles.clearHaul();
+        lastSnap = SnapResult.init;
+        clearLastSnap();
+    }
 
     // ----- Shared helpers (protected — used by every leaf-group's own or ---
     // -----  inherited event handlers) --------------------------------------

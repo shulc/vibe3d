@@ -16,9 +16,10 @@
 //      including once hasUncommittedEdit() becomes true at HeightSet (no
 //      undo entries are created by any stage -- OuterSet, HeightSet, or
 //      InnerSet -- or by a live property edit); a Ctrl+Z pressed DURING an
-//      uncommitted session (HeightSet onward) cancels the tool outright
-//      instead of peeling a step; drop creates exactly one entry; post-drop
-//      undo clears it.
+//      uncommitted session (HeightSet onward) cancels the whole live edit
+//      outright instead of peeling a step, keeping the tool armed (task
+//      0430 keep-alive, reference-measured); drop creates exactly one
+//      entry; post-drop undo clears it.
 
 import std.conv : to;
 import std.json;
@@ -312,16 +313,20 @@ unittest { // Undo ladder: preview-only through every stage; commit happens at d
     assert(undoLen() == 0, "inner-radius construction is still preview-only, no undo entry yet");
 
     // hasUncommittedEdit() (== willCommit()) has been true since HeightSet
-    // (outerRadius>1e-5 && height>1e-5), so a single Ctrl+Z here cancels the
-    // WHOLE tool -- PrimitiveCreateTool has no per-gesture in-session
-    // recording to peel (that is a box.d-specific feature, never inherited
-    // here). No commit ever happened, so there is nothing in /api/history
-    // and nothing in the scene mesh either.
+    // (outerRadius>1e-5 && height>1e-5), so a single Ctrl+Z here cancels
+    // the whole live edit in one step -- PrimitiveCreateTool has no
+    // per-gesture in-session recording to peel (that is a box.d-specific
+    // feature, never inherited here). No commit ever happened, so there is
+    // nothing in /api/history and nothing in the scene mesh either. Since
+    // task 0430 (keep-alive, reference-measured) the cancel no longer
+    // drops the tool: it stays armed for a fresh gesture.
     playCtrlZ();
-    assert(!activeQueryOk(), "Ctrl+Z mid-session should deactivate " ~ TOOL);
+    assert(activeQueryOk(), "Ctrl+Z mid-session must cancel the edit but keep " ~ TOOL ~ " armed");
+    // A REAL deactivate on the now-live Idle tool: willCommit() is false,
+    // so it commits nothing and records nothing.
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == 0, "cancelled tube tool should leave no history entry");
-    assert(vertCount() == 0, "cancelled tube tool should leave no pending geometry");
+    assert(undoLen() == 0, "cancelled tube edit should leave no history entry");
+    assert(vertCount() == 0, "cancelled tube edit should leave no pending geometry");
 
     // Redo the full sequence, then confirm drop collapses the whole preview
     // session (construction stages + a live property edit) into ONE entry.

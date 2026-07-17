@@ -5,6 +5,7 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
+import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles;
@@ -1839,7 +1840,7 @@ private __gshared View gBoxLiveEditView;
 // (the local<->world transforms, worldAxisIdxOf, the Idle-state snap-
 // preview shape) — see task 0418 for the full field/method comparison.
 // ---------------------------------------------------------------------------
-class BoxTool : Tool {
+class BoxTool : Tool, KeepAliveOnCancel {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -2018,9 +2019,24 @@ public:
             || (state >= BoxState.DrawingHeight && abs(currentHeight()) > 1e-5f);
     }
 
-    // Category B cancel — preview-only reset (the RMB body :1948). Box builds a
-    // separate previewMesh/previewGpu; the scene mesh is never touched until
-    // commit, so dropping back to Idle discards the whole live edit.
+    // KeepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2 on
+    // this very tool): the interactive-undo cancel (a ladder step or the
+    // final wipe below) leaves the tool armed instead of dropping it; the
+    // press after the wipe steps prior history. Unconditional `true` — no
+    // `active` guard: EditSession consults this only by cast on the ACTIVE
+    // tool (see PrimitiveCreateTool's identical note).
+    public override bool survivesEditCancel() const { return true; }
+
+    // Category B cancel — preview-only reset (the RMB body in
+    // onMouseButtonDown). Box builds a separate previewMesh/previewGpu; the
+    // scene mesh is never touched until commit, so dropping back to Idle
+    // discards the whole live edit. The FIRST branch is the interactive
+    // undo LADDER (task 0414): one recorded live step popped per press,
+    // early return, session kept — everything else about it stays live, so
+    // NO sanitization there. Only the fall-through wipe is a full cancel,
+    // and with keep-alive (task 0430) the post-wipe state is lived-in
+    // rather than a stop on the way to deactivate(), so it also sanitizes
+    // the transient drag state back to fresh-armed.
     public override void cancelUncommittedEdit() {
         if (history !is null && liveRunActive && liveUndoDepth > 0) {
             if (history.undo())
@@ -2028,16 +2044,20 @@ public:
         }
         state = BoxState.Idle;
         clearLiveEditTracking();
+        resetTransientDragState();
     }
 
     // Resync after a committed undo/redo moved geometry beneath the active tool
     // (undo/redo migration P1). Box builds a SEPARATE previewMesh from `state`
     // each frame and caches no scene-mesh baseline, so nothing needs re-capture;
     // the only safe action is to drop a half-drawn primitive (an in-progress
-    // draw can't survive an external topology change), so reset to Idle.
+    // draw can't survive an external topology change), so reset to Idle —
+    // and, since keep-alive (task 0430) makes this a lived-in state on a
+    // still-armed tool, sanitize the transient drag state too.
     public override void resyncSession() {
         if (liveRunActive) return;
         state = BoxState.Idle;
+        resetTransientDragState();
     }
 
     private void commitBoxEdit(MeshSnapshot pre) {
@@ -2653,6 +2673,24 @@ private:
         liveUndoDepth = 0;
         dragBeforeValid = false;
         paramBeforeValid = false;
+    }
+
+    // Full-cancel sanitization (task 0430 D3) — called ONLY from the wipe
+    // branch of cancelUncommittedEdit() and from resyncSession(), never
+    // from the ladder branch (a peeled ladder step keeps its live session,
+    // including any in-progress handle-drag arbitration). With keep-alive
+    // the post-wipe state is lived-in, so it must equal fresh-armed
+    // (activate()) for every interaction field; previewGpu is deliberately
+    // NOT touched (draw() Idle-gates it, destroy stays in deactivate()).
+    // The lastSnap drop mirrors deactivate()'s overlay drop so a cancelled
+    // gesture's snap overlay doesn't linger on the armed tool.
+    void resetTransientDragState() {
+        moverDragAxis  = -1;
+        edgeDragIdx    = -1;
+        heightHDragIdx = -1;
+        toolHandles.clearHaul();
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     void ensureLiveRun() {

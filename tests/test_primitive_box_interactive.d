@@ -3,7 +3,9 @@
 //   2. second click+drag creates height,
 //   3. viewport handles can edit the live box,
 //   4. Tool Properties / tool.attr edits update live parameters,
-//   5. Ctrl+Z steps active live edits and drop collapses history.
+//   5. Ctrl+Z steps active live edits and drop collapses history; once the
+//      ladder empties, the wipe press cancels the unrecorded base floor and
+//      keeps the tool armed (task 0430 keep-alive, reference-measured).
 
 import std.conv : to;
 import std.format : format;
@@ -597,7 +599,11 @@ unittest { // Height snap aligns the top face to the snap target's level
     cmd("tool.set prim.cube off");
 }
 
-unittest { // Box Ctrl+Z ladder: height -> base -> no pending box
+unittest { // Box Ctrl+Z ladder: height -> base wipe (tool stays armed) -> no pending box
+    // Pins the LADDER + WIPE steps in ISOLATION (empty history). The
+    // composition with PRIOR committed history -- wipe not leaking into it,
+    // the press after the wipe stepping it, the fresh re-gesture -- is the
+    // dedicated keep-alive unittest below.
     resetForBox();
 
     int cx, cy;
@@ -617,14 +623,87 @@ unittest { // Box Ctrl+Z ladder: height -> base -> no pending box
         "first Ctrl+Z should remove height and restore the base");
     assert(undoLen() == 0, "height undo should leave no active history entry");
 
+    // The ladder is empty, so this press is the WIPE: it cancels the
+    // unrecorded base floor. Since task 0430 (keep-alive,
+    // reference-measured) the wipe keeps the tool armed instead of
+    // dropping it.
     playCtrlZ();
-    assert(!activeBoxQueryOk(),
-        "second Ctrl+Z should also deactivate prim.cube");
+    assert(activeBoxQueryOk(),
+        "second Ctrl+Z should wipe the base but keep prim.cube armed");
+    // A REAL deactivate on the now-live Idle tool: willCommit is false, so
+    // it commits nothing and records nothing.
     cmd("tool.set prim.cube off");
     assert(undoLen() == 0,
         "second Ctrl+Z should cancel the base without creating history");
     assert(vertCount() == 0,
         "second Ctrl+Z should leave no pending box to commit on tool drop");
+}
+
+unittest { // Keep-alive x ladder composition (task 0430): ladder -> wipe -> prior history -> fresh gesture
+    // Composes the in-session undo LADDER with keep-alive and PRIOR
+    // committed history -- the intent split with the ladder unittest above:
+    // that one pins the ladder/wipe steps in isolation (empty history);
+    // this one pins that the wipe press does NOT leak into prior history,
+    // that the press AFTER the wipe steps prior history on the still-live
+    // tool, and that a fresh gesture re-arms cleanly. Redo after the wipe
+    // is deliberately NOT pressed here (pre-existing consolidation corner,
+    // task 0430 risk R4 / follow-up CQ6).
+    resetForBox();
+
+    // Prior history: one full committed box cycle.
+    int cx, cy;
+    projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    dragPixels(cx, cy, cx, cy - 100);
+    cmd("tool.set prim.cube off");
+    assert(undoLen() == 1, "prior cycle should commit exactly one box entry");
+    long v1 = vertCount();
+    assert(v1 > 0, "prior cycle should commit box geometry");
+
+    // Re-arm; base + height -> one live in-session record on top
+    // (/api/history counts in-session records -- see the ladder tests
+    // above; the base-construction drag itself records nothing).
+    cmd("tool.set prim.cube");
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    auto f = boxFrame();
+    dragPixels(cx, cy, cx, cy - 100);
+    assert(sizeAlong(f.planeNormal) > 0.25, "height drag should create height");
+    assert(undoLen() == 2, "1 committed + 1 live in-session record expected");
+
+    // Ctrl+Z #1 -- LADDER: pops the height record only (pre-existing 0414
+    // behavior; the tool was alive here even before keep-alive).
+    playCtrlZ();
+    assert(activeBoxQueryOk(), "ladder press must keep prim.cube armed");
+    assert(approx(sizeAlong(f.planeNormal), 0.0, 1e-3),
+        "ladder press should restore the flat base");
+    assert(undoLen() == 1, "ladder press should pop only the live record");
+
+    // Ctrl+Z #2 -- WIPE: cancels the unrecorded base floor. The tool stays
+    // armed (task 0430 keep-alive -- this press used to drop it), and
+    // prior history is NOT touched (the wipe pops nothing).
+    playCtrlZ();
+    assert(activeBoxQueryOk(), "wipe press must keep prim.cube armed (keep-alive)");
+    assert(undoLen() == 1, "wipe press must not touch prior history");
+    assert(vertCount() == v1, "wipe press must not touch committed geometry");
+
+    // Ctrl+Z #3 -- no open edit left: the same navigate() call falls
+    // through to a plain history.undo() + resyncSession() on the LIVE
+    // tool, popping the prior committed box.
+    playCtrlZ();
+    assert(activeBoxQueryOk(), "history-stepping press must keep prim.cube armed");
+    assert(undoLen() == 0, "third press should pop the prior committed entry");
+    assert(vertCount() == 0, "third press should remove the prior committed box");
+
+    // Fresh drag re-gestures a NEW flat base. This discriminates a real
+    // wipe-to-Idle from a leaked BaseSet: had the wiped session leaked,
+    // this same drag would be interpreted as a HEIGHT drag instead.
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    assert(approx(sizeAlong(f.planeNormal), 0.0, 1e-3),
+        "fresh drag after the wipe must open a NEW flat base");
+    assert(undoLen() == 0, "the fresh base gesture records no in-session step");
+    cmd("tool.set prim.cube off");
+    assert(undoLen() == 1, "dropping the re-gestured base should commit exactly one entry");
+    assert(vertCount() == 4, "base-only commit should land the 4-vertex base quad");
 }
 
 // ---------------------------------------------------------------------------

@@ -306,7 +306,7 @@ unittest { // Tool Properties (tool.attr) round-trip for every param
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // Undo ladder: preview stays at 0 entries; mid-session Ctrl+Z cancels the tool
+unittest { // Undo ladder: preview stays at 0 entries; mid-session Ctrl+Z cancels the edit, tool stays armed
     resetForTorus();
 
     int cx, cy;
@@ -319,16 +319,20 @@ unittest { // Undo ladder: preview stays at 0 entries; mid-session Ctrl+Z cancel
     assert(undoLen() == 0, "minor-thickness construction is still preview-only, no undo entry yet");
 
     // willCommit() has been true (unconditionally) since MajorSet, so a
-    // single Ctrl+Z here cancels the WHOLE tool -- PrimitiveCreateTool has
-    // no per-gesture in-session recording to peel back to the MajorSet-
-    // seeded baseline (that is a box.d-specific feature, never inherited
-    // here; see tool.d's hasUncommittedEdit()/cancelUncommittedEdit() and
-    // app.d's navHistory()).
+    // single Ctrl+Z here cancels the whole live edit in one step --
+    // PrimitiveCreateTool has no per-gesture in-session recording to peel
+    // back to the MajorSet-seeded baseline (that is a box.d-specific
+    // feature, never inherited here; see tool.d's hasUncommittedEdit()/
+    // cancelUncommittedEdit() and edit_session.d's navigate()). Since task
+    // 0430 (keep-alive, reference-measured) the cancel no longer drops the
+    // tool: it stays armed for a fresh gesture.
     playCtrlZ();
-    assert(!activeQueryOk(), "Ctrl+Z mid-session should deactivate " ~ TOOL);
+    assert(activeQueryOk(), "Ctrl+Z mid-session must cancel the edit but keep " ~ TOOL ~ " armed");
+    // A REAL deactivate on the now-live Idle tool: willCommit() is false,
+    // so it commits nothing and records nothing.
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == 0, "cancelled torus tool should leave no history entry");
-    assert(vertCount() == 0, "cancelled torus tool should leave no pending geometry");
+    assert(undoLen() == 0, "cancelled torus edit should leave no history entry");
+    assert(vertCount() == 0, "cancelled torus edit should leave no pending geometry");
     // NB: the degenerate-minor commit guard (MajorSet, minorRadius driven to 0
     // via a live size-handle drag) is exercised by the dedicated unittest
     // below. The earlier "zero-motion minor drag" attempt at a MinorSet

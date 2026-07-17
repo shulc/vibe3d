@@ -405,7 +405,7 @@ unittest { // Undo ladder: preview-only through the whole session; commit happen
     assert(vertCount() == 0, "post-drop Ctrl+Z should remove the committed sphere");
 }
 
-unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet baseline
+unittest { // Mid-session Ctrl+Z cancels the whole edit outright (tool stays armed), even at the bare BaseSet baseline
     resetForSphere();
 
     int cx, cy;
@@ -417,12 +417,17 @@ unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet base
 
     // willCommit() is unconditionally true at BaseSet (a flat disk is
     // already a committable primitive) -- so even here, without ever
-    // starting the height drag, a single Ctrl+Z press cancels the WHOLE
-    // tool (PrimitiveCreateTool has no per-gesture in-session recording to
-    // peel one step at a time -- see tool.d's hasUncommittedEdit()/
-    // cancelUncommittedEdit() and app.d's navHistory()).
+    // starting the height drag, a single Ctrl+Z press cancels the whole
+    // live edit in one step (PrimitiveCreateTool has no per-gesture
+    // in-session recording to peel one step at a time -- see tool.d's
+    // hasUncommittedEdit()/cancelUncommittedEdit() and edit_session.d's
+    // navigate()). Since task 0430 (keep-alive, reference-measured) the
+    // cancel no longer drops the tool: it stays armed for a fresh gesture.
     playCtrlZ();
-    assert(!activeQueryOk(), "Ctrl+Z at the bare BaseSet baseline should deactivate " ~ TOOL);
+    assert(activeQueryOk(),
+        "Ctrl+Z at the bare BaseSet baseline must cancel the edit but keep " ~ TOOL ~ " armed");
+    // A REAL deactivate on the now-live Idle tool: willCommit() is false,
+    // so it commits nothing and records nothing.
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelling at BaseSet should leave no history entry");
     assert(vertCount() == 0, "cancelling at BaseSet should leave no pending sphere to commit");

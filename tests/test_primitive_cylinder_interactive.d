@@ -15,9 +15,11 @@
 //   5. Undo ladder: the whole construction/edit session is preview-only
 //      (no undo entries from any stage or from live property edits);
 //      dropping the tool creates exactly one "Create Cylinder" entry;
-//      a Ctrl+Z pressed DURING an uncommitted session cancels the tool
-//      outright (no commit, no undo entry) instead of peeling a step;
-//      undo after drop removes the whole committed primitive.
+//      a Ctrl+Z pressed DURING an uncommitted session cancels the whole
+//      live edit outright (no commit, no undo entry) instead of peeling a
+//      step, and keeps the tool armed for a fresh gesture (task 0430
+//      keep-alive, reference-measured); undo after drop removes the whole
+//      committed primitive.
 
 import std.conv : to;
 import std.json;
@@ -386,7 +388,7 @@ unittest { // Undo ladder: preview-only through the whole session; commit happen
     assert(vertCount() == 0, "post-drop Ctrl+Z should remove the committed cylinder");
 }
 
-unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet baseline
+unittest { // Mid-session Ctrl+Z cancels the whole edit outright (tool stays armed), even at the bare BaseSet baseline
     resetForCylinder();
 
     int cx, cy;
@@ -398,15 +400,78 @@ unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet base
 
     // willCommit() is unconditionally true at BaseSet (a flat disk is
     // already a committable primitive) -- so even here, without ever
-    // starting the height drag, a single Ctrl+Z press cancels the WHOLE
-    // tool (PrimitiveCreateTool has no per-gesture in-session recording to
-    // peel one step at a time -- see tool.d's hasUncommittedEdit()/
-    // cancelUncommittedEdit() and app.d's navHistory()).
+    // starting the height drag, a single Ctrl+Z press cancels the whole
+    // live edit in one step (PrimitiveCreateTool has no per-gesture
+    // in-session recording to peel one step at a time -- see tool.d's
+    // hasUncommittedEdit()/cancelUncommittedEdit() and edit_session.d's
+    // navigate()). Since task 0430 (keep-alive, reference-measured) the
+    // cancel no longer drops the tool: it stays armed for a fresh gesture.
     playCtrlZ();
-    assert(!activeQueryOk(), "Ctrl+Z at the bare BaseSet baseline should deactivate " ~ TOOL);
+    assert(activeQueryOk(),
+        "Ctrl+Z at the bare BaseSet baseline must cancel the edit but keep " ~ TOOL ~ " armed");
+    // A REAL deactivate on the now-live Idle tool: willCommit() is false,
+    // so it commits nothing and records nothing.
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelling at BaseSet should leave no history entry");
     assert(vertCount() == 0, "cancelling at BaseSet should leave no pending cylinder to commit");
+}
+
+unittest { // Keep-alive composition (task 0430, capture-measured): cancel -> prior history -> fresh gesture
+    // The full measured press sequence: with PRIOR committed history and an
+    // open create edit, Ctrl+Z #1 cancels ONLY the open edit (the press is
+    // consumed by navigate()'s cancel branch: tool armed, prior history
+    // untouched); Ctrl+Z #2 steps the prior history on the still-live
+    // tool; a fresh drag then opens a new gesture cleanly. One press fewer
+    // than the reference's count to prior history -- vibe3d has no
+    // tool-state undo records to no-op through (documented press-mapping
+    // divergence, task 0430 D2).
+    resetForCylinder();
+
+    // Prior history: one full committed cylinder cycle.
+    int cx, cy;
+    projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    dragPixels(cx, cy, cx, cy - 100);
+    cmd("tool.set " ~ TOOL ~ " off");
+    assert(undoLen() == 1, "prior cycle should commit exactly one entry");
+    long v1 = vertCount();
+    assert(v1 > 0, "prior cycle should commit mesh geometry");
+
+    // Re-arm and open a new uncommitted edit (flat base -- preview-only).
+    cmd("tool.set " ~ TOOL);
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    assert(undoLen() == 1, "an open preview-only edit must not add history entries");
+
+    // Ctrl+Z #1: cancels ONLY the open edit; the tool survives (keep-alive)
+    // and prior history / committed geometry are untouched.
+    playCtrlZ();
+    assert(activeQueryOk(), "Ctrl+Z #1 must keep " ~ TOOL ~ " armed (keep-alive)");
+    assert(undoLen() == 1, "Ctrl+Z #1 must not touch prior history");
+    assert(vertCount() == v1, "Ctrl+Z #1 must not touch committed geometry");
+
+    // Ctrl+Z #2: no open edit left -> the same navigate() call falls
+    // through to a plain history.undo() + resyncSession() on the LIVE tool.
+    playCtrlZ();
+    assert(activeQueryOk(), "Ctrl+Z #2 must keep " ~ TOOL ~ " armed while stepping history");
+    assert(undoLen() == 0, "Ctrl+Z #2 should pop the prior committed entry");
+    assert(vertCount() == 0, "Ctrl+Z #2 should remove the prior committed cylinder");
+
+    // Fresh drag: a brand-new BASE gesture. This discriminates a real
+    // reset-to-Idle from a leaked BaseSet: had the cancelled session
+    // leaked, this same drag would be interpreted as a HEIGHT drag and
+    // grow sizeAlong(normal).
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    auto f = planeFrame();
+    assert(approx(sizeAlong(f.normal), 0.0),
+        "fresh drag after keep-alive must open a NEW flat base, not extrude the cancelled one");
+    assert(qf("sizeX") > 0.25,
+        "fresh drag should build a real base (live attr reads on the kept-alive tool)");
+    assert(undoLen() == 0, "the fresh gesture is preview-only -- still no history entries");
+
+    // Commit-at-deactivate (task 0414) is intact on the re-gestured session.
+    cmd("tool.set " ~ TOOL ~ " off");
+    assert(undoLen() == 1, "dropping the re-gestured base should commit exactly one entry");
+    assert(vertCount() > 0, "dropping the re-gestured base should commit geometry");
 }
 
 unittest { // Winding regression (task 0424): Z-dominant "front" camera must
