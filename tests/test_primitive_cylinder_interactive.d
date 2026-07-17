@@ -191,6 +191,73 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
     dragPixels(x0, y0, x1, y1, steps);
 }
 
+// ---------------------------------------------------------------------------
+// Winding regression (task 0424): pickMostFacingPlane's X-dominant and
+// Z-dominant camera cases (create_common.d) both return a LEFT-handed basis
+// triple (det(frame.toWorld upper-left 3x3) = -1) -- transforming the
+// builders' fixed local-space CCW winding through that frame mirrors every
+// new face's normal to point inward. Every unittest above uses the oblique
+// Y-dominant camera from resetForCylinder() (azimuth=0.4, elevation=1.1),
+// which always lands on pickMostFacingPlane's Y-dominant case (det=+1) and
+// so never exercised this. resetForCylinderFrontCam() below swaps in a
+// near-dead-on "front" camera (azimuth/elevation close to 0) that stays
+// safely Z-dominant while avoiding the exact az=0/el=0 degenerate case
+// (where the height-drag auxiliary plane's in-plane residual is exactly
+// zero -- see setupHeightPlane() in primitive_create_tool.d).
+// ---------------------------------------------------------------------------
+
+void resetForCylinderFrontCam() {
+    auto r = postJson("/api/reset?empty=true", "");
+    assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
+    cmd("history.clear");
+    r = postJson("/api/camera",
+        `{"azimuth":0.08,"elevation":0.08,"distance":4.0,"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera set failed: " ~ r.toString);
+    cmd("tool.set " ~ TOOL);
+    // Same sticky-param pin as resetForCylinder() -- see its comment above.
+    cmd("tool.attr " ~ TOOL ~ " sides 24");
+    cmd("tool.attr " ~ TOOL ~ " segments 1");
+    cmd("tool.attr " ~ TOOL ~ " axis 1");
+}
+
+// JSON-model geometry helpers -- same Newell-normal formula as
+// tests/test_edge_bevel.d's faceNormal()/faceCentroid(), reimplemented here
+// against drag_helpers.Vec3 (this file already pulls that in for camera/drag
+// math) rather than that file's own double-precision V3.
+Vec3 vert(JSONValue m, size_t i) {
+    auto a = m["vertices"].array[i].array;
+    return Vec3(cast(float)a[0].floating, cast(float)a[1].floating, cast(float)a[2].floating);
+}
+
+Vec3 meshCentroid(JSONValue m) {
+    size_t n = m["vertices"].array.length;
+    Vec3 c = Vec3(0, 0, 0);
+    foreach (i; 0 .. n) c = c + vert(m, i);
+    return c / cast(float)n;
+}
+
+Vec3 faceCentroid(JSONValue m, JSONValue faceArr) {
+    auto idx = faceArr.array;
+    Vec3 c = Vec3(0, 0, 0);
+    foreach (k; 0 .. idx.length) c = c + vert(m, cast(size_t)idx[k].integer);
+    return c / cast(float)idx.length;
+}
+
+// Newell face normal (not normalized).
+Vec3 faceNormal(JSONValue m, JSONValue faceArr) {
+    auto idx = faceArr.array;
+    auto n   = idx.length;
+    Vec3 nm = Vec3(0, 0, 0);
+    foreach (k; 0 .. n) {
+        auto vi = vert(m, cast(size_t)idx[k].integer);
+        auto vj = vert(m, cast(size_t)idx[(k + 1) % n].integer);
+        nm.x += (vi.y - vj.y) * (vi.z + vj.z);
+        nm.y += (vi.z - vj.z) * (vi.x + vj.x);
+        nm.z += (vi.x - vj.x) * (vi.y + vj.y);
+    }
+    return nm;
+}
+
 unittest { // Two-stage construction drag: flat disk, then extruded cylinder
     resetForCylinder();
 
@@ -340,4 +407,37 @@ unittest { // Mid-session Ctrl+Z cancels outright, even at the bare BaseSet base
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == 0, "cancelling at BaseSet should leave no history entry");
     assert(vertCount() == 0, "cancelling at BaseSet should leave no pending cylinder to commit");
+}
+
+unittest { // Winding regression (task 0424): Z-dominant "front" camera must
+           // still commit an outward-wound cylinder, matching BoxTool's
+           // pre-existing left-handed-frame correction.
+    resetForCylinderFrontCam();
+
+    int cx, cy;
+    projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
+    dragPixels(cx, cy, cx + 150, cy + 140);   // Stage 1: flat base ellipse
+    dragPixels(cx, cy, cx, cy - 100);          // Stage 2: extrude height
+    cmd("tool.set " ~ TOOL ~ " off");
+
+    // Same default sides=24/segments=1 as the Y-camera construction-drag
+    // test above -> identical committed topology (48 verts / 26 faces) when
+    // the drag succeeds; only the camera differs, isolating the winding
+    // regression from any geometry-count divergence.
+    assert(vertCount() == 48,
+        "front-camera cylinder: expected 48 verts, got " ~ vertCount().to!string);
+    assert(faceCount() == 26,
+        "front-camera cylinder: expected 26 faces, got " ~ faceCount().to!string);
+
+    auto model = getJson("/api/model");
+    Vec3 mc = meshCentroid(model);
+    foreach (fi, f; model["faces"].array) {
+        Vec3 n  = faceNormal(model, f);
+        Vec3 fc = faceCentroid(model, f);
+        double d = dotD(n, fc - mc);
+        assert(d > 0,
+            "face " ~ fi.to!string ~ " normal points INWARD under a Z-dominant "
+            ~ "camera (left-handed auto-workplane frame, task 0424): dot="
+            ~ d.to!string);
+    }
 }
