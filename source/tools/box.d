@@ -18,7 +18,8 @@ import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               currentWorkplaneFrame, mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit;
+                              transformPoint, transformDir, snapLocalHit,
+                              frameIsLeftHanded, reverseFaceWinding;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
@@ -1819,14 +1820,21 @@ private __gshared View gBoxLiveEditView;
 //     3-tier click priority and a snap query on EVERY handle type — not
 //     the base's uniform sizeH[6] outward-axis rig (screenAxisDelta only,
 //     no snap hook at all).
-//   - preview/commit dispatches on BOTH state (buildBase vs. buildCuboid)
-//     AND frame handedness (frameIsLeftHanded(), needed because
-//     choosePlane's signed normal can produce a mirrored frame); the
-//     base's buildInto()/applyFrameToMeshRange() do neither.
+//   - preview/commit dispatches on state (buildBase vs. buildCuboid), and
+//     buildBase() carries an ADDITIONAL planeNormal-signed reverse
+//     (choosePlane's signed normal can itself produce a mirrored frame,
+//     on top of the shared frameIsLeftHanded() check both this tool and
+//     the base now run in applyFrameToMesh/applyFrameToMeshRange — task
+//     0424 hoisted that shared check into create_common.d); the base's
+//     buildInto()/applyFrameToMeshRange() do the shared check but have no
+//     state to dispatch on and no signed-planeNormal builder to correct for.
 //   - the per-drag live-undo ladder (recordInSession/BoxLiveEditCommand,
 //     captureLiveDragStart/recordLiveDragEnd below) is unique to this
 //     tool and predates/is orthogonal to the base's willCommit()/
 //     commitEdit() single-commit-at-deactivate skeleton.
+//   - see applyFrameToMesh()/applyFrameToMeshRange() below for the
+//     frameIsLeftHanded()/reverseFaceWinding() winding correction, shared
+//     with the base since task 0424.
 // Only a handful of leaf-level helpers line up byte-for-byte with the base
 // (the local<->world transforms, worldAxisIdxOf, the Idle-state snap-
 // preview shape) — see task 0418 for the full field/method comparison.
@@ -3113,28 +3121,15 @@ private:
     // (camera most-facing X or Z). The toWorld matrix for those cases
     // has det = -1 → mirrors local-space polygon winding into world →
     // face normals point INWARD. Detect via det of the toWorld 3×3 and
-    // reverse every face's vertex order to compensate.
-    bool frameIsLeftHanded() const {
-        // det of upper-left 3×3 of toWorld (column-major).
-        const ref float[16] m = frame.toWorld;
-        float a = m[0], b = m[4], c = m[8];
-        float d = m[1], e = m[5], f = m[9];
-        float g = m[2], h = m[6], i = m[10];
-        float det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
-        return det < 0;
-    }
-    void reverseFaceWinding(Mesh* m, size_t firstFaceIdx) {
-        foreach (fi; firstFaceIdx .. m.faces.length) {
-            auto face = m.faces[fi];
-            for (size_t k = 0; k < face.length / 2; k++) {
-                auto t = face[k]; face[k] = face[$ - 1 - k]; face[$ - 1 - k] = t;
-            }
-        }
-    }
+    // reverse every face's vertex order to compensate. `frameIsLeftHanded`/
+    // `reverseFaceWinding` are shared with `PrimitiveCreateTool` (task 0424
+    // hoisted them into create_common.d — BoxTool was the only Create-tool
+    // that had this correction pre-0424; the other 6 primitive create-tools
+    // now apply it too via the base's `applyFrameToMeshRange`).
     void applyFrameToMesh(Mesh* m) {
         foreach (ref v; m.vertices)
             v = transformPoint(frame.toWorld, v);
-        if (frameIsLeftHanded())
+        if (frameIsLeftHanded(frame))
             reverseFaceWinding(m, 0);
     }
 
@@ -3145,7 +3140,7 @@ private:
     void applyFrameToMeshRange(Mesh* m, size_t firstIdx, size_t firstFaceIdx) {
         foreach (i; firstIdx .. m.vertices.length)
             m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
-        if (frameIsLeftHanded())
+        if (frameIsLeftHanded(frame))
             reverseFaceWinding(m, firstFaceIdx);
     }
 

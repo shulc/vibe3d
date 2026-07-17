@@ -274,6 +274,55 @@ private void fillFrameMatrices(ref WorkplaneFrame f) {
     ];
 }
 
+// ---------------------------------------------------------------------------
+// frameIsLeftHanded / reverseFaceWinding — task 0424. Hoisted from BoxTool
+// (box.d), the only Create-tool that self-corrected this, into shared
+// helpers so every Create-tool built on `PrimitiveCreateTool` can apply the
+// same fix.
+//
+// `pickMostFacingPlane`'s X-dominant and Z-dominant camera cases each
+// return a basis triple whose (axis1, normal, axis2) ordering is
+// LEFT-handed — e.g. X-dominant returns normal=+X, axis1=+Y, axis2=+Z, and
+// axis1×normal (+Y×+X = -Z) is the negation of axis2 (+Z), unlike the
+// Y-dominant / world-default case. `fillFrameMatrices` lays `toWorld`'s
+// columns out as [axis1, normal, axis2, origin] regardless of handedness,
+// so a left-handed input triple produces a `toWorld` with
+// det(upper-left 3×3) = -1. Builders emit primitives in LOCAL space with a
+// fixed CCW winding (assuming a right-handed local→world map); transforming
+// those vertices through a det=-1 `toWorld` mirrors the winding, flipping
+// every face normal to point inward. `frameIsLeftHanded` detects this;
+// `reverseFaceWinding` corrects it by reversing the newly emitted faces'
+// vertex order.
+// ---------------------------------------------------------------------------
+
+/// True when `frame.toWorld`'s rotation part (upper-left 3×3, column-major)
+/// is a left-handed basis — i.e. transforming local-space geometry through
+/// it mirrors winding. See the banner above for why the auto-mode
+/// X/Z-dominant camera cases trigger this and the Y-dominant case never
+/// does.
+bool frameIsLeftHanded(in WorkplaneFrame frame) {
+    // det of upper-left 3×3 of toWorld (column-major).
+    const ref float[16] m = frame.toWorld;
+    float a = m[0], b = m[4], c = m[8];
+    float d = m[1], e = m[5], f = m[9];
+    float g = m[2], h = m[6], i = m[10];
+    float det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+    return det < 0;
+}
+
+/// Reverse the vertex order of every face in `m` from `firstFaceIdx`
+/// onward (in place). Callers pass the pre-emission `m.faces.length` as
+/// `firstFaceIdx` so only the newly appended faces are touched — existing
+/// scene geometry (and any other tool's prior output) is left alone.
+void reverseFaceWinding(Mesh* m, size_t firstFaceIdx) {
+    foreach (fi; firstFaceIdx .. m.faces.length) {
+        auto face = m.faces[fi];
+        for (size_t k = 0; k < face.length / 2; k++) {
+            auto t = face[k]; face[k] = face[$ - 1 - k]; face[$ - 1 - k] = t;
+        }
+    }
+}
+
 /// Apply `m` (column-major 4×4) to a point (w=1). Convenience for tools.
 Vec3 transformPoint(in float[16] m, Vec3 v) @nogc nothrow {
     return Vec3(
@@ -479,4 +528,41 @@ unittest {
     assert(abs(pw.x - 5.0f)  < 1e-5f);
     assert(abs(pw.y - (-2)) < 1e-5f);
     assert(abs(pw.z - 3.0f) < 1e-5f);
+}
+
+// frameIsLeftHanded — determinant sign for pickMostFacingPlane's three
+// canonical bases (task 0424). The X-dominant and Z-dominant cases are the
+// bug trigger (PrimitiveCreateTool.applyFrameToMeshRange / BoxTool's own
+// applyFrameToMesh both branch on this); Y-dominant (and the world-XZ
+// default) must stay right-handed so every non-triggering camera/preset/
+// headless path is byte-stable.
+unittest {
+    // Y-dominant (pickMostFacingPlane case 1): axis1=X, normal=Y, axis2=Z —
+    // right-handed (this is also worldXZFrame()'s shape).
+    auto fY = frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1), Vec3(0, 0, 0));
+    assert(!frameIsLeftHanded(fY), "Y-dominant frame should be right-handed");
+
+    // X-dominant (case 0): axis1=Y, normal=X, axis2=Z — left-handed.
+    auto fX = frameFromBasis(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), Vec3(0, 0, 0));
+    assert(frameIsLeftHanded(fX), "X-dominant frame should be left-handed");
+
+    // Z-dominant (case 2): axis1=X, normal=Z, axis2=Y — left-handed.
+    auto fZ = frameFromBasis(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 0));
+    assert(frameIsLeftHanded(fZ), "Z-dominant frame should be left-handed");
+}
+
+// reverseFaceWinding — reverses only faces[firstFaceIdx .. $] in place;
+// anything before firstFaceIdx (pre-existing scene geometry from another
+// tool/gesture) must be left untouched.
+unittest {
+    Mesh m;
+    m.faces ~= [0u, 1u, 2u];        // pre-existing face — must be left alone
+    m.faces ~= [3u, 4u, 5u, 6u];    // "new" face 1
+    m.faces ~= [7u, 8u, 9u];        // "new" face 2
+
+    reverseFaceWinding(&m, 1);      // only faces[1 .. $] should reverse
+
+    assert(m.faces[0] == [0u, 1u, 2u],       "pre-existing face must be untouched");
+    assert(m.faces[1] == [6u, 5u, 4u, 3u],   "new face 1 should reverse in place");
+    assert(m.faces[2] == [9u, 8u, 7u],       "new face 2 should reverse in place");
 }
