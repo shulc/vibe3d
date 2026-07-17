@@ -132,31 +132,40 @@ interface RefireClient {
 }
 
 // ---------------------------------------------------------------------------
-// StandingPreview — optional capability: the tool's uncommitted edit is a
-// STANDING preview sitting on the mesh across arbitrary frames, re-armable
-// after every commit/cancel (LoopSliceTool / EdgeSliceTool — task 0232 +
-// 0400). One predicate: whether a cancel ends the tool's session. (The
-// former second predicate — task 0232's redo-cancel hook, "a redo while
-// armed cancels the preview first" — was removed by task 0429: a standing
+// KeepAliveOnCancel — optional capability (task 0400's interface, renamed in
+// task 0430 when the second implementor family joined): cancelling the
+// tool's open uncommitted edit from history navigation (navigate()'s
+// whole-edit-cancel branch) does not end the tool's life. Two implementor
+// families:
+//   * the slice standing previews (LoopSliceTool / EdgeSliceTool — task
+//     0232 + 0400): the uncommitted edit is a STANDING preview sitting on
+//     the mesh across arbitrary frames, re-armable after every
+//     commit/cancel;
+//   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
+//     task 0430, capture-measured): a cancelled create gesture leaves the
+//     tool armed for a fresh gesture.
+// One predicate: whether a cancel ends the tool's session. (The former
+// second predicate — task 0232's redo-cancel hook, "a redo while armed
+// cancels the preview first" — was removed by task 0429: a standing
 // preview's writes now invalidate the redo timeline at their own
 // write-points (CommandHistory.invalidateRedo), so a redo pressed while a
 // preview is up finds an empty stack and is a no-op by construction —
 // reference-captured semantics; no cancel-press exists in that direction
 // at all.)
 // ---------------------------------------------------------------------------
-interface StandingPreview {
+interface KeepAliveOnCancel {
     // Task 0400: whether cancelling this tool's open uncommitted edit (via
     // cancelUncommittedEdit(), reached from navigate()'s whole-edit-cancel
     // branch) leaves the tool with a still-meaningful session to stay in,
     // versus nothing further to do. The reference editor's interactive
-    // undo NEVER drops an active interactive tool. For most tools here, an
-    // uncommitted edit IS the tool's whole reason to be active (a one-shot
-    // create/drag gesture — Box, Pen, a primitive's live resize), so
-    // navigate()'s default of cancel-then-drop mirrors Esc and matches the
-    // pre-0400, still-correct behavior for that shape. A STANDING-PREVIEW
-    // tool is a different shape: cancelling its live preview is a normal
-    // step WITHIN an ongoing session, not the end of the tool's usefulness —
-    // those tools answer true.
+    // undo NEVER drops an active interactive tool — measured for the slice
+    // standing previews (task 0400) and for the create family (task 0428
+    // capture Q2; adopted by 0430). For a tool implementing neither shape
+    // (e.g. the chain creators pen / arc / vertex_place — unmeasured),
+    // navigate()'s default of cancel-then-drop mirrors Esc and stays the
+    // conservative pre-0400 behavior. Implementors answer true: for them a
+    // cancelled preview / create gesture is a normal step WITHIN an ongoing
+    // session, not the end of the tool's usefulness.
     bool survivesEditCancel() const;
 }
 
@@ -371,16 +380,18 @@ final class EditSession {
             // navigate() steps it again; a tool that fully cancelled falls
             // through to the drop branch. (Codifying the stronger claim as
             // an assert aborted the editor on the first box-gesture Ctrl+Z.)
-            // Task 0400: a standing-preview tool (survivesEditCancel()==true —
-            // LoopSliceTool/EdgeSliceTool) is never dropped by this cancel;
+            // Task 0400 + 0430: a KeepAliveOnCancel tool
+            // (survivesEditCancel()==true — the slice standing previews
+            // LoopSliceTool/EdgeSliceTool, and the create family
+            // PrimitiveCreateTool/BoxTool) is never dropped by this cancel;
             // the reference editor's interactive undo never drops an active
             // tool. Every other tool keeps the pre-0400 cancel-then-drop
             // behavior. RE-READ, not the `t` cached above — see the method
             // doc.
             auto t2  = tool_();
-            auto sp2 = cast(StandingPreview) t2;
+            auto ka2 = cast(KeepAliveOnCancel) t2;
             if (t2 !is null && !t2.hasUncommittedEdit()
-                && !(sp2 !is null && sp2.survivesEditCancel())) {
+                && !(ka2 !is null && ka2.survivesEditCancel())) {
                 dropTool_();
             }
             return true;

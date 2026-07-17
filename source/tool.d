@@ -67,7 +67,7 @@ enum ToolFlag : uint {
 // navigation, refire, live re-eval, lifecycle-undo emit) lives in
 // edit_session.d: EditSession is the sole driver, and the narrow per-tool
 // opt-ins are its optional capability interfaces (LiveEvalClient,
-// RefireClient, StandingPreview, SessionStepUndo, LifecycleUndoEmitter),
+// RefireClient, KeepAliveOnCancel, SessionStepUndo, LifecycleUndoEmitter),
 // discovered by cast on the active tool.
 // ---------------------------------------------------------------------------
 
@@ -272,14 +272,16 @@ class Tool : ParamProvider {
     // this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
-    // Standing-preview cancel-survival shape (task 0400 —
-    // survivesEditCancel) and the mid-session per-step undo peel (task 0321
-    // — tryUndoStepInSession) moved to the optional StandingPreview /
-    // SessionStepUndo interfaces in edit_session.d (task 0428). A tool not
-    // implementing them keeps the former base defaults (cancel-then-drop;
-    // no per-step peel). The redo direction never cancels an open edit for
-    // ANY tool: a standing preview's write-points invalidate the redo
-    // timeline instead (task 0429), so the former redo-cancel hook is gone.
+    // The cancel-survival shape (task 0400 — survivesEditCancel) and the
+    // mid-session per-step undo peel (task 0321 — tryUndoStepInSession)
+    // moved to the optional KeepAliveOnCancel / SessionStepUndo interfaces
+    // in edit_session.d (task 0428). A tool not implementing them keeps the
+    // former base defaults (cancel-then-drop; no per-step peel) — but note
+    // the cancel-then-drop default no longer covers the create family:
+    // PrimitiveCreateTool and BoxTool implement KeepAliveOnCancel (task
+    // 0430). The redo direction never cancels an open edit for ANY tool: a
+    // standing preview's write-points invalidate the redo timeline instead
+    // (task 0429), so the former redo-cancel hook is gone.
 
     // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
     // after history navigation moved geometry underneath an active tool. P0

@@ -6,7 +6,7 @@ import std.algorithm : sort;
 import operator : VectorStack;
 
 import tool;
-import edit_session : StandingPreview;
+import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import editmode : EditMode;
@@ -176,9 +176,10 @@ unittest {
 // state: `ToolDoApplyCommand` captures its own snapshot pair around the call
 // and IS the undo entry.
 // ---------------------------------------------------------------------------
-// StandingPreview (task 0428): the survivesEditCancel override below is the
-// interface's implementation (EditSession discovers it by cast).
-final class LoopSliceTool : Tool, StandingPreview {
+// KeepAliveOnCancel (task 0428; interface renamed in 0430): the
+// survivesEditCancel override below is the interface's implementation
+// (EditSession discovers it by cast).
+final class LoopSliceTool : Tool, KeepAliveOnCancel {
 public:
     // Edit — what a click on the HUD track / a marker does (task 0239).
     // Move (default): reposition the Current slice (today's scrub,
