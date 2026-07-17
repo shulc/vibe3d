@@ -20,14 +20,14 @@
 #
 # Env overrides:
 #   DOCKER   container engine (default: podman; docker also works)
-#   IMAGE    builder image tag (default: vibe3d-appimage-builder:ubuntu20.04)
+#   IMAGE    builder image tag (default: vibe3d-appimage-builder:ubuntu2004-portal)
 #
 # set -euo pipefail; clear logging; exits non-zero on the first failure.
 
 set -euo pipefail
 
 DOCKER="${DOCKER:-podman}"
-IMAGE="${IMAGE:-vibe3d-appimage-builder:ubuntu20.04}"
+IMAGE="${IMAGE:-vibe3d-appimage-builder:ubuntu2004-portal}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -93,29 +93,19 @@ log "  pack  : bundle_linux_appimage.sh --no-build ${VERIFY_ARG}"
     bash -lc "
         set -euo pipefail
 
-        # Resolve + fetch the dependency tree WITHOUT running preBuild steps, so
-        # the nfde package is on disk but nativefiledialog-extended is not cloned
-        # yet. nfde's own preBuildCommand does 'git clone --depth 1' WITHOUT
-        # --recurse-submodules, which leaves its bundled wayland-protocols
-        # submodule empty and its CMake fails on a missing xdg-foreign XML. On a
-        # long-lived dev-host dub cache this is masked (the tree was seeded once);
-        # a fresh container cache is not. Pre-seed a RECURSIVE clone so nfde's
-        # preBuildCommand sees an existing .git and skips its shallow clone.
+        # nfde is vendored at /src/third_party/nfde (a path dependency), so there
+        # is no build-time git clone of nativefiledialog-extended to pre-seed —
+        # the old wayland-protocols submodule workaround is gone with it.
+        #
+        # Drop any dub.selections.json bind-mounted in from the host: it is
+        # gitignored and could still pin nfde to the OLD registry package (0.1.3,
+        # GTK backend), which would silently defeat the vendored portal build. A
+        # fresh CI checkout has none; this covers local iteration. dub regenerates
+        # it from dub.json (the committed source of truth) on the next resolve.
+        rm -f /src/dub.selections.json
+
+        # Prefetch the registry dependency tree into the container dub cache.
         dub describe --config=modeling --compiler=ldc2 >/dev/null
-        wl_marker=3ps/wayland-protocols/unstable/xdg-foreign/xdg-foreign-unstable-v1.xml
-        for nfde_dir in /root/.dub/packages/nfde/*/nfde; do
-            [ -d \"\$nfde_dir\" ] || continue
-            tgt=\"\$nfde_dir/nativefiledialog-extended\"
-            # Re-seed whenever the required submodule file is absent — covers both
-            # a missing clone AND a stale shallow clone from a prior failed run
-            # (which left a .git but an empty wayland-protocols submodule).
-            if [ ! -e \"\$tgt/\$wl_marker\" ]; then
-                echo \"[appimage-container] pre-seeding nfde submodules -> \$tgt\"
-                rm -rf \"\$tgt\"
-                git clone --depth 1 --recurse-submodules --shallow-submodules \
-                    https://github.com/btzy/nativefiledialog-extended.git \"\$tgt\"
-            fi
-        done
 
         dub build --config=modeling --build=release --d-version=ReleaseBuild --compiler=ldc2
         tools/release/bundle_linux_appimage.sh --no-build --output '$INCONTAINER_OUT' ${VERIFY_ARG}

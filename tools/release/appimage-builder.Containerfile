@@ -8,7 +8,7 @@
 # instead of at the Fedora-43 dev host's glibc 2.42 (which runs almost nowhere).
 #
 # The GENERATED code is what we care about: the whole native toolchain (gcc, ld,
-# the SDL2/GTK3/-dev libs, the static-assimp C++ build) is Ubuntu 20.04's, so it
+# the SDL2 + dbus/wayland dev libs, the static-assimp C++ build) is Ubuntu 20.04's, so it
 # links against glibc 2.31. LDC's prebuilt druntime/phobos .a files carry NO
 # versioned glibc references (verified: all plain `U` symbols), so they bind to
 # the 2.31 libc at final link — the output floors at 2.31 (measured lower still,
@@ -28,7 +28,7 @@
 # Build (via the wrapper, which tags + caches this image):
 #   tools/release/build_linux_appimage_container.sh
 # or by hand:
-#   podman build -t vibe3d-appimage-builder:ubuntu20.04 \
+#   podman build -t vibe3d-appimage-builder:ubuntu2004-portal \
 #     -f tools/release/appimage-builder.Containerfile tools/release
 
 # --- Stage 1: harvest a consistent newer-glibc runtime set (2.35) -----------
@@ -67,20 +67,17 @@ RUN set -eux; \
         `#     SDL_2020 binding's 2.0.20 runtime floor; SDL2 is built from` \
         `#     source below so a modern-enough libSDL2 gets bundled.) ------` \
         zlib1g-dev \
-        libgtk-3-dev \
-        libgdk-pixbuf2.0-dev \
-        libglib2.0-dev \
         libgl1-mesa-dev libegl1-mesa-dev \
         libwayland-dev libwayland-egl1 wayland-protocols \
         libxkbcommon-dev libxkbcommon-x11-dev \
-        `# --- SDL2-from-source build deps: X11 + input + dbus ----------` \
+        `# --- SDL2-from-source build deps: X11 + input + dbus. libdbus-1-dev` \
+        `#     also provides dbus-1.pc for nfde's NFD_PORTAL cmake probe, and` \
+        `#     libdbus-1.so.3 is the sole file-dialog runtime dep now (portal).` \
         libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev \
         libxrandr-dev libxrender-dev libxss-dev libxinerama-dev \
         libdbus-1-dev libudev-dev \
-        `# --- packaging / linuxdeploy + gtk plugin helper tools --------` \
+        `# --- packaging / linuxdeploy helper tools ---------------------` \
         patchelf file desktop-file-utils \
-        librsvg2-2 librsvg2-common \
-        libgtk-3-bin libgdk-pixbuf2.0-bin libglib2.0-bin \
         `# --- --verify runtime: X11 (Xvfb) + headless Wayland (weston) -` \
         `# + mesa software GL/EGL so a GL context comes up without a GPU  ` \
         xvfb xauth \

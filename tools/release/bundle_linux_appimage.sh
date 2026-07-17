@@ -4,16 +4,18 @@
 #
 # Produces a single-file `Vibe3D-x86_64.AppImage` that runs "download →
 # chmod +x → run" on any Linux with a modern-enough glibc, WITHOUT the
-# target machine having SDL2 or the GTK3 stack installed.
+# target machine having SDL2 installed.
 #
-# Why the whole GTK3 loader stack (not just SDL2)?
-#   `ldd ./vibe3d` shows the real runtime closure is the entire GTK3 loader
-#   stack — libgtk-3/libgdk-3/libgdk_pixbuf/libcairo/libpango/libjson-glib/
-#   libglycin + wayland — pulled in by the native file dialog (nfde), NOT by
-#   SDL2. `dub.json`'s `libs-linux` only names the tip of that iceberg. So we
-#   bundle SDL2 + the GTK3 loader modules via `linuxdeploy-plugin-gtk`, which
-#   also emits the GDK_PIXBUF_MODULE_FILE / GTK_PATH / GIO_MODULE_DIR env
-#   wrappers that a hand-rolled tarball would have to replicate by hand.
+# File dialogs: xdg-desktop-portal (out-of-process), NOT a bundled GTK stack.
+#   The native file dialog (nfde, built with NFD_PORTAL=ON) talks to the host's
+#   xdg-desktop-portal service over D-Bus; the file-chooser UI is drawn by that
+#   service in its OWN process. So for dialogs the app links only libdbus-1 (the
+#   system IPC library) — the whole GTK / gdk-pixbuf / pango / cairo font stack
+#   that a bundled in-process GTK3 chooser used to drag in is GONE. That stack
+#   was also the source of the FcFontSetSort crash on hosts whose fontconfig
+#   outran the bundled pango. We therefore bundle just SDL2 (+ its lazily
+#   dlopen'd wayland/xkb backends); libdbus-1 and libwayland-client stay SYSTEM
+#   (host-matched, in linuxdeploy's excludelist — see notes below).
 #
 # What stays SYSTEM (never bundled): libGL/GLX/EGL + graphics drivers, glibc,
 #   libstdc++, and the X11 core — linuxdeploy's standard excludelist enforces
@@ -49,10 +51,9 @@ OUTPUT="${REPO_ROOT}/Vibe3D-x86_64.AppImage"
 BUILD=true
 VERIFY=false
 
-# Pinned upstream tool sources (single-file AppImages + the gtk plugin shell
-# script). Cached under $TOOLS_DIR so re-runs don't re-download.
+# Pinned upstream tool sources (single-file AppImages). Cached under $TOOLS_DIR
+# so re-runs don't re-download.
 LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-GTK_PLUGIN_URL="https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
 APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
 PATCHELF_URL="https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz"
 
@@ -124,11 +125,9 @@ fetch() {  # url dest
 
 LINUXDEPLOY="$TOOLS_DIR/linuxdeploy-x86_64.AppImage"
 APPIMAGETOOL="$TOOLS_DIR/appimagetool-x86_64.AppImage"
-GTK_PLUGIN="$TOOLS_DIR/linuxdeploy-plugin-gtk.sh"
 fetch "$LINUXDEPLOY_URL"   "$LINUXDEPLOY"
-fetch "$GTK_PLUGIN_URL"    "$GTK_PLUGIN"
 fetch "$APPIMAGETOOL_URL"  "$APPIMAGETOOL"
-chmod +x "$LINUXDEPLOY" "$APPIMAGETOOL" "$GTK_PLUGIN"
+chmod +x "$LINUXDEPLOY" "$APPIMAGETOOL"
 
 # patchelf: linuxdeploy requires it and Fedora 43 doesn't ship it. Fetch a
 # static build into the cache and put it on PATH if the host has none.
@@ -139,10 +138,6 @@ if ! command -v patchelf >/dev/null 2>&1 && [[ ! -x "$PATCHELF_BIN" ]]; then
     tar -xzf "$TOOLS_DIR/patchelf.tar.gz" -C "$TOOLS_DIR/patchelf"
 fi
 [[ -x "$PATCHELF_BIN" ]] && export PATH="$TOOLS_DIR/patchelf/bin:$PATH"
-
-# Make the gtk plugin discoverable to linuxdeploy (`--plugin gtk` searches PATH
-# for linuxdeploy-plugin-gtk.sh).
-export PATH="$TOOLS_DIR:$PATH"
 
 # Run the bundled tools FUSE-free (headless CI/containers often lack /dev/fuse).
 export APPIMAGE_EXTRACT_AND_RUN=1
@@ -167,19 +162,46 @@ SVG_SRC="$REPO_ROOT/assets/icon/vibe3d.svg"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR"
 
-log "running linuxdeploy (+gtk plugin) — bundling SDL2 + GTK3 loader stack"
-DEPLOY_GTK_VERSION=3 ARCH=x86_64 \
+log "running linuxdeploy — bundling SDL2 (file dialogs run out-of-process via xdg-desktop-portal)"
+ARCH=x86_64 \
     "$LINUXDEPLOY" --appdir "$APPDIR" \
         --executable "$REPO_ROOT/vibe3d" \
         --desktop-file "$DESKTOP_SRC" \
-        --icon-file "$ICON_SRC" --icon-filename vibe3d \
-        --plugin gtk
+        --icon-file "$ICON_SRC" --icon-filename vibe3d
 
 # Scalable icon alongside the rasterized one (launchers that prefer SVG).
 if [[ -f "$SVG_SRC" ]]; then
     install -Dm644 "$SVG_SRC" \
         "$APPDIR/usr/share/icons/hicolor/scalable/apps/vibe3d.svg"
 fi
+
+# --- Assert the GTK stack is GONE + libdbus stays system (task 0431) ---------
+# Inverse of the pre-portal bundle: NO gtk/gdk/pango/glib/gobject/gdk-pixbuf may
+# be bundled — the portal moved the file-chooser UI out of our process. If any
+# appears, linuxdeploy pulled a GTK closure back in (e.g. a re-introduced dep) —
+# fail loudly rather than ship the crash-prone font stack again.
+log "asserting no GTK/pango/glib closure was bundled"
+gtk_leak="$(find "$APPDIR/usr/lib" -maxdepth 1 -type f \
+    \( -name 'libgtk-3*' -o -name 'libgdk-3*' -o -name 'libgdk_pixbuf*' \
+       -o -name 'libpango*' -o -name 'libglib-2.0*' -o -name 'libgobject*' \) 2>/dev/null || true)"
+[[ -n "$gtk_leak" ]] && die "GTK stack leaked into the AppDir (portal build must not bundle it): $gtk_leak"
+log "  none — GTK/pango/glib stack absent from the bundle"
+
+# libdbus-1 is a host-matched IPC library (the portal is itself a D-Bus service,
+# so any host that has a portal has libdbus). linuxdeploy's excludelist normally
+# drops it; rm defensively in case a future excludelist regresses, then assert.
+if [[ -e "$APPDIR/usr/lib/libdbus-1.so.3" ]]; then
+    log "  removing bundled libdbus-1.so.3 (host-matched IPC lib; stays system)"
+    rm -f "$APPDIR/usr/lib/libdbus-1.so.3"
+fi
+[[ -e "$APPDIR/usr/lib/libdbus-1.so.3" ]] && die "libdbus-1.so.3 still present in AppDir after rm"
+
+# The executable must NEED libdbus-1 (portal dialogs) and must NOT NEED gtk/gdk
+# (inverse of the pre-0431 link).
+needed="$(readelf -d "$APPDIR/usr/bin/vibe3d" 2>/dev/null | grep NEEDED || true)"
+grep -q 'libdbus-1\.so\.3' <<<"$needed" || die "executable does not NEED libdbus-1.so.3 (portal backend missing?)"
+grep -qiE 'libgtk-3|libgdk-3|libgdk_pixbuf|libpango' <<<"$needed" && die "executable still NEEDs a GTK library"
+log "  executable NEEDs libdbus-1.so.3, no GTK — link inversion confirmed"
 
 # --- Work around patchelf 0.18 + RELR corruption (only where RELR is used) ---
 # A toolchain that builds shared libs with RELR relative relocations
@@ -220,18 +242,6 @@ if [[ "$relr_present" == true ]]; then
             n_kept=$((n_kept+1))   # e.g. libonnxruntime (dub cache; no RELR, uncorrupted)
         fi
     done < <(find "$APPDIR/usr/lib" -maxdepth 1 -type f -name '*.so*')
-    # gdk-pixbuf loader modules live outside ldconfig — restore from the system
-    # loaders dir. Cover BOTH Fedora's /usr/lib64 and Ubuntu's multiarch
-    # /usr/lib/x86_64-linux-gnu layout.
-    sysloaders="$(ls -d /usr/lib64/gdk-pixbuf-2.0/*/loaders \
-                        /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/*/loaders \
-                        /usr/lib/gdk-pixbuf-2.0/*/loaders 2>/dev/null | head -1 || true)"
-    if [[ -n "$sysloaders" && -d "$sysloaders" ]]; then
-        while IFS= read -r f; do
-            [[ -f "$sysloaders/$(basename "$f")" ]] && cp -L "$sysloaders/$(basename "$f")" "$f" 2>/dev/null \
-                && n_restored=$((n_restored+1)) || true
-        done < <(find "$APPDIR/usr/lib" -path '*/gdk-pixbuf-2.0/*/loaders/*.so' -type f)
-    fi
     log "  restored $n_restored pristine libs (kept $n_kept non-system, e.g. onnxruntime)"
 else
     log "no RELR in bundled libs (non-Fedora-43 toolchain) — skipping pristine-restore workaround"
@@ -243,8 +253,9 @@ patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/vibe3d"
 
 # --- Ensure SDL2's native-Wayland + xkb backend libs are bundled ------------
 # SDL2 picks its video backend at runtime and dlopens the wayland/xkb libs
-# LAZILY, so they are NOT in `ldd ./vibe3d`; linuxdeploy only bundles what the
-# GTK3 closure happens to pull in transitively. Guarantee the native-Wayland
+# LAZILY, so they are NOT in `ldd ./vibe3d`; linuxdeploy only bundles the
+# executable's direct DT_NEEDED closure (SDL2 + its link-time deps), not the
+# libs SDL2 dlopens later. Guarantee the native-Wayland
 # path (not just the XWayland fallback) by making sure each is present, copying
 # the pristine system copy in if linuxdeploy missed it. The executable's
 # transitive DT_RPATH (set above) covers these on dlopen.
@@ -295,14 +306,14 @@ find "$WORKER_DST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/n
 chmod +x "$WORKER_DST/install_linux.sh" "$WORKER_DST/download_model.sh"
 
 # --- Custom AppRun -----------------------------------------------------------
-# Replaces linuxdeploy's default AppRun. It still sources the gtk plugin's env
-# hooks (apprun-hooks/*.sh set GDK_PIXBUF_MODULE_FILE / GTK_PATH / GIO_MODULE_DIR)
-# but ADDS a chdir into a writable working directory that exposes the bundled
-# config/ (+ assets/). vibe3d resolves config/ against the CWD and writes
-# events.log/prefs there; the AppImage mount is read-only, so a plain chdir into
-# $APPDIR would crash on the first config-read / log-write. The symlinks are
-# re-pointed every launch because a FUSE/extract mount path is ephemeral.
-log "writing custom AppRun (writable-cwd + gtk hooks)"
+# Replaces linuxdeploy's default AppRun. Its job: chdir into a writable working
+# directory that exposes the bundled config/ (+ assets/). vibe3d resolves config/
+# against the CWD and writes events.log/prefs there; the AppImage mount is
+# read-only, so a plain chdir into $APPDIR would crash on the first config-read /
+# log-write. The symlinks are re-pointed every launch because a FUSE/extract
+# mount path is ephemeral. (No gtk env hooks: the portal dialog is drawn by the
+# host service and needs no GDK_PIXBUF_MODULE_FILE / GTK_PATH / GIO_MODULE_DIR.)
+log "writing custom AppRun (writable-cwd)"
 cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/bash
 # vibe3d AppImage entry point.
@@ -313,8 +324,7 @@ export APPDIR="${APPDIR:-$HERE}"
 # events.log / prefs to the CWD. The AppImage mount is READ-ONLY, so run from a
 # writable working dir that exposes the bundled config/ + assets/ via symlinks.
 # The symlinks are re-pointed every launch because a FUSE / extract-and-run
-# mount path is ephemeral. Done FIRST — before the gtk hooks — so these coreutils
-# helpers run with a clean environment.
+# mount path is ephemeral.
 WORKDIR="${VIBE3D_WORKDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/vibe3d/cwd}"
 if ! mkdir -p "$WORKDIR" 2>/dev/null; then
     WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/vibe3d.XXXXXX")"
@@ -322,19 +332,10 @@ fi
 ln -sfn "$APPDIR/config" "$WORKDIR/config"
 [ -d "$APPDIR/assets" ] && ln -sfn "$APPDIR/assets" "$WORKDIR/assets"
 
-# GTK / gdk-pixbuf / GIO env from linuxdeploy-plugin-gtk (sets GTK_PATH,
-# GDK_PIXBUF_MODULE_FILE, GIO_MODULE_DIR — absolute paths under $APPDIR).
-# Sourced, not exec'd, so the exports persist into the final exec.
-if [ -d "$APPDIR/apprun-hooks" ]; then
-    for hook in "$APPDIR"/apprun-hooks/*.sh; do
-        [ -r "$hook" ] && . "$hook"
-    done
-fi
-
 # NB: we deliberately do NOT export LD_LIBRARY_PATH. The binary's RUNPATH is
-# $ORIGIN/../lib, so the bundled SDL2 + GTK3 stack resolve without it — and
-# leaking the bundled lib dir onto LD_LIBRARY_PATH would SIGSEGV any system
-# helper (mkdir, xdg-open, …) that loaded the bundled libselinux/libpcre2
+# $ORIGIN/../lib, so the bundled SDL2 resolves without it — and leaking the
+# bundled lib dir onto LD_LIBRARY_PATH would SIGSEGV any system helper (mkdir,
+# xdg-open, the portal / AI-worker child processes …) that loaded a bundled lib
 # against the host libc.
 cd "$WORKDIR" || exit 1
 exec "$APPDIR/usr/bin/vibe3d" "$@"

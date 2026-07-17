@@ -90,8 +90,8 @@ The modeling-only artifacts ship on every release tag as before.
 
 Produces a single-file **`Vibe3D-x86_64.AppImage`** that runs
 "download → `chmod +x` → run" on any Linux with a modern-enough
-glibc, **without the target having SDL2 or the GTK3 stack
-installed**. This is the modeling configuration (no render backends).
+glibc, **without the target having SDL2 installed**. This is the
+modeling configuration (no render backends).
 
 ```bash
 ./tools/release/bundle_linux_appimage.sh                 # build
@@ -104,31 +104,35 @@ The script builds `dub build --config=modeling --build=release
 --d-version=ReleaseBuild` with LDC (defaults to the first `ldc2 >=
 1.41` it finds — the Fedora system `ldc2` 1.40 can't build vibe3d),
 fetches its packaging tools on first run (cached under
-`.appimage-build/`), stages an AppDir, runs
-`linuxdeploy` + `linuxdeploy-plugin-gtk`, and packs with
-`appimagetool`.
+`.appimage-build/`), stages an AppDir, runs `linuxdeploy`, and packs
+with `appimagetool`.
 
-## Why the whole GTK3 stack (not just SDL2)
+## File dialogs via xdg-desktop-portal (no bundled GTK)
 
-`ldd ./vibe3d` shows the real runtime closure is the **entire GTK3
-loader stack** (`libgtk-3`/`libgdk-3`/`libgdk_pixbuf` + its loader
-modules/`libcairo`/`libpango`/`libjson-glib`/`libglycin` + wayland),
-pulled in by the **native file dialog (nfde), not SDL2**.
-`dub.json`'s `libs-linux` only names the tip. So the AppImage bundles
-SDL2 **and** the GTK3 loader stack (via the gtk plugin, which also
-emits the `GDK_PIXBUF_MODULE_FILE` / `GTK_PATH` / `GIO_MODULE_DIR`
-env wrappers).
+The native file dialog (`nfde`, vendored at `third_party/nfde` and
+built with `NFD_PORTAL=ON`) talks to the host's **xdg-desktop-portal**
+service over **D-Bus**; the file-chooser UI is drawn by that service
+in its **own** process. So the app links only `libdbus-1` for dialogs
+— the entire in-process GTK3 loader stack
+(`libgtk-3`/`libgdk-3`/`libgdk_pixbuf`/`libcairo`/`libpango`/…) that
+the old GTK backend dragged in is **gone**. That stack was also the
+source of the `FcFontSetSort` crash on hosts whose `libfontconfig`
+outran the bundled `libpango`. The AppImage therefore bundles just
+SDL2; `libdbus-1` and `libwayland-client` stay system (see below).
 
 ## Bundle vs system split
 
-- **Bundled** (into `usr/lib`): `libSDL2`, the GTK3 stack + gdk-pixbuf
-  loader modules, `libgobject/glib/gio`, `libjson-glib`, `libglycin`,
-  `libcairo`, `libpango*`, `libgdk_pixbuf`, plus `libonnxruntime`
-  (from the dub cache; the AI candidate-ranker backend). The full
-  ldd closure resolves to the bundled copies.
+- **Bundled** (into `usr/lib`): `libSDL2` + its lazily-dlopen'd
+  wayland/xkb backend libs (`libwayland-cursor`, `libwayland-egl`,
+  `libxkbcommon*`), plus `libonnxruntime` (from the dub cache; the AI
+  candidate-ranker backend). The bundle no longer carries any GTK /
+  gdk-pixbuf / pango / glib closure — a post-link assert in the script
+  fails the build if any of those reappears.
 - **System** (linuxdeploy's standard excludelist): `libGL/GLX/EGL` +
   graphics drivers, glibc / `libstdc++`, the X11 core, and the
-  universally-present stable-ABI libs `libwayland-client`,
+  host-matched stable-ABI libs `libwayland-client`, **`libdbus-1`**
+  (the portal is itself a D-Bus service, so any host with a portal has
+  libdbus — the script `rm`s it defensively and asserts its absence),
   `libfreetype`, `libfontconfig`, `libharfbuzz`. **Never** bundle
   GL/driver/glibc — bundling `libGL`/drivers breaks on other GPUs.
 
@@ -168,7 +172,8 @@ etc. — fatal if absent) and writes `events.log`/prefs to the CWD. The
 AppImage mount is read-only, so the custom `AppRun` chdirs into a
 writable working dir (`${XDG_CACHE_HOME:-~/.cache}/vibe3d/cwd`, override
 with `VIBE3D_WORKDIR`) that symlinks the bundled `config/` + `assets/`,
-then sources the gtk env hooks and execs the binary.
+then execs the binary. (No gtk env hooks — the portal dialog needs
+none.)
 
 ## Verify
 
@@ -185,9 +190,10 @@ curl -s localhost:8760/api/model              # 8 verts / 6 faces (cube)
 
 A clean start prints `[io] libassimp … linked statically` / `[http]
 HTTP server started` with **no** `not found` / `error while loading`
-lines. `ldd AppDir/usr/bin/vibe3d` should show SDL2/GTK3 resolving to
-`$ORIGIN/../lib` while `libGL`/`libc`/`libstdc++`/`libX11` stay
-`/lib64`.
+lines. `ldd AppDir/usr/bin/vibe3d` should show `libSDL2` resolving to
+`$ORIGIN/../lib` while `libGL`/`libc`/`libstdc++`/`libX11`/`libdbus-1`/
+`libwayland-client` stay `/lib64`, and **no** `libgtk`/`libgdk`/
+`libpango` appears at all.
 
 ## Not done here (owner sign-off)
 
@@ -195,4 +201,5 @@ lines. `ldd AppDir/usr/bin/vibe3d` should show SDL2/GTK3 resolving to
   floor above.
 - **CI wiring** — `build.yml` is deliberately untouched; adding the
   AppImage as a release asset is a separate, reviewable step.
-- Genuine "clean non-dev distro" run (no SDL2/GTK installed).
+- Genuine "clean non-dev distro" run (no SDL2 installed; the file
+  dialog additionally needs a working xdg-desktop-portal on the host).
