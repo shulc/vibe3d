@@ -1,14 +1,14 @@
 {
   "name": "bridge_open_edge_rows",
   "description": "mesh.bridgeTool (task 0395) — EDGE-selection Bridge contract when the selected edges form OPEN chains/rows instead of exactly 2 closed cycles. Reported bug: a cube with 2 adjacent faces deleted (8v/4f/11e), selecting the 4 boundary edges away from the two connector edges (two 2-edge open arcs) makes Bridge silently no-op in vibe3d (bridge.d:91 requires exactly 2 CLOSED cycles via extractSelectedEdgeCycles). Reference-editor capture (task 0395, live, worker_id=31) shows the reference tool accepts open rows directly: it pairs the two chains by NEAREST-ENDPOINT PROXIMITY (not creation/selection order — verified via an asymmetric mesh where index-order pairing and proximity pairing predict different geometry, see 'pairing_proximity' case), applies the SAME Segments interior-ring law already verified for closed-loop/polygon-mode Bridge (spans=max(1,segments), interior rings lerped at t=i/spans), fans/triangulates when the two rows have unequal edge counts (excess edges on the longer row are trimmed into end-triangles toward the shorter row's near endpoint; the aligned middle edges bridge 1:1), and no-ops on a single open chain with nothing else selected (not an error, not a self-close).",
-  "source": "live reference-editor capture, task 0395 (private capture harness: tools/local/modo_diff/atlas/bridge_openrows_build.py + bridge_openrows_capture.py, worker_id=31)",
+  "source": "live reference-editor capture, task 0395 (private capture harness, task 0395, worker_id=31)",
   "provenance": {
     "schema": 1,
     "source": "live",
     "reference": "reference-editor headless capture",
     "method": "live-capture",
     "captured_utc": "2026-07-14",
-    "harness": "atlas capture (private, tools/local/modo_diff/atlas/bridge_openrows_build.py + bridge_openrows_capture.py)",
+    "harness": "atlas capture (private harness, task 0395)",
     "task": "0395",
     "notes": "Explicit-geometry construction (item.create mesh -> geo.vertices.new/geo.polygons.new -> geo.setMeshEdits(), the proven bridge_ngon_build.py recipe) with edges selected by POSITION match (not index, since index stability across a mesh-edit commit is not guaranteed by the Python API). Every case's expected_vertices/expected_after below is copied verbatim from the captured post-tool dump, not hand-derived. NOTE (not encoded as a fixture, needs a 'connect'/Auto-Connection attribute vibe3d does not have yet): on the reported-bug's specific topology (an internal hole in an otherwise-closed box), the reference tool's Auto Connection default (connect=true) silently OVERRIDES an explicit Segments>1 request back down to spans=1 to keep the patch flush with the surrounding surface; with connect=false (or on a non-enclosed/disjoint topology, e.g. this fixture's other cases) the requested Segments value is honored exactly. Deferred — flagged for whoever implements Auto Connection, not required for the reported bug (which uses the default segments=1)."
   },
