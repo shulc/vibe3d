@@ -2965,12 +2965,17 @@ void main(string[] args) {
 
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
-    // AI-less build (config=modeling-noai, Win7): the ONNX ranker backend is
-    // compiled out, so render the AI master-switch button as a disabled
-    // placeholder (engraved, non-clickable) instead of a live toggle. Done
-    // before the id-validation pass below, which skips disabled buttons — so
-    // `ai.toggle` need not be a resolvable command in this build.
-    version (WithAI) {} else {
+    // The AI master-switch (ai.toggle/enable/disable) status-line buttons are
+    // live only when those commands are actually registered — i.e. a WithAI
+    // build (ONNX ranker compiled in) AND the copilot enabled (kCopilotEnabled,
+    // task 0422). In any other state the factories are absent, so render the
+    // buttons as disabled placeholders (engraved, non-clickable). Done BEFORE
+    // the id-validation pass below, which skips disabled buttons — so `ai.toggle`
+    // need not be a resolvable command in those states (modeling-noai, or
+    // copilot-off in a WithAI build).
+    bool aiSwitchLive = false;
+    version (WithAI) { static if (kCopilotEnabled) aiSwitchLive = true; }
+    if (!aiSwitchLive) {
         foreach (ref grp; statusLineGroups)
             foreach (ref btn; grp.buttons)
                 if (btn.action.kind == ActionKind.command &&
