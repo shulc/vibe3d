@@ -175,8 +175,7 @@ void setThickLineScreenSize(int w, int h) {
 
 // Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
 // Fills *vbo with the created buffer object and returns the VAO.
-// 0423 Ph2: tighten to package
-public GLuint buildVao3f(float[] data, out GLuint vbo) {
+package GLuint buildVao3f(float[] data, out GLuint vbo) {
     version(unittest) {
         vbo = 0;
         return 0;
@@ -196,8 +195,7 @@ public GLuint buildVao3f(float[] data, out GLuint vbo) {
 
 // Compute a right-handed local frame from a normal/forward vector.
 // right and up are perpendicular to normal and to each other.
-// 0423 Ph2: tighten to package
-public void localFrame(Vec3 normal, out Vec3 right, out Vec3 up) {
+package void localFrame(Vec3 normal, out Vec3 right, out Vec3 up) {
     Vec3 fwd = normalize(normal);
     Vec3 tmp  = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
     right = normalize(cross(fwd, tmp));
@@ -206,8 +204,7 @@ public void localFrame(Vec3 normal, out Vec3 right, out Vec3 up) {
 
 // Build unit-cube triangle data (half-extent 1, 6 faces × 2 tris × 3 verts)
 // into an existing float array.  CubicArrow and BoxHandler share this geometry.
-// 0423 Ph2: tighten to package
-public void buildUnitCubeData(ref float[] data) {
+package void buildUnitCubeData(ref float[] data) {
     immutable float[3][8] v = [
         [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],  // back
         [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],  // front
@@ -227,8 +224,7 @@ public void buildUnitCubeData(ref float[] data) {
 
 // Draw VAO with GL_LINES/GL_LINE_STRIP using the thick-line program,
 // then restore the caller's program.
-// 0423 Ph2: tighten to package
-public void drawThickLines(GLuint vao, int vertCount, GLenum mode,
+package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
                              const ref float[16] model,
                              const ref Viewport vp,
                              Vec3 color, float lineWidth,
