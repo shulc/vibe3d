@@ -1795,26 +1795,6 @@ void main(string[] args) {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
-    // Seam 3 (task 0413, campaign 0407 §A.D4-b) — install the display-
-    // TARGET resolver, the gpu/cache counterpart to the `activeMeshResolver`
-    // installed above. Every migrated mesh-command's apply()/revert() calls
-    // `display_sync.refreshDisplayActive(mesh)` instead of carrying its own
-    // GpuMesh*/VertexCache*/EdgeCache*/FaceBoundsCache* fields; this
-    // resolver is what supplies those targets, resolved fresh on every
-    // call. Must be installed here (not alongside `activeMeshResolver`
-    // above) because `gpu`/`vertexCache()`/`edgeCache()`/`faceCache()` don't
-    // exist yet at that earlier point — `vertexCache()`/`edgeCache()`/
-    // `faceCache()` resolve to `vpm.views[vpm.activeId].{vcache,ecache,fcache}`
-    // (declared above), so re-evaluating them on every call — rather than
-    // capturing `&vertexCache()` once the way the old per-command ctor
-    // wiring did — is exactly the bonus-fix: an undo/redo delivered after
-    // the user switches the active viewport cell now refreshes the cell
-    // that is ACTUALLY active at refresh time, not the one that was active
-    // when the command happened to be constructed.
-    import display_sync : displayTargetsResolver, DisplayTargets;
-    displayTargetsResolver = () => DisplayTargets(
-        &gpu, &vertexCache(), &edgeCache(), &faceCache());
-
     // Mid-batch display pull-guard (campaign 0407 §D4-в, phase 2).
     //
     // With the display upload bus-driven (the capture-and-upload at the top
