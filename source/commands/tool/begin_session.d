@@ -5,7 +5,7 @@ import mesh;
 import view;
 import editmode;
 import commands.tool.host : ToolHost;
-import tools.xfrm_transform : XfrmTransformTool;
+import tools.transform.xfrm_transform : XfrmTransformTool;
 
 // ---------------------------------------------------------------------------
 // ToolBeginSessionCommand — `tool.beginSession`

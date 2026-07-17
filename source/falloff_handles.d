@@ -11,7 +11,7 @@ import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
-import tools.create_common : pickWorkplaneFrame, WorkplaneFrame;
+import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame;
 
 import std.format : format;
 import std.math   : sqrt, abs;

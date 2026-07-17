@@ -39,50 +39,50 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 
-import tools.transform;
-import tools.move;
-import tools.push;
-import tools.bend;
-import tools.linear_align_tool;
-import tools.radial_align_tool;
-import tools.scale;
-import tools.rotate;
-import tools.box;
-import tools.mirror;
-import tools.radial_sweep_tool;
-import tools.sphere;
-import tools.cylinder;
-import tools.cone;
-import tools.capsule;
-import tools.torus;
-import tools.arc;
-import tools.tube;
-import tools.pen;
-import tools.vertex_place : VertexTool;
-import tools.drag_weld    : DragWeldTool;
-import tools.edge_extrude : EdgeExtrudeTool;
-import tools.edge_extend : EdgeExtendTool;
-import tools.edge_slide : EdgeSlideTool;
-import tools.poly_extrude : PolyExtrudeTool;
-import tools.radial_array_tool : RadialArrayTool;
-import tools.poly_bevel : PolyBevelTool;
-import tools.poly_inset_tool : PolyInsetTool;
-import tools.smooth_shift_tool : SmoothShiftTool;
-import tools.magnet : MagnetTool;
-import tools.edge_bevel : EdgeBevelTool;
-import tools.loop_slice_tool : LoopSliceTool;
-import tools.slice_tool : SliceTool;
-import tools.edge_slice_tool : EdgeSliceTool;
-import tools.reduce : ReductionTool;
-import tools.clone_tool : CloneTool;
-import tools.array_tool : ArrayTool;
-import tools.tack : TackTool;
-import tools.bridge_tool : BridgeTool, BridgeEditFactory;
-import tools.vert_merge_tool : VertexMergeTool;
-import tools.vertex_bevel_tool : VertexBevelTool;
-import tools.vertex_extrude_tool : VertexExtrudeTool;
-import tools.stroke_extrude_tool : StrokeExtrudeTool;
-import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
+import tools.transform.transform;
+import tools.transform.move;
+import tools.deform.push;
+import tools.deform.bend;
+import tools.alignment.linear_align_tool;
+import tools.alignment.radial_align_tool;
+import tools.transform.scale;
+import tools.transform.rotate;
+import tools.create.box;
+import tools.alignment.mirror;
+import tools.alignment.radial_sweep_tool;
+import tools.create.sphere;
+import tools.create.cylinder;
+import tools.create.cone;
+import tools.create.capsule;
+import tools.create.torus;
+import tools.create.arc;
+import tools.create.tube;
+import tools.create.pen;
+import tools.create.vertex_place : VertexTool;
+import tools.edit.drag_weld    : DragWeldTool;
+import tools.edit.edge_extrude : EdgeExtrudeTool;
+import tools.edit.edge_extend : EdgeExtendTool;
+import tools.slice.edge_slide : EdgeSlideTool;
+import tools.edit.poly_extrude : PolyExtrudeTool;
+import tools.alignment.radial_array_tool : RadialArrayTool;
+import tools.edit.poly_bevel : PolyBevelTool;
+import tools.edit.poly_inset_tool : PolyInsetTool;
+import tools.deform.smooth_shift_tool : SmoothShiftTool;
+import tools.deform.magnet : MagnetTool;
+import tools.edit.edge_bevel : EdgeBevelTool;
+import tools.slice.loop_slice_tool : LoopSliceTool;
+import tools.slice.slice_tool : SliceTool;
+import tools.slice.edge_slice_tool : EdgeSliceTool;
+import tools.edit.reduce : ReductionTool;
+import tools.alignment.clone_tool : CloneTool;
+import tools.alignment.array_tool : ArrayTool;
+import tools.edit.tack : TackTool;
+import tools.edit.bridge_tool : BridgeTool, BridgeEditFactory;
+import tools.edit.vert_merge_tool : VertexMergeTool;
+import tools.edit.vertex_bevel_tool : VertexBevelTool;
+import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
+import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
 import commands.select.expand;
@@ -3756,7 +3756,7 @@ void main(string[] args) {
             // Absent block ⇒ no transform tool active; tests gate on its presence.
             // (Phase 1 adds the frozen run-frame fields to this same block.)
             {
-                import tools.xfrm_transform : XfrmTransformTool;
+                import tools.transform.xfrm_transform : XfrmTransformTool;
                 if (auto xf = cast(XfrmTransformTool) activeTool) {
                     buf.put(`,"transform":{"translate":`); putVec3(xf.publishedTranslate());
                     buf.put(`,"rotate":`);  putVec3(xf.publishedRotate());
@@ -7303,7 +7303,7 @@ void main(string[] args) {
                     // transform tool sets renderParamsAsPanel()==false
                     // (PropertyPanel.draw early-returns), and formed tools render
                     // values via the form.
-                    import tools.xfrm_transform : XfrmTransformTool;
+                    import tools.transform.xfrm_transform : XfrmTransformTool;
                     if (auto xf = cast(XfrmTransformTool) activeTool) {
                         xf.suppressTRSProperties = true;
                         scope(exit) xf.suppressTRSProperties = false;
@@ -8558,7 +8558,7 @@ void main(string[] args) {
                                         ImVec2(curX + kTriHalf, trackY - kTriHalf * 2 - kTriHalf),
                                         col);
                                 }
-                                import tools.loop_slice_tool : loopSliceHudLabel;
+                                import tools.slice.loop_slice_tool : loopSliceHudLabel;
                                 // Position is a 0..1 fraction internally; the
                                 // slider readout is a true PERCENT (0.13 ->
                                 // "13.00 %") — see loopSliceHudLabel (pure +
@@ -9099,8 +9099,8 @@ void main(string[] args) {
         // pre-task-0206 behaviour.
         {
             import viewport : DirtyKey, overlayDrawOrder;
-            import tools.xfrm_transform : XfrmTransformTool;
-            import tools.command_wrapper : CommandWrapperTool;
+            import tools.transform.xfrm_transform : XfrmTransformTool;
+            import tools.common.command_wrapper : CommandWrapperTool;
 
             // Task 0209 (Quad/Split any-cell input), Phase 4: current rollover
             // ("hot") part on whichever arbiter owns this frame's interaction —

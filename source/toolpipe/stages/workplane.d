@@ -9,7 +9,7 @@ import toolpipe.stage    : Stage, TaskCode, ordWork;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : WorkplanePacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import tools.create_common : pickMostFacingPlane;
+import tools.create.create_common : pickMostFacingPlane;
 import popup_state        : setStatePath;
 
 // ---------------------------------------------------------------------------

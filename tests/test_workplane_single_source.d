@@ -38,7 +38,7 @@ import std.net.curl : get, post;
 // to run_test.d's compile-mode detector (isSourceBackedTest scans for a
 // leading `import toolpipe.`/`tools.` line), so it gets linked against the
 // full project instead of the bare-path std-only compile line.
-import tools.create_common       : currentWorkplaneFrame;
+import tools.create.create_common       : currentWorkplaneFrame;
 import toolpipe.pipeline         : g_pipeCtx, ToolPipeContext;
 import toolpipe.stages.workplane : WorkplaneStage;
 

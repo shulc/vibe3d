@@ -22,7 +22,7 @@ void main() {}
 // 1. Selection-parity unit test — byte-identical extraction guard
 // ---------------------------------------------------------------------------
 
-// Mirror of tools.move.chooseConstraintAxis — copied verbatim to validate
+// Mirror of tools.transform.move.chooseConstraintAxis — copied verbatim to validate
 // the extracted function's behavior against a known-good reference.
 // This is exactly what the live path computes; the unit test below calls
 // the extracted function through HTTP (no direct D import) by relying on

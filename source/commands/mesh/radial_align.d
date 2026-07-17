@@ -9,7 +9,7 @@ import editmode;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
-import tools.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
+import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
                               MAX_ALIGN_SIDES;
 
 /// Distribute a selected vertex CHAIN at equal angular slots around a

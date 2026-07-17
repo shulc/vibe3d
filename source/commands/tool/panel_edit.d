@@ -6,7 +6,7 @@ import view;
 import editmode;
 import math : Vec3;
 import commands.tool.host : ToolHost;
-import tools.xfrm_transform : XfrmTransformTool;
+import tools.transform.xfrm_transform : XfrmTransformTool;
 
 // ---------------------------------------------------------------------------
 // ToolPanelEditCommand — `tool.panelEdit <dx> <dy> <dz>`

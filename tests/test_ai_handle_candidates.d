@@ -14,7 +14,7 @@ import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
 import mesh : GpuMesh, Mesh, makeCube;
 import operator : VectorStack;
-import tools.xfrm_transform : XfrmTransformTool,
+import tools.transform.xfrm_transform : XfrmTransformTool,
     xfrmCompactScaleHeadFallbackForTest, xfrmLatchedHandlePartForTest;
 
 void main() {}

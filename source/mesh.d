@@ -105,7 +105,7 @@ enum string kUvMapName = "uv";
 /// module's own `revolveProfileEx` kernel-level backstop (its durable
 /// defense against a direct/scripted caller — Param `.min()/.max()` hints
 /// are UI-only and do not clamp the headless write path) and
-/// `tools.radial_sweep_tool`'s Param `.max()`/`toKernelParams` clamp.
+/// `tools.alignment.radial_sweep_tool`'s Param `.max()`/`toKernelParams` clamp.
 /// Lives here — not in the tool module it originally shipped in — because
 /// `mesh.d` is a core module that must not import `tools/*`; this is the
 /// one definition both sides read (task 0365 P1 relocation).
@@ -6725,7 +6725,7 @@ struct Mesh {
     // and does not share its call sites (face_extrude.d, poly_extrude.d,
     // smooth_shift.d's existing one-shot command all keep calling
     // extrudeFacesByMask, untouched). Backs the interactive Smooth Shift
-    // tool (tools.smooth_shift_tool.SmoothShiftTool).
+    // tool (tools.deform.smooth_shift_tool.SmoothShiftTool).
     //
     // Per-(island,vertex) cap law, fitted to the frozen reference fixture
     // (see tests/fixtures/smooth_shift.json):

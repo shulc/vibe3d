@@ -9,7 +9,7 @@ import editmode;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
-import tools.align_kernels : extractAlignChain, linearAlignTargets, lerp3;
+import tools.alignment.align_kernels : extractAlignChain, linearAlignTargets, lerp3;
 
 /// Align a selected vertex CHAIN between its two fixed endpoints (task
 /// 0361 — replaces the previous bbox-collapse-to-centroid-line algorithm,

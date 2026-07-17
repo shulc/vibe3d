@@ -3,7 +3,7 @@ module drag;
 import std.math : sqrt, isNaN;
 import math;
 import handler : MoveHandler;
-import tools.create_common : mostFacingAxis;
+import tools.create.create_common : mostFacingAxis;
 
 // ---------------------------------------------------------------------------
 // Shared drag-delta functions used by MoveTool and BoxTool (and any future

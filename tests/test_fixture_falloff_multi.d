@@ -32,8 +32,8 @@ import std.math : fabs, PI, sqrt;
 import math : Vec3, Viewport, identityMatrix, lookAt, perspectiveMatrix;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
-import tools.transform : TransformTool;
-import tools.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
+import tools.transform.transform : TransformTool;
+import tools.transform.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
 import fixture_helpers : requireProvenance;
 
 void main() {}

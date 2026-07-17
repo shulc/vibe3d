@@ -24,7 +24,7 @@ import std.conv : to;
 import std.math : abs, sin, cos, PI;
 import mesh;
 import math : Vec3;
-import tools.radial_sweep_tool;
+import tools.alignment.radial_sweep_tool;
 
 void main() {}
 

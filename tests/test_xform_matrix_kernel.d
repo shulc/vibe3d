@@ -28,8 +28,8 @@ import math : Vec3, Viewport, identityMatrix, translationMatrix,
               perspectiveMatrix;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
-import tools.transform : TransformTool;
-import tools.xform_kernels :
+import tools.transform.transform : TransformTool;
+import tools.transform.xform_kernels :
     applyTranslateIncremental, applyRotateIncremental, applyScaleFromActivation,
     applyXformMatrix, BlendMode, blendToIdentity;
 
