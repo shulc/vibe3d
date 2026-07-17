@@ -1298,6 +1298,19 @@ private:
     void rebuildCut() {
         if (!before_.filled || seeds_.length == 0) return;
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
+        // Reference-captured semantics (task 0429): every write of the
+        // standing preview into the real mesh — arm, re-arm, scrub,
+        // HUD/panel/param regrade, ALL of which funnel through this method —
+        // is a new action and invalidates the redo timeline, exactly as
+        // record() does for a committed entry. A redo pressed while armed
+        // then finds an empty stack and is a dead no-op (the preview stays
+        // byte-identical, the tool stays armed and committable). Residual
+        // corner, deliberately unfixed: the /api/undo|redo TEST endpoints
+        // bypass navigate() (frozen 0428 contract, see app.d) and can still
+        // step history under a preview-mutated mesh — pre-existing badness,
+        // unchanged here; the historical resync-bake hazard specifically is
+        // already unreachable (resyncSession()'s armed-guard below).
+        if (history !is null) history.invalidateRedo();
         before_.restore(*mesh);
         uint[] newFaceIndices;
         float[] pos, heights;

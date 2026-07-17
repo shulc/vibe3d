@@ -913,6 +913,34 @@ final class CommandHistory {
     bool canUndo() const { return undoStack.length > 0; }
     bool canRedo() const { return redoStack.length > 0; }
 
+    /// Kill the redo timeline WITHOUT recording anything — the same "Any new
+    /// action invalidates the redo timeline" rule record() applies
+    /// (`redoStack.length = 0` there), exported for new actions that write
+    /// PAST the history: a standing-preview tool's arm/re-arm/scrub writes
+    /// mutate the real mesh directly (mutate/revert preview, no history
+    /// entry), yet they are new actions all the same — reference-captured
+    /// semantics (task 0429): a redo pressed while such a preview is up must
+    /// find an empty stack and be a dead no-op.
+    ///
+    /// Guards mirror the record() family (record()/recordCoalescing()):
+    /// refused under lockout, and refused while `_state != Active`. The state
+    /// guard is what protects a stack step against re-entrant erasure: BOTH
+    /// directions apply/revert under Suspend — undo()'s wraps (legacy LIFO,
+    /// ToolLifecycle hard-step, Case A model revert, Case B UI fallback) and,
+    /// crucially for THIS method, redo()'s wraps (legacy LIFO, ToolLifecycle
+    /// head re-apply, T-SEP model re-apply) — so even an exotic preview
+    /// rebuild triggered from inside a step cannot erase the redo entry that
+    /// step just created.
+    ///
+    /// Deliberately narrow: does NOT touch undoStack/_runOpen, does NOT fire
+    /// onRecord, and does not check blockDepth (the invalidation is correct
+    /// whenever a write diverged from the redo entries, block open or not).
+    void invalidateRedo() {
+        if (_lockout) return;
+        if (_state != UndoState.Active) return;
+        redoStack.length = 0;
+    }
+
     // Scan undoStack from the tail toward the head for the nearest Model-class
     // entry (Undoable && !UiUndo). Returns the index into undoStack, or
     // undoStack.length if no Model entry is found (all-UI stack).
@@ -1586,6 +1614,41 @@ unittest { // consolidate does NOT bump undoEpoch
 
     h.consolidate(run);
     assert(h.undoEpoch == 0, "consolidate must not bump epoch");
+}
+
+unittest { // invalidateRedo (task 0429): kills redo; refused under Suspend/lockout
+    auto h = new CommandHistory();
+    auto a = new _EpochTestCmd();
+    auto b = new _EpochTestCmd();
+    a.apply(); h.record(a);
+    b.apply(); h.record(b);
+    assert(h.undo());
+    assert(h.canRedo(), "setup: redo available after an undo");
+    assert(h.undoStack.length == 1, "setup: one entry left below the cursor");
+
+    // Suspend guard — the state undo()/redo() hold around a stack step's
+    // apply/revert: a re-entrant invalidation DURING the step must not erase
+    // the redo entry the step just created.
+    h.setState(UndoState.Suspend);
+    h.invalidateRedo();
+    assert(h.canRedo(), "invalidateRedo under Suspend must be a no-op");
+    h.setState(UndoState.Active);
+
+    // Lockout guard (record-family pattern).
+    h.setLockout(true);
+    h.invalidateRedo();
+    assert(h.canRedo(), "invalidateRedo under lockout must be a no-op");
+    h.setLockout(false);
+
+    // Active: exactly the redo timeline dies — undoStack and epoch are
+    // untouched — and the call is idempotent on an already-empty redo stack.
+    auto epochBefore = h.undoEpoch;
+    h.invalidateRedo();
+    assert(!h.canRedo(), "invalidateRedo must clear the redo stack");
+    assert(h.undoStack.length == 1, "invalidateRedo must not touch the undo stack");
+    assert(h.undoEpoch == epochBefore, "invalidateRedo must not bump the epoch");
+    h.invalidateRedo();
+    assert(!h.canRedo(), "idempotent on empty redo");
 }
 
 // ---------------------------------------------------------------------------

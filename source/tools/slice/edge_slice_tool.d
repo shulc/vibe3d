@@ -649,6 +649,16 @@ private:
         syncProxy();
         armedKey_.stamp(*mesh);
         // No cut yet — armed_/built_ stay false until a second point latches.
+        //
+        // Task 0429: the first latch writes NOTHING to the mesh, but it OPENS
+        // the standing-preview session (hasUncommittedEdit() is true from one
+        // point on) — invalidate redo here too, by the uniform "a standing-
+        // preview session opened" rule. Side benefit: no redo step can ever
+        // land under a 1-point chain, whose chainBefore_ (captured above)
+        // would be stale against the redone mesh. One corner of this call is
+        // an extrapolation pending capture — see the task file's CQ-A
+        // (task 0429) before removing it.
+        if (history !is null) history.invalidateRedo();
     }
 
     void appendPoint(int h, float sx, float sy) {
@@ -679,6 +689,11 @@ private:
         activePoint_   = cast(int)latchedPoints_.length - 1;
         syncProxy();
         chainBefore_   = MeshSnapshot.capture(*mesh);
+        // Task 0429: the headless arm bakes the preview into the real mesh
+        // DIRECTLY (bypassing rebuildPreview), so it is its own redo-
+        // invalidation write-point — same law as rebuildPreview()/
+        // LoopSliceTool.rebuildCut().
+        if (history !is null) history.invalidateRedo();
         size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
         // Stamp AFTER baking — bakeChainFrom mutates the mesh (bumps
         // mutationVersion), so stamping before it would leave armedKey_
@@ -978,6 +993,13 @@ private:
         if (!chainBefore_.filled || latchedPoints_.length == 0) return;
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
 
+        // Task 0429: a standing-preview write into the real mesh (append-
+        // latch bake, scrub, pointT/param regrade, peel re-bake — every path
+        // funnels through here except armChain's direct bake) invalidates
+        // the redo timeline like any new action — see LoopSliceTool.
+        // rebuildCut()'s comment for the full law + the /api/undo-bypass
+        // residual corner.
+        if (history !is null) history.invalidateRedo();
         size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
         built_ = n > 0;
         armedKey_.stamp(*mesh);
