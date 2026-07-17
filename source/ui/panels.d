@@ -252,6 +252,7 @@ import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
+import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
@@ -1544,10 +1545,16 @@ void drawStatusBar(EditorApp app) {
                 }
                 // "AI" master-switch button: greyed (not hidden) in
                 // modeling-noai — see kAiToggleAvailable's doc comment
-                // near `main`. Every OTHER status-line button stays as
-                // today (no other action id is gated here).
+                // near `main`. Also greyed while the copilot is paused
+                // (kCopilotEnabled=false, task 0422 — registration.d drops
+                // the ai.toggle/enable/disable factories in that state, so
+                // this reuses the same disabled-placeholder mechanism to
+                // keep the button un-clickable rather than dispatching to a
+                // now-unregistered command id). Every OTHER status-line
+                // button stays as today (no other action id is gated here).
                 bool aiGateBlocked = action.kind == ActionKind.command
-                    && action.id == "ai.toggle" && !kAiToggleAvailable;
+                    && action.id == "ai.toggle"
+                    && !(kAiToggleAvailable && kCopilotEnabled);
                 if (renderStyledButton(label, sc, on, /*isCommand=*/true,
                                        ImVec2(effW, 0), aiGateBlocked)) {
                     final switch (action.kind) {
@@ -2032,7 +2039,10 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // in this codebase (doc/ai_model_adapter_live_wiring_plan.md).
     // version(WithAI)-only — the whole findings panel/overlay is
     // compiled out of modeling-noai (see import block doc comment).
+    // static if kCopilotEnabled (task 0422): ghost overlay skipped while
+    // the copilot is paused; flip the flag to restore.
     version (WithAI)
+    static if (kCopilotEnabled)
     {
         immutable bool panelShown = !command.g_testMode || g_copilotPanelShown;
         if (aiState.enabled && panelShown) {

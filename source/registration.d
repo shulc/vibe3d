@@ -246,6 +246,7 @@ import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
+import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
@@ -1064,6 +1065,18 @@ void registerCommands(EditorApp app) {
         reg.commandFactories["path.define"] = () => cast(Command)
             new PathDefineCommand(&mesh(), cameraView, editMode);
     }
+    // ai.toggle / ai.enable / ai.disable: gated on kCopilotEnabled (task
+    // 0422 — owner pausing the AI Modeling Copilot; ONNX path untouched).
+    // All THREE are gated together, not just ai.toggle: aiState.enabled
+    // must stay permanently false with no command able to flip it, so the
+    // model-decision-provider's keepDefault fallback (app.d ~2555, which
+    // calls aiAdvisor.advise() directly) stays byte-identical to "AI never
+    // existed" per its own doc comment, with no backdoor left to re-arm the
+    // deterministic advisor while the copilot is off. The statusline "AI"
+    // button greys out via the same kAiToggleAvailable/aiGateBlocked
+    // mechanism (ui/panels.d) so it never dispatches to this now-missing
+    // factory. Flip kCopilotEnabled back to `true` to restore.
+    static if (kCopilotEnabled)
     {
         Command delegate() makeAiFactory(AiToggleAction action) {
             return () => cast(Command)
@@ -1075,7 +1088,10 @@ void registerCommands(EditorApp app) {
     }
     // AI Modeling Copilot findings-panel commands: version(WithAI)-only,
     // compiled out of modeling-noai entirely (see import block doc comment).
+    // static if kCopilotEnabled (task 0422) on top: not registered while the
+    // copilot is paused; flip the flag to restore.
     version (WithAI)
+    static if (kCopilotEnabled)
     {
         // AI Modeling Copilot (task 0402 Phase 2): copilot.analyze is a pure
         // read (repopulates copilotPanel's findings list); copilot.selectFinding

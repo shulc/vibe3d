@@ -252,6 +252,7 @@ import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
+import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
@@ -2506,6 +2507,18 @@ void main(string[] args) {
     auto formsPanel    = new forms_render.FormsPanel();
     auto aiState       = new EditorAiState();
     auto aiAdvisor     = new AiAdvisor(() => aiState.enabled);
+    // Copilot deterministic handle-advisor hook (task 0402/0386). Gated off
+    // under kCopilotEnabled (task 0422 — owner pausing the copilot; ONNX
+    // path untouched). The `aiAdvisor` OBJECT above stays constructed
+    // regardless: the model-backed decision provider below (~line 2555)
+    // holds its own direct closure reference to it as its keepDefault
+    // fallback, bypassing this global hook entirely. Skipping this call
+    // just means handler.d's handleAiAdvisor() lazily falls back to a bare
+    // `new AiAdvisor()` (permanently inert — see ai/advisor.d's own default-
+    // ctor unittest), so ordinary handle picking gets zero advisor
+    // influence, byte-identical to AI never having existed. Flip
+    // kCopilotEnabled back to `true` to restore.
+    static if (kCopilotEnabled)
     setHandleAiAdvisor(aiAdvisor);
 
     // AI Modeling Copilot (task 0402 Phase 2): the passive findings-list
@@ -2513,8 +2526,10 @@ void main(string[] args) {
     // the copilot.analyze / copilot.selectFinding commands below are the
     // only writers, see copilot_panel.d's doc comment.
     // version(WithAI)-only (compiled out of modeling-noai) — see the import
-    // block's doc comment near the top of this file.
+    // block's doc comment near the top of this file. static if kCopilotEnabled
+    // (task 0422) on top: not constructed at all while the copilot is paused.
     version (WithAI)
+    static if (kCopilotEnabled)
     auto copilotPanel = new CopilotPanel();
 
     // Opt-in model-backed handle decision provider (task 0028). Enabled only
@@ -2797,7 +2812,7 @@ void main(string[] args) {
     app.ai3dController  = ai3dController;
     app.remeshJob       = remeshJob;
     app.aiState         = aiState;
-    version (WithAI) app.copilotPanel = copilotPanel;
+    version (WithAI) static if (kCopilotEnabled) app.copilotPanel = copilotPanel;
     app.aiExplore       = aiExplore;
     app.aiLogWriter     = aiLogWriter;
 
@@ -7202,7 +7217,10 @@ void main(string[] args) {
         // document / selection state directly.
         // version(WithAI)-only — compiled out of modeling-noai entirely
         // (see import block doc comment near the top of this file).
+        // static if kCopilotEnabled (task 0422): panel draw skipped while
+        // the copilot is paused; flip the flag to restore.
         version (WithAI)
+        static if (kCopilotEnabled)
         if (!command.g_testMode || g_copilotPanelShown) {
             pushPanelChromeStyle();
             copilotPanel.draw(aiState.enabled, commandHandlerDelegate);
