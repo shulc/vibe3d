@@ -272,12 +272,14 @@ class Tool : ParamProvider {
     // this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
-    // Standing-preview redo/cancel shape (tasks 0232/0400 —
-    // cancelsOnRedo / survivesEditCancel) and the mid-session per-step undo
-    // peel (task 0321 — tryUndoStepInSession) moved to the optional
-    // StandingPreview / SessionStepUndo interfaces in edit_session.d (task
-    // 0428). A tool not implementing them keeps the former base defaults
-    // (redo steps the stack; cancel-then-drop; no per-step peel).
+    // Standing-preview cancel-survival shape (task 0400 —
+    // survivesEditCancel) and the mid-session per-step undo peel (task 0321
+    // — tryUndoStepInSession) moved to the optional StandingPreview /
+    // SessionStepUndo interfaces in edit_session.d (task 0428). A tool not
+    // implementing them keeps the former base defaults (cancel-then-drop;
+    // no per-step peel). The redo direction never cancels an open edit for
+    // ANY tool: a standing preview's write-points invalidate the redo
+    // timeline instead (task 0429), so the former redo-cancel hook is gone.
 
     // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
     // after history navigation moved geometry underneath an active tool. P0

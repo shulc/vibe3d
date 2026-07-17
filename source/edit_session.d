@@ -135,23 +135,16 @@ interface RefireClient {
 // StandingPreview — optional capability: the tool's uncommitted edit is a
 // STANDING preview sitting on the mesh across arbitrary frames, re-armable
 // after every commit/cancel (LoopSliceTool / EdgeSliceTool — task 0232 +
-// 0400). The two predicates co-travel by design: a tool cannot opt into the
-// redo-cancels-preview shape without also deciding whether a cancel ends its
-// session — one interface encodes both decisions.
+// 0400). One predicate: whether a cancel ends the tool's session. (The
+// former second predicate — task 0232's redo-cancel hook, "a redo while
+// armed cancels the preview first" — was removed by task 0429: a standing
+// preview's writes now invalidate the redo timeline at their own
+// write-points (CommandHistory.invalidateRedo), so a redo pressed while a
+// preview is up finds an empty stack and is a no-op by construction —
+// reference-captured semantics; no cancel-press exists in that direction
+// at all.)
 // ---------------------------------------------------------------------------
 interface StandingPreview {
-    // Whether an interactive history REDO (redo keystroke) should CANCEL this
-    // tool's open uncommitted edit instead of stepping the redo stack. The
-    // undo direction always cancels an open edit (there is nothing to undo
-    // into a still-open session); the redo direction, for a tool NOT on this
-    // interface, does NOT — refire-based tools (e.g. BoxTool's live property
-    // edit) legitimately hold an uncommitted edit AND must redo their own
-    // param changes. Only a standing preview (task 0232: LoopSliceTool's
-    // `armed_`) answers true here, so a redo reachable while the preview is
-    // up cancels it first rather than applying a redo on top of the dirty
-    // mesh.
-    bool cancelsOnRedo() const;
-
     // Task 0400: whether cancelling this tool's open uncommitted edit (via
     // cancelUncommittedEdit(), reached from navigate()'s whole-edit-cancel
     // branch) leaves the tool with a still-meaningful session to stay in,
@@ -337,21 +330,15 @@ final class EditSession {
     // phase) — both reported by hasUncommittedEdit() ONLY when no drag is
     // active, so a mid-gizmo-drag undo still falls through to history.undo()
     // and never aborts the live drag. The UNDO direction always cancels an
-    // open edit ("a redo never cancels an open session — there is nothing to
-    // redo into one" was the original rule), but task 0232's Loop Slice
-    // standing preview (armed_) needs a NARROW exception in the REDO
-    // direction: unlike the transient panel/gizmo sessions this branch was
-    // written for, an armed preview can sit on the mesh across an arbitrary
-    // number of frames, so a REDO reachable while armed would otherwise apply
-    // on top of an uncommitted cut — and resyncSession() would then
-    // re-baseline `before_` from that dirty mesh, permanently baking the cut
-    // in. So the redo direction cancels ONLY when the tool opts in via
-    // StandingPreview.cancelsOnRedo() (LoopSliceTool ⇔ armed_); every other
-    // tool — crucially the refire-based BoxTool live property edit, which
-    // reports hasUncommittedEdit()==true yet MUST redo normally — keeps the
-    // pre-0232 "redo steps the stack" behavior. Cancelling first has no
-    // history side effect (nothing was recorded while armed), so a second
-    // press still reaches the real undo/redo.
+    // open edit; the REDO direction never does (task 0429 — this replaced
+    // task 0232's narrow redo-cancel exception): a standing preview's
+    // writes invalidate the redo timeline at their own write-points
+    // (CommandHistory.invalidateRedo — reference-captured semantics), so a
+    // redo pressed while a preview is armed finds an empty redo stack and is
+    // a no-op by MECHANISM, with no special branch here; refire-based tools
+    // (e.g. BoxTool's live property edit), which report
+    // hasUncommittedEdit()==true yet must redo their own param changes, redo
+    // exactly as before.
     //
     // NOTE the deliberate RE-READS of tool_() after cancelUncommittedEdit():
     // the absorbed app.d block re-evaluated `activeTool` live at each mention,
@@ -370,10 +357,8 @@ final class EditSession {
             auto su = cast(SessionStepUndo) tool_();
             if (isUndo && su !is null && su.tryUndoStepInSession()) return true;
         }
-        auto t  = tool_();
-        auto sp = cast(StandingPreview) t;
-        if (t !is null && t.hasUncommittedEdit()
-            && (isUndo || (sp !is null && sp.cancelsOnRedo()))) {
+        auto t = tool_();
+        if (t !is null && t.hasUncommittedEdit() && isUndo) {
             t.cancelUncommittedEdit();
             // NO postcondition assert here — deliberately. The one-shot
             // "cancel ⇒ !hasUncommittedEdit" reading of the base-class

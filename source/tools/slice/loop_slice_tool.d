@@ -161,7 +161,8 @@ unittest {
 // `scrubPosition()`) → COMMIT (Enter, or tool-drop while armed+built, one
 // `MeshSessionEdit` undo entry, then RE-ARMS) → CANCEL (Esc/RMB, restores
 // `before_`, no undo entry). See doc/loop_slice_slider_hud_impl_plan.md for
-// the full mechanism-by-mechanism rationale (navHistory redo-cancel,
+// the full mechanism-by-mechanism rationale (write-point redo invalidation
+// — task 0429, superseding the plan's navHistory redo-cancel —
 // scene.reset/onActiveLayerChanged `dropArmedPreview()` calls, `armedKey_`
 // mesh-swap guard) — none of that changed for v2, only WHAT gets latched
 // (`seeds_[]` instead of a single `seedEdge_`) and WHAT gets rebuilt from
@@ -175,9 +176,8 @@ unittest {
 // state: `ToolDoApplyCommand` captures its own snapshot pair around the call
 // and IS the undo entry.
 // ---------------------------------------------------------------------------
-// StandingPreview (task 0428): the cancelsOnRedo / survivesEditCancel
-// overrides below are the interface's implementations (EditSession discovers
-// them by cast).
+// StandingPreview (task 0428): the survivesEditCancel override below is the
+// interface's implementation (EditSession discovers it by cast).
 final class LoopSliceTool : Tool, StandingPreview {
 public:
     // Edit — what a click on the HUD track / a marker does (task 0239).
@@ -693,16 +693,6 @@ public:
 
     public override void cancelUncommittedEdit() {
         cancelLiveEdit();
-    }
-
-    // A standing armed preview sits on the mesh across arbitrary frames, so a
-    // REDO reachable while armed must cancel it first (else the redo would apply
-    // on top of the uncommitted cut and resyncSession() would bake it in). This
-    // is what makes the navHistory redo-cancel narrow: it fires ONLY for this
-    // tool's armed preview, never for refire-based tools (BoxTool) whose
-    // uncommitted edit must redo normally on Ctrl+Shift+Z.
-    public override bool cancelsOnRedo() const {
-        return active && armed_;
     }
 
     // Task 0400 (captured reference — see the task doc): interactive Ctrl+Z
@@ -1304,7 +1294,12 @@ private:
         // is a new action and invalidates the redo timeline, exactly as
         // record() does for a committed entry. A redo pressed while armed
         // then finds an empty stack and is a dead no-op (the preview stays
-        // byte-identical, the tool stays armed and committable). Residual
+        // byte-identical, the tool stays armed and committable). This is
+        // also THIS preview's own safety invariant (formerly the job of task
+        // 0232's redo-cancel hook): a redo stepping the stack under an armed preview
+        // would let resyncSession() re-baseline from the dirty mesh and bake
+        // the uncommitted cut in — the empty redo stack makes that
+        // structurally unreachable from the keyboard. Residual
         // corner, deliberately unfixed: the /api/undo|redo TEST endpoints
         // bypass navigate() (frozen 0428 contract, see app.d) and can still
         // step history under a preview-mutated mesh — pre-existing badness,

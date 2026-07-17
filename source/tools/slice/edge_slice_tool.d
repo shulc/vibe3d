@@ -79,9 +79,9 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 // sequence would produce, without committing, so a synthetic Enter / tool-off
 // can exercise the real interactive commit path in a test.
 // ---------------------------------------------------------------------------
-// StandingPreview + SessionStepUndo (task 0428): the cancelsOnRedo /
-// survivesEditCancel / tryUndoStepInSession overrides below are the
-// interfaces' implementations (EditSession discovers them by cast).
+// StandingPreview + SessionStepUndo (task 0428): the survivesEditCancel /
+// tryUndoStepInSession overrides below are the interfaces' implementations
+// (EditSession discovers them by cast).
 final class EdgeSliceTool : Tool, StandingPreview, SessionStepUndo {
 public:
     enum Show { None, Position }
@@ -347,17 +347,10 @@ public:
         cancelLiveEdit();
     }
 
-    // A standing armed preview (or even a lone latched point) sits on the
-    // mesh across arbitrary frames, so a REDO reachable while any chain state
-    // is live must cancel it first (mirrors LoopSliceTool).
-    public override bool cancelsOnRedo() const {
-        return active && (armed_ || latchedPoints_.length > 0);
-    }
-
     // Task 0400 (see LoopSliceTool's identical override + the task doc):
     // EdgeSliceTool shares LoopSliceTool's standing-preview architecture
     // (armed_ sits on the mesh across arbitrary frames, re-armable after
-    // commit/cancel — the same family that opts into cancelsOnRedo() above),
+    // commit/cancel — the standing-preview family),
     // so an interactive Ctrl+Z that reaches navHistory()'s whole-edit-cancel
     // branch (only when tryUndoStepInSession() below has nothing left to
     // peel) must not drop the tool either. In practice tryUndoStepInSession()
