@@ -580,8 +580,9 @@ public:
     override bool applyHeadless() {
         frame = currentWorkplaneFrame();
         size_t firstNewVert = mesh.vertices.length;
+        size_t firstNewFace = mesh.faces.length;
         if (!buildByMethod(mesh)) return false;
-        applyFrameToMeshRange(mesh, firstNewVert);
+        applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;

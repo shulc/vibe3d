@@ -40,15 +40,21 @@ module tools.primitive_create_tool;
 // planeNormal by camera side and writes params_.axis as a side effect
 // (this base's choosePlane is unsigned and params_-agnostic); its handle
 // rig is a 3-tier edge+height split with a snap query on every drag, not
-// this base's uniform sizeH[6]; its preview/commit dispatch is BOTH state-
-// and frame-handedness-aware (this base's buildInto()/
-// applyFrameToMeshRange() are neither); and it carries its own per-drag
-// live-undo ladder (recordInSession/BoxLiveEditCommand) that predates and
-// is orthogonal to this base's willCommit()/commitEdit() skeleton. Only a
-// handful of leaf helpers line up byte-for-byte (local<->world transforms,
-// worldAxisIdxOf, the Idle-state snap-preview shape) — not enough to carry
-// an inheritance relationship without it reading as "base + override
-// almost everything". See task 0418 for the full comparison.
+// this base's uniform sizeH[6]; its preview/commit dispatch is state-aware
+// (buildBase vs. buildCuboid) and buildBase() carries an ADDITIONAL
+// planeNormal-signed reverse on top of the frameIsLeftHanded()/
+// reverseFaceWinding() winding correction (this base's
+// applyFrameToMeshRange() applies the same correction — task 0424 hoisted
+// it into create_common.d as a shared helper pair — but has no state to
+// dispatch on and no signed-planeNormal builder to correct for); and it
+// carries its own per-drag live-undo ladder (recordInSession/
+// BoxLiveEditCommand) that predates and is orthogonal to this base's
+// willCommit()/commitEdit() skeleton. Only a handful of leaf helpers line
+// up byte-for-byte (local<->world transforms, worldAxisIdxOf, the
+// Idle-state snap-preview shape, and now frameIsLeftHanded()/
+// reverseFaceWinding()) — not enough to carry an inheritance relationship
+// without it reading as "base + override almost everything". See task
+// 0418 for the full comparison.
 // ---------------------------------------------------------------------------
 
 import bindbc.opengl;
@@ -66,7 +72,8 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              mostFacingAxis, transformPoint, transformDir, snapLocalHit;
+                              mostFacingAxis, transformPoint, transformDir, snapLocalHit,
+                              frameIsLeftHanded, reverseFaceWinding;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
@@ -361,9 +368,23 @@ protected:
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
     Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
-    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+    // `firstFaceIdx` is the pre-emission `m.faces.length` — only the newly
+    // appended faces are winding-corrected below, matching BoxTool's own
+    // applyFrameToMeshRange (box.d) and reverseFaceWinding's own contract.
+    //
+    // The auto-mode frame is NOT necessarily identity (X-dominant camera
+    // gets normal=+X / axis1=+Y, etc: see `pickMostFacingPlane`). For an
+    // X- or Z-dominant camera the resulting `frame.toWorld` is LEFT-handed
+    // (det < 0), which mirrors the builders' fixed local-space CCW winding
+    // into world space and flips every new face normal inward — task 0424.
+    // Every leaf (cylinder/cone/capsule/torus/tube/sphere) routes through
+    // this one correction site via rebuildPreview()/appendBuildInto()
+    // below, or (SphereTool) its own applyHeadless() override.
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx, size_t firstFaceIdx) {
         foreach (i; firstIdx .. m.vertices.length)
             m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
+        if (frameIsLeftHanded(frame))
+            reverseFaceWinding(m, firstFaceIdx);
     }
 
     void setupHeightPlane() {
@@ -393,7 +414,7 @@ protected:
         previewMesh.clear();
         if (previewValid()) {
             buildInto(&previewMesh);
-            applyFrameToMeshRange(&previewMesh, 0);
+            applyFrameToMeshRange(&previewMesh, 0, 0);
             previewMesh.buildLoops();
         }
         previewGpu.upload(previewMesh);
@@ -411,8 +432,9 @@ protected:
     // commit-vs-headless split).
     void appendBuildInto() {
         size_t firstNewVert = mesh.vertices.length;
+        size_t firstNewFace = mesh.faces.length;
         buildInto(mesh);
-        applyFrameToMeshRange(mesh, firstNewVert);
+        applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
     }
