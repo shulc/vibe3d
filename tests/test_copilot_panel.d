@@ -6,10 +6,18 @@
 // read-only refresh that populates the list. Both are dispatched via
 // /api/command — the same path the panel's Analyze button / row click use,
 // so this test drives the identical code path a real UI click would.
+//
+// Task 0422: the AI Modeling Copilot is paused behind kCopilotEnabled —
+// copilot.analyze/copilot.selectFinding are no longer registered commands
+// while it's off. Every unittest below early-skips in that state so the
+// suite stays green; flipping kCopilotEnabled back to `true` re-enables
+// every assertion as-is.
 
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
+import std.stdio : stderr;
+import ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 
@@ -52,6 +60,7 @@ long[] sortedLongs(JSONValue arr) {
 }
 
 unittest { // act-on selects the finding's element set, undoably
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_panel (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
 
@@ -94,6 +103,7 @@ unittest { // act-on selects the finding's element set, undoably
 }
 
 unittest { // AI-off: act-on is inert (no auto-apply, no selection change)
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_panel (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze"); // populate findings while AI is on
@@ -110,6 +120,7 @@ unittest { // AI-off: act-on is inert (no auto-apply, no selection change)
 }
 
 unittest { // an out-of-range finding index is a no-op, not a crash
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_panel (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze");
@@ -123,6 +134,7 @@ unittest { // an out-of-range finding index is a no-op, not a crash
 }
 
 unittest { // copilot.analyze itself never touches selection (pure read)
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_panel (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("select.vertex"); // put the editor in a known, non-default mode

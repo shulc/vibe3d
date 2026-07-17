@@ -10,10 +10,18 @@
 // HTTP-observable side effect — it is exercised for "does it crash" via a
 // live probe during development, but its actual on-screen appearance needs
 // the owner's live GUI eyeball (headless cannot verify appearance).
+//
+// Task 0422: the AI Modeling Copilot is paused behind kCopilotEnabled —
+// copilot.analyze/copilot.selectFinding/copilot.cycleFinding are no longer
+// registered commands while it's off. Every unittest below early-skips in
+// that state so the suite stays green; flipping kCopilotEnabled back to
+// `true` re-enables every assertion as-is.
 
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
+import std.stdio : stderr;
+import ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 
@@ -64,6 +72,7 @@ long[] sortedLongs(JSONValue arr) {
 long[] edgesOf(JSONValue finding) { return sortedLongs(finding["edges"]); }
 
 unittest { // cycle tracks selection to the next/prev finding, wrapping at bounds
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze");
@@ -107,6 +116,7 @@ unittest { // cycle tracks selection to the next/prev finding, wrapping at bound
 }
 
 unittest { // no active finding yet: dir:1 starts at the front, dir:-1 at the back
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze"); // setFindings() resets active_ to -1
@@ -126,6 +136,7 @@ unittest { // no active finding yet: dir:1 starts at the front, dir:-1 at the ba
 }
 
 unittest { // AI-off: cycle is inert (no selection change, no auto-apply)
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze");
@@ -148,6 +159,7 @@ unittest { // cycling with an empty findings list is a safe no-op, not a crash
     // yields zero across ALL Phase-4 detector categories -- a flat grid now
     // legitimately reports a naked-boundary Topology finding (Phase 4 changed
     // the Phase-1 "flat grid = 0 findings" contract), so load empty instead.
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
     postJson("/api/load-mesh", `{"vertices":[],"faces":[]}`);
     runCmd("ai.enable");
     runCmd("copilot.analyze");
@@ -167,6 +179,7 @@ unittest { // redo after undo of a cycle must RE-select the same finding, not ad
     // panel.active(). If undo doesn't restore active_, redo advances AGAIN
     // (finding[2]) instead of re-selecting finding[1]. select_finding.revert()
     // restores active_ (panel.restoreActive) to keep cycle redo idempotent.
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
     resetCube();
     runCmd("ai.enable");
     runCmd("copilot.analyze");

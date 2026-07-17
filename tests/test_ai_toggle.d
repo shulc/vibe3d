@@ -3,9 +3,17 @@
 // Phase A keeps AI behavior inert: commands only flip editor UI state,
 // /api/toolpipe/eval exposes the status payload, and no undo entries are
 // recorded.
+//
+// Task 0422: the AI Modeling Copilot (and the ai.toggle/ai.enable/
+// ai.disable commands this file drives) is paused behind kCopilotEnabled.
+// Every unittest below early-skips when the flag is off so the suite stays
+// green without the owner having to delete/quarantine this file; flipping
+// kCopilotEnabled back to `true` re-enables every assertion as-is.
 
 import std.net.curl;
 import std.json;
+import std.stdio : stderr;
+import ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 
@@ -40,6 +48,7 @@ size_t historyLen(string side) {
 }
 
 unittest { // default-off and advisor shell payload
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_ai_toggle (kCopilotEnabled=false, task 0422)"); return; }
     postJson("/api/reset", "");
     auto ai = aiStatus();
     assert(ai["enabled"].boolean == false,
@@ -51,6 +60,7 @@ unittest { // default-off and advisor shell payload
 }
 
 unittest { // enable / disable / toggle
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_ai_toggle (kCopilotEnabled=false, task 0422)"); return; }
     runCmd("ai.disable");
     assert(!aiEnabled(), "ai.disable must leave AI disabled");
 
@@ -68,6 +78,7 @@ unittest { // enable / disable / toggle
 }
 
 unittest { // undo-neutrality
+    if (!kCopilotEnabled) { stderr.writeln("SKIP: test_ai_toggle (kCopilotEnabled=false, task 0422)"); return; }
     runCmd("ai.disable");
     runCmd("history.clear");
     size_t undo0 = historyLen("undo");
