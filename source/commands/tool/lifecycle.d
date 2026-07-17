@@ -9,7 +9,8 @@ import editmode;
 // ToolDeactivationCommand — tool.deactivate
 //
 // Records that a tool was dropped. Emitted by setActiveTool() (app.d) on every
-// tool deactivation, for tools that opt in via Tool.emitsLifecycleUndo().
+// tool deactivation, for tools that opt in via the LifecycleUndoEmitter
+// marker interface (edit_session.d).
 //
 // revert() (undo) = re-activate the dropped tool by id — a stateless re-baseline
 //   against post-undo geometry. Geometry no-op.

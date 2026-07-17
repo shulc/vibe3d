@@ -9,6 +9,7 @@ import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
 import operator : VectorStack;
 
 import tool;
+import edit_session : StandingPreview, SessionStepUndo;
 import mesh;
 import math;
 import editmode : EditMode;
@@ -78,7 +79,10 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 // sequence would produce, without committing, so a synthetic Enter / tool-off
 // can exercise the real interactive commit path in a test.
 // ---------------------------------------------------------------------------
-final class EdgeSliceTool : Tool {
+// StandingPreview + SessionStepUndo (task 0428): the cancelsOnRedo /
+// survivesEditCancel / tryUndoStepInSession overrides below are the
+// interfaces' implementations (EditSession discovers them by cast).
+final class EdgeSliceTool : Tool, StandingPreview, SessionStepUndo {
 public:
     enum Show { None, Position }
 

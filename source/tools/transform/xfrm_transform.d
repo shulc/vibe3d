@@ -87,7 +87,7 @@ import shader : Shader;
 import params : Param;
 import tools.transform.transform : TransformTool;
 import tool            : ToolFlag;
-import edit_session    : LiveEvalClient;
+import edit_session    : LiveEvalClient, LifecycleUndoEmitter;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -282,7 +282,9 @@ struct GestureRecord {
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
 // capability — hasLiveEval / hasLiveAttrEval / reEvaluate below are the
 // interface's implementations (EditSession discovers them by cast).
-class XfrmTransformTool : TransformTool, LiveEvalClient {
+// LifecycleUndoEmitter (task 0428): marker — this tool emits a
+// ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
+class XfrmTransformTool : TransformTool, LiveEvalClient, LifecycleUndoEmitter {
 public:
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -1465,7 +1467,8 @@ public:
     // stays highlighted, not every element under the moving cursor).
     override bool isDragging() const { return activeDrag !is null; }
 
-    override bool emitsLifecycleUndo() const { return true; }
+    // Lifecycle-undo emit opt-in is the LifecycleUndoEmitter marker on the
+    // class declaration (task 0428) — no method needed.
 
     override bool wantsHoverForType(EditMode type) const {
         auto fs = activeFalloffStage();

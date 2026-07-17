@@ -248,7 +248,18 @@ class Tool : ParamProvider {
     // Currently unused; renderer in phase 4.4+ will start dispatching to it.
     bool applyHeadless() { return false; }
 
-    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    // ----- Session contract (wide per-tool hooks) --------------------------
+    //
+    // hasUncommittedEdit / cancelUncommittedEdit / resyncSession are the
+    // per-tool session contract: genuinely polymorphic (~30 interactive
+    // overriders each), so they stay virtuals on the base. Their DRIVER is
+    // EditSession (edit_session.d) exclusively — the only exception is two
+    // documented READ-ONLY render gates in ui/panels.d (the held-drag
+    // sub-window suppression) that consult hasUncommittedEdit() without
+    // driving the protocol. The NARROW session hooks (standing-preview
+    // redo/cancel shape, per-step in-session undo peel, refire, live
+    // re-eval, lifecycle-undo emit) live as optional capability interfaces
+    // in edit_session.d, discovered by cast.
     //
     // INVARIANT: hasUncommittedEdit() <=> a commit would fire if the tool's
     // session ended *right now*. This is deliberately NOT "state != Idle" and
@@ -266,48 +277,12 @@ class Tool : ParamProvider {
     // transform-cancel code) — this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
-    // Whether an interactive history REDO (Ctrl+Shift+Z) should CANCEL this
-    // tool's open uncommitted edit instead of stepping the redo stack. The
-    // undo direction always cancels an open edit (there is nothing to undo
-    // into a still-open session); the redo direction, by default, does NOT —
-    // refire-based tools (e.g. BoxTool's live property edit) legitimately hold
-    // an uncommitted edit AND must redo their own param changes on Ctrl+Shift+Z.
-    // Only a tool whose uncommitted edit is a STANDING preview sitting on the
-    // mesh across arbitrary frames (LoopSliceTool's `armed_`) overrides this to
-    // true, so a redo reachable while the preview is up cancels it first rather
-    // than applying a redo on top of the dirty mesh. Default false ⇒ every
-    // other tool keeps the pre-0232 redo-steps-the-stack behavior.
-    bool cancelsOnRedo() const { return false; }
-
-    // Task 0400: whether cancelling this tool's open uncommitted edit (via
-    // cancelUncommittedEdit(), reached from navHistory()'s whole-edit-cancel
-    // branch below) leaves the tool with a still-meaningful session to stay
-    // in, versus nothing further to do. The reference editor's interactive
-    // Ctrl+Z NEVER drops an active interactive tool — undo always operates on
-    // mesh-edit history and the tool stays live. For most tools here, an
-    // uncommitted edit IS the tool's whole reason to be active (a one-shot
-    // create/drag gesture — Box, Pen, a primitive's live resize), so
-    // navHistory's default of cancel-then-drop mirrors Esc and matches the
-    // pre-0400, still-correct behavior for that shape. A STANDING-PREVIEW
-    // tool is a different shape: the preview sits on the mesh across
-    // arbitrary frames and is re-armable after every commit/cancel
-    // (LoopSliceTool/EdgeSliceTool — the same family that already opts into
-    // cancelsOnRedo() above), so cancelling its live preview is a normal step
-    // WITHIN an ongoing session, not the end of the tool's usefulness — those
-    // tools override this to true. Default false ⇒ every other tool keeps
-    // its pre-0400 cancel-then-drop behavior byte-for-byte.
-    bool survivesEditCancel() const { return false; }
-
-    // Mid-session per-step undo peel (task 0321). The app's navHistory()
-    // chokepoint calls this FIRST, before its own hasUncommittedEdit()
-    // whole-edit-cancel branch: a tool holding some internal sequence of
-    // not-yet-committed steps (e.g. EdgeSliceTool's latched chain points) can
-    // peel exactly ONE of those steps here and report true, so a real Ctrl+Z
-    // keystroke un-does one step at a time instead of unwinding the whole
-    // live edit. Default false ⇒ every other tool's undo behavior (and the
-    // existing hasUncommittedEdit()/cancelsOnRedo() cancel-whole-edit path)
-    // is completely unaffected.
-    bool tryUndoStepInSession() { return false; }
+    // Standing-preview redo/cancel shape (tasks 0232/0400 —
+    // cancelsOnRedo / survivesEditCancel) and the mid-session per-step undo
+    // peel (task 0321 — tryUndoStepInSession) moved to the optional
+    // StandingPreview / SessionStepUndo interfaces in edit_session.d (task
+    // 0428). A tool not implementing them keeps the former base defaults
+    // (redo steps the stack; cancel-then-drop; no per-step peel).
 
     // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
     // after history navigation moved geometry underneath an active tool. P0
@@ -336,11 +311,9 @@ class Tool : ParamProvider {
     // rendering — preventing duplicate widgets.
     bool renderParamsAsPanel() const { return true; }
 
-    // Whether this tool emits a ToolDeactivationCommand on drop, enabling
-    // undo-cursor lifecycle stepping. Default false (only transform tools
-    // that interleave geometry commits with tool sessions opt in).
-    bool emitsLifecycleUndo() const { return false; }
-
+    // Lifecycle-undo emit opt-in (ToolDeactivationCommand on drop) moved to
+    // the LifecycleUndoEmitter marker interface in edit_session.d (task
+    // 0428).
 
     // Edit modes in which this tool makes sense. Side-panel /
     // status-bar buttons auto-disable when the current edit mode is

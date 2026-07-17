@@ -132,6 +132,66 @@ interface RefireClient {
 }
 
 // ---------------------------------------------------------------------------
+// StandingPreview — optional capability: the tool's uncommitted edit is a
+// STANDING preview sitting on the mesh across arbitrary frames, re-armable
+// after every commit/cancel (LoopSliceTool / EdgeSliceTool — task 0232 +
+// 0400). The two predicates co-travel by design: a tool cannot opt into the
+// redo-cancels-preview shape without also deciding whether a cancel ends its
+// session — one interface encodes both decisions.
+// ---------------------------------------------------------------------------
+interface StandingPreview {
+    // Whether an interactive history REDO (redo keystroke) should CANCEL this
+    // tool's open uncommitted edit instead of stepping the redo stack. The
+    // undo direction always cancels an open edit (there is nothing to undo
+    // into a still-open session); the redo direction, for a tool NOT on this
+    // interface, does NOT — refire-based tools (e.g. BoxTool's live property
+    // edit) legitimately hold an uncommitted edit AND must redo their own
+    // param changes. Only a standing preview (task 0232: LoopSliceTool's
+    // `armed_`) answers true here, so a redo reachable while the preview is
+    // up cancels it first rather than applying a redo on top of the dirty
+    // mesh.
+    bool cancelsOnRedo() const;
+
+    // Task 0400: whether cancelling this tool's open uncommitted edit (via
+    // cancelUncommittedEdit(), reached from navigate()'s whole-edit-cancel
+    // branch) leaves the tool with a still-meaningful session to stay in,
+    // versus nothing further to do. The reference editor's interactive
+    // undo NEVER drops an active interactive tool. For most tools here, an
+    // uncommitted edit IS the tool's whole reason to be active (a one-shot
+    // create/drag gesture — Box, Pen, a primitive's live resize), so
+    // navigate()'s default of cancel-then-drop mirrors Esc and matches the
+    // pre-0400, still-correct behavior for that shape. A STANDING-PREVIEW
+    // tool is a different shape: cancelling its live preview is a normal
+    // step WITHIN an ongoing session, not the end of the tool's usefulness —
+    // those tools answer true.
+    bool survivesEditCancel() const;
+}
+
+// ---------------------------------------------------------------------------
+// SessionStepUndo — optional capability: mid-session per-step undo peel
+// (task 0321). EdgeSliceTool is the sole implementor.
+// ---------------------------------------------------------------------------
+interface SessionStepUndo {
+    // navigate() calls this FIRST, before its whole-edit-cancel branch
+    // (invariant C): a tool holding some internal sequence of not-yet-
+    // committed steps (EdgeSliceTool's latched chain points) can peel exactly
+    // ONE of those steps here and report true, so a real undo keystroke
+    // un-does one step at a time instead of unwinding the whole live edit.
+    bool tryUndoStepInSession();
+}
+
+// ---------------------------------------------------------------------------
+// LifecycleUndoEmitter — marker: the tool emits a ToolDeactivationCommand on
+// drop, enabling undo-cursor lifecycle stepping (only transform tools that
+// interleave geometry commits with tool sessions opt in — XfrmTransformTool
+// is the sole implementor). The emit itself lives in the app's setActiveTool
+// and fires AFTER deactivate(), once consolidate() has merged the run into
+// one geometry entry; the session only answers the gate
+// (activeToolEmitsLifecycle below).
+// ---------------------------------------------------------------------------
+interface LifecycleUndoEmitter { }
+
+// ---------------------------------------------------------------------------
 // EditSession
 // ---------------------------------------------------------------------------
 final class EditSession {
@@ -257,6 +317,112 @@ final class EditSession {
         history_.refireEnd();
         auto rc = cast(RefireClient) tool_();
         if (rc !is null && rc.wantsRefire()) rc.onRefireCommitted();
+    }
+
+    // ----- history coordination (undo/redo migration P0 + 0232/0321/0400) ---
+
+    // Interactive history-navigation chokepoint (in-session record+consolidate
+    // Phase 1). The one method whose STRUCTURE is the invariant: peel →
+    // whole-edit cancel → drop-or-survive → stack step → resync, in that
+    // order (the branch order can no longer drift apart across three hooks).
+    //
+    // Gizmo gestures no longer hold an open session at idle: each Move drag
+    // commits its own tagged in-session entry on mouse-up (record+consolidate
+    // Phase 1), so an idle Move run leaves NOTHING to "cancel" — an undo
+    // keystroke just pops the last in-session gesture entry via the plain
+    // history.undo() path and resyncSession() re-baselines the still-live
+    // tool against the now-current mesh. The residual cancel branch survives
+    // ONLY for an open PANEL session (coalesce-until-drop value edits) and an
+    // open R/S gizmo session (R/S per-gesture recording lands in a later
+    // phase) — both reported by hasUncommittedEdit() ONLY when no drag is
+    // active, so a mid-gizmo-drag undo still falls through to history.undo()
+    // and never aborts the live drag. The UNDO direction always cancels an
+    // open edit ("a redo never cancels an open session — there is nothing to
+    // redo into one" was the original rule), but task 0232's Loop Slice
+    // standing preview (armed_) needs a NARROW exception in the REDO
+    // direction: unlike the transient panel/gizmo sessions this branch was
+    // written for, an armed preview can sit on the mesh across an arbitrary
+    // number of frames, so a REDO reachable while armed would otherwise apply
+    // on top of an uncommitted cut — and resyncSession() would then
+    // re-baseline `before_` from that dirty mesh, permanently baking the cut
+    // in. So the redo direction cancels ONLY when the tool opts in via
+    // StandingPreview.cancelsOnRedo() (LoopSliceTool ⇔ armed_); every other
+    // tool — crucially the refire-based BoxTool live property edit, which
+    // reports hasUncommittedEdit()==true yet MUST redo normally — keeps the
+    // pre-0232 "redo steps the stack" behavior. Cancelling first has no
+    // history side effect (nothing was recorded while armed), so a second
+    // press still reaches the real undo/redo.
+    //
+    // NOTE the deliberate RE-READS of tool_() after cancelUncommittedEdit():
+    // the absorbed app.d block re-evaluated `activeTool` live at each mention,
+    // and that tolerant shape is preserved byte-for-byte — the postcondition
+    // assert below is a debug-build DIAGNOSTIC on top, not a replacement.
+    //
+    // Returns true if anything happened (edit cancelled OR stack moved).
+    bool navigate(bool isUndo) {
+        // Mid-session per-step undo peel (task 0321) — checked BEFORE the
+        // whole-edit cancel branch below, so a tool holding an internal
+        // sequence of not-yet-committed steps (EdgeSliceTool's latched chain)
+        // can peel exactly one step per undo keystroke instead of unwinding
+        // everything. Absence of the SessionStepUndo interface == the former
+        // base-Tool default (false) ⇒ every other tool is byte-identical.
+        {
+            auto su = cast(SessionStepUndo) tool_();
+            if (isUndo && su !is null && su.tryUndoStepInSession()) return true;
+        }
+        auto t  = tool_();
+        auto sp = cast(StandingPreview) t;
+        if (t !is null && t.hasUncommittedEdit()
+            && (isUndo || (sp !is null && sp.cancelsOnRedo()))) {
+            t.cancelUncommittedEdit();
+            // Diagnostic-only (debug builds): the cancel postcondition the
+            // Tool contract documents — after cancelUncommittedEdit() the
+            // SAME tool must report no uncommitted edit and a coherent mesh.
+            // A firing here is a pre-existing cancel-body bug surfacing, not
+            // a navigation regression: the tolerant re-read logic below
+            // behaves exactly as before the assert existed.
+            assert(!t.hasUncommittedEdit(),
+                   "cancelUncommittedEdit postcondition violated "
+                   ~ "(Tool session contract)");
+            // Task 0400: a standing-preview tool (survivesEditCancel()==true —
+            // LoopSliceTool/EdgeSliceTool) is never dropped by this cancel;
+            // the reference editor's interactive undo never drops an active
+            // tool. Every other tool keeps the pre-0400 cancel-then-drop
+            // behavior. RE-READ, not the `t` cached above — see the method
+            // doc.
+            auto t2  = tool_();
+            auto sp2 = cast(StandingPreview) t2;
+            if (t2 !is null && !t2.hasUncommittedEdit()
+                && !(sp2 !is null && sp2.survivesEditCancel())) {
+                dropTool_();
+            }
+            return true;
+        }
+        bool ok = isUndo ? history_.undo() : history_.redo();
+        if (ok) {
+            // Only AFTER a successful stack step, with no open edit remaining:
+            // re-sync the still-live tool's baseline to the now-current mesh.
+            auto t3 = tool_();
+            if (t3 !is null) t3.resyncSession();
+        }
+        return ok;
+    }
+
+    // Discard the active tool's in-progress edit WITHOUT committing it and
+    // WITHOUT touching history (cancel bodies are pure mesh restores). The
+    // tool.reset path uses this so a reset THROWS the open edit away rather
+    // than committing it.
+    void discardOpenEdit() {
+        auto t = tool_();
+        if (t !is null && t.hasUncommittedEdit())
+            t.cancelUncommittedEdit();
+    }
+
+    // Whether the ACTIVE tool participates in undo-cursor lifecycle stepping
+    // (emits a ToolDeactivationCommand on drop) — the LifecycleUndoEmitter
+    // marker discovered by cast; see the marker's doc for the emit ordering.
+    bool activeToolEmitsLifecycle() {
+        return (cast(LifecycleUndoEmitter) tool_()) !is null;
     }
 }
 

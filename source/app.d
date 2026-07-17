@@ -2213,9 +2213,14 @@ void main(string[] args) {
         pipeGizmoHost.cancelDrag();
         if (t is null) captureStickyToolDefaults();
         if (activeTool) {
-            // Capture the dropped tool id BEFORE destroying (emitsLifecycleUndo
-            // gate ensures only transform tools emit; no SDK names in tracked source).
-            string droppedId = (activeTool.emitsLifecycleUndo() && activeToolId.length > 0)
+            // Capture the dropped tool id BEFORE destroying (the session's
+            // LifecycleUndoEmitter gate ensures only transform tools emit).
+            // `session` null-guard: this nested function is declared before
+            // the session is constructed at the ToolHost block — pre-wiring
+            // drops see no emit, equivalent, since no transform tool can be
+            // active before wiring completes.
+            string droppedId = (session !is null && session.activeToolEmitsLifecycle()
+                                && activeToolId.length > 0)
                 ? activeToolId : "";
             activeTool.deactivate();
             activeTool.destroy();
@@ -3184,12 +3189,11 @@ void main(string[] args) {
         string id = optId.length ? optId : activeToolId;
         if (id.length == 0 || (id in reg.toolFactories) is null) return false;
         // Discard any in-progress preview so reset THROWS the edit away
-        // rather than committing it (touches no history — cancel bodies are
-        // pure mesh restores). With `dirty` cleared, the rebuild's
-        // deactivate()->commitNow() below is a no-op even if suspend alone
-        // didn't also gate record().
-        if (activeTool !is null && activeTool.hasUncommittedEdit())
-            activeTool.cancelUncommittedEdit();
+        // rather than committing it (EditSession.discardOpenEdit — touches no
+        // history; cancel bodies are pure mesh restores). With `dirty`
+        // cleared, the rebuild's deactivate()->commitNow() below is a no-op
+        // even if suspend alone didn't also gate record().
+        session.discardOpenEdit();
         g_prefs.toolDefaults.remove(id);   // clear sticky (B step 1)
         auto s = history.suspended();       // no spurious lifecycle/vertex-edit entry
         toolHost.activate(id);              // rebuild -> constructor + YAML defaults,
@@ -5412,59 +5416,17 @@ void main(string[] args) {
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;
     // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call
-    // from the HTTP server thread (it touches activeTool).
-    //
-    // Gizmo gestures no longer hold an open session at idle: each Move drag
-    // commits its own tagged in-session entry on mouse-up (record+consolidate
-    // Phase 1), so an idle Move run leaves NOTHING to "cancel" — a Ctrl+Z just
-    // pops the last in-session gesture entry via the plain history.undo() path
-    // and resyncSession() re-baselines the still-live tool against the now-
-    // current mesh. The residual cancel branch survives ONLY for an open PANEL
-    // session (coalesce-until-drop value edits) and an open R/S gizmo session
-    // (R/S per-gesture recording lands in a later phase) — both reported by
-    // hasUncommittedEdit() ONLY when activeDrag is null, so a mid-gizmo-drag
-    // Ctrl+Z still falls through to history.undo() and never aborts the live
-    // drag. The UNDO direction always cancels an open edit ("a redo never
-    // cancels an open session — there is nothing to redo into one" was the
-    // original rule), but task 0232's Loop Slice standing preview (armed_)
-    // needs a NARROW exception in the REDO direction: unlike the transient
-    // panel/gizmo sessions this branch was written for, an armed preview can
-    // sit on the mesh across an arbitrary number of frames, so a REDO reachable
-    // while armed would otherwise apply on top of an uncommitted cut — and
-    // resyncSession() would then re-baseline `before_` from that dirty mesh,
-    // permanently baking the cut in. So the redo direction cancels ONLY when
-    // the tool opts in via cancelsOnRedo() (LoopSliceTool ⇔ armed_); every
-    // other tool — crucially the refire-based BoxTool live property edit, which
-    // reports hasUncommittedEdit()==true yet MUST redo normally on Ctrl+Shift+Z
-    // — keeps the pre-0232 "redo steps the stack" behavior. Cancelling first
-    // has no history side effect (nothing was recorded while armed), so a
-    // second press still reaches the real undo/redo.
+    // from the HTTP server thread (it touches the active tool). The body —
+    // branch order, comments and all (peel → whole-edit cancel →
+    // drop-or-survive → stack step → resync) — moved verbatim to
+    // EditSession.navigate (task 0428); this forward stays so the four
+    // keyboard/script callers keep their name. NOTE: /api/undo and /api/redo
+    // deliberately BYPASS this chokepoint (straight history.undo()/redo(),
+    // no cancel, no resync) — a frozen contract the edge-slice tests
+    // document; do not "unify" them through navigate().
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navHistory(bool isUndo) {
-        // Mid-session per-step undo peel (task 0321) — checked BEFORE the
-        // whole-edit cancel branch below, so a tool holding an internal
-        // sequence of not-yet-committed steps (EdgeSliceTool's latched chain)
-        // can peel exactly one step per Ctrl+Z instead of unwinding
-        // everything. Default false on the base Tool ⇒ every other tool is
-        // byte-identical.
-        if (isUndo && activeTool !is null && activeTool.tryUndoStepInSession()) return true;
-        if (activeTool !is null && activeTool.hasUncommittedEdit()
-            && (isUndo || activeTool.cancelsOnRedo())) {
-            activeTool.cancelUncommittedEdit();
-            // Task 0400: a standing-preview tool (survivesEditCancel()==true —
-            // LoopSliceTool/EdgeSliceTool) is never dropped by this cancel; the
-            // reference editor's interactive undo never drops an active tool.
-            // Every other tool keeps the pre-0400 cancel-then-drop behavior.
-            if (activeTool !is null && !activeTool.hasUncommittedEdit()
-                && !activeTool.survivesEditCancel()) {
-                setActiveTool(null);
-                activeToolId = "";
-            }
-            return true;
-        }
-        bool ok = isUndo ? history.undo() : history.redo();
-        if (ok && activeTool !is null) activeTool.resyncSession();
-        return ok;
+        return session.navigate(isUndo);
     }
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
