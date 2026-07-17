@@ -7817,6 +7817,38 @@ void main(string[] args) {
         {
             import change_bus : changeBus;
 
+            // Display upload is bus-driven (campaign 0407 §D4-в): mutating
+            // commands no longer refresh the display themselves — this flush
+            // site uploads the ACTIVE mesh's GPU buffers whenever the frame's
+            // pending change classes intersect DisplayRefreshMask. Capture +
+            // upload at the TOP of the flush block, BEFORE the debug shadow
+            // check and the drain below, for two reasons:
+            //   • Under an active subpatch preview `gpu.upload` redirects to
+            //     a mutationVersion bump (GpuMesh.suppressCageUpload) instead
+            //     of uploading. Done after the drain, that bump would land in
+            //     a zero-flag window and the NEXT frame's shadow check would
+            //     latch a spurious MISSED-PUBLISHER warning; here the bump is
+            //     observed in the same frame with the triggering flags still
+            //     pending, so the diagnostic stays quiet. The bump is also
+            //     what makes the preview block's `versionChanged` (further
+            //     down) fire for noteChange-only commands — so the upload is
+            //     deliberately NOT skipped while the preview is active.
+            //   • The one hard ordering constraint: the upload MUST precede
+            //     the subpatch gate below, whose GPU fan-out reads the cage
+            //     VBO contents. Ordering vs `changeBus.flush` itself is free
+            //     (subscribers are invalidate-only and never read the VBO).
+            // No cache resize/invalidate here — the flag-driven block after
+            // the flush already services vc/ec/fc from meshChangedFlags.
+            // Active-layer flags only (not the cross-layer aggregate): an
+            // undo landing on a background layer must not re-upload the
+            // active one — same gate the command-side refresh had.
+            {
+                import display_sync : DisplayRefreshMask;
+                const uint activeFlags = mesh.pendingChanges_;
+                if (activeFlags & DisplayRefreshMask)
+                    gpu.upload(mesh);
+            }
+
             // Stage 0b — aggregate pending flags across ALL document layers,
             // then flush once. Each layer's mesh accumulates its own
             // `pendingChanges_`/`pendingSelDomains_` independently; we OR them

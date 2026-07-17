@@ -1,7 +1,27 @@
 module display_sync;
 
 import mesh : Mesh, GpuMesh;
+import mesh_edit_delta : MeshEditScope;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+
+/// Change classes that require a DISPLAY refresh (GPU upload + pick-cache
+/// resize/invalidate) of the active mesh — the mask the bus-driven refresh
+/// engine (campaign 0407 §D4-в) keys on, both at the frame's flush site
+/// (capture-and-upload in app.d's main loop) and in the mid-batch pull guard
+/// `ensureDisplayCurrent` in front of every VBO reader that can run BEFORE
+/// the flush (pickers, HTTP providers).
+///
+/// Deliberately excludes:
+///   • Marks — selection/hover highlight is drawn each frame straight from
+///     the mesh marks arrays (gpu.drawVertices/drawEdges), never baked into
+///     the VBO; the subpatch-preview Tab gate keys on Marks separately.
+/// Includes Material even though it is not geometry: per-face material ids
+/// ARE baked into the VBO (GpuMesh.upload reads faceMaterial into matIdVbo).
+enum uint DisplayRefreshMask =
+      MeshEditScope.Position
+    | MeshEditScope.Points
+    | MeshEditScope.Polygons
+    | MeshEditScope.Material;
 
 // Seam 2b — the display-refresh gate.
 //
