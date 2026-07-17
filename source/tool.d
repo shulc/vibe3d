@@ -259,11 +259,17 @@ class Tool : ParamProvider {
     // predicate its deactivate()/commit path tests.
     bool hasUncommittedEdit() const { return false; }
 
-    // Abort the tool's open live edit, restoring the mesh to the session's
-    // pre-edit baseline WITHOUT recording anything to history. Postcondition:
-    // hasUncommittedEdit() == false and the mesh is coherent. Cancel bodies are
-    // heterogeneous across tools (live-mesh restore / preview-only reset / new
-    // transform-cancel code) — this is not uniformly "reuse the RMB handler".
+    // Step the tool's open live edit BACK toward the session baseline WITHOUT
+    // recording anything new to history. Contract (measured, 0428): this is
+    // NOT guaranteed one-shot — the primitive live-run family pops ONE
+    // recorded live step per call (the interactive undo ladder) and may
+    // legitimately still report hasUncommittedEdit()==true afterwards; other
+    // tools cancel fully in one call. The driver (EditSession.navigate)
+    // re-reads hasUncommittedEdit() after every call and either steps again
+    // on the next navigate or falls through to the drop branch — do NOT
+    // assert the one-shot postcondition. Cancel bodies are heterogeneous
+    // (live-mesh restore / preview-only reset / transform-cancel code) —
+    // this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
     // Standing-preview redo/cancel shape (tasks 0232/0400 —

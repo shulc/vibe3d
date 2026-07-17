@@ -375,15 +375,17 @@ final class EditSession {
         if (t !is null && t.hasUncommittedEdit()
             && (isUndo || (sp !is null && sp.cancelsOnRedo()))) {
             t.cancelUncommittedEdit();
-            // Diagnostic-only (debug builds): the cancel postcondition the
-            // Tool contract documents — after cancelUncommittedEdit() the
-            // SAME tool must report no uncommitted edit and a coherent mesh.
-            // A firing here is a pre-existing cancel-body bug surfacing, not
-            // a navigation regression: the tolerant re-read logic below
-            // behaves exactly as before the assert existed.
-            assert(!t.hasUncommittedEdit(),
-                   "cancelUncommittedEdit postcondition violated "
-                   ~ "(Tool session contract)");
+            // NO postcondition assert here — deliberately. The one-shot
+            // "cancel ⇒ !hasUncommittedEdit" reading of the base-class
+            // comment is FALSE for the primitive live-run family: their
+            // cancel body pops ONE recorded live step (history.undo() +
+            // early return — the interactive undo LADDER) and legitimately
+            // keeps hasUncommittedEdit()==true until the ladder empties.
+            // The tolerant re-read below IS the contract: a tool that still
+            // reports an open edit after cancel is kept alive so the next
+            // navigate() steps it again; a tool that fully cancelled falls
+            // through to the drop branch. (Codifying the stronger claim as
+            // an assert aborted the editor on the first box-gesture Ctrl+Z.)
             // Task 0400: a standing-preview tool (survivesEditCancel()==true —
             // LoopSliceTool/EdgeSliceTool) is never dropped by this cancel;
             // the reference editor's interactive undo never drops an active
