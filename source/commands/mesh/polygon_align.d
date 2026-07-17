@@ -1,6 +1,5 @@
 module commands.mesh.polygon_align;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -50,14 +49,12 @@ class MeshAlign : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

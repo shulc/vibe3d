@@ -1,6 +1,5 @@
 module commands.mesh.move_vertex;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -60,7 +59,6 @@ class MeshMoveVertex : Command, Operator {
         // the counters, so the bus sees the move while the version stays put.
         mesh.noteChange(MeshEditScope.Position);
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -68,7 +66,6 @@ class MeshMoveVertex : Command, Operator {
         if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) return false;
         mesh.vertices[movedIdx] = origPos;
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

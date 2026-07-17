@@ -1,6 +1,5 @@
 module commands.mesh.magnet;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -82,7 +81,6 @@ public:
             if (touchedIdx_[k] < mesh.vertices.length)
                 mesh.vertices[touchedIdx_[k]] = touchedPrev_[k];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -155,7 +153,6 @@ private:
         if (touchedIdx_.length == 0) return false;
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

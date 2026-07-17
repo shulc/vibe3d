@@ -1,6 +1,5 @@
 module commands.mesh.split_edge;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -70,14 +69,12 @@ class MeshSplitEdge : Command, Operator {
         mesh.buildLoops();
         mesh.resetSelection();
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

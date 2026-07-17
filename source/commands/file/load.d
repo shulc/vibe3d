@@ -1,6 +1,5 @@
 module commands.file.load;
 
-import display_sync : refreshDisplayActive;
 import std.path : extension;
 import std.uni  : toLower;
 
@@ -206,7 +205,6 @@ class FileLoad : Command {
         // layer-list change), so it emits no layer kind.
         if (docSnapped)
             noteLayerChange(LayerChangeAll);
-        refreshActive(active);
         return true;
     }
 
@@ -221,16 +219,10 @@ class FileLoad : Command {
             active.noteChange(MeshChangeAll);
             // Undo restores the prior layer list — another whole-document change.
             noteLayerChange(LayerChangeAll);
-            refreshActive(active);
             return true;
         }
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshActive(mesh);
         return true;
-    }
-
-    private void refreshActive(Mesh* active) {
-        refreshDisplayActive(active);
     }
 }

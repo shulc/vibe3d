@@ -1,6 +1,5 @@
 module commands.mesh.edge_slide;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -79,7 +78,6 @@ class MeshEdgeSlide : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         // Always true for a non-empty edge selection — even if no rail existed
         // on the requested side (touchedIdx is empty, undo is a no-op).
         return true;
@@ -90,7 +88,6 @@ class MeshEdgeSlide : Command, Operator {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

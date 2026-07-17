@@ -1,6 +1,5 @@
 module commands.mesh.transform;
 
-import display_sync : refreshDisplayActive;
 import std.json;
 
 import command;
@@ -214,7 +213,6 @@ class MeshTransform : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -225,7 +223,6 @@ class MeshTransform : Command, Operator {
                 mesh.vertices[vid] = touchedPrev[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

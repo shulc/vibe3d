@@ -1,6 +1,5 @@
 module commands.scene.reset;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -197,7 +196,6 @@ class SceneReset : Command {
         // noteChange (not commitChange) because the fresh mesh's version counters
         // start at 0 by design; the bus only needs the All notification.
         mesh.noteChange(MeshChangeAll);
-        refreshCaches();
         return true;
     }
 
@@ -227,11 +225,6 @@ class SceneReset : Command {
         // restore the camera, only the mesh. The viewport reset is delegated
         // to the app layer (onViewportReset, fired only from apply()) and is
         // not part of model undo, same as before.
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

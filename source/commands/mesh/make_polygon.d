@@ -1,6 +1,5 @@
 module commands.mesh.make_polygon;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -100,18 +99,12 @@ class MeshMakePolygon : Command, Operator {
         // Post-success: leave vertex selection intact (selecting a face while
         // EditMode == Vertices would be incoherent; no test or UI depends on it
         // here). The new face fi is already addressable via /api/model.
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

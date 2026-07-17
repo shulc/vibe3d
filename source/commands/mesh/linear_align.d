@@ -1,6 +1,5 @@
 module commands.mesh.linear_align;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -77,7 +76,6 @@ class MeshLinearAlign : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -86,7 +84,6 @@ class MeshLinearAlign : Command, Operator {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

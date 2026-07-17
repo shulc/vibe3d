@@ -1,6 +1,5 @@
 module commands.mesh.cut_;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -56,7 +55,6 @@ class MeshCut : Command, Operator {
         }
         // Delete succeeded — now commit to the global clipboard.
         geometryClipboard = localClip;
-        refreshCaches();
         return true;
     }
 
@@ -65,11 +63,6 @@ class MeshCut : Command, Operator {
         // Snapshot restores geometry. The clipboard intentionally keeps its
         // content — undoing a cut does not wipe the clip.
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

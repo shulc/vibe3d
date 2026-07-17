@@ -1,6 +1,5 @@
 module commands.mesh.loop_slice;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -59,14 +58,12 @@ class MeshAddLoop : Command, Operator {
         bool ok = mesh.insertEdgeLoops(cast(uint)ei, [position_]);
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }
@@ -126,14 +123,12 @@ class MeshLoopSlice : Command, Operator {
         bool ok = mesh.insertEdgeLoops(cast(uint)ei, pos);
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

@@ -1,6 +1,5 @@
 module commands.mesh.triple;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -67,19 +66,13 @@ class MeshTriple : Command, Operator {
         }
 
         mesh.noteChange(MeshEditScope.Geometry);
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }
 

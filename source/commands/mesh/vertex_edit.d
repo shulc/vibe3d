@@ -1,6 +1,5 @@
 module commands.mesh.vertex_edit;
 
-import display_sync : refreshDisplayActive;
 import std.conv : to;
 
 import command;
@@ -159,9 +158,10 @@ class MeshVertexEdit : Command, Operator {
     ///   - hooks = first.onRevertHook (restore to run-start) +
     ///     last.onApplyHook  (run-end)
     /// Context (mesh/view/editMode) is cloned from the first entry so the
-    /// merged edit's apply()/revert() route through the same mesh; the GPU
-    /// upload target comes from `refreshDisplayActive`'s app-installed
-    /// resolver (task 0413), not a per-entry captured pointer.
+    /// merged edit's apply()/revert() route through the same mesh; the
+    /// display refresh is bus-driven (the main loop's flush site consumes
+    /// the change flags apply()/revert() publish — task 0427), so no
+    /// per-entry captured GPU/cache pointer is involved.
     ///
     /// Lives HERE (not in command_history) because it reads each entry's
     /// private indices/before/after, module-scoped to vertex_edit. Pure: it
@@ -225,7 +225,6 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = after[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         if (onApplyHook !is null) onApplyHook();
         return true;
     }
@@ -236,7 +235,6 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = before[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         if (onRevertHook !is null) onRevertHook();
         return true;
     }

@@ -5,7 +5,6 @@ import std.path : baseName;
 import ai3d.scene_validator : validateImportedSceneForAi3d;
 import change_bus : MeshChangeAll, LayerChange, noteLayerChange;
 import command;
-import display_sync : refreshDisplayActive;
 import document : Document, Layer;
 import editmode;
 import io.scene_import : importViaAssimp;
@@ -127,7 +126,6 @@ final class Ai3dImportResult : Command {
         inserted.mesh.syncSelection();
         inserted.mesh.noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Added);
-        refreshDisplayActive(&inserted.mesh);
         fireSwitchIfChanged(prevLayer, prevIndex);
         applied = true;
         return true;
@@ -149,7 +147,6 @@ final class Ai3dImportResult : Command {
         auto active = doc.activeMesh();
         active.noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Removed);
-        refreshDisplayActive(active);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;
     }

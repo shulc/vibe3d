@@ -1,6 +1,5 @@
 module commands.scene.load_mesh;
 
-import display_sync : refreshDisplayActive;
 import command;
 import math : Vec3;
 import mesh;
@@ -110,7 +109,6 @@ class MeshLoadRaw : Command {
         // every cache must invalidate. noteChange(All), after the `*mesh = m`
         // swap reset the fresh struct's pending + counters to 0.
         mesh.noteChange(MeshChangeAll);
-        refreshCaches();
         return true;
     }
 
@@ -119,12 +117,7 @@ class MeshLoadRaw : Command {
         snap.restore(*mesh);
         if (promoteType) promoteType(prevEditMode);
         else *editModePtr = prevEditMode;
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 
     // Tiny @safe int-to-string for error messages without dragging

@@ -1,6 +1,5 @@
 module commands.mesh.bridge;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -105,18 +104,12 @@ class MeshBridge : Command, Operator {
         }
 
         mesh.syncSelection();
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

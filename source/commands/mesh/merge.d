@@ -1,6 +1,5 @@
 module commands.mesh.merge;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -80,18 +79,12 @@ class MeshMergeFaces : Command, Operator {
 
         // Steps 8-9: notify bus + refresh GPU/caches.
         mesh.noteChange(MeshEditScope.Geometry);
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

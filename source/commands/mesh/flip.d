@@ -1,6 +1,5 @@
 module commands.mesh.flip;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -57,14 +56,12 @@ class MeshFlip : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

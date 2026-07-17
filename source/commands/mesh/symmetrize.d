@@ -1,6 +1,5 @@
 module commands.mesh.symmetrize;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -135,7 +134,6 @@ class MeshSymmetrize : Command, Operator {
 
         captured = true;
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -145,7 +143,6 @@ class MeshSymmetrize : Command, Operator {
             if (i < mesh.vertices.length)
                 mesh.vertices[i] = prevPositions[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

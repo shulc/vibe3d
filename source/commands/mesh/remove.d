@@ -1,6 +1,5 @@
 module commands.mesh.remove_;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -108,7 +107,6 @@ class MeshRemove : Command, Operator {
         if (useDelta_) {
             const affected = runKernel();
             if (affected == 0) return false;
-            refreshCaches();
             return true;
         }
 
@@ -128,7 +126,6 @@ class MeshRemove : Command, Operator {
                 return false;
             }
             useDelta_ = true;
-            refreshCaches();
             return true;
         }
 
@@ -138,7 +135,6 @@ class MeshRemove : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        refreshCaches();
         return true;
     }
 
@@ -153,16 +149,10 @@ class MeshRemove : Command, Operator {
                 mesh.setFaceSubpatchFrom(preSubpatch_);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
-            refreshCaches();
             return true;
         }
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

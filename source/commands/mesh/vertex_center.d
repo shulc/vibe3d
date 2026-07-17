@@ -1,6 +1,5 @@
 module commands.mesh.vertex_center;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -80,7 +79,6 @@ class MeshCenterVertices : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -89,7 +87,6 @@ class MeshCenterVertices : Command, Operator {
         foreach (k; 0 .. idxs.length)
             mesh.vertices[idxs[k]] = orig[k];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

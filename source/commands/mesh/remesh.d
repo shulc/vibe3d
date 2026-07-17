@@ -14,7 +14,6 @@ module commands.mesh.remesh;
 import std.algorithm.iteration : map;
 import std.array : array;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -101,7 +100,6 @@ final class Remesh : Command, Operator {
         if (result.vertices.length == 0 || result.faces.length == 0) {
             snap.restore(*mesh);
             snap = MeshSnapshot.init;
-            refreshCaches();
             return false;
         }
 
@@ -111,7 +109,6 @@ final class Remesh : Command, Operator {
         // 0; noteChange (not commitChange) just needs the bus to know a
         // Geometry-scope change happened so caches rebuild.
         mesh.noteChange(MeshEditScope.Geometry);
-        refreshCaches();
         applied_ = true;
         return true;
     }
@@ -119,12 +116,7 @@ final class Remesh : Command, Operator {
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }
 

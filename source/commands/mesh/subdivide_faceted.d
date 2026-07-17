@@ -1,6 +1,5 @@
 module commands.mesh.subdivide_faceted;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -13,7 +12,9 @@ import change_bus : MeshEditScope;
 /// Runs `facetedSubdivide` (smooth=false) or `smoothSubdivide` (smooth=true),
 /// then rebuilds the post-op face selection using the same emit-cursor walk
 /// and publishes the Geometry change-bus notification.
-/// Snapshot capture and refreshCaches() are the caller's responsibility.
+/// Snapshot capture is the caller's responsibility; the display refresh is
+/// bus-driven (the main loop's flush site consumes the Geometry flag
+/// published below — task 0427).
 package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
 {
     // Selection-aware split only makes sense in Polygons mode where the user
@@ -76,19 +77,13 @@ class SubdivideFaceted : Command, Operator {
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
         runFacetedFamily(mesh, editMode, /*smooth=*/false);
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }
 

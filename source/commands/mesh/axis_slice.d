@@ -1,6 +1,5 @@
 module commands.mesh.axis_slice;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -93,14 +92,12 @@ class MeshAxisSlice : Command, Operator {
             return false;
         }
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }
@@ -167,14 +164,12 @@ class MeshJulienne : Command, Operator {
             return false;
         }
 
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 

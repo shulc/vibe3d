@@ -1,6 +1,5 @@
 module commands.mesh.jitter;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -155,7 +154,6 @@ class MeshJitter : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -164,7 +162,6 @@ class MeshJitter : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

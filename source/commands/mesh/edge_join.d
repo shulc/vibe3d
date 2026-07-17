@@ -1,6 +1,5 @@
 module commands.mesh.edge_join;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -98,14 +97,12 @@ class MeshEdgeJoin : Command, Operator {
         }
 
         mesh.resetSelection();
-        refreshDisplayActive(mesh);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

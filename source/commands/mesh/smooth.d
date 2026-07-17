@@ -1,6 +1,5 @@
 module commands.mesh.smooth;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -325,7 +324,6 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 
@@ -334,7 +332,6 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        refreshDisplayActive(mesh);
         return true;
     }
 }

@@ -1,6 +1,5 @@
 module commands.tool.do_apply;
 
-import display_sync : refreshDisplayActive;
 import command;
 import mesh;
 import view;
@@ -61,7 +60,6 @@ class ToolDoApplyCommand : Command {
             return false;
         }
         appliedToolId = toolHost.getActiveToolId();
-        refreshCaches();
         return true;
     }
 
@@ -73,11 +71,6 @@ class ToolDoApplyCommand : Command {
             snap.restoreGeometryKeepSelection(*mesh);
         else
             snap.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }

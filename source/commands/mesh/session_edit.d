@@ -1,6 +1,5 @@
 module commands.mesh.session_edit;
 
-import display_sync : refreshDisplayActive;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -108,19 +107,13 @@ class MeshSessionEdit : Command, Operator {
         if (subj is null) return false;
         if (useDelta_) delta_.apply(*mesh);   // forward replay (redo)
         else           after.restore(*mesh);
-        refreshCaches();
         return true;
     }
 
     override bool revert() {
         if (useDelta_) delta_.revert(*mesh);  // LIFO inverse replay (undo)
         else           before.restore(*mesh);
-        refreshCaches();
         return true;
-    }
-
-    private void refreshCaches() {
-        refreshDisplayActive(mesh);
     }
 }
 
