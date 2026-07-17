@@ -314,6 +314,13 @@ chmod +x "$WORKER_DST/install_linux.sh" "$WORKER_DST/download_model.sh"
 # mount path is ephemeral. (No gtk env hooks: the portal dialog is drawn by the
 # host service and needs no GDK_PIXBUF_MODULE_FILE / GTK_PATH / GIO_MODULE_DIR.)
 log "writing custom AppRun (writable-cwd)"
+# linuxdeploy seeds $APPDIR/AppRun as a SYMLINK -> usr/bin/vibe3d (the real ELF).
+# Without `rm -f`, the `cat >` below follows that symlink and overwrites the ELF
+# with this wrapper's text (the binary vanishes; AppRun then exec's itself). The
+# gtk plugin used to replace AppRun with a regular file, masking this; dropping
+# the plugin (task 0431) exposed it. Break the symlink so `cat >` writes a fresh
+# regular file and usr/bin/vibe3d stays the ELF.
+rm -f "$APPDIR/AppRun"
 cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/bash
 # vibe3d AppImage entry point.
