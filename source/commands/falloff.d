@@ -82,11 +82,11 @@ class FalloffPresetCommand : Command {
         // Mid-session immediacy: if a tool already has a live evaluation
         // session, re-run its apply now so the new falloff takes effect this
         // edit instead of on the next update() tick. Mirrors
-        // ToolPipeAttrCommand.apply(). The active tool is NOT changed.
-        if (toolHost.getActiveTool !is null) {
-            auto t = toolHost.getActiveTool();
-            if (t !is null && t.hasLiveEval()) t.reEvaluate();
-        }
+        // ToolPipeAttrCommand.apply() (gate in
+        // EditSession.onStageConfigChanged — task 0428). The active tool is
+        // NOT changed.
+        if (toolHost.session !is null)
+            toolHost.session().onStageConfigChanged();
         return true;
     }
 
@@ -214,12 +214,11 @@ private string allocFalloffId() {
 
 // Mid-session immediacy: re-run the active tool's apply so a freshly
 // added/removed falloff takes effect this edit instead of next tick.
-// Mirrors FalloffPresetCommand.apply()'s live-eval kick.
+// Mirrors FalloffPresetCommand.apply()'s live-eval kick (gate in
+// EditSession.onStageConfigChanged — task 0428).
 private void kickLiveEval(ToolHost host) {
-    if (host.getActiveTool !is null) {
-        auto t = host.getActiveTool();
-        if (t !is null && t.hasLiveEval()) t.reEvaluate();
-    }
+    if (host.session !is null)
+        host.session().onStageConfigChanged();
 }
 
 class FalloffAddCommand : Command {

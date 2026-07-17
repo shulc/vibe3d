@@ -122,24 +122,15 @@ class ToolAttrCommand : Command {
         t.evaluate();
 
         // Faithful gated re-eval (re-eval plan D4): the value is injected
-        // BEFORE the trigger so reEvaluate() reads it absolutely from the
-        // session baseline (no accumulation).
-        //   - hasLiveEval(): a session is ALREADY open (e.g. a live drag or a
-        //     prior panel/form edit) — re-run the apply from the session
-        //     baseline using the just-written value.
-        //   - interactive_: a forms-dispatched FIRST edit — reEvaluate() opens
-        //     the session (idempotent beginEdit + baseline capture) and replays.
-        //   - else: raw HTTP `tool.attr` on a fresh tool — inert (faithful;
-        //     every existing HTTP tool.attr golden depends on this).
-        // tool.attr stays CmdFlags.SideEffect; the geometry change is recorded
-        // by the session's commitEdit at tool drop, not by this command.
-        // hasLiveAttrEval() (not hasLiveEval()): a VALUE-attr write also re-runs
-        // when a gizmo run is still open after a per-gesture self-commit (Phase
-        // 1, R/S run-baseline), so a panel RX/RY/RZ / SX/SY/SZ edit composes onto
-        // the run baseline. The pipe-stage config path keeps the narrower
-        // hasLiveEval() so a mid-run falloff change still records its re-grade.
-        if (t.hasLiveAttrEval())  t.reEvaluate();
-        else if (interactive_)    t.reEvaluate();
+        // BEFORE the trigger; the gate itself (hasLiveAttrEval / interactive
+        // opener / fresh-tool inertness, plus the value-attr vs pipe-config
+        // asymmetry) lives in EditSession.onValueAttrApplied (task 0428).
+        // tool.attr stays CmdFlags.SideEffect; the geometry change is
+        // recorded by the session's commitEdit at tool drop, not by this
+        // command. The session accessor is null only in bare-struct ToolHost
+        // test contexts — same defensive shape as the getActiveTool guards.
+        if (toolHost.session !is null)
+            toolHost.session().onValueAttrApplied(interactive_);
         return true;
     }
 

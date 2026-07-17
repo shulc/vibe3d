@@ -115,16 +115,16 @@ class ToolPipeAttrCommand : Command {
         }
 
         // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
-        // immediacy: when a tool ALREADY has a live evaluation session, re-run
-        // its apply now so the new stage state takes effect this edit instead
-        // of on the next update() tick (re-eval plan, stage re-eval). setAttr
-        // above has already published the new stage state, so reEvaluate()
-        // reads the new packet. Stage edits never carry the forms `interactive`
-        // opener — a falloff edit with no live session stays inert.
-        if (toolHost.getActiveTool !is null) {
-            auto t = toolHost.getActiveTool();
-            if (t !is null && t.hasLiveEval()) t.reEvaluate();
-        }
+        // immediacy: when a tool ALREADY has a live evaluation session, the
+        // session driver re-runs its apply now so the new stage state takes
+        // effect this edit instead of on the next update() tick (re-eval
+        // plan, stage re-eval; gate in EditSession.onStageConfigChanged —
+        // task 0428). setAttr above has already published the new stage
+        // state, so the re-eval reads the new packet. Stage edits never carry
+        // the forms `interactive` opener — a falloff edit with no live
+        // session stays inert.
+        if (toolHost.session !is null)
+            toolHost.session().onStageConfigChanged();
         return true;
     }
 

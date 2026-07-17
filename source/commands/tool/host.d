@@ -1,6 +1,7 @@
 module commands.tool.host;
 
-import tool : Tool;
+import tool         : Tool;
+import edit_session : EditSession;
 
 // ---------------------------------------------------------------------------
 // ToolHost — delegate-based bridge between tool.* commands and the App's
@@ -32,4 +33,11 @@ struct ToolHost {
     /// undo entry. Returns whether a reset actually happened (false if the
     /// tool id is unknown / nothing to reset).
     bool   delegate(string) resetActiveTool;
+
+    /// The session-protocol driver (task 0428) — commands route live-eval /
+    /// session decisions through it instead of calling Tool hooks directly.
+    /// Null (ToolHost.init) in bare-struct unit-test contexts, so callers
+    /// keep the same defensive shape as the getActiveTool guards:
+    /// `if (host.session !is null) host.session().…`.
+    EditSession delegate() session;
 }

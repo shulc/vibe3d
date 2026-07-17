@@ -87,6 +87,7 @@ import shader : Shader;
 import params : Param;
 import tools.transform.transform : TransformTool;
 import tool            : ToolFlag;
+import edit_session    : LiveEvalClient;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -278,7 +279,10 @@ struct GestureRecord {
     Pin           pinStart;
 }
 
-class XfrmTransformTool : TransformTool {
+// LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
+// capability — hasLiveEval / hasLiveAttrEval / reEvaluate below are the
+// interface's implementations (EditSession discovers them by cast).
+class XfrmTransformTool : TransformTool, LiveEvalClient {
 public:
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows

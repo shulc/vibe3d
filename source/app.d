@@ -2188,6 +2188,15 @@ void main(string[] args) {
     // Null until wired; setActiveTool guards on non-null before calling.
     void delegate(string droppedId) lifecycleRecordHook;
 
+    // EditSession — the single driver of the Tool session protocol (task
+    // 0428). DECLARED here so the nested setActiveTool below can reference it
+    // lexically; CONSTRUCTED at the ToolHost block further down (`history`
+    // exists only from there). Null until wired — same pattern as
+    // lifecycleRecordHook above; users that can run pre-wiring guard on
+    // non-null.
+    import edit_session : EditSession;
+    EditSession session;
+
     void setActiveTool(Tool t) {
         // One-shot falloff-drag cancel at the universal tool
         // activation/switch/drop chokepoint (BOTH activateToolById and
@@ -2919,6 +2928,18 @@ void main(string[] args) {
         setActiveTool(null);
         activeToolId = "";
     };
+    // EditSession wiring (task 0428): construct the session-protocol driver
+    // now that history + setActiveTool + toolHost are all in scope (the
+    // variable itself is declared next to setActiveTool above so the nested
+    // function can see it). Commands reach the session through the ToolHost
+    // bridge — the same delegate pattern as getActiveTool — assigned BEFORE
+    // toolHostPtr / registerCommands below so every ToolHost copy taken later
+    // carries the accessor.
+    session = new EditSession(
+        () => activeTool,
+        history,
+        () { setActiveTool(null); activeToolId = ""; });
+    toolHost.session = () => session;
     // task 0415 Phase 1: wire the ctx's toolHostPtr now that `toolHost` is
     // fully assembled -- Span A (registerTools, above) never touches it;
     // Span B below (registerCommands, Phase 2) does.
