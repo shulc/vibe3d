@@ -27,6 +27,24 @@ static this() {
   // Result.error while uninitialized, so a failed init degrades to a no-op menu
   // action rather than a crash. Neutral for Windows/macOS (their init does not
   // fail this way). See third_party/nfde/PATCHES.md.
+  //
+  // [vibe3d vendor patch, task 0431 CI-fix] The soften above assumes NFD_Init
+  // RETURNS on failure. It does not always: with no DBUS_SESSION_BUS_ADDRESS the
+  // portal backend's dbus_bus_get() attempts AUTOLAUNCH (spawns dbus-launch),
+  // which on a restricted/headless service env (the self-hosted CI runner)
+  // "terminates abnormally" and trips an INTERNAL libdbus assertion that
+  // abort()s the whole process before NFD_Init can return -- killing e.g. the
+  // shared `vibe3d --test` server and cascading every test on that worker to
+  // FAIL. No session-bus address ⇒ the portal is unreachable regardless, so skip
+  // Init entirely (dialogs stay unavailable) and never touch autolaunch. A real
+  // desktop always exports DBUS_SESSION_BUS_ADDRESS, so dialogs are unaffected.
+  version (linux) {
+    import std.process : environment;
+    if (environment.get("DBUS_SESSION_BUS_ADDRESS", "").length == 0) {
+      isInitialized = false;
+      return;
+    }
+  }
   isInitialized = (NFD_Init() == NFD_OKAY);
   if (!isInitialized) {
     import core.stdc.stdio : fprintf, stderr;

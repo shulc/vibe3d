@@ -53,8 +53,22 @@ there would abort **every** process start. Patch:
   connection inside NFD. (vibe3d only calls `openDialog`/`saveDialog`, but all
   four public entry points are guarded for safety.)
 
+- `static this()` (task 0431 CI-fix): the stderr-warning soften above assumes
+  `NFD_Init()` **returns** on failure. It does not always. With no
+  `DBUS_SESSION_BUS_ADDRESS`, the portal backend's `dbus_bus_get()` attempts
+  **autolaunch** (spawns `dbus-launch`); on a restricted/headless service env
+  (the self-hosted CI runner) `dbus-launch` "terminates abnormally" and trips an
+  **internal libdbus assertion that `abort()`s the process** before `NFD_Init()`
+  can return — killing the shared `vibe3d --test` server and cascading every
+  test on that worker to FAIL. So, on `version (linux)` only, skip `NFD_Init()`
+  entirely when `DBUS_SESSION_BUS_ADDRESS` is empty/unset (leave
+  `isInitialized=false`): no session-bus address ⇒ the portal is unreachable
+  regardless, and autolaunch is never provoked. A real desktop always exports
+  `DBUS_SESSION_BUS_ADDRESS`, so interactive dialogs are unaffected.
+
 Neutral on Windows/macOS: their `NFD_Init()` does not fail this way, so
-`isInitialized` stays true and the guards never trip.
+`isInitialized` stays true and the guards never trip (the `DBUS_*` skip is
+`version (linux)`-gated).
 
 ### 3. `nativefiledialog-extended/src/nfd_portal.cpp` — survive a bus disconnect
 
