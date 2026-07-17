@@ -364,8 +364,6 @@ public:
         engaged = true;
     }
 
-    override bool drawImGui() { return false; }
-
     // ----- Headless one-shot (fold #1: builds its OWN selection from the
     // live mesh — ToolHeadlessCommand never calls activate()). -----------
 

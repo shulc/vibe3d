@@ -242,8 +242,6 @@ public:
         // separate overlay geometry needed.
     }
 
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
         if (!active) return;

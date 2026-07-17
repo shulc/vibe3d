@@ -1040,15 +1040,6 @@ public:
         return true;
     }
 
-    override bool drawImGui() {
-        if (active)
-            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Rotate           E");
-        if (active)
-            ImGui.PopStyleColor();
-        return clicked;
-    }
-
     override void drawProperties() {
         import std.math : PI;
         if (wrapperRef !is null) {

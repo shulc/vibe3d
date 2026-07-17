@@ -444,8 +444,6 @@ public:
         return true;
     }
 
-    override bool drawImGui() { return false; }
-
     // ----- Live preview ---------------------------------------------------
 
     override void evaluate() {

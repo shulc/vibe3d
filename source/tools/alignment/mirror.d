@@ -401,8 +401,6 @@ public:
         return true;
     }
 
-    override bool drawImGui() { return false; }
-
     // ----- Live preview (M3, §2.2-2.3 of the impl plan) ---------------------
     //
     // Re-apply the preview after a parameter change or handle drag. Guarded

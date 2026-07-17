@@ -319,8 +319,6 @@ public:
         if (showHandles()) drawToolHandles(shader, vp);
     }
 
-    override bool drawImGui() { return false; }
-
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     // willCommit() IS the exact compound condition each leaf's
     // hasUncommittedEdit()/deactivate() commit-guard tested individually —

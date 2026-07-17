@@ -342,8 +342,6 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {}
 
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
         ImGui.TextDisabled("Set params and click in viewport.");

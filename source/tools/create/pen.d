@@ -556,8 +556,6 @@ public:
         }
     }
 
-    override bool drawImGui() { return false; }
-
     override void drawProperties() {
         import ImGui = d_imgui;
         if (state == PenState.Idle)

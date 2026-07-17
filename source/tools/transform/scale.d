@@ -950,15 +950,6 @@ public:
         ownsRelativeMouse = false;
     }
 
-    override bool drawImGui() {
-        if (active)
-            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Scale            R");
-        if (active)
-            ImGui.PopStyleColor();
-        return clicked;
-    }
-
     override void drawProperties() {
         if (wrapperRef !is null) {
             // WRAPPED role (FORMS=0 kill-switch only — FORMS=1 suppresses this

@@ -5,7 +5,7 @@ import bindbc.opengl;
 
 import math;
 import shader;
-import params : Param, ParamHints, ParamProvider;
+import params : Param, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
 import std.json : JSONValue;
@@ -28,12 +28,10 @@ import std.json : JSONValue;
 //
 //  2. Static capability bits. A tool class declares the constant capabilities
 //     it always has by overriding `flags()` to return them. The base
-//     predicates (`consumesFalloff`, `wantsHoverForType`) derive from these
-//     bits, so a tool whose capability is fixed need only list a flag rather
-//     than override a method. Tools whose capability is computed at runtime
-//     keep overriding the predicate method instead.
-//       - `NeedsFalloff`   : per-vertex transforms multiply displacement by
-//                            the per-vertex falloff weight.
+//     predicate `wantsHoverForType` derives from these bits, so a tool whose
+//     capability is fixed need only list a flag rather than override a
+//     method. Tools whose capability is computed at runtime keep overriding
+//     the predicate method instead.
 //       - `HoverVertices`  : wants vertex hover-highlight while active.
 //       - `HoverEdges`     : wants edge hover-highlight while active.
 //       - `HoverPolygons`  : wants polygon hover-highlight while active.
@@ -43,15 +41,34 @@ enum ToolFlag : uint {
     // Preset-applied bits.
     Immediate     = 1u << 0,
     BrushReset    = 1u << 1,
-    // Static capability bits.
-    NeedsFalloff  = 1u << 2,
+    // Static capability bits. (Bit 2 was NeedsFalloff — retired with the
+    // dead consumesFalloff chain, task 0428; falloff weighting flows through
+    // the WGHT packet into the transform kernels instead.)
     HoverVertices = 1u << 3,
     HoverEdges    = 1u << 4,
     HoverPolygons = 1u << 5,
 }
 
 // ---------------------------------------------------------------------------
-// Tool — base class for all editing tools
+// Tool — base class for all editing tools.
+//
+// The base owns four surfaces (task 0428 boundary):
+//   * INPUT + RENDER — activate/deactivate/update, the onMouse*/onKey*
+//     dispatch hooks, draw()/drawProperties().
+//   * PARAMS — the ParamProvider schema (params/onParamChanged/paramEnabled/
+//     evaluate/renderParamsAsPanel) driving the Tool Properties panel and the
+//     headless tool.attr path.
+//   * PIPE CAPABILITIES + INTROSPECTION — flags()/hover opt-ins/isDragging/
+//     toolHandlesJson/toolStateJson/applyHeadless/supportedModes.
+//   * The WIDE SESSION CONTRACT — hasUncommittedEdit / cancelUncommittedEdit
+//     / resyncSession (see their block below).
+//
+// The session PROTOCOL (who calls those hooks, in what order — history
+// navigation, refire, live re-eval, lifecycle-undo emit) lives in
+// edit_session.d: EditSession is the sole driver, and the narrow per-tool
+// opt-ins are its optional capability interfaces (LiveEvalClient,
+// RefireClient, StandingPreview, SessionStepUndo, LifecycleUndoEmitter),
+// discovered by cast on the active tool.
 // ---------------------------------------------------------------------------
 
 class Tool : ParamProvider {
@@ -74,8 +91,8 @@ class Tool : ParamProvider {
     }
 
     // Static capability bits for this tool class. Override to return the
-    // OR of the constant capabilities the tool always has (NeedsFalloff,
-    // HoverVertices/Edges/Polygons). The base capability predicates below
+    // OR of the constant capabilities the tool always has
+    // (HoverVertices/Edges/Polygons). The base capability predicates below
     // derive from these. Tools whose capability is computed at runtime
     // (e.g. hover that depends on the active falloff stage) leave this be
     // and override the predicate method instead.
@@ -131,10 +148,6 @@ class Tool : ParamProvider {
     // call site (single-cell / `--test`) is byte-identical.
     void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {}
 
-    // Called once per frame inside the ImGui window to append tool UI.
-    // Returns true if the user clicked the activation button.
-    bool drawImGui() { return false; }
-
     // Called inside the floating "Tool Properties" ImGui window.
     // Override to show/edit tool-specific properties.
     void drawProperties() {}
@@ -143,27 +156,12 @@ class Tool : ParamProvider {
     // numeric properties panel override this.
     Param[] params() { return []; }
 
-    // Called before opening an args dialog (rare for tools, kept for
-    // symmetry with Command).
-    void dialogInit() {}
-
     // Called after a parameter value changes. Tools override to drive
     // their preview re-evaluation.
     void onParamChanged(string name) {}
 
     // Whether the named parameter widget should be enabled.
     bool paramEnabled(string name) const { return true; }
-
-    // Phase 7.5: opt-in flag for the WGHT (Falloff) stage. Tools that
-    // apply per-vertex transforms (Move / Rotate / Scale via the
-    // TransformTool base) override to `true` so their drag math
-    // multiplies per-vertex displacements by the falloff weight.
-    // Other tools (Bevel, primitive create-tools, Pen) leave it
-    // `false` — their geometry isn't per-vertex / has no meaningful
-    // falloff interpretation. See doc/falloff_plan.md §"Tool
-    // integration points" for the rationale. Derived from the static
-    // `NeedsFalloff` capability bit by default.
-    bool consumesFalloff() const { return hasCapability(ToolFlag.NeedsFalloff); }
 
     // Per-element-type hover opt-in. Tools override to declare which
     // element types they want pickVertices / pickEdges / pickFaces to
@@ -227,18 +225,9 @@ class Tool : ParamProvider {
     // Default empty object; XfrmTransformTool + LoopSliceTool override it.
     JSONValue toolStateJson() const { return JSONValue.emptyObject; }
 
-    // Per-parameter hint overrides at runtime.
-    void paramHints(string name, ref ParamHints hints) {}
-
     // Re-apply the tool's preview after a parameter change. Default
     // no-op (tools without params don't need this).
     void evaluate() {}
-
-    // Whether the previous evaluation can be incrementally patched given
-    // new attribute values, or must be rebuilt from scratch. Default:
-    // always rebuild. (Renderer in phase 3+ will start using this for
-    // big meshes / heavy tools.)
-    bool canIncrementalUpdate() const { return false; }
 
     // Apply tool one-shot (headless / scripted path). Default no-op returns
     // false. Implementations run business logic with current attribute

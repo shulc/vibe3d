@@ -1451,8 +1451,6 @@ public:
         return routeResolvedHandlePart(e, vts, hitPart);
     }
 
-    // consumesFalloff is inherited from TransformTool (NeedsFalloff flag).
-
     // Element-falloff hover gating — DYNAMIC, depends on the active
     // falloff stage's element mode, so this stays a method override
     // rather than a static Hover* flag.

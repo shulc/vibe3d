@@ -294,8 +294,6 @@ public:
         ];
     }
 
-    override bool drawImGui() { return false; }
-
     // ----- Headless one-shot (fold #1: builds its OWN source + target from
     // live selection + params_ — ToolHeadlessCommand never calls activate(),
     // so sourceFace_/islandMask_ are never populated on that throwaway

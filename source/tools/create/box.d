@@ -2548,8 +2548,6 @@ public:
         }
     }
 
-    override bool drawImGui() { return false; }
-
     /// Wire schema for prim.cube headless invocation.
     /// Phase 6.1a: 9 core attrs (position/size/segments).
     /// Phase 6.1b: 3 rounded-edge attrs (radius/segmentsR/axis).
