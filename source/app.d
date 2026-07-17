@@ -1362,9 +1362,9 @@ void main(string[] args) {
         // Make the app appear in the Dock and Command-Tab switcher when launched from terminal.
         // Use metaclass interface + objc_getClass instead of static interface methods:
         // LDC2 dispatches static ObjC interface calls to the Protocol object, not the class.
-        NSApplication app = objc_getClass("NSApplication").sharedApplication();
-        app.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
-        app.activateIgnoringOtherApps(true);
+        NSApplication nsapp = objc_getClass("NSApplication").sharedApplication();
+        nsapp.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
+        nsapp.activateIgnoringOtherApps(true);
     }
 
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
