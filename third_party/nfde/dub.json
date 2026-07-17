@@ -18,12 +18,12 @@
 		"source/"
 	],
 	"preBuildCommands-linux": [
-		"mkdir -p $NFDE_PACKAGE_DIR/nativefiledialog-extended/out",
+		"rm -rf $NFDE_PACKAGE_DIR/nativefiledialog-extended/out && mkdir -p $NFDE_PACKAGE_DIR/nativefiledialog-extended/out",
 		"cmake -B $NFDE_PACKAGE_DIR/nativefiledialog-extended/out -DCMAKE_GENERATOR=Ninja -DNFD_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release -DNFD_PORTAL=ON $NFDE_PACKAGE_DIR/nativefiledialog-extended",
 		"cmake --build $NFDE_PACKAGE_DIR/nativefiledialog-extended/out --config Release"
 	],
 	"preBuildCommands-osx": [
-		"mkdir -p $NFDE_PACKAGE_DIR/nativefiledialog-extended/out",
+		"rm -rf $NFDE_PACKAGE_DIR/nativefiledialog-extended/out && mkdir -p $NFDE_PACKAGE_DIR/nativefiledialog-extended/out",
 		"cmake -B $NFDE_PACKAGE_DIR/nativefiledialog-extended/out -DCMAKE_GENERATOR=Ninja -DNFD_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release $NFDE_PACKAGE_DIR/nativefiledialog-extended",
 		"cmake --build $NFDE_PACKAGE_DIR/nativefiledialog-extended/out --config Release"
 	],
