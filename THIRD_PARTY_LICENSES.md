@@ -19,7 +19,7 @@ required for redistribution.
 | [bindbc-common](https://github.com/BindBC/bindbc-common) | 1.0.5 | BSL-1.0 | BindBC contributors |
 | [bindbc-loader](https://github.com/BindBC/bindbc-loader) | 1.1.5 | BSL-1.0 | BindBC contributors |
 | [dyaml](https://github.com/dlang-community/D-YAML) | 0.10.0 | BSL-1.0 | Ferdinand Majerech, dyaml contributors |
-| [nfde](https://github.com/inochi2d/nativefiledialog-d) | 0.1.3 | Zlib | nfde contributors; bundles `nativefiledialog-extended` (Zlib) |
+| [nfde](https://github.com/chances/nfde) | 0.1.3 (vendored: `third_party/nfde`) | Zlib | Chance Snow; D bindings, **statically linked**. Bundles [nativefiledialog-extended](https://github.com/btzy/nativefiledialog-extended) @ `e092bbb` (Zlib) © Bernard Teo — Linux build uses the xdg-desktop-portal backend — plus the Wayland `xdg-foreign-unstable-v1` protocol description (MIT/X11) © Red Hat, Inc. |
 | [D-OpenSubdiv](https://github.com/shulc/D-OpenSubdiv) | ~main | BSL-1.0 (wrapper) | Alexander Shagarov; bundles **OpenSubdiv** (modified Apache 2.0) © Pixar |
 | [assimp](https://github.com/assimp/assimp) | 6.0.x (minimal: OBJ/glTF/FBX) | BSD-3-Clause | assimp team; **statically linked** into the executable |
 | [bindbc-assimp6](https://github.com/shulc/bindbc-assimp6) | ~master | BSL-1.0 (wrapper) | Alexander Shagarov; D bindings to the assimp C API |
@@ -360,7 +360,9 @@ Copyright (c) 2006-2024, assimp team. All rights reserved.
 ## MIT License
 
 Applies to: Dear ImGui (vendored via `d_imgui`), lwo2-writer, D-BVH (wrapper)
-and its bundled nanort, D-OnnxRuntime (wrapper) and its bundled ONNX Runtime.
+and its bundled nanort, D-OnnxRuntime (wrapper) and its bundled ONNX Runtime,
+and the Wayland `xdg-foreign-unstable-v1` protocol description bundled with
+`nfde` (`third_party/nfde`).
 
 ```
 Copyright (c) 2014-2024 Omar Cornut
@@ -398,6 +400,9 @@ Copyright (c) 2015-2018 Light Transport Entertainment, Inc.
 
 ONNX Runtime
 Copyright (c) Microsoft Corporation
+
+xdg-foreign-unstable-v1 (Wayland protocol description, bundled with nfde)
+Copyright © 2015-2016 Red Hat, Inc.
 ```
 
 ---
@@ -431,6 +436,9 @@ freely, subject to the following restrictions:
 ```
 Simple DirectMedia Layer (SDL)
 Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+
+nfde (D bindings to Native File Dialog Extended)
+Copyright © 2024 Chance Snow
 
 nativefiledialog-extended
 Copyright (c) 2014-2024 Bernard Teo and contributors.

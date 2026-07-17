@@ -26,10 +26,9 @@
 		"assets/icon",
 		"assets/fonts"
 	],
+	"_comment-libs-linux": "gdk-3/gobject-2.0 were dropped in task 0431 when the Linux file-dialog backend moved from GTK3 to xdg-desktop-portal (see third_party/nfde): they resolved only nfd_gtk symbols, which are no longer compiled. Keep wayland-client -- NFD's xdg-foreign glue (NFD_WAYLAND=ON) links it, and it was already a DT_NEEDED before this change. dbus-1 (the portal backend's link dep) is declared by third_party/nfde's own libs-linux, not here.",
 	"libs-linux": [
 		"pthread",
-		"gdk-3",
-		"gobject-2.0",
 		"wayland-client"
 	],
 	"libs-osx": [
@@ -49,7 +48,9 @@
 			"repository": "git+https://github.com/shulc/D-BVH.git"
 		},
 		"bindbc-sdl": "~>1.5.2",
-		"nfde": "~>0.1.3",
+		"nfde": {
+			"path": "third_party/nfde"
+		},
 		"bindbc-loader": "~>1.1.5",
 		"dyaml": {
 			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
