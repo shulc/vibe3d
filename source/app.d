@@ -4748,31 +4748,14 @@ void main(string[] args) {
                         return;
                     }
                 }
-                // Refire (undo/redo migration P4): a panel-param-edit session on
-                // an opted-in tool routes a tool.attr through the tool's own
-                // buildRefireCommand() rather than firing the (non-undoable)
-                // tool.attr command itself. Each tick reverts the previous live
-                // command and applies the freshly-evaluated one, so refireEnd
-                // lands ONE entry reflecting the LAST param value. The attr is
-                // injected onto the tool first (with the tool marked refire-
-                // driving so its internal preview stays inert), then the rebuilt
-                // command is fired. Non-tool.attr commands inside a refire window
-                // (and non-opted-in tools) keep the plain fire(cmd) path.
-                if (history.refireActive
-                    && id == "tool.attr"
-                    && activeTool !is null
-                    && activeTool.wantsRefire()) {
-                    activeTool.setRefireDriving(true);
-                    scope(exit) activeTool.setRefireDriving(false);
-                    if (!cmd.apply())   // inject attr onto the tool's inner cmd
-                        throw new Exception("command '" ~ id ~ "' did not apply");
-                    auto refireCmd = activeTool.buildRefireCommand();
-                    if (refireCmd !is null) {
-                        if (!history.fire(refireCmd))
-                            throw new Exception(
-                                "refire command did not apply");
-                    }
-                } else {
+                // Refire (undo/redo migration P4) — the dispatch decision +
+                // driver bracket live in EditSession.tryRefireDispatch (task
+                // 0428): a tool.attr inside an open refire window on an
+                // opted-in tool fires the tool's rebuilt command instead of
+                // the plain path below. Non-tool.attr commands inside a
+                // refire window (and non-opted-in tools) keep the plain
+                // fire(cmd) path.
+                if (!session.tryRefireDispatch(cmd, id)) {
                     // Programmatic command-dispatch path: route through
                     // recordCoalescing() so consecutive COMPATIBLE delta edits
                     // (same targets, same edit label) collapse into a single
@@ -4956,19 +4939,13 @@ void main(string[] args) {
         });
 
         // Phase C: /api/refire opens/closes a refire block on the history.
-        // Tools call refireBegin/refireEnd directly; this endpoint exists
-        // for HTTP-driven tests that want to verify the refire-coalescing
-        // behavior without going through SDL.
+        // The bracket is driven by EditSession on the main thread; this
+        // endpoint exists for HTTP-driven tests that want to verify the
+        // refire-coalescing behavior without going through SDL. refireEnded()
+        // carries the P4 opted-in-tool commit notification.
         httpServer.setRefireHandler((string action) {
-            if (action == "begin")     history.refireBegin();
-            else if (action == "end") {
-                history.refireEnd();
-                // P4: if a refire session was driving an opted-in tool, tell it
-                // the single entry has landed so its commit chokepoint
-                // (deactivate/Apply) records nothing for the same edit.
-                if (activeTool !is null && activeTool.wantsRefire())
-                    activeTool.onRefireCommitted();
-            }
+            if (action == "begin")     session.refireBegin();
+            else if (action == "end")  session.refireEnded();
             else throw new Exception("invalid refire action '" ~ action ~ "'");
         });
 

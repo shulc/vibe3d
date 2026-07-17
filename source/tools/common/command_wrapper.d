@@ -9,6 +9,7 @@ import editmode : EditMode;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tool   : Tool;
+import edit_session : RefireClient;
 import params : Param;
 import math   : Vec3, Viewport, screenToWorkPlane;
 import shader : Shader;
@@ -56,7 +57,11 @@ import ImGui = d_imgui;
 ///  - The "Apply" button in `drawProperties()` runs the same commit
 ///    path then refreshes the baseline so further drags compose on
 ///    top of the now-committed state. Tool stays active.
-abstract class CommandWrapperTool : Tool {
+// RefireClient (task 0428): the sole implementor of the refire capability —
+// the wantsRefire / buildRefireCommand / setRefireDriving / onRefireCommitted
+// overrides below are the interface's implementations (EditSession discovers
+// them by cast).
+abstract class CommandWrapperTool : Tool, RefireClient {
     protected Command inner;
     protected Mesh*   meshPtr;
     protected GpuMesh*        gpu;

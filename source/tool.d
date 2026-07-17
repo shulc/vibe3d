@@ -8,7 +8,6 @@ import shader;
 import params : Param, ParamHints, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
-import command : Command;
 import std.json : JSONValue;
 
 // ---------------------------------------------------------------------------
@@ -317,43 +316,12 @@ class Tool : ParamProvider {
     // post-mode re-init in P1.
     void resyncSession() {}
 
-    // ----- Refire (record-once, re-evaluate) hooks (undo/redo migration P4) --
-    //
-    // A Tool-Properties (panel) param edit on an opted-in tool becomes ONE
-    // re-evaluated undo entry instead of a tool-internal preview followed by a
-    // separate commit-at-deactivate. The driver (app.d's tool.attr dispatch)
-    // brackets a panel-param-edit SESSION with the history's refireBegin /
-    // refireEnd primitives and, on each param change inside the bracket, fires
-    // buildRefireCommand() so each tick reverts the previous live command and
-    // applies the freshly-evaluated one — the net stack effect is a single
-    // entry reflecting the LAST param value.
-    //
-    // Opt-in. Default false: a non-opted-in tool keeps its existing
-    // onParamChanged() preview behaviour unchanged and is never routed through
-    // refire.
-    bool wantsRefire() const { return false; }
-
-    // Build the command that represents the tool's CURRENT param state, ready
-    // to apply(). For a deform tool this re-runs the deformation against the
-    // session baseline and packages the resulting per-vertex before/after as a
-    // single undoable command, WITHOUT recording it (the history's fire() owns
-    // the apply / revert / record lifecycle). Returns null when there is no
-    // meaningful edit to fire (e.g. the params produced a no-op diff) — the
-    // driver then skips the fire() for that tick. Default null: only tools that
-    // return true from wantsRefire() override this.
-    Command buildRefireCommand() { return null; }
-
-    // Toggle the tool's "a refire session is driving me" state. Set true by the
-    // driver around a param injection so the tool suppresses its own internal
-    // preview (the fired command owns mutation); cleared by the driver when the
-    // session ends. Default no-op — only opted-in tools track it.
-    void setRefireDriving(bool on) {}
-
-    // Driver callback once a refire session committed its single entry (after
-    // refireEnd). Lets the tool latch its double-record guard and advance its
-    // baseline so the subsequent commit chokepoint records nothing. Default
-    // no-op.
-    void onRefireCommitted() {}
+    // Refire (record-once, re-evaluate panel-edit sessions, undo/redo
+    // migration P4) moved to the optional RefireClient interface in
+    // edit_session.d (task 0428) — wantsRefire / buildRefireCommand /
+    // setRefireDriving / onRefireCommitted. A tool not implementing the
+    // interface keeps its onParamChanged() preview behaviour unchanged and
+    // is never routed through refire.
 
     // Live re-evaluation (attr / pipe-stage edits re-running a live tool)
     // moved to the optional LiveEvalClient interface in edit_session.d

@@ -32,6 +32,7 @@ module edit_session;
 // ---------------------------------------------------------------------------
 
 import tool            : Tool;
+import command         : Command;
 import command_history : CommandHistory;
 
 // Computed classification of the session protocol's current phase. There is
@@ -90,6 +91,47 @@ interface LiveEvalClient {
 }
 
 // ---------------------------------------------------------------------------
+// RefireClient — optional capability: record-once, re-evaluate panel-edit
+// sessions (undo/redo migration P4). CommandWrapperTool (the deform-command
+// wrapper base: xfrm.smooth / jitter / quantize + edge slide) is the sole
+// implementor.
+//
+// A Tool-Properties (panel) param edit on an opted-in tool becomes ONE
+// re-evaluated undo entry instead of a tool-internal preview followed by a
+// separate commit-at-deactivate. The driver (EditSession) brackets a
+// panel-param-edit SESSION with the history's refireBegin / refireEnd
+// primitives and, on each param change inside the bracket, fires
+// buildRefireCommand() so each tick reverts the previous live command and
+// applies the freshly-evaluated one — the net stack effect is a single
+// entry reflecting the LAST param value.
+// ---------------------------------------------------------------------------
+interface RefireClient {
+    // Opt-in gate: a tool may implement the interface yet answer false when
+    // its undo plumbing isn't wired — it is then never routed through refire.
+    bool wantsRefire() const;
+
+    // Build the command that represents the tool's CURRENT param state, ready
+    // to apply(). For a deform tool this re-runs the deformation against the
+    // session baseline and packages the resulting per-vertex before/after as a
+    // single undoable command, WITHOUT recording it (the history's fire() owns
+    // the apply / revert / record lifecycle). Returns null when there is no
+    // meaningful edit to fire (e.g. the params produced a no-op diff) — the
+    // driver then skips the fire() for that tick.
+    Command buildRefireCommand();
+
+    // Toggle the tool's "a refire session is driving me" state. Set true by
+    // the driver around a param injection so the tool suppresses its own
+    // internal preview (the fired command owns mutation); cleared by the
+    // driver when the injection tick ends.
+    void setRefireDriving(bool on);
+
+    // Driver callback once a refire session committed its single entry (after
+    // refireEnd). Lets the tool latch its double-record guard and advance its
+    // baseline so the subsequent commit chokepoint records nothing.
+    void onRefireCommitted();
+}
+
+// ---------------------------------------------------------------------------
 // EditSession
 // ---------------------------------------------------------------------------
 final class EditSession {
@@ -100,6 +142,10 @@ final class EditSession {
     private CommandHistory  history_;
     // { setActiveTool(null); activeToolId = ""; } — the app's tool-drop verb.
     private void delegate() dropTool_;
+    // The ONLY state EditSession owns: the refire driver-bracket bit
+    // (tryRefireDispatch's non-reentrancy tripwire). Everything else is
+    // computed from tool_() — see SessionPhase.
+    private bool refireDriving_ = false;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool) {
@@ -155,6 +201,62 @@ final class EditSession {
     void onStageConfigChanged() {
         auto lc = cast(LiveEvalClient) tool_();
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate();
+    }
+
+    // ----- refire (undo/redo migration P4) ----------------------------------
+
+    // Open a refire block on the history. The bracket is driven externally
+    // (the /api/refire test endpoint today) — begin / end are separate calls,
+    // not a scope; tryRefireDispatch handles the per-tick fires in between.
+    void refireBegin() { history_.refireBegin(); }
+
+    // Refire dispatch (see RefireClient): a `tool.attr` arriving inside an
+    // open refire window on an opted-in tool routes through the tool's own
+    // buildRefireCommand() rather than firing the (non-undoable) tool.attr
+    // command itself. Each tick reverts the previous live command and applies
+    // the freshly-evaluated one, so refireEnd lands ONE entry reflecting the
+    // LAST param value. The attr is injected onto the tool first (with the
+    // tool marked refire-driving so its internal preview stays inert), then
+    // the rebuilt command is fired.
+    //
+    // Returns false — and does NOTHING — when this dispatch is not a refire
+    // tick (no refire window open / not a tool.attr / tool not opted in): the
+    // caller then keeps its plain fire path. Non-reentrant by construction
+    // (history.fire applies the built command directly, never through the
+    // command dispatcher) — asserted via the session-owned driving bit, which
+    // is scope(exit)-cleared so either throw path below unlatches it.
+    bool tryRefireDispatch(Command cmd, string id) {
+        auto rc = cast(RefireClient) tool_();
+        if (!(history_.refireActive
+              && id == "tool.attr"
+              && rc !is null
+              && rc.wantsRefire()))
+            return false;
+        assert(!refireDriving_, "refire bracket re-entered");
+        refireDriving_ = true;
+        scope(exit) refireDriving_ = false;
+        rc.setRefireDriving(true);
+        scope(exit) rc.setRefireDriving(false);
+        if (!cmd.apply())   // inject attr onto the tool's inner cmd
+            throw new Exception("command '" ~ id ~ "' did not apply");
+        auto refireCmd = rc.buildRefireCommand();
+        if (refireCmd !is null) {
+            if (!history_.fire(refireCmd))
+                throw new Exception(
+                    "refire command did not apply");
+        }
+        return true;
+    }
+
+    // Close the refire block: refireEnd() lands the session's single entry;
+    // then — ONLY after refireEnd(), the call order encodes the P4 contract —
+    // if the session was driving an opted-in tool, tell it the entry has
+    // landed so its commit chokepoint (deactivate/Apply) records nothing for
+    // the same edit.
+    void refireEnded() {
+        history_.refireEnd();
+        auto rc = cast(RefireClient) tool_();
+        if (rc !is null && rc.wantsRefire()) rc.onRefireCommitted();
     }
 }
 

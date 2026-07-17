@@ -333,8 +333,8 @@ class HttpServer {
 
     // ----- /api/refire synchronous bridge ----------------------------------
     // POST /api/refire {"action":"begin"|"end"} opens or closes a refire
-    // block on the history. Tools call refireBegin/refireEnd directly on
-    // the main thread; this endpoint exists for HTTP-driven tests.
+    // block on the history. The refire bracket is driven on the main thread
+    // (EditSession); this endpoint exists for HTTP-driven tests.
     private alias RefireHandler = void delegate(string action);
     private RefireHandler refireHandler;
 
