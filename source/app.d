@@ -1815,6 +1815,56 @@ void main(string[] args) {
     displayTargetsResolver = () => DisplayTargets(
         &gpu, &vertexCache(), &edgeCache(), &faceCache());
 
+    // Mid-batch display pull-guard (campaign 0407 §D4-в, phase 2).
+    //
+    // With the display upload bus-driven (the capture-and-upload at the top
+    // of the flush block in the main loop), a VBO reader that runs BEFORE
+    // this frame's flush — the pickers during event dispatch (same-batch
+    // undo→click in an event replay), the lasso visibility readback, and the
+    // two MainThreadBridge-serviced HTTP providers — could read a VBO that
+    // predates a mutation applied earlier in the SAME batch. Each such
+    // reader calls this guard first: when the active mesh has un-flushed
+    // display-relevant changes, run the full display refresh (GPU upload +
+    // pick-cache resize/invalidate) NOW.
+    //
+    // Bit-transfer dedup: serviced bits move OUT of `pendingChanges_` into
+    // the `displayEnsured_` shadow word (owner-tagged by mesh address), so
+    //   • N readers after one mutation refresh ONCE, not N times (a replayed
+    //     batch of motion events after an undo would otherwise re-upload +
+    //     reproject per event), and
+    //   • the flush-site upload skips bits the guard already serviced — no
+    //     double upload on command+pick frames.
+    // The frame drain ORs the shadow back into the aggregated `meshFlags`
+    // (then zeroes it), so the flush subscribers (subpatch gate, pick-cache
+    // block, gpu_select, symmetry/snap) still receive FULL flags; the debug
+    // MISSED-PUBLISHER check counts the shadow as pending for its owner.
+    //
+    // Multi-layer: the guard only ever services the ACTIVE mesh (`mesh()`),
+    // so the shadow word is single-owner by construction. If the active
+    // layer switches mid-frame while bits are parked (a layer.select between
+    // two HTTP requests serviced in one tick), the parked bits are returned
+    // to their owner's `pendingChanges_` first — the drain aggregates across
+    // ALL layers, so nothing is lost; only the once-per-mutation dedup
+    // restarts (and `refreshDisplay`'s own active-mesh gate keeps a
+    // now-background owner from ever being re-uploaded).
+    uint  displayEnsured_     = 0;
+    Mesh* displayEnsuredMesh_ = null;
+    void ensureDisplayCurrent() {
+        import display_sync : refreshDisplay, DisplayRefreshMask;
+        Mesh* am = &mesh();
+        if (displayEnsuredMesh_ !is am && displayEnsured_ != 0) {
+            displayEnsuredMesh_.pendingChanges_ |= displayEnsured_;
+            displayEnsured_ = 0;
+        }
+        const uint f = am.pendingChanges_ & DisplayRefreshMask;
+        if (f) {
+            refreshDisplay(am, &gpu, &vertexCache(), &edgeCache(), &faceCache());
+            displayEnsured_    |= f;
+            displayEnsuredMesh_ = am;
+            am.pendingChanges_ &= ~f;
+        }
+    }
+
     // Layers Stage 5 — background-layer GPU buffers. A side map (NOT a field on
     // Layer: document.d stays GL-free and the render boundary stays clean)
     // keyed by the Layer object. Each entry caches the layer's last uploaded
@@ -3295,6 +3345,11 @@ void main(string[] args) {
             import std.array : appender;
             import std.format : format;
             import bindbc.opengl;
+            // Mid-batch pull-guard: this provider is MainThreadBridge-serviced
+            // during httpServer.tickAll(), i.e. BEFORE this frame's flush — a
+            // command earlier in the same tick may have mutated the mesh
+            // without the (bus-driven) upload having run yet.
+            ensureDisplayCurrent();
             // Faces use stride-6 (pos+normal). Read the live VBO.
             int vertCount = gpu.faceVertCount;
             // Also expose the model matrix the renderer applies to the
@@ -3345,6 +3400,10 @@ void main(string[] args) {
         // so the oracle is always reachable even when BVH is the default.
         httpServer.setPickProvider((int x, int y, string engine) {
             import std.format : format;
+            // Mid-batch pull-guard: serviced during tickAll, before the flush
+            // (see the surface provider above) — both engines read
+            // upload-derived state (ID-FBO / BVH keyed on gpu.uploadVersion).
+            ensureDisplayCurrent();
             Viewport vp = vpm.activeSnapshot();
             int faceIdx;
             if (engine == "gpu") {
@@ -5865,6 +5924,7 @@ void main(string[] args) {
                     case EditMode.Edges:    vbMode = SelectMode.Edge;   break;
                     case EditMode.Polygons: vbMode = SelectMode.Face;   break;
                 }
+                ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
                 bool[] gpuVisible = gpuSelect.elementVisibility(
                     vbMode, mesh, gpu, vp2);
 
@@ -6198,6 +6258,7 @@ void main(string[] args) {
     }
 
     void pickVertices(ref Viewport vp, bool doingCameraDrag) {
+        ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
         // Freeze hover during an active tool drag (element-move haul): return
         // WITHOUT re-picking so the element picked at drag-start stays
         // highlighted instead of every vertex the moving cursor passes over.
@@ -6237,6 +6298,7 @@ void main(string[] args) {
     }
 
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
+        ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredEdge = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
@@ -6268,6 +6330,11 @@ void main(string[] args) {
     }
 
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
+        // Mid-batch pull-guard — covers BOTH engines: the GPU path reads the
+        // ID-FBO rendered from the VBO, and the BVH path is keyed on
+        // gpu.uploadVersion, so the guard's upload is what triggers its
+        // rebuild against the post-mutation mesh.
+        ensureDisplayCurrent();
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredFace = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
@@ -7877,7 +7944,13 @@ void main(string[] args) {
                 static bool  warnedMissedPublisher = false;
 
                 foreach (layer; document.layers) {
-                    const lf = layer.mesh.pendingChanges_;
+                    // Guard-serviced bits count as pending for their owner —
+                    // without this, a mutation whose flags ensureDisplayCurrent
+                    // transferred into the shadow word would read as "version
+                    // advanced, zero flags" and latch a spurious warning.
+                    const lf = layer.mesh.pendingChanges_
+                        | ((&layer.mesh) is displayEnsuredMesh_
+                               ? displayEnsured_ : 0u);
                     auto seen = layer in lastSeenMutVer;
                     if (seen is null) {
                         // First observation of this layer — seed, do not compare.
@@ -7905,6 +7978,14 @@ void main(string[] args) {
                 layer.mesh.pendingChanges_    = 0;
                 layer.mesh.pendingSelDomains_ = 0;
             }
+
+            // Transfer-back (phase-2 dedup): bits `ensureDisplayCurrent`
+            // moved out of `pendingChanges_` (display already serviced
+            // mid-batch) still belong to THIS frame's flags for every flush
+            // subscriber — return them to the aggregate and reset the shadow.
+            meshFlags |= displayEnsured_;
+            displayEnsured_     = 0;
+            displayEnsuredMesh_ = null;
 
             // Layer-structural changes are DOCUMENT-level, not per-mesh, so they
             // accumulate in a module-level word (change_bus.pendingLayerChanges)
