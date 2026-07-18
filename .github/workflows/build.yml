@@ -261,6 +261,30 @@ jobs:
       # Git dependencies are pinned to commit SHAs in dub.json/dub.selections.json.
       # Keep the persistent dub cache intact so heavyweight deps (notably assimp
       # via lwo2-writer/bindbc-assimp6) are not re-cloned on every CI run.
+      #
+      # EXCEPTION — nfde: the vendored nfde path dep (third_party/nfde) builds its
+      # C lib (out/src/{libnfd.a,nfd.lib}) via preBuildCommands (CMake) INTO THE
+      # WORKSPACE, linked directly through dub's lflags. preBuildCommands only run
+      # when dub (re)builds the nfde target — but the D-wrapper build is frozen in
+      # the persistent dub cache. On a warm-cache run dub cache-hits nfde, SKIPS
+      # the CMake preBuild, and never regenerates the C lib that actions/checkout's
+      # git clean wiped from the workspace, so the link fails on every platform
+      # (`cannot find .../out/src/libnfd.a` / `LNK1181 ... nfd.lib`). Drop just the
+      # nfde cache so Build re-runs preBuild and rebuilds it (small C lib). Same
+      # fix as ci.yaml's lwo2-writer/nfde drop. DUB_HOME is F:\dub on Windows (set
+      # above), ~/.dub elsewhere.
+      - name: 'Drop cached nfde dep (force preBuild rebuild of vendored C lib) (Linux/macOS)'
+        if: runner.os != 'Windows'
+        run: rm -rf "${DUB_HOME:-$HOME/.dub}/cache/nfde" "${DUB_HOME:-$HOME/.dub}/packages/nfde" || true
+
+      - name: 'Drop cached nfde dep (force preBuild rebuild of vendored C lib) (Windows)'
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $root = if ($env:DUB_HOME) { $env:DUB_HOME } else { "$env:USERPROFILE\.dub" }
+          foreach ($p in @("$root\cache\nfde", "$root\packages\nfde")) {
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+          }
 
       # ---- Build ----
 
