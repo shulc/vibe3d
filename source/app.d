@@ -1356,7 +1356,14 @@ void main(string[] args) {
         try savePrefs();
         catch (Exception e) logWarn("prefs", "could not write prefs.json: " ~ e.msg);
     }
-    if (prefsActive) scope(exit) persistPrefsOnExit();
+    // NB: `scope(exit) if (...)`, NOT `if (...) scope(exit)`. In the latter the
+    // guard binds to the `if`'s controlled-statement scope, which closes
+    // IMMEDIATELY — so it would fire here at startup (persisting the just-loaded
+    // prefs) and never at real shutdown, silently dropping every in-session
+    // change (viewport layout, window size, recent files, tool defaults). The
+    // form below registers one unconditional guard in main()'s scope that runs
+    // at return and re-checks prefsActive then.
+    scope(exit) if (prefsActive) persistPrefsOnExit();
     setWindowIcon(window);
 
     version (OSX) {
