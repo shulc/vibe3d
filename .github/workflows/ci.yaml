@@ -30,17 +30,26 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # nfde's nativefiledialog-extended checkout + its wayland-protocols submodule
-    # live in the runner's persistent dub cache, so a single Build pass suffices
-    # (the old throwaway first-pass build that cloned nfde is no longer needed).
+    # nfde is now a VENDORED path dep (third_party/nfde, task 0431). Its C lib
+    # (nativefiledialog-extended/out/src/libnfd.a) is produced by the package's
+    # preBuildCommands (a CMake/Ninja build) INTO THE WORKSPACE, and dub's
+    # lflags link it directly. But preBuildCommands only run when dub actually
+    # (re)builds the nfde target — and the D-wrapper build is frozen in the
+    # runner's persistent ~/.dub/cache. So on a warm-cache run, dub cache-hits
+    # nfde, SKIPS the CMake preBuild, and never regenerates out/src/libnfd.a —
+    # which actions/checkout's `git clean` wiped from the workspace on this
+    # checkout. Result: `ld: cannot find .../out/src/libnfd.a`. Drop the nfde
+    # cache so the Build re-runs preBuildCommands and rebuilds the C lib.
+    # (Cheap — a small C static lib.)
+    #
     # lwo2-writer is a `~master` git dep. dub resolves a branch dep ONCE and
     # freezes it in the runner's persistent package cache — it never re-fetches
     # when upstream master advances, so a lib bump (e.g. the VMAP/VMAD UV work)
     # leaves vibe3d source compiling against a stale frozen copy. Drop it so the
     # Build checks out the current master. (Cheap — pure-D lib, no static build,
     # unlike bindbc-assimp6 which we leave cached here.)
-    - name: 'Drop cached lwo2-writer ~master dep'
-      run: rm -rf ~/.dub/packages/lwo2-writer ~/.dub/cache/lwo2-writer || true
+    - name: 'Drop cached nfde + lwo2-writer deps (force preBuild / re-fetch)'
+      run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde ~/.dub/packages/lwo2-writer ~/.dub/cache/lwo2-writer || true
 
     - name: 'Build'
       run: dub build --compiler=dmd
