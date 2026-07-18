@@ -604,6 +604,11 @@ struct EditorApp {
     @property ref Tool activeTool() { return *activeToolPtr; }
     bool* runningPtr;
     @property ref bool running() { return *runningPtr; }
+    // Close-requested flag (task 0434): the file.quit factory sets this instead
+    // of clearing `running` directly, so the main loop can route the close
+    // through the unsaved-changes guard (window title / quit-confirm modal).
+    bool* quitRequestedPtr;
+    @property ref bool quitRequested() { return *quitRequestedPtr; }
     bool* showHistoryPanelPtr;
     @property ref bool showHistoryPanel() { return *showHistoryPanelPtr; }
 

@@ -1228,8 +1228,11 @@ void registerCommands(EditorApp app) {
     };
     {
         import commands.file.quit : FileQuit;
+        // Route close through the unsaved-changes guard (task 0434): set the
+        // request flag instead of clearing `running`. The main loop's per-frame
+        // quit-guard decides whether to prompt (dirty) or exit (clean / --test).
         reg.commandFactories["file.quit"] = () => cast(Command)
-            new FileQuit(&mesh(), cameraView, editMode, () { running = false; });
+            new FileQuit(&mesh(), cameraView, editMode, () { quitRequested = true; });
     }
     reg.commandFactories["mesh.subdivide"] = () => cast(Command)
         new Subdivide(&mesh(), cameraView, editMode,

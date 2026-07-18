@@ -34,3 +34,44 @@ void setCurrentDocPath(string p) { g_currentDocPath = p; }
 
 /// Forget the open document (e.g. File → New starts untitled).
 void clearCurrentDoc() { g_currentDocPath = null; }
+
+// -----------------------------------------------------------------------------
+// Unsaved-changes tracking (task 0434).
+//
+// The document is "dirty" when its content revision differs from the revision
+// at the last save / open / new. The revision itself is the change-bus'
+// cumulative document-mutation counter (change_bus.docRevision) — this module
+// stays dependency-free: app.d reads that counter and feeds it in once per
+// frame via syncDocRevision(), AFTER the change-bus flush (so the frame's own
+// mesh/layer mutations are already counted).
+//
+// Rebaseline (mark clean) is DEFERRED, not immediate: a Save leaves geometry
+// untouched, but a load / new mutates the mesh and that mutation only reaches
+// the counter on the flush that follows the command. Arming a rebaseline and
+// applying it on the next sync therefore handles all three uniformly — the
+// baseline is taken AFTER the triggering command's mutation has flushed.
+//
+// Main-thread only, like the current-doc path above.
+
+private ulong g_liveRevision;                 // most recent revision (post-flush)
+private ulong g_savedRevision;                // revision at last save/open/new
+private bool  g_rebaselineOnNextSync = true;  // armed at startup + by save/load/new
+
+/// Feed the current change-bus document revision; call once per frame AFTER
+/// changeBus.flush. Establishes the clean baseline on the first sync after a
+/// save / open / new armed a rebaseline (and once at startup, so a freshly
+/// launched editor with its default scene reads clean).
+void syncDocRevision(ulong rev) {
+    g_liveRevision = rev;
+    if (g_rebaselineOnNextSync) {
+        g_savedRevision = rev;
+        g_rebaselineOnNextSync = false;
+    }
+}
+
+/// Arm the clean baseline: the next syncDocRevision marks the document clean.
+/// Called by file save (native .v3d), file open (.v3d), and file new / reset.
+void requestDocRebaseline() { g_rebaselineOnNextSync = true; }
+
+/// True when the document has unsaved changes since the last save/open/new.
+bool docDirty() { return g_liveRevision != g_savedRevision; }

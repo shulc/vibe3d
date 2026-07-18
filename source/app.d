@@ -2522,6 +2522,15 @@ void main(string[] args) {
     // other ai3d.* factories); drawn once per frame beside drawTabPanel().
     bool   ai3dModalOpen;
     bool   ai3dModalPendingOpen;
+    // Unsaved-changes quit confirmation (task 0434). Same pendingOpen→OpenPopup
+    // convention as the AI3D / Remesh modals. quitAfterSave defers the exit
+    // decision until the frame's Save has flushed (a cancelled Save dialog
+    // leaves the document dirty ⇒ the quit is aborted). lastWindowTitle caches
+    // the last string handed to SDL so the title is only re-set when it changes.
+    bool   quitConfirmOpen;
+    bool   quitConfirmPending;
+    bool   quitAfterSave;
+    string lastWindowTitle;
     string ai3dPickedImagePath;
     char[256] ai3dWorkerUrlBuf;
     ai3dWorkerUrlBuf[] = 0;
@@ -2819,6 +2828,10 @@ void main(string[] args) {
     // (file.quit in particular) can capture it before the actual
     // loop runs below.
     bool running = true;
+    // Close-requested flag (task 0434). Set by SDL_QUIT (window [X]) and by the
+    // file.quit command (Ctrl+Q / File→Quit); drained once per frame by the
+    // quit-guard, which either prompts (unsaved changes) or clears `running`.
+    bool quitRequested = false;
 
     Registry reg;
 
@@ -2854,6 +2867,7 @@ void main(string[] args) {
     // is lexically visible (the guard itself is declared far earlier).
     displayVboOwnedByTool_  = () => activeTool !is null && activeTool.isDragging();
     app.runningPtr          = &running;
+    app.quitRequestedPtr    = &quitRequested;
     app.showHistoryPanelPtr = &showHistoryPanel;
 
     app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
@@ -6504,7 +6518,10 @@ void main(string[] args) {
         }
 
         switch (ev.type) {
-            case SDL_QUIT:            return false;
+            // Window [X] / SIGINT: request a close rather than quitting
+            // outright (task 0434). The per-frame quit-guard prompts on
+            // unsaved changes; keep processing this frame (return true).
+            case SDL_QUIT:            quitRequested = true;               break;
             case SDL_WINDOWEVENT:     handleWindowEvent(ev.window);      break;
             case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
             case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
@@ -7217,6 +7234,62 @@ void main(string[] args) {
                 // any in-flight job so it can't land after the modal is gone.
                 if (remeshJob.busy()) remeshJob.cancel();
                 remeshModalOpen = false;
+            }
+        }
+
+        // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
+        // Drain the close request once per frame. Placed inside the ImGui frame
+        // (after the menu bar and the other modals are drawn) so a same-frame
+        // File→Quit, a Ctrl+Q from the event phase, and an SDL_QUIT all land
+        // here. A dirty document opens the confirm modal; a clean one — or any
+        // --test session (the harness closes the window and must not block on a
+        // dialog) — exits immediately.
+        if (quitRequested) {
+            import io.doc_state : docDirty;
+            quitRequested = false;
+            if (docDirty() && !command.g_testMode) {
+                quitConfirmOpen    = true;
+                quitConfirmPending = true;
+            } else {
+                running = false;
+            }
+        }
+        if (quitConfirmOpen) {
+            if (quitConfirmPending) {
+                ImGui.OpenPopup("Unsaved Changes");
+                quitConfirmPending = false;
+            }
+            if (ImGui.BeginPopupModal("Unsaved Changes", null,
+                                      ImGuiWindowFlags.AlwaysAutoResize)) {
+                ImGui.TextUnformatted(
+                    "You have unsaved changes. Do you really want to exit?");
+                ImGui.Separator();
+                // Save: write via the ordinary file.save command (prompts if the
+                // document is untitled). The exit is DEFERRED to the post-flush
+                // settle (quitAfterSave) so a cancelled Save dialog — which
+                // leaves the document dirty — aborts the quit instead of losing
+                // work. Save→exit is the destructive-safe default, so it leads.
+                if (ImGui.Button("Save")) {
+                    runCommand(reg.commandFactories["file.save"]());
+                    quitAfterSave   = true;
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Yes")) {          // discard changes and exit
+                    running         = false;
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("No")) {           // cancel the quit
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            } else {
+                // Closed via ESC / [X] — same semantics as No: cancel the quit.
+                quitConfirmOpen = false;
             }
         }
 
@@ -7987,6 +8060,37 @@ void main(string[] args) {
 
             changeBus.flush(meshFlags, selDomains, layerKinds,
                             typeChanged, newType);
+        }
+
+        // ---- Unsaved-changes tracking + window title (task 0434) -----------
+        // Push the change-bus document revision AFTER the flush so this frame's
+        // mesh/layer mutations are already counted, then reflect the resulting
+        // dirty state in the title and settle any Save-and-exit armed this
+        // frame by the quit-confirm modal.
+        {
+            import change_bus  : changeBus;
+            import io.doc_state : syncDocRevision, docDirty, currentDocPath;
+            import std.path     : baseName;
+            import std.string   : toStringz;
+
+            syncDocRevision(changeBus.docRevision());
+
+            if (quitAfterSave) {
+                quitAfterSave = false;
+                // Exit only if the Save actually landed; a cancelled Save
+                // dialog leaves the document dirty ⇒ the quit is aborted.
+                if (!docDirty()) running = false;
+            }
+
+            // Title: "<file> - Vibe3d", leading "*" while dirty, "untitled"
+            // when no native document is open. Only touch SDL on change.
+            const p     = currentDocPath();
+            const fname = p.length ? baseName(p) : "untitled";
+            string title = (docDirty() ? "*" : "") ~ fname ~ " - Vibe3d";
+            if (title != lastWindowTitle) {
+                SDL_SetWindowTitle(window, toStringz(title));
+                lastWindowTitle = title;
+            }
         }
 
         // Refresh subpatch preview if the cage or depth changed since last

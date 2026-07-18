@@ -15,7 +15,7 @@ import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
 import io.native : writeV3d;
 import io.formats;
-import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath;
+import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 
@@ -159,8 +159,13 @@ class FileSave : Command {
         // Document-path memory: a successful native Save / Save As becomes
         // the current document so a later plain Save needs no dialog.
         // Interchange exports leave the document path untouched.
-        if (mode != FileSaveMode.exportSingle && ext == ".v3d")
+        if (mode != FileSaveMode.exportSingle && ext == ".v3d") {
             setCurrentDocPath(path);
+            // The on-disk document now matches memory → clear the dirty flag
+            // (task 0434). Only a native .v3d write counts as "saved"; an
+            // interchange export leaves the native document unsaved.
+            requestDocRebaseline();
+        }
 
         // Prefs: MRU-push a native Save / Save As (a real document the user
         // would want in Recent); interchange exports are excluded (they leave

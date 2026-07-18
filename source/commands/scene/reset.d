@@ -8,7 +8,7 @@ import document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
-import io.doc_state : clearCurrentDoc;
+import io.doc_state : clearCurrentDoc, requestDocRebaseline;
 
 /// Reset the scene to a chosen primitive
 /// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy
@@ -164,6 +164,10 @@ class SceneReset : Command {
         // Intentionally NOT restored in revert() — session/UI state, same
         // policy as the camera (see the revert() note below).
         clearCurrentDoc();
+        // A reset is a fresh untitled document: start clean (task 0434). The
+        // reset's own mesh mutation flushes after this command, so the
+        // rebaseline lands on the next syncDocRevision.
+        requestDocRebaseline();
         // Reset EVERY toolpipe stage to its declaration-time defaults.
         // Stage state — Snap on, Symmetry plane, Falloff type, ACEN /
         // AXIS modes, Workplane tilt — is session-level UI state, and

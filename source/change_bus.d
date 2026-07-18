@@ -146,6 +146,21 @@ struct ChangeBus {
     // switch is NOT selection content, so this ticks while sel/mesh stay zero.
     ulong currentTypeChanged;
 
+    /// Monotonic count of DOCUMENT-CONTENT mutations delivered so far: the
+    /// persisted mesh classes (geometry + marks + material) plus the
+    /// persisted layer-structural kinds (add / remove / reorder / rename /
+    /// visibility / per-item property). Deliberately EXCLUDES selection,
+    /// current-type flips, and layer-active changes — those are view/edit
+    /// state, not saved document content. io.doc_state compares this value
+    /// against the revision at the last save/open/new to detect unsaved
+    /// changes (see doc/tasks/work/0434-window-title-unsaved-changes.md).
+    ulong docRevision() const {
+        return totalPosition + totalPoints + totalPolygons
+             + totalMarks + totalMaterial
+             + totalLayerAdded + totalLayerRemoved + totalLayerReordered
+             + totalLayerRenamed + totalLayerVisible + totalLayerProperty;
+    }
+
     // --- Registration -----------------------------------------------------
     void onMeshChanged(void delegate(uint flags) dg) {
         if (dg !is null) meshSubs ~= dg;

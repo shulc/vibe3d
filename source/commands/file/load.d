@@ -15,7 +15,7 @@ import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
 import io.native : readV3d;
 import io.formats;
-import io.doc_state : setCurrentDocPath;
+import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import snapshot : MeshSnapshot;
@@ -163,8 +163,14 @@ class FileLoad : Command {
         // .v3d) becomes the current document so plain Save needs no dialog.
         // Interchange imports leave the document untitled (a later Save
         // prompts for a .v3d).
-        if (mode == FileLoadMode.open && ext == ".v3d")
+        if (mode == FileLoadMode.open && ext == ".v3d") {
             setCurrentDocPath(path);
+            // A freshly opened native document starts clean (task 0434). The
+            // load's own mesh mutation flushes AFTER this command, so the
+            // rebaseline is applied by the next syncDocRevision, not now.
+            // Interchange imports deliberately stay dirty (untitled, unsaved).
+            requestDocRebaseline();
+        }
 
         // Prefs: MRU-push every successful load (open + import); remember the
         // directory only for dialog-driven loads (HTTP file.load with an
