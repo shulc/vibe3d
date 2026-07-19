@@ -8441,8 +8441,9 @@ struct Mesh {
     /// Edge bevel (Candidate A — slide-along-adjacent-edge, generalized).
     ///
     /// Replaces every qualifying selected edge with a chamfer strip (a flat
-    /// quad at `roundLevel==0`, or `2^roundLevel` quad rings sampling a true
-    /// circular arc when `roundLevel>0` — task 0391 Phase 3). Unlike the v1
+    /// quad at `roundLevel==0`, or `2^roundLevel` rings at `roundLevel>0`.
+    /// The isolated K1 SLIDE profile is a capture-verified true circular arc;
+    /// K2/K3 MITER rails use the explicitly unverified local profile). Unlike the v1
     /// kernel, selected edges may share endpoints: the per-VERTEX cap
     /// topology (bare end / loop-turn miter / N-way junction hub-fill) is
     /// derived generically from the half-edge ring around each touched
@@ -8485,25 +8486,17 @@ struct Mesh {
     /// (exactly 2 incident faces) — boundary edges are silently skipped
     /// (open-boundary bevel is task 0391 Phase 6, deferred/XFAIL).
     ///
-    /// `roundLevel` (Round Level — `2^L+1` evenly-angled points on the TRUE
-    /// circular arc of radius `width`, task 0391 Phase 3,
-    /// `capture-verified`; DIFFERENT law from poly.bevel's linear-staircase
-    /// Segments, see `bevelFacesByMask`) rounds a selected edge's
-    /// cross-section ONLY when BOTH endpoints are a "clean" bare end: both
-    /// bordering corners SLIDE (not MITER) AND the endpoint's LOCAL valence
-    /// is exactly 3 AND neither corner hit the overshoot clamp. This is the
-    /// only topology where the arc's interior vertices can be PROVABLY
-    /// shared with the endpoint's "back face" (the third, neither-edge-
-    /// selected face) and stay manifold — see the `arcInterior` doc comment
-    /// below for the hole this guards against. If EITHER endpoint fails
-    /// that test (a loop-turn/junction MITER corner, a valence>3 endpoint,
-    /// or an overshoot-clamped one), the WHOLE SPAN stays flat regardless
-    /// of `roundLevel` — a documented gap, not a silent bug: partially-
-    /// rounding one endpoint while leaving the other flat was tried and
-    /// found to ALSO create an unshared (non-manifold) rail at whichever
-    /// endpoint's corners aren't fixture/topology-provable, so this kernel
-    /// does not attempt it. `roundLevel==0` is byte-identical to the flat
-    /// behavior described above.
+    /// `roundLevel` subdivides every eligible cross-section into `2^L`
+    /// segments.  A rail is owned by its two already-resolved L0 endpoint
+    /// vertices, not by an individual strip: the same interior indices are
+    /// threaded through both of its consumers (support face, neighbouring
+    /// strip, or hub cap).  Clean slide rails use the capture-verified true
+    /// circle law.  A miter rail can have unequal endpoint radii, for which
+    /// no circle about the source vertex passes through both L0 points; it
+    /// uses the local polar interpolation documented beside `railInterior`.
+    /// This keeps the L0 endpoints and manifold ownership exact while the
+    /// external miter/junction profile law remains an explicit reference gap.
+    /// `roundLevel==0` takes the old flat path without allocating a registry.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8557,6 +8550,30 @@ struct Mesh {
             affected[edges[i][1]] = true;
         }
 
+        // Safety preflight for the one topology family the current L0 base
+        // kernel cannot cap: a partial (K<valence) multi-edge selection at a
+        // valence>3 vertex.  Its mixed K2 rails have no closed support
+        // boundary, so treating an unapproved rail as a local L0 chord would
+        // still leave the BASE bevel non-manifold.  Reject before the corner
+        // pass (and therefore before any addVertex/recorder/version mutation)
+        // instead of the old post-addVertex pseudo-rollback.  Full hubs and
+        // valence-3 loop turns are handled by their existing cap paths.
+        if (roundLevel > 0) {
+            foreach (V; 0 .. cast(uint)vertices.length) {
+                if (V >= affected.length || !affected[V]) continue;
+                size_t d = 0, K = 0, edgeCount = 0;
+                foreach (fi; facesAroundVertex(V)) ++d;
+                foreach (ei; edgesAroundVertex(V)) {
+                    ++edgeCount;
+                    if (ei < qualifies.length && qualifies[ei]) ++K;
+                }
+                // Malformed/boundary fan remains on the existing per-span
+                // silent-skip path below; this guard is only for a proven
+                // closed ring whose partial cap is known unsupported.
+                if (edgeCount == d && d > 3 && K >= 2 && K < d) return 0;
+            }
+        }
+
         // Overshoot guard (mirrors the edge-extrude face-aware inset clamp,
         // mesh.d ~2520 — "the reference bumps the inset into the far vertex
         // and stops... does NOT overshoot and self-intersect"): a SLIDE
@@ -8576,16 +8593,17 @@ struct Mesh {
             return (cast(ulong)v << 32) | cast(ulong)f;
         }
 
-        // Per-(vertex,face) corner resolution. `dir` is only meaningful for
-        // SLIDE corners (isMiter==false) — the unit direction from V toward
-        // the unselected neighbor, needed to reconstruct a Round Level arc.
-        // `roundEligible` (SLIDE corners only) is true iff this corner's
-        // endpoint is a "clean" bare end — locally valence==3 (so the
-        // back-face split below is GUARANTEED to exist and be threadable)
-        // and not overshoot-clamped (so the arc's fixed `width` radius
-        // actually matches this corner's real, possibly-shorter, distance
-        // from V) — see the manifold-hole fix note on `arcInterior` below.
-        struct CornerInfo { uint vert; bool isMiter; Vec3 dir; bool roundEligible; }
+        // Per-(vertex,face) corner resolution.  Keep the construction
+        // provenance with the L0 vertex: round-profile selection must not
+        // rediscover it from a floating-point radius heuristic.
+        enum CornerKind : ubyte { Slide, Miter }
+        struct CornerInfo {
+            uint vert;
+            CornerKind kind;
+            bool clamped;
+            uint selectedDegree; // K at this source vertex, before rebuilding
+            Vec3 dir;
+        }
         CornerInfo[ulong] cornerAtVF;
 
         // face_index → (old_vert → new_verts[]), same substitution-table
@@ -8601,45 +8619,116 @@ struct Mesh {
         uint[][uint] hubCapRing;
         uint[uint]   hubCapSrc;
 
-        // Round Level arc-manifold fix (post-review hardening): a rounded
-        // chamfer strip subdivides its cross-section rail into `2^L - 1`
-        // NEW interior vertices at each endpoint. At a bare-end vertex V,
-        // that SAME rail is also a direct chord edge in V's "back face"
-        // (the third, neither-selected-edge face — the `activeSucc &&
-        // activePred` branch below), which the flat (roundLevel==0) kernel
-        // shares correctly (chord used once by the chamfer quad, once by
-        // the back face). If the chamfer strip subdivides that rail but the
-        // back face keeps the plain 2-vertex chord, the chord edge — and
-        // EVERY interior arc edge — ends up bordering only ONE face: a
-        // non-manifold hole (lune-shaped gap between the arc and the old
-        // straight chord) at BOTH ends of every rounded bare edge. Fix:
-        // BOTH the back-face split AND the chamfer strip call this SAME
-        // memoized helper, so there is only ever ONE physical arc computed
-        // per span — its interior vertices are shared, not duplicated, and
-        // every sub-edge along the rail is used by exactly 2 faces.
-        // Scoped conservatively to vertices with LOCAL valence==3 (see
-        // `roundEligible` above) — the only topology where this back face
-        // is provably unique and unambiguous; a loop-turn/junction (MITER-
-        // adjacent) or valence>3 endpoint keeps its ENTIRE chamfer span
-        // flat instead (documented gap, not a silent bug — see the
-        // `roundLevel` doc comment above `bevelEdgesByMask`).
-        uint[][ulong] arcInteriorMemo; // canonical pairKey(a,b), a<b → interior verts in a→b order
+        // Round Level rail registry.  Identity is the unordered pair of L0
+        // endpoints; callers receive the stored chain in their own winding.
+        // A RailSpec is classified from the corner construction, never from
+        // `abs(radius-width)`: only two unclamped SLIDEs are the verified K1
+        // true-arc profile.  Any K!=1, MITER, or clamped rail is explicitly
+        // local analytic only (K2/K3 external parity remains XFAIL).
+        enum RailProfile : ubyte { VerifiedK1Arc, LocalAnalyticUnverified }
+        struct RailSpec {
+            uint a, b; // canonical a < b
+            Vec3 center;
+            CornerKind aKind, bKind;
+            bool aClamped, bClamped;
+            uint aSelectedDegree, bSelectedDegree;
+            RailProfile profile;
+            uint supportConsumers;
+            uint stripConsumers;
+            bool approved;
+        }
+        RailSpec[ulong] railSpecs;
+        uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
         static ulong pairKey(uint a, uint b) {
             return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
         }
-        uint[] arcInterior(uint a, uint b, Vec3 center, Vec3 dirA, Vec3 dirB) {
+        void registerRail(CornerInfo left, CornerInfo right, Vec3 center) {
+            immutable ulong key = pairKey(left.vert, right.vert);
+            immutable bool forward = left.vert < right.vert;
+            RailSpec spec = RailSpec(
+                forward ? left.vert : right.vert, forward ? right.vert : left.vert,
+                center,
+                forward ? left.kind : right.kind, forward ? right.kind : left.kind,
+                forward ? left.clamped : right.clamped, forward ? right.clamped : left.clamped,
+                forward ? left.selectedDegree : right.selectedDegree,
+                forward ? right.selectedDegree : left.selectedDegree,
+                (left.kind == CornerKind.Slide && right.kind == CornerKind.Slide &&
+                 !left.clamped && !right.clamped &&
+                 left.selectedDegree == 1 && right.selectedDegree == 1)
+                    ? RailProfile.VerifiedK1Arc : RailProfile.LocalAnalyticUnverified,
+                0, 0, false);
+            if (auto prior = key in railSpecs) {
+                assert((prior.center - center).length < 1e-5f &&
+                    prior.profile == spec.profile &&
+                    prior.aKind == spec.aKind && prior.bKind == spec.bKind &&
+                    prior.aClamped == spec.aClamped && prior.bClamped == spec.bClamped &&
+                    prior.aSelectedDegree == spec.aSelectedDegree &&
+                    prior.bSelectedDegree == spec.bSelectedDegree,
+                    "edge bevel rail endpoint pair has incompatible provenance");
+            } else {
+                railSpecs[key] = spec;
+            }
+        }
+        void addRailSupportConsumer(uint a, uint b) {
+            immutable ulong key = pairKey(a, b);
+            if (auto spec = key in railSpecs) ++spec.supportConsumers;
+        }
+        uint[] railInterior(uint a, uint b) {
             import std.algorithm : reverse;
+            import std.math : acos, cos, sin;
             immutable ulong key = pairKey(a, b);
             uint[] stored;
-            if (auto p = key in arcInteriorMemo) {
+            if (auto p = key in railInteriorMemo) {
                 stored = *p;
             } else {
+                auto specP = key in railSpecs;
+                assert(specP !is null && specP.approved,
+                    "rounded edge bevel rail must be approved before materialization");
+                immutable RailSpec spec = *specP;
                 immutable int n = 1 << roundLevel;
-                Vec3[] pts = (a < b) ? bevelArcPoints(center, dirA, dirB, width, roundLevel)
-                                      : bevelArcPoints(center, dirB, dirA, width, roundLevel);
+                immutable uint lo = a < b ? a : b;
+                immutable uint hi = a < b ? b : a;
+                Vec3 va = vertices[lo] - spec.center;
+                Vec3 vb = vertices[hi] - spec.center;
+                immutable float ra = va.length, rb = vb.length;
+                Vec3[] pts;
+                if (spec.profile == RailProfile.VerifiedK1Arc) {
+                    // Capture-verified isolated (K1) profile.
+                    assert(ra > 1e-9f && rb > 1e-9f,
+                        "unclamped SLIDE rail must have non-zero radius");
+                    pts = bevelArcPoints(spec.center, va / ra, vb / rb, width, roundLevel);
+                } else {
+                    // Local analytic, explicitly unverified K2/K3/MITER/clamped
+                    // profile: angular interpolation plus linear radius.
+                    // It preserves L0 endpoints and count law, but is not an
+                    // external K2/K3 parity claim.
+                    pts = new Vec3[](n + 1);
+                    Vec3 da = ra > 1e-9f ? va / ra : Vec3(0, 0, 0);
+                    Vec3 db = rb > 1e-9f ? vb / rb : Vec3(0, 0, 0);
+                    Vec3 axis = cross(da, db);
+                    immutable float axisLen = axis.length;
+                    if (axisLen < 1e-9f) {
+                        foreach (t; 0 .. n + 1) {
+                            immutable float f = cast(float)t / cast(float)n;
+                            pts[t] = vertices[lo] * (1.0f - f) + vertices[hi] * f;
+                        }
+                    } else {
+                        axis = axis / axisLen;
+                        float c = dot(da, db);
+                        if (c > 1.0f) c = 1.0f;
+                        if (c < -1.0f) c = -1.0f;
+                        immutable float theta = acos(c);
+                        foreach (t; 0 .. n + 1) {
+                            immutable float f = cast(float)t / cast(float)n;
+                            immutable float ang = theta * f;
+                            Vec3 dir = da * cos(ang) + cross(axis, da) * sin(ang);
+                            pts[t] = spec.center + dir * (ra * (1.0f - f) + rb * f);
+                        }
+                    }
+                }
                 uint[] interior = new uint[](n - 1);
                 foreach (t; 1 .. n) interior[t - 1] = addVertex(pts[t]);
-                arcInteriorMemo[key] = interior;
+                railInteriorMemo[key] = interior;
                 stored = interior;
             }
             if (a < b) return stored;
@@ -8705,15 +8794,16 @@ struct Mesh {
                     Vec3 eNext = safeNormalize(vertices[vNbrs[k]]  - vpos);
                     Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), width, width);
                     uint nv = addVertex(m);
-                    cornerAtVF[vfKey(V, fi)] = CornerInfo(nv, true, Vec3(0,0,0), false);
+                    cornerAtVF[vfKey(V, fi)] = CornerInfo(
+                        nv, CornerKind.Miter, false, cast(uint)K, Vec3(0,0,0));
                     faceSubs.require(fi) ~= VertSub(V, [nv]);
                 } else if (selSucc != selPred) {
                     // SLIDE: exactly one bordering edge selected — corner
                     // slides along the OTHER (unselected) one.
                     immutable int unselK = selSucc ? kr : k;
                     uint nv = getSlide(unselK);
-                    immutable bool eligible = (d == 3) && !slideClamped[unselK];
-                    cornerAtVF[vfKey(V, fi)] = CornerInfo(nv, false, slideDir(unselK), eligible);
+                    cornerAtVF[vfKey(V, fi)] = CornerInfo(
+                        nv, CornerKind.Slide, slideClamped[unselK], cast(uint)K, slideDir(unselK));
                     faceSubs.require(fi) ~= VertSub(V, [nv]);
                 } else {
                     // Neither bordering edge selected — split iff at least
@@ -8725,31 +8815,18 @@ struct Mesh {
                     if (activeSucc && activePred) {
                         uint predSide = getSlide(kr);
                         uint succSide = getSlide(k);
-                        // Only a LOCAL-valence-3 bare end guarantees this is
-                        // THE unique back face for the rounding endpoint(s)
-                        // that will reuse `arcInterior`'s memo below (see
-                        // the fix note above) — d>3 back faces (a chain of
-                        // possibly-partial splits) are out of scope, kept
-                        // flat via `roundEligible=false` on their SLIDE
-                        // corners, so this branch's own arc attempt would
-                        // simply go unused (harmless) but is skipped anyway
-                        // for clarity/cost.
-                        if (roundLevel > 0 && d == 3 &&
-                            !slideClamped[kr] && !slideClamped[k]) {
-                            uint[] interior = arcInterior(
-                                predSide, succSide, vpos, slideDir(kr), slideDir(k));
-                            faceSubs.require(fi) ~= VertSub(V, [predSide] ~ interior ~ [succSide]);
-                        } else {
-                            faceSubs.require(fi) ~= VertSub(V, [predSide, succSide]);
-                        }
+                        // Keep the L0 chord here.  Once every span has
+                        // registered its rails, boundary threading below
+                        // replaces this edge with the shared chain.
+                        faceSubs.require(fi) ~= VertSub(V, [predSide, succSide]);
                     } else if (activeSucc) {
                         // KNOWN-UNTESTED partial notch (valence>3 only — a
                         // cube corner is always valence 3, so no fixture
                         // exercises this branch): V retained on the
                         // inactive side, a single slide vertex on the
                         // active side. No arc/rounding is ever attempted
-                        // here (roundEligible requires d==3, which this
-                        // branch structurally cannot reach — d==3 with a
+                        // here (the old bare-only rounding gate required
+                        // d==3, which this branch structurally cannot reach — d==3 with a
                         // single active side would already be the
                         // `activeSucc && activePred` case above).
                         faceSubs.require(fi) ~= VertSub(V, [V, getSlide(k)]);
@@ -8823,18 +8900,15 @@ struct Mesh {
         }
         immutable size_t processed = spans.length;
 
-        // Apply substitutions per face (unaffected faces copy through as-is).
-        uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        int[]    newOrd;
-        bool[]   newSub;
-
+        // Resolve every original face to its L0 boundary before rounded
+        // vertices exist.  This is also the authoritative support-consumer
+        // inventory, rather than an optimistic post-materialization guess.
+        uint[][] baseFaces;
         foreach (fi; 0 .. faces.length) {
             auto orig = faces[fi];
             auto subsP = cast(uint)fi in faceSubs;
             if (subsP is null) {
-                newFaces ~= orig.dup;
+                baseFaces ~= orig.dup;
             } else {
                 uint[][uint] repl;
                 foreach (s; *subsP) repl[s.oldV] = s.newVs;
@@ -8844,59 +8918,137 @@ struct Mesh {
                     if (rp is null) rebuilt ~= v;
                     else            rebuilt ~= *rp;
                 }
-                newFaces ~= rebuilt;
+                baseFaces ~= rebuilt;
             }
+        }
+
+        // Inventory rail consumers symbolically before allocating a single
+        // interior vertex.  A strip can round only when BOTH of its endpoint
+        // rails have exactly two consumers.  Prune that relation to a fixed
+        // point: disabling one strip removes its consumer from both rails,
+        // which can disable a neighbouring strip too.  Any rail that cannot
+        // meet the invariant stays locally L0; the base bevel still commits.
+        // K2/K3 external profile parity remains XFAIL, not inferred here.
+        bool[] roundedSpan;
+        if (roundLevel > 0) {
+            foreach (ref sp; spans) {
+                auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
+                auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
+                auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
+                auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
+                registerRail(cV0L, cV0R, vertices[sp.v0]);
+                registerRail(cV1L, cV1R, vertices[sp.v1]);
+            }
+            foreach (ring; baseFaces)
+                foreach (k; 0 .. ring.length)
+                    addRailSupportConsumer(ring[k], ring[(k + 1) % ring.length]);
+            foreach (V, ring; hubCapRing)
+                foreach (k; 0 .. ring.length)
+                    addRailSupportConsumer(ring[k], ring[(k + 1) % ring.length]);
+
+            roundedSpan.length = spans.length;
+            roundedSpan[] = true;
+            bool changed;
+            do {
+                foreach (ref spec; railSpecs) {
+                    spec.stripConsumers = 0;
+                    spec.approved = false;
+                }
+                foreach (si, ref sp; spans) if (roundedSpan[si]) {
+                    auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
+                    auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
+                    auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
+                    auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
+                    ++railSpecs[pairKey(cV0L.vert, cV0R.vert)].stripConsumers;
+                    ++railSpecs[pairKey(cV1L.vert, cV1R.vert)].stripConsumers;
+                }
+                foreach (ref spec; railSpecs)
+                    spec.approved = spec.stripConsumers > 0 &&
+                        spec.supportConsumers + spec.stripConsumers == 2;
+
+                changed = false;
+                foreach (si, ref sp; spans) if (roundedSpan[si]) {
+                    auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
+                    auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
+                    auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
+                    auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
+                    if (!railSpecs[pairKey(cV0L.vert, cV0R.vert)].approved ||
+                        !railSpecs[pairKey(cV1L.vert, cV1R.vert)].approved) {
+                        roundedSpan[si] = false;
+                        changed = true;
+                    }
+                }
+            } while (changed);
+
+            // Materialize only the fixed-point-approved rails.  No later
+            // rollback can strand them because all remaining consumers are
+            // already known symbolically.
+            foreach (key, spec; railSpecs)
+                if (spec.approved) railInterior(spec.a, spec.b);
+        }
+
+        // Thread only L0 boundaries.  Rounded strip faces are emitted below
+        // directly from the same registry and therefore cannot be threaded a
+        // second time.
+        uint[] threadRails(const uint[] ring) {
+            import std.algorithm : reverse;
+            if (roundLevel == 0 || ring.length < 2) return ring.dup;
+            uint[] threaded;
+            foreach (k; 0 .. ring.length) {
+                uint a = ring[k], b = ring[(k + 1) % ring.length];
+                threaded ~= a;
+                immutable ulong key = pairKey(a, b);
+                if (auto p = key in railInteriorMemo) {
+                    uint[] interior = *p;
+                    if (a > b) {
+                        interior = interior.dup;
+                        reverse(interior);
+                    }
+                    threaded ~= interior;
+                }
+            }
+            return threaded;
+        }
+
+        // Thread the pre-resolved support boundaries through the materialized
+        // rails.  Rounded strip faces are emitted directly below and are not
+        // threaded a second time.
+        uint[][] newFaces;
+        uint[]   newMat;
+        uint[]   newPart;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        foreach (fi; 0 .. baseFaces.length) {
+            newFaces ~= threadRails(baseFaces[fi]);
             newMat  ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
             newPart ~= fi < facePart.length           ? facePart[fi]           : 0u;
             newOrd  ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
             newSub  ~= isFaceSubpatch(fi);
         }
 
-        // Emit the chamfer strip per qualifying edge: a flat quad at
-        // roundLevel==0, or `2^roundLevel` quad rings sampling a circular
-        // arc when BOTH endpoints are round-eligible — task 0391 Phase 3.
-        // Post-review hardening: arc rounding requires ALL FOUR corners
-        // (`roundEligible`, set above — local valence==3, not overshoot-
-        // clamped) to be eligible, i.e. BOTH endpoints must be clean bare
-        // ends, not just one. If either endpoint is MITER-adjacent (loop
-        // turn / junction) or higher-valence, the ENTIRE SPAN stays flat —
-        // there is no longer a per-endpoint linear-lerp fallback: that
-        // fallback used to create its OWN brand-new, unshared interior
-        // vertices at a non-eligible endpoint, which (like the arc) would
-        // leave that endpoint's rail bordering only one face — the exact
-        // non-manifold hole class this hardening pass fixes. A whole-span
-        // flat fallback is always safe; a partially-rounded one was not.
-        // Every interior vertex used below comes from `arcInterior`'s
-        // memo — the SAME calls the per-vertex "back face" split made
-        // above for this identical span, so the rail is shared, not
-        // duplicated. Task 0389: Subpatch inherits via OR of the two faces
-        // adjacent to the beveled edge.
+        // Emit the chamfer strip per qualifying edge.  At L>0 every endpoint
+        // draws from the pre-materialized rail registry; all support
+        // consumers use those exact same indices.
         size_t chamferStart = newFaces.length;
-        foreach (ref sp; spans) {
+        foreach (si, ref sp; spans) {
             auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
             auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
             auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
             auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
             immutable bool sub = isFaceSubpatch(sp.fL) || isFaceSubpatch(sp.fR);
 
-            immutable bool canRound = roundLevel > 0 &&
-                cV0L.roundEligible && cV0R.roundEligible &&
-                cV1L.roundEligible && cV1R.roundEligible;
-
-            if (!canRound) {
+            if (roundLevel == 0 || !roundedSpan[si]) {
                 newFaces ~= [cV0L.vert, cV1L.vert, cV1R.vert, cV0R.vert];
                 newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newSub ~= sub;
                 continue;
             }
 
             immutable int n = 1 << roundLevel;
-            // r0 walks V0's cross-section from the fL corner to the fR
-            // corner; r1 walks V1's, in the SAME fL→fR direction so
-            // consecutive rings bridge into consistent quads. Both reuse
-            // (never re-create) the arc's interior vertices via the shared
-            // memo — see the doc note above.
-            uint[] r0Interior = arcInterior(cV0L.vert, cV0R.vert, vertices[sp.v0], cV0L.dir, cV0R.dir);
-            uint[] r1Interior = arcInterior(cV1L.vert, cV1R.vert, vertices[sp.v1], cV1L.dir, cV1R.dir);
+            // r0/r1 both walk fL→fR, using the stored orientation of their
+            // source-centred rail chains.
+            uint[] r0Interior = railInterior(cV0L.vert, cV0R.vert);
+            uint[] r1Interior = railInterior(cV1L.vert, cV1R.vert);
 
             uint[] r0 = new uint[](n + 1), r1 = new uint[](n + 1);
             r0[0] = cV0L.vert; r0[n] = cV0R.vert;
@@ -8915,7 +9067,7 @@ struct Mesh {
         // ORIGINAL incident-face normal, same idiom as bevelVerticesByMask.
         size_t capStart = newFaces.length;
         foreach (V, ring_; hubCapRing) {
-            uint[] ring = ring_.dup;
+            uint[] ring = threadRails(ring_);
             immutable int Ncap = cast(int)ring.length;
             Vec3 newellN = Vec3(0, 0, 0);
             foreach (k; 0 .. Ncap) {
@@ -14971,16 +15123,26 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
     // (0/1/3+) count here is precisely the double-weld / cracked-junction
     // defect class this backstop exists to catch.
     int[ulong] edgeUse;
+    int[ulong] edgeWinding;
+    uint[] vertexUse; vertexUse.length = m.vertices.length;
     static ulong ekey(uint a, uint b) {
         return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
     }
     foreach (f; m.faces)
-        foreach (k; 0 .. f.length)
-            edgeUse[ekey(f[k], f[(k + 1) % f.length])]++;
+        foreach (k; 0 .. f.length) {
+            uint a = f[k], b = f[(k + 1) % f.length];
+            edgeUse[ekey(a, b)]++;
+            edgeWinding[ekey(a, b)] += a < b ? 1 : -1;
+            ++vertexUse[a];
+        }
+    foreach (vi, count; vertexUse)
+        assert(count > 0, tag ~ ": orphan vertex " ~ vi.to!string);
     size_t edgeCount = 0;
     foreach (key, count; edgeUse) {
         assert(count == 2, tag ~ ": non-manifold edge (used by " ~
             count.to!string ~ " faces, expected 2)");
+        assert(edgeWinding[key] == 0,
+            tag ~ ": co-oriented edge winding (both incident faces use the same direction)");
         ++edgeCount;
     }
 
@@ -15176,15 +15338,9 @@ unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
         "4 untouched/fL/fR quads + 2 rounded chamfer-strip quads, got " ~ fvd.to!string);
 }
 
-unittest { // bevelEdgesByMask: roundLevel arc-manifold hardening gate — a
-           // LOOP selection (every corner MITER-adjacent) with roundLevel>0
-           // must stay FLAT (not attempt a partial/unshareable arc) —
-           // exactly the "documented gap, not a silent bug" scoping in the
-           // kernel's own doc comment (post-review hardening: rounding is
-           // ONLY attempted when BOTH endpoints of a span are a clean
-           // local-valence-3 bare end).
-    auto m = makeCube();
-    bool[] mask; mask.length = m.edges.length; mask[] = false;
+unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
+           // The local-polar K2 profile is topology-tested here only; its
+           // external reference/parity shape remains XFAIL (task 0435).
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
             uint a = mm.edges[i][0], b = mm.edges[i][1];
@@ -15192,44 +15348,222 @@ unittest { // bevelEdgesByMask: roundLevel arc-manifold hardening gate — a
         }
         return -1;
     }
-    foreach (pair; [[4u,7u], [7u,6u], [6u,5u], [5u,4u]]) {
-        int ei = findEdge(m, pair[0], pair[1]);
-        assert(ei >= 0);
-        mask[ei] = true;
+    foreach (level; [1, 2]) {
+        auto m = makeCube();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[4u,7u], [7u,6u], [6u,5u], [5u,4u]]) {
+            int ei = findEdge(m, pair[0], pair[1]);
+            assert(ei >= 0);
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 4);
+        immutable int n = 1 << level;
+        // L0 has 12 vertices/10 faces.  All four rounded strips gain n-1
+        // quads, and the four shared rails own their interiors exactly once.
+        assert(m.vertices.length == 12 + 4 * (n - 1));
+        assert(m.faces.length == 10 + 4 * (n - 1));
+        assertBevelManifoldClean(m, "loop shared rails");
     }
-    // Flat (roundLevel=0) reference on an identical mesh/selection.
-    auto mFlat = makeCube();
-    bool[] maskFlat = mask.dup;
-    assert(mFlat.bevelEdgesByMask(maskFlat, 0.1f, 0) == 4);
-
-    assert(m.bevelEdgesByMask(mask, 0.1f, 3) == 4,
-        "loop selection should still process (rounding request silently no-ops to flat)");
-    assert(m.vertices.length == mFlat.vertices.length,
-        "roundLevel>0 on a loop (MITER-adjacent everywhere) must stay byte-identical to flat");
-    assert(m.faces.length == mFlat.faces.length);
-    foreach (i; 0 .. m.vertices.length)
-        assert((m.vertices[i] - mFlat.vertices[i]).length < 1e-6f,
-            "loop + roundLevel>0 must reproduce the flat vertex positions exactly (whole-span flat gate)");
-    assertBevelManifoldClean(m, "loop + roundLevel=3 (should be flat, manifold)");
 }
 
-unittest { // bevelEdgesByMask: roundLevel==0 is byte-identical to the flat
-           // (Phase 0-2) chamfer — arc rounding must be strictly additive.
-    auto mFlat = makeCube();
-    auto mL0   = makeCube();
+unittest { // bevelEdgesByMask: K=3 hub cap consumes the same rails at L1/L2.
+           // The local-polar K3 profile is topology-tested here only; its
+           // external reference/parity shape remains XFAIL (task 0435).
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    foreach (level; [1, 2]) {
+        auto m = makeCube();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
+            int ei = findEdge(m, pair[0], pair[1]);
+            assert(ei >= 0);
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        immutable int n = 1 << level;
+        // L0 has 13 vertices/10 faces; three hub and three bare rails each
+        // own n-1 interiors, while the three strips gain n-1 quads.
+        assert(m.vertices.length == 13 + 6 * (n - 1));
+        assert(m.faces.length == 10 + 3 * (n - 1));
+        assertBevelManifoldClean(m, "junction shared rails");
+    }
+}
+
+unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
+           // is rejected by the preflight BEFORE corner construction.  The
+           // current L0 partial-fan cap is non-manifold, so a local rounded
+           // fallback would not be safe.
+    Mesh makeValence4Octahedron() {
+        Mesh m;
+        m.vertices = [
+            Vec3( 0, 1, 0), Vec3( 1, 0, 0), Vec3(0, 0, 1),
+            Vec3(-1, 0, 0), Vec3( 0, 0,-1), Vec3(0,-1, 0),
+        ];
+        // Closed, consistently wound octahedron.  Vertex 0 has valence four.
+        m.addFace([0u, 2u, 1u]); m.addFace([0u, 3u, 2u]);
+        m.addFace([0u, 4u, 3u]); m.addFace([0u, 1u, 4u]);
+        m.addFace([5u, 1u, 2u]); m.addFace([5u, 2u, 3u]);
+        m.addFace([5u, 3u, 4u]); m.addFace([5u, 4u, 1u]);
+        m.buildLoops();
+        m.syncSelection(); // grow parallel marks/material/part arrays after addFace
+        m.faceMaterial[0] = 7u; m.facePart[0] = 23u;
+        m.setFaceSubpatch(0, true);
+        m.selectFace(0);
+        return m;
+    }
+    bool[] selectPairs(ref Mesh m, uint[][] pairs) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; pairs) {
+            int ei = -1;
+            foreach (i; 0 .. m.edges.length) {
+                uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) {
+                    ei = cast(int)i;
+                    break;
+                }
+            }
+            assert(ei >= 0, "selected octahedron edge missing");
+            mask[ei] = true;
+        }
+        return mask;
+    }
+
+    auto m = makeValence4Octahedron();
+    auto mask = selectPairs(m, [[0u, 1u], [0u, 2u]]);
+    auto vertsBefore = m.vertices.dup;
+    auto facesBefore = m.faces._store.dup;
+    immutable ulong mutationBefore = m.mutationVersion;
+    immutable ulong topologyBefore = m.topologyVersion;
+    immutable ulong structBefore = m.structVersion;
+    immutable uint pendingBefore = m.pendingChanges_;
+    immutable uint pendingSelBefore = m.pendingSelDomains_;
+    MeshEditTracker recorder;
+    m.beginEditBatch(&recorder, MeshEditScope.Geometry);
+    assert(m.isRecordingEdits());
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 0,
+        "unsupported mixed K2 must be rejected before any mutation");
+    assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
+        "early K2 preflight must leave geometry byte-identical");
+    assert(m.mutationVersion == mutationBefore && m.topologyVersion == topologyBefore &&
+           m.structVersion == structBefore && m.pendingChanges_ == pendingBefore &&
+           m.pendingSelDomains_ == pendingSelBefore,
+        "early K2 preflight must not bump versions or pending changes");
+    assert(recorder.isEmpty(), "early K2 preflight must not write an edit record");
+    assert(m.endEditBatch().isEmpty(), "early K2 preflight must finish with an empty delta");
+}
+
+unittest { // bevelEdgesByMask: non-adjacent K2 at valence four is equally
+           // preflighted and therefore can never enter VerifiedK1Arc.
+    Mesh makeValence4Octahedron() {
+        Mesh m;
+        m.vertices = [
+            Vec3( 0, 1, 0), Vec3( 1, 0, 0), Vec3(0, 0, 1),
+            Vec3(-1, 0, 0), Vec3( 0, 0,-1), Vec3(0,-1, 0),
+        ];
+        m.addFace([0u, 2u, 1u]); m.addFace([0u, 3u, 2u]);
+        m.addFace([0u, 4u, 3u]); m.addFace([0u, 1u, 4u]);
+        m.addFace([5u, 1u, 2u]); m.addFace([5u, 2u, 3u]);
+        m.addFace([5u, 3u, 4u]); m.addFace([5u, 4u, 1u]);
+        m.buildLoops();
+        m.syncSelection(); // grow parallel marks/material/part arrays after addFace
+        m.faceMaterial[0] = 7u; m.facePart[0] = 23u;
+        m.setFaceSubpatch(0, true);
+        m.selectFace(0);
+        return m;
+    }
+    bool[] selectPairs(ref Mesh m) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[0u, 1u], [0u, 3u]]) {
+            int ei = -1;
+            foreach (i; 0 .. m.edges.length) {
+                uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) {
+                    ei = cast(int)i;
+                    break;
+                }
+            }
+            assert(ei >= 0, "non-adjacent K2 octahedron edge missing");
+            mask[ei] = true;
+        }
+        return mask;
+    }
+    auto m = makeValence4Octahedron();
+    auto mask = selectPairs(m);
+    auto vertsBefore = m.vertices.dup;
+    auto edgesBefore = m.edges.dup;
+    auto facesBefore = m.faces._store.dup;
+    auto vertexMarksBefore = m.vertexMarks.dup;
+    auto edgeMarksBefore = m.edgeMarks.dup;
+    auto faceMarksBefore = m.faceMarks.dup;
+    auto vertexSelectionOrderBefore = m.vertexSelectionOrder.dup;
+    auto edgeSelectionOrderBefore = m.edgeSelectionOrder.dup;
+    auto faceSelectionOrderBefore = m.faceSelectionOrder.dup;
+    auto faceMaterialBefore = m.faceMaterial.dup;
+    auto facePartBefore = m.facePart.dup;
+    auto selectedVerticesBefore = m.selectedVertices;
+    auto selectedEdgesBefore = m.selectedEdges;
+    auto selectedFacesBefore = m.selectedFaces;
+    immutable ulong mutationBefore = m.mutationVersion;
+    immutable ulong topologyBefore = m.topologyVersion;
+    immutable ulong structBefore = m.structVersion;
+    immutable uint pendingBefore = m.pendingChanges_;
+    immutable uint pendingSelBefore = m.pendingSelDomains_;
+    MeshEditTracker recorder;
+    m.beginEditBatch(&recorder, MeshEditScope.Geometry);
+    assert(m.isRecordingEdits());
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 0,
+        "non-adjacent K2 must be rejected before a false K1 profile is possible");
+    assert(m.vertices == vertsBefore && m.edges == edgesBefore && m.faces._store == facesBefore,
+        "non-adjacent K2 preflight must leave geometry byte-identical");
+    assert(m.vertexMarks == vertexMarksBefore && m.edgeMarks == edgeMarksBefore &&
+           m.faceMarks == faceMarksBefore &&
+           m.vertexSelectionOrder == vertexSelectionOrderBefore &&
+           m.edgeSelectionOrder == edgeSelectionOrderBefore &&
+           m.faceSelectionOrder == faceSelectionOrderBefore &&
+           m.faceMaterial == faceMaterialBefore && m.facePart == facePartBefore,
+        "non-adjacent K2 preflight must leave parallel attributes byte-identical");
+    assert(m.selectedVertices == selectedVerticesBefore && m.selectedEdges == selectedEdgesBefore &&
+           m.selectedFaces == selectedFacesBefore,
+        "non-adjacent K2 preflight must leave selection byte-identical");
+    assert(m.mutationVersion == mutationBefore && m.topologyVersion == topologyBefore &&
+           m.structVersion == structBefore && m.pendingChanges_ == pendingBefore &&
+           m.pendingSelDomains_ == pendingSelBefore,
+        "non-adjacent K2 preflight must not bump versions or pending changes");
+    assert(recorder.isEmpty(), "non-adjacent K2 preflight must not write an edit record");
+    assert(m.endEditBatch().isEmpty(), "non-adjacent K2 preflight must finish with an empty delta");
+    assertBevelManifoldClean(m, "non-adjacent valence-4 K2 unchanged input");
+}
+
+unittest { // bevelEdgesByMask: explicit L0 golden for an isolated cube edge.
+           // Do not compare two calls through the same implementation: these
+    // values are the pre-rounding topology/attribute contract.
+    auto m = makeCube();
+    m.syncSelection(); // initialize parallel marks/material/part arrays
+    m.faceMaterial[1] = 7u; m.facePart[1] = 23u;
+    m.setFaceSubpatch(1, true);
     int ei = -1;
-    foreach (i; 0 .. mFlat.edges.length) {
-        uint a = mFlat.edges[i][0], b = mFlat.edges[i][1];
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
         if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
     }
-    bool[] mask; mask.length = mFlat.edges.length; mask[] = false; mask[ei] = true;
-    assert(mFlat.bevelEdgesByMask(mask, 0.1f) == 1);
-    assert(mL0.bevelEdgesByMask(mask, 0.1f, 0) == 1);
-    assert(mFlat.vertices.length == mL0.vertices.length);
-    assert(mFlat.faces.length    == mL0.faces.length);
-    foreach (i; 0 .. mFlat.vertices.length)
-        assert((mFlat.vertices[i] - mL0.vertices[i]).length < 1e-6f,
-            "roundLevel=0 must reproduce the flat-chamfer vertex positions exactly");
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(m.vertices.length == 10 && m.faces.length == 7);
+    int[int] fvd;
+    foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(4, 0) == 5 && fvd.get(5, 0) == 2,
+        "L0 isolated-edge face golden must stay {quad:5,pentagon:2}");
+    assert(m.faceMaterial[1] == 7u && m.facePart[1] == 23u && m.isFaceSubpatch(1),
+        "L0 source material/part/subpatch must be preserved");
+    assert(m.countSelectedFaces() == 1,
+        "L0 selection policy must select the one new chamfer face");
+    assertBevelManifoldClean(m, "L0 isolated-edge golden");
 }
 
 unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
@@ -17959,12 +18293,3 @@ unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
             ~ "reproduce R(srcNormal), not its negation)");
     }
 }
-
-
-
-
-
-
-
-
-
