@@ -8494,14 +8494,17 @@ struct Mesh {
     /// threaded through both of its consumers (support face, neighbouring
     /// strip, or hub cap).  ALL rails — clean slide, bare-end, and miter —
     /// use the ONE reference-captured law documented beside `railInterior`:
-    /// a convex quarter-sweep about `E_A + E_B - V` that stays bit-exact at
-    /// both L0 endpoints.  For a square corner (K1 / bare end) it is the true
-    /// circular fillet; for an unequal-radius miter (K2, and each pairwise
-    /// rail of a K3 junction) it is the captured hub arc.  Both are verified
-    /// bit-for-bit against the reference.  Still open: a K3+ junction's single
-    /// CENTRAL hub vertex + surrounding fan (an unresolved reference gap — the
-    /// pairwise rails are correct, the hub cap topology is not yet matched).
-    /// `roundLevel==0` takes the old flat path without allocating a registry.
+    /// a TRUE circular fillet tangent to the two adjacent faces, whose radius
+    /// (`width·tan(φ/2)`) AND sweep (`180°−φ`) are set by the ACTUAL dihedral φ
+    /// — reconstructed from the reference's two-tangent-line-intersection +
+    /// angular-SLERP builders, verified bit-exact across dihedrals 45°–150° and
+    /// on the 90° cube (K1 / bare end / K2 miter).  The 90° cube is a special
+    /// case (a coincidental quarter-turn about `E_A+E_B−V`), not the whole law.
+    /// Still open (K3+ junction only): the single CENTRAL hub vertex + its fan
+    /// is an N-sided rational Gregory patch — the pairwise boundary rails are
+    /// correct, but the hub magnitude / interior-ring evaluator is an unmatched
+    /// reference gap (XFAIL).  `roundLevel==0` takes the old flat path without
+    /// allocating a registry.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8682,7 +8685,7 @@ struct Mesh {
         }
         uint[] railInterior(uint a, uint b) {
             import std.algorithm : reverse;
-            import std.math : cos, sin, PI_2;
+            import std.math : sin, acos, abs;
             immutable ulong key = pairKey(a, b);
             uint[] stored;
             if (auto p = key in railInteriorMemo) {
@@ -8696,29 +8699,54 @@ struct Mesh {
                 immutable uint lo = a < b ? a : b;
                 immutable uint hi = a < b ? b : a;
                 // Reference-captured round-rail law (task 0435, edge.bevel spec
-                // behavior.miter_rail_law).  The rounded cross-section is a
-                // convex quarter-sweep about C = E_A + E_B - V (the corner-
-                // completion of the two L0 chamfer ends across the source
-                // vertex), written per-endpoint as
-                //   Q(θ) = V - dA·(1 - sinθ) - dB·(1 - cosθ),  θ = t/n · 90°
-                // with dA = V - E_A, dB = V - E_B.  θ=0 → E_A and θ=90° → E_B
-                // exactly, so the two shared L0 endpoints stay bit-exact and the
-                // rail is manifold-safe.  For the clean isolated / bare-end
-                // corner (|dA|=|dB|, dA⟂dB) this is IDENTICALLY the true
-                // circular fillet of radius=width about C — the earlier
-                // V-centred `bevelArcPoints` call bulged the arc the wrong way
-                // (a concave notch instead of a convex round-over).  For a
-                // shared-vertex miter (K2, and each pairwise rail of a K3
-                // junction) the same closed form gives the capture-verified
-                // unequal-radius hub arc.  Swapping lo/hi mirrors the sweep,
-                // which the a<b reversal below already undoes, so the emitted
-                // interior point set is orientation-independent.
-                immutable Vec3 dA = spec.center - vertices[lo];   // V - E_A
-                immutable Vec3 dB = spec.center - vertices[hi];   // V - E_B
+                // behavior.miter_rail_law + generalization_findings). The rounded
+                // cross-section is a TRUE circular fillet tangent to the two
+                // adjacent faces, whose radius AND sweep are set by the ACTUAL
+                // dihedral — not a fixed 90° quarter-turn (that was a cube-only
+                // degeneracy). Reconstructed from the reference's own builders
+                // (RoundCenter = two-tangent-line intersection; RoundPos =
+                // angular SLERP):
+                //   dA = V - E_A,  dB = V - E_B
+                //   k  = width² / (width² + dA·dB)      // = 1 at a 90° corner
+                //   C  = V - k·(dA + dB)                // fillet center
+                //   Ω  = angle(E_A - C, E_B - C) = 180° - dihedral
+                //   Q(f) = C + slerp(E_A - C, E_B - C, f),  f = t/n
+                // f=0 → E_A and f=1 → E_B exactly (endpoints bit-exact, manifold
+                // safe). At a 90° dihedral (dA·dB=0 ⇒ k=1, Ω=90°) this reduces
+                // EXACTLY to the earlier V - dA(1-sinθ) - dB(1-cosθ) form, so the
+                // axis-aligned cube stays bit-exact while non-90° edges now round
+                // correctly. Swapping lo/hi mirrors the sweep, which the a<b
+                // reversal below undoes, so the emitted point set is orientation-
+                // independent. (K3+ junction hub magnitude / Gregory-patch ring
+                // remain a separate reference gap — see the doc comment above.)
+                immutable Vec3 EA = vertices[lo];
+                immutable Vec3 EB = vertices[hi];
+                immutable Vec3 dA = spec.center - EA;   // V - E_A
+                immutable Vec3 dB = spec.center - EB;   // V - E_B
+                immutable float w2    = width * width;
+                immutable float denom = w2 + dot(dA, dB);
+                immutable float k     = (abs(denom) > 1e-12f) ? (w2 / denom) : 1.0f;
+                immutable Vec3  C     = spec.center - (dA + dB) * k;
+                immutable Vec3  sA    = EA - C;         // spoke to E_A
+                immutable Vec3  sB    = EB - C;         // spoke to E_B
+                immutable float lenA  = sA.length, lenB = sB.length;
+                float cosO = (lenA > 1e-12f && lenB > 1e-12f)
+                    ? dot(sA, sB) / (lenA * lenB) : 1.0f;
+                if (cosO >  1.0f) cosO =  1.0f;
+                if (cosO < -1.0f) cosO = -1.0f;
+                immutable float Omega = acos(cosO);
+                immutable float sinO  = sin(Omega);
                 Vec3[] pts = new Vec3[](n + 1);
                 foreach (t; 0 .. n + 1) {
-                    immutable float ang = PI_2 * (cast(float)t / cast(float)n);
-                    pts[t] = spec.center - dA * (1.0f - sin(ang)) - dB * (1.0f - cos(ang));
+                    immutable float f = cast(float)t / cast(float)n;
+                    if (sinO < 1e-6f) {
+                        // Degenerate (collinear / 180° sweep): straight chord.
+                        pts[t] = EA * (1.0f - f) + EB * f;
+                    } else {
+                        immutable float wa = sin((1.0f - f) * Omega) / sinO;
+                        immutable float wb = sin(f * Omega) / sinO;
+                        pts[t] = C + sA * wa + sB * wb;
+                    }
                 }
                 uint[] interior = new uint[](n - 1);
                 foreach (t; 1 .. n) interior[t - 1] = addVertex(pts[t]);
@@ -15372,6 +15400,57 @@ unittest { // bevelEdgesByMask: K=2 miter round profile GOLDEN — a 2-edge
         assert(found, "K2 miter L1 reference point not reproduced");
     }
     assertBevelManifoldClean(m, "K2 miter round golden");
+}
+
+unittest { // bevelEdgesByMask: NON-90° dihedral round arc is a TRUE circular
+           // fillet — radius = width·tan(φ/2), swept 180°−φ (reference-captured
+           // general law, edge.bevel generalization_findings, task 0435). The
+           // cube's 90° corner is a DEGENERACY (tan45°=1, sweep=90°); a closed
+           // equilateral triangular prism has 60°-corner vertical edges that
+           // discriminate the general SLERP fillet from the old fixed-90° blend.
+    import std.math : tan, abs, PI;
+    immutable float h = 0.8660254f;   // sqrt(3)/2, equilateral side 1
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, -0.5f), Vec3(1, 0, -0.5f), Vec3(0.5f, h, -0.5f),  // bottom tri
+        Vec3(0, 0,  0.5f), Vec3(1, 0,  0.5f), Vec3(0.5f, h,  0.5f),  // top tri
+    ];
+    m.addFace([0u, 2u, 1u]);          // bottom cap (−Z)
+    m.addFace([3u, 4u, 5u]);          // top cap (+Z)
+    m.addFace([0u, 1u, 4u, 3u]);      // side A
+    m.addFace([1u, 2u, 5u, 4u]);      // side B
+    m.addFace([2u, 0u, 3u, 5u]);      // side C
+    m.buildLoops();
+    m.syncSelection();
+    int ei = -1;                      // vertical edge v0–v3 (60°-corner at v0/v3)
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 0 && b == 3) || (a == 3 && b == 0)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "prism vertical edge missing");
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 1, "prism edge bevel must apply");
+    // At the z=-0.5 end (source V=(0,0,-0.5)) the L0 chamfer corners slide along
+    // the two 60°-apart triangle edges: E_A=(0.1,0,-0.5), E_B=(0.05,0.0866,-0.5).
+    // The true fillet (r=0.1·tan30°=0.057735, centre from the two-tangent-line
+    // intersection, SLERP bisector) puts the level-1 interior point at
+    // (0.05, 0.028868, -0.5); the OLD fixed-90° blend gives (0.0439, 0.0254).
+    immutable Vec3 wantM = Vec3(0.05f, 0.0288675f, -0.5f);
+    bool found = false;
+    foreach (v; m.vertices) if ((v - wantM).length < 1e-4f) { found = true; break; }
+    assert(found,
+        "φ=60° round arc must land on the true fillet bisector (0.05,0.02887,-0.5); "
+        ~ "the fixed-90° blend (0.0439,0.0254) is wrong off-cube");
+    // Independent geometric check: E_A, M, E_B lie on one circle of radius
+    // r=width·tan(φ/2) — the defining fillet property (fails for the old blend).
+    immutable Vec3 EA = Vec3(0.1f, 0, -0.5f), EB = Vec3(0.05f, 0.0866025f, -0.5f);
+    immutable float sa = (EB - wantM).length, sb = (EA - wantM).length, sc = (EA - EB).length;
+    immutable float area = 0.5f * cross(EB - EA, wantM - EA).length;
+    immutable float circumR = sa * sb * sc / (4.0f * area);
+    immutable float wantR = 0.1f * tan(30.0f * (PI / 180.0f));  // 0.057735
+    assert(abs(circumR - wantR) < 1e-4f,
+        "fillet circumradius must equal width·tan(φ/2)=0.0577, not the 90° value");
+    assertBevelManifoldClean(m, "non-90° prism fillet");
 }
 
 unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
