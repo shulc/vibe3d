@@ -156,10 +156,6 @@ public:
 
     override bool applyHeadless() {
         if (*editMode != EditMode.Edges) return false;
-        if (built && before.filled) {
-            before.restore(*mesh);
-            built = false;
-        }
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();

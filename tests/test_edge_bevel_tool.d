@@ -25,6 +25,11 @@ void cmd(string text) {
     assert(r["status"].str == "ok", "command failed: " ~ text ~ " → " ~ r.toString);
 }
 
+void interactiveCmd(string text) {
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/script?interactive=true", text));
+    assert(r["status"].str == "ok", "interactive command failed: " ~ text ~ " → " ~ r.toString);
+}
+
 void settle() { Thread.sleep(130.msecs); }
 
 void play(string log) {
@@ -61,6 +66,18 @@ void selectTopFrontEdge() {
     auto r = parseJSON(cast(string)post(BASE ~ "/api/select",
         `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     assert(r["status"].str == "ok", "edge selection failed");
+}
+
+// Three selected edges incident to one cube corner. This is deliberately a
+// K3 junction, rather than the isolated K1 edge whose old implementation had
+// already rounded, so level changes exercise complex standing-preview topology.
+void selectCornerEdges() {
+    auto m = model();
+    int[] es = [edgeIndex(m, 6, 7), edgeIndex(m, 2, 6), edgeIndex(m, 5, 6)];
+    foreach (ei; es) assert(ei >= 0, "cube corner edge missing");
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/select",
+        format(`{"mode":"edges","indices":[%d,%d,%d]}`, es[0], es[1], es[2])));
+    assert(r["status"].str == "ok", "corner edge selection failed");
 }
 
 struct DragSetup { int x0, y0, x1, y1; }
@@ -159,4 +176,74 @@ unittest {
         "one-step and three-step drag previews differ");
     play(button("SDL_MOUSEBUTTONUP", 0.0, one.x1, one.y1));
     cmd("tool.set edge.bevel off");
+}
+
+// Round Level is a live property of the standing K3 Edge Bevel preview. These
+// interactive ToolAttrCommand writes happen after Width has made one preview and
+// before the tool is dropped. Returning to L0 must replay its activation
+// snapshot exactly.
+unittest {
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectCornerEdges();
+    long depthBefore = modelDepth();
+
+    cmd("tool.set edge.bevel on");
+    settle();
+    interactiveCmd("tool.attr edge.bevel width 0.2");
+    settle();
+    auto l0State = getJson("/api/tool/state");
+    assert(l0State["tool"].str == "edgeBevel" && l0State["built"].type == JSONType.true_,
+        "width panel edit did not leave an active, built edge-bevel preview");
+    assert(l0State["width"].floating > 0.1, "width attr did not set a non-zero preview");
+    auto l0 = model();
+    string l0Geometry = l0["vertices"].toString ~ l0["faces"].toString;
+    size_t l0Verts = l0["vertices"].array.length, l0Faces = l0["faces"].array.length;
+
+    interactiveCmd("tool.attr edge.bevel roundLevel 1");
+    settle();
+    auto l1State = getJson("/api/tool/state");
+    auto l1 = model();
+    size_t l1Verts = l1["vertices"].array.length, l1Faces = l1["faces"].array.length;
+    assert(l1State["tool"].str == "edgeBevel" && l1State["built"].type == JSONType.true_
+           && l1State["roundLevel"].integer == 1,
+        "Round Level 1 dropped or failed to rebuild the active preview");
+    assert(l1Verts > l0Verts && l1Faces > l0Faces,
+        "Round Level 1 did not add rounded preview segments over L0");
+    assert((l1["vertices"].toString ~ l1["faces"].toString) != l0Geometry,
+        "Round Level 1 did not change the K3 preview profile");
+
+    interactiveCmd("tool.attr edge.bevel roundLevel 2");
+    settle();
+    auto l2State = getJson("/api/tool/state");
+    auto l2 = model();
+    size_t l2Verts = l2["vertices"].array.length, l2Faces = l2["faces"].array.length;
+    assert(l2State["tool"].str == "edgeBevel" && l2State["built"].type == JSONType.true_
+           && l2State["roundLevel"].integer == 2,
+        "Round Level 2 dropped or failed to rebuild the active preview");
+    assert(l2Verts > l1Verts && l2Faces > l1Faces,
+        "Round Level 2 did not add rounded preview segments over L1");
+    assert((l2["vertices"].toString ~ l2["faces"].toString)
+           != (l1["vertices"].toString ~ l1["faces"].toString),
+        "Round Level 2 did not refine the K3 preview profile");
+
+    interactiveCmd("tool.attr edge.bevel roundLevel 0");
+    settle();
+    auto l0AgainState = getJson("/api/tool/state");
+    auto l0Again = model();
+    string l0AgainGeometry = l0Again["vertices"].toString ~ l0Again["faces"].toString;
+    assert(l0AgainState["tool"].str == "edgeBevel" && l0AgainState["built"].type == JSONType.true_
+           && l0AgainState["roundLevel"].integer == 0,
+        "Round Level 0 dropped or failed to rebuild the active preview");
+    assert(l0Again["vertices"].array.length == l0Verts && l0Again["faces"].array.length == l0Faces
+           && l0AgainGeometry == l0Geometry,
+        "returning to Round Level 0 did not reproduce the original flat preview");
+
+    cmd("tool.set edge.bevel off");
+    assert(modelDepth() == depthBefore + 1,
+        "dropping the standing preview must record exactly one undo entry");
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    assert(undo["status"].str == "ok", "undo failed");
+    assert(model()["vertexCount"].integer == 8 && model()["faceCount"].integer == 6,
+        "undo after Round Level edits did not restore the cube");
 }

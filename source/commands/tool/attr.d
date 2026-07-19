@@ -118,7 +118,10 @@ class ToolAttrCommand : Command {
         // tool can react (e.g. PenTool clamping currentPoint, mirroring the
         // posX/Y/Z field into the in-progress vertex buffer; SphereTool
         // re-permuting per-axis radii on axis change).
-        t.onParamChanged(attrName_);
+        if (interactive_)
+            t.notifyInteractiveParamChanged(attrName_);
+        else
+            t.onParamChanged(attrName_);
         t.evaluate();
 
         // Faithful gated re-eval (re-eval plan D4): the value is injected
