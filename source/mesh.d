@@ -8500,11 +8500,15 @@ struct Mesh {
     /// angular-SLERP builders, verified bit-exact across dihedrals 45°–150° and
     /// on the 90° cube (K1 / bare end / K2 miter).  The 90° cube is a special
     /// case (a coincidental quarter-turn about `E_A+E_B−V`), not the whole law.
-    /// Still open (K3+ junction only): the single CENTRAL hub vertex + its fan
-    /// is an N-sided rational Gregory patch — the pairwise boundary rails are
-    /// correct, but the hub magnitude / interior-ring evaluator is an unmatched
-    /// reference gap (XFAIL).  `roundLevel==0` takes the old flat path without
-    /// allocating a registry.
+    /// A 3-way junction rounded at Round Level 1 reproduces the reference's
+    /// central Gregory hub vertex + `[pole,R,HUB,R]` quad fan bit-exact: the
+    /// pairwise boundary rails are geodesics on the corner-rounding sphere
+    /// (centre `V−width·Σn̂`, not the per-vertex fillet — that degenerates for
+    /// near-antipodal hub poles), and the hub is the classical cubic Gregory
+    /// interior point `avg(1.5·Q_i−0.5·R_i)`.  Still open (XFAIL): the L≥2
+    /// junction interior RING (a rational N-sided Gregory evaluator) and N>3
+    /// junctions — both keep the flat N-gon cap for now.  `roundLevel==0` takes
+    /// the old flat path without allocating a registry.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8646,15 +8650,36 @@ struct Mesh {
             uint supportConsumers;
             uint stripConsumers;
             bool approved;
+            Vec3 arcCenter;      // explicit fillet centre for a junction rail
+            bool hasArcCenter;   // ↑ valid (else use the per-vertex fillet centre)
         }
         RailSpec[ulong] railSpecs;
         uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
         static ulong pairKey(uint a, uint b) {
             return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
         }
-        void registerRail(CornerInfo left, CornerInfo right, Vec3 center) {
+        void registerRail(CornerInfo left, CornerInfo right, Vec3 center, uint centerVert) {
             immutable ulong key = pairKey(left.vert, right.vert);
             immutable bool forward = left.vert < right.vert;
+            // Junction pairwise rail (both corners MITER at a K==valence
+            // junction, selectedDegree≥3): the boundary arc between two hub
+            // poles is NOT the per-vertex fillet — that degenerates (the two
+            // poles are ~antipodal about the fillet centre, so Ω→180° collapses
+            // to a straight chord, e.g. the (0.45,…) linear midpoint instead of
+            // the reference (0.4707,…) bisector). The reference arc is a geodesic
+            // on the corner-rounding sphere centred at V − width·Σn̂ (Σ of the
+            // junction's unit face normals) — verified bit-exact on the cube
+            // (task 0435). Bare-end / K1 / K2 rails keep the per-vertex fillet.
+            immutable bool useHub =
+                left.kind == CornerKind.Miter && right.kind == CornerKind.Miter &&
+                left.selectedDegree >= 3 && right.selectedDegree >= 3;
+            Vec3 hubC = Vec3(0, 0, 0);
+            if (useHub) {
+                Vec3 sn = Vec3(0, 0, 0);
+                foreach (fi; facesAroundVertex(centerVert))
+                    sn = sn + safeNormalize(faceNormal(cast(uint)fi));
+                hubC = center - sn * width;
+            }
             RailSpec spec = RailSpec(
                 forward ? left.vert : right.vert, forward ? right.vert : left.vert,
                 center,
@@ -8666,7 +8691,8 @@ struct Mesh {
                  !left.clamped && !right.clamped &&
                  left.selectedDegree == 1 && right.selectedDegree == 1)
                     ? RailProfile.VerifiedK1Arc : RailProfile.LocalAnalyticUnverified,
-                0, 0, false);
+                0, 0, false,
+                hubC, useHub);
             if (auto prior = key in railSpecs) {
                 assert((prior.center - center).length < 1e-5f &&
                     prior.profile == spec.profile &&
@@ -8726,7 +8752,11 @@ struct Mesh {
                 immutable float w2    = width * width;
                 immutable float denom = w2 + dot(dA, dB);
                 immutable float k     = (abs(denom) > 1e-12f) ? (w2 / denom) : 1.0f;
-                immutable Vec3  C     = spec.center - (dA + dB) * k;
+                // Junction pairwise rail: geodesic on the corner-rounding sphere
+                // (centre V − width·Σn̂, set at registerRail) — the per-vertex
+                // fillet centre degenerates for near-antipodal hub poles.
+                immutable Vec3  C     = spec.hasArcCenter
+                    ? spec.arcCenter : (spec.center - (dA + dB) * k);
                 immutable Vec3  sA    = EA - C;         // spoke to E_A
                 immutable Vec3  sB    = EB - C;         // spoke to E_B
                 immutable float lenA  = sA.length, lenB = sB.length;
@@ -8958,8 +8988,8 @@ struct Mesh {
                 auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
                 auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
                 auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
-                registerRail(cV0L, cV0R, vertices[sp.v0]);
-                registerRail(cV1L, cV1R, vertices[sp.v1]);
+                registerRail(cV0L, cV0R, vertices[sp.v0], sp.v0);
+                registerRail(cV1L, cV1R, vertices[sp.v1], sp.v1);
             }
             foreach (ring; baseFaces)
                 foreach (k; 0 .. ring.length)
@@ -9084,7 +9114,57 @@ struct Mesh {
             }
         }
 
-        // Emit one hub cap N-gon per full-ring (K==valence) vertex — Phase 2.
+        // Junction hub centre (reference N-sided Gregory patch barycentre —
+        // task 0435, gregory_eval_findings). For an N-way junction the rounded
+        // corner is a Gregory patch; its centre vertex is the classical cubic
+        // triangular Gregory interior point at u=v=w=1/3 (a plain average):
+        //   C_i = 1.5·Q_i − 0.5·R_i,  HUB = avg(C_i)
+        //   Q_i = R_i + ¼·[(P2_{i-1}−P0_i) + (P1_{i+1}−P0_{i+1})]
+        // where R_i (bis[i]) is side i's arc midpoint and P0..P3 are the κ-Bézier
+        // control points of that side's circular boundary arc through
+        // (poles[i], R_i, poles[(i+1)%n]) — reconstructed from those three known
+        // points (circumcircle + the standard 4/3·tan(Ω/4) arc control arm).
+        // Verified bit-exact vs the reference on cube + non-cube (α40, asymmetric)
+        // 3-way junctions. Returns false on a degenerate ring.
+        static bool junctionHub(const(Vec3)[] poles, const(Vec3)[] bis, out Vec3 hub) {
+            import std.math : tan, acos;
+            immutable size_t n = poles.length;
+            if (n < 3 || bis.length != n) return false;
+            Vec3[] P1 = new Vec3[](n), P2 = new Vec3[](n);
+            foreach (i; 0 .. n) {
+                immutable Vec3 A = poles[i], M = bis[i], B = poles[(i + 1) % n];
+                immutable Vec3 ab = M - A, ac = B - A;
+                immutable Vec3 abXac = cross(ab, ac);
+                immutable float d = 2.0f * dot(abXac, abXac);
+                if (d < 1e-18f) return false;                     // collinear → no arc
+                immutable Vec3 O = A + (cross(abXac, ab) * dot(ac, ac)
+                                      + cross(ac, abXac) * dot(ab, ab)) / d;  // circumcentre
+                immutable Vec3 sA = A - O, sB = B - O;
+                immutable float r = sA.length;
+                if (r < 1e-9f) return false;
+                float cosO = dot(sA, sB) / (r * r);
+                if (cosO >  1.0f) cosO =  1.0f;
+                if (cosO < -1.0f) cosO = -1.0f;
+                immutable float Om = acos(cosO);
+                if (Om < 1e-6f) return false;
+                Vec3 tA = sB - sA * cosO;  tA = tA / tA.length;   // unit tangent at A→B
+                Vec3 tB = sA - sB * cosO;  tB = tB / tB.length;   // unit tangent at B→A
+                immutable float arm = (4.0f / 3.0f) * tan(Om / 4.0f) * r;
+                P1[i] = A + tA * arm;
+                P2[i] = B + tB * arm;
+            }
+            Vec3 hsum = Vec3(0, 0, 0);
+            foreach (i; 0 .. n) {
+                immutable Vec3 Qi = bis[i]
+                    + ((P2[(i + n - 1) % n] - poles[i])
+                     + (P1[(i + 1) % n]     - poles[(i + 1) % n])) * 0.25f;
+                hsum = hsum + (Qi * 1.5f - bis[i] * 0.5f);        // Σ C_i
+            }
+            hub = hsum / cast(float) n;
+            return true;
+        }
+
+        // Emit one hub cap per full-ring (K==valence) vertex — Phase 2.
         // Outward-winding check via Newell's formula vs the averaged
         // ORIGINAL incident-face normal, same idiom as bevelVerticesByMask.
         size_t capStart = newFaces.length;
@@ -9109,7 +9189,52 @@ struct Mesh {
                     uint tmp = ring[lo]; ring[lo] = ring[hi]; ring[hi] = tmp;
                 }
             }
-            uint srcFi = hubCapSrc[V];
+            immutable uint srcFi = hubCapSrc[V];
+
+            // Stage A (task 0435): a 3-way junction rounded at Round Level 1
+            // gets the reference's central Gregory hub vertex + a [pole,R,HUB,R]
+            // quad fan (matching the reference 20v/15f K3 cap) instead of one
+            // flat N-gon. The hub is level-independent, but the L≥2 interior
+            // ring (rational Gregory evaluator) is not yet implemented, so higher
+            // levels keep the flat cap; N>3 junctions use a different reference
+            // N-sided path and also keep the flat cap for now.
+            if (roundLevel == 1 && ring_.length == 3 && ring.length == 6) {
+                // Classify the (possibly winding-reversed) threaded ring into its
+                // 3 poles + 3 bisectors by membership in ring_ (the miter
+                // corners); the reverse above can start on a bisector, so a fixed
+                // even/odd split is unsafe. bis[i] is the arc midpoint between
+                // poles[i] and poles[(i+1)%3].
+                bool isPole(uint v) { foreach (p; ring_) if (p == v) return true; return false; }
+                int start = -1;
+                foreach (k; 0 .. 6) if (isPole(ring[k])) { start = k; break; }
+                uint[3] poleIdx, bisIdx;
+                bool ok = start >= 0;
+                if (ok) foreach (i; 0 .. 3) {
+                    immutable uint pv = ring[(start + 2 * i) % 6];
+                    immutable uint bv = ring[(start + 2 * i + 1) % 6];
+                    if (!isPole(pv) || isPole(bv)) { ok = false; break; }
+                    poleIdx[i] = pv; bisIdx[i] = bv;
+                }
+                Vec3 hubPos;
+                if (ok && junctionHub(
+                        [vertices[poleIdx[0]], vertices[poleIdx[1]], vertices[poleIdx[2]]],
+                        [vertices[bisIdx[0]],  vertices[bisIdx[1]],  vertices[bisIdx[2]]],
+                        hubPos))
+                {
+                    immutable uint hubIdx = addVertex(hubPos);
+                    foreach (i; 0 .. 3) {
+                        // pole_i flanked by its after-bisector bis[i] and its
+                        // before-bisector bis[(i-1)%3] == bis[(i+2)%3].
+                        newFaces ~= [poleIdx[i], bisIdx[i], hubIdx, bisIdx[(i + 2) % 3]];
+                        newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+                        newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
+                        newOrd  ~= 0;
+                        newSub  ~= isFaceSubpatch(srcFi);
+                    }
+                    continue;
+                }
+            }
+
             newFaces ~= ring;
             newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
             newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
@@ -15482,11 +15607,14 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
     }
 }
 
-unittest { // bevelEdgesByMask: K=3 hub cap consumes the same rails at L1/L2.
-           // The 3 pairwise hub rails now follow the verified reference law,
-           // but the junction's CENTRAL hub vertex + fan topology differs from
-           // the reference (fewer verts/faces) — that hub cap stays XFAIL
-           // (task 0435); this case asserts the shared-rail topology only.
+unittest { // bevelEdgesByMask: K=3 junction round cap. At Round Level 1 the
+           // reference's central Gregory hub vertex + [pole,R,HUB,R] quad fan is
+           // reproduced BIT-EXACT (task 0435 — closes the K3 L1 gap). The 3
+           // pairwise boundary arcs are geodesics on the corner-rounding sphere
+           // (centre V−width·Σn̂), not the per-vertex fillet. The L≥2 interior
+           // Gregory ring is not yet implemented, so higher levels keep the flat
+           // N-gon cap (XFAIL).
+    import std.math : SQRT1_2;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
             uint a = mm.edges[i][0], b = mm.edges[i][1];
@@ -15504,10 +15632,27 @@ unittest { // bevelEdgesByMask: K=3 hub cap consumes the same rails at L1/L2.
         }
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
         immutable int n = 1 << level;
-        // L0 has 13 vertices/10 faces; three hub and three bare rails each
-        // own n-1 interiors, while the three strips gain n-1 quads.
-        assert(m.vertices.length == 13 + 6 * (n - 1));
-        assert(m.faces.length == 10 + 3 * (n - 1));
+        if (level == 1) {
+            // 13 L0 + 6 rail interiors + 1 central HUB = 20 verts; 10 + 3 strips
+            // + 2 (the 3-quad fan replaces the single flat cap) = 15 faces.
+            assert(m.vertices.length == 20 && m.faces.length == 15,
+                "K3 L1 must be the reference 20v/15f hub-fan cap");
+            immutable float off = 0.1f * SQRT1_2;
+            immutable Vec3 wantHub = Vec3(0.460948f, 0.460948f, 0.460948f);
+            immutable Vec3 wantBis = Vec3(0.4f, 0.4f + off, 0.4f + off);  // a pairwise bisector
+            bool foundHub = false, foundBis = false;
+            foreach (v; m.vertices) {
+                if ((v - wantHub).length < 1e-4f) foundHub = true;
+                if ((v - wantBis).length < 1e-4f) foundBis = true;
+            }
+            assert(foundHub, "K3 L1 central Gregory hub (0.4609)³ not reproduced");
+            assert(foundBis, "K3 L1 pairwise arc must round to (0.4,0.4707,0.4707), not the "
+                ~ "(0.4,0.45,0.45) degenerate linear midpoint");
+        } else {
+            // L≥2: the interior ring is XFAIL, so still the flat-cap topology.
+            assert(m.vertices.length == 13 + 6 * (n - 1));
+            assert(m.faces.length == 10 + 3 * (n - 1));
+        }
         assertBevelManifoldClean(m, "junction shared rails");
     }
 }
