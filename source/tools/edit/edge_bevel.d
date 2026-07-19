@@ -19,6 +19,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 alias EdgeBevelEditFactory = MeshSessionEdit delegate();
 
@@ -65,7 +66,10 @@ private:
 
     enum int PART_WIDTH = 0;
     int   dragPart = -1;
-    int   dragLastMX, dragLastMY;
+    // One drag has one screen-space origin.  Width is written back as an
+    // absolute value from that origin, so replay/coalescing cannot make the
+    // result depend on how many motion events SDL delivered.
+    int   dragStartMX, dragStartMY;
     float dragBaseWidth;
 
     Arrow       widthArrow;
@@ -178,7 +182,7 @@ public:
         queryMouse(hmx, hmy);
         int part = toolHandles.test(hmx, hmy, cachedVp);
 
-        dragLastMX    = e.x; dragLastMY = e.y;
+        dragStartMX   = e.x; dragStartMY = e.y;
         dragBaseWidth = width_;
 
         if (part == PART_WIDTH) {
@@ -200,7 +204,7 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || !gizmoValid) return false;
         bool skip;
-        Vec3 delta = screenAxisDelta(e.x, e.y, dragLastMX, dragLastMY,
+        Vec3 delta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
                                      anchor, widthAxis, cachedVp, skip);
         if (!skip) {
             float d = dot(delta, widthAxis);
@@ -208,9 +212,23 @@ public:
             if (width_ < 0.0f) width_ = 0.0f;
             rebuildPreview();
         }
-        dragLastMX = e.x;
-        dragLastMY = e.y;
         return true;
+    }
+
+    // Read-only test seams.  The handle registry remains the hit-testing
+    // authority; these merely expose its already-drawn state to the HTTP API.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]       = JSONValue("edgeBevel");
+        root["width"]      = JSONValue(width_);
+        root["roundLevel"] = JSONValue(roundLevel_);
+        root["built"]      = JSONValue(built);
+        root["dragPart"]   = JSONValue(dragPart);
+        return root;
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
