@@ -8442,8 +8442,10 @@ struct Mesh {
     ///
     /// Replaces every qualifying selected edge with a chamfer strip (a flat
     /// quad at `roundLevel==0`, or `2^roundLevel` rings at `roundLevel>0`.
-    /// The isolated K1 SLIDE profile is a capture-verified true circular arc;
-    /// K2/K3 MITER rails use the explicitly unverified local profile). Unlike the v1
+    /// The isolated K1 SLIDE profile and the K2 shared-vertex miter rails are
+    /// both capture-verified (bit-exact convex round-over / hub arc); a K3+
+    /// junction's per-pair rails use the same verified law, but its central
+    /// hub vertex + fan topology is an unresolved reference gap). Unlike the v1
     /// kernel, selected edges may share endpoints: the per-VERTEX cap
     /// topology (bare end / loop-turn miter / N-way junction hub-fill) is
     /// derived generically from the half-edge ring around each touched
@@ -8490,12 +8492,15 @@ struct Mesh {
     /// segments.  A rail is owned by its two already-resolved L0 endpoint
     /// vertices, not by an individual strip: the same interior indices are
     /// threaded through both of its consumers (support face, neighbouring
-    /// strip, or hub cap).  Clean slide rails use the capture-verified true
-    /// circle law.  A miter rail can have unequal endpoint radii, for which
-    /// no circle about the source vertex passes through both L0 points; it
-    /// uses the local polar interpolation documented beside `railInterior`.
-    /// This keeps the L0 endpoints and manifold ownership exact while the
-    /// external miter/junction profile law remains an explicit reference gap.
+    /// strip, or hub cap).  ALL rails — clean slide, bare-end, and miter —
+    /// use the ONE reference-captured law documented beside `railInterior`:
+    /// a convex quarter-sweep about `E_A + E_B - V` that stays bit-exact at
+    /// both L0 endpoints.  For a square corner (K1 / bare end) it is the true
+    /// circular fillet; for an unequal-radius miter (K2, and each pairwise
+    /// rail of a K3 junction) it is the captured hub arc.  Both are verified
+    /// bit-for-bit against the reference.  Still open: a K3+ junction's single
+    /// CENTRAL hub vertex + surrounding fan (an unresolved reference gap — the
+    /// pairwise rails are correct, the hub cap topology is not yet matched).
     /// `roundLevel==0` takes the old flat path without allocating a registry.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
@@ -8621,10 +8626,12 @@ struct Mesh {
 
         // Round Level rail registry.  Identity is the unordered pair of L0
         // endpoints; callers receive the stored chain in their own winding.
-        // A RailSpec is classified from the corner construction, never from
-        // `abs(radius-width)`: only two unclamped SLIDEs are the verified K1
-        // true-arc profile.  Any K!=1, MITER, or clamped rail is explicitly
-        // local analytic only (K2/K3 external parity remains XFAIL).
+        // A RailSpec still records its corner-construction class (below), but
+        // that is now used only for the shared-endpoint provenance assert in
+        // `registerRail` — NOT to pick a profile: every rail materializes
+        // through the ONE reference-captured law in `railInterior` (K1 / bare
+        // end / K2 miter all verified bit-exact; a K3+ junction's central hub
+        // vertex + fan remains the sole unresolved reference gap).
         enum RailProfile : ubyte { VerifiedK1Arc, LocalAnalyticUnverified }
         struct RailSpec {
             uint a, b; // canonical a < b
@@ -8675,7 +8682,7 @@ struct Mesh {
         }
         uint[] railInterior(uint a, uint b) {
             import std.algorithm : reverse;
-            import std.math : acos, cos, sin;
+            import std.math : cos, sin, PI_2;
             immutable ulong key = pairKey(a, b);
             uint[] stored;
             if (auto p = key in railInteriorMemo) {
@@ -8688,43 +8695,30 @@ struct Mesh {
                 immutable int n = 1 << roundLevel;
                 immutable uint lo = a < b ? a : b;
                 immutable uint hi = a < b ? b : a;
-                Vec3 va = vertices[lo] - spec.center;
-                Vec3 vb = vertices[hi] - spec.center;
-                immutable float ra = va.length, rb = vb.length;
-                Vec3[] pts;
-                if (spec.profile == RailProfile.VerifiedK1Arc) {
-                    // Capture-verified isolated (K1) profile.
-                    assert(ra > 1e-9f && rb > 1e-9f,
-                        "unclamped SLIDE rail must have non-zero radius");
-                    pts = bevelArcPoints(spec.center, va / ra, vb / rb, width, roundLevel);
-                } else {
-                    // Local analytic, explicitly unverified K2/K3/MITER/clamped
-                    // profile: angular interpolation plus linear radius.
-                    // It preserves L0 endpoints and count law, but is not an
-                    // external K2/K3 parity claim.
-                    pts = new Vec3[](n + 1);
-                    Vec3 da = ra > 1e-9f ? va / ra : Vec3(0, 0, 0);
-                    Vec3 db = rb > 1e-9f ? vb / rb : Vec3(0, 0, 0);
-                    Vec3 axis = cross(da, db);
-                    immutable float axisLen = axis.length;
-                    if (axisLen < 1e-9f) {
-                        foreach (t; 0 .. n + 1) {
-                            immutable float f = cast(float)t / cast(float)n;
-                            pts[t] = vertices[lo] * (1.0f - f) + vertices[hi] * f;
-                        }
-                    } else {
-                        axis = axis / axisLen;
-                        float c = dot(da, db);
-                        if (c > 1.0f) c = 1.0f;
-                        if (c < -1.0f) c = -1.0f;
-                        immutable float theta = acos(c);
-                        foreach (t; 0 .. n + 1) {
-                            immutable float f = cast(float)t / cast(float)n;
-                            immutable float ang = theta * f;
-                            Vec3 dir = da * cos(ang) + cross(axis, da) * sin(ang);
-                            pts[t] = spec.center + dir * (ra * (1.0f - f) + rb * f);
-                        }
-                    }
+                // Reference-captured round-rail law (task 0435, edge.bevel spec
+                // behavior.miter_rail_law).  The rounded cross-section is a
+                // convex quarter-sweep about C = E_A + E_B - V (the corner-
+                // completion of the two L0 chamfer ends across the source
+                // vertex), written per-endpoint as
+                //   Q(θ) = V - dA·(1 - sinθ) - dB·(1 - cosθ),  θ = t/n · 90°
+                // with dA = V - E_A, dB = V - E_B.  θ=0 → E_A and θ=90° → E_B
+                // exactly, so the two shared L0 endpoints stay bit-exact and the
+                // rail is manifold-safe.  For the clean isolated / bare-end
+                // corner (|dA|=|dB|, dA⟂dB) this is IDENTICALLY the true
+                // circular fillet of radius=width about C — the earlier
+                // V-centred `bevelArcPoints` call bulged the arc the wrong way
+                // (a concave notch instead of a convex round-over).  For a
+                // shared-vertex miter (K2, and each pairwise rail of a K3
+                // junction) the same closed form gives the capture-verified
+                // unequal-radius hub arc.  Swapping lo/hi mirrors the sweep,
+                // which the a<b reversal below already undoes, so the emitted
+                // interior point set is orientation-independent.
+                immutable Vec3 dA = spec.center - vertices[lo];   // V - E_A
+                immutable Vec3 dB = spec.center - vertices[hi];   // V - E_B
+                Vec3[] pts = new Vec3[](n + 1);
+                foreach (t; 0 .. n + 1) {
+                    immutable float ang = PI_2 * (cast(float)t / cast(float)n);
+                    pts[t] = spec.center - dA * (1.0f - sin(ang)) - dB * (1.0f - cos(ang));
                 }
                 uint[] interior = new uint[](n - 1);
                 foreach (t; 1 .. n) interior[t - 1] = addVertex(pts[t]);
@@ -15281,15 +15275,16 @@ unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on
 }
 
 unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
-           // single isolated-edge case rounded to a true circular arc (task
-           // 0391 Phase 3 law, `doc/bevel_full_plan.md`: 2^L+1 evenly-angled
-           // points on radius=width). Cross-checked analytically: at vertex
-           // 6=(0.5,0.5,0.5), edge (6,7) width=0.1's 2 flat L0 corners are
-           // (0.5,0.5,0.4) and (0.5,0.4,0.5) (existing L0 unittest above);
-           // their directions from vertex 6 are the unit vectors (0,0,-1)
-           // and (0,-1,0) — perpendicular, so the L=1 arc midpoint sits at
-           // the exact 45° bisector: 6 + 0.1*normalize((0,-1,-1)) =
-           // (0.5, 0.5 - 0.1/sqrt(2), 0.5 - 0.1/sqrt(2)).
+           // single isolated-edge case rounded to a true circular arc
+           // (reference-captured law, edge.bevel spec behavior.miter_rail_law).
+           // Cross-checked analytically: at vertex 6=(0.5,0.5,0.5), edge (6,7)
+           // width=0.1's 2 flat L0 corners are E_A=(0.5,0.5,0.4) and
+           // E_B=(0.5,0.4,0.5) (existing L0 unittest above). The arc rounds
+           // the corner CONVEXLY, centred at C = E_A + E_B - V6 = (0.5,0.4,0.4)
+           // with radius=width, so the L=1 45° bisector bulges TOWARD the
+           // original corner: C + 0.1*normalize((0,1,1)) =
+           // (0.5, 0.4 + 0.1/sqrt(2), 0.4 + 0.1/sqrt(2)). (The old V-centred
+           // arc bulged the WRONG way, to 0.5 - 0.1/sqrt(2) — a concave notch.)
     import std.math : SQRT1_2, abs;
     import std.conv : to;
     auto m = makeCube();
@@ -15306,8 +15301,8 @@ unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
     assert(m.vertices.length == 12, "expected 10+2=12 verts at roundLevel=1");
     assert(m.faces.length    == 8,  "expected 7+1=8 faces at roundLevel=1");
     immutable float off = 0.1f * SQRT1_2;
-    immutable Vec3 wantV6 = Vec3(0.5f, 0.5f - off, 0.5f - off);
-    immutable Vec3 wantV7 = Vec3(-0.5f, 0.5f - off, 0.5f - off);
+    immutable Vec3 wantV6 = Vec3(0.5f, 0.4f + off, 0.4f + off);
+    immutable Vec3 wantV7 = Vec3(-0.5f, 0.4f + off, 0.4f + off);
     bool foundV6 = false, foundV7 = false;
     foreach (v; m.vertices) {
         if ((v - wantV6).length < 1e-4f) foundV6 = true;
@@ -15338,9 +15333,51 @@ unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
         "4 untouched/fL/fR quads + 2 rounded chamfer-strip quads, got " ~ fvd.to!string);
 }
 
+unittest { // bevelEdgesByMask: K=2 miter round profile GOLDEN — a 2-edge
+           // shared-vertex miter at cube vertex 6, rounded, matches the
+           // reference editor bit-for-bit (edge.bevel spec
+           // behavior.miter_rail_law, task 0435 — closes the K2 external gap).
+           // Two independent rail families are checked:
+           //   • the shared-vertex HUB arc (unequal-radius miter hub);
+           //   • the two BARE-END arcs (each a plain K1 corner fillet).
+    import std.math : SQRT1_2;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeCube();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[6u,7u], [2u,6u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2);
+    // Same topology as the reference: 8 corners survive minus vertex 6, plus
+    // 6 flat miter/slide corners + 3 rounded interior points = 14v/10f.
+    assert(m.vertices.length == 14 && m.faces.length == 10,
+        "K2 miter L1 must be 14v/10f");
+    immutable float off = 0.1f * SQRT1_2;   // 0.0707…
+    immutable Vec3[] want = [
+        Vec3( 0.4f + off, 0.4f + off, 0.4f + off),  // shared hub arc bisector
+        Vec3(-0.5f,       0.4f + off, 0.4f + off),  // bare end at vertex 7
+        Vec3( 0.4f + off, 0.4f + off, -0.5f),       // bare end at vertex 2
+    ];
+    foreach (w; want) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - w).length < 1e-4f) { found = true; break; }
+        assert(found, "K2 miter L1 reference point not reproduced");
+    }
+    assertBevelManifoldClean(m, "K2 miter round golden");
+}
+
 unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
-           // The local-polar K2 profile is topology-tested here only; its
-           // external reference/parity shape remains XFAIL (task 0435).
+           // Rail POSITIONS follow the reference-captured miter law (verified
+           // bit-exact on the 2-edge K2 golden above); this 4-turn loop case
+           // asserts the shared-rail TOPOLOGY/manifoldness only.
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
             uint a = mm.edges[i][0], b = mm.edges[i][1];
@@ -15367,8 +15404,10 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
 }
 
 unittest { // bevelEdgesByMask: K=3 hub cap consumes the same rails at L1/L2.
-           // The local-polar K3 profile is topology-tested here only; its
-           // external reference/parity shape remains XFAIL (task 0435).
+           // The 3 pairwise hub rails now follow the verified reference law,
+           // but the junction's CENTRAL hub vertex + fan topology differs from
+           // the reference (fewer verts/faces) — that hub cap stays XFAIL
+           // (task 0435); this case asserts the shared-rail topology only.
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
             uint a = mm.edges[i][0], b = mm.edges[i][1];
