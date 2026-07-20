@@ -16553,9 +16553,18 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
     }
 }
 
-unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
-           // Level (task 0435). One general L×L Gregory ring: L1=20v/15f (fan),
-           // L2=38v/30f, L3=62v/51f. The central Gregory hub is level-independent;
+unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
+           // every Round Level (task 0435). One general L×L Gregory ring:
+           // L1=20v/15f (fan), L2=38v/30f, L3=62v/51f.
+           // NOTE on "bit-exact": the open-boundary and K3-L0 fixtures ARE
+           // bit-for-bit with the dump, but the Gregory hub/ring values here
+           // agree only to the position tolerance the comparison uses — our
+           // float32 order-of-operations differs from the reference's by a few
+           // ULPs (e.g. hub 0.46094760 vs dump 0.46094757), ~1e-7. That rounds
+           // identically at posKey's %.5f so the fixture passes, but the older
+           // "bit-exact" wording on this law overclaimed; it is tolerance-exact
+           // (task 0450 re-sourcing finding).
+           // The central Gregory hub is level-independent;
            // the 3 pairwise boundary arcs are geodesics on the corner-rounding
            // sphere (centre V−width·Σn̂) subdivided into 2·L segments (not 2^L).
            // N>3 junctions still keep the flat N-gon cap (different reference).
