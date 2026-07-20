@@ -318,12 +318,15 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test E — overshoot guard (task 0304, fuzz-found): width == the length of
-//          the adjacent (non-bevel) edge must never slide the chamfer
-//          corner onto — and duplicate — an existing neighbor vertex.
-//          Before the fix, width=1.0 on a unit cube made the new corners
-//          exactly duplicate verts 2,3,4,5 and left two zero-area faces,
-//          while still reporting status:"ok".
+// Test E — overshoot guard (task 0304, re-measured task 0436): width == the
+//          length of the adjacent (non-bevel) edge clamps the slide corner
+//          per-direction (bit-exact) at that far vertex's position — but the
+//          reference does NOT weld it into the pre-existing far vertex.
+//          `toolcards/edge.bevel/clamp_findings.md` Case A: it leaves the
+//          duplicate in place (10v stays 10v, not 9v) with a hole-free,
+//          orphan-free mesh; the old assumption that this must come out
+//          "clean" (no coincident verts) was never reference-verified, and
+//          the reference's own capture shows the opposite.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -338,18 +341,21 @@ unittest {
 
     // width == 1.0 == length of every adjacent (non-bevel) edge on a unit cube.
     auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"width":1.0}}`);
+    assert(r["status"].str == "ok", "E: width==adjacent edge length should still process (clamped)");
     auto m = getModel();
-    // Either the overshoot guard clamps it (status ok, geometry changed) or it
-    // is an honest no-op (status error, mesh unchanged) — never a corrupted mesh.
-    if (r["status"].str == "ok") {
-        assert(noCoincidentVerts(m), "E: coincident verts at width==adjacent edge length");
-        assert(noDegenerateFaces(m), "E: degenerate face at width==adjacent edge length");
-        assert(isHoleFree(m),        "E: not hole-free at width==adjacent edge length");
-        assert(orphanVerts(m).length == 0, "E: orphan verts at width==adjacent edge length");
-    } else {
-        assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
-            "E: no-op must leave mesh unchanged");
-    }
+    assert(m["vertexCount"].integer == 10,
+        "E: expected 10 vertex records (no weld against the original mesh), got " ~
+        m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 7,
+        "E: expected 7 faces, got " ~ m["faceCount"].integer.to!string);
+    assert(isHoleFree(m),              "E: not hole-free at width==adjacent edge length");
+    assert(orphanVerts(m).length == 0, "E: orphan verts at width==adjacent edge length");
+    // The reference leaves the clamp-saturated slide corner and the
+    // pre-existing far vertex it lands on as two separate, coincident
+    // records — asserting their ABSENCE would be the stale (unverified)
+    // expectation this test used to make.
+    assert(!noCoincidentVerts(m),
+        "E: expected coincident verts at width==adjacent edge length (no weld against the original mesh)");
 
     // Sanity: a normal small width must be completely unaffected by the guard.
     resetCube();
@@ -362,4 +368,5 @@ unittest {
     auto m2 = getModel();
     assert(m2["vertexCount"].integer == 10, "E: normal width must be unaffected by the guard");
     assert(m2["faceCount"].integer   == 7,  "E: normal width must be unaffected by the guard");
+    assert(noCoincidentVerts(m2), "E: normal width must have no coincident verts");
 }

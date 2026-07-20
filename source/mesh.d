@@ -8672,18 +8672,26 @@ struct Mesh {
             }
         }
 
-        // Overshoot guard (mirrors the edge-extrude face-aware inset clamp,
-        // mesh.d ~2520 — "the reference bumps the inset into the far vertex
-        // and stops... does NOT overshoot and self-intersect"): a SLIDE
-        // corner cannot travel past the far end of its non-bevel neighbor
-        // edge, so `width` is capped per-direction to that edge's own
-        // length. Landing exactly on the far vertex makes the new corner
-        // coincide with an EXISTING mesh vertex — `anyClamped` gates a
-        // `weldCoincidentVertices` pass after the topology rebuild below.
-        bool anyClamped = false;
+        // Overshoot guard: a SLIDE corner cannot travel past the far end of
+        // its non-bevel neighbor edge, so `width` is capped PER-DIRECTION —
+        // per `(vertex, unselected-neighbour-edge)` pair, never globally —
+        // to that edge's own length. Reference-measured, bit-exact (task
+        // 0436, `toolcards/edge.bevel/clamp_findings.md`): Case B's `v6` has
+        // two directions in different clamp states within a single op at a
+        // single width, which directly refutes a global-minimum clamp.
+        //
+        // Landing exactly on the far vertex makes the new corner coincide
+        // with an EXISTING mesh vertex — the reference does NOT weld that
+        // pair. It leaves two separate vertex records at the same position
+        // (Case A, width == farLen: 10v stays 10v, not 9v; the resulting
+        // zero-area chamfer-strip face is left in place, not dropped). A
+        // narrower, independently-measured rule DOES merge two *new*
+        // corners with each other — regardless of whether either was
+        // clamp-saturated — when they become corners of the SAME rebuilt
+        // face; see the pass after the topology rebuild below.
         float clampedWidth(uint from, uint to) {
             const float farLen = (vertices[to] - vertices[from]).length;
-            if (farLen > 1e-9f && width >= farLen) { anyClamped = true; return farLen; }
+            if (farLen > 1e-9f && width >= farLen) return farLen;
             return width;
         }
 
@@ -9517,12 +9525,14 @@ struct Mesh {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
-        // Overshoot clamping (`clampedWidth` above) can land a SLIDE corner
-        // exactly on an EXISTING mesh vertex — weld it in and collapse the
-        // resulting duplicate corner instead of leaving a coincident-vertex
-        // / zero-area mesh behind. Safe here: new faces occupy the array
-        // tail, so a fully-collapsed one only shortens the tail.
-        if (anyClamped) weldCoincidentVertices(1e-10);
+        // task 0436: overshoot clamping (`clampedWidth` above) can land a
+        // SLIDE corner exactly on an EXISTING mesh vertex — the reference
+        // leaves that as two separate vertex records (see the guard's doc
+        // comment above), so there is deliberately NO weld against the
+        // original mesh here. A narrower, independently-measured rule DOES
+        // merge two *new* corners with each other, regardless of clamp
+        // state, when they become corners of the same rebuilt face — see
+        // the merge pass below.
 
         // Tail: rebuild topology + compact orphaned original vertices.
         rebuildEdges();
@@ -15425,65 +15435,120 @@ unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0
     assert(dot > 0.9f, "chamfer normal should point outward (+Y+Z direction)");
 }
 
-unittest { // bevelEdgesByMask: overshoot guard (task 0304, fuzz-found) —
-           // width == the length of the adjacent (non-bevel) edge must not
-           // slide the chamfer corner onto — and duplicate — an existing
-           // neighbor vertex, nor leave a zero-area face behind.
-    import std.math : abs;
+// Case A (task 0304 overshoot guard, re-measured task 0436): an isolated
+// interior edge of a unit cube, both ends bare, every neighbouring edge
+// length 1.0. `toolcards/edge.bevel/clamp_findings.md`, Case A: clamping is
+// per-direction and bit-exact (`clampedWidth`) — but the reference does NOT
+// weld a clamp-saturated SLIDE corner into the pre-existing far vertex it
+// lands on. It leaves TWO separate vertex records at that position, and the
+// vertex/face COUNTS stay flat across the threshold (no collapse) at every
+// width tested and at both Round Levels. (The two stale assumptions this
+// replaces — "no coincident verts" / "no degenerate faces" at width ==
+// farLen — were never reference-verified; the reference's own capture shows
+// both DO happen here, and that is correct.)
+unittest { // Case A: vertex/face counts stay flat across the clamp
+           // threshold, at both Round Level 0 and 1.
     import std.conv : to;
 
-    float newellArea(Mesh m, const uint[] f) {
-        Vec3 nsum = Vec3(0, 0, 0);
-        foreach (i; 0 .. f.length) {
-            Vec3 a = m.vertices[f[i]];
-            Vec3 b = m.vertices[f[(i + 1) % f.length]];
-            nsum.x += (a.y - b.y) * (a.z + b.z);
-            nsum.y += (a.z - b.z) * (a.x + b.x);
-            nsum.z += (a.x - b.x) * (a.y + b.y);
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
         }
-        return nsum.length * 0.5f;
+        return -1;
+    }
+    bool[] edgeMask(ref Mesh m, uint a, uint b) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        int ei = findEdge(m, a, b);
+        assert(ei >= 0, "cube edge not found");
+        mask[ei] = true;
+        return mask;
     }
 
-    void assertClean(Mesh m, string tag) {
+    immutable float[4] widths = [0.3f, 0.9f, 1.0f, 1.4f];
+    foreach (w; widths) {
+        auto m0 = makeCube();
+        assert(m0.bevelEdgesByMask(edgeMask(m0, 6, 7), w) == 1,
+            "case A L0 w=" ~ w.to!string ~ ": must process the edge");
+        assert(m0.vertices.length == 10 && m0.faces.length == 7,
+            "case A L0 w=" ~ w.to!string ~ ": expected 10v/7f, got " ~
+            m0.vertices.length.to!string ~ "v/" ~ m0.faces.length.to!string ~ "f");
+
+        auto m1 = makeCube();
+        assert(m1.bevelEdgesByMask(edgeMask(m1, 6, 7), w, 1) == 1,
+            "case A L1 w=" ~ w.to!string ~ ": must process the edge");
+        assert(m1.vertices.length == 12 && m1.faces.length == 8,
+            "case A L1 w=" ~ w.to!string ~ ": expected 12v/8f, got " ~
+            m1.vertices.length.to!string ~ "v/" ~ m1.faces.length.to!string ~ "f");
+    }
+}
+
+unittest { // Case A: saturation — w=1.0 and w=1.4 land every slide corner
+           // on the SAME position (each has already reached its own
+           // farLen at w=1.0), so the two vertex arrays are bit-identical.
+    import std.conv : to;
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool[] edgeMask(ref Mesh m, uint a, uint b) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        int ei = findEdge(m, a, b);
+        assert(ei >= 0, "cube edge not found");
+        mask[ei] = true;
+        return mask;
+    }
+    auto mA = makeCube(); mA.bevelEdgesByMask(edgeMask(mA, 6, 7), 1.0f);
+    auto mB = makeCube(); mB.bevelEdgesByMask(edgeMask(mB, 6, 7), 1.4f);
+    assert(mA.vertices.length == mB.vertices.length, "case A: w=1.0/1.4 vertex count must match");
+    foreach (i; 0 .. mA.vertices.length)
+        assert((mA.vertices[i] - mB.vertices[i]).length < 1e-6f,
+            "case A: w=1.0 and w=1.4 must saturate to the same vertex " ~ i.to!string);
+}
+
+unittest { // Case A: no weld against the original mesh — at w >= 1.0, each
+           // of the 4 slide corners that reaches its own neighbour's far
+           // vertex duplicates that vertex's POSITION but keeps its own,
+           // separate INDEX (10 vertex records, not 9-or-fewer). Below
+           // threshold there is no coincidence at all.
+    import std.conv : to;
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool[] edgeMask(ref Mesh m, uint a, uint b) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        int ei = findEdge(m, a, b);
+        assert(ei >= 0, "cube edge not found");
+        mask[ei] = true;
+        return mask;
+    }
+    int coincidentPairs(ref Mesh m) {
+        int n = 0;
         foreach (i; 0 .. m.vertices.length)
             foreach (j; i + 1 .. m.vertices.length)
-                assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
-                    tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
-        foreach (fi, f; m.faces) {
-            bool[uint] distinct;
-            foreach (v; f) distinct[v] = true;
-            assert(distinct.length >= 3,
-                tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
-            assert(newellArea(m, f) > 1e-9f,
-                tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
-        }
+                if ((m.vertices[i] - m.vertices[j]).length < 1e-6f) ++n;
+        return n;
     }
 
-    auto m = makeCube();
-    int ei = -1;
-    foreach (i; 0 .. m.edges.length) {
-        uint a = m.edges[i][0], b = m.edges[i][1];
-        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
-    }
-    assert(ei >= 0, "edge (6,7) not found in cube");
-    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    auto mLow = makeCube();
+    mLow.bevelEdgesByMask(edgeMask(mLow, 6, 7), 0.9f);
+    assert(mLow.vertices.length == 10, "case A w=0.9: expected 10v (no clamp yet)");
+    assert(coincidentPairs(mLow) == 0, "case A w=0.9: no coincidence expected below threshold");
 
-    // width == 1.0 == length of every adjacent (non-bevel) edge on a unit cube.
-    size_t n = m.bevelEdgesByMask(mask, 1.0f);
-    assert(n == 1, "width==adjacent edge length should still process (clamped)");
-    assertClean(m, "width==adjacent edge length");
-
-    // Sanity: a normal small width must be completely unaffected by the guard.
-    auto m2 = makeCube();
-    int ei2 = -1;
-    foreach (i; 0 .. m2.edges.length) {
-        uint a = m2.edges[i][0], b = m2.edges[i][1];
-        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei2 = cast(int)i; break; }
-    }
-    bool[] mask2; mask2.length = m2.edges.length; mask2[] = false; mask2[ei2] = true;
-    assert(m2.bevelEdgesByMask(mask2, 0.1f) == 1);
-    assert(m2.vertices.length == 10, "normal width must be unaffected by the overshoot guard");
-    assert(m2.faces.length    == 7);
+    auto mAt = makeCube();
+    mAt.bevelEdgesByMask(edgeMask(mAt, 6, 7), 1.0f);
+    assert(mAt.vertices.length == 10,
+        "case A w=1.0: expected 10 vertex RECORDS (no weld), got " ~ mAt.vertices.length.to!string);
+    assert(coincidentPairs(mAt) == 4,
+        "case A w=1.0: expected 4 coincident (new-slide, pre-existing) pairs, got " ~
+        coincidentPairs(mAt).to!string);
 }
 
 // Task 0391 Phase 1/2 winding-backstop helper: `runTopologyDiffSuite` only
