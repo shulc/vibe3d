@@ -9547,22 +9547,147 @@ struct Mesh {
         foreach (fi, s; newSub)
             if (s) faceMarks[fi] |= Marks.Subpatch;
 
-        // New selection = chamfer + hub-cap faces; clear vertex/edge selections.
+        // task 0436: new-vertex merge. `toolcards/edge.bevel/
+        // clamp_findings.md` — geometry-only pass ("Follow-up pass —
+        // positional vs. constructive new-vertex merge") plus a live
+        // rr/gdb trace of the reference's own polygon-assembly routine
+        // ("rr/gdb mechanism trace — task 0436 follow-up 2") that reads and
+        // watches `EdgeBevel_AddVertex` execute. Two steps, matching two
+        // DIFFERENT parts of the reference the trace distinguishes:
+        //
+        // STEP 1 — IDENTITY POOLING (the trace's own open sub-question,
+        // "what pools two independently-computed slide positions into one
+        // shared object" — not traced; `EdgeBevel_GetNewV` is a plausible
+        // carrier, inspected but not confirmed). Two NEW corners (both
+        // >= savedVertCount) pool into one shared representative iff they
+        // coincide AND are corners of the SAME rebuilt face — this is the
+        // positional proxy the trace explicitly endorses ("keep our
+        // positional comparison — it reproduces every captured case") for
+        // that untraced step. Confirmed necessary by Case C's own capture:
+        // the merged corner there is referenced by THREE different faces
+        // (a reduced side face plus both chamfer strips) as a SINGLE
+        // shared vertex record, not by three separately-computed,
+        // merely-coincident ones — that sharing has to happen somewhere
+        // before any one face's own corner list is assembled, since the
+        // two slides being pooled are computed from different SOURCE
+        // vertices entirely (different `getSlide` closures), not the same
+        // one memoized twice. Scoping the pool to same-FACE pairs (rather
+        // than any two coincident new vertices mesh-wide) is what keeps
+        // Case D's cross-component pair — never a corner of any shared
+        // face — un-pooled and therefore un-merged.
+        //
+        // STEP 2 — PER-FACE CONSTRUCTION (this IS the directly traced
+        // mechanism). `EdgeBevel_AddVertex` appends each candidate corner
+        // to the rebuilt face's own list unless it equals — by pointer
+        // identity, checked on every candidate, not just the closing one —
+        // the LAST corner already accepted into THIS face's list, or the
+        // FIRST. After Step 1's pooling, "equal by identity" is exact index
+        // equality (two pooled duplicates now share one index), matching
+        // the reference's own pointer test far more literally than a
+        // second positional check would. This is what lets a middle
+        // candidate that coincides with the face's own first corner still
+        // get dropped (Case C's traced 4-candidate top-face run: 2
+        // accepted, 2 skipped, one dup-of-last and one dup-of-first) and is
+        // why Case B's two colliding pairs — non-adjacent in the pre-pool
+        // corner order, a miter corner sits between them — still collapse
+        // their host faces to CLEAN triangles rather than a corner-
+        // repeating "bowtie" face: post-pooling they share one index, and
+        // that shared index equals the face's own first-accepted entry.
+        //
+        // "Both new" holds throughout — a pre-existing (< savedVertCount)
+        // vertex is never eligible for Step 1's pool (measured Case D, pair
+        // (P3, clamped-P0): same rebuilt face, bit-exact position, never
+        // pooled — the overshoot guard's own "no weld against the
+        // original" law above, unconditional). Clamp state never enters
+        // either step (measured Case C: neither slide is anywhere near its
+        // neighbour's farLen). Both steps are single passes — Step 1 scans
+        // the just-assigned `faces` once building pool pairs; Step 2 walks
+        // each (already-pooled) face once — no rescanning, no fixpoint
+        // iteration (a merge could in principle create new co-membership
+        // that no captured case exhibits — see doc/behavior_gap_registry.md).
+        //
+        // Both steps are local to this function, not the shared
+        // `applyVertexRemap` (whose own dedup only compares a candidate to
+        // the immediately preceding kept corner, plus a separate final-vs-
+        // first wrap check — not "compare to first on every candidate";
+        // extending it would risk changing the other 7
+        // `weldCoincidentVertices` call sites, which Phase 2 promised zero
+        // behavior change for). A corner never kept by ANY face becomes
+        // unreferenced and is swept by this function's own existing
+        // `compactUnreferenced()` in its tail.
+        bool coincide(uint a, uint b) {
+            Vec3 d = vertices[a] - vertices[b];
+            return d.x * d.x + d.y * d.y + d.z * d.z < 1e-10;
+        }
+        immutable size_t rebuiltFaceCount = faces.length;
+
+        // Step 1: identity pooling, "lowest surviving index wins" — same
+        // discipline as `computeWeldRemap`.
+        int[] poolRemap = new int[](vertices.length);
+        foreach (i; 0 .. vertices.length) poolRemap[i] = cast(int)i;
+        uint resolvePool(uint i) {
+            while (poolRemap[i] != cast(int)i) i = cast(uint)poolRemap[i];
+            return i;
+        }
+        foreach (f; faces)
+            foreach (a; 0 .. f.length)
+                foreach (b; a + 1 .. f.length) {
+                    if (f[a] < savedVertCount || f[b] < savedVertCount) continue;
+                    immutable uint ra = resolvePool(f[a]), rb = resolvePool(f[b]);
+                    if (ra == rb || !coincide(ra, rb)) continue;
+                    immutable uint lo = ra < rb ? ra : rb, hi = ra < rb ? rb : ra;
+                    poolRemap[hi] = cast(int)lo;
+                }
+
+        // Step 2: per-face live construction over the pooled identities.
+        uint[][] mergedFaces;
+        mergedFaces.reserve(faces.length);
+        int[] faceRemap = new int[](faces.length);
+        bool anyMerge = false;
+        foreach (fi, f; faces) {
+            uint[] kept;
+            kept.reserve(f.length);
+            foreach (vid0; f) {
+                immutable uint vid = resolvePool(vid0);
+                if (kept.length > 0 && vid == kept[$ - 1]) {
+                    anyMerge = true;
+                    continue; // dup of LAST kept corner: drop, don't update last/first
+                }
+                if (kept.length > 0 && vid == kept[0]) {
+                    anyMerge = true;
+                    continue; // dup of FIRST kept corner (incl. loop closure): drop
+                }
+                kept ~= vid;
+            }
+            if (kept.length >= 3) {
+                faceRemap[fi] = cast(int)mergedFaces.length;
+                mergedFaces ~= kept;
+            } else {
+                faceRemap[fi] = -1; // whole face collapsed below 3 corners (Case C)
+            }
+        }
+        faces = mergedFaces;
+        if (anyMerge) {
+            if (selectedFaces.length > faces.length) resizeFaceSelection();
+            if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
+            if (isSubpatch.length > faces.length) resizeSubpatch();
+            if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
+            if (facePart.length     > faces.length) facePart.length     = faces.length;
+        }
+
+        // New selection = chamfer + hub-cap faces; clear vertex/edge
+        // selections. Re-derived through `faceRemap` — a dropped, non-tail
+        // face (Case C: the whole top-face quad can vanish) shifts every
+        // surviving face after it, so re-selecting by the OLD index range
+        // directly would silently select the wrong faces.
         faceSelectionOrderCounter = 0;
-        foreach (fi; chamferStart .. faces.length)
-            selectFace(cast(int)fi);
+        foreach (fi; chamferStart .. rebuiltFaceCount) {
+            immutable int newFi = faceRemap[fi];
+            if (newFi >= 0) selectFace(newFi);
+        }
         resizeVertexSelection();
         clearVertexSelection();
         clearEdgeSelectionResize();
-
-        // task 0436: overshoot clamping (`clampedWidth` above) can land a
-        // SLIDE corner exactly on an EXISTING mesh vertex — the reference
-        // leaves that as two separate vertex records (see the guard's doc
-        // comment above), so there is deliberately NO weld against the
-        // original mesh here. A narrower, independently-measured rule DOES
-        // merge two *new* corners with each other, regardless of clamp
-        // state, when they become corners of the same rebuilt face — see
-        // the merge pass below.
 
         // Tail: rebuild topology + compact orphaned original vertices.
         rebuildEdges();
@@ -15579,6 +15704,288 @@ unittest { // Case A: no weld against the original mesh — at w >= 1.0, each
     assert(coincidentPairs(mAt) == 4,
         "case A w=1.0: expected 4 coincident (new-slide, pre-existing) pairs, got " ~
         coincidentPairs(mAt).to!string);
+}
+
+unittest { // Case B (task 0436, clamp_findings.md main pass): a 3-edge chain
+           // on a frustum with ASYMMETRIC neighbour-edge lengths at its
+           // bare ends — the discriminator between per-direction and
+           // global clamping, plus (at w=1.4) the new-vs-new merge law.
+    import std.conv : to;
+
+    static Mesh buildFrustum() {
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, -0.5f),   Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.2f, -0.2f, 0.5f),  Vec3(0.2f, -0.2f, 0.5f),
+            Vec3(0.2f, 0.2f, 0.5f),    Vec3(-0.2f, 0.2f, 0.5f),
+        ];
+        m.addFace([3u, 2u, 1u, 0u]);
+        m.addFace([4u, 5u, 6u, 7u]);
+        m.addFace([0u, 1u, 5u, 4u]);
+        m.addFace([1u, 2u, 6u, 5u]);
+        m.addFace([2u, 3u, 7u, 6u]);
+        m.addFace([3u, 0u, 4u, 7u]);
+        m.buildLoops();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool[] chainMask(ref Mesh m) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[0u, 1u], [1u, 5u], [5u, 6u]]) {
+            int ei = findEdge(m, pair[0], pair[1]);
+            assert(ei >= 0, "case B: chain edge missing");
+            mask[ei] = true;
+        }
+        return mask;
+    }
+    int findVertNear(ref Mesh m, Vec3 p, double tol = 1e-4) {
+        foreach (i; 0 .. m.vertices.length)
+            if ((m.vertices[i] - p).length < tol) return cast(int)i;
+        return -1;
+    }
+
+    // Counts stay flat across 0.3/0.9/1.0; collapse only at 1.4.
+    foreach (w; [0.3f, 0.9f, 1.0f]) {
+        auto m = buildFrustum();
+        assert(m.bevelEdgesByMask(chainMask(m), w) == 3, "case B w=" ~ w.to!string);
+        assert(m.vertices.length == 12 && m.faces.length == 9,
+            "case B w=" ~ w.to!string ~ ": expected 12v/9f, got " ~
+            m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+    }
+
+    // Per-direction discriminator at w=0.9: v6 has two directions in
+    // DIFFERENT clamp states in the SAME call (farLen 0.4 clamps, farLen
+    // 1.086278 does not) — a global-minimum clamp would force both to 0.4
+    // and would miss every one of these bit-exact positions.
+    {
+        auto m = buildFrustum();
+        assert(m.bevelEdgesByMask(chainMask(m), 0.9f) == 3);
+        assert(findVertNear(m, Vec3(-0.5f, 0.4f, -0.5f)) >= 0, "case B w=0.9: v0->v3 unclamped");
+        assert(findVertNear(m, Vec3(-0.2514449f, -0.2514449f, 0.3285172f)) >= 0, "case B w=0.9: v0->v4 unclamped");
+        assert(findVertNear(m, Vec3(0.5f, 0.4f, -0.5f)) >= 0, "case B w=0.9: v1->v2 unclamped");
+        assert(findVertNear(m, Vec3(-0.2f, -0.2f, 0.5f)) >= 0, "case B w=0.9: v5->v4 clamped, lands on v4");
+        assert(findVertNear(m, Vec3(-0.2f, 0.2f, 0.5f)) >= 0, "case B w=0.9: v6->v7 clamped, lands on v7");
+        assert(findVertNear(m, Vec3(0.4485551f, 0.4485551f, -0.3285172f)) >= 0, "case B w=0.9: v6->v2 unclamped");
+    }
+
+    // New-vs-new merge at w=1.4: v1->v2 and v6->v2 both saturate at v2;
+    // v0->v4 and v5->v4 both saturate at v4. Each pair pools into ONE
+    // shared identity (both new, coincide, corners of the same rebuilt
+    // face — `bevelEdgesByMask`'s Step 1) and each host face's own
+    // construction (Step 2) then drops the duplicate occurrence, landing
+    // exactly on the measured 12v -> 10v / two-triangles-from-quads
+    // outcome. The pre-existing v2 and v4 remain separate records (the
+    // guard's "no weld against the original" law is unconditional, not
+    // narrowed by this merge) — checked positively via "exactly 2 records
+    // at each target position" (original + one pooled slide), never 3
+    // (never pooled) or 1 (welded into the original).
+    {
+        auto m = buildFrustum();
+        assert(m.bevelEdgesByMask(chainMask(m), 1.4f) == 3);
+        assert(m.vertices.length == 10 && m.faces.length == 9,
+            "case B w=1.4: expected 10v/9f, got " ~
+            m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+        int countNear(Vec3 p, double tol = 1e-4) {
+            int n = 0;
+            foreach (v; m.vertices) if ((v - p).length < tol) ++n;
+            return n;
+        }
+        assert(countNear(Vec3(0.5f, 0.5f, -0.5f)) == 2,
+            "case B w=1.4: expected exactly 2 records at v2's position (original + merged slide), got " ~
+            countNear(Vec3(0.5f, 0.5f, -0.5f)).to!string);
+        assert(countNear(Vec3(-0.2f, -0.2f, 0.5f)) == 2,
+            "case B w=1.4: expected exactly 2 records at v4's position (original + merged slide), got " ~
+            countNear(Vec3(-0.2f, -0.2f, 0.5f)).to!string);
+        // Both merges resolve their host faces into CLEAN triangles (not a
+        // corner-repeating "bowtie" quad) — direct proof the pooled
+        // identity, not just position, drives Step 2's construction.
+        int triCount = 0;
+        foreach (f; m.faces) if (f.length == 3) ++triCount;
+        assert(triCount == 2,
+            "case B w=1.4: expected exactly 2 clean triangles (two collapsed quads), got " ~ triCount.to!string);
+    }
+}
+
+unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
+           // disjoint top-face edges of a unit cube with NO clamp
+           // anywhere (every farLen is 1.0, every width tested is well
+           // under it) — the discriminator proving the new-vs-new merge is
+           // independent of clamp state entirely. At the one width where
+           // the two bare-end top-face slide corners coincide on each
+           // side, the shared top-face quad vanishes ENTIRELY (not a
+           // degenerate triangle) because all 4 of its corners collapse
+           // pairwise to 2 distinct points.
+    import std.conv : to;
+
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool[] twoTopEdgeMask(ref Mesh m) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[4u, 5u], [6u, 7u]]) {
+            int ei = findEdge(m, pair[0], pair[1]);
+            assert(ei >= 0, "case C: top-face edge missing");
+            mask[ei] = true;
+        }
+        return mask;
+    }
+    int findVertNear(ref Mesh m, Vec3 p, double tol = 1e-4) {
+        foreach (i; 0 .. m.vertices.length)
+            if ((m.vertices[i] - p).length < tol) return cast(int)i;
+        return -1;
+    }
+    int facesReferencing(ref Mesh m, uint vi) {
+        int n = 0;
+        foreach (f; m.faces) foreach (c; f) if (c == vi) { ++n; break; }
+        return n;
+    }
+
+    // Control: below and past the coincidence width, full topology (both
+    // bonus points: the collapse is a single-width phenomenon, not sticky).
+    foreach (w; [0.4f, 0.6f]) {
+        auto m = makeCube();
+        assert(m.bevelEdgesByMask(twoTopEdgeMask(m), w) == 2, "case C w=" ~ w.to!string);
+        assert(m.vertices.length == 12 && m.faces.length == 8,
+            "case C w=" ~ w.to!string ~ ": expected 12v/8f, got " ~
+            m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+    }
+
+    // Test: at w=0.5 the two top-face slide-corner pairs coincide and merge.
+    auto m = makeCube();
+    assert(m.bevelEdgesByMask(twoTopEdgeMask(m), 0.5f) == 2);
+    assert(m.vertices.length == 10 && m.faces.length == 7,
+        "case C w=0.5: expected 10v/7f (top-face quad vanishes entirely), got " ~
+        m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+
+    int viLeft  = findVertNear(m, Vec3(-0.5f, 0.0f, 0.5f));
+    int viRight = findVertNear(m, Vec3(0.5f, 0.0f, 0.5f));
+    assert(viLeft >= 0 && viRight >= 0, "case C w=0.5: merged corners must exist");
+    // Each merged corner is a SINGLE shared vertex record, referenced by
+    // exactly 2 (side-strip) faces — direct proof it is one record, not two
+    // separate coincident ones (unlike Case A/B/D's "duplicate, not welded").
+    // Reference dump cross-check (clamp_findings.md, width 0.5): the merged
+    // corner is a corner of THREE faces — the reduced 5-gon side face (was
+    // a 6-gon) PLUS both chamfer strips — not just the "two different strip
+    // faces" the writeup calls out by name (that phrase highlights the
+    // double chamfer-strip duty specifically; the reference's own dump
+    // shows the same 5-gon side face reference vibe3d produces here, e.g.
+    // its `[9, 2, 0, 6, 7]` / `[8, 5, 4, 1, 3]` left/right 5-gons).
+    assert(facesReferencing(m, cast(uint)viLeft)  == 3,
+        "case C w=0.5: merged left corner must be a single shared vertex (5-gon side face + 2 strips)");
+    assert(facesReferencing(m, cast(uint)viRight) == 3,
+        "case C w=0.5: merged right corner must be a single shared vertex (5-gon side face + 2 strips)");
+}
+
+unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
+           // coincidence WITHOUT merge. The reference fixture is two
+           // disjoint single-FACE quads (each bare-end vertex touching only
+           // 1 face); vibe3d's per-vertex corner pass requires `d >= 2`
+           // incident faces to visit a vertex at all, so an isolated
+           // single-face island is a stricter degenerate case the kernel
+           // does not support today (a `d < 2` no-op) and is out of this
+           // task's scope (flagged separately, not patched here). This
+           // reconstructs the SAME discriminating property — a CLAMPED
+           // slide and an UNCLAMPED slide from two wholly disconnected mesh
+           // components landing on the identical point, in one bevel call —
+           // on two disjoint unit cubes (`makeCube()`'s own topology,
+           // already `d == 3` everywhere and proven by the Case A
+           // unittests above), one of them uniformly scaled 4x and
+           // translated so its analogous bare-end slide is UNCLAMPED
+           // (farLen 4.0 > width 1.4) yet still lands on cube 1's own
+           // CLAMPED landing point (Case A: edge (6,7), width>=1.0, one
+           // slide corner saturates at exactly (-0.5,0.5,-0.5)).
+    import std.conv : to;
+
+    static Mesh makeTranslatedScaledCube(Vec3 scale, Vec3 offset) {
+        Mesh m = makeCube();
+        foreach (ref v; m.vertices)
+            v = Vec3(v.x * scale.x + offset.x, v.y * scale.y + offset.y, v.z * scale.z + offset.z);
+        return m;
+    }
+    static Mesh buildTwoCubes(Vec3 scale2, Vec3 offset2) {
+        Mesh mm;
+        mm.vertices = makeCube().vertices ~ makeTranslatedScaledCube(scale2, offset2).vertices;
+        foreach (f; makeCube().faces) mm.addFace(f.dup);
+        foreach (f; makeCube().faces) {
+            uint[] shifted; foreach (vi; f) shifted ~= vi + 8;
+            mm.addFace(shifted);
+        }
+        mm.buildLoops();
+        return mm;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    int countNear(ref Mesh m, Vec3 p, double tol = 1e-4) {
+        int n = 0;
+        foreach (v; m.vertices) if ((v - p).length < tol) ++n;
+        return n;
+    }
+
+    // cube1: standard unit cube (Case A's own fixture). cube2: scaled 4x,
+    // translated so its OWN edge-(6,7)-equivalent bare-end slide (same
+    // relative construction, unclamped since farLen=4.0 > width=1.4) lands
+    // EXACTLY on cube1's clamped landing point (-0.5,0.5,-0.5) — solved
+    // directly from the unclamped slide law `V + width*dir`: cube2's
+    // analogous source vertex is at scale*(-0.5,0.5,0.5)+offset, sliding in
+    // direction (0,0,-1); offset chosen so that position + 1.4*(0,0,-1) ==
+    // (-0.5,0.5,-0.5).
+    immutable Vec3 scale2  = Vec3(4, 4, 4);
+    immutable Vec3 offset2 = Vec3(1.5f, -1.5f, -1.1f);
+
+    bool[] maskFor(ref Mesh mm) {
+        bool[] mk; mk.length = mm.edges.length; mk[] = false;
+        int e1 = findEdge(mm, 6, 7);
+        int e2 = findEdge(mm, 14, 15); // cube2's own (6,7)-equivalent, shifted +8
+        assert(e1 >= 0 && e2 >= 0, "case D: both cubes' target edges must exist");
+        mk[e1] = true;
+        mk[e2] = true;
+        return mk;
+    }
+
+    // Control: a width well under BOTH cubes' clamp thresholds — no
+    // coincidence anywhere, plain per-cube Case A topology twice over.
+    auto mCtrl = buildTwoCubes(scale2, offset2);
+    assert(mCtrl.bevelEdgesByMask(maskFor(mCtrl), 0.3f) == 2, "case D control: must process both edges");
+    assert(mCtrl.vertices.length == 20 && mCtrl.faces.length == 14,
+        "case D w=0.3 control: expected 20v/14f (2x Case A's 10v/7f), got " ~
+        mCtrl.vertices.length.to!string ~ "v/" ~ mCtrl.faces.length.to!string ~ "f");
+
+    auto m = buildTwoCubes(scale2, offset2);
+    auto mask = maskFor(m);
+
+    // Test: cube1's slide clamps (farLen 1.0 < 1.4) onto its OWN original
+    // vertex 3's position; cube2's analogous slide is unclamped (farLen 4.0
+    // > 1.4) and, by construction, lands on the SAME point via a wholly
+    // unrelated component (different mesh island, different source vertex,
+    // zero shared ancestry, never a corner of any face cube1 touches).
+    // Counts stay IDENTICAL to the control — the two-clause discriminator:
+    // "both new" alone says nothing here (Case A's own new-vs-original
+    // pairs are all over both cubes already); "same rebuilt face" is what
+    // rules out a cross-component merge.
+    assert(m.bevelEdgesByMask(mask, 1.4f) == 2, "case D test: must process both edges");
+    assert(m.vertices.length == 20 && m.faces.length == 14,
+        "case D w=1.4: expected 20v/14f (no merge at all), got " ~
+        m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+    assert(countNear(m, Vec3(-0.5f, 0.5f, -0.5f)) == 3,
+        "case D w=1.4: expected 3 separate records at (-0.5,0.5,-0.5) " ~
+        "(cube1's original v3, cube1's clamped slide, cube2's unclamped slide), got " ~
+        countNear(m, Vec3(-0.5f, 0.5f, -0.5f)).to!string);
 }
 
 // Task 0391 Phase 1/2 winding-backstop helper: `runTopologyDiffSuite` only
