@@ -9005,36 +9005,17 @@ struct Mesh {
             // Anything else is a malformed / non-manifold fan and is skipped.
             immutable bool openFan = (nE == d + 1);
             if (d < 2 || (nE != d && !openFan)) continue;
-            // Task 0447 (phase 2): an unordered fan (rests on a same-direction
-            // shared edge) is enumerated COMPLETELY by the CSR fallback now,
-            // so the counts above look healthy AND `walkSane` below sees no
-            // foreign edge — both of bevel's old gates pass. But the slot
-            // arithmetic (face f_k bordered by edge slots k, k+1) needs a
-            // meaningfully ORDERED fan, which the CSR does not promise. Decline
-            // rather than build from a garbage slot assignment. This must land
-            // in the SAME commit as the CSR completeness (else the hinge bevel
-            // decline reddens) — see doc/vertex_fan_walk_foreign_edge_plan.md
-            // §Phase 2. Placed BEFORE slot materialization.
+            // Task 0447: the fan of an inconsistently-wound vertex is now
+            // enumerated COMPLETELY (by the CSR fallback) with only incident
+            // elements, so neither the count gate above nor the old foreign-
+            // edge scan can catch it — the counts look healthy and no edge is
+            // foreign. But the slot arithmetic below (face f_k bordered by edge
+            // slots k and k+1) needs a meaningfully ORDERED fan, which the CSR
+            // does not promise. Decline on !vertexFanOrdered rather than build
+            // from a garbage slot assignment. This replaced the earlier
+            // defensive foreign-edge scan (`walkSane`), which the root fix made
+            // redundant — see doc/vertex_fan_walk_foreign_edge_plan.md §Phase 3.
             if (!vertexFanOrdered(V)) continue;
-            // The counts above can look healthy while the walk itself is wrong.
-            // On a two-face "hinge" — two faces sharing one edge and nothing
-            // else at either endpoint — `edgesAroundVertex` yields an edge that
-            // is not incident to V at all (measured: at V=0 it returns the
-            // edge (3,1)). `edgeOtherVertex` then asserts, which took the whole
-            // application down from the tool's live preview. A count check
-            // cannot catch this, so verify incidence directly and treat a bad
-            // walk as the malformed fan it is.
-            //
-            // This is a defensive skip, NOT a fix: the walk itself is wrong and
-            // every operation that iterates a vertex fan sees the same bad
-            // edge. That is tracked separately — do not remove this guard on
-            // the grounds that the walk "should" be correct.
-            bool walkSane = true;
-            foreach (k; 0 .. nE) {
-                immutable uint ea = edges[vEdges[k]][0], eb = edges[vEdges[k]][1];
-                if (ea != V && eb != V) { walkSane = false; break; }
-            }
-            if (!walkSane) continue;
             vNbrs.length = nE;
             foreach (k; 0 .. nE) vNbrs[k] = edgeOtherVertex(vEdges[k], V);
 
@@ -17308,6 +17289,50 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
             assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
                 "the decline must leave the mesh byte-identical");
         }
+}
+
+unittest { // bevelEdgesByMask on a CLOSED inverted cube: task 0447. Closedness
+           // does not immunise a mesh — flipping one face makes all four of
+           // its shared edges same-direction, so its four corner vertices are
+           // NOT vertexFanOrdered. Selecting that face's edges must make bevel
+           // DECLINE (every affected vertex is unordered), leaving the mesh
+           // byte-identical. This is the motivating-scenario point fixture
+           // (the generative bevel census over inverted variants is 0445).
+    Mesh cubeFlip2() {
+        Mesh m = makeCube();
+        bool[] fm = new bool[](m.faces.length);
+        fm[2] = true;               // flip face 2 = [0,4,7,3]
+        m.flipFacesByMask(fm);
+        m.syncSelection();
+        return m;
+    }
+    {
+        auto m = cubeFlip2();
+        // The four corners of the flipped face are unordered; the rest ordered.
+        foreach (uint V; [0u, 3u, 4u, 7u])
+            assert(!m.vertexFanOrdered(V), "flipped-face corner must be unordered");
+        foreach (uint V; [1u, 2u, 5u, 6u])
+            assert(m.vertexFanOrdered(V), "non-flipped corner must stay ordered");
+    }
+    // Select the four edges of the flipped face; both endpoints of each are
+    // unordered, so the whole selection declines.
+    foreach (level; 0 .. 2) {
+        auto m = cubeFlip2();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[3u, 7u], [7u, 4u], [4u, 0u], [0u, 3u]])
+            foreach (i; 0 .. m.edges.length) {
+                immutable uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) {
+                    mask[i] = true; break;
+                }
+            }
+        auto vertsBefore = m.vertices.dup;
+        auto facesBefore = m.faces._store.dup;
+        assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 0,
+            "inverted-cube unordered selection must decline");
+        assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
+            "the decline must leave the inverted cube byte-identical");
+    }
 }
 
 unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
