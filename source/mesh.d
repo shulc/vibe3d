@@ -1596,6 +1596,34 @@ struct Mesh {
             if (remap[i] != cast(int)i) ++welded;
         if (welded == 0) return 0;
 
+        applyVertexRemap(remap);
+
+        // Geometry-class: coincident verts merged, faces/edges rebuilt.
+        commitChange(MeshEditScope.Geometry);
+        return welded;
+    }
+
+    /// Applies a precomputed vertex remap (`remap[i]` = the surviving vertex
+    /// index `i` collapses into, or `i` itself if it survives unchanged) to
+    /// `faces`: collapses each face's corner list (drop consecutive dups,
+    /// drop the wrap-around dup, drop the whole face once it falls below 3
+    /// distinct corners), remaps PolyVertex maps, rebuilds edges, and
+    /// resizes the parallel per-face arrays. Does **not** call
+    /// `commitChange` — the caller owns that. Split out of
+    /// `weldCoincidentVertices` (task 0436, pure refactor — zero behavior
+    /// change for that function's own 8 call sites) so `bevelEdgesByMask`
+    /// can reuse the APPLY half of the weld machinery under its own,
+    /// differently-scoped merge predicate without inheriting
+    /// `computeWeldRemap`'s all-pairs spatial SEARCH, which that predicate
+    /// does not use (it derives its remap from rebuilt-face co-membership,
+    /// not from a coincidence scan).
+    ///
+    /// Returns `faceRemap`: for each OLD face index, the NEW index it lands
+    /// at after collapse, or `-1` if the face was dropped entirely. Callers
+    /// that carry face-indexed state across the call (e.g. a selection) MUST
+    /// re-derive it through this map — a dropped face that is not at the
+    /// array tail shifts every face after it.
+    private int[] applyVertexRemap(const int[] remap) {
         // PolyVertex remap, mechanism (b): the corner-collapse below rewrites
         // each face's corner LIST (consecutive-dup drop + wrap-around-dup drop +
         // sub-3 face drop). Track which OLD corner each surviving NEW corner came
@@ -1610,6 +1638,7 @@ struct Mesh {
 
         uint[][] newFaces;
         newFaces.reserve(faces.length);
+        int[] faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
             uint[] f;
             uint[] srcCorner; // old corner index that produced each kept corner
@@ -1628,10 +1657,13 @@ struct Mesh {
                 if (remapUv) srcCorner = srcCorner[0 .. $ - 1];
             }
             if (f.length >= 3) {
+                faceRemap[fi] = cast(int)newFaces.length;
                 newFaces ~= f;
                 if (remapUv)
                     foreach (sc; srcCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
+            } else {
+                faceRemap[fi] = -1;
             }
         }
         faces = newFaces;
@@ -1648,9 +1680,7 @@ struct Mesh {
         if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
         if (facePart.length     > faces.length) facePart.length     = faces.length;
 
-        // Geometry-class: coincident verts merged, faces/edges rebuilt.
-        commitChange(MeshEditScope.Geometry);
-        return welded;
+        return faceRemap;
     }
 
     /// Remove vertices not referenced by any face. Updates all face vertex
