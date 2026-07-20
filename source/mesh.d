@@ -121,6 +121,14 @@ enum int MAX_SWEEP_SIDES = 1024;
 enum int MAX_ROUND_LEVEL     = 10;  // 2·10 = 20 arc segments/endpoint
 enum int MAX_BEVEL_SEGMENTS  = 64;
 
+/// Rounded-hub allocation backstop for `bevelEdgesByMask`'s N-way junction
+/// ring (task 0454): a full-ring hub emits `valence · (2^L)²` quad faces, so a
+/// crafted high-valence full hub is an attacker-scalable allocation vector.
+/// Valence is mesh-derived (not a user Param), so this is a kernel-only cap —
+/// an over-cap full hub falls back to the flat N-gon cap, staying sound. No
+/// Param/UI layer (there is no user-facing valence knob to clamp).
+enum int MAX_JUNCTION_VALENCE = 64;
+
 /// A generic named, typed per-element float attribute channel — the single
 /// reusable home for continuous per-element data (UV, vertex weight, edge
 /// crease, vertex color, …) so each such attribute does NOT become a bespoke
@@ -8778,6 +8786,15 @@ struct Mesh {
             CornerKind kind;
             bool clamped;
             uint selectedDegree; // K at this source vertex, before rebuilding
+            // Whether this corner sits at a GENUINE closed full-ring hub
+            // (`!openFan && K == d`). Load-bearing for task 0454's N≥4 rail
+            // gate: `selectedDegree` (== K) is NOT tied to full-hub-ness — a
+            // valence-5 vertex with a partial K=4 selection carries
+            // `selectedDegree==4` yet is a free-end/partial fan, NOT a hub, and
+            // must keep the shipped slerp rail (no boundary-Bézier ground truth
+            // there). Only `isFullHub && selectedDegree>=4` switches to the
+            // finding-(F) Bézier rail.
+            bool isFullHub;
             Vec3 dir;
         }
         CornerInfo[ulong] cornerAtVF;
@@ -8835,11 +8852,68 @@ struct Mesh {
             Vec3 arcCenter;      // explicit fillet centre for a junction rail
             bool hasArcCenter;   // ↑ valid (else use the per-vertex fillet centre)
             bool rimRail;        // centre vertex sits on an open (boundary) fan
+            // Task 0454 — N≥4 full-ring hub rail only: the finding-(F) boundary
+            // Bézier handles (P1 near endpoint `a`, P2 near `b`, matching
+            // `railInterior`'s a→b sampling). When `useBezier` is set,
+            // `railInterior` samples the uniform-t cubic Bézier
+            // `[vertices[a], bezP1, bezP2, vertices[b]]` instead of the slerp
+            // arc — the ONLY law change vs today, and reached only by a genuine
+            // closed N≥4 hub (`hasArcCenter`/slerp stays byte-identical for
+            // every non-hub rail, incl. partial-K≥4 free-end rails).
+            Vec3 bezP1, bezP2;
+            bool useBezier;
         }
         RailSpec[ulong] railSpecs;
         uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
         static ulong pairKey(uint a, uint b) {
             return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+        }
+        // finding (F) boundary-Bézier handles for one N-way hub side: the
+        // kappa-cubic-Bézier circular-arc approximation from corner `P0` to
+        // corner `P3`, pivoted around `jv` (the shared selected edge's slide
+        // point, NOT the junction vertex). Direct port of
+        // `nway_hub_ring_ref.py::boundary_bezier`. `ok=false` on any
+        // degeneracy (parallel radii, zero sweep) so the caller falls back to
+        // the slerp rail + flat cap (compute-then-commit, no partial mutation).
+        static void boundaryBezier(Vec3 P0, Vec3 P3, Vec3 jv,
+                                   out Vec3 outP1, out Vec3 outP2, out bool ok) {
+            import std.math : acos, tan, abs;
+            ok = false;
+            Vec3 uA = P0 - jv, uB = P3 - jv;
+            immutable float lA0 = uA.length, lB0 = uB.length;
+            if (lA0 < 1e-9f || lB0 < 1e-9f) return;
+            uA = uA / lA0; uB = uB / lB0;
+            Vec3 nrm = cross(uA, uB);
+            immutable float nlen = nrm.length;
+            if (nlen < 1e-9f) return;              // uA ∥ uB (collinear pivot)
+            nrm = nrm / nlen;
+            immutable Vec3 d1 = cross(uA, nrm);
+            immutable Vec3 d2 = cross(nrm, uB);
+            immutable float denom = dot(cross(d1, d2), nrm);
+            if (abs(denom) < 1e-12f) return;
+            immutable float t = dot(cross(P3 - P0, d2), nrm) / denom;
+            immutable Vec3 C = P0 + d1 * t;
+            immutable Vec3 rA = P0 - C, rB = P3 - C;
+            immutable float lenA = rA.length, lenB = rB.length;
+            if (lenA < 1e-9f || lenB < 1e-9f) return;
+            float cosO = dot(rA, rB) / (lenA * lenB);
+            if (cosO >  1.0f) cosO =  1.0f;
+            if (cosO < -1.0f) cosO = -1.0f;
+            immutable float Omega = acos(cosO);
+            if (Omega < 1e-6f) return;
+            immutable float kappa = (4.0f / 3.0f) * tan(Omega / 4.0f);
+            immutable Vec3 uAc = rA / lenA, uBc = rB / lenB;
+            Vec3 t0 = uBc - uAc * dot(uBc, uAc);
+            immutable float t0l = t0.length;
+            if (t0l < 1e-9f) return;
+            t0 = t0 / t0l;
+            Vec3 t3 = uAc - uBc * dot(uAc, uBc);
+            immutable float t3l = t3.length;
+            if (t3l < 1e-9f) return;
+            t3 = t3 / t3l;
+            outP1 = P0 + t0 * (kappa * lenA);
+            outP2 = P3 + t3 * (kappa * lenB);
+            ok = true;
         }
         // A rail whose centre vertex is on a rim is bounded by the chamfer
         // strip on one side and by the OPEN boundary on the other, so it has
@@ -8850,7 +8924,8 @@ struct Mesh {
             foreach (ei; edgesAroundVertex(V)) ++ne;
             return ne == nf + 1;
         }
-        void registerRail(CornerInfo left, CornerInfo right, Vec3 center, uint centerVert) {
+        void registerRail(CornerInfo left, CornerInfo right, Vec3 center,
+                          uint centerVert, Vec3 farEnd) {
             immutable ulong key = pairKey(left.vert, right.vert);
             immutable bool forward = left.vert < right.vert;
             // Junction pairwise rail (both corners MITER at a K==valence
@@ -8872,6 +8947,50 @@ struct Mesh {
                     sn = sn + safeNormalize(faceNormal(cast(uint)fi));
                 hubC = center - sn * width;
             }
+            // Task 0454 — genuine closed N≥4 full-ring hub rail ONLY. R6: the
+            // gate is `isFullHub && selectedDegree≥4` at BOTH corners, NOT bare
+            // `selectedDegree≥4`, so a partial K=4 at a valence-5 vertex
+            // (free-end path, isFullHub false) is EXCLUDED and keeps the slerp
+            // rail — the finding-(F) boundary-Bézier law was RE'd only against
+            // genuine closed junctions and has no ground truth on a partial
+            // fan. Both corners of a rail are at the same source vertex, so
+            // these flags are identical across left/right; checking both is
+            // belt-and-suspenders. `useHub`/slerp is NOT narrowed — a hub rail
+            // carries both, and `railInterior` prefers the Bézier when set.
+            Vec3 bez1 = Vec3(0, 0, 0), bez2 = Vec3(0, 0, 0);
+            bool useBez = false;
+            // ⛔ BLOCKED (task 0454, writer stage): the finding-(F)
+            // boundary-Bézier rail law reproduces the reference's INTERNAL
+            // Gregory control net (P1/P2/C/HUB — all bit-exact, and the ring
+            // HUB matches every k4/k5 dump), but NOT the emitted MESH rail
+            // vertices. Measured directly against the reference dumps: the rail
+            // midpoint R_i (boundary Bézier at t=0.5) is ~0.013 (K4) / ~0.026
+            // (K5) off from edge_bevel_gen_k{4,5}_* — three orders of magnitude
+            // above the float32 floor, i.e. a real law error, not roundoff. The
+            // dump rail stays in the corner plane (tangential coord unchanged),
+            // whereas boundary_bezier pulls it toward `jv`; no jv variant and
+            // no sphere-arc reproduces it. Finding (F) only ever validated
+            // P1/P2/C/HUB against rr/gdb captures of `EdgeBevel_RoundCubic`
+            // (the control net), plus R_i vs the N=3 target for K3 — it never
+            // checked the N≥4 *mesh rail vertices* against a dump, which is
+            // exactly the plan's own Phase-0 control (even-N k4 reproduces the
+            // FULL mesh at the float32 floor) — and that control FAILS. The
+            // correct N≥4 rail-vertex law is un-captured; the whole N≥4 hub
+            // ring (junctionRingN + this Bézier rail) stays dormant behind this
+            // flag until it is captured. Set true only once the rail law
+            // reproduces the dumps' rail vertices. See doc/tasks/work/
+            // 0454-nway-junction-port.md §Результат.
+            enum bool NWAY_HUB_RAIL_LAW_RESOLVED = false;
+            if (NWAY_HUB_RAIL_LAW_RESOLVED &&
+                left.isFullHub && right.isFullHub &&
+                left.selectedDegree >= 4 && right.selectedDegree >= 4) {
+                // Pivot jv = slide of the shared selected edge at V (the span
+                // this rail runs along): V + width·normalize(farEnd − V).
+                immutable Vec3 jv = center + safeNormalize(farEnd - center) * width;
+                immutable uint aV = forward ? left.vert : right.vert;
+                immutable uint bV = forward ? right.vert : left.vert;
+                boundaryBezier(vertices[aV], vertices[bV], jv, bez1, bez2, useBez);
+            }
             RailSpec spec = RailSpec(
                 forward ? left.vert : right.vert, forward ? right.vert : left.vert,
                 center,
@@ -8885,7 +9004,8 @@ struct Mesh {
                     ? RailProfile.VerifiedK1Arc : RailProfile.LocalAnalyticUnverified,
                 0, 0, false,
                 hubC, useHub,
-                isOpenFanVertex(centerVert));
+                isOpenFanVertex(centerVert),
+                bez1, bez2, useBez);
             if (auto prior = key in railSpecs) {
                 assert((prior.center - center).length < 1e-5f &&
                     prior.profile == spec.profile &&
@@ -8967,7 +9087,18 @@ struct Mesh {
                 Vec3[] pts = new Vec3[](n + 1);
                 foreach (t; 0 .. n + 1) {
                     immutable float f = cast(float)t / cast(float)n;
-                    if (sinO < 1e-6f) {
+                    if (spec.useBezier) {
+                        // Task 0454 — genuine N≥4 hub rail: uniform-t cubic
+                        // Bézier [EA, bezP1, bezP2, EB] (handles stored a→b at
+                        // registerRail), sampled at t = j/(2L). The Gregory
+                        // ring's u=0/v=0 boundary re-derives this SAME curve
+                        // (finding F / D2), so rail and ring share one curve —
+                        // no seam. Reached only by a closed full hub; every
+                        // other rail keeps the slerp path below byte-identical.
+                        immutable float s = 1.0f - f;
+                        pts[t] = EA * (s*s*s) + spec.bezP1 * (3.0f*f*s*s)
+                               + spec.bezP2 * (3.0f*f*f*s) + EB * (f*f*f);
+                    } else if (sinO < 1e-6f) {
                         // Degenerate (collinear / 180° sweep): straight chord.
                         pts[t] = EA * (1.0f - f) + EB * f;
                     } else {
@@ -9027,6 +9158,14 @@ struct Mesh {
             }
             if (K == 0) continue;
 
+            // A GENUINE closed full-ring hub: every incident edge selected on a
+            // NON-boundary fan (`K == d`, `!openFan`). This is the ONLY shape
+            // whose pairwise rails take task 0454's finding-(F) boundary-Bézier
+            // law; a partial K (free-end / notch) or a boundary fan is NOT a
+            // hub even when `K` reaches 4+, so it is excluded here (R6). Threaded
+            // into every CornerInfo below so `registerRail` gates on it.
+            immutable bool isFullHub = !openFan && (K == d);
+
             immutable Vec3 vpos = vertices[V];
             uint[int] slideVert;    // local edge-slot k → new vertex (memoized per V)
             bool[int] slideClamped; // local edge-slot k → did the overshoot guard clamp it?
@@ -9059,7 +9198,7 @@ struct Mesh {
                     Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), width, width);
                     uint nv = addVertex(m);
                     cornerAtVF[vfKey(V, fi)] = CornerInfo(
-                        nv, CornerKind.Miter, false, cast(uint)K, Vec3(0,0,0));
+                        nv, CornerKind.Miter, false, cast(uint)K, isFullHub, Vec3(0,0,0));
                     faceSubs.require(fi) ~= VertSub(V, [nv]);
                 } else if (selSucc != selPred) {
                     // SLIDE: exactly one bordering edge selected — corner
@@ -9067,7 +9206,7 @@ struct Mesh {
                     immutable int unselK = selSucc ? kr : k;
                     uint nv = getSlide(unselK);
                     cornerAtVF[vfKey(V, fi)] = CornerInfo(
-                        nv, CornerKind.Slide, slideClamped[unselK], cast(uint)K, slideDir(unselK));
+                        nv, CornerKind.Slide, slideClamped[unselK], cast(uint)K, isFullHub, slideDir(unselK));
                     faceSubs.require(fi) ~= VertSub(V, [nv]);
                 } else {
                     // Neither bordering edge selected: the source vertex is
@@ -9212,8 +9351,11 @@ struct Mesh {
                 auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
                 auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
                 auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
-                registerRail(cV0L, cV0R, vertices[sp.v0], sp.v0);
-                registerRail(cV1L, cV1R, vertices[sp.v1], sp.v1);
+                // farEnd = the span's OTHER endpoint: the finding-(F) pivot for
+                // this rail is the slide of the shared selected edge, computed
+                // in registerRail from V + width·normalize(farEnd − V).
+                registerRail(cV0L, cV0R, vertices[sp.v0], sp.v0, vertices[sp.v1]);
+                registerRail(cV1L, cV1R, vertices[sp.v1], sp.v1, vertices[sp.v0]);
             }
             foreach (ring; baseFaces)
                 foreach (k; 0 .. ring.length)
@@ -9467,6 +9609,166 @@ struct Mesh {
             return true;
         }
 
+        // GENERAL N-sided junction Gregory ring (N≥4, task 0454). The N-sided
+        // reference path (GPatch_NSides / GPatch_SolveEquations) is a DIFFERENT
+        // evaluator than N=3's fast path, recovered capture-free
+        // (toolcards/edge.bevel/nway_hub_ring_ref.py, findings A/B/E/F/H). Unlike
+        // `junctionRing` (which re-fits each boundary Bézier from a circumcircle
+        // through pole_i/R_i/pole_{i+1} — the N=3 reconstruction), this builder
+        // takes the TRUE boundary-Bézier control points P0/P1/P2 per side
+        // (finding F, from `boundaryBezier`, the same curve the rail samples).
+        //   R_i    = boundary Bézier at t=0.5 = (P0+3P1+3P2+P0_next)/8
+        //   Q/C/HUB/newC + F16/F17/F5/F9      = SAME closed forms as N=3, mod N
+        //   F6/F10/F18/F19 (twist)            = closed-form affine for EVEN N;
+        //     for ODD N the finding-(H) closed-form recurrence W0=½·Σ(−1)^j·c_j
+        //     (exact decomposition of the reference's sparse (4N)×(4N) system —
+        //     NO dense solver, dodges the O(N³)/allocation DoS). Odd N carries a
+        //     small L≥2 ring residual (the un-RE'd GPatch_MovePoints/newC_i
+        //     correction, task 0453) — measured, XFAIL-fixtured, NOT hidden.
+        //   evaluator: identical to N=3 EXCEPT the p22 grid cell is
+        //     avg(F10_i, F19_i) (finding D — for N=3 F10==F19 so it was moot).
+        static bool junctionRingN(const(Vec3)[] poles, const(Vec3)[] p1s,
+                                  const(Vec3)[] p2s, int N, int L,
+                                  out Vec3 hub, out Vec3[] spokePts, out Vec3[] interiorPts) {
+            import std.math : abs;
+            if (cast(int)poles.length != N || cast(int)p1s.length != N ||
+                cast(int)p2s.length != N || N < 4 || L < 1) return false;
+            int nxt(int i) { return (i + 1) % N; }
+            int prv(int i) { return (i + N - 1) % N; }
+
+            Vec3[] R = new Vec3[](N);
+            foreach (i; 0 .. N)
+                R[i] = (poles[i] + p1s[i] * 3.0f + p2s[i] * 3.0f + poles[nxt(i)]) * 0.125f;
+            Vec3 DA(int i) { return p2s[prv(i)] - poles[i]; }
+            Vec3 DB(int i) { return p1s[nxt(i)] - poles[nxt(i)]; }
+            Vec3[] Qv = new Vec3[](N);
+            foreach (i; 0 .. N) Qv[i] = R[i] + (DA(i) + DB(i)) * 0.25f;
+            Vec3 hsum = Vec3(0, 0, 0);
+            Vec3[] Cv = new Vec3[](N);
+            foreach (i; 0 .. N) { Cv[i] = Qv[i] * 1.5f - R[i] * 0.5f; hsum = hsum + Cv[i]; }
+            hub = hsum / cast(float)N;
+            Vec3[] newCv = new Vec3[](N);
+            foreach (i; 0 .. N) newCv[i] = (Cv[i] * 2.0f + hub) / 3.0f;
+
+            Vec3 DT(int i) { return DA(i) * (2.0f / 3.0f) + DB(i) * (1.0f / 3.0f); }
+            Vec3 DU(int i) { return DA(i) * (1.0f / 3.0f) + DB(i) * (2.0f / 3.0f); }
+            Vec3[] p10v = new Vec3[](N), p20v = new Vec3[](N),
+                   p01v = new Vec3[](N), p02v = new Vec3[](N);
+            foreach (i; 0 .. N) {
+                immutable int pv = prv(i);
+                p10v[i] = (poles[i] + p1s[i]) * 0.5f;
+                p20v[i] = (poles[i] + p1s[i] * 2.0f + p2s[i]) * 0.25f;
+                p01v[i] = (p2s[pv] + poles[i]) * 0.5f;
+                p02v[i] = (p1s[pv] + p2s[pv] * 2.0f + poles[i]) * 0.25f;
+            }
+            Vec3[] F16v = new Vec3[](N), F17v = new Vec3[](N),
+                   F5v = new Vec3[](N), F9v = new Vec3[](N);
+            foreach (i; 0 .. N) {
+                immutable int pv = prv(i);
+                F16v[i] = p10v[i] + (DA(i) + DT(i)) * 0.25f;
+                F17v[i] = p20v[i] + (DA(i) + DU(i)) * 0.125f + DT(i) * 0.25f;
+                F5v[i]  = p01v[i] + (DB(pv) + DU(pv)) * 0.25f;
+                F9v[i]  = p02v[i] + (DT(pv) + DB(pv)) * 0.125f + DU(pv) * 0.25f;
+            }
+            Vec3[] F13v = new Vec3[](N);
+            foreach (i; 0 .. N) F13v[i] = Qv[prv(i)];
+
+            Vec3[] F6v = new Vec3[](N), F10v = new Vec3[](N),
+                   F18v = new Vec3[](N), F19v = new Vec3[](N);
+            if (N % 2 == 0) {
+                // twist_fields_even_N — pure closed-form affine (the reference
+                // statically branches AROUND the solve on `N&1`; there is no
+                // linear system to reconstruct for even N).
+                foreach (i; 0 .. N) {
+                    immutable int pv = prv(i);
+                    immutable Vec3 baseI = (newCv[i] - hub) * 0.5f + (Qv[i] - R[i]) * 0.5f;
+                    F10v[i] = baseI + newCv[pv] * (2.0f / 3.0f) + p20v[i] * (1.0f / 3.0f);
+                    F6v[i]  = baseI + newCv[pv] * (1.0f / 3.0f) + p20v[i] * (2.0f / 3.0f);
+                    immutable Vec3 baseP = (newCv[pv] - hub) * 0.5f + (Qv[pv] - R[pv]) * 0.5f;
+                    F18v[i] = baseP + p02v[i] * (2.0f / 3.0f) + newCv[i] * (1.0f / 3.0f);
+                    F19v[i] = baseP + p02v[i] * (1.0f / 3.0f) + newCv[i] * (2.0f / 3.0f);
+                }
+            } else {
+                // twist_fields_odd_N via the finding-(H) closed-form recurrence
+                // (D3). The reference's (4N)×(4N) system is 2 nonzeros/row (all
+                // ±1): rows 4i+0/4i+2 solve LOCALLY (a 2×2 block per side); rows
+                // 4i+1/4i+3 link all N sides in one circular chain
+                // W_{i+1}=−W_i+c_i whose odd-N monodromy (−1)^N=−1 gives the
+                // unique W_0=½·Σ(−1)^j·c_j. O(N), allocation-bounded, exact — no
+                // np.linalg.solve, no math.d solver surface.
+                Vec3[] rhs0 = new Vec3[](N), rhs1 = new Vec3[](N),
+                       rhs2 = new Vec3[](N), rhs3 = new Vec3[](N);
+                foreach (i; 0 .. N) {
+                    immutable Vec3 a = newCv[i] - hub;
+                    immutable float numer = dot(a, (newCv[nxt(i)] - hub) + (newCv[prv(i)] - hub));
+                    immutable float den = 3.0f * dot(a, a);
+                    immutable float lam = (abs(den) > 1e-20f) ? numer / den : 0.0f;
+                    rhs0[i] = F9v[nxt(i)] - F17v[i];
+                    rhs1[i] = (Qv[i] - newCv[i]) * (2.0f * lam);
+                    rhs2[i] = (R[i] - Qv[i]) * lam;
+                    rhs3[i] = newCv[nxt(i)] - newCv[i];
+                }
+                Vec3[] X0 = new Vec3[](N), X1 = new Vec3[](N),
+                       X2 = new Vec3[](N), X3 = new Vec3[](N);
+                foreach (i; 0 .. N) {
+                    X0[i] = (rhs0[i] - rhs2[i]) * 0.5f;
+                    X2[i] = (rhs0[i] + rhs2[i]) * 0.5f;
+                }
+                Vec3 wsum = Vec3(0, 0, 0);
+                foreach (j; 0 .. N) {
+                    immutable Vec3 cj = rhs3[j] - rhs1[j];
+                    wsum = (j % 2 == 0) ? wsum + cj : wsum - cj;
+                }
+                X1[0] = wsum * 0.5f;
+                foreach (i; 0 .. N - 1) X1[i + 1] = -X1[i] + (rhs3[i] - rhs1[i]);
+                foreach (i; 0 .. N) X3[i] = X1[i] + rhs1[i];
+                foreach (i; 0 .. N) {
+                    immutable int pv = prv(i);
+                    F6v[i]  = Qv[i]    - X0[i];
+                    F10v[i] = newCv[i] - X1[i];
+                    F18v[i] = X2[pv] + F13v[i];
+                    F19v[i] = X3[pv] + newCv[pv];
+                }
+            }
+
+            static float[4] bern(float t) {
+                immutable float s = 1.0f - t;
+                return [s*s*s, 3.0f*t*s*s, 3.0f*t*t*s, t*t*t];
+            }
+            Vec3 evalSub(int i, float u, float v) {
+                immutable int pv = prv(i);
+                Vec3 blend(Vec3 a, Vec3 b, float wa, float wb) {
+                    immutable float den = wa + wb;
+                    return den > 1e-9f ? (a * wa + b * wb) / den : (a + b) * 0.5f;
+                }
+                immutable Vec3 p11 = blend(F16v[i], F5v[i], u, v);
+                immutable Vec3 p12 = blend(F18v[i], F9v[i], u, 1.0f - v);
+                immutable Vec3 p21 = blend(F17v[i], F6v[i], 1.0f - u, v);
+                immutable Vec3 p22 = (F10v[i] + F19v[i]) * 0.5f;   // finding D
+                immutable Vec3[4][4] g = [
+                    [poles[i], p01v[i], p02v[i], R[pv]  ],
+                    [p10v[i],  p11,     p12,     Qv[pv] ],
+                    [p20v[i],  p21,     p22,     newCv[pv]],
+                    [R[i],     Qv[i],   newCv[i], hub    ],
+                ];
+                immutable float[4] Bu = bern(u), Bv = bern(v);
+                Vec3 acc = Vec3(0, 0, 0);
+                foreach (a; 0 .. 4) foreach (b; 0 .. 4) acc = acc + g[a][b] * (Bu[a] * Bv[b]);
+                return acc;
+            }
+            immutable int m = L - 1;
+            spokePts.length    = N * m;
+            interiorPts.length = N * m * m;
+            immutable float inv = 1.0f / cast(float) L;
+            foreach (i; 0 .. N) {
+                foreach (k; 1 .. L)
+                    spokePts[i * m + (k - 1)] = evalSub(i, 1.0f, k * inv);
+                foreach (b; 1 .. L) foreach (a; 1 .. L)
+                    interiorPts[i * m * m + (b - 1) * m + (a - 1)] = evalSub(i, a * inv, b * inv);
+            }
+            return true;
+        }
+
         // Emit one hub cap per full-ring (K==valence) vertex — Phase 2.
         // Outward-winding check via Newell's formula vs the averaged
         // ORIGINAL incident-face normal, same idiom as bevelVerticesByMask.
@@ -9569,6 +9871,86 @@ struct Mesh {
                         return interiorIdx[i][(b - 1) * m + (a - 1)];
                     }
                     foreach (i; 0 .. 3)
+                        foreach (b; 0 .. L) foreach (a; 0 .. L) {
+                            newFaces ~= [gv(i, a, b), gv(i, a + 1, b),
+                                         gv(i, a + 1, b + 1), gv(i, a, b + 1)];
+                            newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+                            newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
+                            newOrd  ~= 0;
+                            newSub  ~= isFaceSubpatch(srcFi);
+                        }
+                    continue;
+                }
+            }
+            // GENERAL N-way junction ring (N≥4, task 0454). Same L×L grid weave
+            // per sub-quad as the N=3 branch — u=0/v=0 REUSE the boundary-Bézier
+            // rail interiors, u=1/v=1 are the R→HUB spokes, the interior is the
+            // N-sided Gregory eval (`junctionRingN`, even + odd via the finding
+            // (H) closed forms). The `MAX_JUNCTION_VALENCE` cap is the DoS
+            // backstop: an over-cap full hub falls through to the flat N-gon.
+            // Compute-then-commit (R5): every position is computed before any
+            // `addVertex`, and any unapproved / non-Bézier rail (a degenerate
+            // corner the finding-(F) build refused) drops the whole ring to the
+            // flat cap — no partial mutation.
+            else if (ring_.length >= 4 && roundLevel >= 1 &&
+                     ring_.length <= MAX_JUNCTION_VALENCE) {
+                immutable int N = cast(int)ring_.length;
+                immutable int L = roundLevel;
+                immutable int m = L - 1;
+                uint[] poleI;
+                foreach (v; ring) {
+                    bool isP = false; foreach (p; ring_) if (v == p) { isP = true; break; }
+                    if (isP && cast(int)poleI.length < N) poleI ~= v;
+                }
+                bool ok = (cast(int)poleI.length == N);
+                uint[][] railI; railI.length = N;
+                Vec3[] poleP; poleP.length = N;
+                Vec3[] p1s;   p1s.length   = N;
+                Vec3[] p2s;   p2s.length   = N;
+                if (ok) foreach (i; 0 .. N) {
+                    immutable int nx = (i + 1) % N;
+                    auto railSpec = pairKey(poleI[i], poleI[nx]) in railSpecs;
+                    // A genuine N≥4 hub rail carries `useBezier` (registerRail's
+                    // R6 gate). Any rail that is unapproved (the fixed point
+                    // withheld consent) OR not a Bézier hub rail (a degenerate
+                    // corner the finding-(F) build refused) drops the ring to
+                    // the flat cap, exactly as the N=3 branch drops on an
+                    // unapproved rail.
+                    if (railSpec is null || !railSpec.approved || !railSpec.useBezier) {
+                        ok = false; break;
+                    }
+                    railI[i] = railInterior(poleI[i], poleI[nx]);
+                    if (cast(int)railI[i].length != 2 * L - 1) { ok = false; break; }
+                    poleP[i] = vertices[poleI[i]];
+                    immutable bool fwd = poleI[i] < poleI[nx];
+                    // Orient the stored (canonical a→b) handles to pole_i→pole_{i+1}.
+                    p1s[i] = fwd ? railSpec.bezP1 : railSpec.bezP2;
+                    p2s[i] = fwd ? railSpec.bezP2 : railSpec.bezP1;
+                }
+                Vec3 hubPos; Vec3[] spokeP, interiorP;
+                if (ok && junctionRingN(poleP, p1s, p2s, N, L, hubPos, spokeP, interiorP)) {
+                    immutable uint hubIdx = addVertex(hubPos);
+                    uint[][] spokeIdx;    spokeIdx.length    = N;
+                    uint[][] interiorIdx; interiorIdx.length = N;
+                    foreach (i; 0 .. N) {
+                        spokeIdx[i].length = m;
+                        foreach (k; 0 .. m) spokeIdx[i][k] = addVertex(spokeP[i * m + k]);
+                        interiorIdx[i].length = m * m;
+                        foreach (k; 0 .. m * m) interiorIdx[i][k] = addVertex(interiorP[i * m * m + k]);
+                    }
+                    uint gv(int i, int a, int b) {
+                        immutable int pv = (i + N - 1) % N;
+                        if (a == 0 && b == 0) return poleI[i];
+                        if (a == L && b == 0) return railI[i][L - 1];        // R_i
+                        if (a == 0 && b == L) return railI[pv][L - 1];       // R_prev
+                        if (a == L && b == L) return hubIdx;
+                        if (b == 0)           return railI[i][a - 1];        // pole_i→R_i
+                        if (a == 0)           return railI[pv][2 * L - 1 - b]; // pole_i→R_prev
+                        if (a == L)           return spokeIdx[i][b - 1];     // R_i→HUB
+                        if (b == L)           return spokeIdx[pv][a - 1];    // R_prev→HUB
+                        return interiorIdx[i][(b - 1) * m + (a - 1)];
+                    }
+                    foreach (i; 0 .. N)
                         foreach (b; 0 .. L) foreach (a; 0 .. L) {
                             newFaces ~= [gv(i, a, b), gv(i, a + 1, b),
                                          gv(i, a + 1, b + 1), gv(i, a, b + 1)];
