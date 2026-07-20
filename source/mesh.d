@@ -16559,6 +16559,15 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
            // the 3 pairwise boundary arcs are geodesics on the corner-rounding
            // sphere (centre V−width·Σn̂) subdivided into 2·L segments (not 2^L).
            // N>3 junctions still keep the flat N-gon cap (different reference).
+           // Provenance (task 0450): the L1 and L2 want* numbers below are
+           // transcribed directly FROM the reference capture dump
+           // (corner3_level1 / corner3_level2_w01), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's own vertex ordering substitutes
+           // directly. This makes the fixture a PARITY guard, not merely a
+           // regression guard on our own output. L3 has NO reference dump
+           // captured (no level-3 corner dump exists), so the L3 block stays
+           // kernel-frozen — a regression guard only — until one is captured.
     import std.math : SQRT1_2;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -16600,24 +16609,22 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
             // scratchpad script actually verified and the repo never kept.
             immutable Vec3[] wantVertsL1 = [
                 Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
-                Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
-                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+                Vec3(-0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
                 Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
                 Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
                 Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
-                Vec3(-0.5f, 0.400000006f, 0.5f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
-                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.470710695f, 0.470710695f, 0.400000006f),
-                Vec3(0.470710695f, -0.5f, 0.470710695f), Vec3(-0.5f, 0.470710695f, 0.470710695f),
-                Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.460947603f, 0.460947603f, 0.460947603f),
+                Vec3(-0.5f, 0.400000006f, 0.5f), Vec3(0.470710695f, 0.470710695f, -0.5f),
+                Vec3(0.470710695f, 0.470710695f, 0.400000006f), Vec3(0.470710695f, -0.5f, 0.470710695f),
+                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
+                Vec3(-0.5f, 0.470710695f, 0.470710695f), Vec3(0.460947573f, 0.460947573f, 0.460947573f),
             ];
             static immutable uint[][] wantFacesL1 = [
-                [0u, 2u, 4u, 18u, 5u, 1u], [3u, 7u, 9u, 12u],
-                [0u, 3u, 12u, 17u, 11u, 2u], [1u, 5u, 10u, 6u],
-                [2u, 11u, 8u, 4u], [0u, 1u, 6u, 16u, 7u, 3u],
-                [6u, 10u, 14u, 16u], [16u, 14u, 9u, 7u],
-                [8u, 11u, 17u, 13u], [13u, 17u, 12u, 9u],
-                [4u, 8u, 15u, 18u], [18u, 15u, 10u, 5u],
-                [8u, 13u, 19u, 15u], [9u, 14u, 19u, 13u], [10u, 15u, 19u, 14u],
+                [11u, 8u, 6u, 3u], [18u, 11u, 3u, 0u, 2u, 12u], [12u, 2u, 5u, 9u],
+                [10u, 4u, 1u, 7u], [6u, 13u, 7u, 1u, 0u, 3u], [1u, 4u, 15u, 5u, 2u, 0u],
+                [10u, 7u, 13u, 14u], [14u, 13u, 6u, 8u], [9u, 5u, 15u, 16u],
+                [16u, 15u, 4u, 10u], [12u, 9u, 17u, 18u], [18u, 17u, 8u, 11u],
+                [8u, 17u, 19u, 14u], [9u, 16u, 19u, 17u], [10u, 14u, 19u, 16u],
             ];
             assertFacesMatchByPosition(m, wantVertsL1, wantFacesL1, "K3 L1 hub-fan cap (task 0443 freeze)");
         } else if (level == 2) {
@@ -16659,38 +16666,36 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
             // above for why the topology-guard quad alone isn't enough).
             immutable Vec3[] wantVertsL2 = [
                 Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
-                Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
-                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+                Vec3(-0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
                 Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
                 Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
                 Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
-                Vec3(-0.5f, 0.400000006f, 0.5f),
-                Vec3(0.400000006f, 0.49238795f, 0.438268363f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
-                Vec3(0.400000006f, 0.438268363f, 0.49238795f), Vec3(0.438268363f, 0.400000006f, 0.49238795f),
-                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.49238795f, 0.400000006f, 0.438268363f),
-                Vec3(0.438268363f, 0.49238795f, 0.400000006f), Vec3(0.470710695f, 0.470710695f, 0.400000006f),
-                Vec3(0.49238795f, 0.438268363f, 0.400000006f), Vec3(0.49238795f, -0.5f, 0.438268363f),
-                Vec3(0.470710695f, -0.5f, 0.470710695f), Vec3(0.438268363f, -0.5f, 0.49238795f),
-                Vec3(-0.5f, 0.49238795f, 0.438268363f), Vec3(-0.5f, 0.470710695f, 0.470710695f),
-                Vec3(-0.5f, 0.438268363f, 0.49238795f), Vec3(0.438268363f, 0.49238795f, -0.5f),
-                Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.49238795f, 0.438268363f, -0.5f),
-                Vec3(0.460947603f, 0.460947603f, 0.460947603f),
-                Vec3(0.435947597f, 0.468269914f, 0.468269914f), Vec3(0.439017057f, 0.485392362f, 0.439017057f),
-                Vec3(0.468269914f, 0.435947597f, 0.468269914f), Vec3(0.439017057f, 0.439017057f, 0.485392362f),
-                Vec3(0.468269914f, 0.468269914f, 0.435947597f), Vec3(0.485392362f, 0.439017057f, 0.439017057f),
+                Vec3(-0.5f, 0.400000006f, 0.5f), Vec3(0.49238795f, 0.438268334f, -0.5f),
+                Vec3(0.49238795f, 0.438268334f, 0.400000006f), Vec3(0.470710695f, 0.470710695f, -0.5f),
+                Vec3(0.470710695f, 0.470710695f, 0.400000006f), Vec3(0.438268334f, 0.49238795f, -0.5f),
+                Vec3(0.438268334f, 0.49238795f, 0.400000006f), Vec3(0.438268334f, -0.5f, 0.49238795f),
+                Vec3(0.438268334f, 0.400000006f, 0.49238795f), Vec3(0.470710695f, -0.5f, 0.470710695f),
+                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.49238795f, -0.5f, 0.438268334f),
+                Vec3(0.49238795f, 0.400000006f, 0.438268334f), Vec3(0.400000006f, 0.438268334f, 0.49238795f),
+                Vec3(-0.5f, 0.438268334f, 0.49238795f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
+                Vec3(-0.5f, 0.470710695f, 0.470710695f), Vec3(0.400000006f, 0.49238795f, 0.438268334f),
+                Vec3(-0.5f, 0.49238795f, 0.438268334f), Vec3(0.460947573f, 0.460947573f, 0.460947573f),
+                Vec3(0.468269914f, 0.468269914f, 0.435947567f), Vec3(0.439017057f, 0.485392362f, 0.439017057f),
+                Vec3(0.435947567f, 0.468269914f, 0.468269914f), Vec3(0.439017057f, 0.439017057f, 0.485392362f),
+                Vec3(0.468269914f, 0.435947567f, 0.468269914f), Vec3(0.485392362f, 0.439017057f, 0.439017057f),
             ];
             static immutable uint[][] wantFacesL2 = [
-                [0u, 2u, 4u, 28u, 29u, 30u, 5u, 1u], [3u, 7u, 9u, 12u],
-                [0u, 3u, 12u, 27u, 26u, 25u, 11u, 2u], [1u, 5u, 10u, 6u],
-                [2u, 11u, 8u, 4u], [0u, 1u, 6u, 22u, 23u, 24u, 7u, 3u],
-                [6u, 10u, 18u, 22u], [22u, 18u, 17u, 23u], [23u, 17u, 16u, 24u],
-                [24u, 16u, 9u, 7u], [8u, 11u, 25u, 13u], [13u, 25u, 26u, 14u],
-                [14u, 26u, 27u, 15u], [15u, 27u, 12u, 9u], [4u, 8u, 19u, 28u],
-                [28u, 19u, 20u, 29u], [29u, 20u, 21u, 30u], [30u, 21u, 10u, 5u],
-                [8u, 13u, 33u, 19u], [13u, 14u, 32u, 33u], [19u, 33u, 36u, 20u],
-                [33u, 32u, 31u, 36u], [9u, 16u, 35u, 15u], [16u, 17u, 34u, 35u],
-                [15u, 35u, 32u, 14u], [35u, 34u, 31u, 32u], [10u, 21u, 37u, 18u],
-                [21u, 20u, 36u, 37u], [18u, 37u, 34u, 17u], [37u, 36u, 31u, 34u],
+                [11u, 8u, 6u, 3u], [26u, 28u, 30u, 11u, 3u, 0u, 2u, 12u], [12u, 2u, 5u, 9u],
+                [10u, 4u, 1u, 7u], [6u, 17u, 15u, 13u, 7u, 1u, 0u, 3u], [1u, 4u, 23u, 21u, 19u, 5u, 2u, 0u],
+                [10u, 7u, 13u, 14u], [14u, 13u, 15u, 16u], [16u, 15u, 17u, 18u],
+                [18u, 17u, 6u, 8u], [9u, 5u, 19u, 20u], [20u, 19u, 21u, 22u],
+                [22u, 21u, 23u, 24u], [24u, 23u, 4u, 10u], [12u, 9u, 25u, 26u],
+                [26u, 25u, 27u, 28u], [28u, 27u, 29u, 30u], [30u, 29u, 8u, 11u],
+                [8u, 29u, 33u, 18u], [18u, 33u, 32u, 16u], [29u, 27u, 34u, 33u],
+                [33u, 34u, 31u, 32u], [9u, 20u, 35u, 25u], [25u, 35u, 34u, 27u],
+                [20u, 22u, 36u, 35u], [35u, 36u, 31u, 34u], [10u, 14u, 37u, 24u],
+                [24u, 37u, 36u, 22u], [14u, 16u, 32u, 37u], [37u, 32u, 31u, 36u],
             ];
             assertFacesMatchByPosition(m, wantVertsL2, wantFacesL2, "K3 L2 Gregory ring (task 0443 freeze)");
         } else {
@@ -16937,9 +16942,12 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
 unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
            // cap (task 0443 freeze). Companion to the L1/L2/L3 Gregory-ring
            // test above; same cube corner, same width, no rounding at all.
-           // Full position+connectivity freeze — the reference numbers
-           // (13v/10f) were, like L1-L3 before this task, verified once
-           // out-of-repo and never pinned beyond a vertex/face count.
+           // Full position+connectivity freeze. Provenance (task 0450): the
+           // want* numbers below are transcribed directly FROM the reference
+           // capture dump (corner3_sharp0), not from our kernel's output, so
+           // this is a PARITY guard — assertFacesMatchByPosition canonicalises
+           // by position+connectivity, letting the reference's own vertex
+           // ordering substitute directly.
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
             uint a = mm.edges[i][0], b = mm.edges[i][1];
@@ -16959,17 +16967,17 @@ unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
         "K3 L0 must be the reference 13v/10f flat cap");
     immutable Vec3[] wantVerts = [
         Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
-        Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
-        Vec3(0.4f, 0.5f, -0.5f), Vec3(0.5f, 0.4f, -0.5f),
-        Vec3(0.5f, -0.5f, 0.4f), Vec3(0.4f, -0.5f, 0.5f),
-        Vec3(0.4f, 0.5f, 0.4f), Vec3(0.4f, 0.4f, 0.5f),
-        Vec3(0.5f, 0.4f, 0.4f), Vec3(-0.5f, 0.5f, 0.4f),
-        Vec3(-0.5f, 0.4f, 0.5f),
+        Vec3(-0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+        Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+        Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+        Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
+        Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
+        Vec3(-0.5f, 0.400000006f, 0.5f),
     ];
     static immutable uint[][] wantFaces = [
-        [0u, 2u, 4u, 5u, 1u], [3u, 7u, 9u, 12u], [0u, 3u, 12u, 11u, 2u],
-        [1u, 5u, 10u, 6u], [2u, 11u, 8u, 4u], [0u, 1u, 6u, 7u, 3u],
-        [6u, 10u, 9u, 7u], [8u, 11u, 12u, 9u], [4u, 8u, 10u, 5u],
+        [11u, 8u, 6u, 3u], [11u, 3u, 0u, 2u, 12u], [12u, 2u, 5u, 9u],
+        [10u, 4u, 1u, 7u], [6u, 7u, 1u, 0u, 3u], [1u, 4u, 5u, 2u, 0u],
+        [10u, 7u, 6u, 8u], [9u, 5u, 4u, 10u], [12u, 9u, 8u, 11u],
         [8u, 9u, 10u],
     ];
     assertFacesMatchByPosition(m, wantVerts, wantFaces, "K3 L0 flat cap (task 0443 freeze)");
@@ -17040,7 +17048,13 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
            // Reference-verified at width=0.15, Round Level 0/1/2 (task
            // 0391's open-boundary law + its Round Level follow-up) — full
            // position+connectivity freeze, not just the vertex/face counts
-           // the repo kept until now.
+           // the repo kept until now. Provenance (task 0450): the want*
+           // numbers below are transcribed directly FROM the matching reference
+           // capture dump (open_<case>_w015[_levelN]), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly. This makes each level a PARITY guard, not merely a
+           // regression guard on our own output.
     import std.conv : to;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -17078,13 +17092,13 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
             Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
-            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.349999994f),
             Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 7u, 5u],
-            [6u, 9u, 8u, 7u], [9u, 11u, 10u, 8u],
+            [0u, 1u, 2u, 3u], [11u, 8u, 2u, 1u], [3u, 6u, 4u, 0u],
+            [2u, 8u, 6u, 3u], [7u, 9u, 10u, 5u], [7u, 5u, 4u, 6u],
+            [9u, 7u, 6u, 8u], [10u, 9u, 8u, 11u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17097,16 +17111,16 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
             Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
-            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.349999994f),
             Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.456066012f, 0.456066012f, -0.456066012f),
             Vec3(0.456066012f, 0.456066012f, 0.456066012f), Vec3(0.456066012f, -0.5f, 0.456066012f),
-            Vec3(0.456066012f, 0.456066012f, -0.456066012f), Vec3(0.456066012f, -0.5f, -0.456066012f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 14u, 15u],
-            [15u, 14u, 7u, 5u], [6u, 9u, 12u, 14u], [14u, 12u, 8u, 7u],
-            [9u, 11u, 13u, 12u], [12u, 13u, 10u, 8u],
+            [0u, 1u, 2u, 3u], [11u, 8u, 2u, 1u], [3u, 6u, 4u, 0u],
+            [2u, 8u, 6u, 3u], [7u, 9u, 10u, 5u], [7u, 5u, 12u, 13u],
+            [13u, 12u, 4u, 6u], [9u, 7u, 13u, 14u], [14u, 13u, 6u, 8u],
+            [10u, 9u, 14u, 15u], [15u, 14u, 8u, 11u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17119,22 +17133,22 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
             Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
-            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.349999994f),
             Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
+            Vec3(0.488581926f, -0.5f, -0.407402515f), Vec3(0.488581926f, 0.407402515f, -0.407402515f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.456066012f, 0.456066012f, -0.456066012f),
+            Vec3(0.407402515f, -0.5f, -0.488581926f), Vec3(0.407402515f, 0.488581926f, -0.488581926f),
             Vec3(0.488581926f, 0.407402515f, 0.407402515f), Vec3(0.456066012f, 0.456066012f, 0.456066012f),
             Vec3(0.407402515f, 0.488581926f, 0.488581926f), Vec3(0.488581926f, -0.5f, 0.407402515f),
             Vec3(0.456066012f, -0.5f, 0.456066012f), Vec3(0.407402515f, -0.5f, 0.488581926f),
-            Vec3(0.407402515f, 0.488581926f, -0.488581926f), Vec3(0.456066012f, 0.456066012f, -0.456066012f),
-            Vec3(0.488581926f, 0.407402515f, -0.407402515f), Vec3(0.407402515f, -0.5f, -0.488581926f),
-            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.488581926f, -0.5f, -0.407402515f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 18u, 21u],
-            [21u, 18u, 19u, 22u], [22u, 19u, 20u, 23u], [23u, 20u, 7u, 5u],
-            [6u, 9u, 14u, 18u], [18u, 14u, 13u, 19u], [19u, 13u, 12u, 20u],
-            [20u, 12u, 8u, 7u], [9u, 11u, 17u, 14u], [14u, 17u, 16u, 13u],
-            [13u, 16u, 15u, 12u], [12u, 15u, 10u, 8u],
+            [0u, 1u, 2u, 3u], [11u, 8u, 2u, 1u], [3u, 6u, 4u, 0u],
+            [2u, 8u, 6u, 3u], [7u, 9u, 10u, 5u], [7u, 5u, 12u, 13u],
+            [13u, 12u, 14u, 15u], [15u, 14u, 16u, 17u], [17u, 16u, 4u, 6u],
+            [9u, 7u, 13u, 18u], [18u, 13u, 15u, 19u], [19u, 15u, 17u, 20u],
+            [20u, 17u, 6u, 8u], [10u, 9u, 18u, 21u], [21u, 18u, 19u, 22u],
+            [22u, 19u, 20u, 23u], [23u, 20u, 8u, 11u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17151,7 +17165,13 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
            // Reference-verified at width=0.15, Round Level 0/1/2 (task
            // 0391's open-boundary law + its Round Level follow-up) — full
            // position+connectivity freeze, not just the vertex/face counts
-           // the repo kept until now.
+           // the repo kept until now. Provenance (task 0450): the want*
+           // numbers below are transcribed directly FROM the matching reference
+           // capture dump (open_<case>_w015[_levelN]), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly. This makes each level a PARITY guard, not merely a
+           // regression guard on our own output.
     import std.conv : to;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -17189,11 +17209,11 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
-            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.349999994f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 9u],
-            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [3u, 8u, 6u, 0u], [2u, 4u, 9u, 8u, 3u],
+            [9u, 4u, 5u, 7u], [1u, 5u, 4u, 2u], [9u, 7u, 6u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17206,13 +17226,13 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
-            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
-            Vec3(0.456066012f, 0.5f, -0.456066012f), Vec3(0.456066012f, -0.5f, -0.456066012f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.349999994f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.456066012f, 0.5f, -0.456066012f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 10u, 9u],
-            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 10u, 11u],
-            [11u, 10u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [3u, 8u, 6u, 0u], [2u, 4u, 9u, 11u, 8u, 3u],
+            [9u, 4u, 5u, 7u], [1u, 5u, 4u, 2u], [9u, 7u, 10u, 11u],
+            [11u, 10u, 6u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17225,15 +17245,15 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
-            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
-            Vec3(0.488581926f, 0.5f, -0.407402515f), Vec3(0.456066012f, 0.5f, -0.456066012f),
-            Vec3(0.407402515f, 0.5f, -0.488581926f), Vec3(0.407402515f, -0.5f, -0.488581926f),
-            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.488581926f, -0.5f, -0.407402515f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.349999994f),
+            Vec3(0.488581926f, -0.5f, -0.407402515f), Vec3(0.488581926f, 0.5f, -0.407402515f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.456066012f, 0.5f, -0.456066012f),
+            Vec3(0.407402515f, -0.5f, -0.488581926f), Vec3(0.407402515f, 0.5f, -0.488581926f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 10u, 11u, 12u, 9u],
-            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 12u, 13u],
-            [13u, 12u, 11u, 14u], [14u, 11u, 10u, 15u], [15u, 10u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [3u, 8u, 6u, 0u], [2u, 4u, 9u, 11u, 13u, 15u, 8u, 3u],
+            [9u, 4u, 5u, 7u], [1u, 5u, 4u, 2u], [9u, 7u, 10u, 11u],
+            [11u, 10u, 12u, 13u], [13u, 12u, 14u, 15u], [15u, 14u, 6u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17250,7 +17270,13 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
            // Reference-verified at width=0.15, Round Level 0/1/2 (task
            // 0391's open-boundary law + its Round Level follow-up) — full
            // position+connectivity freeze, not just the vertex/face counts
-           // the repo kept until now.
+           // the repo kept until now. Provenance (task 0450): the want*
+           // numbers below are transcribed directly FROM the matching reference
+           // capture dump (open_<case>_w015[_levelN]), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly. This makes each level a PARITY guard, not merely a
+           // regression guard on our own output.
     import std.conv : to;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -17287,12 +17313,12 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
-            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 7u, 4u], [1u, 5u, 8u, 9u, 2u], [6u, 9u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [5u, 9u, 8u, 2u, 1u], [3u, 7u, 6u, 4u, 0u],
+            [2u, 8u, 7u, 3u], [6u, 9u, 5u, 4u], [9u, 6u, 7u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17304,14 +17330,14 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
-            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
-            Vec3(0.456066012f, 0.456066012f, 0.5f), Vec3(0.456066012f, 0.456066012f, -0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
+            Vec3(0.456066012f, 0.456066012f, -0.5f), Vec3(0.456066012f, 0.456066012f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 11u, 7u, 4u], [1u, 5u, 8u, 10u, 9u, 2u], [6u, 9u, 10u, 11u],
-            [11u, 10u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [5u, 9u, 11u, 8u, 2u, 1u], [3u, 7u, 10u, 6u, 4u, 0u],
+            [2u, 8u, 7u, 3u], [6u, 9u, 5u, 4u], [9u, 6u, 10u, 11u],
+            [11u, 10u, 7u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17323,16 +17349,16 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
-            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
-            Vec3(0.488581926f, 0.407402515f, 0.5f), Vec3(0.456066012f, 0.456066012f, 0.5f),
-            Vec3(0.407402515f, 0.488581926f, 0.5f), Vec3(0.407402515f, 0.488581926f, -0.5f),
-            Vec3(0.456066012f, 0.456066012f, -0.5f), Vec3(0.488581926f, 0.407402515f, -0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
+            Vec3(0.488581926f, 0.407402515f, -0.5f), Vec3(0.488581926f, 0.407402515f, 0.5f),
+            Vec3(0.456066012f, 0.456066012f, -0.5f), Vec3(0.456066012f, 0.456066012f, 0.5f),
+            Vec3(0.407402515f, 0.488581926f, -0.5f), Vec3(0.407402515f, 0.488581926f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
-            [0u, 3u, 6u, 13u, 14u, 15u, 7u, 4u], [1u, 5u, 8u, 10u, 11u, 12u, 9u, 2u], [6u, 9u, 12u, 13u],
-            [13u, 12u, 11u, 14u], [14u, 11u, 10u, 15u], [15u, 10u, 8u, 7u],
+            [0u, 1u, 2u, 3u], [5u, 9u, 11u, 13u, 15u, 8u, 2u, 1u], [3u, 7u, 14u, 12u, 10u, 6u, 4u, 0u],
+            [2u, 8u, 7u, 3u], [6u, 9u, 5u, 4u], [9u, 6u, 10u, 11u],
+            [11u, 10u, 12u, 13u], [13u, 12u, 14u, 15u], [15u, 14u, 7u, 8u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17350,7 +17376,13 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
            // Reference-verified at width=0.15, Round Level 0/1/2 (task
            // 0391's open-boundary law + its Round Level follow-up) — full
            // position+connectivity freeze, not just the vertex/face counts
-           // the repo kept until now.
+           // the repo kept until now. Provenance (task 0450): the want*
+           // numbers below are transcribed directly FROM the matching reference
+           // capture dump (open_<case>_w015[_levelN]), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly. This makes each level a PARITY guard, not merely a
+           // regression guard on our own output.
     import std.conv : to;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -17387,12 +17419,12 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
-            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.349999994f, -0.5f),
             Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
-            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+            [0u, 1u, 2u, 3u], [4u, 5u, 8u, 7u], [3u, 2u, 5u, 4u],
+            [3u, 4u, 7u, 6u, 0u], [9u, 8u, 5u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17404,12 +17436,12 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
-            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.349999994f, -0.5f),
             Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
-            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+            [0u, 1u, 2u, 3u], [4u, 5u, 8u, 7u], [3u, 2u, 5u, 4u],
+            [3u, 4u, 7u, 6u, 0u], [9u, 8u, 5u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17421,12 +17453,12 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
-            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.349999994f, -0.5f),
             Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
-            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+            [0u, 1u, 2u, 3u], [4u, 5u, 8u, 7u], [3u, 2u, 5u, 4u],
+            [3u, 4u, 7u, 6u, 0u], [9u, 8u, 5u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17444,7 +17476,13 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
            // Reference-verified at width=0.15, Round Level 0/1/2 (task
            // 0391's open-boundary law + its Round Level follow-up) — full
            // position+connectivity freeze, not just the vertex/face counts
-           // the repo kept until now.
+           // the repo kept until now. Provenance (task 0450): the want*
+           // numbers below are transcribed directly FROM the matching reference
+           // capture dump (open_<case>_w015[_levelN]), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly. This makes each level a PARITY guard, not merely a
+           // regression guard on our own output.
     import std.conv : to;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -17482,11 +17520,11 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
-            [1u, 5u, 8u, 9u, 2u],
+            [0u, 1u, 2u, 3u], [6u, 9u, 5u, 4u], [3u, 7u, 6u, 4u, 0u],
+            [5u, 9u, 8u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17499,11 +17537,11 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
-            [1u, 5u, 8u, 9u, 2u],
+            [0u, 1u, 2u, 3u], [6u, 9u, 5u, 4u], [3u, 7u, 6u, 4u, 0u],
+            [5u, 9u, 8u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17516,11 +17554,11 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
             Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
             Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
-            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, 0.5f), Vec3(0.5f, 0.349999994f, 0.5f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
-            [1u, 5u, 8u, 9u, 2u],
+            [0u, 1u, 2u, 3u], [6u, 9u, 5u, 4u], [3u, 7u, 6u, 4u, 0u],
+            [5u, 9u, 8u, 2u, 1u],
         ];
 
             assertFacesMatchByPosition(m, wantVerts, wantFaces,
@@ -17538,7 +17576,13 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0
            // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
            // every level per task 0435/0442 — no Gregory ring generalization
            // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it.
+           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // the want* numbers below are transcribed directly FROM the
+           // reference capture dump (gen_k*_level0), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly, making this a PARITY guard rather than a regression
+           // guard on our own output.
     import std.conv : to;
     Mesh m;
     m.vertices = [
@@ -17558,17 +17602,17 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0
 
         // 12v/9f
         immutable Vec3[] wantVerts = [
-            Vec3(0.122474499f, 0.122474536f, 0.244949028f), Vec3(-0.122474536f, 0.122474499f, 0.244949028f),
-            Vec3(-0.122474499f, -0.122474536f, 0.244949028f), Vec3(0.122474536f, -0.122474499f, 0.244949028f),
-            Vec3(1.30814755f, 0.106066026f, 1.41421354f), Vec3(1.30814755f, -0.106066026f, 1.41421354f),
-            Vec3(-0.106066026f, 1.30814755f, 1.41421354f), Vec3(0.106066026f, 1.30814755f, 1.41421354f),
-            Vec3(-1.30814755f, -0.106066026f, 1.41421354f), Vec3(-1.30814755f, 0.106066026f, 1.41421354f),
-            Vec3(0.106066026f, -1.30814755f, 1.41421354f), Vec3(-0.106066026f, -1.30814755f, 1.41421354f),
+            Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f),
+            Vec3(0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, 0.122474484f, 0.244948968f),
+            Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-0.106066018f, 1.30814755f, 1.41421354f), Vec3(0.106066018f, 1.30814755f, 1.41421354f),
+            Vec3(-1.30814755f, -0.106066018f, 1.41421354f), Vec3(-1.30814755f, 0.106066018f, 1.41421354f),
+            Vec3(0.106066018f, -1.30814755f, 1.41421354f), Vec3(-0.106066018f, -1.30814755f, 1.41421354f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 4u, 7u], [1u, 6u, 9u], [2u, 8u, 11u],
-            [3u, 10u, 5u], [3u, 5u, 4u, 0u], [6u, 1u, 0u, 7u],
-            [8u, 2u, 1u, 9u], [10u, 3u, 2u, 11u], [0u, 1u, 2u, 3u],
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 2u, 5u], [3u, 7u, 6u, 0u],
+            [0u, 9u, 8u, 1u], [1u, 11u, 10u, 2u], [0u, 1u, 2u, 3u],
         ];
 
     assertFacesMatchByPosition(m, wantVerts, wantFaces, "K4 junction (symmetric) L0 (task 0443 freeze)");
@@ -17581,7 +17625,13 @@ unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0
            // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
            // every level per task 0435/0442 — no Gregory ring generalization
            // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it.
+           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // the want* numbers below are transcribed directly FROM the
+           // reference capture dump (gen_k*_level0), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly, making this a PARITY guard rather than a regression
+           // guard on our own output.
     import std.conv : to;
     Mesh m;
     m.vertices = [
@@ -17602,9 +17652,9 @@ unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0
 
         // 15v/11f
         immutable Vec3[] wantVerts = [
-            Vec3(0.183640465f, 0.133422613f, 0.28057766f), Vec3(-0.0701444373f, 0.215882331f, 0.28057766f),
-            Vec3(-0.2269921f, 0f, 0.28057766f), Vec3(-0.0701444224f, -0.215882331f, 0.28057766f),
-            Vec3(0.18364048f, -0.133422598f, 0.28057766f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
+            Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f),
+            Vec3(-0.0701444149f, -0.215882301f, 0.28057763f), Vec3(0.18364045f, -0.133422598f, 0.28057763f),
+            Vec3(0.18364045f, 0.133422598f, 0.28057763f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
             Vec3(1.32604575f, -0.121352553f, 1.41421354f), Vec3(0.294357538f, 1.29864454f, 1.41421354f),
             Vec3(0.525183797f, 1.2236445f, 1.41421354f), Vec3(-1.14412284f, 0.68125391f, 1.41421354f),
             Vec3(-1.00146437f, 0.877606452f, 1.41421354f), Vec3(-1.00146437f, -0.877606452f, 1.41421354f),
@@ -17612,10 +17662,10 @@ unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0
             Vec3(0.294357538f, -1.29864454f, 1.41421354f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 5u, 8u], [1u, 7u, 10u], [2u, 9u, 12u],
-            [3u, 11u, 14u], [4u, 13u, 6u], [4u, 6u, 5u, 0u],
-            [7u, 1u, 0u, 8u], [9u, 2u, 1u, 10u], [11u, 3u, 2u, 12u],
-            [13u, 4u, 3u, 14u], [0u, 1u, 2u, 3u, 4u],
+            [3u, 13u, 6u], [2u, 11u, 14u], [1u, 9u, 12u],
+            [0u, 7u, 10u], [4u, 5u, 8u], [5u, 4u, 3u, 6u],
+            [4u, 8u, 7u, 0u], [0u, 10u, 9u, 1u], [1u, 12u, 11u, 2u],
+            [2u, 14u, 13u, 3u], [0u, 1u, 2u, 3u, 4u],
         ];
 
     assertFacesMatchByPosition(m, wantVerts, wantFaces, "K5 junction (symmetric) L0 (task 0443 freeze)");
@@ -17630,7 +17680,13 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 
            // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
            // every level per task 0435/0442 — no Gregory ring generalization
            // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it.
+           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // the want* numbers below are transcribed directly FROM the
+           // reference capture dump (gen_k*_level0), not from our kernel's
+           // output — assertFacesMatchByPosition canonicalises by position and
+           // connectivity, so the reference's vertex ordering substitutes
+           // directly, making this a PARITY guard rather than a regression
+           // guard on our own output.
     import std.conv : to;
     Mesh m;
     m.vertices = [
@@ -17650,17 +17706,17 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 
 
         // 12v/9f
         immutable Vec3[] wantVerts = [
-            Vec3(0.154816538f, 0.131210014f, 0.219448239f), Vec3(-0.112768516f, 0.177031428f, 0.204165533f),
-            Vec3(-0.123843782f, -0.0404019952f, 0.222460389f), Vec3(0.137606412f, -0.09467794f, 0.261711955f),
-            Vec3(1.51600754f, 0.122758195f, 1.31938279f), Vec3(1.48506081f, -0.0862043649f, 1.3431021f),
+            Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f),
+            Vec3(0.137606427f, -0.0946779326f, 0.261711925f), Vec3(0.154816538f, 0.131210014f, 0.219448209f),
+            Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
             Vec3(0.18828249f, 1.80799735f, 1.56057036f), Vec3(0.383992463f, 1.77724183f, 1.58061719f),
             Vec3(-1.31173038f, 0.3928155f, 1.05674469f), Vec3(-1.28828239f, 0.59200269f, 1.03942966f),
-            Vec3(0.114939161f, -1.11379564f, 1.85689783f), Vec3(-0.0882695764f, -1.09281552f, 1.84325528f),
+            Vec3(0.114939153f, -1.11379564f, 1.85689783f), Vec3(-0.0882695839f, -1.09281552f, 1.84325528f),
         ];
         static immutable uint[][] wantFaces = [
-            [0u, 4u, 7u], [1u, 6u, 9u], [2u, 8u, 11u],
-            [3u, 10u, 5u], [3u, 5u, 4u, 0u], [6u, 1u, 0u, 7u],
-            [8u, 2u, 1u, 9u], [10u, 3u, 2u, 11u], [0u, 1u, 2u, 3u],
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 2u, 5u], [3u, 7u, 6u, 0u],
+            [0u, 9u, 8u, 1u], [1u, 11u, 10u, 2u], [0u, 1u, 2u, 3u],
         ];
 
     assertFacesMatchByPosition(m, wantVerts, wantFaces, "K4 junction (asymmetric) L0 (task 0443 freeze)");
