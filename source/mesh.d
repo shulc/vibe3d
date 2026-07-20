@@ -15602,9 +15602,10 @@ unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
            // mutation, at every Round Level.
            //
            // Verified: with the notch guard removed this very mesh produces a
-           // 12-edge rim where 8 is correct — i.e. the no-op is load-bearing,
-           // not incidental. A proper valence>3 free-end cap needs its own
-           // reference capture and is tracked separately.
+           // 12-edge rim, where the reference gives 12v/6f with a 9-edge rim
+           // (the pre-bevel rim is 8, plus one from splitting the boundary
+           // vertex). So the no-op is load-bearing, not incidental. The real
+           // valence>3 free-end cap is captured and tracked separately.
     //   0   1   2
     //   3   4   5     <- 2x2 quad grid; vertex 4 is fully interior (valence
     //   6   7   8        4); vertex 1 is a top-boundary vertex (valence 3,
