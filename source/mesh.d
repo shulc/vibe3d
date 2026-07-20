@@ -8958,6 +8958,25 @@ struct Mesh {
             // Anything else is a malformed / non-manifold fan and is skipped.
             immutable bool openFan = (nE == d + 1);
             if (d < 2 || (nE != d && !openFan)) continue;
+            // The counts above can look healthy while the walk itself is wrong.
+            // On a two-face "hinge" — two faces sharing one edge and nothing
+            // else at either endpoint — `edgesAroundVertex` yields an edge that
+            // is not incident to V at all (measured: at V=0 it returns the
+            // edge (3,1)). `edgeOtherVertex` then asserts, which took the whole
+            // application down from the tool's live preview. A count check
+            // cannot catch this, so verify incidence directly and treat a bad
+            // walk as the malformed fan it is.
+            //
+            // This is a defensive skip, NOT a fix: the walk itself is wrong and
+            // every operation that iterates a vertex fan sees the same bad
+            // edge. That is tracked separately — do not remove this guard on
+            // the grounds that the walk "should" be correct.
+            bool walkSane = true;
+            foreach (k; 0 .. nE) {
+                immutable uint ea = edges[vEdges[k]][0], eb = edges[vEdges[k]][1];
+                if (ea != V && eb != V) { walkSane = false; break; }
+            }
+            if (!walkSane) continue;
             vNbrs.length = nE;
             foreach (k; 0 .. nE) vNbrs[k] = edgeOtherVertex(vEdges[k], V);
 
@@ -16725,6 +16744,72 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four (task 0439).
     assert(m.vertices.length == 11 && m.faces.length == 12,
         "non-adjacent K2 valence-4 octahedron golden must be 11v/12f");
     assertBevelManifoldClean(m, "non-adjacent valence-4 K2 free-end cap");
+}
+
+unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
+           // Regression for a crash the reference-diff suite surfaced the
+           // moment it was re-enabled: `edgeOtherVertex: vi does not belong to
+           // edge ei`, asserted from the per-vertex fan pass and fatal to the
+           // whole application when reached through the tool.
+           //
+           // The cause is NOT in this function. On this shape
+           // `edgesAroundVertex` yields an edge that is not incident to the
+           // vertex at all — at V=0 it returns the edge (3,1) — while the
+           // counts still look healthy (2 faces, 3 edges, so it reads as a
+           // well-formed open fan). The walk is wrong, and every operation
+           // that iterates a vertex fan sees the same bad edge; that is
+           // tracked separately. Here we only require that the bevel treats
+           // it as the malformed fan it is and declines, rather than
+           // asserting.
+    Mesh hinge() {
+        // Two quads sharing the spine (0,1), nothing else at either endpoint.
+        Mesh m;
+        m.vertices = [
+            Vec3(0, 0, 1), Vec3(0, 0, -1),
+            Vec3(1, 0, 1), Vec3(1, 0, -1),
+            Vec3(-0.5f, 0.866025f, 1), Vec3(-0.5f, 0.866025f, -1),
+        ];
+        m.addFace([0u, 2u, 3u, 1u]);
+        m.addFace([0u, 4u, 5u, 1u]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+
+    // Premise: the walk really is inconsistent here. If this ever starts
+    // passing, the underlying fan-walk defect has been fixed and this test
+    // should be revisited rather than deleted — the bevel may then legitimately
+    // process the hinge.
+    {
+        auto m = hinge();
+        bool sawForeignEdge = false;
+        foreach (V; 0 .. cast(uint)m.vertices.length)
+            foreach (ei; m.edgesAroundVertex(V)) {
+                immutable uint a = m.edges[ei][0], b = m.edges[ei][1];
+                if (a != V && b != V) { sawForeignEdge = true; break; }
+            }
+        assert(sawForeignEdge,
+            "premise gone: the fan walk no longer returns a foreign edge here");
+    }
+
+    foreach (pair; [[0u, 1u], [0u, 2u], [2u, 3u]])
+        foreach (level; 0 .. 2) {
+            auto m = hinge();
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            foreach (i; 0 .. m.edges.length) {
+                immutable uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) {
+                    mask[i] = true; break;
+                }
+            }
+            auto vertsBefore = m.vertices.dup;
+            auto facesBefore = m.faces._store.dup;
+            // Completing at all is the regression check — this used to assert.
+            assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 0,
+                "a malformed fan must decline, not assert");
+            assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
+                "the decline must leave the mesh byte-identical");
+        }
 }
 
 unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
