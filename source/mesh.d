@@ -9447,6 +9447,17 @@ struct Mesh {
                 uint[][3] railI;
                 Vec3[3] poleP, RP;
                 if (ok) foreach (i; 0 .. 3) {
+                    // A pairwise rail here is NOT guaranteed approved. Since
+                    // task 0439 a free-end / partial-fan cap elsewhere in the
+                    // same operation can withhold a rail's second consumer, and
+                    // the approval fixed point then un-rounds that whole span
+                    // run — including a rail this junction wants. `railInterior`
+                    // asserts on an unapproved rail, so check first and fall
+                    // back to the flat cap, exactly as the strip emission does.
+                    // Reachable: a K3 junction whose far endpoints are valence-4
+                    // free ends, which was refused outright before 0439.
+                    auto railSpec = pairKey(poleI[i], poleI[(i + 1) % 3]) in railSpecs;
+                    if (railSpec is null || !railSpec.approved) { ok = false; break; }
                     railI[i] = railInterior(poleI[i], poleI[(i + 1) % 3]);
                     if (railI[i].length != 2 * L - 1) { ok = false; break; }
                     poleP[i] = vertices[poleI[i]];
@@ -16714,6 +16725,63 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four (task 0439).
     assert(m.vertices.length == 11 && m.faces.length == 12,
         "non-adjacent K2 valence-4 octahedron golden must be 11v/12f");
     assertBevelManifoldClean(m, "non-adjacent valence-4 K2 free-end cap");
+}
+
+unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
+           // FREE ENDS must not assert. Regression for a crash that reached a
+           // user (`rounded edge bevel rail must be approved before
+           // materialization`, hit through the tool's live preview).
+           //
+           // The two cap mechanisms meet in one operation here: the corner is a
+           // full ring (K == valence == 3) and takes the hub-cap path, while its
+           // three far endpoints are valence-4 free ends and take the cap added
+           // by task 0439. That cap deliberately withholds its rails' second
+           // consumer so the span run degrades to L0 — which leaves the rails
+           // UNAPPROVED, and the K3 Gregory branch used to call `railInterior`
+           // on them unconditionally. It must check approval and fall back to
+           // the flat cap instead.
+           //
+           // Unreachable before 0439: the valence-4 free ends were refused
+           // outright, so the junction never got the chance to round.
+    // A once-subdivided cube is exactly this shape: 26v/24f, corner vertices at
+    // valence 3, every one of their neighbours at valence 4.
+    auto probe = subdivideCube(1);
+    int corner = -1;
+    foreach (V; 0 .. cast(uint)probe.vertices.length) {
+        size_t d = 0;
+        foreach (fi; probe.facesAroundVertex(V)) ++d;
+        if (d == 3) { corner = cast(int)V; break; }
+    }
+    assert(corner >= 0, "a subdivided cube must have a valence-3 corner");
+    {
+        size_t d = 0, e = 0;
+        foreach (fi; probe.facesAroundVertex(cast(uint)corner)) ++d;
+        foreach (ei; probe.edgesAroundVertex(cast(uint)corner)) ++e;
+        assert(d == 3 && e == 3, "corner must be a closed valence-3 fan");
+        foreach (ei; probe.edgesAroundVertex(cast(uint)corner)) {
+            immutable uint far = probe.edgeOtherVertex(ei, cast(uint)corner);
+            size_t fd = 0;
+            foreach (fi; probe.facesAroundVertex(far)) ++fd;
+            assert(fd == 4, "each far endpoint must be valence 4 for this regression");
+        }
+    }
+
+    foreach (level; 0 .. 3) {
+        auto m = subdivideCube(1);
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        size_t sel = 0;
+        foreach (ei; m.edgesAroundVertex(cast(uint)corner)) { mask[ei] = true; ++sel; }
+        assert(sel == 3, "expected the corner's three edges");
+        // The assertion this guards against fired inside the kernel, so simply
+        // completing is the regression check; the counts pin the flat-cap
+        // fallback the degrade produces.
+        immutable size_t n = m.bevelEdgesByMask(mask, 0.05f, cast(int)level);
+        assert(n == 3, "all three junction edges must bevel at every Round Level");
+        assert(m.vertices.length == 34 && m.faces.length == 31,
+            "cap-bearing free ends degrade the whole run to L0, so every level "
+            ~ "must produce the same flat result");
+        assertBevelManifoldClean(m, "K3 junction with valence-4 free ends");
+    }
 }
 
 unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
