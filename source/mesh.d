@@ -16594,6 +16594,32 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
             foreach (v; m.vertices)
                 if ((v - Vec3(0.4f, 0.4f + off, 0.4f + off)).length < 1e-4f) foundBis = true;
             assert(foundBis, "K3 L1 pairwise arc must be the true-arc bisector");
+            // Task 0443: the spot-checks above only ever pinned a handful of
+            // positions; the full position+connectivity freeze (every vertex,
+            // every face canonicalized over rotation) is what the private
+            // scratchpad script actually verified and the repo never kept.
+            immutable Vec3[] wantVertsL1 = [
+                Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
+                Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+                Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
+                Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
+                Vec3(-0.5f, 0.400000006f, 0.5f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
+                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.470710695f, 0.470710695f, 0.400000006f),
+                Vec3(0.470710695f, -0.5f, 0.470710695f), Vec3(-0.5f, 0.470710695f, 0.470710695f),
+                Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.460947603f, 0.460947603f, 0.460947603f),
+            ];
+            static immutable uint[][] wantFacesL1 = [
+                [0u, 2u, 4u, 18u, 5u, 1u], [3u, 7u, 9u, 12u],
+                [0u, 3u, 12u, 17u, 11u, 2u], [1u, 5u, 10u, 6u],
+                [2u, 11u, 8u, 4u], [0u, 1u, 6u, 16u, 7u, 3u],
+                [6u, 10u, 14u, 16u], [16u, 14u, 9u, 7u],
+                [8u, 11u, 17u, 13u], [13u, 17u, 12u, 9u],
+                [4u, 8u, 15u, 18u], [18u, 15u, 10u, 5u],
+                [8u, 13u, 19u, 15u], [9u, 14u, 19u, 13u], [10u, 15u, 19u, 14u],
+            ];
+            assertFacesMatchByPosition(m, wantVertsL1, wantFacesL1, "K3 L1 hub-fan cap (task 0443 freeze)");
         } else if (level == 2) {
             // Rational-Gregory interior ring over a 2×2-per-sub-quad grid.
             assert(m.vertices.length == 38 && m.faces.length == 30,
@@ -16629,6 +16655,44 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
             assert(foundQuad,
                 "K3 L2 ring must weave the reference [rail,typeB,typeA,R] quad; a "
                 ~ "count/manifold-clean pass with the wrong connectivity fails here");
+            // Task 0443: full position+connectivity freeze (see the L1 branch
+            // above for why the topology-guard quad alone isn't enough).
+            immutable Vec3[] wantVertsL2 = [
+                Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
+                Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+                Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
+                Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
+                Vec3(-0.5f, 0.400000006f, 0.5f),
+                Vec3(0.400000006f, 0.49238795f, 0.438268363f), Vec3(0.400000006f, 0.470710695f, 0.470710695f),
+                Vec3(0.400000006f, 0.438268363f, 0.49238795f), Vec3(0.438268363f, 0.400000006f, 0.49238795f),
+                Vec3(0.470710695f, 0.400000006f, 0.470710695f), Vec3(0.49238795f, 0.400000006f, 0.438268363f),
+                Vec3(0.438268363f, 0.49238795f, 0.400000006f), Vec3(0.470710695f, 0.470710695f, 0.400000006f),
+                Vec3(0.49238795f, 0.438268363f, 0.400000006f), Vec3(0.49238795f, -0.5f, 0.438268363f),
+                Vec3(0.470710695f, -0.5f, 0.470710695f), Vec3(0.438268363f, -0.5f, 0.49238795f),
+                Vec3(-0.5f, 0.49238795f, 0.438268363f), Vec3(-0.5f, 0.470710695f, 0.470710695f),
+                Vec3(-0.5f, 0.438268363f, 0.49238795f), Vec3(0.438268363f, 0.49238795f, -0.5f),
+                Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.49238795f, 0.438268363f, -0.5f),
+                Vec3(0.460947603f, 0.460947603f, 0.460947603f),
+                Vec3(0.435947597f, 0.468269914f, 0.468269914f), Vec3(0.439017057f, 0.485392362f, 0.439017057f),
+                Vec3(0.468269914f, 0.435947597f, 0.468269914f), Vec3(0.439017057f, 0.439017057f, 0.485392362f),
+                Vec3(0.468269914f, 0.468269914f, 0.435947597f), Vec3(0.485392362f, 0.439017057f, 0.439017057f),
+            ];
+            static immutable uint[][] wantFacesL2 = [
+                [0u, 2u, 4u, 28u, 29u, 30u, 5u, 1u], [3u, 7u, 9u, 12u],
+                [0u, 3u, 12u, 27u, 26u, 25u, 11u, 2u], [1u, 5u, 10u, 6u],
+                [2u, 11u, 8u, 4u], [0u, 1u, 6u, 22u, 23u, 24u, 7u, 3u],
+                [6u, 10u, 18u, 22u], [22u, 18u, 17u, 23u], [23u, 17u, 16u, 24u],
+                [24u, 16u, 9u, 7u], [8u, 11u, 25u, 13u], [13u, 25u, 26u, 14u],
+                [14u, 26u, 27u, 15u], [15u, 27u, 12u, 9u], [4u, 8u, 19u, 28u],
+                [28u, 19u, 20u, 29u], [29u, 20u, 21u, 30u], [30u, 21u, 10u, 5u],
+                [8u, 13u, 33u, 19u], [13u, 14u, 32u, 33u], [19u, 33u, 36u, 20u],
+                [33u, 32u, 31u, 36u], [9u, 16u, 35u, 15u], [16u, 17u, 34u, 35u],
+                [15u, 35u, 32u, 14u], [35u, 34u, 31u, 32u], [10u, 21u, 37u, 18u],
+                [21u, 20u, 36u, 37u], [18u, 37u, 34u, 17u], [37u, 36u, 31u, 34u],
+            ];
+            assertFacesMatchByPosition(m, wantVertsL2, wantFacesL2, "K3 L2 Gregory ring (task 0443 freeze)");
         } else {
             // Round Level 3: general L×L Gregory ring — the arc is subdivided
             // into 2·L segments (5 rail interiors), not 2^L. 62v/51f {quad:48,
@@ -16636,6 +16700,64 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
             assert(m.vertices.length == 62 && m.faces.length == 51,
                 "K3 L3 must be the reference 62v/51f Gregory-ring cap");
             assert(fvd.get(10, 0) == 3, "K3 L3 must keep the 3 decagon absorber faces");
+            // Task 0443: full position+connectivity freeze.
+            immutable Vec3[] wantVertsL3 = [
+                Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
+                Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, -0.5f), Vec3(0.5f, 0.400000006f, -0.5f),
+                Vec3(0.5f, -0.5f, 0.400000006f), Vec3(0.400000006f, -0.5f, 0.5f),
+                Vec3(0.400000006f, 0.5f, 0.400000006f), Vec3(0.400000006f, 0.400000006f, 0.5f),
+                Vec3(0.5f, 0.400000006f, 0.400000006f), Vec3(-0.5f, 0.5f, 0.400000006f),
+                Vec3(-0.5f, 0.400000006f, 0.5f),
+                Vec3(0.400000006f, 0.496592581f, 0.425881922f), Vec3(0.400000006f, 0.486602545f, 0.449999988f),
+                Vec3(0.400000006f, 0.470710695f, 0.470710695f), Vec3(0.400000006f, 0.449999988f, 0.486602545f),
+                Vec3(0.400000006f, 0.425881922f, 0.496592581f), Vec3(0.425881922f, 0.400000006f, 0.496592581f),
+                Vec3(0.449999988f, 0.400000006f, 0.486602545f), Vec3(0.470710695f, 0.400000006f, 0.470710695f),
+                Vec3(0.486602545f, 0.400000006f, 0.449999988f), Vec3(0.496592581f, 0.400000006f, 0.425881922f),
+                Vec3(0.425881922f, 0.496592581f, 0.400000006f), Vec3(0.449999988f, 0.486602545f, 0.400000006f),
+                Vec3(0.470710695f, 0.470710695f, 0.400000006f), Vec3(0.486602545f, 0.449999988f, 0.400000006f),
+                Vec3(0.496592581f, 0.425881922f, 0.400000006f),
+                Vec3(0.496592581f, -0.5f, 0.425881922f), Vec3(0.486602545f, -0.5f, 0.449999988f),
+                Vec3(0.470710695f, -0.5f, 0.470710695f), Vec3(0.449999988f, -0.5f, 0.486602545f),
+                Vec3(0.425881922f, -0.5f, 0.496592581f),
+                Vec3(-0.5f, 0.496592581f, 0.425881922f), Vec3(-0.5f, 0.486602545f, 0.449999988f),
+                Vec3(-0.5f, 0.470710695f, 0.470710695f), Vec3(-0.5f, 0.449999988f, 0.486602545f),
+                Vec3(-0.5f, 0.425881922f, 0.496592581f),
+                Vec3(0.425881922f, 0.496592581f, -0.5f), Vec3(0.449999988f, 0.486602545f, -0.5f),
+                Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.486602545f, 0.449999988f, -0.5f),
+                Vec3(0.496592581f, 0.425881922f, -0.5f),
+                Vec3(0.460947603f, 0.460947603f, 0.460947603f),
+                Vec3(0.425181419f, 0.46962586f, 0.46962586f), Vec3(0.445497334f, 0.466371536f, 0.466371536f),
+                Vec3(0.426759779f, 0.493034244f, 0.426759779f), Vec3(0.426775515f, 0.483684719f, 0.4503932f),
+                Vec3(0.4503932f, 0.483684719f, 0.426775575f), Vec3(0.449284881f, 0.476583421f, 0.449284822f),
+                Vec3(0.46962586f, 0.425181419f, 0.46962586f), Vec3(0.466371536f, 0.445497334f, 0.466371536f),
+                Vec3(0.426759779f, 0.426759779f, 0.493034244f), Vec3(0.4503932f, 0.426775515f, 0.483684719f),
+                Vec3(0.426775575f, 0.4503932f, 0.483684719f), Vec3(0.449284822f, 0.449284881f, 0.476583421f),
+                Vec3(0.46962586f, 0.46962586f, 0.425181419f), Vec3(0.466371536f, 0.466371536f, 0.445497334f),
+                Vec3(0.493034244f, 0.426759779f, 0.426759779f), Vec3(0.483684719f, 0.4503932f, 0.426775515f),
+                Vec3(0.483684719f, 0.426775575f, 0.4503932f), Vec3(0.476583421f, 0.449284822f, 0.449284881f),
+            ];
+            static immutable uint[][] wantFacesL3 = [
+                [0u, 2u, 4u, 38u, 39u, 40u, 41u, 42u, 5u, 1u], [3u, 7u, 9u, 12u],
+                [0u, 3u, 12u, 37u, 36u, 35u, 34u, 33u, 11u, 2u], [1u, 5u, 10u, 6u],
+                [2u, 11u, 8u, 4u], [0u, 1u, 6u, 28u, 29u, 30u, 31u, 32u, 7u, 3u],
+                [6u, 10u, 22u, 28u], [28u, 22u, 21u, 29u], [29u, 21u, 20u, 30u],
+                [30u, 20u, 19u, 31u], [31u, 19u, 18u, 32u], [32u, 18u, 9u, 7u],
+                [8u, 11u, 33u, 13u], [13u, 33u, 34u, 14u], [14u, 34u, 35u, 15u],
+                [15u, 35u, 36u, 16u], [16u, 36u, 37u, 17u], [17u, 37u, 12u, 9u],
+                [4u, 8u, 23u, 38u], [38u, 23u, 24u, 39u], [39u, 24u, 25u, 40u],
+                [40u, 25u, 26u, 41u], [41u, 26u, 27u, 42u], [42u, 27u, 10u, 5u],
+                [8u, 13u, 46u, 23u], [13u, 14u, 47u, 46u], [14u, 15u, 44u, 47u],
+                [23u, 46u, 48u, 24u], [46u, 47u, 49u, 48u], [47u, 44u, 45u, 49u],
+                [24u, 48u, 56u, 25u], [48u, 49u, 57u, 56u], [49u, 45u, 43u, 57u],
+                [9u, 18u, 52u, 17u], [18u, 19u, 53u, 52u], [19u, 20u, 50u, 53u],
+                [17u, 52u, 54u, 16u], [52u, 53u, 55u, 54u], [53u, 50u, 51u, 55u],
+                [16u, 54u, 44u, 15u], [54u, 55u, 45u, 44u], [55u, 51u, 43u, 45u],
+                [10u, 27u, 58u, 22u], [27u, 26u, 59u, 58u], [26u, 25u, 56u, 59u],
+                [22u, 58u, 60u, 21u], [58u, 59u, 61u, 60u], [59u, 56u, 57u, 61u],
+                [21u, 60u, 50u, 20u], [60u, 61u, 51u, 50u], [61u, 57u, 43u, 51u],
+            ];
+            assertFacesMatchByPosition(m, wantVertsL3, wantFacesL3, "K3 L3 Gregory ring (task 0443 freeze)");
         }
         assertBevelManifoldClean(m, "junction shared rails");
     }
@@ -16812,6 +16934,48 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
         }
 }
 
+unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
+           // cap (task 0443 freeze). Companion to the L1/L2/L3 Gregory-ring
+           // test above; same cube corner, same width, no rounding at all.
+           // Full position+connectivity freeze — the reference numbers
+           // (13v/10f) were, like L1-L3 before this task, verified once
+           // out-of-repo and never pinned beyond a vertex/face count.
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeCube();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(m.vertices.length == 13 && m.faces.length == 10,
+        "K3 L0 must be the reference 13v/10f flat cap");
+    immutable Vec3[] wantVerts = [
+        Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f),
+        Vec3(-0.5f, 0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+        Vec3(0.4f, 0.5f, -0.5f), Vec3(0.5f, 0.4f, -0.5f),
+        Vec3(0.5f, -0.5f, 0.4f), Vec3(0.4f, -0.5f, 0.5f),
+        Vec3(0.4f, 0.5f, 0.4f), Vec3(0.4f, 0.4f, 0.5f),
+        Vec3(0.5f, 0.4f, 0.4f), Vec3(-0.5f, 0.5f, 0.4f),
+        Vec3(-0.5f, 0.4f, 0.5f),
+    ];
+    static immutable uint[][] wantFaces = [
+        [0u, 2u, 4u, 5u, 1u], [3u, 7u, 9u, 12u], [0u, 3u, 12u, 11u, 2u],
+        [1u, 5u, 10u, 6u], [2u, 11u, 8u, 4u], [0u, 1u, 6u, 7u, 3u],
+        [6u, 10u, 9u, 7u], [8u, 11u, 12u, 9u], [4u, 8u, 10u, 5u],
+        [8u, 9u, 10u],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "K3 L0 flat cap (task 0443 freeze)");
+    assertBevelManifoldClean(m, "K3 L0 flat cap");
+}
+
 unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
            // FREE ENDS must not assert. Regression for a crash that reached a
            // user (`rounded edge bevel rail must be approved before
@@ -16867,6 +17031,640 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
             ~ "must produce the same flat result");
         assertBevelManifoldClean(m, "K3 junction with valence-4 free ends");
     }
+}
+
+unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
+           // 3-edge chain E-F,F-G,G-H (three of the +X face's four edges); both
+           // chain ends sit on the open rim. BASE = unit cube -0.5..0.5 with one (or, for
+           // "bothends", two) face(s) omitted, leaving an open rim.
+           // Reference-verified at width=0.15, Round Level 0/1/2 (task
+           // 0391's open-boundary law + its Round Level follow-up) — full
+           // position+connectivity freeze, not just the vertex/face counts
+           // the repo kept until now.
+    import std.conv : to;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    immutable Vec3[8] baseVerts = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
+        Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+    ];
+    static immutable uint[][] baseFaces = [[0,1,2,3],[4,5,6,7],[3,2,6,5],[0,3,5,4],[1,7,6,2]];
+    static immutable uint[2][] edges = [[4u,5u],[5u,6u],[6u,7u]];
+
+    foreach (level; [0, 1, 2]) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (e; edges) {
+            int ei = findEdge(m, e[0], e[1]);
+            assert(ei >= 0, "open-boundary chain3: selected edge not found");
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+
+
+        if (level == 0) {
+        // 12v/8f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
+            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 7u, 5u],
+            [6u, 9u, 8u, 7u], [9u, 11u, 10u, 8u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary chain3 L0 (task 0443 freeze)");
+
+        } else if (level == 1) {
+        // 16v/11f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
+            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
+            Vec3(0.456066012f, 0.456066012f, 0.456066012f), Vec3(0.456066012f, -0.5f, 0.456066012f),
+            Vec3(0.456066012f, 0.456066012f, -0.456066012f), Vec3(0.456066012f, -0.5f, -0.456066012f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 14u, 15u],
+            [15u, 14u, 7u, 5u], [6u, 9u, 12u, 14u], [14u, 12u, 8u, 7u],
+            [9u, 11u, 13u, 12u], [12u, 13u, 10u, 8u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary chain3 L1 (task 0443 freeze)");
+
+        } else {
+        // 24v/17f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.349999994f),
+            Vec3(0.5f, 0.349999994f, 0.349999994f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.5f, 0.349999994f), Vec3(0.349999994f, -0.5f, 0.5f),
+            Vec3(0.488581926f, 0.407402515f, 0.407402515f), Vec3(0.456066012f, 0.456066012f, 0.456066012f),
+            Vec3(0.407402515f, 0.488581926f, 0.488581926f), Vec3(0.488581926f, -0.5f, 0.407402515f),
+            Vec3(0.456066012f, -0.5f, 0.456066012f), Vec3(0.407402515f, -0.5f, 0.488581926f),
+            Vec3(0.407402515f, 0.488581926f, -0.488581926f), Vec3(0.456066012f, 0.456066012f, -0.456066012f),
+            Vec3(0.488581926f, 0.407402515f, -0.407402515f), Vec3(0.407402515f, -0.5f, -0.488581926f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.488581926f, -0.5f, -0.407402515f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [5u, 7u, 8u, 10u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 4u], [1u, 11u, 9u, 2u], [4u, 6u, 18u, 21u],
+            [21u, 18u, 19u, 22u], [22u, 19u, 20u, 23u], [23u, 20u, 7u, 5u],
+            [6u, 9u, 14u, 18u], [18u, 14u, 13u, 19u], [19u, 13u, 12u, 20u],
+            [20u, 12u, 8u, 7u], [9u, 11u, 17u, 14u], [14u, 17u, 16u, 13u],
+            [13u, 16u, 15u, 12u], [12u, 15u, 10u, 8u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary chain3 L2 (task 0443 freeze)");
+
+        }
+        assertBevelManifoldCleanOpen(m, "open-boundary chain3", 1);
+    }
+}
+
+unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
+           // one edge whose far end sits on the open rim, near end is interior. BASE = unit cube -0.5..0.5 with one (or, for
+           // "bothends", two) face(s) omitted, leaving an open rim.
+           // Reference-verified at width=0.15, Round Level 0/1/2 (task
+           // 0391's open-boundary law + its Round Level follow-up) — full
+           // position+connectivity freeze, not just the vertex/face counts
+           // the repo kept until now.
+    import std.conv : to;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    immutable Vec3[8] baseVerts = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
+        Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+    ];
+    static immutable uint[][] baseFaces = [[0,1,2,3],[4,5,6,7],[3,2,6,5],[0,3,5,4],[1,7,6,2]];
+    static immutable uint[2][] edges = [[4u,5u]];
+
+    foreach (level; [0, 1, 2]) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (e; edges) {
+            int ei = findEdge(m, e[0], e[1]);
+            assert(ei >= 0, "open-boundary oneend: selected edge not found");
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+
+
+        if (level == 0) {
+        // 10v/6f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 9u],
+            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary oneend L0 (task 0443 freeze)");
+
+        } else if (level == 1) {
+        // 12v/7f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.456066012f, 0.5f, -0.456066012f), Vec3(0.456066012f, -0.5f, -0.456066012f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 10u, 9u],
+            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 10u, 11u],
+            [11u, 10u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary oneend L1 (task 0443 freeze)");
+
+        } else {
+        // 16v/9f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.349999994f),
+            Vec3(0.5f, 0.5f, -0.349999994f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.488581926f, 0.5f, -0.407402515f), Vec3(0.456066012f, 0.5f, -0.456066012f),
+            Vec3(0.407402515f, 0.5f, -0.488581926f), Vec3(0.407402515f, -0.5f, -0.488581926f),
+            Vec3(0.456066012f, -0.5f, -0.456066012f), Vec3(0.488581926f, -0.5f, -0.407402515f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [7u, 8u, 4u, 5u], [3u, 2u, 4u, 8u, 10u, 11u, 12u, 9u],
+            [0u, 3u, 9u, 6u], [1u, 5u, 4u, 2u], [6u, 9u, 12u, 13u],
+            [13u, 12u, 11u, 14u], [14u, 11u, 10u, 15u], [15u, 10u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary oneend L2 (task 0443 freeze)");
+
+        }
+        assertBevelManifoldCleanOpen(m, "open-boundary oneend", 1);
+    }
+}
+
+unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
+           // one edge whose both ends are interior — neither touches the rim. BASE = unit cube -0.5..0.5 with one (or, for
+           // "bothends", two) face(s) omitted, leaving an open rim.
+           // Reference-verified at width=0.15, Round Level 0/1/2 (task
+           // 0391's open-boundary law + its Round Level follow-up) — full
+           // position+connectivity freeze, not just the vertex/face counts
+           // the repo kept until now.
+    import std.conv : to;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    immutable Vec3[8] baseVerts = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
+        Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+    ];
+    static immutable uint[][] baseFaces = [[0,1,2,3],[4,5,6,7],[3,2,6,5],[0,3,5,4],[1,7,6,2]];
+    static immutable uint[2][] edges = [[5u,6u]];
+
+    foreach (level; [0, 1, 2]) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (e; edges) {
+            int ei = findEdge(m, e[0], e[1]);
+            assert(ei >= 0, "open-boundary interior: selected edge not found");
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+
+
+        if (level == 0) {
+        // 10v/6f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 7u, 4u], [1u, 5u, 8u, 9u, 2u], [6u, 9u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary interior L0 (task 0443 freeze)");
+
+        } else if (level == 1) {
+        // 12v/7f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.456066012f, 0.456066012f, 0.5f), Vec3(0.456066012f, 0.456066012f, -0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 11u, 7u, 4u], [1u, 5u, 8u, 10u, 9u, 2u], [6u, 9u, 10u, 11u],
+            [11u, 10u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary interior L1 (task 0443 freeze)");
+
+        } else {
+        // 16v/9f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.349999994f, 0.5f, -0.5f), Vec3(0.5f, 0.349999994f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+            Vec3(0.488581926f, 0.407402515f, 0.5f), Vec3(0.456066012f, 0.456066012f, 0.5f),
+            Vec3(0.407402515f, 0.488581926f, 0.5f), Vec3(0.407402515f, 0.488581926f, -0.5f),
+            Vec3(0.456066012f, 0.456066012f, -0.5f), Vec3(0.488581926f, 0.407402515f, -0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 7u, 8u, 5u], [3u, 2u, 9u, 6u],
+            [0u, 3u, 6u, 13u, 14u, 15u, 7u, 4u], [1u, 5u, 8u, 10u, 11u, 12u, 9u, 2u], [6u, 9u, 12u, 13u],
+            [13u, 12u, 11u, 14u], [14u, 11u, 10u, 15u], [15u, 10u, 8u, 7u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary interior L2 (task 0443 freeze)");
+
+        }
+        assertBevelManifoldCleanOpen(m, "open-boundary interior", 1);
+    }
+}
+
+unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
+           // the rim edge itself (1 incident face) — Round Level must be
+           // completely inert (byte-identical L0/L1/L2). BASE = unit cube -0.5..0.5 with one (or, for
+           // "bothends", two) face(s) omitted, leaving an open rim.
+           // Reference-verified at width=0.15, Round Level 0/1/2 (task
+           // 0391's open-boundary law + its Round Level follow-up) — full
+           // position+connectivity freeze, not just the vertex/face counts
+           // the repo kept until now.
+    import std.conv : to;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    immutable Vec3[8] baseVerts = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
+        Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+    ];
+    static immutable uint[][] baseFaces = [[0,1,2,3],[4,5,6,7],[3,2,6,5],[0,3,5,4],[1,7,6,2]];
+    static immutable uint[2][] edges = [[7u,4u]];
+
+    foreach (level; [0, 1, 2]) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (e; edges) {
+            int ei = findEdge(m, e[0], e[1]);
+            assert(ei >= 0, "open-boundary rimedge: selected edge not found");
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+
+
+        if (level == 0) {
+        // 10v/5f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
+            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary rimedge L0 (task 0443 freeze)");
+
+        } else if (level == 1) {
+        // 10v/5f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
+            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary rimedge L1 (task 0443 freeze)");
+
+        } else {
+        // 10v/5f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
+            Vec3(0.5f, -0.349999994f, -0.5f), Vec3(0.349999994f, -0.5f, -0.5f),
+            Vec3(0.5f, -0.349999994f, 0.5f), Vec3(0.349999994f, -0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [6u, 4u, 5u, 8u], [3u, 2u, 5u, 4u],
+            [0u, 3u, 4u, 6u, 7u], [1u, 9u, 8u, 5u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary rimedge L2 (task 0443 freeze)");
+
+        }
+        assertBevelManifoldCleanOpen(m, "open-boundary rimedge", 1);
+    }
+}
+
+unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
+           // an edge with BOTH endpoints on a rim (base mesh drops a second
+           // face) — no cap face, Round Level inert. BASE = unit cube -0.5..0.5 with one (or, for
+           // "bothends", two) face(s) omitted, leaving an open rim.
+           // Reference-verified at width=0.15, Round Level 0/1/2 (task
+           // 0391's open-boundary law + its Round Level follow-up) — full
+           // position+connectivity freeze, not just the vertex/face counts
+           // the repo kept until now.
+    import std.conv : to;
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    immutable Vec3[8] baseVerts = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
+        Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+    ];
+    static immutable uint[][] baseFaces = [[0,1,2,3],[4,5,6,7],[0,3,5,4],[1,7,6,2]];
+    static immutable uint[2][] edges = [[5u,6u]];
+
+    foreach (level; [0, 1, 2]) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (e; edges) {
+            int ei = findEdge(m, e[0], e[1]);
+            assert(ei >= 0, "open-boundary bothends: selected edge not found");
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+
+
+        if (level == 0) {
+        // 10v/4f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
+            [1u, 5u, 8u, 9u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary bothends L0 (task 0443 freeze)");
+
+        } else if (level == 1) {
+        // 10v/4f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
+            [1u, 5u, 8u, 9u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary bothends L1 (task 0443 freeze)");
+
+        } else {
+        // 10v/4f
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f),
+            Vec3(0.5f, 0.349999994f, -0.5f), Vec3(0.349999994f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.349999994f, 0.5f), Vec3(0.349999994f, 0.5f, 0.5f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 1u, 2u, 3u], [4u, 6u, 8u, 5u], [0u, 3u, 7u, 6u, 4u],
+            [1u, 5u, 8u, 9u, 2u],
+        ];
+
+            assertFacesMatchByPosition(m, wantVerts, wantFaces,
+                "open-boundary bothends L2 (task 0443 freeze)");
+
+        }
+        assertBevelManifoldCleanOpen(m, "open-boundary bothends", 0);
+    }
+}
+
+unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0443
+           // freeze) — a symmetric 4-valence apex — 4 triangular faces around one apex,
+           // all 4 edges from the apex selected (square-pyramid, 45-degree
+           // polar half-angle).
+           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
+           // every level per task 0435/0442 — no Gregory ring generalization
+           // for N>3 yet); this level already matches the reference bit-
+           // exact and nothing in the repo guards it.
+    import std.conv : to;
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(8.659560562354932e-17f,1.414213562373095f,1.4142135623730951f),
+        Vec3(-1.414213562373095f,1.7319121124709863e-16f,1.4142135623730951f),
+        Vec3(-2.5978681687064796e-16f,-1.414213562373095f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    size_t nSel = 0;
+    foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
+    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+
+        // 12v/9f
+        immutable Vec3[] wantVerts = [
+            Vec3(0.122474499f, 0.122474536f, 0.244949028f), Vec3(-0.122474536f, 0.122474499f, 0.244949028f),
+            Vec3(-0.122474499f, -0.122474536f, 0.244949028f), Vec3(0.122474536f, -0.122474499f, 0.244949028f),
+            Vec3(1.30814755f, 0.106066026f, 1.41421354f), Vec3(1.30814755f, -0.106066026f, 1.41421354f),
+            Vec3(-0.106066026f, 1.30814755f, 1.41421354f), Vec3(0.106066026f, 1.30814755f, 1.41421354f),
+            Vec3(-1.30814755f, -0.106066026f, 1.41421354f), Vec3(-1.30814755f, 0.106066026f, 1.41421354f),
+            Vec3(0.106066026f, -1.30814755f, 1.41421354f), Vec3(-0.106066026f, -1.30814755f, 1.41421354f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 4u, 7u], [1u, 6u, 9u], [2u, 8u, 11u],
+            [3u, 10u, 5u], [3u, 5u, 4u, 0u], [6u, 1u, 0u, 7u],
+            [8u, 2u, 1u, 9u], [10u, 3u, 2u, 11u], [0u, 1u, 2u, 3u],
+        ];
+
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "K4 junction (symmetric) L0 (task 0443 freeze)");
+    assertBevelManifoldCleanOpen(m, "K4 junction (symmetric) L0", 1);
+}
+
+unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0443
+           // freeze) — a symmetric 5-valence apex — 5 triangular faces around one apex,
+           // all 5 edges from the apex selected.
+           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
+           // every level per task 0435/0442 — no Gregory ring generalization
+           // for N>3 yet); this level already matches the reference bit-
+           // exact and nothing in the repo guards it.
+    import std.conv : to;
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(0.4370160244488211f,1.3449970239279145f,1.4142135623730951f),
+        Vec3(-1.1441228056353683f,0.8312538755549069f,1.4142135623730951f),
+        Vec3(-1.1441228056353687f,-0.8312538755549066f,1.4142135623730951f),
+        Vec3(0.43701602444882076f,-1.3449970239279145f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,5u]); m.addFace([0u,5u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    size_t nSel = 0;
+    foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
+    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+
+        // 15v/11f
+        immutable Vec3[] wantVerts = [
+            Vec3(0.183640465f, 0.133422613f, 0.28057766f), Vec3(-0.0701444373f, 0.215882331f, 0.28057766f),
+            Vec3(-0.2269921f, 0f, 0.28057766f), Vec3(-0.0701444224f, -0.215882331f, 0.28057766f),
+            Vec3(0.18364048f, -0.133422598f, 0.28057766f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
+            Vec3(1.32604575f, -0.121352553f, 1.41421354f), Vec3(0.294357538f, 1.29864454f, 1.41421354f),
+            Vec3(0.525183797f, 1.2236445f, 1.41421354f), Vec3(-1.14412284f, 0.68125391f, 1.41421354f),
+            Vec3(-1.00146437f, 0.877606452f, 1.41421354f), Vec3(-1.00146437f, -0.877606452f, 1.41421354f),
+            Vec3(-1.14412284f, -0.68125391f, 1.41421354f), Vec3(0.525183797f, -1.2236445f, 1.41421354f),
+            Vec3(0.294357538f, -1.29864454f, 1.41421354f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 5u, 8u], [1u, 7u, 10u], [2u, 9u, 12u],
+            [3u, 11u, 14u], [4u, 13u, 6u], [4u, 6u, 5u, 0u],
+            [7u, 1u, 0u, 8u], [9u, 2u, 1u, 10u], [11u, 3u, 2u, 12u],
+            [13u, 4u, 3u, 14u], [0u, 1u, 2u, 3u, 4u],
+        ];
+
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "K5 junction (symmetric) L0 (task 0443 freeze)");
+    assertBevelManifoldCleanOpen(m, "K5 junction (symmetric) L0", 1);
+}
+
+unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 0443
+           // freeze) — the SAME topology as K4 above (4 triangles, all 4 edges selected)
+           // but a deliberately irregular base ring — unequal edge lengths
+           // and unequal azimuthal spacing, so no two of the 4 faces are
+           // congruent (rules out a symmetry coincidence hiding a bug).
+           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
+           // every level per task 0435/0442 — no Gregory ring generalization
+           // for N>3 yet); this level already matches the reference bit-
+           // exact and nothing in the repo guards it.
+    import std.conv : to;
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.6f,0,1.3f),
+        Vec3(0.3f,1.9f,1.6f),
+        Vec3(-1.4f,0.5f,1.0f),
+        Vec3(0,-1.2f,1.9f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    size_t nSel = 0;
+    foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
+    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+
+        // 12v/9f
+        immutable Vec3[] wantVerts = [
+            Vec3(0.154816538f, 0.131210014f, 0.219448239f), Vec3(-0.112768516f, 0.177031428f, 0.204165533f),
+            Vec3(-0.123843782f, -0.0404019952f, 0.222460389f), Vec3(0.137606412f, -0.09467794f, 0.261711955f),
+            Vec3(1.51600754f, 0.122758195f, 1.31938279f), Vec3(1.48506081f, -0.0862043649f, 1.3431021f),
+            Vec3(0.18828249f, 1.80799735f, 1.56057036f), Vec3(0.383992463f, 1.77724183f, 1.58061719f),
+            Vec3(-1.31173038f, 0.3928155f, 1.05674469f), Vec3(-1.28828239f, 0.59200269f, 1.03942966f),
+            Vec3(0.114939161f, -1.11379564f, 1.85689783f), Vec3(-0.0882695764f, -1.09281552f, 1.84325528f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 4u, 7u], [1u, 6u, 9u], [2u, 8u, 11u],
+            [3u, 10u, 5u], [3u, 5u, 4u, 0u], [6u, 1u, 0u, 7u],
+            [8u, 2u, 1u, 9u], [10u, 3u, 2u, 11u], [0u, 1u, 2u, 3u],
+        ];
+
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "K4 junction (asymmetric) L0 (task 0443 freeze)");
+    assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L0", 1);
 }
 
 unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
@@ -20615,3 +21413,4 @@ unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
             ~ "reproduce R(srcNormal), not its negation)");
     }
 }
+
