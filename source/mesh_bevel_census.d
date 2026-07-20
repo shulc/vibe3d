@@ -834,16 +834,19 @@ unittest {
 // results are geometrically identical: identical means the parameter did
 // nothing observable for that trial.
 //
-// Today's hand measurement (2026-07-20): Round Level changed nothing for
-// sphere/torus/open-cylinder/subdivided-cube (both levels) single-edge
-// trials, changed SOME closed-cylinder trials (the ones touching the
-// N-gon cap), and changed EVERY plain-cube trial. The mechanism: Round
-// Level only affects the well-supported K==3 full-corner-hub shape (a
-// plain cube's corners, or a capped cylinder's cap-adjacent rim); every
-// other topology in this census exercises a code path Round Level does
-// not reach — so the parameter is silently a no-op there. Pinned below so
-// a free-end cap at Round Level (once implemented) shows up as these
-// numbers MOVING, not as silence.
+// UPDATE (task 0449): "Round Level only reaches the K==3 full-corner-hub
+// shape" is no longer the fact on the ground — it was true only because the
+// free-end / partial-fan cap's own ring was withheld as a rail-support
+// consumer (task 0439's Decision D). That withholding is gone: the cap ring
+// is now its bordering rails' missing second consumer, exactly like the hub
+// cap's ring, so Round Level reaches every closed-fan free end and partial
+// fan too. `identical` collapses to 0 on every mesh here EXCEPT the open
+// cylinder, whose 24 identical trials are the mesh's own rim edges — a rim
+// edge never becomes a ChamferSpan at all (`rimOnly`, see the per-edge
+// qualification step above), so it has no rail and Round Level is
+// inapplicable to it BY CONSTRUCTION, not by an unclosed gap. The plain cube
+// stays at 0 identical unchanged (it was already the one mesh Round Level
+// fully reached).
 // ===========================================================================
 
 private struct RoundLevelCensus {
@@ -917,25 +920,30 @@ unittest {
         ~ "bigger finding than a silently-ignored parameter and needs its own investigation "
         ~ "before this baseline is touched.");
 
-    // Baselines measured 2026-07-20 (task 0445 extension). Pinned EXACTLY:
-    // when the free-end cap at Round Level lands, these numbers must MOVE
-    // (more trials identical -> fewer, i.e. more topologies observably
-    // respond to roundLevel); a rise in "identical" with no code change
-    // anywhere near Round Level would itself be worth investigating.
+    // Baselines measured 2026-07-20 (task 0445 extension), MOVED 2026-07-20
+    // (task 0449 — the free-end cap at Round Level landed). Pinned EXACTLY,
+    // same rationale as every other lane: a rise in "identical" with no
+    // code change anywhere near Round Level would itself be worth
+    // investigating; a further drop means another gap closed.
     enum size_t BASELINE_SPHERE_TOTAL    = 110;
-    enum size_t BASELINE_SPHERE_IDENT    = 110; // Round Level: no effect at all
+    enum size_t BASELINE_SPHERE_IDENT    = 0; // was 110 (task 0445) — every trial now rounds
     enum size_t BASELINE_CYL_TOTAL       = 60;
-    enum size_t BASELINE_CYL_IDENT       = 36; // Round Level affects the 24 cap-adjacent edges
+    enum size_t BASELINE_CYL_IDENT       = 0; // was 36 (task 0445) — every trial now rounds
     enum size_t BASELINE_CYLOPEN_TOTAL   = 60;
-    enum size_t BASELINE_CYLOPEN_IDENT   = 60; // no cap -> no effect
+    enum size_t BASELINE_CYLOPEN_IDENT   = 24; // was 60 (task 0445) — the 24 rim edges are
+                                                // structurally NOT ChamferSpans (rimOnly), so
+                                                // they have no rail and stay outside Round
+                                                // Level's reach; the other 36 now round
     enum size_t BASELINE_TORUS_TOTAL     = 192;
-    enum size_t BASELINE_TORUS_IDENT     = 192; // no effect
+    enum size_t BASELINE_TORUS_IDENT     = 0; // was 192 (task 0445) — every trial now rounds
     enum size_t BASELINE_SUBL1_TOTAL     = 48;
-    enum size_t BASELINE_SUBL1_IDENT     = 48; // no effect
+    enum size_t BASELINE_SUBL1_IDENT     = 0; // was 48 (task 0445) — every trial now rounds
     enum size_t BASELINE_SUBL2_TOTAL     = 192;
-    enum size_t BASELINE_SUBL2_IDENT     = 192; // no effect
+    enum size_t BASELINE_SUBL2_IDENT     = 0; // was 192 (task 0445) — every trial now rounds
     enum size_t BASELINE_CUBE_TOTAL      = 12;
-    enum size_t BASELINE_CUBE_IDENT      = 0; // Round Level affects EVERY edge (all corners are K==3 hubs)
+    enum size_t BASELINE_CUBE_IDENT      = 0; // unchanged — Round Level already reached EVERY
+                                               // edge here (all corners are K==3 hubs), and
+                                               // task 0449 does not touch that path
 
     assert(rSphere.total == BASELINE_SPHERE_TOTAL && rSphere.identical == BASELINE_SPHERE_IDENT,
         "roundLevel/sphere baseline moved — update BASELINE_SPHERE_* (task 0445 extension)");
@@ -954,6 +962,154 @@ unittest {
         ~ "moved UP (more identical), Round Level started reaching the plain-cube corner shape "
         ~ "differently — investigate. If a free-end-cap-at-Round-Level fix landed and this "
         ~ "stayed put, that fix did not touch the plain-cube path — worth a second look.");
+}
+
+// ===========================================================================
+// LANE 3b (task 0449) — "identical/total" is blind to the difference between
+// a REAL rounded arc and a degenerate straight chord that just got
+// subdivided (more vertices, zero added curvature — the antipodal-fillet
+// degeneracy documented at `railInterior`'s `sinO < 1e-6` branch, Decision C
+// in doc/edge_bevel_freeend_cap_roundlevel_plan.md). A mesh could show
+// `identical == 0` (task 0449's own headline number) purely from flat
+// subdivision and still not exercise the law this task exists to land.
+//
+// This counter is PURELY GEOMETRIC and instruments nothing inside the
+// kernel (an instrumented counter would be production code shipped only to
+// serve a test, which this file's own header rules out): for every
+// single-edge trial, a "no bulge" verdict means every vertex of the Round
+// Level 1 result lies within EPS of some Round Level 0 vertex, or on some
+// Round Level 0 EDGE (as a line segment) — i.e. the trial may have added
+// vertices, but added no vertex off the flat L0 surface.
+//
+// Baselines measured DIRECTLY (task 0449 plan, Phase 0 item 3 — NOT derived
+// from the "arc vs. straight chord" per-rail counter measured earlier in
+// this task's plan, which counts a different unit: rails, not trials). The
+// plan predicted five exact zeros (every mesh here with zero straight-chord
+// rails in that per-rail measurement) and left the two cylinder numbers
+// unpredicted; both predictions are confirmed by the direct measurement
+// below, and the two cylinder numbers are simply recorded.
+// ===========================================================================
+
+private struct NoBulgeCensus {
+    size_t total;
+    size_t noBulge;
+    size_t acceptDeclineMismatch;
+}
+
+private float pointToSegmentDistance(Vec3 p, Vec3 a, Vec3 b) {
+    import std.math : sqrt;
+    immutable Vec3 ab = Vec3(b.x - a.x, b.y - a.y, b.z - a.z);
+    immutable float len2 = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z;
+    if (len2 < 1e-20f) {
+        immutable Vec3 d = Vec3(p.x - a.x, p.y - a.y, p.z - a.z);
+        return sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    }
+    immutable Vec3 ap = Vec3(p.x - a.x, p.y - a.y, p.z - a.z);
+    float t = (ap.x * ab.x + ap.y * ab.y + ap.z * ab.z) / len2;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    immutable Vec3 closest = Vec3(a.x + ab.x * t, a.y + ab.y * t, a.z + ab.z * t);
+    immutable Vec3 d = Vec3(p.x - closest.x, p.y - closest.y, p.z - closest.z);
+    return sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+}
+
+/// True iff every vertex of `post` lies within EPS of some vertex of `pre`,
+/// or on some EDGE (line segment) of `pre` — i.e. `post` added no curvature
+/// relative to `pre`'s flat shape, even if it added vertices.
+private bool liesOnFlatSurface(const ref Mesh pre, const ref Mesh post) {
+    enum float EPS = 1e-4f;
+    foreach (v; post.vertices) {
+        bool ok = false;
+        foreach (pv; pre.vertices) {
+            immutable Vec3 d = Vec3(v.x - pv.x, v.y - pv.y, v.z - pv.z);
+            import std.math : sqrt;
+            if (sqrt(d.x * d.x + d.y * d.y + d.z * d.z) < EPS) { ok = true; break; }
+        }
+        if (ok) continue;
+        foreach (e; pre.edges) {
+            if (pointToSegmentDistance(v, pre.vertices[e[0]], pre.vertices[e[1]]) < EPS) {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok) return false;
+    }
+    return true;
+}
+
+private NoBulgeCensus noBulgeCensusSingleEdge(string label, const ref Mesh m, float width = 0.08f) {
+    NoBulgeCensus c;
+    immutable size_t nE = m.edges.length;
+    foreach (i; 0 .. nE) {
+        auto mask = new bool[](nE);
+        mask[i] = true;
+        auto clone0 = cloneMeshForTrial(m);
+        auto clone1 = cloneMeshForTrial(m);
+        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
+        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        ++c.total;
+        if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
+        if (p0 == 0 && p1 == 0)   { ++c.noBulge; continue; } // both declined: vacuously flat
+        if (liesOnFlatSurface(clone0, clone1)) ++c.noBulge;
+    }
+    writefln("[edge.bevel census] noBulge    %-16s trials=%-5d noBulge=%-5d (%.1f%%)",
+        label, c.total, c.noBulge, c.total ? 100.0 * c.noBulge / c.total : 0.0);
+    return c;
+}
+
+unittest {
+    // Same 7-mesh set as the roundLevel lane above.
+    auto sphere       = makeUvSphereForCensus(6, 10);
+    auto cylClosed    = makeCylinderForCensus(12, 2, 1.0f, 1.5f, true);
+    auto cylOpen      = makeCylinderForCensus(12, 2, 1.0f, 1.5f, false);
+    auto torus        = makeTorusForCensus(12, 8, 1.0f, 0.35f);
+    auto subdivCubeL1 = subdivideCube(1);
+    auto subdivCubeL2 = subdivideCube(2);
+    auto plainCube    = makeCube();
+
+    auto nSphere  = noBulgeCensusSingleEdge("sphere",         sphere);
+    auto nCyl     = noBulgeCensusSingleEdge("cylinder",       cylClosed);
+    auto nCylOpen = noBulgeCensusSingleEdge("cylinder_open",  cylOpen);
+    auto nTorus   = noBulgeCensusSingleEdge("torus",          torus);
+    auto nSubL1   = noBulgeCensusSingleEdge("subdiv_cube_L1", subdivCubeL1);
+    auto nSubL2   = noBulgeCensusSingleEdge("subdiv_cube_L2", subdivCubeL2);
+    auto nCube    = noBulgeCensusSingleEdge("cube",           plainCube);
+
+    assert(nSphere.acceptDeclineMismatch == 0 && nCyl.acceptDeclineMismatch == 0 &&
+           nCylOpen.acceptDeclineMismatch == 0 && nTorus.acceptDeclineMismatch == 0 &&
+           nSubL1.acceptDeclineMismatch == 0 && nSubL2.acceptDeclineMismatch == 0 &&
+           nCube.acceptDeclineMismatch == 0,
+        "Round Level flipped accept vs. decline outright for some trial in the no-bulge lane — "
+        ~ "investigate before touching this baseline (task 0449).");
+
+    // Baselines measured DIRECTLY 2026-07-20 (task 0449, plan Phase 0 item
+    // 3) against the patched kernel. Five exact zeros were the plan's own
+    // PREDICTION (derived from the per-rail arc-vs-chord measurement in the
+    // plan document, §"Замер 5") — confirmed here by direct measurement, not
+    // assumed. The two cylinder numbers were NOT predicted by the plan and
+    // are simply recorded.
+    enum size_t BASELINE_SPHERE_NOBULGE   = 0;
+    enum size_t BASELINE_CYL_NOBULGE      = 12;
+    enum size_t BASELINE_CYLOPEN_NOBULGE  = 36;
+    enum size_t BASELINE_TORUS_NOBULGE    = 0;
+    enum size_t BASELINE_SUBL1_NOBULGE    = 0;
+    enum size_t BASELINE_SUBL2_NOBULGE    = 0;
+    enum size_t BASELINE_CUBE_NOBULGE     = 0;
+
+    assert(nSphere.noBulge == BASELINE_SPHERE_NOBULGE,
+        "no-bulge/sphere baseline moved — update BASELINE_SPHERE_NOBULGE (task 0449)");
+    assert(nCyl.noBulge == BASELINE_CYL_NOBULGE,
+        "no-bulge/cylinder baseline moved — update BASELINE_CYL_NOBULGE (task 0449)");
+    assert(nCylOpen.noBulge == BASELINE_CYLOPEN_NOBULGE,
+        "no-bulge/cylinder_open baseline moved — update BASELINE_CYLOPEN_NOBULGE (task 0449)");
+    assert(nTorus.noBulge == BASELINE_TORUS_NOBULGE,
+        "no-bulge/torus baseline moved — update BASELINE_TORUS_NOBULGE (task 0449)");
+    assert(nSubL1.noBulge == BASELINE_SUBL1_NOBULGE,
+        "no-bulge/subdiv_cube_L1 baseline moved — update BASELINE_SUBL1_NOBULGE (task 0449)");
+    assert(nSubL2.noBulge == BASELINE_SUBL2_NOBULGE,
+        "no-bulge/subdiv_cube_L2 baseline moved — update BASELINE_SUBL2_NOBULGE (task 0449)");
+    assert(nCube.noBulge == BASELINE_CUBE_NOBULGE,
+        "no-bulge/cube baseline moved — update BASELINE_CUBE_NOBULGE (task 0449)");
 }
 
 // ===========================================================================
@@ -1186,9 +1342,9 @@ private bool[] cornerHubPlusFreeEndMask(const ref Mesh m) {
 }
 
 private void runMixedTrial(const ref Mesh template_, const bool[] mask, ref Census census,
-                            ref SoundnessCounters sc, float width) {
+                            ref SoundnessCounters sc, float width, int roundLevel = 0) {
     auto clone = cloneMeshForTrial(template_);
-    immutable size_t processed = clone.bevelEdgesByMask(mask, width);
+    immutable size_t processed = clone.bevelEdgesByMask(mask, width, roundLevel);
     if (processed > 0) {
         census.record(Reason.Processed);
         checkSoundness(template_, clone, sc);
@@ -1202,7 +1358,8 @@ private struct MixedResult {
     SoundnessCounters soundness;
 }
 
-private MixedResult mixedSelectionCensusMesh(string label, const ref Mesh m, float width = 0.08f) {
+private MixedResult mixedSelectionCensusMesh(string label, const ref Mesh m, float width = 0.08f,
+                                              int roundLevel = 0) {
     bool[][] masks;
     masks ~= chainMasks(m);
     masks ~= ringPlusTrailingMasks(m);
@@ -1210,7 +1367,7 @@ private MixedResult mixedSelectionCensusMesh(string label, const ref Mesh m, flo
     masks ~= disjointClusterMasks(m);
 
     MixedResult r;
-    foreach (mask; masks) runMixedTrial(m, mask, r.census, r.soundness, width);
+    foreach (mask; masks) runMixedTrial(m, mask, r.census, r.soundness, width, roundLevel);
 
     immutable size_t violations = r.soundness.edgeOveruse + r.soundness.orphanVertices +
         r.soundness.coincidentVertices + r.soundness.degenerateFaces + r.soundness.newBoundaryOnClosed;
@@ -1320,4 +1477,87 @@ unittest {
     assert(totalSound.newBoundaryOnClosed == BASELINE_MIXED_NEW_BOUNDARY,
         "edge.bevel opened a new boundary on a CLOSED mixed-selection trial — investigate "
         ~ "before touching this baseline.");
+}
+
+// ===========================================================================
+// LANE 4, Round Level axis (task 0449, Decision D / §D2 follow-up). The
+// mixed-selection lane above only ever ran at Round Level 0 — exactly the
+// class of multi-anchor selection the K3 Gregory-ring guard at `railSpec is
+// null || !railSpec.approved` (see the guard's own comment, near the "3-way
+// junction Gregory ring" doc block) exists to protect, and the gap this
+// lane was blind to it AT Round Level > 0 is called out explicitly in the
+// plan (doc/edge_bevel_freeend_cap_roundlevel_plan.md, Decision D). This is
+// that closing measurement, not new mixed-selection coverage: same masks,
+// same meshes, Round Level 1 instead of 0.
+// ===========================================================================
+
+unittest {
+    auto sphere       = makeUvSphereForCensus(6, 10);
+    auto cylClosed    = makeCylinderForCensus(12, 2, 1.0f, 1.5f, true);
+    auto cylOpen      = makeCylinderForCensus(12, 2, 1.0f, 1.5f, false);
+    auto torus        = makeTorusForCensus(12, 8, 1.0f, 0.35f);
+    auto subdivCubeL2 = subdivideCube(2);
+    auto postBevel    = makePostBevelCubeForCensus();
+    auto subdivCubeL1 = subdivideCube(1);
+
+    Census total;
+    SoundnessCounters totalSound;
+    void merge(MixedResult r) {
+        total.total += r.census.total;
+        foreach (rr, n; r.census.byReason) total.byReason[rr] = total.byReason.get(rr, 0) + n;
+        totalSound.trialsChecked       += r.soundness.trialsChecked;
+        totalSound.edgeOveruse         += r.soundness.edgeOveruse;
+        totalSound.orphanVertices      += r.soundness.orphanVertices;
+        totalSound.coincidentVertices  += r.soundness.coincidentVertices;
+        totalSound.degenerateFaces     += r.soundness.degenerateFaces;
+        totalSound.newBoundaryOnClosed += r.soundness.newBoundaryOnClosed;
+    }
+
+    merge(mixedSelectionCensusMesh("sphere",         sphere,       0.08f, 1));
+    merge(mixedSelectionCensusMesh("cylinder",       cylClosed,    0.08f, 1));
+    merge(mixedSelectionCensusMesh("cylinder_open",  cylOpen,      0.08f, 1));
+    merge(mixedSelectionCensusMesh("torus",          torus,        0.08f, 1));
+    merge(mixedSelectionCensusMesh("subdiv_cube_L2", subdivCubeL2, 0.08f, 1));
+    merge(mixedSelectionCensusMesh("post_bevel",     postBevel,    0.08f, 1));
+    merge(mixedSelectionCensusMesh("subdiv_cube_L1", subdivCubeL1, 0.08f, 1));
+
+    {
+        auto mask = cornerHubPlusFreeEndMask(subdivCubeL1);
+        runMixedTrial(subdivCubeL1, mask, total, totalSound, 0.08f, 1);
+    }
+
+    writefln("[edge.bevel census] mixed@L1   TOTAL trials=%d declined=%d", total.total, total.declined());
+    static immutable Reason[] knownOrder =
+        [Reason.FacesGE3, Reason.PartialFanNotch, Reason.MalformedFan, Reason.NoQualifying, Reason.Unclassified];
+    foreach (r; knownOrder) {
+        immutable n = total.byReason.get(r, 0);
+        if (n > 0) writefln("    %-18s %d", r, n);
+    }
+
+    assert(total.byReason.get(Reason.Unclassified, 0) == 0,
+        "edge.bevel MIXED-selection census at Round Level 1 found an UNCLASSIFIED refusal "
+        ~ "family — investigate before touching this baseline (task 0449).");
+
+    // Same trial count as the L0 lane above (176) — identical mask
+    // generation, only roundLevel differs. Baselines measured 2026-07-20
+    // (task 0449): the guard this axis exists to exercise (railSpec
+    // approval in the K3 Gregory branch) is not hit by any of these 176
+    // trials, matching the plan's own 0/5652 count across the FULL rounded
+    // census matrix.
+    enum size_t BASELINE_MIXED_L1_TOTAL      = 176;
+    enum size_t BASELINE_MIXED_L1_DECLINED   = 0;
+    enum size_t BASELINE_MIXED_L1_VIOLATIONS = 0;
+
+    immutable size_t violations = totalSound.edgeOveruse + totalSound.orphanVertices +
+        totalSound.coincidentVertices + totalSound.degenerateFaces + totalSound.newBoundaryOnClosed;
+
+    assert(total.total == BASELINE_MIXED_L1_TOTAL,
+        "mixed-selection@L1 trial count moved — update BASELINE_MIXED_L1_TOTAL (task 0449)");
+    assert(total.declined() == BASELINE_MIXED_L1_DECLINED,
+        "edge.bevel mixed-selection refusal baseline moved AT ROUND LEVEL 1 (task 0449). If this "
+        ~ "ROSE, that's a regression in the exact class of selection the K3 Gregory-ring guard "
+        ~ "exists to protect.");
+    assert(violations == BASELINE_MIXED_L1_VIOLATIONS,
+        "edge.bevel left a soundness violation on an ACCEPTED mixed-selection trial AT ROUND "
+        ~ "LEVEL 1 — investigate before touching this baseline (task 0449).");
 }

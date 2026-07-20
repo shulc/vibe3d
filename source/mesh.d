@@ -8516,13 +8516,17 @@ struct Mesh {
     ///   the old `keep V` branch used to leave. `K < nE` keeps this path
     ///   DISJOINT from the K==d hub cap below (on a closed fan the two
     ///   conditions are mutually exclusive) — a vertex is never both.
-    ///   `roundLevel` never rounds this cap: it is deliberately never
-    ///   registered as a rail-support consumer (unlike the hub cap's ring),
-    ///   so its bordering rails can never reach the two-consumer approval
-    ///   fixed point below and the affected span run degrades to Round
-    ///   Level 0 automatically instead of emitting an unmeasured shape. The
-    ///   same cap on an OPEN (boundary) fan has no reference dump and is
-    ///   refused before any mutation (see the preflight below).
+    ///   `roundLevel` rounds this cap's own ring (task 0449): the ring is
+    ///   registered as a rail-support consumer exactly like the hub cap's
+    ///   ring, since it IS the missing second consumer for its bordering
+    ///   rails (the reference's own cap plugging the hole the free end
+    ///   cuts — capture-verified). A rail that also clears the chamfer-
+    ///   strip side of the two-consumer fixed point rounds via the ONE
+    ///   reference-captured fillet law every rail uses; the cap's own
+    ///   interior tessellation at K >= 2 remains unclosed (see the Round
+    ///   Level inventory comment further below). The same cap on an OPEN
+    ///   (boundary) fan has no reference dump and is refused before any
+    ///   mutation (see the preflight below).
     /// A selected edge's own chamfer strip always bridges the per-(vertex,
     /// face) corner already resolved above for its 2 bordering faces at
     /// each endpoint — so the strip is well-defined for EVERY case (bare
@@ -8566,11 +8570,15 @@ struct Mesh {
     /// flat N-gon cap.  `roundLevel==0` takes the old flat path without a
     /// registry.
     ///
-    /// A DIFFERENT flat cap — the free-end / partial-fan cap for `0 < K <
-    /// nE` (task 0439, described above) — is a disjoint code path guarded by
-    /// `K < nE` and never rounds at all, degrading its span run to Round
-    /// Level 0 instead (see the Round Level inventory comment further
-    /// below). It is not a special case of this hub-cap N-gon.
+    /// A DIFFERENT cap — the free-end / partial-fan cap for `0 < K < nE`
+    /// (task 0439, described above) — is a disjoint code path guarded by
+    /// `K < nE`. Since task 0449 its own boundary rails round through the
+    /// same fixed point as any other rail (its ring is the missing second
+    /// support-consumer those rails needed); the cap's own interior
+    /// tessellation at K >= 2 (a notch spanning 2+ selected slots) is not
+    /// decoded and stays a flat fill between the rounded boundary arcs (see
+    /// the Round Level inventory comment further below). It is not a
+    /// special case of this hub-cap N-gon.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8758,11 +8766,18 @@ struct Mesh {
         // Free-end / partial-fan cap bookkeeping (task 0439): vertex → ring
         // of unselected-slot slide corners + both-selected-neighbours miter
         // corners, in fan order (only populated for `0 < K < nE` on a CLOSED
-        // fan with a ring of ≥3 corners — Decision B). Deliberately never
-        // fed into `addRailSupportConsumer` below (unlike `hubCapRing`): its
-        // bordering rails must never reach the two-consumer approval fixed
-        // point, so an affected span run degrades to Round Level 0 instead
-        // of rounding an unmeasured cap interior (Decision D).
+        // fan with a ring of ≥3 corners — Decision B). Since task 0449 this
+        // ring IS fed into `addRailSupportConsumer` below, exactly like
+        // `hubCapRing`: it is the ring's own "back face" that a bordering
+        // rail was missing as its SECOND consumer (the reference's own cap
+        // plugging the hole the free end cuts — capture-verified,
+        // doc/edge_bevel_freeend_cap_roundlevel_plan.md Decision A). A rail
+        // that clears the two-consumer fixed point rounds via `railInterior`
+        // (the same reference-captured fillet law every other rail uses);
+        // one that doesn't still degrades that span run to Round Level 0,
+        // same as before. The cap's own INTERIOR tessellation at K >= 2
+        // (a notch spanning 2+ selected slots) remains unclosed — only the
+        // boundary arcs round — see Decision B in the same plan.
         uint[][uint] freeEndCapRing;
         uint[uint]   freeEndCapSrc;
 
@@ -9182,6 +9197,15 @@ struct Mesh {
             foreach (V, ring; hubCapRing)
                 foreach (k; 0 .. ring.length)
                     addRailSupportConsumer(ring[k], ring[(k + 1) % ring.length]);
+            // The free-end / partial-fan cap ring is this task's (0449) second
+            // support-consumer registration, exactly mirroring hubCapRing above:
+            // the cap ring IS the "back face" a bordering rail was missing (see
+            // the updated declaration comment below). See Decision A in
+            // doc/edge_bevel_freeend_cap_roundlevel_plan.md for why a third
+            // consumer is structurally impossible and this cannot over-approve.
+            foreach (V, ring; freeEndCapRing)
+                foreach (k; 0 .. ring.length)
+                    addRailSupportConsumer(ring[k], ring[(k + 1) % ring.length]);
 
             roundedSpan.length = spans.length;
             roundedSpan[] = true;
@@ -9466,15 +9490,28 @@ struct Mesh {
                 uint[][3] railI;
                 Vec3[3] poleP, RP;
                 if (ok) foreach (i; 0 .. 3) {
-                    // A pairwise rail here is NOT guaranteed approved. Since
-                    // task 0439 a free-end / partial-fan cap elsewhere in the
-                    // same operation can withhold a rail's second consumer, and
-                    // the approval fixed point then un-rounds that whole span
-                    // run — including a rail this junction wants. `railInterior`
-                    // asserts on an unapproved rail, so check first and fall
-                    // back to the flat cap, exactly as the strip emission does.
-                    // Reachable: a K3 junction whose far endpoints are valence-4
-                    // free ends, which was refused outright before 0439.
+                    // A pairwise rail here is NOT guaranteed approved. The
+                    // fixed point can un-round a rail for any of several
+                    // reasons — a rail-starved span elsewhere in the same
+                    // connected run, a malformed/rejected neighbouring fan,
+                    // or (before task 0449) a free-end cap that withheld a
+                    // rail's second consumer — and this node has no business
+                    // assuming which one applies. `railInterior` asserts on
+                    // an unapproved rail, so check first and fall back to
+                    // the flat cap, exactly as the strip emission does.
+                    // Known-unreached as of task 0449 (0 hits over 5652
+                    // rounded census trials, generateTrialMasks × 7 meshes ×
+                    // L1-L3, mesh_bevel_census.d): a K3 junction whose far
+                    // endpoints are valence-4 free ends now rounds cleanly
+                    // (that cap ring is a rail's second consumer too, same
+                    // as this junction's own ring), and the one other
+                    // construction found that reaches `railSpec is null`
+                    // here depends on the fan-walk winding defect task 0447
+                    // is removing — see doc/edge_bevel_freeend_cap_
+                    // roundlevel_plan.md, Decision D2. "Not hit yet" is not
+                    // "unreachable": this guard is a structural backstop
+                    // with no freezable trigger, and removing it needs a
+                    // proof of unreachability, not an absence of failures.
                     auto railSpec = pairKey(poleI[i], poleI[(i + 1) % 3]) in railSpecs;
                     if (railSpec is null || !railSpec.approved) { ok = false; break; }
                     railI[i] = railInterior(poleI[i], poleI[(i + 1) % 3]);
@@ -9528,14 +9565,20 @@ struct Mesh {
         }
 
         // Emit one free-end / partial-fan cap per `freeEndCapRing` vertex
-        // (task 0439, Decision B). Same Newell-winding idiom as the hub cap
-        // above, but `threadRails` is deliberately NOT called: this ring is
-        // never registered via `addRailSupportConsumer` (see its
-        // declaration above), so its bordering rails never reach the
-        // two-consumer approval fixed point and are never materialized —
-        // the affected span run simply commits flat (Decision D). Calling
-        // `threadRails` here would be a no-op; the comment exists so this
-        // doesn't read as a forgotten branch.
+        // (task 0439, Decision B; rounded at Round Level > 0 since task
+        // 0449). Same Newell-winding idiom as the hub cap above, and — as
+        // of 0449 — the same `threadRails` call: this ring is now the
+        // SECOND support-consumer for its bordering rails (registered
+        // above, alongside `hubCapRing`), so a rail whose chamfer-strip
+        // side is also approved reaches the two-consumer fixed point and
+        // materializes; `threadRails` swaps the L0 chord for the
+        // materialized arc chain exactly as it does for any other ring.
+        // K >= 2 (a notch spanning 2+ selected slots) still only closes the
+        // boundary arcs, not the cap's own interior tessellation — see
+        // doc/edge_bevel_freeend_cap_roundlevel_plan.md, Decision B — and a
+        // vertex whose whole span run fails to reach approval (for any of
+        // the OTHER reasons the fixed point can withhold consent) still
+        // commits this cap flat, same as before.
         foreach (V, ring_; freeEndCapRing) {
             uint[] ring = ring_.dup;
             immutable int Ncap = cast(int)ring.length;
@@ -9558,7 +9601,7 @@ struct Mesh {
                 }
             }
             immutable uint srcFi = freeEndCapSrc[V];
-            newFaces ~= ring;
+            newFaces ~= threadRails(ring);
             newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
             newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
             newOrd  ~= 0;
@@ -16826,8 +16869,11 @@ unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
     auto mask = selectPairs(m, [[0u, 1u], [0u, 2u]]);
     assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
         "mixed adjacent K2 must now bevel both edges");
-    assert(m.vertices.length == 12 && m.faces.length == 13,
-        "adjacent K2 valence-4 octahedron golden must be 12v/13f");
+    // task 0449: the two far-endpoint free-end caps are now a second
+    // support-consumer for their own bordering rails, so Round Level 1
+    // rounds them too (was 12v/13f flat before this task).
+    assert(m.vertices.length == 16 && m.faces.length == 15,
+        "adjacent K2 valence-4 octahedron golden must be 16v/15f at Round Level 1");
     assertBevelManifoldClean(m, "adjacent valence-4 K2 free-end cap");
 }
 
@@ -16877,8 +16923,10 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four (task 0439).
     auto mask = selectPairs(m);
     assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
         "non-adjacent K2 must now bevel both edges");
-    assert(m.vertices.length == 11 && m.faces.length == 12,
-        "non-adjacent K2 valence-4 octahedron golden must be 11v/12f");
+    // task 0449: same second-consumer registration as the adjacent sibling
+    // above — was 11v/12f flat before this task.
+    assert(m.vertices.length == 14 && m.faces.length == 14,
+        "non-adjacent K2 valence-4 octahedron golden must be 14v/14f at Round Level 1");
     assertBevelManifoldClean(m, "non-adjacent valence-4 K2 free-end cap");
 }
 
@@ -17001,14 +17049,24 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
            // The two cap mechanisms meet in one operation here: the corner is a
            // full ring (K == valence == 3) and takes the hub-cap path, while its
            // three far endpoints are valence-4 free ends and take the cap added
-           // by task 0439. That cap deliberately withholds its rails' second
-           // consumer so the span run degrades to L0 — which leaves the rails
-           // UNAPPROVED, and the K3 Gregory branch used to call `railInterior`
-           // on them unconditionally. It must check approval and fall back to
-           // the flat cap instead.
+           // by task 0439. Before task 0449 that far-endpoint cap withheld its
+           // rails' second consumer, so the whole span run degraded to L0 at
+           // EVERY requested level (34v/31f regardless of level) — this test
+           // used to be titled "cap-bearing free ends degrade the whole run to
+           // L0". Since 0449 the far cap IS its rails' second consumer, so the
+           // hub and its three free ends now round INDEPENDENTLY at Round
+           // Level > 0 (capture-verified composition — the reference's own
+           // used-vertex counts for this exact shape are 41/59/83, matching
+           // ours once its 3 sibling-orphaned slide points are excluded). The
+           // K3 Gregory branch still must not assume its own rails are
+           // approved just because they usually are now — it checks approval
+           // and falls back to the flat cap on any span the fixed point
+           // withholds for some OTHER reason, which is what this test still
+           // regression-guards.
            //
            // Unreachable before 0439: the valence-4 free ends were refused
            // outright, so the junction never got the chance to round.
+    import std.conv : to;
     // A once-subdivided cube is exactly this shape: 26v/24f, corner vertices at
     // valence 3, every one of their neighbours at valence 4.
     auto probe = subdivideCube(1);
@@ -17032,6 +17090,11 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
         }
     }
 
+    // task 0449: L0 never rounds by definition (stays the flat 34v/31f base),
+    // but L1/L2 now round the hub AND all three free-end caps independently
+    // — was 34/31 at every level before this task.
+    static immutable size_t[3] wantV = [34, 41, 59];
+    static immutable size_t[3] wantF = [31, 36, 51];
     foreach (level; 0 .. 3) {
         auto m = subdivideCube(1);
         bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -17039,13 +17102,13 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
         foreach (ei; m.edgesAroundVertex(cast(uint)corner)) { mask[ei] = true; ++sel; }
         assert(sel == 3, "expected the corner's three edges");
         // The assertion this guards against fired inside the kernel, so simply
-        // completing is the regression check; the counts pin the flat-cap
-        // fallback the degrade produces.
+        // completing is the regression check; the counts pin the composed
+        // (hub + 3 independent free-end caps) result at each Round Level.
         immutable size_t n = m.bevelEdgesByMask(mask, 0.05f, cast(int)level);
         assert(n == 3, "all three junction edges must bevel at every Round Level");
-        assert(m.vertices.length == 34 && m.faces.length == 31,
-            "cap-bearing free ends degrade the whole run to L0, so every level "
-            ~ "must produce the same flat result");
+        assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
+            "K3 hub and its three valence-4 free ends must round independently "
+            ~ "at Round Level " ~ level.to!string);
         assertBevelManifoldClean(m, "K3 junction with valence-4 free ends");
     }
 }
@@ -18383,6 +18446,709 @@ unittest { // golden test 5: disk N=6, hub-R0 + hub-R2 (gap 1/3) -> quad cap,
     assertBevelManifoldCleanOpen(m, "disk N=6 notch gap(1,3)", 1);
 }
 
+// ===========================================================================
+// Task 0449 fixtures (F1-F4, doc/edge_bevel_freeend_cap_roundlevel_plan.md
+// §"Фаза 3"). Literals below are MECHANICALLY generated from the raw
+// reference dumps `toolcards/edge.bevel/capture/task0439fu_*.json` (full
+// float precision) against the matching private case description's setup
+// mesh — orphan reference vertices (never referenced by any reference
+// face) filtered, indices recompacted. Only the generated literals are
+// committed; the one-off generator script itself stayed in scratchpad per
+// the plan.
+// ===========================================================================
+
+unittest { // F1a: K=1 free end at Round Level, disk N=5 (valence 5), L1-L3.
+           // Bit-exact vs reference at every level (task 0449 Замер 1): the
+           // cap ring's own two boundary rails are threaded through the same
+           // reference-captured fillet law every rail uses, and the reference
+           // itself leaves the K=1 cap as ONE face with the arc woven in.
+    import std.math : cos, sin, PI;
+    import std.conv : to;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    static immutable Vec3[] v5L1Verts = [
+        Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+        Vec3(-0.80901700258255f, 0.5877852439880371f, 0.0f),
+        Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+        Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+        Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+        Vec3(-0.08090169727802277f, 0.05877852439880371f, 0.0f),
+        Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+        Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+        Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+        Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+        Vec3(0.015838444232940674f, 0.0f, 0.0f),
+        Vec3(0.9675080180168152f, 0.0f, 0.0f),
+    ];
+    static immutable uint[][] v5L1Faces = [
+        [7u, 3u, 9u], [6u, 2u, 3u, 7u], [5u, 1u, 2u, 6u], [4u, 0u, 1u, 5u],
+        [4u, 8u, 0u], [8u, 4u, 10u, 11u], [11u, 10u, 7u, 9u],
+        [4u, 5u, 6u, 7u, 10u],
+    ];
+    static immutable Vec3[] v5L2Verts = [
+        Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+        Vec3(-0.80901700258255f, 0.5877852439880371f, 0.0f),
+        Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+        Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+        Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+        Vec3(-0.08090169727802277f, 0.05877852439880371f, 0.0f),
+        Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+        Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+        Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+        Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+        Vec3(0.019627584144473076f, 0.04814557731151581f, 0.0f),
+        Vec3(0.9607715606689453f, 0.0425325408577919f, 0.0f),
+        Vec3(0.015838444232940674f, 0.0f, 0.0f),
+        Vec3(0.9675080180168152f, 0.0f, 0.0f),
+        Vec3(0.019627584144473076f, -0.04814557731151581f, 0.0f),
+        Vec3(0.9607715606689453f, -0.0425325408577919f, 0.0f),
+    ];
+    static immutable uint[][] v5L2Faces = [
+        [7u, 3u, 9u], [6u, 2u, 3u, 7u], [5u, 1u, 2u, 6u], [4u, 0u, 1u, 5u],
+        [4u, 8u, 0u], [8u, 4u, 10u, 11u], [11u, 10u, 12u, 13u],
+        [13u, 12u, 14u, 15u], [15u, 14u, 7u, 9u],
+        [4u, 5u, 6u, 7u, 14u, 12u, 10u],
+    ];
+    static immutable Vec3[] v5L3Verts = [
+        Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+        Vec3(-0.80901700258255f, 0.5877852439880371f, 0.0f),
+        Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+        Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+        Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+        Vec3(-0.08090169727802277f, 0.05877852439880371f, 0.0f),
+        Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+        Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+        Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+        Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+        Vec3(0.02256392128765583f, 0.06398863345384598f, 0.0f),
+        Vec3(0.955608606338501f, 0.055982496589422226f, 0.0f),
+        Vec3(0.01752443239092827f, 0.032170552760362625f, 0.0f),
+        Vec3(0.9645003080368042f, 0.028616588562726974f, 0.0f),
+        Vec3(0.015838444232940674f, 0.0f, 0.0f),
+        Vec3(0.9675080180168152f, 0.0f, 0.0f),
+        Vec3(0.01752443239092827f, -0.032170552760362625f, 0.0f),
+        Vec3(0.9645003080368042f, -0.028616588562726974f, 0.0f),
+        Vec3(0.02256392128765583f, -0.06398863345384598f, 0.0f),
+        Vec3(0.955608606338501f, -0.055982496589422226f, 0.0f),
+    ];
+    static immutable uint[][] v5L3Faces = [
+        [7u, 3u, 9u], [6u, 2u, 3u, 7u], [5u, 1u, 2u, 6u], [4u, 0u, 1u, 5u],
+        [4u, 8u, 0u], [8u, 4u, 10u, 11u], [11u, 10u, 12u, 13u],
+        [13u, 12u, 14u, 15u], [15u, 14u, 16u, 17u], [17u, 16u, 18u, 19u],
+        [19u, 18u, 7u, 9u], [4u, 5u, 6u, 7u, 18u, 16u, 14u, 12u, 10u],
+    ];
+    const(Vec3[])[3]   wantVertsByLevel = [v5L1Verts, v5L2Verts, v5L3Verts];
+    const(uint[][])[3] wantFacesByLevel = [v5L1Faces, v5L2Faces, v5L3Faces];
+    foreach (level; 1 .. 4) {
+        auto m = makeDisk(5);
+        int ei = findEdge(m, 0, 1);
+        assert(ei >= 0);
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
+            "F1a disk N=5 hub-R0 L" ~ level.to!string);
+        assertBevelManifoldCleanOpen(m, "F1a disk N=5 hub-R0", 1);
+    }
+}
+
+unittest { // F1b: K=1 free end at Round Level, disk N=6 (valence 6), L1-L3.
+           // Bit-exact vs reference at every level (task 0449 Замер 1).
+    import std.math : cos, sin, PI;
+    import std.conv : to;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    static immutable Vec3[] v6L1Verts = [
+        Vec3(0.5f, 0.8660253882408142f, 0.0f), Vec3(-0.5f, 0.8660253882408142f, 0.0f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.0f), Vec3(-0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.10000000149011612f, 1.22464685e-17f, 0.0f),
+        Vec3(-0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, 0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, -0.08660253882408142f, 0.0f),
+        Vec3(0.02679491974413395f, 0.0f, 0.0f), Vec3(0.9732050895690918f, 0.0f, 0.0f),
+    ];
+    static immutable uint[][] v6L1Faces = [
+        [9u, 4u, 11u], [8u, 3u, 4u, 9u], [7u, 2u, 3u, 8u], [6u, 1u, 2u, 7u],
+        [5u, 0u, 1u, 6u], [5u, 10u, 0u], [10u, 5u, 12u, 13u], [13u, 12u, 9u, 11u],
+        [5u, 6u, 7u, 8u, 9u, 12u],
+    ];
+    static immutable Vec3[] v6L2Verts = [
+        Vec3(0.5f, 0.8660253882408142f, 0.0f), Vec3(-0.5f, 0.8660253882408142f, 0.0f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.0f), Vec3(-0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.10000000149011612f, 1.22464685e-17f, 0.0f),
+        Vec3(-0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, 0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, -0.08660253882408142f, 0.0f),
+        Vec3(0.032696738839149475f, 0.04482877254486084f, 0.0f),
+        Vec3(0.9673032760620117f, 0.04482877254486084f, 0.0f),
+        Vec3(0.02679491974413395f, 0.0f, 0.0f), Vec3(0.9732050895690918f, 0.0f, 0.0f),
+        Vec3(0.032696738839149475f, -0.04482877254486084f, 0.0f),
+        Vec3(0.9673032760620117f, -0.04482877254486084f, 0.0f),
+    ];
+    static immutable uint[][] v6L2Faces = [
+        [9u, 4u, 11u], [8u, 3u, 4u, 9u], [7u, 2u, 3u, 8u], [6u, 1u, 2u, 7u],
+        [5u, 0u, 1u, 6u], [5u, 10u, 0u], [10u, 5u, 12u, 13u], [13u, 12u, 14u, 15u],
+        [15u, 14u, 16u, 17u], [17u, 16u, 9u, 11u], [5u, 6u, 7u, 8u, 9u, 16u, 14u, 12u],
+    ];
+    static immutable Vec3[] v6L3Verts = [
+        Vec3(0.5f, 0.8660253882408142f, 0.0f), Vec3(-0.5f, 0.8660253882408142f, 0.0f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.0f), Vec3(-0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.5f, -0.8660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.05000000074505806f, 0.08660253882408142f, 0.0f),
+        Vec3(-0.10000000149011612f, 1.22464685e-17f, 0.0f),
+        Vec3(-0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.05000000074505806f, -0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, 0.08660253882408142f, 0.0f),
+        Vec3(0.949999988079071f, -0.08660253882408142f, 0.0f),
+        Vec3(0.037240464240312576f, 0.05923962593078613f, 0.0f),
+        Vec3(0.9627594947814941f, 0.05923962593078613f, 0.0f),
+        Vec3(0.029426293447613716f, 0.03007674589753151f, 0.0f),
+        Vec3(0.9705737233161926f, 0.03007674589753151f, 0.0f),
+        Vec3(0.02679491974413395f, 0.0f, 0.0f), Vec3(0.9732050895690918f, 0.0f, 0.0f),
+        Vec3(0.029426293447613716f, -0.03007674589753151f, 0.0f),
+        Vec3(0.9705737233161926f, -0.03007674589753151f, 0.0f),
+        Vec3(0.037240464240312576f, -0.05923962593078613f, 0.0f),
+        Vec3(0.9627594947814941f, -0.05923962593078613f, 0.0f),
+    ];
+    static immutable uint[][] v6L3Faces = [
+        [9u, 4u, 11u], [8u, 3u, 4u, 9u], [7u, 2u, 3u, 8u], [6u, 1u, 2u, 7u],
+        [5u, 0u, 1u, 6u], [5u, 10u, 0u], [10u, 5u, 12u, 13u], [13u, 12u, 14u, 15u],
+        [15u, 14u, 16u, 17u], [17u, 16u, 18u, 19u], [19u, 18u, 20u, 21u],
+        [21u, 20u, 9u, 11u], [5u, 6u, 7u, 8u, 9u, 20u, 18u, 16u, 14u, 12u],
+    ];
+    const(Vec3[])[3]   wantVertsByLevel = [v6L1Verts, v6L2Verts, v6L3Verts];
+    const(uint[][])[3] wantFacesByLevel = [v6L1Faces, v6L2Faces, v6L3Faces];
+    foreach (level; 1 .. 4) {
+        auto m = makeDisk(6);
+        int ei = findEdge(m, 0, 1);
+        assert(ei >= 0);
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
+            "F1b disk N=6 hub-R0 L" ~ level.to!string);
+        assertBevelManifoldCleanOpen(m, "F1b disk N=6 hub-R0", 1);
+    }
+}
+
+unittest { // F1c: K=1 free end at Round Level, NON-PLANAR valence-4 "tent"
+           // fan (asymmetric Z-tilts), L1-L3. The single most valuable F1
+           // sub-case: the only family here where the law is confirmed on
+           // genuinely non-flat 3D geometry with no antipodal degeneracy
+           // (contrast F2 below, same valence but planar-antipodal).
+    import std.conv : to;
+    Mesh makeTent() {
+        Mesh m;
+        m.vertices = [
+            Vec3(0, 0, 0),
+            Vec3(1.0f, 0.0f, 0.35f),
+            Vec3(6.123234e-17f, 1.0f, -0.2f),
+            Vec3(-1.0f, 1.2246468e-16f, 0.15f),
+            Vec3(-1.8369702e-16f, -1.0f, -0.3f),
+        ];
+        m.addFace([0u, 1u, 2u]); m.addFace([0u, 2u, 3u]);
+        m.addFace([0u, 3u, 4u]); m.addFace([0u, 4u, 1u]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    static immutable Vec3[] tentL1Verts = [
+        Vec3(6.12323426e-17f, 1.0f, -0.20000000298023224f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.15000000596046448f),
+        Vec3(-1.83697015e-16f, -1.0f, -0.30000001192092896f),
+        Vec3(6.00432498e-18f, 0.0980580672621727f, -0.01961161382496357f),
+        Vec3(-0.09889363497495651f, 1.2110978e-17f, 0.014834045432507992f),
+        Vec3(-1.75949836e-17f, -0.09578263014554977f, -0.028734790161252022f),
+        Vec3(0.9340977668762207f, 0.0659022405743599f, 0.31375375390052795f),
+        Vec3(0.9357507228851318f, -0.06424925476312637f, 0.3082379698753357f),
+        Vec3(-2.94137919e-18f, 0.0005774405435658991f, -0.01226893998682499f),
+        Vec3(0.9605934619903564f, 0.0005004822742193937f, 0.3263810873031616f),
+    ];
+    static immutable uint[][] tentL1Faces = [
+        [5u, 2u, 7u], [4u, 1u, 2u, 5u], [3u, 0u, 1u, 4u], [3u, 6u, 0u],
+        [6u, 3u, 8u, 9u], [9u, 8u, 5u, 7u], [3u, 4u, 5u, 8u],
+    ];
+    static immutable Vec3[] tentL2Verts = [
+        Vec3(6.12323426e-17f, 1.0f, -0.20000000298023224f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.15000000596046448f),
+        Vec3(-1.83697015e-16f, -1.0f, -0.30000001192092896f),
+        Vec3(6.00432498e-18f, 0.0980580672621727f, -0.01961161382496357f),
+        Vec3(-0.09889363497495651f, 1.2110978e-17f, 0.014834045432507992f),
+        Vec3(-1.75949836e-17f, -0.09578263014554977f, -0.028734790161252022f),
+        Vec3(0.9340977668762207f, 0.0659022405743599f, 0.31375375390052795f),
+        Vec3(0.9357507228851318f, -0.06424925476312637f, 0.3082379698753357f),
+        Vec3(2.28662562e-18f, 0.0495423749089241f, -0.012958211824297905f),
+        Vec3(0.9534143209457397f, 0.03639378026127815f, 0.3238682746887207f),
+        Vec3(-2.94137919e-18f, 0.0005774405435658991f, -0.01226893998682499f),
+        Vec3(0.9605934619903564f, 0.0005004822742193937f, 0.3263810873031616f),
+        Vec3(-9.60170079e-18f, -0.04810630902647972f, -0.017554080113768578f),
+        Vec3(0.9543238878250122f, -0.03522201254963875f, 0.3208332061767578f),
+    ];
+    static immutable uint[][] tentL2Faces = [
+        [5u, 2u, 7u], [4u, 1u, 2u, 5u], [3u, 0u, 1u, 4u], [3u, 6u, 0u],
+        [6u, 3u, 8u, 9u], [9u, 8u, 10u, 11u], [11u, 10u, 12u, 13u],
+        [13u, 12u, 5u, 7u], [3u, 4u, 5u, 12u, 10u, 8u],
+    ];
+    static immutable Vec3[] tentL3Verts = [
+        Vec3(6.12323426e-17f, 1.0f, -0.20000000298023224f),
+        Vec3(-1.0f, 1.22464685e-16f, 0.15000000596046448f),
+        Vec3(-1.83697015e-16f, -1.0f, -0.30000001192092896f),
+        Vec3(6.00432498e-18f, 0.0980580672621727f, -0.01961161382496357f),
+        Vec3(-0.09889363497495651f, 1.2110978e-17f, 0.014834045432507992f),
+        Vec3(-1.75949836e-17f, -0.09578263014554977f, -0.028734790161252022f),
+        Vec3(0.9340977668762207f, 0.0659022405743599f, 0.31375375390052795f),
+        Vec3(0.9357507228851318f, -0.06424925476312637f, 0.3082379698753357f),
+        Vec3(3.69688192e-18f, 0.06580017507076263f, -0.014516410417854786f),
+        Vec3(0.9481908082962036f, 0.04724028334021568f, 0.3212765157222748f),
+        Vec3(7.08371524e-19f, 0.0332346111536026f, -0.012063427828252316f),
+        Vec3(0.9572705030441284f, 0.024828020483255386f, 0.3256036937236786f),
+        Vec3(-2.94137919e-18f, 0.0005774405435658991f, -0.01226893998682499f),
+        Vec3(0.9605934619903564f, 0.0005004822742193937f, 0.3263810873031616f),
+        Vec3(-7.22815566e-18f, -0.03195466846227646f, -0.01513158343732357f),
+        Vec3(0.9578874707221985f, -0.023750487715005875f, 0.323544979095459f),
+        Vec3(-1.21235164e-17f, -0.06414588540792465f, -0.020632365718483925f),
+        Vec3(0.949374258518219f, -0.045939311385154724f, 0.3173275887966156f),
+    ];
+    static immutable uint[][] tentL3Faces = [
+        [5u, 2u, 7u], [4u, 1u, 2u, 5u], [3u, 0u, 1u, 4u], [3u, 6u, 0u],
+        [6u, 3u, 8u, 9u], [9u, 8u, 10u, 11u], [11u, 10u, 12u, 13u],
+        [13u, 12u, 14u, 15u], [15u, 14u, 16u, 17u], [17u, 16u, 5u, 7u],
+        [3u, 4u, 5u, 16u, 14u, 12u, 10u, 8u],
+    ];
+    const(Vec3[])[3]   wantVertsByLevel = [tentL1Verts, tentL2Verts, tentL3Verts];
+    const(uint[][])[3] wantFacesByLevel = [tentL1Faces, tentL2Faces, tentL3Faces];
+    foreach (level; 1 .. 4) {
+        auto m = makeTent();
+        int ei = findEdge(m, 0, 1);
+        assert(ei >= 0);
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
+            "F1c non-planar valence-4 tent L" ~ level.to!string);
+        assertBevelManifoldCleanOpen(m, "F1c non-planar valence-4 tent", 1);
+    }
+}
+
+unittest { // F1d: F1's own regression bar EXTENDED to `MAX_ROUND_LEVEL`
+           // (task 0449 test-plan requirement: "F1 must run at
+           // MAX_ROUND_LEVEL, not only L3"). No reference dump exists at
+           // this depth (the plan's own captures stop at L3) — this is a
+           // scale/DoS-clamp sanity check, not a position-parity fixture:
+           // the cap ring now participates in Round Level, so its own
+           // growth (`(N-K) + K*(2L-1)`, still linear in the ALREADY-
+           // clamped `L` per the two-layer DoS clamp at `MAX_ROUND_LEVEL`)
+           // must not blow past a bounded count or leave the mesh unsound
+           // at the clamp boundary either.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(5);
+    int ei = findEdge(m, 0, 1);
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, MAX_ROUND_LEVEL) == 1);
+    // Measured (not derived from the ring-growth formula alone, which only
+    // bounds the cap ring's own corner count, not the whole mesh's):
+    // MAX_ROUND_LEVEL=10 gives 48v/26f for this disk. Pinned exactly so any
+    // future change to this path shows up here, not just as an allocation
+    // blowup caught by a looser bound.
+    assert(m.vertices.length == 48 && m.faces.length == 26,
+        "F1d disk N=5 hub-R0 at MAX_ROUND_LEVEL golden must be 48v/26f");
+    assertBevelManifoldCleanOpen(m, "F1d disk N=5 hub-R0 at MAX_ROUND_LEVEL", 1);
+}
+
+unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
+           // z=0) — the antipodal-fillet degeneracy (Decision C): the hub's
+           // two ring-neighbours of the selected slot sit exactly opposite
+           // each other, so `railInterior`'s `sinO < 1e-6` fallback fires
+           // and the "arc" is a straight chord. Two claims, not one: (i)
+           // our OWN result is frozen bit-exact (positions + connectivity);
+           // (ii) the DIVERGENCE from the reference is measured directly —
+           // NOT the plan's own table cell (that cell said ref-only=1,
+           // our-only=2; re-measuring against the raw capture dumps at
+           // every level gives ref-only=1, our-only=1 instead — a clean
+           // one-for-one swap, not an asymmetric one — see the task Result
+           // for how this was checked). The reference substitutes the
+           // ring's opposite unselected slot with the RAW hub position
+           // (0,0,0) and separately (unpooled) computes its own degenerate
+           // rail interior, which lands on that SAME position — two
+           // distinct vertex records at one spot, one of which we lack. We
+           // instead just emit the ordinary slide at that ring slot, which
+           // the reference orphans.
+    import std.math : cos, sin, PI;
+    import std.conv : to;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    static immutable Vec3[] v4L1Verts = [
+        Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
+        Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
+        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
+        Vec3(-1.58932545e-09f, 0f, 0f), Vec3(0.958578706f, 0f, 0f),
+    ];
+    static immutable uint[][] v4L1Faces = [
+        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
+        [5u, 7u, 9u, 8u], [8u, 9u, 6u, 3u], [3u, 4u, 5u, 8u],
+    ];
+    static immutable Vec3[] v4L2Verts = [
+        Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
+        Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
+        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
+        Vec3(-2.98023228e-09f, 0.0500000045f, 0f), Vec3(-1.58932545e-09f, 0f, 0f),
+        Vec3(-1.9841867e-10f, -0.0500000045f, 0f), Vec3(0.950966597f, 0.0382683501f, 0f),
+        Vec3(0.958578706f, 0f, 0f), Vec3(0.950966597f, -0.0382683501f, 0f),
+    ];
+    static immutable uint[][] v4L2Faces = [
+        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
+        [5u, 7u, 13u, 10u], [10u, 13u, 12u, 9u], [9u, 12u, 11u, 8u],
+        [8u, 11u, 6u, 3u], [3u, 4u, 5u, 10u, 9u, 8u],
+    ];
+    static immutable Vec3[] v4L3Verts = [
+        Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
+        Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
+        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
+        Vec3(-3.44386786e-09f, 0.0666666701f, 0f), Vec3(-2.51659649e-09f, 0.0333333276f, 0f),
+        Vec3(-1.58932545e-09f, 0f, 0f), Vec3(-6.62054189e-10f, -0.0333333388f, 0f),
+        Vec3(2.65216848e-10f, -0.0666666627f, 0f), Vec3(0.945181191f, 0.0500000007f, 0f),
+        Vec3(0.955171227f, 0.0258819051f, 0f), Vec3(0.958578706f, 0f, 0f),
+        Vec3(0.955171227f, -0.0258819126f, 0f), Vec3(0.945181191f, -0.0500000007f, 0f),
+    ];
+    static immutable uint[][] v4L3Faces = [
+        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
+        [5u, 7u, 17u, 12u], [12u, 17u, 16u, 11u], [11u, 16u, 15u, 10u],
+        [10u, 15u, 14u, 9u], [9u, 14u, 13u, 8u], [8u, 13u, 6u, 3u],
+        [3u, 4u, 5u, 12u, 11u, 10u, 9u, 8u],
+    ];
+    const(Vec3[])[3]   wantVertsByLevel = [v4L1Verts, v4L2Verts, v4L3Verts];
+    const(uint[][])[3] wantFacesByLevel = [v4L1Faces, v4L2Faces, v4L3Faces];
+    // The one differing corner, both positions named (task Result records
+    // the direct re-measurement this comes from):
+    static immutable Vec3 refOnlyCorner = Vec3(0.0f, 0.0f, 0.0f);   // reference's raw hub position, reused
+    static immutable Vec3 ourOnlyCorner = Vec3(-0.1f, 0.0f, 0.0f);  // our own plain slide at the same ring slot
+    foreach (level; 1 .. 4) {
+        auto m = makeDisk(4);
+        int ei = findEdge(m, 0, 1);
+        assert(ei >= 0);
+        bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
+            "F2 disk N=4 antipodal hub-R0 L" ~ level.to!string);
+        bool foundOurCorner = false;
+        foreach (v; m.vertices)
+            if ((v - ourOnlyCorner).length < 1e-4f) foundOurCorner = true;
+        assert(foundOurCorner,
+            "F2 L" ~ level.to!string ~ ": our own slide corner " ~ ourOnlyCorner.to!string ~
+            " must be present — the frozen-result check above should already have caught this");
+        // refOnlyCorner is deliberately NOT asserted present in `m` — it is
+        // the reference's own choice, not ours (Decision C: we do not
+        // imitate the degenerate substitution). Naming it here, rather than
+        // only in prose, is what "both positions" in the plan's DoD means.
+        assertBevelManifoldCleanOpen(m, "F2 disk N=4 antipodal hub-R0", 1);
+    }
+}
+
+unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
+           // gap(1,3), L1-L3 — a SUBSET fixture (Decision B): every vertex
+           // we emit matches SOME reference position bit-exact (4 boundary
+           // arcs are decoded and closed), but we do not decode the 2-3
+           // remaining interior points of the cap's own tessellation, so
+           // our result is a strict subset of the reference's used-vertex
+           // positions. Counts are pinned exactly (they freeze the KNOWN
+           // incompleteness, not just a lower bound).
+    import std.math : cos, sin, PI;
+    import std.conv : to;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool everyVertexMatchesSomeReference(ref Mesh m, const Vec3[] refPositions) {
+        foreach (v; m.vertices) {
+            bool ok = false;
+            foreach (r; refPositions) if ((v - r).length < 1e-4f) { ok = true; break; }
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    // N=5 gap(1,2): our counts 14v/10f, 22v/14f, 30v/18f (task 0449 Замер 1).
+    {
+        static immutable size_t[3] wantV = [14, 22, 30];
+        static immutable size_t[3] wantF = [10, 14, 18];
+        static immutable Vec3[] refL1 = [
+            Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+            Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+            Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+            Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+            Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+            Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+            Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+            Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+            Vec3(-0.80901700258255f, 0.4877852499485016f, 0.0f),
+            Vec3(-0.7139113545417786f, 0.6186869740486145f, 0.0f),
+            Vec3(0.015838444232940674f, 0.0f, 0.0f),
+            Vec3(0.9675080180168152f, 0.0f, 0.0f),
+            Vec3(-0.7827304601669312f, 0.5686869621276855f, 0.0f),
+            Vec3(-0.01281356904655695f, 0.009309601970016956f, 0.0f),
+            Vec3(-0.030901696532964706f, -0.09510564804077148f, 0.0f),
+            Vec3(0.001146096852608025f, 0.0035273197572678328f, 0.0f),
+        ];
+        foreach (level; 1 .. 4) {
+            auto m = makeDisk(5);
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            foreach (pair; [[0u, 1u], [0u, 3u]]) mask[findEdge(m, pair[0], pair[1])] = true;
+            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(m.vertices.length == wantV[level - 1] && m.faces.length == wantF[level - 1],
+                "F3 disk N=5 gap(1,2) L" ~ level.to!string ~ " count mismatch");
+            // Subset check only at L1, where the reference literal above is
+            // complete for — the 34/60 L2/L3 reference sets would be a
+            // large literal for marginal extra coverage; L1 already
+            // exercises the same 4-boundary-arc mechanism at the smallest
+            // cell, and the vertex/face COUNTS above still pin L2/L3 exactly.
+            if (level == 1)
+                assert(everyVertexMatchesSomeReference(m, refL1),
+                    "F3 disk N=5 gap(1,2) L1: emitted a position not in the reference dump — "
+                    ~ "our output must stay a STRICT SUBSET of the reference's used vertices");
+            assertBevelManifoldCleanOpen(m, "F3 disk N=5 gap(1,2)", 1);
+        }
+    }
+
+    // N=6 gap(1,3): our counts 16v/11f, 24v/15f, 32v/19f (task 0449 Замер 1).
+    {
+        static immutable size_t[3] wantV = [16, 24, 32];
+        static immutable size_t[3] wantF = [11, 15, 19];
+        static immutable Vec3[] refL1 = [
+            Vec3(0.5f, 0.8660253882408142f, 0.0f),
+            Vec3(-1.0f, 1.22464685e-16f, 0.0f),
+            Vec3(-0.5f, -0.8660253882408142f, 0.0f),
+            Vec3(0.5f, -0.8660253882408142f, 0.0f),
+            Vec3(0.05000000074505806f, 0.08660253882408142f, 0.0f),
+            Vec3(-0.10000000149011612f, 1.22464685e-17f, 0.0f),
+            Vec3(-0.05000000074505806f, -0.08660253882408142f, 0.0f),
+            Vec3(0.05000000074505806f, -0.08660253882408142f, 0.0f),
+            Vec3(0.949999988079071f, 0.08660253882408142f, 0.0f),
+            Vec3(0.949999988079071f, -0.08660253882408142f, 0.0f),
+            Vec3(-0.550000011920929f, 0.7794228196144104f, 0.0f),
+            Vec3(-0.4000000059604645f, 0.8660253882408142f, 0.0f),
+            Vec3(0.02679491974413395f, 0.0f, 0.0f),
+            Vec3(0.9732050895690918f, 0.0f, 0.0f),
+            Vec3(-0.4866025447845459f, 0.8428202867507935f, 0.0f),
+            Vec3(-0.013397459872066975f, 0.02320507913827896f, 0.0f),
+            Vec3(-0.07500000298023224f, -0.04330126941204071f, 0.0f),
+            Vec3(0.0f, -0.08660253882408142f, 0.0f),
+            Vec3(-0.017991282045841217f, -0.03116181306540966f, 0.0f),
+        ];
+        foreach (level; 1 .. 4) {
+            auto m = makeDisk(6);
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            foreach (pair; [[0u, 1u], [0u, 3u]]) mask[findEdge(m, pair[0], pair[1])] = true;
+            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(m.vertices.length == wantV[level - 1] && m.faces.length == wantF[level - 1],
+                "F3 disk N=6 gap(1,3) L" ~ level.to!string ~ " count mismatch");
+            if (level == 1)
+                assert(everyVertexMatchesSomeReference(m, refL1),
+                    "F3 disk N=6 gap(1,3) L1: emitted a position not in the reference dump — "
+                    ~ "our output must stay a STRICT SUBSET of the reference's used vertices");
+            assertBevelManifoldCleanOpen(m, "F3 disk N=6 gap(1,3)", 1);
+        }
+    }
+}
+
+unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
+           // valence == 3) with its 3 far endpoints each an independent
+           // valence-4 free end, on the same 26v/24f LINEAR-split unit cube
+           // (NOT `subdivideCube(1)`'s Catmull-Clark limit surface — that
+           // has the same topology and thus the same vertex/face COUNTS,
+           // but different smoothed POSITIONS, so it cannot stand in for a
+           // position-comparison fixture) as the reference case. L0: full
+           // position + connectivity match. L1-L3: face count matches the
+           // reference exactly; our positions are a SUBSET of the
+           // reference's FULL vertex array (including its 3 orphans — the
+           // reference orphans exactly our 3 own slide points, task 0449
+           // Замер 1); the symmetric difference against the reference's
+           // USED set is exactly 3 corners (task 0449 Замер 1, confirmed by
+           // direct re-measurement) — the 3 raw ORIGINAL free-end vertex
+           // positions the reference substitutes into its own cap rings
+           // in place of our plain slides (the same Decision C substitution
+           // as F2, independently on all three free ends here).
+    import std.conv : to;
+    static immutable Vec3[] baseVerts = [
+        Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
+        Vec3(0.5f, -0.5f, 0.5f), Vec3(0.5f, 0.0f, 0.0f), Vec3(0.5f, 0.0f, -0.5f),
+        Vec3(0.5f, 0.5f, 0.0f), Vec3(0.5f, 0.0f, 0.5f), Vec3(0.5f, -0.5f, 0.0f),
+        Vec3(-0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+        Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.0f, 0.0f), Vec3(-0.5f, 0.0f, 0.5f),
+        Vec3(-0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.0f, -0.5f), Vec3(-0.5f, -0.5f, 0.0f),
+        Vec3(0.0f, 0.5f, 0.0f), Vec3(0.0f, 0.5f, 0.5f), Vec3(0.0f, 0.5f, -0.5f),
+        Vec3(0.0f, -0.5f, 0.0f), Vec3(0.0f, -0.5f, -0.5f), Vec3(0.0f, -0.5f, 0.5f),
+        Vec3(0.0f, 0.0f, 0.5f), Vec3(0.0f, 0.0f, -0.5f),
+    ];
+    static immutable uint[][] baseFaces = [
+        [0u, 5u, 4u, 8u], [1u, 6u, 4u, 5u], [2u, 7u, 4u, 6u], [3u, 8u, 4u, 7u],
+        [9u, 14u, 13u, 17u], [10u, 15u, 13u, 14u], [11u, 16u, 13u, 15u], [12u, 17u, 13u, 16u],
+        [11u, 15u, 18u, 20u], [10u, 19u, 18u, 15u], [2u, 6u, 18u, 19u], [1u, 20u, 18u, 6u],
+        [9u, 17u, 21u, 23u], [12u, 22u, 21u, 17u], [0u, 8u, 21u, 22u], [3u, 23u, 21u, 8u],
+        [9u, 23u, 24u, 14u], [3u, 7u, 24u, 23u], [2u, 19u, 24u, 7u], [10u, 14u, 24u, 19u],
+        [12u, 16u, 25u, 22u], [11u, 20u, 25u, 16u], [1u, 5u, 25u, 20u], [0u, 22u, 25u, 5u],
+    ];
+    // Fixture assembly note: this is `setup.vertices`/`setup.faces` of
+    // `task0439fu_combined_subcube_corner_L1.json` (task 0449 plan §Фаза
+    // 3), transcribed once, mechanically, for the whole F4 block — the SAME
+    // 26v/24f LINEAR-split cube every level (L0-L3) selects on. Corner
+    // vertex 2=(0.5,0.5,0.5); its 3 far endpoints are 6=(0.5,0.5,0.0),
+    // 7=(0.5,0.0,0.5), 19=(0.0,0.5,0.5) — each a valence-4 free end (same
+    // shape mesh.d's own K3-composition unittest exercises via
+    // `subdivideCube(1)` for its count-only regression check — that
+    // function's Catmull-Clark limit-surface smoothing gives the same
+    // topology but different POSITIONS, so it cannot stand in here).
+    static immutable Vec3[] diffCorners = [
+        Vec3(0.5f, 0.5f, 0.0f), Vec3(0.5f, 0.0f, 0.5f), Vec3(0.0f, 0.5f, 0.5f),
+    ];
+    static immutable size_t[4] wantF4 = [31, 36, 51, 72];
+    bool positionIn(Vec3 v, const Vec3[] set) {
+        foreach (p; set) if ((v - p).length < 1e-4f) return true;
+        return false;
+    }
+    foreach (level; 0 .. 4) {
+        Mesh m;
+        m.vertices = baseVerts.dup;
+        foreach (f; baseFaces) m.addFace(f.dup);
+        m.buildLoops();
+        m.syncSelection();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (far; [6u, 7u, 19u]) {
+            foreach (i; 0 .. m.edges.length) {
+                uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == 2 && b == far) || (a == far && b == 2)) { mask[i] = true; break; }
+            }
+        }
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        assert(m.faces.length == wantF4[level],
+            "F4 combined K3+3-free-ends L" ~ level.to!string ~ " face count mismatch");
+        if (level == 0) {
+            assert(m.vertices.length == 34, "F4 L0 must be the reference's own bit-exact 34v");
+        } else {
+            // Every one of our vertices is one of the 3 substituted corners
+            // OR appears somewhere in the composition (loosely: not
+            // asserting full-array-subset here to avoid a 44/62/86-entry
+            // literal for marginal extra coverage beyond F1-F3's already-
+            // exercised mechanism — the face-count pin above plus the
+            // 3-corner symmetric difference below are what Decision A/B
+            // actually need locking down for THIS composed case).
+            size_t diffCount = 0;
+            foreach (v; m.vertices)
+                if (positionIn(v, diffCorners)) ++diffCount;
+            assert(diffCount == 0,
+                "F4 L" ~ level.to!string ~ ": we must not emit the reference's own substituted "
+                ~ "free-end-original-position corners — Decision C is not imitated here either");
+        }
+        assertBevelManifoldClean(m, "F4 combined K3+3-free-ends L" ~ level.to!string);
+    }
+}
+
 unittest { // smoke test 7 (extrapolated zone, no reference dump): disk N=7,
            // K=3 at slots 0/2/4 (gaps 1/1/2) -> quad cap.
     import std.math : cos, sin, PI;
@@ -18542,15 +19308,41 @@ unittest { // regression test 10: 3x3-quad grid (4x4 verts), L-turn selection
     assertBevelManifoldCleanOpen(m, "grid 3x3 L-turn (was a hole)", 1);
 }
 
-unittest { // Round Level local-degrade tests 11-13 (Decision D): a cube whose
-           // top face is quartered around a center pole C (valence 4) with 4
-           // edge midpoints (valence 3 each). Selecting a span touching C is
-           // exactly the free-end-cap shape (C is a closed-fan K=1 valence-4
-           // vertex), so its bordering rail can never reach the two-consumer
-           // approval fixed point and the whole span run commits flat at
-           // EVERY requested Round Level — no reject, no new code, per the
-           // existing mechanism at the "Round Level rail registry" comment.
+unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
+           // 0439; task 0449 supersedes the "always flat" premise for the
+           // general free-end cap, but THIS specific vertex still rounds to
+           // a degenerate straight chord rather than a visible arc — for a
+           // topological reason unrelated to the withheld-consumer mechanism
+           // that used to be the whole story here). A cube whose top face is
+           // quartered around a center pole C (valence 4) with 4 edge
+           // midpoints (valence 3 each): C's own two ring-neighbours of the
+           // selected slot (M12, M30) sit exactly opposite each other across
+           // C (a planar quartered disk), which is the antipodal-fillet
+           // degeneracy documented at `railInterior`'s `sinO < 1e-6` branch
+           // — the fillet centre pulls to infinity and the arc collapses to
+           // the straight chord between the two rail endpoints (Decision C,
+           // doc/edge_bevel_freeend_cap_roundlevel_plan.md). The far
+           // endpoint M01 (an edge midpoint of the base cube, valence 3) is
+           // independently degenerate for the same reason along the OTHER
+           // axis: its own two ring-neighbours (toward T0, toward T1) sit on
+           // the original straight cube edge, also exactly antipodal. So
+           // BOTH of this span's rails are straight chords, verified below
+           // by an explicit collinearity check rather than assumed from the
+           // vertex/face counts alone.
     import std.conv : to;
+    import std.math : abs, sqrt;
+    // Distance from point `p` to the infinite line through `a`,`b` — used
+    // below to verify a "rounded" rail is actually a DEGENERATE straight
+    // chord (distance ~0), not a real arc bulging off that line.
+    float distToLine(Vec3 p, Vec3 a, Vec3 b) {
+        Vec3 ab = b - a, ap = p - a;
+        immutable float len2 = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z;
+        if (len2 < 1e-12f) return sqrt(ap.x * ap.x + ap.y * ap.y + ap.z * ap.z);
+        immutable float t = (ap.x * ab.x + ap.y * ab.y + ap.z * ab.z) / len2;
+        Vec3 closest = a + ab * t;
+        Vec3 d = p - closest;
+        return sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    }
     Mesh quarteredTopCube() {
         auto m0 = makeCube();
         immutable Vec3 T0 = m0.vertices[4], T1 = m0.vertices[5],
@@ -18591,15 +19383,36 @@ unittest { // Round Level local-degrade tests 11-13 (Decision D): a cube whose
         foreach (ei; m.edgesAroundVertex(8)) ++e;
         assert(d == 4 && e == 4, "pole C must be a closed-fan valence-4 vertex");
     }
-    // Test 11: span C-M01 alone (touches the pole) — flat at every level.
+    // Test 11: span C-M01 alone (touches the pole) — task 0449: rounds at
+    // every level (was flat 16v/11f at every level before this task), but
+    // BOTH its rails are the antipodal-fillet degeneracy above, so the new
+    // vertices are on the straight chords [v11,v13] (C's rail) and
+    // [v14,v15] (M01's rail), never off them.
+    static immutable size_t[3] wantV11 = [16, 18, 22];
+    static immutable size_t[3] wantF11 = [11, 12, 14];
     foreach (level; 0 .. 3) {
         auto m = quarteredTopCube();
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         mask[findEdge(m, 8, 9)] = true;
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
-        assert(m.vertices.length == 16 && m.faces.length == 11,
-            "pole-touching span must stay 16v/11f (flat) at every Round Level, got L" ~
-            level.to!string);
+        assert(m.vertices.length == wantV11[level] && m.faces.length == wantF11[level],
+            "pole-touching span must round to the degenerate straight-chord "
+            ~ "profile at Round Level " ~ level.to!string);
+        // v11=(-0.1,0,0.5)/v13=(0.1,0,0.5) are C's own two slide corners
+        // bordering the selected edge (created at Round Level 0, indices
+        // stable across levels — rail interiors are strictly appended);
+        // v14=(0.1,-0.5,0.5)/v15=(-0.1,-0.5,0.5) are M01's. Any vertex
+        // added at this level (index >= 16) must sit on one of those two
+        // chords — a real arc would bulge off both.
+        enum float EPS = 1e-5f;
+        foreach (vi; 16 .. m.vertices.length) {
+            immutable float dC   = distToLine(m.vertices[vi], m.vertices[11], m.vertices[13]);
+            immutable float dM01 = distToLine(m.vertices[vi], m.vertices[14], m.vertices[15]);
+            assert(dC < EPS || dM01 < EPS,
+                "pole-touching span's new vertex " ~ vi.to!string ~ " at L" ~
+                level.to!string ~ " is off BOTH degenerate chords — this is a real "
+                ~ "arc, not the antipodal straight-chord degeneracy Decision C predicts");
+        }
         assertBevelManifoldClean(m, "degrade C-M01 span");
     }
     // Test 12: span M01-T0 alone (control, does not touch the pole) — rounds
@@ -18617,12 +19430,17 @@ unittest { // Round Level local-degrade tests 11-13 (Decision D): a cube whose
             assertBevelManifoldClean(m, "degrade control M01-T0 span");
         }
     }
-    // Test 13: span C-M01 UNION a disconnected bottom edge — the pole part
-    // stays flat, the disconnected part rounds normally: 18v/12f -> 20v/13f
-    // -> 24v/15f.
+    // Test 13: span C-M01 UNION a disconnected bottom edge — task 0449: BOTH
+    // spans round now, independently (were 18v/12f -> 20v/13f -> 24v/15f
+    // before this task, the pole span held flat by the withheld-consumer
+    // mechanism). The pole span's own profile is still the antipodal
+    // straight-chord degeneracy (test 11, same C/M01 rails); the
+    // disconnected bottom edge is an ordinary cube corner and rounds to a
+    // real arc — this test only pins the composed counts, test 11 owns the
+    // per-vertex degeneracy proof.
     {
-        static immutable size_t[3] wantV = [18, 20, 24];
-        static immutable size_t[3] wantF = [12, 13, 15];
+        static immutable size_t[3] wantV = [18, 22, 30];
+        static immutable size_t[3] wantF = [12, 14, 18];
         foreach (level; 0 .. 3) {
             auto m = quarteredTopCube();
             bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -18630,7 +19448,7 @@ unittest { // Round Level local-degrade tests 11-13 (Decision D): a cube whose
             mask[findEdge(m, 0, 1)] = true;
             assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
             assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
-                "pole span + disconnected span must degrade/round independently at L" ~
+                "pole span and disconnected span must round independently at L" ~
                 level.to!string);
             assertBevelManifoldClean(m, "degrade C-M01 plus disconnected bottom edge");
         }
