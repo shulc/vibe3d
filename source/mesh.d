@@ -8544,7 +8544,7 @@ struct Mesh {
         auto edgeFaces = buildEdgeFaces();
 
         // Step 1: qualifying selected edges — interior (exactly 2 incident
-        // faces) only. Boundary edges are silently skipped (Phase 6).
+        // faces) only. A boundary edge (one incident face) is still skipped.
         bool[] qualifies = new bool[](edges.length);
         size_t nQual = 0;
         foreach (i; 0 .. edges.length) {
@@ -8566,27 +8566,52 @@ struct Mesh {
             affected[edges[i][1]] = true;
         }
 
-        // Safety preflight for the one topology family the current L0 base
-        // kernel cannot cap: a partial (K<valence) multi-edge selection at a
-        // valence>3 vertex.  Its mixed K2 rails have no closed support
-        // boundary, so treating an unapproved rail as a local L0 chord would
-        // still leave the BASE bevel non-manifold.  Reject before the corner
-        // pass (and therefore before any addVertex/recorder/version mutation)
-        // instead of the old post-addVertex pseudo-rollback.  Full hubs and
-        // valence-3 loop turns are handled by their existing cap paths.
-        if (roundLevel > 0) {
-            foreach (V; 0 .. cast(uint)vertices.length) {
-                if (V >= affected.length || !affected[V]) continue;
-                size_t d = 0, K = 0, edgeCount = 0;
-                foreach (fi; facesAroundVertex(V)) ++d;
-                foreach (ei; edgesAroundVertex(V)) {
-                    ++edgeCount;
-                    if (ei < qualifies.length && qualifies[ei]) ++K;
-                }
-                // Malformed/boundary fan remains on the existing per-span
-                // silent-skip path below; this guard is only for a proven
-                // closed ring whose partial cap is known unsupported.
-                if (edgeCount == d && d > 3 && K >= 2 && K < d) return 0;
+        // Safety preflight. Two supported fan shapes reach the per-vertex pass
+        // below: CLOSED (interior vertex, nE == d) and OPEN (boundary vertex,
+        // nE == d + 1 — `VertexEdgeRange` anchors at the open start of the fan
+        // and emits one extra rim edge). In both, face f_k is bordered by edge
+        // slots k and k+1; only the closed fan wraps.
+        foreach (V; 0 .. cast(uint)vertices.length) {
+            if (V >= affected.length || !affected[V]) continue;
+            size_t d = 0;
+            foreach (fi; facesAroundVertex(V)) ++d;
+            bool[] fanSelected;
+            foreach (ei; edgesAroundVertex(V))
+                fanSelected ~= (ei < qualifies.length && qualifies[ei]);
+            immutable bool openFan = (fanSelected.length == d + 1);
+            // Malformed fan stays on the existing per-span silent-skip path
+            // below; the tests here need a well-formed closed or open fan.
+            if (!openFan && fanSelected.length != d) continue;
+            size_t K = 0;
+            foreach (s; fanSelected) if (s) ++K;
+            if (K == 0 || (!openFan && K == d)) continue; // untouched, or a full hub
+
+            // The ROUNDED profile at a rim vertex — where the arc terminates
+            // against the open edge rather than against another chamfer — has
+            // no reference capture yet. The L0 chamfer there IS supported (see
+            // the open-fan walk in the per-vertex pass). Refuse rather than
+            // ship a guessed boundary arc: that exact shortcut is one this
+            // task already had to walk back once.
+            if (openFan && roundLevel > 0) return 0;
+
+            // A face whose BOTH bordering edges are unselected takes the
+            // partial-notch branch below, which retains V on the inactive side
+            // and has no free-end cap — it leaves a hole, at EVERY Round Level
+            // including L0. Walking the fan, such a face exists iff two
+            // fan-adjacent slots are both unselected. Slots are adjacent
+            // exactly when they bound a common face: cyclic on a closed fan,
+            // linear on an open one.
+            //
+            // A closed fan of d <= 3 cannot express such a gap while still
+            // having a selected edge, so it is exempt (ordinary cube-corner
+            // geometry, byte-identical).
+            if (openFan) {
+                foreach (k; 0 .. d)
+                    if (!fanSelected[k] && !fanSelected[k + 1]) return 0;
+            } else {
+                if (d <= 3) continue;
+                foreach (k; 0 .. d)
+                    if (!fanSelected[k] && !fanSelected[(k + 1) % d]) return 0;
             }
         }
 
@@ -8804,27 +8829,43 @@ struct Mesh {
             uint[] vFaces, vEdges, vNbrs;
             foreach (fi; facesAroundVertex(V)) vFaces ~= fi;
             foreach (ei; edgesAroundVertex(V)) vEdges ~= ei;
-            immutable int d = cast(int)vFaces.length;
-            if (d < 2 || vEdges.length != d) continue; // malformed/non-manifold guard
-            vNbrs.length = d;
-            foreach (k; 0 .. d) vNbrs[k] = edgeOtherVertex(vEdges[k], V);
+            immutable int d  = cast(int)vFaces.length;
+            immutable int nE = cast(int)vEdges.length;
+            // Two supported fan shapes, both walked by the SAME convention:
+            // face f_k is bordered by edge slots k and k+1.
+            //   CLOSED (interior vertex): nE == d, slot d wraps to slot 0.
+            //   OPEN   (boundary vertex): nE == d + 1 — `VertexEdgeRange`
+            //     anchors at the open start of the fan and emits one extra
+            //     edge at the end, so the slots run e_0 .. e_d with NO wrap
+            //     (e_0 and e_d are the two rim edges).
+            // Anything else is a malformed / non-manifold fan and is skipped.
+            immutable bool openFan = (nE == d + 1);
+            if (d < 2 || (nE != d && !openFan)) continue;
+            vNbrs.length = nE;
+            foreach (k; 0 .. nE) vNbrs[k] = edgeOtherVertex(vEdges[k], V);
 
-            bool[] selE = new bool[](d);
+            bool[] selE = new bool[](nE);
             int K = 0;
-            foreach (k; 0 .. d) {
+            foreach (k; 0 .. nE) {
                 selE[k] = (vEdges[k] < qualifies.length) && qualifies[vEdges[k]];
                 if (selE[k]) ++K;
             }
             if (K == 0) continue;
 
             // An unselected edge is "active" iff it is immediately adjacent
-            // (in the vertex's cyclic ring) to a selected edge — i.e. it
-            // needs its own slide vertex (shared by both faces bordering it).
-            bool[] active = new bool[](d);
-            foreach (k; 0 .. d) {
+            // to a selected edge — i.e. it needs its own slide vertex (shared
+            // by both faces bordering it). Two edge slots are adjacent exactly
+            // when they bound a common face, so the relation is cyclic on a
+            // closed fan and LINEAR on an open one (slot 0 and slot d share no
+            // face there — wrapping them would invent an adjacency).
+            bool[] active = new bool[](nE);
+            foreach (k; 0 .. nE) {
                 if (selE[k]) continue;
-                immutable int km1 = (k - 1 + d) % d, kp1 = (k + 1) % d;
-                active[k] = selE[km1] || selE[kp1];
+                if (openFan) {
+                    active[k] = (k > 0 && selE[k - 1]) || (k + 1 < nE && selE[k + 1]);
+                } else {
+                    active[k] = selE[(k - 1 + d) % d] || selE[(k + 1) % d];
+                }
             }
 
             immutable Vec3 vpos = vertices[V];
@@ -8842,7 +8883,10 @@ struct Mesh {
             Vec3 slideDir(int k) { return safeNormalize(vertices[vNbrs[k]] - vpos); }
 
             foreach (k; 0 .. d) {
-                immutable int kr = (k + 1) % d;    // face f_k's PRED-side edge slot
+                // face f_k's PRED-side edge slot. On an open fan k+1 never
+                // exceeds d < nE, so the modulus is a no-op there and only
+                // the closed fan actually wraps.
+                immutable int kr = (k + 1) % nE;
                 immutable uint fi = vFaces[k];
                 immutable bool selSucc = selE[k];   // edge k: V's succ-side in f_k
                 immutable bool selPred = selE[kr];  // edge kr: V's pred-side in f_k
@@ -8898,9 +8942,12 @@ struct Mesh {
                 }
             }
 
-            if (K == d && d >= 3) {
+            if (!openFan && K == d && d >= 3) {
                 // Full ring: every face at V is a MITER — its per-face
                 // corners trace a closed K-gon needing exactly one cap face.
+                // An OPEN fan can never form one: its corner chain terminates
+                // on the two rim edges instead of closing, so it takes the
+                // ordinary per-face SLIDE/MITER path with no hub cap.
                 // KNOWN-UNTESTED: only d==3 (the cube-corner junction, K=3)
                 // is fixture/unittest-covered; d>3 (a higher-valence full
                 // hub, e.g. from a subdivided mesh) exercises this same
@@ -8936,20 +8983,14 @@ struct Mesh {
             }
             if (fL == uint.max) continue;
             // Defensive: both endpoints must have a resolved corner at BOTH
-            // fL and fR. This can legitimately be missing when an endpoint
-            // is a BOUNDARY vertex elsewhere in its own fan — its
-            // `edgesAroundVertex`/`facesAroundVertex` ring lengths differ
-            // (the half-edge walk emits one extra "open" edge at a
-            // boundary vertex, per `VertexEdgeRange`'s own doc comment),
-            // which trips the per-vertex loop's `vEdges.length != d` guard
-            // above and leaves that vertex's `cornerAtVF` entries
-            // unpopulated. Rather than crash on a missing-key AA lookup,
-            // skip just this span — same "silently skipped" contract as
-            // v1's guards (open-boundary bevel is task 0391 Phase 6,
-            // deferred/XFAIL, not yet reachable via `qualifies` since Step 1
-            // only admits 2-face interior edges — but this guard also
-            // protects a FUTURE Phase 6 caller from a partially-resolved
-            // boundary-adjacent vertex).
+            // fL and fR. A BOUNDARY endpoint no longer lands here — the
+            // per-vertex pass above now walks the OPEN fan (nE == d + 1) and
+            // populates its `cornerAtVF` entries, so a chain whose ends sit
+            // on a rim bevels instead of being dropped. What remains
+            // unresolved is a genuinely malformed / non-manifold fan, which
+            // still fails the shape check above. Rather than crash on a
+            // missing-key AA lookup, skip just this span — the same
+            // "silently skipped" contract as v1's guards.
             if (vfKey(v0, fL) !in cornerAtVF || vfKey(v1, fL) !in cornerAtVF ||
                 vfKey(v0, fR) !in cornerAtVF || vfKey(v1, fR) !in cornerAtVF)
                 continue;
@@ -15476,17 +15517,21 @@ unittest { // bevelEdgesByMask: roundLevel DoS clamp — an absurd roundLevel
         "chamfer ring count should reflect the CLAMPED level, not the raw request");
 }
 
-unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on
-           // an open-mesh boundary must NOT crash — the boundary endpoint's
-           // half-edge ring has a mismatched edge/face count (one extra
-           // "open" edge, per VertexEdgeRange's own doc comment), tripping
-           // the per-vertex loop's ring-length guard and leaving that
-           // endpoint's corners unresolved while the OTHER (fully interior)
-           // endpoint resolves normally — the exact asymmetric-resolution
-           // shape that would RangeError on an unguarded `cornerAtVF[key]`
-           // lookup in the chamfer-span pass. Silently skips instead
-           // (matches v1's "silently skipped" contract; full open-boundary
-           // support is task 0391 Phase 6, deferred).
+unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
+           // open-mesh boundary must NOT crash. The boundary endpoint itself
+           // is now supported (the per-vertex pass walks its OPEN fan), so the
+           // reason this case still no-ops has MOVED: the other endpoint is
+           // the grid's fully interior vertex 4, a valence-FOUR free end
+           // (K == 1). Its fan therefore has a gap of three unselected
+           // edges, so a face there would take the partial-notch branch,
+           // which has no free-end cap at valence > 3 and would leave holes.
+           // The preflight rejects that shape before any mutation, at every
+           // Round Level.
+           //
+           // Verified: with the notch guard removed this very mesh produces a
+           // 12-edge rim where 9 is correct — i.e. the no-op is load-bearing,
+           // not incidental. A proper valence>3 free-end cap needs its own
+           // reference capture and is tracked separately.
     //   0   1   2
     //   3   4   5     <- 2x2 quad grid; vertex 4 is fully interior (valence
     //   6   7   8        4); vertex 1 is a top-boundary vertex (valence 3,
@@ -15930,6 +15975,208 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four is equally
     assert(recorder.isEmpty(), "non-adjacent K2 preflight must not write an edit record");
     assert(m.endEditBatch().isEmpty(), "non-adjacent K2 preflight must finish with an empty delta");
     assertBevelManifoldClean(m, "non-adjacent valence-4 K2 unchanged input");
+}
+
+unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a chain
+           // whose end vertices sit on the rim of a hole must bevel every
+           // selected edge, not just the interior ones.
+           //
+           // Before open-fan support the per-vertex pass rejected any vertex
+           // whose edge ring was longer than its face ring (a boundary vertex
+           // emits one extra "open" edge), so both end spans were silently
+           // dropped and a 3-edge selection produced ONE chamfer.  The fan is
+           // now walked as an open slot sequence e_0..e_d with no wrap.
+           //
+    Mesh cubeMinusBottom() {
+        // Unit cube with the y == -0.5 face removed: 8 verts, 5 faces, one
+        // open rim of 4 edges. Rim vertices are 0, 1, 4, 7.
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f,-0.5f),
+            Vec3( 0.5f,-0.5f,-0.5f), Vec3( 0.5f, 0.5f,-0.5f),
+            Vec3( 0.5f, 0.5f, 0.5f), Vec3( 0.5f,-0.5f, 0.5f),
+        ];
+        m.addFace([0u, 1u, 2u, 3u]);   // -X
+        m.addFace([4u, 5u, 6u, 7u]);   // +X
+        m.addFace([3u, 2u, 6u, 5u]);   // +Y
+        m.addFace([0u, 3u, 5u, 4u]);   // -Z
+        m.addFace([1u, 7u, 6u, 2u]);   // +Z
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    // Counts edges by how many faces use them: [rim (1 face), non-manifold (>2)].
+    int[2] edgeUseProfile(ref Mesh m) {
+        int[ulong] use;
+        foreach (f; m.faces)
+            foreach (k; 0 .. f.length) use[ekey(f[k], f[(k + 1) % f.length])]++;
+        int[2] r = [0, 0];
+        foreach (kv; use.byKeyValue) {
+            if (kv.value == 1) ++r[0];
+            else if (kv.value != 2) ++r[1];
+        }
+        return r;
+    }
+    bool hasVert(ref Mesh m, Vec3 want) {
+        foreach (v; m.vertices) if ((v - want).length < 1e-5f) return true;
+        return false;
+    }
+    bool[] selectPairs(ref Mesh m, uint[2][] pairs) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (p; pairs) {
+            bool found = false;
+            foreach (i; 0 .. m.edges.length) {
+                uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == p[0] && b == p[1]) || (a == p[1] && b == p[0])) {
+                    mask[i] = true; found = true; break;
+                }
+            }
+            assert(found, "selected edge missing");
+        }
+        return mask;
+    }
+
+    // Premise: the chain's two end vertices really are on the rim (open fan),
+    // i.e. edge-ring length == face-ring length + 1.
+    {
+        auto m = cubeMinusBottom();
+        foreach (V; [4u, 7u]) {
+            size_t d = 0, e = 0;
+            foreach (fi; m.facesAroundVertex(V)) ++d;
+            foreach (ei; m.edgesAroundVertex(V)) ++e;
+            assert(e == d + 1, "rim vertex must present an OPEN fan");
+        }
+        foreach (V; [5u, 6u]) {
+            size_t d = 0, e = 0;
+            foreach (fi; m.facesAroundVertex(V)) ++d;
+            foreach (ei; m.edgesAroundVertex(V)) ++e;
+            assert(e == d, "interior chain vertex must present a CLOSED fan");
+        }
+        assert(edgeUseProfile(m) == [4, 0], "input must have a 4-edge rim and be otherwise manifold");
+    }
+
+    // `chain3`: all three edges bevel, including the two anchored on the rim.
+    {
+        auto m = cubeMinusBottom();
+        auto mask = selectPairs(m, [[4u, 5u], [5u, 6u], [6u, 7u]]);
+        assert(m.bevelEdgesByMask(mask, 0.15f, 0) == 3,
+            "all three edges must bevel — the two rim-anchored ones included");
+        assert(m.vertices.length == 12 && m.faces.length == 8,
+            "open-boundary L0 chain bevel must be 12v/8f");
+        // The bevel notches the rim at each end (one rim vertex becomes two),
+        // so the hole grows from 4 to 6 edges — and NOTHING else may open.
+        assert(edgeUseProfile(m) == [6, 0],
+            "rim must grow 4 -> 6 edges with no new non-manifold edge");
+        foreach (want; [Vec3(0.35f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.35f),
+                        Vec3(0.5f, -0.5f,  0.35f), Vec3(0.35f, -0.5f, 0.5f)])
+            assert(hasVert(m, want), "expected rim slide corner missing");
+        foreach (v; m.vertices)
+            assert(v.y >= -0.5f - 1e-6f, "bevel must not push geometry past the rim plane");
+    }
+
+    // Round Level > 0 at a rim vertex has NO reference capture yet, so it must
+    // refuse as a clean no-op rather than ship a guessed boundary arc.
+    foreach (level; [1, 2]) {
+        auto mr = cubeMinusBottom();
+        auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
+        auto vertsBefore = mr.vertices.dup;
+        auto facesBefore = mr.faces._store.dup;
+        assert(mr.bevelEdgesByMask(maskr, 0.15f, level) == 0,
+            "rounded open-boundary bevel is not captured yet and must no-op");
+        assert(mr.vertices == vertsBefore && mr.faces._store == facesBefore,
+            "the refusal must leave the mesh byte-identical");
+    }
+
+}
+
+unittest { // bevelEdgesByMask: a partial K2 fan at valence FOUR whose selected
+           // edges alternate with the unselected ones (every fan gap == 1 edge)
+           // is SUPPORTED at every Round Level — every face at such a vertex
+           // borders a selected edge, so the fan resolves to MITER/SLIDE only
+           // and never reaches the partial-notch branch.  The old preflight
+           // rejected the whole family on a coarse `d>3 && K>=2 && K<d`
+           // signature, silently turning Round Level > 0 into a no-op here.
+           //
+           // Provenance: this is a cube whose (+,+,+) corner was itself edge-
+           // beveled (the reference-verified K3 junction), then the 3-edge
+           // chain crossing that junction cap is beveled again.  The chain's
+           // two shared vertices land at valence 4 with alternating K2; its
+           // free ends stay valence 3.
+    Mesh chainOnBeveledCorner() {
+        auto m = makeCube();
+        int corner = -1;
+        foreach (i, v; m.vertices)
+            if ((v - Vec3(0.5f, 0.5f, 0.5f)).length < 1e-6f) corner = cast(int)i;
+        assert(corner >= 0, "cube corner (+,+,+) missing");
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (i; 0 .. m.edges.length)
+            if (m.edges[i][0] == corner || m.edges[i][1] == corner) mask[i] = true;
+        assert(m.bevelEdgesByMask(mask, 0.273983f, 0) == 3, "K3 corner setup must bevel 3 edges");
+        assert(m.vertices.length == 13 && m.faces.length == 10, "K3 L0 setup must be 13v/10f");
+        return m;
+    }
+    // The 3-edge chain: two junction-cap edges plus one rail edge, meeting at
+    // the two valence-4 vertices (0.226017, 0.5, 0.226017) / (0.226017, 0.226017, 0.5).
+    bool[] selectChain(ref Mesh m) {
+        static immutable Vec3[2][3] pairs = [
+            [Vec3(0.226017f, -0.5f, 0.5f),      Vec3(0.226017f, 0.226017f, 0.5f)],
+            [Vec3(0.226017f, 0.5f, 0.226017f),  Vec3(0.226017f, 0.5f, -0.5f)],
+            [Vec3(0.226017f, 0.226017f, 0.5f),  Vec3(0.226017f, 0.5f, 0.226017f)],
+        ];
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (p; pairs) {
+            bool found = false;
+            foreach (i; 0 .. m.edges.length) {
+                Vec3 a = m.vertices[m.edges[i][0]], b = m.vertices[m.edges[i][1]];
+                if (((a - p[0]).length < 1e-5f && (b - p[1]).length < 1e-5f) ||
+                    ((a - p[1]).length < 1e-5f && (b - p[0]).length < 1e-5f)) {
+                    mask[i] = true; found = true; break;
+                }
+            }
+            assert(found, "chain edge missing from the beveled-corner cube");
+        }
+        return mask;
+    }
+
+    // Guard premise: the two shared vertices really are valence-4 alternating
+    // K2, i.e. the exact family the old signature rejected.
+    {
+        auto m = chainOnBeveledCorner();
+        auto mask = selectChain(m);
+        size_t alternatingK2 = 0;
+        foreach (V; 0 .. cast(uint)m.vertices.length) {
+            size_t d = 0;
+            foreach (fi; m.facesAroundVertex(V)) ++d;
+            bool[] fan;
+            foreach (ei; m.edgesAroundVertex(V)) fan ~= mask[ei];
+            if (fan.length != d || d != 4) continue;
+            size_t K = 0;
+            foreach (s; fan) if (s) ++K;
+            if (K != 2) continue;
+            bool gapOk = true;
+            foreach (k; 0 .. d) if (!fan[k] && !fan[(k + 1) % d]) gapOk = false;
+            if (gapOk) ++alternatingK2;
+        }
+        assert(alternatingK2 == 2, "setup must expose exactly two alternating-K2 valence-4 vertices");
+    }
+
+    // 2·L segments per rail × 4 rails (two K1 free ends + two K2 miters):
+    // L0 17v/13f, then +4 verts and +2 faces per level step.
+    static immutable size_t[4] wantVerts = [17, 21, 29, 37];
+    static immutable size_t[4] wantFaces = [13, 16, 22, 28];
+    foreach (level; 0 .. 4) {
+        auto m = chainOnBeveledCorner();
+        auto mask = selectChain(m);
+        assert(m.bevelEdgesByMask(mask, 0.1f, cast(int)level) == 3,
+            "alternating K2 at valence 4 must bevel all 3 chain edges at every Round Level");
+        assert(m.vertices.length == wantVerts[level] && m.faces.length == wantFaces[level],
+            "alternating-K2 chain vertex/face count regressed");
+        assertBevelManifoldClean(m, "alternating K2 valence-4 chain");
+    }
 }
 
 unittest { // bevelEdgesByMask: explicit L0 golden for an isolated cube edge.
