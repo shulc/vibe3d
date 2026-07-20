@@ -43,6 +43,23 @@ module mesh_bevel_census;
 // `version (unittest)` gates the ENTIRE file body below the imports —
 // none of this (primitives, classifier, census loop) compiles into the
 // shipped `vibe3d` binary; it only exists under `dub test`.
+//
+// EXTENDED 2026-07-20 (still task 0445): the census above measures
+// ACCEPTANCE only — after task 0439's free-end cap landed, that number
+// reached 1884/1884 accepted, which answers "does it refuse?" but not
+// "does it work?", "does every parameter it takes do anything?", or "does
+// it survive a selection that spans more than one vertex-anchored
+// cluster?" (the exact shape that reached the owner as a crash, assert
+// "rounded edge bevel rail must be approved before materialization",
+// fixed in 0d1b3be — the original census structurally could not have
+// built that selection, since every trial mask was anchored at ONE
+// vertex). Three more lanes below, same census philosophy (real kernel
+// call, pinned-by-equality baseline, loud failure on ANY movement):
+//   - SOUNDNESS: is the accepted geometry actually well-formed?
+//   - ROUND-LEVEL: does the roundLevel parameter ever do anything outside
+//     the well-supported K==3 corner-hub shape?
+//   - MIXED SELECTIONS: chains, ring+trailing-chain, disjoint clusters,
+//     and the specific corner-hub-plus-free-end shape that crashed.
 
 import mesh;
 import math : Vec3;
@@ -50,7 +67,7 @@ import math : Vec3;
 version (unittest):
 
 import std.stdio : writefln;
-import std.math : PI, cos, sin;
+import std.math : PI, cos, sin, fabs;
 
 // ===========================================================================
 // Test-only mesh primitives (sphere / cylinder / torus) — NOT present in
@@ -585,4 +602,722 @@ unittest {
     assert(total.byReason.get(Reason.PartialFanNotch, 0) == BASELINE_PARTIAL_NOTCH);
     assert(total.byReason.get(Reason.MalformedFan, 0) == BASELINE_MALFORMED_FAN);
     assert(total.byReason.get(Reason.NoQualifying, 0) == BASELINE_NO_QUALIFYING);
+}
+
+// ===========================================================================
+// LANE 2 (task 0445, extended scope, 2026-07-20) — SOUNDNESS of what
+// edge.bevel ACCEPTS.
+//
+// WHY. The acceptance census above answers "did it refuse?" — after task
+// 0439's free-end cap landed, the answer is "never" (1884/1884 accepted).
+// "Stopped refusing" is not "started working": acceptance could just as
+// easily mean the kernel now emits BROKEN geometry instead of declining
+// honestly. This lane checks the RESULT of every accepted trial for five
+// concrete properties a mesh must never lose to a bevel:
+//   - no edge left shared by more than two faces,
+//   - no vertex left unreferenced by any edge (orphaned),
+//   - no two distinct vertices left at the same position,
+//   - no zero-area face,
+//   - no NEW boundary appearing on a mesh that started closed.
+//
+// The coincident-vertex threshold reuses `weldCoincidentVertices`'s own
+// default `epsSq = 1e-12` (source/mesh.d) rather than inventing a new
+// tolerance — this is the kernel's OWN definition of "the same point".
+//
+// The boundary check is intentionally NOT "boundary count == 0" for every
+// mesh: on an already-open mesh (`cylinder_open`) the boundary
+// legitimately GROWS when a bevel terminates on a rim (a rim-anchored
+// bevel lengthens the rim it touches — verified behaviour, not a bug). So
+// the check compares each trial's TEMPLATE's own pre-op boundary edge
+// count against the RESULT's: a violation is only counted when the
+// template was closed (0 boundary edges) and the result is not.
+//
+// SCOPE. Runs the SAME full trial matrix as the acceptance census above —
+// `generateTrialMasks` below is the acceptance census's own mask-
+// generation loop, extracted so both lanes build the IDENTICAL mask set
+// from one place instead of two copies that could drift apart. (The
+// acceptance census's own loop is left as-is, not rewired to call this —
+// zero-behavior-change risk to an already-landed, already-asserted
+// baseline, for no measurable benefit.) This is a superset of today's
+// hand-probe, which spot-checked only the single-edge sub-matrix (656 of
+// the 1884 trials, all five counters zero); this lane pins zero across
+// the FULL matrix instead.
+// ===========================================================================
+
+/// Identical mask set to the acceptance census's own trial loop (single
+/// edge, per-vertex full hub, adjacent pair, and — at valence>=4 —
+/// all-but-one and non-adjacent pair). See the block comment above for why
+/// this is a read-only extraction, not a shared dependency the acceptance
+/// census itself was rewired onto.
+private bool[][] generateTrialMasks(const ref Mesh m) {
+    bool[][] masks;
+    immutable size_t nE = m.edges.length;
+    immutable size_t nV = m.vertices.length;
+    foreach (i; 0 .. nE) {
+        auto mask = new bool[](nE);
+        mask[i] = true;
+        masks ~= mask;
+    }
+    foreach (V; 0 .. cast(uint)nV) {
+        uint[] vEdges;
+        foreach (ei; m.edgesAroundVertex(V)) vEdges ~= ei;
+        immutable size_t nEv = vEdges.length;
+        if (nEv < 2) continue;
+        { auto mask = new bool[](nE); foreach (ei; vEdges) mask[ei] = true; masks ~= mask; }
+        { auto mask = new bool[](nE); mask[vEdges[0]] = true; mask[vEdges[1]] = true; masks ~= mask; }
+        if (nEv >= 4) { auto mask = new bool[](nE); foreach (ei; vEdges) mask[ei] = true; mask[vEdges[0]] = false; masks ~= mask; }
+        if (nEv >= 4) { auto mask = new bool[](nE); mask[vEdges[0]] = true; mask[vEdges[2]] = true; masks ~= mask; }
+    }
+    return masks;
+}
+
+struct SoundnessCounters {
+    size_t trialsChecked;       // accepted trials actually checked
+    size_t edgeOveruse;         // trials leaving an edge used by >2 faces
+    size_t orphanVertices;      // trials leaving a vertex no edge references
+    size_t coincidentVertices;  // trials leaving 2+ distinct verts at 1 position
+    size_t degenerateFaces;     // trials leaving a zero-area face
+    size_t newBoundaryOnClosed; // trials that opened a boundary on a CLOSED input
+}
+
+private size_t boundaryEdgeCount(const ref Mesh m) {
+    size_t n = 0;
+    foreach (u; m.edgeFaceUseCounts()) if (u == 1) ++n;
+    return n;
+}
+
+private bool hasEdgeOveruse(const ref Mesh m) {
+    foreach (u; m.edgeFaceUseCounts()) if (u > 2) return true;
+    return false;
+}
+
+private bool hasOrphanVertex(const ref Mesh m) {
+    auto used = new bool[](m.vertices.length);
+    foreach (e; m.edges) { used[e[0]] = true; used[e[1]] = true; }
+    foreach (u; used) if (!u) return true;
+    return false;
+}
+
+private bool hasCoincidentVertices(const ref Mesh m) {
+    // Same threshold `weldCoincidentVertices` uses by default (mesh.d) —
+    // the kernel's OWN notion of "the same point", not an independently
+    // invented tolerance.
+    enum double EPS_SQ = 1e-12;
+    immutable size_t n = m.vertices.length;
+    foreach (i; 0 .. n) foreach (j; i + 1 .. n) {
+        immutable double dx = m.vertices[i].x - m.vertices[j].x;
+        immutable double dy = m.vertices[i].y - m.vertices[j].y;
+        immutable double dz = m.vertices[i].z - m.vertices[j].z;
+        if (dx * dx + dy * dy + dz * dz < EPS_SQ) return true;
+    }
+    return false;
+}
+
+private bool hasDegenerateFace(const ref Mesh m) {
+    // Newell's method (same idiom already used for winding checks
+    // elsewhere in mesh.d, e.g. the hub-cap orientation check around line
+    // 9410): the raw (undivided) Newell sum has magnitude 2*area, so its
+    // SQUARED magnitude is (2*area)^2 — comparing that against a small
+    // epsilon is a divide-free zero-area test.
+    enum double NEWELL_MAG2_EPS = 1e-10; // ~ area < 5e-6 at this census's ~1.0-scale meshes
+    foreach (f; m.faces) {
+        if (f.length < 3) return true; // degenerate by construction
+        double nx = 0, ny = 0, nz = 0;
+        foreach (i; 0 .. f.length) {
+            immutable Vec3 a = m.vertices[f[i]];
+            immutable Vec3 b = m.vertices[f[(i + 1) % f.length]];
+            nx += cast(double)(a.y - b.y) * (a.z + b.z);
+            ny += cast(double)(a.z - b.z) * (a.x + b.x);
+            nz += cast(double)(a.x - b.x) * (a.y + b.y);
+        }
+        if (nx * nx + ny * ny + nz * nz < NEWELL_MAG2_EPS) return true;
+    }
+    return false;
+}
+
+private void checkSoundness(const ref Mesh preTemplate, const ref Mesh post, ref SoundnessCounters sc) {
+    ++sc.trialsChecked;
+    if (hasEdgeOveruse(post))        ++sc.edgeOveruse;
+    if (hasOrphanVertex(post))       ++sc.orphanVertices;
+    if (hasCoincidentVertices(post)) ++sc.coincidentVertices;
+    if (hasDegenerateFace(post))     ++sc.degenerateFaces;
+    if (boundaryEdgeCount(preTemplate) == 0 && boundaryEdgeCount(post) > 0)
+        ++sc.newBoundaryOnClosed;
+}
+
+private SoundnessCounters soundnessCensusMesh(string label, const ref Mesh m, float width = 0.08f) {
+    SoundnessCounters sc;
+    foreach (mask; generateTrialMasks(m)) {
+        auto clone = cloneMeshForTrial(m);
+        immutable size_t processed = clone.bevelEdgesByMask(mask, width);
+        if (processed == 0) continue; // acceptance-only lane; declines are the lane above's job
+        checkSoundness(m, clone, sc);
+    }
+    writefln("[edge.bevel census] soundness  %-16s checked=%-5d edgeOveruse=%-2d orphan=%-2d coincident=%-2d degenerate=%-2d newBoundary=%-2d",
+        label, sc.trialsChecked, sc.edgeOveruse, sc.orphanVertices, sc.coincidentVertices,
+        sc.degenerateFaces, sc.newBoundaryOnClosed);
+    return sc;
+}
+
+unittest {
+    // Same 6 meshes, same construction, as the acceptance census above.
+    auto sphere      = makeUvSphereForCensus(6, 10);
+    auto cylClosed   = makeCylinderForCensus(12, 2, 1.0f, 1.5f, true);
+    auto cylOpen     = makeCylinderForCensus(12, 2, 1.0f, 1.5f, false);
+    auto torus       = makeTorusForCensus(12, 8, 1.0f, 0.35f);
+    auto subdivCube  = subdivideCube(2);
+    auto postBevel   = makePostBevelCubeForCensus();
+
+    SoundnessCounters total;
+    void merge(SoundnessCounters c) {
+        total.trialsChecked       += c.trialsChecked;
+        total.edgeOveruse         += c.edgeOveruse;
+        total.orphanVertices      += c.orphanVertices;
+        total.coincidentVertices  += c.coincidentVertices;
+        total.degenerateFaces     += c.degenerateFaces;
+        total.newBoundaryOnClosed += c.newBoundaryOnClosed;
+    }
+
+    merge(soundnessCensusMesh("sphere",        sphere));
+    merge(soundnessCensusMesh("cylinder",      cylClosed));
+    merge(soundnessCensusMesh("cylinder_open", cylOpen));
+    merge(soundnessCensusMesh("torus",         torus));
+    merge(soundnessCensusMesh("subdiv_cube_L2", subdivCube));
+    merge(soundnessCensusMesh("post_bevel",    postBevel));
+
+    writefln("[edge.bevel census] soundness  TOTAL checked=%d edgeOveruse=%d orphan=%d coincident=%d degenerate=%d newBoundary=%d",
+        total.trialsChecked, total.edgeOveruse, total.orphanVertices, total.coincidentVertices,
+        total.degenerateFaces, total.newBoundaryOnClosed);
+
+    // Baseline, measured 2026-07-20 (task 0445 extension). Pinned EXACTLY,
+    // same rationale as the acceptance census: a DROP means a bug got
+    // fixed (or a mesh primitive changed), a RISE means a regression.
+    enum size_t BASELINE_SOUNDNESS_TRIALS_CHECKED = 1_884;
+    enum size_t BASELINE_EDGE_OVERUSE             = 0;
+    enum size_t BASELINE_ORPHAN_VERTICES          = 0;
+    enum size_t BASELINE_COINCIDENT_VERTICES      = 0;
+    enum size_t BASELINE_DEGENERATE_FACES         = 0;
+    enum size_t BASELINE_NEW_BOUNDARY_ON_CLOSED   = 0;
+
+    assert(total.trialsChecked == BASELINE_SOUNDNESS_TRIALS_CHECKED,
+        "soundness lane checked a different number of accepted trials than the pinned "
+        ~ "baseline — a mesh primitive or the acceptance census's trial matrix changed; "
+        ~ "re-derive BASELINE_SOUNDNESS_TRIALS_CHECKED (and the counters below) rather "
+        ~ "than just this one constant");
+    assert(total.edgeOveruse == BASELINE_EDGE_OVERUSE,
+        "edge.bevel left an edge shared by >2 faces on an ACCEPTED trial — a soundness "
+        ~ "regression, not a refusal-family change; investigate before touching this baseline.");
+    assert(total.orphanVertices == BASELINE_ORPHAN_VERTICES,
+        "edge.bevel left an orphan (unreferenced) vertex on an ACCEPTED trial — investigate "
+        ~ "before touching this baseline.");
+    assert(total.coincidentVertices == BASELINE_COINCIDENT_VERTICES,
+        "edge.bevel left two distinct vertices at the same position (by the kernel's OWN weld "
+        ~ "threshold) on an ACCEPTED trial — investigate before touching this baseline.");
+    assert(total.degenerateFaces == BASELINE_DEGENERATE_FACES,
+        "edge.bevel left a zero-area face on an ACCEPTED trial — investigate before touching "
+        ~ "this baseline.");
+    assert(total.newBoundaryOnClosed == BASELINE_NEW_BOUNDARY_ON_CLOSED,
+        "edge.bevel opened a NEW boundary on a mesh that started CLOSED, on an ACCEPTED trial "
+        ~ "(this does NOT fire for meshes that were already open, e.g. cylinder_open, where "
+        ~ "boundary growth at a rim-anchored bevel is expected) — investigate before touching "
+        ~ "this baseline.");
+}
+
+// ===========================================================================
+// LANE 3 (task 0445, extended scope, 2026-07-20) — silently ignored
+// PARAMETERS: does Round Level do anything?
+//
+// WHY. A parameter that is accepted, validated, and silently has NO EFFECT
+// on the output is its own defect class — distinct from both refusal
+// (lane 1) and unsound output (lane 2). This lane runs every single-edge
+// trial at Round Level 0 and at Round Level 1 and counts how often the two
+// results are geometrically identical: identical means the parameter did
+// nothing observable for that trial.
+//
+// Today's hand measurement (2026-07-20): Round Level changed nothing for
+// sphere/torus/open-cylinder/subdivided-cube (both levels) single-edge
+// trials, changed SOME closed-cylinder trials (the ones touching the
+// N-gon cap), and changed EVERY plain-cube trial. The mechanism: Round
+// Level only affects the well-supported K==3 full-corner-hub shape (a
+// plain cube's corners, or a capped cylinder's cap-adjacent rim); every
+// other topology in this census exercises a code path Round Level does
+// not reach — so the parameter is silently a no-op there. Pinned below so
+// a free-end cap at Round Level (once implemented) shows up as these
+// numbers MOVING, not as silence.
+// ===========================================================================
+
+private struct RoundLevelCensus {
+    size_t total;
+    size_t identical;
+    size_t acceptDeclineMismatch; // RL flipped accept vs. decline outright — always worth a loud look
+    size_t differed() const { return total - identical - acceptDeclineMismatch; }
+}
+
+private bool meshesGeometricallyIdentical(const ref Mesh a, const ref Mesh b) {
+    if (a.vertices.length != b.vertices.length) return false;
+    if (a.faces.length    != b.faces.length)    return false;
+    enum float EPS = 1e-6f;
+    foreach (i; 0 .. a.vertices.length) {
+        immutable Vec3 va = a.vertices[i];
+        immutable Vec3 vb = b.vertices[i];
+        if (fabs(va.x - vb.x) > EPS || fabs(va.y - vb.y) > EPS || fabs(va.z - vb.z) > EPS)
+            return false;
+    }
+    return true;
+}
+
+private RoundLevelCensus censusRoundLevelSingleEdge(string label, const ref Mesh m, float width = 0.08f) {
+    RoundLevelCensus c;
+    immutable size_t nE = m.edges.length;
+    foreach (i; 0 .. nE) {
+        auto mask = new bool[](nE);
+        mask[i] = true;
+        auto clone0 = cloneMeshForTrial(m);
+        auto clone1 = cloneMeshForTrial(m);
+        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
+        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        ++c.total;
+        if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
+        if (p0 == 0 && p1 == 0)   { ++c.identical; continue; } // both declined: RL moot either way
+        if (meshesGeometricallyIdentical(clone0, clone1)) ++c.identical;
+    }
+    writefln("[edge.bevel census] roundLevel %-16s trials=%-5d identical=%-5d (%.1f%%)",
+        label, c.total, c.identical, c.total ? 100.0 * c.identical / c.total : 0.0);
+    return c;
+}
+
+unittest {
+    // NOT the same 6-mesh set as the other lanes: adds a level-1 subdivided
+    // cube and a PLAIN cube — the plain cube in particular is the mesh that
+    // shows Round Level having full effect (every corner is a K==3 hub),
+    // which none of the other census meshes can show (a cube has no
+    // valence>=4 vertex, so it never appears in the acceptance/soundness
+    // lanes' primitive set — see their own header comments).
+    auto sphere       = makeUvSphereForCensus(6, 10);
+    auto cylClosed    = makeCylinderForCensus(12, 2, 1.0f, 1.5f, true);
+    auto cylOpen      = makeCylinderForCensus(12, 2, 1.0f, 1.5f, false);
+    auto torus        = makeTorusForCensus(12, 8, 1.0f, 0.35f);
+    auto subdivCubeL1 = subdivideCube(1);
+    auto subdivCubeL2 = subdivideCube(2);
+    auto plainCube    = makeCube();
+
+    auto rSphere  = censusRoundLevelSingleEdge("sphere",         sphere);
+    auto rCyl     = censusRoundLevelSingleEdge("cylinder",       cylClosed);
+    auto rCylOpen = censusRoundLevelSingleEdge("cylinder_open",  cylOpen);
+    auto rTorus   = censusRoundLevelSingleEdge("torus",          torus);
+    auto rSubL1   = censusRoundLevelSingleEdge("subdiv_cube_L1", subdivCubeL1);
+    auto rSubL2   = censusRoundLevelSingleEdge("subdiv_cube_L2", subdivCubeL2);
+    auto rCube    = censusRoundLevelSingleEdge("cube",           plainCube);
+
+    assert(rSphere.acceptDeclineMismatch == 0 && rCyl.acceptDeclineMismatch == 0 &&
+           rCylOpen.acceptDeclineMismatch == 0 && rTorus.acceptDeclineMismatch == 0 &&
+           rSubL1.acceptDeclineMismatch == 0 && rSubL2.acceptDeclineMismatch == 0 &&
+           rCube.acceptDeclineMismatch == 0,
+        "Round Level flipped accept vs. decline outright for some trial — that is a much "
+        ~ "bigger finding than a silently-ignored parameter and needs its own investigation "
+        ~ "before this baseline is touched.");
+
+    // Baselines measured 2026-07-20 (task 0445 extension). Pinned EXACTLY:
+    // when the free-end cap at Round Level lands, these numbers must MOVE
+    // (more trials identical -> fewer, i.e. more topologies observably
+    // respond to roundLevel); a rise in "identical" with no code change
+    // anywhere near Round Level would itself be worth investigating.
+    enum size_t BASELINE_SPHERE_TOTAL    = 110;
+    enum size_t BASELINE_SPHERE_IDENT    = 110; // Round Level: no effect at all
+    enum size_t BASELINE_CYL_TOTAL       = 60;
+    enum size_t BASELINE_CYL_IDENT       = 36; // Round Level affects the 24 cap-adjacent edges
+    enum size_t BASELINE_CYLOPEN_TOTAL   = 60;
+    enum size_t BASELINE_CYLOPEN_IDENT   = 60; // no cap -> no effect
+    enum size_t BASELINE_TORUS_TOTAL     = 192;
+    enum size_t BASELINE_TORUS_IDENT     = 192; // no effect
+    enum size_t BASELINE_SUBL1_TOTAL     = 48;
+    enum size_t BASELINE_SUBL1_IDENT     = 48; // no effect
+    enum size_t BASELINE_SUBL2_TOTAL     = 192;
+    enum size_t BASELINE_SUBL2_IDENT     = 192; // no effect
+    enum size_t BASELINE_CUBE_TOTAL      = 12;
+    enum size_t BASELINE_CUBE_IDENT      = 0; // Round Level affects EVERY edge (all corners are K==3 hubs)
+
+    assert(rSphere.total == BASELINE_SPHERE_TOTAL && rSphere.identical == BASELINE_SPHERE_IDENT,
+        "roundLevel/sphere baseline moved — update BASELINE_SPHERE_* (task 0445 extension)");
+    assert(rCyl.total == BASELINE_CYL_TOTAL && rCyl.identical == BASELINE_CYL_IDENT,
+        "roundLevel/cylinder baseline moved — update BASELINE_CYL_* (task 0445 extension)");
+    assert(rCylOpen.total == BASELINE_CYLOPEN_TOTAL && rCylOpen.identical == BASELINE_CYLOPEN_IDENT,
+        "roundLevel/cylinder_open baseline moved — update BASELINE_CYLOPEN_* (task 0445 extension)");
+    assert(rTorus.total == BASELINE_TORUS_TOTAL && rTorus.identical == BASELINE_TORUS_IDENT,
+        "roundLevel/torus baseline moved — update BASELINE_TORUS_* (task 0445 extension)");
+    assert(rSubL1.total == BASELINE_SUBL1_TOTAL && rSubL1.identical == BASELINE_SUBL1_IDENT,
+        "roundLevel/subdiv_cube_L1 baseline moved — update BASELINE_SUBL1_* (task 0445 extension)");
+    assert(rSubL2.total == BASELINE_SUBL2_TOTAL && rSubL2.identical == BASELINE_SUBL2_IDENT,
+        "roundLevel/subdiv_cube_L2 baseline moved — update BASELINE_SUBL2_* (task 0445 extension)");
+    assert(rCube.total == BASELINE_CUBE_TOTAL && rCube.identical == BASELINE_CUBE_IDENT,
+        "roundLevel/cube baseline moved — update BASELINE_CUBE_* (task 0445 extension). If this "
+        ~ "moved UP (more identical), Round Level started reaching the plain-cube corner shape "
+        ~ "differently — investigate. If a free-end-cap-at-Round-Level fix landed and this "
+        ~ "stayed put, that fix did not touch the plain-cube path — worth a second look.");
+}
+
+// ===========================================================================
+// LANE 4 (task 0445, extended scope, 2026-07-20) — MIXED selections.
+//
+// WHY. This is the exact blind spot that let a crash reach the owner
+// before any test did (assert "rounded edge bevel rail must be approved
+// before materialization", fixed in 0d1b3be). Every trial mask in the
+// acceptance/soundness/round-level lanes above is anchored at ONE vertex
+// (a single edge, or a hub/pair/etc. around one vertex) — structurally,
+// that matrix can never build a selection that combines a full ring (a
+// closed hub) at one vertex with an unrelated free end somewhere else in
+// the SAME call, which is precisely the shape that crashed. This lane
+// builds four families of genuinely multi-anchor selections:
+//   - connected CHAINS of 3-6 edges, walked across several vertices of
+//     differing valence and differing K (not just K==1 or K==full-hub),
+//   - a full RING at one vertex plus a TRAILING chain extending outward
+//     from it (ring and chain share exactly one vertex — connected, but
+//     not anchored at a single point),
+//   - a full hub at one vertex plus a DISJOINT free end elsewhere (no
+//     shared vertex at all — this is the family that crashed),
+//   - two entirely DISJOINT clusters combined into one selection.
+//
+// The specific crash-reproducing case — a full ring at one corner of a
+// ONCE-subdivided cube, unioned with a disjoint free end — is included
+// unconditionally as its own explicit trial (`cornerHubPlusFreeEndMask`),
+// not left to chance sampling: Catmull-Clark subdivision leaves an
+// original vertex's valence unchanged (only the newly-inserted face/edge
+// points get valence 4), so a once-subdivided cube's 8 original corners
+// are still valence-3 hubs — exactly the shape that asserted.
+//
+// Every ACCEPTED trial here is also run through the lane-2 soundness
+// checks (`checkSoundness`): mixed, multi-anchor selections are exactly
+// where a new soundness bug is most likely to surface next.
+// ===========================================================================
+
+/// Walks a connected chain of `length` edges starting at `startEdge`,
+/// extending through unvisited edges sharing an endpoint with the current
+/// edge. Deterministic: at each step takes the first unvisited edge found
+/// in `edgesAroundVertex` order at either endpoint. May return a chain
+/// shorter than `length` if the walk dead-ends (e.g. hits a low-valence
+/// boundary vertex) — callers discard chains under 3 edges.
+private uint[] walkEdgeChain(const ref Mesh m, uint startEdge, size_t length) {
+    uint[] chain = [startEdge];
+    bool[uint] visited;
+    visited[startEdge] = true;
+    uint cur = startEdge;
+    while (chain.length < length) {
+        immutable uint a = m.edges[cur][0];
+        immutable uint b = m.edges[cur][1];
+        uint next = uint.max;
+        foreach (end; [a, b]) {
+            foreach (ei; m.edgesAroundVertex(end)) {
+                if (ei !in visited) { next = ei; break; }
+            }
+            if (next != uint.max) break;
+        }
+        if (next == uint.max) break;
+        chain ~= next;
+        visited[next] = true;
+        cur = next;
+    }
+    return chain;
+}
+
+private bool[] maskFromEdges(size_t nE, const uint[] edgeIndices) {
+    auto mask = new bool[](nE);
+    foreach (ei; edgeIndices) if (ei < nE) mask[ei] = true;
+    return mask;
+}
+
+private bool masksDisjoint(const bool[] a, const bool[] b) {
+    immutable size_t n = a.length < b.length ? a.length : b.length;
+    foreach (i; 0 .. n) if (a[i] && b[i]) return false;
+    return true;
+}
+
+/// Connected chains of 3-6 edges, walked from a handful of deterministic,
+/// spread-out starting edges — several different vertices of differing
+/// valence and differing K along each chain, by construction.
+private bool[][] chainMasks(const ref Mesh m) {
+    bool[][] masks;
+    immutable size_t nE = m.edges.length;
+    if (nE == 0) return masks;
+    static immutable size_t[] lengths = [3, 4, 5, 6];
+    foreach (length; lengths) {
+        foreach (size_t startFrac; 0 .. 4) {
+            immutable uint start = cast(uint)((startFrac * nE) / 4 % nE);
+            auto chain = walkEdgeChain(m, start, length);
+            if (chain.length < 3) continue;
+            masks ~= maskFromEdges(nE, chain);
+        }
+    }
+    return masks;
+}
+
+/// A full ring (every incident edge — a closed hub) at one vertex, plus a
+/// short chain extending outward from that ring — connected (they share
+/// exactly the ring's near vertex... no: the chain extends from the FAR
+/// endpoint of one ring edge, so ring and chain share zero edges but the
+/// combined selection is still one connected piece through that far
+/// vertex), never anchored at a single point the way the acceptance
+/// census's per-vertex matrix is.
+private bool[][] ringPlusTrailingMasks(const ref Mesh m) {
+    bool[][] masks;
+    immutable size_t nE = m.edges.length;
+    immutable size_t nV = m.vertices.length;
+    if (nV == 0 || nE == 0) return masks;
+    foreach (size_t frac; 0 .. 4) {
+        immutable uint V = cast(uint)((frac * nV) / 4 % nV);
+        uint[] ring;
+        foreach (ei; m.edgesAroundVertex(V)) ring ~= ei;
+        if (ring.length < 3) continue;
+
+        auto mask = new bool[](nE);
+        bool[uint] visited;
+        foreach (ei; ring) { mask[ei] = true; visited[ei] = true; }
+
+        uint cur = ring[0];
+        size_t added = 0;
+        while (added < 3) {
+            immutable uint a = m.edges[cur][0];
+            immutable uint b = m.edges[cur][1];
+            uint next = uint.max;
+            foreach (end; [a, b]) {
+                foreach (ei; m.edgesAroundVertex(end)) {
+                    if (ei !in visited) { next = ei; break; }
+                }
+                if (next != uint.max) break;
+            }
+            if (next == uint.max) break;
+            mask[next] = true;
+            visited[next] = true;
+            cur = next;
+            ++added;
+        }
+        masks ~= mask;
+    }
+    return masks;
+}
+
+/// A full hub at `hubVertex` plus ONE edge that touches neither the hub
+/// vertex nor any of its ring-adjacent neighbors — a genuinely DISJOINT
+/// free end, zero shared vertices with the hub. This is the exact shape
+/// that crashed (see the lane's header comment).
+private bool[] hubPlusDisjointFreeEndMask(const ref Mesh m, uint hubVertex) {
+    immutable size_t nE = m.edges.length;
+    auto mask = new bool[](nE);
+    foreach (ei; m.edgesAroundVertex(hubVertex)) mask[ei] = true;
+
+    auto touched = new bool[](m.vertices.length);
+    touched[hubVertex] = true;
+    foreach (ei; 0 .. nE)
+        if (mask[ei]) { touched[m.edges[ei][0]] = true; touched[m.edges[ei][1]] = true; }
+
+    foreach (ei; 0 .. nE) {
+        if (mask[ei]) continue;
+        if (touched[m.edges[ei][0]] || touched[m.edges[ei][1]]) continue;
+        mask[ei] = true;
+        break;
+    }
+    return mask;
+}
+
+private bool[][] hubPlusFreeEndMasks(const ref Mesh m) {
+    bool[][] masks;
+    immutable size_t nV = m.vertices.length;
+    if (nV == 0) return masks;
+    foreach (size_t frac; 0 .. 4) {
+        immutable uint V = cast(uint)((frac * nV) / 4 % nV);
+        size_t nEv = 0;
+        foreach (ei; m.edgesAroundVertex(V)) ++nEv;
+        if (nEv < 3) continue;
+        masks ~= hubPlusDisjointFreeEndMask(m, V);
+    }
+    return masks;
+}
+
+/// Two entirely disjoint hub clusters (vertex 0 and the vertex at the
+/// opposite "end" of the index range), combined into ONE selection —
+/// skipped (yields no mask) if the two hubs happen to share an edge on a
+/// small mesh, rather than silently testing a non-disjoint case under a
+/// "disjoint clusters" label.
+private bool[][] disjointClusterMasks(const ref Mesh m) {
+    bool[][] masks;
+    immutable size_t nE = m.edges.length;
+    immutable size_t nV = m.vertices.length;
+    if (nV < 4 || nE == 0) return masks;
+
+    bool[] hubMaskAt(uint V) {
+        auto mask = new bool[](nE);
+        foreach (ei; m.edgesAroundVertex(V)) mask[ei] = true;
+        return mask;
+    }
+
+    immutable uint Va = 0;
+    immutable uint Vb = cast(uint)(nV / 2);
+    if (Va == Vb) return masks;
+    auto ma = hubMaskAt(Va);
+    auto mb = hubMaskAt(Vb);
+    if (masksDisjoint(ma, mb)) {
+        auto combined = new bool[](nE);
+        foreach (i; 0 .. nE) combined[i] = ma[i] || mb[i];
+        masks ~= combined;
+    }
+    return masks;
+}
+
+/// The SPECIFIC shape that crashed (see the lane's header comment): a full
+/// ring at one of the mesh's valence-3 vertices, unioned with a disjoint
+/// free end. Finds its anchor by scanning for a valence-3 vertex rather
+/// than assuming an index — `subdivideCube`'s vertex order after its OSD
+/// preview rebuild (source/mesh.d) is not part of this module's contract,
+/// so an index assumption would be fragile in a way a topological search
+/// is not.
+private bool[] cornerHubPlusFreeEndMask(const ref Mesh m) {
+    immutable size_t nV = m.vertices.length;
+    uint corner = uint.max;
+    foreach (V; 0 .. cast(uint)nV) {
+        size_t nEv = 0;
+        foreach (ei; m.edgesAroundVertex(V)) ++nEv;
+        if (nEv == 3) { corner = V; break; }
+    }
+    assert(corner != uint.max,
+        "cornerHubPlusFreeEndMask: no valence-3 vertex found on this mesh — "
+        ~ "subdivideCube's original-corner-keeps-its-valence assumption no "
+        ~ "longer holds, and this fixture needs a new anchor strategy to keep "
+        ~ "reproducing the 0d1b3be crash shape (full ring + disjoint free end)");
+    return hubPlusDisjointFreeEndMask(m, corner);
+}
+
+private void runMixedTrial(const ref Mesh template_, const bool[] mask, ref Census census,
+                            ref SoundnessCounters sc, float width) {
+    auto clone = cloneMeshForTrial(template_);
+    immutable size_t processed = clone.bevelEdgesByMask(mask, width);
+    if (processed > 0) {
+        census.record(Reason.Processed);
+        checkSoundness(template_, clone, sc);
+        return;
+    }
+    census.record(classifyDecline(template_, mask));
+}
+
+private struct MixedResult {
+    Census census;
+    SoundnessCounters soundness;
+}
+
+private MixedResult mixedSelectionCensusMesh(string label, const ref Mesh m, float width = 0.08f) {
+    bool[][] masks;
+    masks ~= chainMasks(m);
+    masks ~= ringPlusTrailingMasks(m);
+    masks ~= hubPlusFreeEndMasks(m);
+    masks ~= disjointClusterMasks(m);
+
+    MixedResult r;
+    foreach (mask; masks) runMixedTrial(m, mask, r.census, r.soundness, width);
+
+    immutable size_t violations = r.soundness.edgeOveruse + r.soundness.orphanVertices +
+        r.soundness.coincidentVertices + r.soundness.degenerateFaces + r.soundness.newBoundaryOnClosed;
+    writefln("[edge.bevel census] mixed      %-16s trials=%-5d declined=%-5d soundness-violations=%-3d",
+        label, r.census.total, r.census.declined(), violations);
+    static immutable Reason[] knownOrder =
+        [Reason.FacesGE3, Reason.PartialFanNotch, Reason.MalformedFan, Reason.NoQualifying, Reason.Unclassified];
+    foreach (rr; knownOrder) {
+        immutable n = r.census.byReason.get(rr, 0);
+        if (n > 0) writefln("    %-18s %d", rr, n);
+    }
+    return r;
+}
+
+unittest {
+    auto sphere       = makeUvSphereForCensus(6, 10);
+    auto cylClosed    = makeCylinderForCensus(12, 2, 1.0f, 1.5f, true);
+    auto cylOpen      = makeCylinderForCensus(12, 2, 1.0f, 1.5f, false);
+    auto torus        = makeTorusForCensus(12, 8, 1.0f, 0.35f);
+    auto subdivCubeL2 = subdivideCube(2);
+    auto postBevel    = makePostBevelCubeForCensus();
+    auto subdivCubeL1 = subdivideCube(1); // anchor mesh for the crash-repro trial specifically
+
+    Census total;
+    SoundnessCounters totalSound;
+    void merge(MixedResult r) {
+        total.total += r.census.total;
+        foreach (rr, n; r.census.byReason) total.byReason[rr] = total.byReason.get(rr, 0) + n;
+        totalSound.trialsChecked       += r.soundness.trialsChecked;
+        totalSound.edgeOveruse         += r.soundness.edgeOveruse;
+        totalSound.orphanVertices      += r.soundness.orphanVertices;
+        totalSound.coincidentVertices  += r.soundness.coincidentVertices;
+        totalSound.degenerateFaces     += r.soundness.degenerateFaces;
+        totalSound.newBoundaryOnClosed += r.soundness.newBoundaryOnClosed;
+    }
+
+    merge(mixedSelectionCensusMesh("sphere",         sphere));
+    merge(mixedSelectionCensusMesh("cylinder",       cylClosed));
+    merge(mixedSelectionCensusMesh("cylinder_open",  cylOpen));
+    merge(mixedSelectionCensusMesh("torus",          torus));
+    merge(mixedSelectionCensusMesh("subdiv_cube_L2", subdivCubeL2));
+    merge(mixedSelectionCensusMesh("post_bevel",     postBevel));
+    merge(mixedSelectionCensusMesh("subdiv_cube_L1", subdivCubeL1));
+
+    // The explicit crash-repro trial (see the lane header comment): NOT
+    // left to `hubPlusFreeEndMasks`'s sampling grid landing on a valence-3
+    // corner by chance — run unconditionally so it is permanently in the
+    // set regardless of where that grid falls.
+    {
+        auto mask = cornerHubPlusFreeEndMask(subdivCubeL1);
+        runMixedTrial(subdivCubeL1, mask, total, totalSound, 0.08f);
+    }
+
+    writefln("[edge.bevel census] mixed      TOTAL trials=%d declined=%d", total.total, total.declined());
+    static immutable Reason[] knownOrder =
+        [Reason.FacesGE3, Reason.PartialFanNotch, Reason.MalformedFan, Reason.NoQualifying, Reason.Unclassified];
+    foreach (r; knownOrder) {
+        immutable n = total.byReason.get(r, 0);
+        if (n > 0) writefln("    %-18s %d", r, n);
+    }
+
+    // Same loud signal as the acceptance census: a refusal this
+    // classifier cannot attribute to a known family is a NEW class.
+    assert(total.byReason.get(Reason.Unclassified, 0) == 0,
+        "edge.bevel MIXED-selection census found an UNCLASSIFIED refusal family — investigate "
+        ~ "before touching this baseline (task 0445 extension).");
+
+    // Baselines measured 2026-07-20 (task 0445 extension).
+    // 176 = 7 meshes x 25 sampled masks (chain x16 + ring+trailing x4 +
+    // hub+freeEnd x4 + disjoint-clusters x1) + 1 explicit crash-repro trial.
+    // Every trial is ACCEPTED (0d1b3be holds) and every accepted trial is
+    // sound — the exact selection shape that used to crash now measures
+    // clean on all five soundness counters.
+    enum size_t BASELINE_MIXED_TOTAL       = 176;
+    enum size_t BASELINE_MIXED_DECLINED    = 0;
+    enum size_t BASELINE_MIXED_SOUND_CHECKED     = 176;
+    enum size_t BASELINE_MIXED_EDGE_OVERUSE      = 0;
+    enum size_t BASELINE_MIXED_ORPHAN_VERTICES   = 0;
+    enum size_t BASELINE_MIXED_COINCIDENT_VERTS  = 0;
+    enum size_t BASELINE_MIXED_DEGENERATE_FACES  = 0;
+    enum size_t BASELINE_MIXED_NEW_BOUNDARY      = 0;
+
+    assert(total.total == BASELINE_MIXED_TOTAL,
+        "mixed-selection trial count moved — a mesh primitive or a mask-generator above "
+        ~ "changed shape; update BASELINE_MIXED_TOTAL (and re-derive the rest) rather than "
+        ~ "just this one constant");
+    assert(total.declined() == BASELINE_MIXED_DECLINED,
+        "edge.bevel mixed-selection refusal baseline moved (task 0445 extension). If this "
+        ~ "DROPPED, a fix landed — update the baseline down and note which task. If it ROSE, "
+        ~ "that's a regression — this is exactly the class of selection (full ring at one "
+        ~ "vertex + free ends at others) that crashed before any test caught it.");
+    assert(totalSound.trialsChecked == BASELINE_MIXED_SOUND_CHECKED,
+        "mixed-selection soundness lane checked a different number of accepted trials than "
+        ~ "pinned — update BASELINE_MIXED_SOUND_CHECKED (task 0445 extension)");
+    assert(totalSound.edgeOveruse == BASELINE_MIXED_EDGE_OVERUSE,
+        "edge.bevel left an edge shared by >2 faces on an ACCEPTED mixed-selection trial — "
+        ~ "investigate before touching this baseline.");
+    assert(totalSound.orphanVertices == BASELINE_MIXED_ORPHAN_VERTICES,
+        "edge.bevel left an orphan vertex on an ACCEPTED mixed-selection trial — investigate "
+        ~ "before touching this baseline.");
+    assert(totalSound.coincidentVertices == BASELINE_MIXED_COINCIDENT_VERTS,
+        "edge.bevel left coincident vertices on an ACCEPTED mixed-selection trial — investigate "
+        ~ "before touching this baseline.");
+    assert(totalSound.degenerateFaces == BASELINE_MIXED_DEGENERATE_FACES,
+        "edge.bevel left a degenerate face on an ACCEPTED mixed-selection trial — investigate "
+        ~ "before touching this baseline.");
+    assert(totalSound.newBoundaryOnClosed == BASELINE_MIXED_NEW_BOUNDARY,
+        "edge.bevel opened a new boundary on a CLOSED mixed-selection trial — investigate "
+        ~ "before touching this baseline.");
 }
