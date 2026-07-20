@@ -8596,14 +8596,6 @@ struct Mesh {
             foreach (s; fanSelected) if (s) ++K;
             if (K == 0 || (!openFan && K == d)) continue; // untouched, or a full hub
 
-            // The ROUNDED profile at a rim vertex — where the arc terminates
-            // against the open edge rather than against another chamfer — has
-            // no reference capture yet. The L0 chamfer there IS supported (see
-            // the open-fan walk in the per-vertex pass). Refuse rather than
-            // ship a guessed boundary arc: that exact shortcut is one this
-            // task already had to walk back once.
-            if (openFan && roundLevel > 0) return 0;
-
             // The one unsupported shape is the partial-notch `keep V` branch
             // below: a face whose BOTH bordering edges are unselected but only
             // ONE side is active. It retains V with no free-end cap and leaves
@@ -8702,11 +8694,21 @@ struct Mesh {
             bool approved;
             Vec3 arcCenter;      // explicit fillet centre for a junction rail
             bool hasArcCenter;   // ↑ valid (else use the per-vertex fillet centre)
+            bool rimRail;        // centre vertex sits on an open (boundary) fan
         }
         RailSpec[ulong] railSpecs;
         uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
         static ulong pairKey(uint a, uint b) {
             return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+        }
+        // A rail whose centre vertex is on a rim is bounded by the chamfer
+        // strip on one side and by the OPEN boundary on the other, so it has
+        // one consumer where an interior rail has two (strip + back face).
+        bool isOpenFanVertex(uint V) {
+            size_t nf = 0, ne = 0;
+            foreach (fi; facesAroundVertex(V)) ++nf;
+            foreach (ei; edgesAroundVertex(V)) ++ne;
+            return ne == nf + 1;
         }
         void registerRail(CornerInfo left, CornerInfo right, Vec3 center, uint centerVert) {
             immutable ulong key = pairKey(left.vert, right.vert);
@@ -8742,7 +8744,8 @@ struct Mesh {
                  left.selectedDegree == 1 && right.selectedDegree == 1)
                     ? RailProfile.VerifiedK1Arc : RailProfile.LocalAnalyticUnverified,
                 0, 0, false,
-                hubC, useHub);
+                hubC, useHub,
+                isOpenFanVertex(centerVert));
             if (auto prior = key in railSpecs) {
                 assert((prior.center - center).length < 1e-5f &&
                     prior.profile == spec.profile &&
@@ -9105,9 +9108,15 @@ struct Mesh {
                     ++railSpecs[pairKey(cV0L.vert, cV0R.vert)].stripConsumers;
                     ++railSpecs[pairKey(cV1L.vert, cV1R.vert)].stripConsumers;
                 }
-                foreach (ref spec; railSpecs)
+                foreach (ref spec; railSpecs) {
+                    // An interior rail needs exactly two consumers: the chamfer
+                    // strip and the "back" face the source vertex belonged to.
+                    // A RIM rail has no back face — the open boundary takes its
+                    // place — so the strip alone is a complete support there.
+                    immutable uint total = spec.supportConsumers + spec.stripConsumers;
                     spec.approved = spec.stripConsumers > 0 &&
-                        spec.supportConsumers + spec.stripConsumers == 2;
+                        (total == 2 || (spec.rimRail && total == 1));
+                }
 
                 changed = false;
                 foreach (si, ref sp; spans) if (roundedSpan[si]) {
@@ -16121,23 +16130,64 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
             assert(v.y >= -0.5f - 1e-6f, "bevel must not push geometry past the rim plane");
     }
 
-    // Round Level > 0 at a rim vertex has NO reference capture yet, so it must
-    // refuse as a clean no-op rather than ship a guessed boundary arc.
-    foreach (level; [1, 2]) {
-        auto mr = cubeMinusBottom();
-        auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
-        auto vertsBefore = mr.vertices.dup;
-        auto facesBefore = mr.faces._store.dup;
-        assert(mr.bevelEdgesByMask(maskr, 0.15f, level) == 0,
-            "rounded open-boundary bevel is not captured yet and must no-op");
-        assert(mr.vertices == vertsBefore && mr.faces._store == facesBefore,
-            "the refusal must leave the mesh byte-identical");
+    // Round Level at a RIM vertex rounds by the same circular-fillet law as an
+    // interior vertex (reference `edge_bevel_open_chain3_w015_level{1,2}`, rail
+    // points matching the fillet+SLERP closed form to <= 7.09e-9). The rail is
+    // approved with a single consumer there: an interior rail needs the strip
+    // plus the back face, but a rim rail has no back face — the open boundary
+    // takes its place.
+    {
+        static immutable size_t[3] wantV = [12, 16, 24];
+        static immutable size_t[3] wantF = [8, 11, 17];
+        foreach (level; 0 .. 3) {
+            auto mr = cubeMinusBottom();
+            auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
+            assert(mr.bevelEdgesByMask(maskr, 0.15f, cast(int)level) == 3,
+                "rounded open-boundary chain must bevel all three edges");
+            assert(mr.vertices.length == wantV[level] && mr.faces.length == wantF[level],
+                "rounded open-boundary chain vertex/face count regressed");
+            assert(edgeUseProfile(mr)[1] == 0, "rounding must add no non-manifold edge");
+            foreach (v; mr.vertices)
+                assert(v.y >= -0.5f - 1e-6f, "rounding must not cross the rim plane");
+        }
+        // The rim polyline itself is NEVER subdivided; the extra points appear
+        // only on a beveled vertex's own chamfer rail, which the boundary then
+        // follows. Reference rim-edge counts are 6 / 8 / 12 — that is the four
+        // untouched rim edges plus the segments of the two rim-anchored rails
+        // (2 chords at L0, then 2·L segments each).
+        static immutable size_t[3] wantRim = [6, 8, 12];
+        foreach (level; 0 .. 3) {
+            auto mr = cubeMinusBottom();
+            auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
+            mr.bevelEdgesByMask(maskr, 0.15f, cast(int)level);
+            assert(edgeUseProfile(mr)[0] == wantRim[level],
+                "rim edge count must follow the rail subdivision, nothing else");
+        }
+        // A fully interior bevel on the same open mesh never touches the rim.
+        foreach (level; 0 .. 3) {
+            auto mi = cubeMinusBottom();
+            auto maski = selectPairs(mi, [[5u, 6u]]);
+            mi.bevelEdgesByMask(maski, 0.15f, cast(int)level);
+            assert(edgeUseProfile(mi)[0] == 4, "an interior bevel must leave the rim alone");
+        }
     }
 
     // `rimedge`: a selected RIM edge (exactly ONE incident face) bevels too,
     // but adds NO face — its lone face's border insets by `width` and the
     // neighbours absorb the corner cut, becoming pentagons. 10v/5f.
+    //
+    // Round Level does nothing here, at any level: with no bridge quad there
+    // is no chamfer strip, hence no rail to subdivide. The reference dumps at
+    // levels 0, 1 and 2 are byte-identical, so ours must be too.
     {
+        foreach (level; 0 .. 3) {
+            auto ml = cubeMinusBottom();
+            auto maskl = selectPairs(ml, [[7u, 4u]]);
+            assert(ml.bevelEdgesByMask(maskl, 0.15f, cast(int)level) == 1,
+                "a rim edge must bevel at every Round Level");
+            assert(ml.vertices.length == 10 && ml.faces.length == 5,
+                "Round Level must not change a rim edge's result");
+        }
         auto m = cubeMinusBottom();
         auto mask = selectPairs(m, [[7u, 4u]]);
         assert(m.bevelEdgesByMask(mask, 0.15f, 0) == 1,
