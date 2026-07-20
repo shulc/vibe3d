@@ -233,6 +233,38 @@ struct Mesh {
     private uint[]   buildLoopsEdgesAdj;
     private size_t[] buildLoopsEdgesAdjCursor; // scratch during fill
 
+    // Task 0447 (vertex-fan-walk-returns-foreign-edge, KEEP-TWIN redesign):
+    // `buildLoops`'s twin pairing (Pass 3) links two darts by undirected-edge
+    // identity WITHOUT checking direction, so on inconsistently-wound faces a
+    // SAME-direction dart pair sharing an edge is paired as "twins". A proper
+    // twin is antiparallel; a same-direction pair has EQUAL tails
+    // (`loops[tw].vert == loops[li].vert`). We do NOT erase such a twin — the
+    // winding-repair tool (`mesh_ops/cleanup.d computeOrientationFlipMask`,
+    // behind `mesh.fixOrientation` / `mesh_analysis.inconsistentWindingFaces`)
+    // reads exactly that same-direction twin to DETECT the defect, so erasing
+    // it would blind the repair (see doc/vertex_fan_walk_foreign_edge_plan.md
+    // §1.2). Instead every vertex incident to a same-direction edge is marked
+    // NOT `vertexFanOrdered`: the fan walk stops there as at a boundary and
+    // slot-position consumers (`bevelEdgesByMask`,
+    // `symmetry.rebuildPairingTopological`) decline. Keyed STRICTLY on
+    // same-directionness, NOT on `twin==~0u` — a genuine non-manifold ("book")
+    // edge (3+ faces, `twin==~0u` under treatment A) leaves its endpoints
+    // fan-ordered, so meaning-2 (non-manifold) and meaning-3 (same-direction)
+    // stay distinct. Always sized to vertices.length (same class as
+    // `vertLoop`) so `vertexFanOrdered` is an O(1) read.
+    private bool[] vertFanOrdered_;
+
+    // CSR vertex→dart adjacency for the fan-walk fallback on unordered
+    // vertices: for vertex v, `vertDartAdj[vertDartStart[v] .. vertDartStart[v
+    // + 1]]` lists every dart `li` with `loops[li].vert == v` — one entry per
+    // face incident to v, built directly from `loops[]` (NOT via the twin
+    // graph), correct regardless of winding. Built ONLY when `buildLoops`
+    // finds at least one same-direction edge (Risk #1: no per-edge allocation
+    // on the clean corpus) — empty on every consistently-wound mesh, so the
+    // fast path pays nothing.
+    private uint[] vertDartStart;
+    private uint[] vertDartAdj;
+
     // Shared CSR vertex→neighbor adjacency (flattened neighbor list + a
     // per-vertex [offset, offset+1] bounds pair). Lazily rebuilt on read
     // whenever `mutationVersion` moves — mirrors the lazy-invalidation
@@ -9995,6 +10027,23 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// True when vertex `vi`'s dart fan enumerates in a meaningful cyclic
+    /// ORDER and the twin-walk visits it completely (task 0447:
+    /// doc/vertex_fan_walk_foreign_edge_plan.md). False when the fan rests on
+    /// a same-direction shared edge (inconsistent winding) — such a vertex is
+    /// served by the CSR fallback (complete, arbitrary order), and
+    /// slot-position consumers (`bevelEdgesByMask`,
+    /// `symmetry.rebuildPairingTopological`) must check this and decline
+    /// rather than trust slot k. Keyed STRICTLY on same-directionness, NOT on
+    /// the overloaded `twin==~0u` sentinel: a genuine non-manifold ("book")
+    /// vertex (meaning-2) stays ordered, so its twin-walk still truncates at
+    /// the boundary-like edge under treatment A (it does NOT trip the CSR
+    /// fallback). Backed by a persistent per-vertex bool array rebuilt in
+    /// `buildLoops` — O(1).
+    bool vertexFanOrdered(uint vi) const {
+        return vi >= vertFanOrdered_.length || vertFanOrdered_[vi];
+    }
+
     /// Return a range over all vertices directly connected to vertex `vi` by an edge.
     VertexNeighborRange verticesAroundVertex(uint vi) const {
         uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
@@ -11302,6 +11351,35 @@ struct Mesh {
             foreach (idx; 0 .. total) fillTwin(idx);
         }
 
+        // Task 0447 (KEEP-TWIN): per-vertex fan-order tracking. Pass 3 above
+        // leaves same-direction twins POPULATED (byte-identical to before);
+        // here we DETECT them straight from `loops[]` — a same-direction pair
+        // (li, tw) of one edge has EQUAL tails `loops[tw].vert ==
+        // loops[li].vert` (an antiparallel twin gives different tails; a
+        // boundary / non-manifold edge gives `twin==~0u` and never enters
+        // here). Both endpoints of every such edge are marked NOT fan-ordered.
+        // Always (re)size `vertFanOrdered_` (cheap, same class as `vertLoop`);
+        // the single `foreach` over loops has no per-edge allocation (Risk #1).
+        vertFanOrdered_.length = vertices.length;
+        vertFanOrdered_[] = true;
+        bool anySameDir = false;
+        foreach (li; 0 .. total) {
+            uint tw = loops[li].twin;
+            if (tw != ~0u && loops[tw].vert == loops[li].vert) {
+                vertFanOrdered_[loops[li].vert] = false;
+                vertFanOrdered_[loops[loops[li].next].vert] = false;
+                anySameDir = true;
+            }
+        }
+        if (anySameDir) {
+            import log : logWarnOnce;
+            logWarnOnce("mesh", "sameDirTwin",
+                "buildLoops: inconsistently-wound faces detected (a shared "
+                ~ "edge traversed the same direction by both faces) — the "
+                ~ "affected vertex fans are unordered/incomplete for "
+                ~ "slot-position consumers. Run mesh.fixOrientation to repair "
+                ~ "winding.");
+        }
 
         // Anchor walk — independent per vertex; for BOUNDARY verts,
         // walk back via next(twin(cur)) until the open start of the
@@ -11333,6 +11411,10 @@ struct Mesh {
                 uint orig = cur;
                 foreach (_; 0 .. faces.length + 4) {
                     if (loops[cur].twin == ~0u) break;
+                    // Task 0447 (KEEP-TWIN): a same-direction ("meaning-3")
+                    // twin has the SAME tail as `cur`; crossing it would jump
+                    // to the OTHER endpoint's fan. Treat it as a boundary.
+                    if (loops[loops[cur].twin].vert == loops[cur].vert) break;
                     uint back = loops[loops[cur].twin].next;
                     if (back == orig) break;
                     cur = back;
@@ -12691,6 +12773,12 @@ struct VertexDartRange {
         uint prevLi   = _loops[_cur].prev;
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _done = true; return; }
+        // Task 0447 (KEEP-TWIN): a same-direction ("meaning-3") twin shares
+        // the tail of `prevLi` instead of reversing it — following it would
+        // yield a dart based at the OTHER endpoint (a foreign element). Stop
+        // as at a boundary. On a consistently-wound mesh the twin is always
+        // antiparallel, so this never fires and the walk is byte-identical.
+        if (_loops[twinPrev].vert == _loops[prevLi].vert) { _done = true; return; }
         if (++_steps >= MAX_STEPS) {
             warnMaxStepsExceeded("VertexDartRange");
             _done = true;
@@ -12815,6 +12903,10 @@ struct VertexNeighborRange {
         uint prevLi   = _loops[_cur].prev;
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _atExtra = true; return; }
+        // Task 0447 (KEEP-TWIN): same-direction ("meaning-3") twin — see
+        // VertexDartRange.popFront. Stop as at a boundary (emit the extra
+        // open-end neighbour). Never fires on consistent winding.
+        if (_loops[twinPrev].vert == _loops[prevLi].vert) { _atExtra = true; return; }
         if (++_steps >= MAX_STEPS) {
             warnMaxStepsExceeded("VertexNeighborRange");
             _done = true;
@@ -12872,6 +12964,10 @@ struct VertexEdgeRange {
         uint prevLi   = _loops[_cur].prev;
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _atExtra = true; return; }  // boundary: emit extra next
+        // Task 0447 (KEEP-TWIN): same-direction ("meaning-3") twin — see
+        // VertexDartRange.popFront. Stop as at a boundary (emit the extra
+        // open-end edge). Never fires on consistent winding.
+        if (_loops[twinPrev].vert == _loops[prevLi].vert) { _atExtra = true; return; }
         if (++_steps >= MAX_STEPS) {
             warnMaxStepsExceeded("VertexEdgeRange");
             _done = true;
@@ -16960,10 +17056,12 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
         return m;
     }
 
-    // Premise: the walk really is inconsistent here. If this ever starts
-    // passing, the underlying fan-walk defect has been fixed and this test
-    // should be revisited rather than deleted — the bevel may then legitimately
-    // process the hinge.
+    // Premise (task 0447 KEEP-TWIN — this block moved when the fan-walk
+    // defect was fixed): the walk USED to return a foreign edge here (at V=0
+    // it yielded edge (3,1), which contains neither endpoint). The fix makes
+    // the walk return ONLY incident edges, and flags the inconsistently-wound
+    // spine endpoints as NOT fan-ordered so slot-position consumers decline.
+    // Revisit — do not delete — if this ever changes.
     {
         auto m = hinge();
         bool sawForeignEdge = false;
@@ -16972,8 +17070,16 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
                 immutable uint a = m.edges[ei][0], b = m.edges[ei][1];
                 if (a != V && b != V) { sawForeignEdge = true; break; }
             }
-        assert(sawForeignEdge,
-            "premise gone: the fan walk no longer returns a foreign edge here");
+        assert(!sawForeignEdge,
+            "fan walk must no longer return a foreign edge on the hinge");
+        // The spine (0,1) is traversed the same direction by both faces, so
+        // both its endpoints are marked unordered; the page-tip vertices
+        // (2,3,4,5) sit on no same-direction edge and stay ordered.
+        assert(!m.vertexFanOrdered(0) && !m.vertexFanOrdered(1),
+            "hinge spine endpoints must be flagged not-fan-ordered");
+        foreach (uint V; [2u, 3u, 4u, 5u])
+            assert(m.vertexFanOrdered(V),
+                "hinge page-tip vertices must stay fan-ordered");
     }
 
     foreach (pair; [[0u, 1u], [0u, 2u], [2u, 3u]])
