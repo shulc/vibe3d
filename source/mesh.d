@@ -8553,6 +8553,29 @@ struct Mesh {
         // 1", orthogonal to whether the endpoints are on a rim). Both kinds
         // count as "selected" for the per-vertex fan logic below; only the
         // 2-face kind becomes a ChamferSpan.
+        // A selected edge shared by THREE OR MORE faces is a separate family
+        // that this kernel does not build yet, and `buildEdgeFaces`'s `int[2]`
+        // slots cannot even witness the third face — so without this check we
+        // would silently treat it as an ordinary two-face edge and emit
+        // plausible-looking WRONG geometry. Refuse before any mutation instead.
+        //
+        // The reference DOES handle it, and the law is captured (task 0438,
+        // `edge_bevel_0438_{A3face,B4face}_*`): every incident face is inset in
+        // place by `width` along its own in-plane perpendicular — the same
+        // per-face formula used for two-face edges — and exactly ONE new N-gon
+        // fan cap is inserted at EACH END of the edge, joining that end's N rail
+        // points (triangle at N=3, quad at N=4). No face is split, N is only a
+        // fan size, and neither `sharp` nor Round Level affects the result.
+        // What is NOT captured is a 3-face edge embedded in a larger mesh, where
+        // the endpoints also carry faces not incident to the edge; building that
+        // from the fin-bundle captures would be extrapolation, so the whole
+        // family stays refused until it is measured.
+        {
+            auto faceUse = edgeFaceUseCounts();
+            foreach (i; 0 .. edges.length)
+                if (mask[i] && i < faceUse.length && faceUse[i] >= 3) return 0;
+        }
+
         bool[] qualifies = new bool[](edges.length);
         bool[] rimOnly   = new bool[](edges.length);
         size_t nQual = 0;
@@ -16025,6 +16048,59 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four is equally
     assert(recorder.isEmpty(), "non-adjacent K2 preflight must not write an edit record");
     assert(m.endEditBatch().isEmpty(), "non-adjacent K2 preflight must finish with an empty delta");
     assertBevelManifoldClean(m, "non-adjacent valence-4 K2 unchanged input");
+}
+
+unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
+           // refused before any mutation, not silently mis-built.
+           //
+           // `buildEdgeFaces` returns `int[2]` and physically cannot witness a
+           // third incident face, so such an edge used to be processed as an
+           // ordinary two-face one — we did not refuse, we quietly produced
+           // wrong geometry, which is worse. The reference's real law for this
+           // family IS captured (task 0438: every incident face inset in place
+           // by the usual per-face formula, plus one N-gon fan cap per edge
+           // end), but only on isolated fin bundles; a 3-face edge embedded in
+           // a larger mesh is not measured, so the family stays refused rather
+           // than extrapolated.
+    // "Propeller": one spine edge shared by three quad fins.
+    Mesh propeller(int fins) {
+        import std.math : cos, sin, PI;
+        Mesh m;
+        m.vertices = [Vec3(0, 0, 1), Vec3(0, 0, -1)];   // spine top / bottom
+        foreach (i; 0 .. fins) {
+            immutable float a = 2.0f * PI * i / fins;
+            m.vertices ~= Vec3(cos(a), sin(a),  1.0f);
+            m.vertices ~= Vec3(cos(a), sin(a), -1.0f);
+        }
+        foreach (i; 0 .. fins)
+            m.addFace([0u, cast(uint)(2 + 2 * i), cast(uint)(3 + 2 * i), 1u]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    foreach (fins; [3, 4]) {
+        auto m = propeller(fins);
+        // Premise: the spine really is shared by `fins` faces.
+        auto use = m.edgeFaceUseCounts();
+        int spine = -1;
+        foreach (i; 0 .. m.edges.length) {
+            uint a = m.edges[i][0], b = m.edges[i][1];
+            if ((a == 0 && b == 1) || (a == 1 && b == 0)) { spine = cast(int)i; break; }
+        }
+        assert(spine >= 0, "spine edge missing");
+        assert(use[spine] == fins, "spine must carry every fin");
+
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        mask[spine] = true;
+        auto vertsBefore = m.vertices.dup;
+        auto facesBefore = m.faces._store.dup;
+        foreach (level; [0, 1]) {
+            assert(m.bevelEdgesByMask(mask, 0.15f, level) == 0,
+                "an edge on 3+ faces must be refused, not mis-built");
+            assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
+                "the refusal must leave the mesh byte-identical");
+        }
+    }
 }
 
 unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a chain
