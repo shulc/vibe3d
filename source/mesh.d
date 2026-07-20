@@ -8468,13 +8468,31 @@ struct Mesh {
     ///     = V + width·dir(the OTHER, unselected edge) — identical formula
     ///     to the original v1 kernel's per-endpoint corner, so a lone
     ///     selected edge (K==1 at both ends) reproduces v1's output exactly.
-    ///   - `f_k` bordered by 2 UNSELECTED edges: if BOTH are "active" (each
-    ///     itself borders a selected edge via its OTHER incident face) →
-    ///     SPLIT into the 2 already-computed slide vertices (the classic
-    ///     bare-end pentagon); if exactly one is active → SPLIT into
-    ///     [that slide vertex, V] (V retained on the inactive side — a
-    ///     partial notch, not fixture-tested but topologically sound for
-    ///     valence > 3); if neither is active → untouched.
+    ///   - `f_k` bordered by 2 UNSELECTED edges → SPLIT into the 2 already-
+    ///     computed slide vertices. The source vertex V is now ALWAYS fully
+    ///     cut (task 0439): the former "active/inactive" distinction (an
+    ///     unselected edge needed a selected NEIGHBOUR edge, via its OTHER
+    ///     incident face, to earn its own slide point) had no reference
+    ///     counterpart and is gone — every unselected edge gets a slide
+    ///     point, full stop (doc/edge_bevel_freeend_cap_plan.md,
+    ///     capture-verified at Round Level 0 for valence 3-6, K∈{1,2}).
+    ///
+    ///   A vertex with `0 < K < nE` on a CLOSED fan (`nE == d`; see below)
+    ///   additionally gets ONE flat cap face: walk the fan in ring order,
+    ///   threading one slide vertex per unselected slot and one miter vertex
+    ///   per face whose two bordering edges are BOTH selected (a K≥2 run of
+    ///   adjacent selected edges), and emit the cap once that ring has ≥3
+    ///   corners. This is the free-end / partial-fan cap that fills the hole
+    ///   the old `keep V` branch used to leave. `K < nE` keeps this path
+    ///   DISJOINT from the K==d hub cap below (on a closed fan the two
+    ///   conditions are mutually exclusive) — a vertex is never both.
+    ///   `roundLevel` never rounds this cap: it is deliberately never
+    ///   registered as a rail-support consumer (unlike the hub cap's ring),
+    ///   so its bordering rails can never reach the two-consumer approval
+    ///   fixed point below and the affected span run degrades to Round
+    ///   Level 0 automatically instead of emitting an unmeasured shape. The
+    ///   same cap on an OPEN (boundary) fan has no reference dump and is
+    ///   refused before any mutation (see the preflight below).
     /// A selected edge's own chamfer strip always bridges the per-(vertex,
     /// face) corner already resolved above for its 2 bordering faces at
     /// each endpoint — so the strip is well-defined for EVERY case (bare
@@ -8484,9 +8502,13 @@ struct Mesh {
     /// v1's guards this generalizes away (task 0391 Phase 1/2): the blanket
     /// endpoint-disjoint guard and the valence-3-both-endpoints guard are
     /// GONE — a vertex may have any number of selected edges (K) at any
-    /// valence. STILL required: each selected edge must be interior
-    /// (exactly 2 incident faces) — boundary edges are silently skipped
-    /// (open-boundary bevel is task 0391 Phase 6, deferred/XFAIL).
+    /// valence. A selected edge with exactly ONE incident face (a rim edge)
+    /// is handled too (its lone border insets by `width`, no bridge quad —
+    /// see Step 1 below); one with THREE OR MORE is refused (task 0438).
+    /// STILL required: a free-end/partial-fan cap (above) on a BOUNDARY
+    /// (open-fan) vertex has no reference dump and is refused before any
+    /// mutation (task 0439, preflight below) — the same shape on an
+    /// interior (closed-fan) vertex gets the cap.
     ///
     /// `roundLevel` subdivides every eligible cross-section into `2^L`
     /// segments.  A rail is owned by its two already-resolved L0 endpoint
@@ -8513,6 +8535,12 @@ struct Mesh {
     /// open (XFAIL): N>3 junctions (a different reference N-sided path) keep the
     /// flat N-gon cap.  `roundLevel==0` takes the old flat path without a
     /// registry.
+    ///
+    /// A DIFFERENT flat cap — the free-end / partial-fan cap for `0 < K <
+    /// nE` (task 0439, described above) — is a disjoint code path guarded by
+    /// `K < nE` and never rounds at all, degrading its span run to Round
+    /// Level 0 instead (see the Round Level inventory comment further
+    /// below). It is not a special case of this hub-cap N-gon.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8619,35 +8647,28 @@ struct Mesh {
             foreach (s; fanSelected) if (s) ++K;
             if (K == 0 || (!openFan && K == d)) continue; // untouched, or a full hub
 
-            // The one unsupported shape is the partial-notch `keep V` branch
-            // below: a face whose BOTH bordering edges are unselected but only
-            // ONE side is active. It retains V with no free-end cap and leaves
-            // a hole, at EVERY Round Level including L0. Its sibling — BOTH
-            // sides active — fully cuts the corner and is fine (it is exactly
-            // what the reference does at a beveled rim edge).
-            //
-            // So mirror the `active` relation used by the per-vertex pass and
-            // reject only on the single-active case. Slots are fan-adjacent
-            // when they bound a common face (cyclic closed / linear open),
-            // plus the open fan's two rim ends, which the boundary joins.
-            immutable size_t nSlots = fanSelected.length;
-            bool[] fanActive = new bool[](nSlots);
-            foreach (k; 0 .. nSlots) {
-                if (fanSelected[k]) continue;
-                if (openFan) {
-                    fanActive[k] = (k > 0 && fanSelected[k - 1]) ||
-                                   (k + 1 < nSlots && fanSelected[k + 1]);
-                    if (!fanActive[k] && (k == 0 || k == nSlots - 1))
-                        fanActive[k] = fanSelected[k == 0 ? nSlots - 1 : 0];
-                } else {
-                    fanActive[k] = fanSelected[(k + nSlots - 1) % nSlots] ||
-                                   fanSelected[(k + 1) % nSlots];
+            // The partial-notch `keep V` guard that used to live here is
+            // GONE (task 0439, Decision A/C, doc/edge_bevel_freeend_cap_plan.md):
+            // every both-unselected face now gets an unconditional two-slide
+            // cut, and the resulting ring of corners is capped (Decision B,
+            // per-vertex pass below). The one shape that STAYS refused is a
+            // cap on a BOUNDARY (open-fan) vertex: its corner chain
+            // terminates on the two rim edges instead of closing into a
+            // ring, and no reference dump exists for capping it anyway
+            // (§A-5). `ringLen` mirrors the per-vertex ring-collection rule
+            // (Decision B) but is computed here from `fanSelected` alone,
+            // before `cornerAtVF` exists: one entry per unselected slot,
+            // plus one per face whose two bordering edges are both selected
+            // (a miter).
+            if (openFan) {
+                immutable size_t nSlots = fanSelected.length;
+                size_t ringLen = 0;
+                foreach (k; 0 .. nSlots) if (!fanSelected[k]) ++ringLen;
+                foreach (k; 0 .. d) {
+                    immutable size_t kr = k + 1; // linear on an open fan, no wrap
+                    if (fanSelected[k] && fanSelected[kr]) ++ringLen;
                 }
-            }
-            foreach (k; 0 .. d) {
-                immutable size_t kr = (k + 1) % nSlots;
-                if (fanSelected[k] || fanSelected[kr]) continue;
-                if (fanActive[k] != fanActive[kr]) return 0;   // the `keep V` notch
+                if (ringLen >= 3) return 0;
             }
         }
 
@@ -8695,6 +8716,17 @@ struct Mesh {
         // of V is selected — Phase 2's N-way junction).
         uint[][uint] hubCapRing;
         uint[uint]   hubCapSrc;
+
+        // Free-end / partial-fan cap bookkeeping (task 0439): vertex → ring
+        // of unselected-slot slide corners + both-selected-neighbours miter
+        // corners, in fan order (only populated for `0 < K < nE` on a CLOSED
+        // fan with a ring of ≥3 corners — Decision B). Deliberately never
+        // fed into `addRailSupportConsumer` below (unlike `hubCapRing`): its
+        // bordering rails must never reach the two-consumer approval fixed
+        // point, so an affected span run degrades to Round Level 0 instead
+        // of rounding an unmeasured cap interior (Decision D).
+        uint[][uint] freeEndCapRing;
+        uint[uint]   freeEndCapSrc;
 
         // Round Level rail registry.  Identity is the unordered pair of L0
         // endpoints; callers receive the stored chain in their own winding.
@@ -8899,30 +8931,6 @@ struct Mesh {
             }
             if (K == 0) continue;
 
-            // An unselected edge is "active" iff it is immediately adjacent
-            // to a selected edge — i.e. it needs its own slide vertex (shared
-            // by both faces bordering it). Two edge slots are adjacent exactly
-            // when they bound a common face, so the relation is cyclic on a
-            // closed fan and LINEAR on an open one (slot 0 and slot d share no
-            // face there — wrapping them would invent an adjacency).
-            bool[] active = new bool[](nE);
-            foreach (k; 0 .. nE) {
-                if (selE[k]) continue;
-                if (openFan) {
-                    active[k] = (k > 0 && selE[k - 1]) || (k + 1 < nE && selE[k + 1]);
-                    // The two END slots of an open fan are the rim edges. They
-                    // share no FACE, but the boundary itself joins them — so a
-                    // selected RIM edge has to cut the corner on the far side
-                    // too, otherwise the re-routed boundary has nowhere to go.
-                    // Reference: `edge_bevel_open_rimedge_w015` cuts V into a
-                    // slide on EACH remaining edge (V is not retained).
-                    if (!active[k] && (k == 0 || k == nE - 1))
-                        active[k] = selE[k == 0 ? nE - 1 : 0];
-                } else {
-                    active[k] = selE[(k - 1 + d) % d] || selE[(k + 1) % d];
-                }
-            }
-
             immutable Vec3 vpos = vertices[V];
             uint[int] slideVert;    // local edge-slot k → new vertex (memoized per V)
             bool[int] slideClamped; // local edge-slot k → did the overshoot guard clamp it?
@@ -8966,34 +8974,16 @@ struct Mesh {
                         nv, CornerKind.Slide, slideClamped[unselK], cast(uint)K, slideDir(unselK));
                     faceSubs.require(fi) ~= VertSub(V, [nv]);
                 } else {
-                    // Neither bordering edge selected — split iff at least
-                    // one side is "active" (touches a selected edge via its
-                    // OTHER face). Order is [pred-side, succ-side] to match
-                    // f_k's own ring-traversal direction at V.
-                    immutable bool activeSucc = active[k];
-                    immutable bool activePred = active[kr];
-                    if (activeSucc && activePred) {
-                        uint predSide = getSlide(kr);
-                        uint succSide = getSlide(k);
-                        // Keep the L0 chord here.  Once every span has
-                        // registered its rails, boundary threading below
-                        // replaces this edge with the shared chain.
-                        faceSubs.require(fi) ~= VertSub(V, [predSide, succSide]);
-                    } else if (activeSucc) {
-                        // KNOWN-UNTESTED partial notch (valence>3 only — a
-                        // cube corner is always valence 3, so no fixture
-                        // exercises this branch): V retained on the
-                        // inactive side, a single slide vertex on the
-                        // active side. No arc/rounding is ever attempted
-                        // here (the old bare-only rounding gate required
-                        // d==3, which this branch structurally cannot reach — d==3 with a
-                        // single active side would already be the
-                        // `activeSucc && activePred` case above).
-                        faceSubs.require(fi) ~= VertSub(V, [V, getSlide(k)]);
-                    } else if (activePred) {
-                        faceSubs.require(fi) ~= VertSub(V, [getSlide(kr), V]);
-                    }
-                    // else: untouched — this face doesn't reach V's bevel.
+                    // Neither bordering edge selected: the source vertex is
+                    // now ALWAYS fully cut (task 0439) — the old `keep V`
+                    // partial-notch branch had no reference counterpart and
+                    // is gone (capture-verified, Decision C in
+                    // doc/edge_bevel_freeend_cap_plan.md). Both sides get
+                    // their own slide point; order is [pred, succ], matching
+                    // f_k's own ring-traversal direction at V. This is the
+                    // L0 chord — `threadRails` below swaps it for the
+                    // materialized rail chain wherever Round Level approved it.
+                    faceSubs.require(fi) ~= VertSub(V, [getSlide(kr), getSlide(k)]);
                 }
             }
 
@@ -9012,6 +9002,27 @@ struct Mesh {
                 foreach (k; 0 .. d) ring[k] = cornerAtVF[vfKey(V, vFaces[k])].vert;
                 hubCapRing[V] = ring;
                 hubCapSrc[V]  = vFaces[0];
+            }
+
+            // Free-end / partial-fan cap (task 0439, Decision B): a CLOSED
+            // fan (`nE == d`, so `K < nE` is exactly `K < d` and disjoint
+            // from the hub-cap `K == d` case above — a vertex is never both)
+            // with `0 < K < nE` gets one flat cap threading the ring of
+            // unselected-slot slides and both-selected-neighbours miters.
+            // The `K < nE` guard here is load-bearing, not decorative:
+            // removing it lets a vertex emit BOTH this cap and the hub cap.
+            if (!openFan && K > 0 && K < nE) {
+                uint[] cap;
+                foreach (k; 0 .. nE) {
+                    if (!selE[k]) cap ~= getSlide(k);
+                    immutable int kNext = (k + 1) % nE;
+                    if (k < d && selE[k] && selE[kNext])
+                        cap ~= cornerAtVF[vfKey(V, vFaces[k])].vert;   // miter of face f_k
+                }
+                if (cap.length >= 3) {
+                    freeEndCapRing[V] = cap;
+                    freeEndCapSrc[V]  = vFaces[0];
+                }
             }
         }
 
@@ -9441,6 +9452,44 @@ struct Mesh {
                 }
             }
 
+            newFaces ~= ring;
+            newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
+            newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
+            newOrd  ~= 0;
+            newSub  ~= isFaceSubpatch(srcFi);
+        }
+
+        // Emit one free-end / partial-fan cap per `freeEndCapRing` vertex
+        // (task 0439, Decision B). Same Newell-winding idiom as the hub cap
+        // above, but `threadRails` is deliberately NOT called: this ring is
+        // never registered via `addRailSupportConsumer` (see its
+        // declaration above), so its bordering rails never reach the
+        // two-consumer approval fixed point and are never materialized —
+        // the affected span run simply commits flat (Decision D). Calling
+        // `threadRails` here would be a no-op; the comment exists so this
+        // doesn't read as a forgotten branch.
+        foreach (V, ring_; freeEndCapRing) {
+            uint[] ring = ring_.dup;
+            immutable int Ncap = cast(int)ring.length;
+            Vec3 newellN = Vec3(0, 0, 0);
+            foreach (k; 0 .. Ncap) {
+                Vec3 a = vertices[ring[k]];
+                Vec3 b = vertices[ring[(k + 1) % Ncap]];
+                newellN.x += (a.y - b.y) * (a.z + b.z);
+                newellN.y += (a.z - b.z) * (a.x + b.x);
+                newellN.z += (a.x - b.x) * (a.y + b.y);
+            }
+            Vec3 avgFaceN = Vec3(0, 0, 0);
+            foreach (fi; facesAroundVertex(V)) {
+                Vec3 fn = faceNormal(cast(uint)fi);
+                avgFaceN.x += fn.x; avgFaceN.y += fn.y; avgFaceN.z += fn.z;
+            }
+            if (dot(newellN, avgFaceN) < 0) {
+                for (int lo = 0, hi = Ncap - 1; lo < hi; ++lo, --hi) {
+                    uint tmp = ring[lo]; ring[lo] = ring[hi]; ring[hi] = tmp;
+                }
+            }
+            immutable uint srcFi = freeEndCapSrc[V];
             newFaces ~= ring;
             newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
             newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
@@ -15508,6 +15557,132 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
         tag ~ ": Euler characteristic V-E+F=" ~ (V - E + F).to!string ~ " != 2");
 }
 
+// Task 0439 (doc/edge_bevel_freeend_cap_plan.md §F): an OPEN mesh (disk, grid
+// — anything with a boundary) fails `assertBevelManifoldClean`'s hard
+// `V-E+F==2` unconditionally, since that identity assumes a closed genus-0
+// mesh. This variant accepts the same coincident-vertex / degenerate-face /
+// orphan-vertex checks, but an edge may border ONE face (a boundary/rim edge)
+// as well as two (interior, still winding-checked) — never zero or three-or-
+// more — and the caller supplies the expected Euler characteristic instead of
+// a hardcoded 2 (a simply-connected disk with one boundary loop is 1; bevel
+// only adds detail, so it must never change).
+private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler) {
+    import std.conv : to;
+
+    foreach (i; 0 .. m.vertices.length)
+        foreach (j; i + 1 .. m.vertices.length)
+            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+                tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
+
+    foreach (fi, f; m.faces) {
+        bool[uint] distinct;
+        foreach (v; f) distinct[v] = true;
+        assert(distinct.length >= 3,
+            tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+        Vec3 nsum = Vec3(0, 0, 0);
+        foreach (k; 0 .. f.length) {
+            Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
+            nsum.x += (a.y - b.y) * (a.z + b.z);
+            nsum.y += (a.z - b.z) * (a.x + b.x);
+            nsum.z += (a.x - b.x) * (a.y + b.y);
+        }
+        assert(nsum.length * 0.5f > 1e-9f,
+            tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
+    }
+
+    int[ulong] edgeUse;
+    int[ulong] edgeWinding;
+    uint[] vertexUse; vertexUse.length = m.vertices.length;
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    foreach (f; m.faces)
+        foreach (k; 0 .. f.length) {
+            uint a = f[k], b = f[(k + 1) % f.length];
+            edgeUse[ekey(a, b)]++;
+            edgeWinding[ekey(a, b)] += a < b ? 1 : -1;
+            ++vertexUse[a];
+        }
+    foreach (vi, count; vertexUse)
+        assert(count > 0, tag ~ ": orphan vertex " ~ vi.to!string);
+    size_t edgeCount = 0;
+    foreach (key, count; edgeUse) {
+        assert(count == 1 || count == 2, tag ~ ": edge used by " ~ count.to!string ~
+            " faces (expected 1 boundary or 2 interior)");
+        if (count == 2)
+            assert(edgeWinding[key] == 0,
+                tag ~ ": co-oriented edge winding (both incident faces use the same direction)");
+        ++edgeCount;
+    }
+
+    immutable long V = cast(long)m.vertices.length;
+    immutable long E = cast(long)edgeCount;
+    immutable long F = cast(long)m.faces.length;
+    assert(V - E + F == wantEuler,
+        tag ~ ": Euler characteristic V-E+F=" ~ (V - E + F).to!string ~
+        " != " ~ wantEuler.to!string);
+}
+
+// Task 0439 (doc/edge_bevel_freeend_cap_plan.md §F): full position +
+// connectivity + WINDING comparison against a captured reference dump.
+// `runTopologyDiffSuite` (tests/fixture_helpers.d) only checks the vertex
+// position CLOUD and face COUNT — it would pass a winding regression (the
+// right vertex set rewoven with the wrong connectivity or a flipped normal)
+// silently. This compares the SET of vertex positions (rounded to 5 decimal
+// digits) and the SET of faces, each face canonicalized as its sequence of
+// (rounded) positions rotated to the lexicographically smallest starting
+// point WITHOUT trying the reversed sequence — so it is sensitive to winding
+// direction, not just to which 3+ vertices bound a face.
+private void assertFacesMatchByPosition(ref Mesh m, const Vec3[] wantVerts,
+                                         const uint[][] wantFaces, string tag) {
+    import std.algorithm : sort, map;
+    import std.array : array;
+    import std.format : format;
+    import std.conv : to;
+
+    static string posKey(Vec3 p) {
+        // Normalize near-zero components to a clean +0.0 before formatting:
+        // a component that rounds to zero at 5 decimals (e.g. cos(pi/2) in
+        // float32 is a tiny NEGATIVE number, not exactly 0) prints as
+        // "-0.00000" on one side and "0.00000" on the other at the sign bit
+        // — a spurious mismatch, not a real position difference. Threshold
+        // is half the last displayed digit, matching the rounding boundary.
+        import std.math : abs;
+        immutable float x = (abs(p.x) < 5e-6f) ? 0.0f : p.x;
+        immutable float y = (abs(p.y) < 5e-6f) ? 0.0f : p.y;
+        immutable float z = (abs(p.z) < 5e-6f) ? 0.0f : p.z;
+        return format("%.5f,%.5f,%.5f", x, y, z);
+    }
+    static string canonFace(const Vec3[] ring) {
+        string best;
+        foreach (start; 0 .. ring.length) {
+            string s;
+            foreach (k; 0 .. ring.length)
+                s ~= posKey(ring[(start + k) % ring.length]) ~ "|";
+            if (best.length == 0 || s < best) best = s;
+        }
+        return best;
+    }
+    static string faceKey(const uint[] f, const Vec3[] verts) {
+        Vec3[] ring; foreach (v; f) ring ~= verts[v];
+        return canonFace(ring);
+    }
+
+    auto gotPos = m.vertices.map!posKey.array;
+    auto wantPos = wantVerts.map!posKey.array;
+    sort(gotPos);
+    sort(wantPos);
+    assert(gotPos == wantPos, tag ~ ": vertex position set mismatch\ngot:  " ~
+        gotPos.to!string ~ "\nwant: " ~ wantPos.to!string);
+
+    auto gotFaces = m.faces._store.map!(f => faceKey(f, m.vertices)).array;
+    auto wantFaceKeys = wantFaces.map!(f => faceKey(f, wantVerts)).array;
+    sort(gotFaces);
+    sort(wantFaceKeys);
+    assert(gotFaces == wantFaceKeys, tag ~ ": face connectivity/winding mismatch\ngot:  " ~
+        gotFaces.to!string ~ "\nwant: " ~ wantFaceKeys.to!string);
+}
+
 unittest { // bevelEdgesByMask: LOOP cap manifold-cleanliness backstop
            // (task 0391 Phase 1) — the 4-edge top-face-perimeter loop.
     auto m = makeCube();
@@ -15591,21 +15766,20 @@ unittest { // bevelEdgesByMask: roundLevel DoS clamp — an absurd roundLevel
 }
 
 unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
-           // open-mesh boundary must NOT crash. The boundary endpoint itself
-           // is now supported (the per-vertex pass walks its OPEN fan), so the
-           // reason this case still no-ops has MOVED: the other endpoint is
-           // the grid's fully interior vertex 4, a valence-FOUR free end
-           // (K == 1). One of its faces then has both bordering edges
-           // unselected with exactly ONE side active — the partial-notch
-           // `keep V` branch, which has no free-end cap at valence > 3 and
-           // would leave holes. The preflight rejects that shape before any
-           // mutation, at every Round Level.
+           // open-mesh boundary (task 0439, golden test 6). The boundary
+           // endpoint itself is supported (the per-vertex pass walks its
+           // OPEN fan); the other endpoint is the grid's fully interior
+           // vertex 4, a valence-FOUR free end (K == 1). Before task 0439
+           // this was a preflight no-op (the removed `keep V` guard rejected
+           // vertex 4's shape outright); the source vertex is now always cut
+           // and gets its free-end cap (Decision B/C,
+           // doc/edge_bevel_freeend_cap_plan.md) instead of a hole.
            //
-           // Verified: with the notch guard removed this very mesh produces a
-           // 12-edge rim, where the reference gives 12v/6f with a 9-edge rim
-           // (the pre-bevel rim is 8, plus one from splitting the boundary
-           // vertex). So the no-op is load-bearing, not incidental. The real
-           // valence>3 free-end cap is captured and tracked separately.
+           // Reference-verified: 12v/6f with a 9-edge rim (the pre-bevel rim
+           // is 8, plus one from splitting the boundary vertex). NOTE: an
+           // earlier draft of this comment claimed a "12-edge rim, where 8 is
+           // correct" — that reading is wrong; 8 is the rim BEFORE the bevel,
+           // and the reference's own post-bevel rim is 9, not 8.
     //   0   1   2
     //   3   4   5     <- 2x2 quad grid; vertex 4 is fully interior (valence
     //   6   7   8        4); vertex 1 is a top-boundary vertex (valence 3,
@@ -15631,11 +15805,40 @@ unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
     assert(ei >= 0, "edge (1,4) not found");
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
 
-    // Must return gracefully (0, silently-skipped) — NOT throw RangeError.
     size_t n = m.bevelEdgesByMask(mask, 0.1f);
-    assert(n == 0, "boundary-adjacent asymmetric span should silently skip, not crash");
-    assert(m.vertices.length == 9, "no-op should leave the mesh untouched");
-    assert(m.faces.length    == 4);
+    assert(n == 1, "the free-end cap must let this edge bevel, not skip it");
+    assert(m.vertices.length == 12 && m.faces.length == 6,
+        "boundary-adjacent asymmetric span golden must be 12v/6f");
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    int[ulong] edgeUse;
+    foreach (f; m.faces)
+        foreach (k; 0 .. f.length) edgeUse[ekey(f[k], f[(k + 1) % f.length])]++;
+    int rim = 0, nonManifold = 0;
+    foreach (v; edgeUse.byValue) {
+        if (v == 1) ++rim;
+        else if (v != 2) ++nonManifold;
+    }
+    assert(rim == 9, "rim must grow from 8 to 9 edges (one split at the boundary endpoint)");
+    // Golden test 6 (doc/edge_bevel_freeend_cap_plan.md §F): full position +
+    // connectivity + winding match against task0439_A_freeend_v4grid_L0.
+    // All-axis-aligned geometry (no trig), so unlike the disk golden tests
+    // below, transcribed decimal literals carry no 5th-decimal rounding-
+    // boundary risk.
+    static immutable Vec3[] wantVerts = [
+        Vec3(-1, -1, 0), Vec3(0, -1, 0), Vec3(1, -1, 0),
+        Vec3(-1, 0, 0), Vec3(1, 0, 0), Vec3(-1, 1, 0), Vec3(1, 1, 0),
+        Vec3(0, -0.1f, 0), Vec3(0.1f, 0, 0), Vec3(-0.1f, 0, 0),
+        Vec3(-0.1f, 1, 0), Vec3(0.1f, 1, 0),
+    ];
+    static immutable uint[][] wantFaces = [
+        [4, 6, 11, 8], [9, 10, 5, 3], [2, 4, 8, 7, 1], [1, 7, 9, 3, 0],
+        [10, 9, 8, 11], [7, 8, 9],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "grid 2x2 boundary-adjacent free-end cap");
+    assert(nonManifold == 0, "the free-end cap must not introduce a non-manifold edge");
+    assertBevelManifoldCleanOpen(m, "grid 2x2 boundary-adjacent free-end cap", 1);
 }
 
 unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
@@ -15907,9 +16110,15 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
 }
 
 unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
-           // is rejected by the preflight BEFORE corner construction.  The
-           // current L0 partial-fan cap is non-manifold, so a local rounded
-           // fallback would not be safe.
+           // (task 0439). Vertex 0's own K=2-adjacent shape was already
+           // MITER/SLIDE-supported pre-0439 (one miter + one both-unselected
+           // face); what used to reject this case was its two selected
+           // edges' FAR endpoints (vertices 1 and 2), each a valence-4 K=1
+           // free end whose middle unselected edge was "inactive" by the old
+           // `keep V` guard. That guard is gone (Decision A/C,
+           // doc/edge_bevel_freeend_cap_plan.md) — both far ends now get
+           // their own triangular free-end cap, and vertex 0's ring (1 miter
+           // + 2 slides) gets its own triangular cap too.
     Mesh makeValence4Octahedron() {
         Mesh m;
         m.vertices = [
@@ -15947,30 +16156,22 @@ unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
 
     auto m = makeValence4Octahedron();
     auto mask = selectPairs(m, [[0u, 1u], [0u, 2u]]);
-    auto vertsBefore = m.vertices.dup;
-    auto facesBefore = m.faces._store.dup;
-    immutable ulong mutationBefore = m.mutationVersion;
-    immutable ulong topologyBefore = m.topologyVersion;
-    immutable ulong structBefore = m.structVersion;
-    immutable uint pendingBefore = m.pendingChanges_;
-    immutable uint pendingSelBefore = m.pendingSelDomains_;
-    MeshEditTracker recorder;
-    m.beginEditBatch(&recorder, MeshEditScope.Geometry);
-    assert(m.isRecordingEdits());
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 0,
-        "unsupported mixed K2 must be rejected before any mutation");
-    assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
-        "early K2 preflight must leave geometry byte-identical");
-    assert(m.mutationVersion == mutationBefore && m.topologyVersion == topologyBefore &&
-           m.structVersion == structBefore && m.pendingChanges_ == pendingBefore &&
-           m.pendingSelDomains_ == pendingSelBefore,
-        "early K2 preflight must not bump versions or pending changes");
-    assert(recorder.isEmpty(), "early K2 preflight must not write an edit record");
-    assert(m.endEditBatch().isEmpty(), "early K2 preflight must finish with an empty delta");
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
+        "mixed adjacent K2 must now bevel both edges");
+    assert(m.vertices.length == 12 && m.faces.length == 13,
+        "adjacent K2 valence-4 octahedron golden must be 12v/13f");
+    assertBevelManifoldClean(m, "adjacent valence-4 K2 free-end cap");
 }
 
-unittest { // bevelEdgesByMask: non-adjacent K2 at valence four is equally
-           // preflighted and therefore can never enter VerifiedK1Arc.
+unittest { // bevelEdgesByMask: non-adjacent K2 at valence four (task 0439).
+           // Vertex 0's own alternating-K2 shape resolves to MITER/SLIDE
+           // only (no both-unselected face at all, so no cap forms there —
+           // its ring is exactly 2 slides, degenerate, like a valence-3 free
+           // end); what used to reject this case was — exactly as in the
+           // adjacent-K2 sibling above — its two selected edges' FAR
+           // endpoints (vertices 1 and 3), each a valence-4 K=1 free end.
+           // Both now get their own triangular free-end cap instead of
+           // hitting the removed `keep V` guard.
     Mesh makeValence4Octahedron() {
         Mesh m;
         m.vertices = [
@@ -16006,49 +16207,11 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four is equally
     }
     auto m = makeValence4Octahedron();
     auto mask = selectPairs(m);
-    auto vertsBefore = m.vertices.dup;
-    auto edgesBefore = m.edges.dup;
-    auto facesBefore = m.faces._store.dup;
-    auto vertexMarksBefore = m.vertexMarks.dup;
-    auto edgeMarksBefore = m.edgeMarks.dup;
-    auto faceMarksBefore = m.faceMarks.dup;
-    auto vertexSelectionOrderBefore = m.vertexSelectionOrder.dup;
-    auto edgeSelectionOrderBefore = m.edgeSelectionOrder.dup;
-    auto faceSelectionOrderBefore = m.faceSelectionOrder.dup;
-    auto faceMaterialBefore = m.faceMaterial.dup;
-    auto facePartBefore = m.facePart.dup;
-    auto selectedVerticesBefore = m.selectedVertices;
-    auto selectedEdgesBefore = m.selectedEdges;
-    auto selectedFacesBefore = m.selectedFaces;
-    immutable ulong mutationBefore = m.mutationVersion;
-    immutable ulong topologyBefore = m.topologyVersion;
-    immutable ulong structBefore = m.structVersion;
-    immutable uint pendingBefore = m.pendingChanges_;
-    immutable uint pendingSelBefore = m.pendingSelDomains_;
-    MeshEditTracker recorder;
-    m.beginEditBatch(&recorder, MeshEditScope.Geometry);
-    assert(m.isRecordingEdits());
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 0,
-        "non-adjacent K2 must be rejected before a false K1 profile is possible");
-    assert(m.vertices == vertsBefore && m.edges == edgesBefore && m.faces._store == facesBefore,
-        "non-adjacent K2 preflight must leave geometry byte-identical");
-    assert(m.vertexMarks == vertexMarksBefore && m.edgeMarks == edgeMarksBefore &&
-           m.faceMarks == faceMarksBefore &&
-           m.vertexSelectionOrder == vertexSelectionOrderBefore &&
-           m.edgeSelectionOrder == edgeSelectionOrderBefore &&
-           m.faceSelectionOrder == faceSelectionOrderBefore &&
-           m.faceMaterial == faceMaterialBefore && m.facePart == facePartBefore,
-        "non-adjacent K2 preflight must leave parallel attributes byte-identical");
-    assert(m.selectedVertices == selectedVerticesBefore && m.selectedEdges == selectedEdgesBefore &&
-           m.selectedFaces == selectedFacesBefore,
-        "non-adjacent K2 preflight must leave selection byte-identical");
-    assert(m.mutationVersion == mutationBefore && m.topologyVersion == topologyBefore &&
-           m.structVersion == structBefore && m.pendingChanges_ == pendingBefore &&
-           m.pendingSelDomains_ == pendingSelBefore,
-        "non-adjacent K2 preflight must not bump versions or pending changes");
-    assert(recorder.isEmpty(), "non-adjacent K2 preflight must not write an edit record");
-    assert(m.endEditBatch().isEmpty(), "non-adjacent K2 preflight must finish with an empty delta");
-    assertBevelManifoldClean(m, "non-adjacent valence-4 K2 unchanged input");
+    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
+        "non-adjacent K2 must now bevel both edges");
+    assert(m.vertices.length == 11 && m.faces.length == 12,
+        "non-adjacent K2 valence-4 octahedron golden must be 11v/12f");
+    assertBevelManifoldClean(m, "non-adjacent valence-4 K2 free-end cap");
 }
 
 unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
@@ -16420,6 +16583,654 @@ unittest { // bevelEdgesByMask: explicit L0 golden for an isolated cube edge.
     assert(m.countSelectedFaces() == 1,
         "L0 selection policy must select the one new chamfer face");
     assertBevelManifoldClean(m, "L0 isolated-edge golden");
+}
+
+// ---------------------------------------------------------------------------
+// task 0439: free-end cap at valence > 3, partial-fan notch (Decisions A-D,
+// doc/edge_bevel_freeend_cap_plan.md). Golden tests 1-6 reproduce a captured
+// reference dump bit-for-bit (position + connectivity + winding, width=0.1,
+// roundLevel=0); smoke tests 7-8 cover the extrapolated (K>=3 / miter-ring)
+// zone with manifold+connectivity+χ only; regression tests 9-10 close two
+// pre-existing holes on unpatched main; degrade tests 11-13 exercise the
+// Round Level local-degrade fixed point (Decision D); test 14 is the
+// byte-stable reject for a cap on an OPEN (boundary) fan (Decision A-5).
+// ---------------------------------------------------------------------------
+
+unittest { // golden test 1: disk N=4, hub-R0 selected -> triangle cap.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(4);
+    // Reference-verified law (task0439_A2_freeend_v4fan_L0): every slide
+    // vertex is `source + width*normalize(neighbor - source)` — the SAME
+    // formula the kernel's own `getSlide` uses. Deriving "want" positions
+    // from the pre-bevel mesh (rather than re-typing decimal literals from
+    // the capture dump) sidesteps a float32 rounding-boundary artifact at
+    // the 5th decimal (e.g. sqrt(3)/2 prints as "0.86603" from a computed
+    // cos/sin but "0.86602" from a truncated 6-digit literal) — a pure
+    // formatting mismatch the plan's own capture pass hit for the same
+    // reason (findings §"Прототип против эталонных дампов").
+    immutable Vec3[] orig = m.vertices.dup;
+    Vec3 slide(int from, int to) {
+        return orig[from] + safeNormalize(orig[to] - orig[from]) * 0.1f;
+    }
+    int ei = findEdge(m, 0, 1);
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(m.vertices.length == 8 && m.faces.length == 6,
+        "disk N=4 hub-R0 golden must be 8v/6f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(3, 0) == 3, "the free-end cap at N-K=3 must be a triangle");
+    Vec3[] wantVerts = [
+        orig[2], orig[3], orig[4],
+        slide(0, 2), slide(0, 3), slide(0, 4),
+        slide(1, 2), slide(1, 4),
+    ];
+    static immutable uint[][] wantFaces = [
+        [5, 2, 7], [4, 1, 2, 5], [3, 0, 1, 4], [3, 6, 0], [6, 3, 5, 7], [3, 4, 5],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "disk N=4 hub-R0");
+    assertBevelManifoldCleanOpen(m, "disk N=4 hub-R0", 1);
+}
+
+unittest { // golden test 2: disk N=5, hub-R0 selected -> quad cap.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(5);
+    immutable Vec3[] orig = m.vertices.dup;
+    Vec3 slide(int from, int to) {
+        return orig[from] + safeNormalize(orig[to] - orig[from]) * 0.1f;
+    }
+    int ei = findEdge(m, 0, 1);
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(m.vertices.length == 10 && m.faces.length == 7,
+        "disk N=5 hub-R0 golden must be 10v/7f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(4, 0) >= 1, "the free-end cap at N-K=4 must include a quad");
+    Vec3[] wantVerts = [
+        orig[2], orig[3], orig[4], orig[5],
+        slide(0, 2), slide(0, 3), slide(0, 4), slide(0, 5),
+        slide(1, 2), slide(1, 5),
+    ];
+    static immutable uint[][] wantFaces = [
+        [7, 3, 9], [6, 2, 3, 7], [5, 1, 2, 6], [4, 0, 1, 5], [4, 8, 0],
+        [8, 4, 7, 9], [4, 5, 6, 7],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "disk N=5 hub-R0");
+    assertBevelManifoldCleanOpen(m, "disk N=5 hub-R0", 1);
+}
+
+unittest { // golden test 3: disk N=6, hub-R0 selected -> pentagon cap.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(6);
+    immutable Vec3[] orig = m.vertices.dup;
+    Vec3 slide(int from, int to) {
+        return orig[from] + safeNormalize(orig[to] - orig[from]) * 0.1f;
+    }
+    int ei = findEdge(m, 0, 1);
+    assert(ei >= 0);
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(m.vertices.length == 12 && m.faces.length == 8,
+        "disk N=6 hub-R0 golden must be 12v/8f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(5, 0) >= 1, "the free-end cap at N-K=5 must include a pentagon");
+    Vec3[] wantVerts = [
+        orig[2], orig[3], orig[4], orig[5], orig[6],
+        slide(0, 2), slide(0, 3), slide(0, 4), slide(0, 5), slide(0, 6),
+        slide(1, 2), slide(1, 6),
+    ];
+    static immutable uint[][] wantFaces = [
+        [9, 4, 11], [8, 3, 4, 9], [7, 2, 3, 8], [6, 1, 2, 7], [5, 0, 1, 6],
+        [5, 10, 0], [10, 5, 9, 11], [5, 6, 7, 8, 9],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "disk N=6 hub-R0");
+    assertBevelManifoldCleanOpen(m, "disk N=6 hub-R0", 1);
+}
+
+unittest { // golden test 4: disk N=5, hub-R0 + hub-R2 (gap 1/2) -> triangle cap.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(5);
+    immutable Vec3[] orig = m.vertices.dup;
+    Vec3 slide(int from, int to) {
+        return orig[from] + safeNormalize(orig[to] - orig[from]) * 0.1f;
+    }
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[0u, 1u], [0u, 3u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(m.vertices.length == 10 && m.faces.length == 8,
+        "disk N=5 hub-R0+hub-R2 (gap 1/2) golden must be 10v/8f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(3, 0) >= 1, "the free-end cap at ring=3 must include a triangle");
+    // hub-R0 and hub-R2 selected: hub (0), R0 (1, endpoint) and R2 (3,
+    // endpoint) are all fully cut. R1 (2) and R4 (5) are untouched rim
+    // verts; R3 (4) is untouched too (both its bordering edges unselected,
+    // no source-vertex cut there). hub's cap ring threads its 3 unselected
+    // slides (toward R1, R3, R4); R0 and R2 each get their own 2 slide
+    // points from their own (unaffected-by-the-cap) per-face substitution.
+    Vec3[] wantVerts = [
+        orig[2], orig[4], orig[5],
+        slide(0, 2), slide(0, 4), slide(0, 5),
+        slide(1, 2), slide(1, 5),
+        slide(3, 4), slide(3, 2),
+    ];
+    static immutable uint[][] wantFaces = [
+        [5, 2, 7], [4, 1, 2, 5], [4, 8, 1], [3, 0, 9], [3, 6, 0],
+        [6, 3, 5, 7], [3, 9, 8, 4], [3, 4, 5],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "disk N=5 notch gap(1,2)");
+    assertBevelManifoldCleanOpen(m, "disk N=5 notch gap(1,2)", 1);
+}
+
+unittest { // golden test 5: disk N=6, hub-R0 + hub-R2 (gap 1/3) -> quad cap,
+           // includes the slide on the "inactive" middle unselected edge
+           // (hub-R4) that the old preflight's active/inactive distinction
+           // used to single out and reject on.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(6);
+    immutable Vec3[] orig = m.vertices.dup;
+    Vec3 slide(int from, int to) {
+        return orig[from] + safeNormalize(orig[to] - orig[from]) * 0.1f;
+    }
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[0u, 1u], [0u, 3u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(m.vertices.length == 12 && m.faces.length == 9,
+        "disk N=6 hub-R0+hub-R2 (gap 1/3) golden must be 12v/9f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(4, 0) >= 1, "the free-end cap at ring=4 must include a quad");
+    // hub-R0 and hub-R2 selected: hub (0), R0 (1) and R2 (3) fully cut.
+    // hub's cap ring threads its 4 unselected slides (toward R1, R3, R4,
+    // R5) — including the "inactive" middle one (R4) that the old
+    // active/inactive distinction used to single out and reject on.
+    Vec3[] wantVerts = [
+        orig[2], orig[4], orig[5], orig[6],
+        slide(0, 2), slide(0, 4), slide(0, 5), slide(0, 6),
+        slide(1, 2), slide(1, 6),
+        slide(3, 4), slide(3, 2),
+    ];
+    static immutable uint[][] wantFaces = [
+        [7, 3, 9], [6, 2, 3, 7], [5, 1, 2, 6], [5, 10, 1], [4, 0, 11],
+        [4, 8, 0], [8, 4, 7, 9], [4, 11, 10, 5], [4, 5, 6, 7],
+    ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "disk N=6 notch gap(1,3)");
+    assertBevelManifoldCleanOpen(m, "disk N=6 notch gap(1,3)", 1);
+}
+
+unittest { // smoke test 7 (extrapolated zone, no reference dump): disk N=7,
+           // K=3 at slots 0/2/4 (gaps 1/1/2) -> quad cap.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(7);
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[0u, 1u], [0u, 3u], [0u, 5u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(m.vertices.length == 14 && m.faces.length == 11,
+        "disk N=7 K=3 (gaps 1/1/2) must be 14v/11f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(4, 0) >= 1, "the free-end cap at ring=4 must include a quad");
+    assertBevelManifoldCleanOpen(m, "disk N=7 K=3 smoke", 1);
+}
+
+unittest { // smoke test 8 (extrapolated zone, no reference dump): disk N=6,
+           // K=2 ADJACENT (hub-R0, hub-R1) -> ring with a miter, pentagon cap.
+           // This is the clean single-vertex form of the "K=2 adjacent"
+           // pre-existing hole (see the adjacent-K2 octahedron test above,
+           // which combines this same pattern with two more valence-4 K=1
+           // free ends at its far endpoints).
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(6);
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[0u, 1u], [0u, 2u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(m.vertices.length == 13 && m.faces.length == 9,
+        "disk N=6 K=2 adjacent must be 13v/9f");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(5, 0) >= 1, "the miter-ring cap at ring=5 must include a pentagon");
+    assertBevelManifoldCleanOpen(m, "disk N=6 K=2 adjacent smoke", 1);
+}
+
+unittest { // regression test 9: disk N=6, K=3 "every other" (hub-R0, hub-R2,
+           // hub-R4) — a pre-existing hole on unpatched main (the guard
+           // passed this shape through with no cap: ret=3, 12v/9f, χ=0).
+           // Fixed to a triangle cap, χ=1, no non-manifold edge.
+    import std.math : cos, sin, PI;
+    Mesh makeDisk(int N) {
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. N) {
+            immutable float a = 2.0f * PI * i / N;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. N)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeDisk(6);
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[0u, 1u], [0u, 3u], [0u, 5u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(m.vertices.length == 12 && m.faces.length == 10,
+        "disk N=6 K=3 every-other golden must be 12v/10f (was 12v/9f/hole on main)");
+    int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
+    assert(fvd.get(3, 0) >= 1, "the free-end cap at ring=3 must include a triangle");
+    assertBevelManifoldCleanOpen(m, "disk N=6 K=3 every-other (was a hole)", 1);
+}
+
+unittest { // regression test 10: 3x3-quad grid (4x4 verts), L-turn selection
+           // (1,0)-(1,1)-(0,1) at the interior valence-4 vertex (1,1) — a
+           // pre-existing hole on unpatched main (the L-shaped chamfer on a
+           // quad grid: ret=2, 20v/11f, χ=0). Fixed to χ=1 with a miter-ring
+           // cap, no non-manifold edge.
+    Mesh makeGrid(int rows, int cols) {
+        Mesh m;
+        foreach (r; 0 .. rows + 1)
+            foreach (c; 0 .. cols + 1)
+                m.vertices ~= Vec3(cast(float)c, cast(float)r, 0);
+        uint idx(int r, int c) { return cast(uint)(r * (cols + 1) + c); }
+        foreach (r; 0 .. rows)
+            foreach (c; 0 .. cols)
+                m.addFace([idx(r, c), idx(r, c + 1), idx(r + 1, c + 1), idx(r + 1, c)]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = makeGrid(3, 3);
+    uint idx(int r, int c) { return cast(uint)(r * 4 + c); }
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[idx(1, 0), idx(1, 1)], [idx(1, 1), idx(0, 1)]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(m.vertices.length == 20 && m.faces.length == 12,
+        "grid 3x3 L-turn golden must be 20v/12f (was 20v/11f/hole on main)");
+    assertBevelManifoldCleanOpen(m, "grid 3x3 L-turn (was a hole)", 1);
+}
+
+unittest { // Round Level local-degrade tests 11-13 (Decision D): a cube whose
+           // top face is quartered around a center pole C (valence 4) with 4
+           // edge midpoints (valence 3 each). Selecting a span touching C is
+           // exactly the free-end-cap shape (C is a closed-fan K=1 valence-4
+           // vertex), so its bordering rail can never reach the two-consumer
+           // approval fixed point and the whole span run commits flat at
+           // EVERY requested Round Level — no reject, no new code, per the
+           // existing mechanism at the "Round Level rail registry" comment.
+    import std.conv : to;
+    Mesh quarteredTopCube() {
+        auto m0 = makeCube();
+        immutable Vec3 T0 = m0.vertices[4], T1 = m0.vertices[5],
+                        T2 = m0.vertices[6], T3 = m0.vertices[7];
+        immutable Vec3 C   = (T0 + T1 + T2 + T3) * 0.25f;
+        immutable Vec3 M01 = (T0 + T1) * 0.5f;
+        immutable Vec3 M12 = (T1 + T2) * 0.5f;
+        immutable Vec3 M23 = (T2 + T3) * 0.5f;
+        immutable Vec3 M30 = (T3 + T0) * 0.5f;
+        Mesh m;
+        m.vertices = m0.vertices.dup;
+        m.vertices ~= [C, M01, M12, M23, M30]; // 8, 9, 10, 11, 12
+        m.addFace([0u, 3u, 2u, 1u]);       // bottom, unchanged
+        m.addFace([0u, 4u, 12u, 7u, 3u]);  // side touching T3-T0, split at M30
+        m.addFace([1u, 2u, 6u, 10u, 5u]);  // side touching T1-T2, split at M12
+        m.addFace([3u, 7u, 11u, 6u, 2u]);  // side touching T2-T3, split at M23
+        m.addFace([0u, 1u, 5u, 9u, 4u]);   // side touching T0-T1, split at M01
+        m.addFace([4u, 9u, 8u, 12u]);      // top quad 1 (T0, M01, C, M30)
+        m.addFace([9u, 5u, 10u, 8u]);      // top quad 2 (M01, T1, M12, C)
+        m.addFace([10u, 6u, 11u, 8u]);     // top quad 3 (M12, T2, M23, C)
+        m.addFace([11u, 7u, 12u, 8u]);     // top quad 4 (M23, T3, M30, C)
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    // Premise: C (index 8) really is a closed-fan valence-4 vertex.
+    {
+        auto m = quarteredTopCube();
+        size_t d = 0, e = 0;
+        foreach (fi; m.facesAroundVertex(8)) ++d;
+        foreach (ei; m.edgesAroundVertex(8)) ++e;
+        assert(d == 4 && e == 4, "pole C must be a closed-fan valence-4 vertex");
+    }
+    // Test 11: span C-M01 alone (touches the pole) — flat at every level.
+    foreach (level; 0 .. 3) {
+        auto m = quarteredTopCube();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        mask[findEdge(m, 8, 9)] = true;
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(m.vertices.length == 16 && m.faces.length == 11,
+            "pole-touching span must stay 16v/11f (flat) at every Round Level, got L" ~
+            level.to!string);
+        assertBevelManifoldClean(m, "degrade C-M01 span");
+    }
+    // Test 12: span M01-T0 alone (control, does not touch the pole) — rounds
+    // normally: 15v/10f -> 17v/11f -> 21v/13f.
+    {
+        static immutable size_t[3] wantV = [15, 17, 21];
+        static immutable size_t[3] wantF = [10, 11, 13];
+        foreach (level; 0 .. 3) {
+            auto m = quarteredTopCube();
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            mask[findEdge(m, 9, 4)] = true;
+            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+            assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
+                "non-pole control span must round normally at L" ~ level.to!string);
+            assertBevelManifoldClean(m, "degrade control M01-T0 span");
+        }
+    }
+    // Test 13: span C-M01 UNION a disconnected bottom edge — the pole part
+    // stays flat, the disconnected part rounds normally: 18v/12f -> 20v/13f
+    // -> 24v/15f.
+    {
+        static immutable size_t[3] wantV = [18, 20, 24];
+        static immutable size_t[3] wantF = [12, 13, 15];
+        foreach (level; 0 .. 3) {
+            auto m = quarteredTopCube();
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            mask[findEdge(m, 8, 9)] = true;
+            mask[findEdge(m, 0, 1)] = true;
+            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
+                "pole span + disconnected span must degrade/round independently at L" ~
+                level.to!string);
+            assertBevelManifoldClean(m, "degrade C-M01 plus disconnected bottom edge");
+        }
+    }
+}
+
+unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_cap_plan.md
+           // §E): a cap on an OPEN (boundary) fan has no reference dump and
+           // must be refused BEFORE any mutation — this is the ONLY new
+           // reject task 0439 adds. Modeled on the (pre-0439) non-adjacent-K2
+           // octahedron test, the strongest byte-stability battery in this
+           // file: every parallel array, every selection set, every version
+           // counter, and the edit recorder must all be untouched. The input
+           // mesh carries non-empty faceMaterial/facePart, a subpatch bit and
+           // a pre-selected face so this battery actually exercises those
+           // checks instead of comparing zeros to zeros.
+    import std.math : cos, sin, PI;
+    import std.conv : to;
+    Mesh halfDisk() {
+        // Hub + 5 rim verts spanning 180 degrees (4 triangular faces): an
+        // OPEN fan at the hub (d=4 faces, e=5 edges, e == d+1).
+        Mesh m;
+        m.vertices ~= Vec3(0, 0, 0);
+        foreach (i; 0 .. 5) {
+            immutable float a = PI * i / 4;
+            m.vertices ~= Vec3(cos(a), sin(a), 0);
+        }
+        foreach (i; 0 .. 4)
+            m.addFace([0u, cast(uint)(1 + i), cast(uint)(2 + i)]);
+        m.buildLoops();
+        m.syncSelection();
+        m.faceMaterial[1] = 7u; m.facePart[1] = 23u;
+        m.setFaceSubpatch(1, true);
+        m.selectFace(1);
+        return m;
+    }
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    auto m = halfDisk();
+    // Premise: the hub really does present an OPEN fan, and the selected
+    // edge's ring (3 unselected slots, K=1, no miter) is >= 3.
+    {
+        size_t d = 0, e = 0;
+        foreach (fi; m.facesAroundVertex(0)) ++d;
+        foreach (ei; m.edgesAroundVertex(0)) ++e;
+        assert(e == d + 1, "half-disk hub must present an OPEN fan");
+    }
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    mask[findEdge(m, 0, 3)] = true; // an INTERIOR hub spoke (not a rim edge)
+
+    foreach (level; 0 .. 2) {
+        auto mm = halfDisk();
+        bool[] mmask; mmask.length = mm.edges.length; mmask[] = false;
+        mmask[findEdge(mm, 0, 3)] = true;
+
+        auto vertsBefore = mm.vertices.dup;
+        auto edgesBefore = mm.edges.dup;
+        auto facesBefore = mm.faces._store.dup;
+        auto vertexMarksBefore = mm.vertexMarks.dup;
+        auto edgeMarksBefore = mm.edgeMarks.dup;
+        auto faceMarksBefore = mm.faceMarks.dup;
+        auto vertexSelectionOrderBefore = mm.vertexSelectionOrder.dup;
+        auto edgeSelectionOrderBefore = mm.edgeSelectionOrder.dup;
+        auto faceSelectionOrderBefore = mm.faceSelectionOrder.dup;
+        auto faceMaterialBefore = mm.faceMaterial.dup;
+        auto facePartBefore = mm.facePart.dup;
+        auto selectedVerticesBefore = mm.selectedVertices;
+        auto selectedEdgesBefore = mm.selectedEdges;
+        auto selectedFacesBefore = mm.selectedFaces;
+        immutable ulong mutationBefore = mm.mutationVersion;
+        immutable ulong topologyBefore = mm.topologyVersion;
+        immutable ulong structBefore = mm.structVersion;
+        immutable uint pendingBefore = mm.pendingChanges_;
+        immutable uint pendingSelBefore = mm.pendingSelDomains_;
+        MeshEditTracker recorder;
+        mm.beginEditBatch(&recorder, MeshEditScope.Geometry);
+        assert(mm.isRecordingEdits());
+
+        assert(mm.bevelEdgesByMask(mmask, 0.1f, cast(int)level) == 0,
+            "an open-fan cap must be refused before any mutation, at L" ~ level.to!string);
+        assert(mm.vertices == vertsBefore && mm.edges == edgesBefore &&
+               mm.faces._store == facesBefore,
+            "open-fan cap preflight must leave geometry byte-identical");
+        assert(mm.vertexMarks == vertexMarksBefore && mm.edgeMarks == edgeMarksBefore &&
+               mm.faceMarks == faceMarksBefore &&
+               mm.vertexSelectionOrder == vertexSelectionOrderBefore &&
+               mm.edgeSelectionOrder == edgeSelectionOrderBefore &&
+               mm.faceSelectionOrder == faceSelectionOrderBefore &&
+               mm.faceMaterial == faceMaterialBefore && mm.facePart == facePartBefore,
+            "open-fan cap preflight must leave parallel attributes byte-identical");
+        assert(mm.selectedVertices == selectedVerticesBefore &&
+               mm.selectedEdges == selectedEdgesBefore &&
+               mm.selectedFaces == selectedFacesBefore,
+            "open-fan cap preflight must leave selection byte-identical");
+        assert(mm.mutationVersion == mutationBefore && mm.topologyVersion == topologyBefore &&
+               mm.structVersion == structBefore && mm.pendingChanges_ == pendingBefore &&
+               mm.pendingSelDomains_ == pendingSelBefore,
+            "open-fan cap preflight must not bump versions or pending changes");
+        assert(recorder.isEmpty(), "open-fan cap preflight must not write an edit record");
+        assert(mm.endEditBatch().isEmpty(), "open-fan cap preflight must finish with an empty delta");
+        assertBevelManifoldCleanOpen(mm, "half-disk open-fan cap reject, unchanged input", 1);
+    }
+
+    // Verify the 15 open-mesh reference cases' own shapes (boundary ring <=
+    // 2) are NOT caught by this new reject — they stay accepted.
+    {
+        auto md = halfDisk();
+        size_t d = 0, e = 0;
+        foreach (fi; md.facesAroundVertex(1)) ++d; // a rim vertex
+        foreach (ei; md.edgesAroundVertex(1)) ++e;
+        assert(e == d + 1, "rim vertex must itself be an open fan");
+        assert(d <= 2, "a rim vertex on this half-disk has ring <= 2, below the reject threshold");
+    }
 }
 
 unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
