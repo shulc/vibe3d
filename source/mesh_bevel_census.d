@@ -555,10 +555,20 @@ unittest {
     // sphere latitude rings, torus, subdivided-cube interior, a
     // cylinder's non-cap rings) has valence>=4. A cube-only test suite
     // cannot see this because a cube has no valence>=4 vertex at all.
+    //
+    // UPDATE — task 0439 landed the free-end/partial-fan cap and the
+    // baseline went 1784 -> 0: every trial on every mesh here is now
+    // accepted. The census measures acceptance only, so acceptance was
+    // separately checked for SOUNDNESS over the 656 single-edge results:
+    // zero non-manifold edges, zero orphans, zero coincident vertices,
+    // zero degenerate faces, and no new boundary on any CLOSED mesh. The
+    // one mesh whose boundary does grow is `cylinder_open`, which is the
+    // reference-verified behaviour for an edge that terminates on a rim
+    // (a rim-anchored bevel legitimately lengthens the rim).
     enum size_t BASELINE_TOTAL_TRIALS   = 1_884;
-    enum size_t BASELINE_DECLINED       = 1_784;
+    enum size_t BASELINE_DECLINED       = 0;
     enum size_t BASELINE_FACES_GE3      = 0;
-    enum size_t BASELINE_PARTIAL_NOTCH  = 1_784;
+    enum size_t BASELINE_PARTIAL_NOTCH  = 0;
     enum size_t BASELINE_MALFORMED_FAN  = 0;
     enum size_t BASELINE_NO_QUALIFYING  = 0;
 
