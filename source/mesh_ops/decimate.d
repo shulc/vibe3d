@@ -530,8 +530,10 @@ unittest { // reduceToTarget preserveBoundary=true: boundary positions kept, int
         bool[] isBV; isBV.length = m.vertices.length;
         foreach (uint ei; 0 .. cast(uint)m.edges.length) {
             uint va = m.edges[ei][0], vb = m.edges[ei][1];
-            auto efr = EdgeFaceRange(m.loops, m.edges[], m.vertLoop, ei);
-            int cnt = 0; foreach (_; efr) ++cnt;
+            // Task 0447: EdgeFaceRange's constructor now needs the fan-order
+            // state + CSR — go through the public accessor instead of building
+            // the range by hand (its private members aren't reachable here).
+            int cnt = 0; foreach (_; m.facesAroundEdge(ei)) ++cnt;
             if (cnt < 2) { isBV[va] = true; isBV[vb] = true; }
         }
         foreach (vi, b; isBV) if (b) bpos ~= m.vertices[vi];

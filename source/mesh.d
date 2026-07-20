@@ -9005,6 +9005,17 @@ struct Mesh {
             // Anything else is a malformed / non-manifold fan and is skipped.
             immutable bool openFan = (nE == d + 1);
             if (d < 2 || (nE != d && !openFan)) continue;
+            // Task 0447 (phase 2): an unordered fan (rests on a same-direction
+            // shared edge) is enumerated COMPLETELY by the CSR fallback now,
+            // so the counts above look healthy AND `walkSane` below sees no
+            // foreign edge — both of bevel's old gates pass. But the slot
+            // arithmetic (face f_k bordered by edge slots k, k+1) needs a
+            // meaningfully ORDERED fan, which the CSR does not promise. Decline
+            // rather than build from a garbage slot assignment. This must land
+            // in the SAME commit as the CSR completeness (else the hinge bevel
+            // decline reddens) — see doc/vertex_fan_walk_foreign_edge_plan.md
+            // §Phase 2. Placed BEFORE slot materialization.
+            if (!vertexFanOrdered(V)) continue;
             // The counts above can look healthy while the walk itself is wrong.
             // On a two-face "hinge" — two faces sharing one edge and nothing
             // else at either endpoint — `edgesAroundVertex` yields an edge that
@@ -10047,6 +10058,10 @@ struct Mesh {
     /// Return a range over all vertices directly connected to vertex `vi` by an edge.
     VertexNeighborRange verticesAroundVertex(uint vi) const {
         uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        // Task 0447: an unordered fan (rests on a same-direction edge) cannot
+        // be trusted to the twin-walk — enumerate it completely from the CSR.
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexNeighborRange.fromCsr(loops, vertDartStart, vertDartAdj, vi);
         return VertexNeighborRange(loops, first);
     }
 
@@ -10055,18 +10070,23 @@ struct Mesh {
     /// Requires buildLoops() to have been called (uses vertLoop and loopEdge).
     VertexEdgeRange edgesAroundVertex(uint vi) const {
         uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexEdgeRange.fromCsr(loops, loopEdge, vertDartStart, vertDartAdj, vi);
         return VertexEdgeRange(loops, loopEdge, first);
     }
 
     /// Return a range over all faces incident to vertex `vi`.
     VertexFaceRange facesAroundVertex(uint vi) const {
         uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexFaceRange.fromCsr(loops, vertDartStart, vertDartAdj, vi);
         return VertexFaceRange(loops, first);
     }
 
     /// Return a range over the 1–2 faces incident to edge `ei`.
     EdgeFaceRange facesAroundEdge(uint ei) const {
-        return EdgeFaceRange(loops, edges, vertLoop, ei);
+        return EdgeFaceRange(loops, edges, vertLoop, vertFanOrdered_,
+                             vertDartStart, vertDartAdj, ei);
     }
 
     /// Return a range over all faces that share an edge with face `fi`.
@@ -11154,6 +11174,16 @@ struct Mesh {
     /// Rebuild the half-edge loop structure from the current faces/vertices.
     /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
     ///
+    /// CONTRACT (task 0447 §7): this re-syncs `loops`/`loopEdge`/`vertLoop`
+    /// against the CURRENT `edges[]` — it does NOT rebuild the edge set. A
+    /// caller that assigns `faces` directly (bypassing `addFace`, which grows
+    /// `edges` incrementally) must call `rebuildEdges()` /
+    /// `rebuildEdgesFromFaces()` BEFORE this, or every `loopEdge` stays `~0u`
+    /// and the vertex-fan edge walk yields garbage edge indices.
+    /// `scene.loadMesh` follows the correct order (rebuildEdgesFromFaces then
+    /// buildLoops); `/api/model` never reads edges, so a live instance is
+    /// unaffected. Semantics are otherwise unchanged.
+    ///
     /// `rebuildEdgeIndexMap`: when true (default), repopulates the
     /// undirected edgeKey → edge index `edgeIndexMap` AA — required
     /// for callers that read `edgeIndexMap` directly or call
@@ -11372,6 +11402,29 @@ struct Mesh {
             }
         }
         if (anySameDir) {
+            // CSR vertex→dart adjacency (template: buildLoopsEdgesAdjStart /
+            // buildLoopsEdgesAdj above — same count / prefix-sum / fill shape,
+            // keyed by `loops[idx].vert` instead of an edge's two endpoints,
+            // one entry per dart since each dart has exactly one tail vertex).
+            // Built ONLY here (some edge is same-direction), so the
+            // consistently-wound fast path never allocates it (Risk #1). The
+            // fan-walk ranges use it to enumerate the WHOLE fan of an
+            // unordered vertex, complete and winding-independent (but in
+            // arbitrary order — only consumers tolerant of any order reach it,
+            // since slot-position consumers decline on !vertexFanOrdered).
+            vertDartStart.length = vertices.length + 1;
+            vertDartStart[] = 0;
+            foreach (idx; 0 .. total) ++vertDartStart[loops[idx].vert + 1];
+            foreach (i; 1 .. vertDartStart.length)
+                vertDartStart[i] += vertDartStart[i - 1];
+            vertDartAdj.length = total;
+            auto vertDartCursor = new uint[](vertices.length);
+            vertDartCursor[] = 0;
+            foreach (idx; 0 .. total) {
+                uint v = loops[idx].vert;
+                vertDartAdj[vertDartStart[v] + vertDartCursor[v]++] = cast(uint)idx;
+            }
+
             import log : logWarnOnce;
             logWarnOnce("mesh", "sameDirTwin",
                 "buildLoops: inconsistently-wound faces detected (a shared "
@@ -11379,6 +11432,12 @@ struct Mesh {
                 ~ "affected vertex fans are unordered/incomplete for "
                 ~ "slot-position consumers. Run mesh.fixOrientation to repair "
                 ~ "winding.");
+        } else {
+            // Keep the CSR arrays empty on the clean fast path (the ranges
+            // only ever read them when !vertexFanOrdered, which never happens
+            // when anySameDir is false).
+            vertDartStart.length = 0;
+            vertDartAdj.length   = 0;
         }
 
         // Anchor walk — independent per vertex; for BOUNDARY verts,
@@ -12848,16 +12907,49 @@ struct FaceEdgeRange {
 struct VertexFaceRange {
     private const(Loop)[]  _loops;
     private VertexDartRange _inner;
+    private const(uint)[] _csr;    // task 0447: materialized CSR fallback (see fromCsr)
+    private uint   _csrI;
+    private bool   _useCsr;
 
     this(const(Loop)[] loops, uint startLi) {
         _loops = loops;
         _inner = VertexDartRange(loops, startLi);
     }
 
-    @property bool empty() const { return _inner.empty; }
-    @property uint front() const { return _loops[_inner.front].face; }
-    void popFront() { _inner.popFront(); }
+    /// Task 0447: complete (but arbitrarily ordered) face enumeration for a
+    /// vertex whose fan is not `vertexFanOrdered`, built from the CSR
+    /// vertex→dart adjacency (`vertDartStart`/`vertDartAdj`), NOT the twin
+    /// graph, so it is correct regardless of winding. Exactly one CSR entry
+    /// per face incident to `vi` (`loops[li].vert == vi`) — no dedup needed
+    /// short of a self-touching degenerate polygon.
+    static VertexFaceRange fromCsr(const(Loop)[] loops,
+                                    const(uint)[] vertDartStart,
+                                    const(uint)[] vertDartAdj,
+                                    uint vi)
+    {
+        VertexFaceRange r;
+        r._loops  = loops;
+        r._useCsr = true;
+        uint[] csr;
+        if (vi + 1 < vertDartStart.length)
+            foreach (i; vertDartStart[vi] .. vertDartStart[vi + 1])
+                csr ~= loops[vertDartAdj[i]].face;
+        r._csr = csr;
+        return r;
+    }
+
+    @property bool empty() const { return _useCsr ? _csrI >= _csr.length : _inner.empty; }
+    @property uint front() const { return _useCsr ? _csr[_csrI] : _loops[_inner.front].face; }
+    void popFront() { if (_useCsr) ++_csrI; else _inner.popFront(); }
     @property VertexFaceRange save() const { return this; }
+}
+
+/// Task 0447 CSR-fallback helper: append `v` to `arr` unless already present.
+/// Valence is single-digit to low tens on every real mesh, so a linear scan
+/// is cheaper than a set and keeps this dependency-free.
+private void csrAddUnique(ref uint[] arr, uint v) nothrow @safe {
+    foreach (x; arr) if (x == v) return;
+    arr ~= v;
 }
 
 // ---------------------------------------------------------------------------
@@ -12876,6 +12968,10 @@ struct VertexNeighborRange {
     private uint _steps;
     private enum uint MAX_STEPS = 1024;
 
+    private const(uint)[] _csr;    // task 0447: materialized CSR fallback (see fromCsr)
+    private uint   _csrI;
+    private bool   _useCsr;
+
     this(const(Loop)[] loops, uint startLi) {
         _loops   = loops;
         _start   = startLi;
@@ -12885,11 +12981,40 @@ struct VertexNeighborRange {
         _steps   = 0;
     }
 
-    @property bool empty() const { return _done; }
+    /// Task 0447: complete (but arbitrarily ordered) neighbour enumeration for
+    /// a vertex whose fan is not `vertexFanOrdered`. For every CSR dart `li`
+    /// at `vi` (one per incident face), BOTH face-local edges touching `vi`
+    /// contribute a neighbour — the succ side (`next(li).vert`) and the pred
+    /// side (`prev(li).vert`) — deduped, since a shared edge is normally
+    /// reached from two faces. This recovers the neighbour whose only darts
+    /// are based at the OTHER endpoint (e.g. the hinge's inconsistently-wound
+    /// spine), which a dart-succ-only projection would miss.
+    static VertexNeighborRange fromCsr(const(Loop)[] loops,
+                                        const(uint)[] vertDartStart,
+                                        const(uint)[] vertDartAdj,
+                                        uint vi)
+    {
+        VertexNeighborRange r;
+        r._loops  = loops;
+        r._useCsr = true;
+        uint[] csr;
+        if (vi + 1 < vertDartStart.length) {
+            foreach (i; vertDartStart[vi] .. vertDartStart[vi + 1]) {
+                uint li = vertDartAdj[i];
+                csrAddUnique(csr, loops[loops[li].next].vert);
+                csrAddUnique(csr, loops[loops[li].prev].vert);
+            }
+        }
+        r._csr = csr;
+        return r;
+    }
+
+    @property bool empty() const { return _useCsr ? _csrI >= _csr.length : _done; }
 
     @property uint front() const
-    in (!_done)
+    in (!empty)
     {
+        if (_useCsr) return _csr[_csrI];
         // Main darts: neighbour is the next vertex in the dart.
         // Extra boundary dart: the open-end vertex is prev(cur).vert.
         return _atExtra ? _loops[_loops[_cur].prev].vert
@@ -12897,8 +13022,9 @@ struct VertexNeighborRange {
     }
 
     void popFront()
-    in (!_done)
+    in (!empty)
     {
+        if (_useCsr) { ++_csrI; return; }
         if (_atExtra) { _done = true; return; }
         uint prevLi   = _loops[_cur].prev;
         uint twinPrev = _loops[prevLi].twin;
@@ -12939,6 +13065,10 @@ struct VertexEdgeRange {
     private uint _steps;
     private enum uint MAX_STEPS = 1024;
 
+    private const(uint)[] _csr;    // task 0447: materialized CSR fallback (see fromCsr)
+    private uint   _csrI;
+    private bool   _useCsr;
+
     this(const(Loop)[] loops, const(uint)[] loopEdge, uint startLi) {
         _loops    = loops;
         _loopEdge = loopEdge;
@@ -12949,17 +13079,48 @@ struct VertexEdgeRange {
         _steps    = 0;
     }
 
-    @property bool empty() const { return _done; }
+    /// Task 0447: complete (but arbitrarily ordered) edge enumeration for a
+    /// vertex whose fan is not `vertexFanOrdered`. For every CSR dart `li` at
+    /// `vi` (one per incident face), BOTH face-local edges touching `vi`
+    /// contribute — the succ edge (`loopEdge[li]`) and the pred edge
+    /// (`loopEdge[prev(li)]`) — deduped, since a shared edge is normally
+    /// reached from two faces (this is precisely how the hinge's marked spine
+    /// edge shows up from BOTH its incident faces as a pred-edge, with neither
+    /// face contributing it as a succ-edge).
+    static VertexEdgeRange fromCsr(const(Loop)[] loops, const(uint)[] loopEdge,
+                                    const(uint)[] vertDartStart,
+                                    const(uint)[] vertDartAdj,
+                                    uint vi)
+    {
+        VertexEdgeRange r;
+        r._loops    = loops;
+        r._loopEdge = loopEdge;
+        r._useCsr   = true;
+        uint[] csr;
+        if (vi + 1 < vertDartStart.length) {
+            foreach (i; vertDartStart[vi] .. vertDartStart[vi + 1]) {
+                uint li = vertDartAdj[i];
+                csrAddUnique(csr, loopEdge[li]);
+                csrAddUnique(csr, loopEdge[loops[li].prev]);
+            }
+        }
+        r._csr = csr;
+        return r;
+    }
+
+    @property bool empty() const { return _useCsr ? _csrI >= _csr.length : _done; }
 
     @property uint front() const
-    in (!_done)
+    in (!empty)
     {
+        if (_useCsr) return _csr[_csrI];
         return _atExtra ? _loopEdge[_loops[_cur].prev] : _loopEdge[_cur];
     }
 
     void popFront()
-    in (!_done)
+    in (!empty)
     {
+        if (_useCsr) { ++_csrI; return; }
         if (_atExtra) { _done = true; return; }
         uint prevLi   = _loops[_cur].prev;
         uint twinPrev = _loops[prevLi].twin;
@@ -12993,11 +13154,30 @@ struct EdgeFaceRange {
     private uint    _i;
 
     this(const(Loop)[] loops, const(uint[2])[] edges,
-         const(uint)[] vertLoop, uint ei)
+         const(uint)[] vertLoop, const(bool)[] vertFanOrdered,
+         const(uint)[] vertDartStart, const(uint)[] vertDartAdj,
+         uint ei)
     {
         _count = 0; _i = 0;
         if (ei >= edges.length) return;
         uint va = edges[ei][0], vb = edges[ei][1];
+
+        // Task 0447 §5/§5.1: gate on the ENDPOINTS' fan-order status, NOT a
+        // flag on the edge itself. A same-direction edge leaves BOTH its
+        // endpoints' fans unordered; but a single-face boundary edge sitting
+        // on an endpoint whose fan is broken elsewhere would carry no flag of
+        // its own — the endpoint-status gate catches that case too (measured:
+        // 0 undercounts / 0 overcounts on every topology). `_tryFrom` routes
+        // through the now-guarded VertexDartRange, which stops early at a
+        // same-direction edge and can miss the dart va→vb, so collect the
+        // incident faces straight from the CSR (never via `.twin`) instead.
+        bool gate = (va >= vertFanOrdered.length || !vertFanOrdered[va])
+                 || (vb >= vertFanOrdered.length || !vertFanOrdered[vb]);
+        if (gate) {
+            _collectViaCsr(loops, vertDartStart, vertDartAdj, va, vb);
+            return;
+        }
+
         if (_tryFrom(loops, vertLoop, va, vb)) return;
         // task 0394 (consumer hardening): an inconsistently-wound patch
         // elsewhere in the mesh (e.g. a same-direction shared edge — see the
@@ -13011,6 +13191,34 @@ struct EdgeFaceRange {
         // the first attempt always succeeds, so this retry never fires
         // there — inert by construction.
         _tryFrom(loops, vertLoop, vb, va);
+    }
+
+    /// Task 0447 §5: SDK-faithful remediation for the endpoints-gated path —
+    /// collect the faces of the darts INCIDENT to the edge from BOTH endpoints
+    /// via the CSR vertex→dart adjacency, never through `.twin` (which is
+    /// exactly what is undefined-in-meaning on these edges). A dart at `from`
+    /// is incident to this edge when its next vertex is `to`. `_faces` stays
+    /// `uint[2]` (documented 1-2-face contract) — capped defensively so a
+    /// non-manifold (3+ face) edge can never write past it; enumerating all
+    /// 3+ faces there is out of scope (§5.2), not overflowing is the contract.
+    private void _collectViaCsr(const(Loop)[] loops,
+                                 const(uint)[] vertDartStart,
+                                 const(uint)[] vertDartAdj,
+                                 uint va, uint vb)
+    {
+        void scanFrom(uint from, uint to) {
+            if (from + 1 >= vertDartStart.length) return;
+            foreach (i; vertDartStart[from] .. vertDartStart[from + 1]) {
+                uint li = vertDartAdj[i];
+                if (loops[loops[li].next].vert != to) continue;
+                uint fi = loops[li].face;
+                bool dup = false;
+                foreach (k; 0 .. _count) if (_faces[k] == fi) { dup = true; break; }
+                if (!dup && _count < 2) _faces[_count++] = fi;
+            }
+        }
+        scanFrom(va, vb);
+        scanFrom(vb, va);
     }
 
     /// Walk darts from `from`, looking for the one whose next vertex is

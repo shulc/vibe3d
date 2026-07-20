@@ -494,6 +494,18 @@ void rebuildPairingTopological(const ref Mesh mesh, const ref SymmetryPacket sp,
         uint b = queueB[qHead];
         ++qHead;
 
+        // Task 0447: this pairing matches mirror partners by fan SLOT NUMBER
+        // (the reversed modular / linear walks below). A vertex whose fan is
+        // not `vertexFanOrdered` (rests on a same-direction shared edge —
+        // inconsistent winding) has no meaningful slot order, so `Na`/`Nb`
+        // (from verticesAroundVertex, CSR-backed and arbitrarily ordered
+        // there) would pair the wrong partners. Abandon this expansion —
+        // the affected vertices simply stay pairOf = -1 (safe degradation,
+        // identical to the "no reference slot" outcome below). This is the
+        // silent-corruption consumer §3.1 warns about, so it declines
+        // explicitly rather than writing a wrong mirror pair.
+        if (!mesh.vertexFanOrdered(a) || !mesh.vertexFanOrdered(b)) continue;
+
         // Materialize neighbor arrays.
         uint[] Na, Nb;
         foreach (nb; mesh.verticesAroundVertex(a)) Na ~= nb;
@@ -658,6 +670,39 @@ unittest { // rebuildPairingTopological: pairs connectivity partners regardless 
     // vertSign
     assert(vertSign[2] == +1 && vertSign[3] == +1, "+X verts should have vertSign +1");
     assert(vertSign[4] == -1 && vertSign[5] == -1, "-X verts should have vertSign -1");
+}
+
+unittest { // rebuildPairingTopological (task 0447): a face wound the SAME
+           // direction across the seam edge leaves the seam endpoints NOT
+           // vertexFanOrdered. Their fans have no meaningful slot order, so the
+           // slot-position pairing must ABANDON (leave pairOf = -1) rather than
+           // silently write a WRONG mirror pair (§3.1 — the silent corruptor).
+    import std.conv : to;
+    Mesh m;
+    m.addVertex(Vec3( 0.0f,  0.0f, 0.0f));   // 0: c0 (seam)
+    m.addVertex(Vec3( 0.0f,  1.0f, 0.0f));   // 1: c1 (seam)
+    m.addVertex(Vec3( 2.0f,  0.5f, 0.0f));   // 2: A (+X)
+    m.addVertex(Vec3( 1.5f,  1.2f, 0.0f));   // 3: B (+X)
+    m.addVertex(Vec3(-0.8f, -0.3f, 0.0f));   // 4: D (-X)
+    m.addVertex(Vec3(-1.1f,  1.3f, 0.0f));   // 5: C (-X)
+    m.addFace([0u, 2u, 3u, 1u]);              // +X quad: seam (0,1) as 1->0
+    m.addFace([0u, 4u, 5u, 1u]);              // -X quad: seam (0,1) ALSO 1->0 => inconsistent
+    m.buildLoops();
+
+    assert(!m.vertexFanOrdered(0) && !m.vertexFanOrdered(1),
+        "setup: seam endpoints must be unordered on the inconsistently-wound mesh");
+
+    auto sp = xPlanePacket();
+    int[]  pairOf; bool[] onPlane; int[] vertSign;
+    rebuildPairingTopological(m, sp, pairOf, onPlane, vertSign);
+
+    assert(pairOf.length == 6);
+    // No off-plane vertex is paired: the expansion was abandoned at the
+    // unordered seam. Crucially, NOT ONE wrong pair was written.
+    foreach (vi; [2, 3, 4, 5])
+        assert(pairOf[vi] == -1,
+            "off-plane v" ~ vi.to!string ~ " must stay unpaired (abandoned), got "
+            ~ pairOf[vi].to!string);
 }
 
 unittest { // rebuildPairing (spatial) fails to pair the deformed mesh — the discriminator
