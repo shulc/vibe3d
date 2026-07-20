@@ -118,7 +118,7 @@ enum int MAX_SWEEP_SIDES = 1024;
 /// (shallower, UI/HTTP-only). Same relocation rationale as
 /// `MAX_SWEEP_SIDES` above (task 0365 P1) — `mesh.d` must not import
 /// `commands/*`/`tools/*`, so this is the one definition both sides read.
-enum int MAX_ROUND_LEVEL     = 10;  // 2^10+1 = 1025 arc pts/endpoint
+enum int MAX_ROUND_LEVEL     = 10;  // 2·10 = 20 arc segments/endpoint
 enum int MAX_BEVEL_SEGMENTS  = 64;
 
 /// A generic named, typed per-element float attribute channel — the single
@@ -8500,15 +8500,19 @@ struct Mesh {
     /// angular-SLERP builders, verified bit-exact across dihedrals 45°–150° and
     /// on the 90° cube (K1 / bare end / K2 miter).  The 90° cube is a special
     /// case (a coincidental quarter-turn about `E_A+E_B−V`), not the whole law.
-    /// A 3-way junction rounded at Round Level 1 reproduces the reference's
-    /// central Gregory hub vertex + `[pole,R,HUB,R]` quad fan bit-exact: the
-    /// pairwise boundary rails are geodesics on the corner-rounding sphere
-    /// (centre `V−width·Σn̂`, not the per-vertex fillet — that degenerates for
-    /// near-antipodal hub poles), and the hub is the classical cubic Gregory
-    /// interior point `avg(1.5·Q_i−0.5·R_i)`.  Still open (XFAIL): the L≥2
-    /// junction interior RING (a rational N-sided Gregory evaluator) and N>3
-    /// junctions — both keep the flat N-gon cap for now.  `roundLevel==0` takes
-    /// the old flat path without allocating a registry.
+    /// A 3-way junction reproduces the reference's rounded corner bit-exact at
+    /// EVERY Round Level: one general L×L rational-Gregory ring (Gregory 1974 /
+    /// Chiyokura–Kimura) per sub-quad — HUB + R→HUB spoke points + rational
+    /// interior points — whose u=0/v=0 boundary reuses the true-arc pairwise
+    /// rail interiors. The pairwise arcs are geodesics on the corner-rounding
+    /// sphere (centre `V−width·Σn̂`, not the per-vertex fillet — that degenerates
+    /// for near-antipodal hub poles), and the whole junction (rails + ring) is
+    /// subdivided into `2·roundLevel` equal-angle segments (the isolated K1
+    /// convention is the same law; `2·L` only equals `2^L` at L≤2, which is why
+    /// the old `1<<roundLevel` matched there but over-subdivided at L≥3). Still
+    /// open (XFAIL): N>3 junctions (a different reference N-sided path) keep the
+    /// flat N-gon cap.  `roundLevel==0` takes the old flat path without a
+    /// registry.
     ///
     /// Two-layer DoS clamp (`doc/param_bounds_plan.md` convention):
     /// `roundLevel` is hard-capped to `MAX_ROUND_LEVEL` HERE (kernel-side,
@@ -8721,7 +8725,12 @@ struct Mesh {
                 assert(specP !is null && specP.approved,
                     "rounded edge bevel rail must be approved before materialization");
                 immutable RailSpec spec = *specP;
-                immutable int n = 1 << roundLevel;
+                // Reference subdivides a rounded arc into 2·roundLevel equal-
+                // angle segments (verified: isolated K1 at Round Level 3 has 5
+                // interior points, not 7 — task 0435). 2·L equals 2^L only at
+                // L≤2, which is why the old 1<<roundLevel matched there but
+                // over-subdivided at L≥3.
+                immutable int n = 2 * roundLevel;
                 immutable uint lo = a < b ? a : b;
                 immutable uint hi = a < b ? b : a;
                 // Reference-captured round-rail law (task 0435, edge.bevel spec
@@ -9096,7 +9105,7 @@ struct Mesh {
                 continue;
             }
 
-            immutable int n = 1 << roundLevel;
+            immutable int n = 2 * roundLevel;   // 2·L segments (matches railInterior)
             // r0/r1 both walk fL→fR, using the stored orientation of their
             // source-centred rail chains.
             uint[] r0Interior = railInterior(cV0L.vert, cV0R.vert);
@@ -9114,77 +9123,26 @@ struct Mesh {
             }
         }
 
-        // Junction hub centre (reference N-sided Gregory patch barycentre —
-        // task 0435, gregory_eval_findings). For an N-way junction the rounded
-        // corner is a Gregory patch; its centre vertex is the classical cubic
-        // triangular Gregory interior point at u=v=w=1/3 (a plain average):
-        //   C_i = 1.5·Q_i − 0.5·R_i,  HUB = avg(C_i)
-        //   Q_i = R_i + ¼·[(P2_{i-1}−P0_i) + (P1_{i+1}−P0_{i+1})]
-        // where R_i (bis[i]) is side i's arc midpoint and P0..P3 are the κ-Bézier
-        // control points of that side's circular boundary arc through
-        // (poles[i], R_i, poles[(i+1)%n]) — reconstructed from those three known
-        // points (circumcircle + the standard 4/3·tan(Ω/4) arc control arm).
-        // Verified bit-exact vs the reference on cube + non-cube (α40, asymmetric)
-        // 3-way junctions. Returns false on a degenerate ring.
-        static bool junctionHub(const(Vec3)[] poles, const(Vec3)[] bis, out Vec3 hub) {
-            import std.math : tan, acos;
-            immutable size_t n = poles.length;
-            if (n < 3 || bis.length != n) return false;
-            Vec3[] P1 = new Vec3[](n), P2 = new Vec3[](n);
-            foreach (i; 0 .. n) {
-                immutable Vec3 A = poles[i], M = bis[i], B = poles[(i + 1) % n];
-                immutable Vec3 ab = M - A, ac = B - A;
-                immutable Vec3 abXac = cross(ab, ac);
-                immutable float d = 2.0f * dot(abXac, abXac);
-                if (d < 1e-18f) return false;                     // collinear → no arc
-                immutable Vec3 O = A + (cross(abXac, ab) * dot(ac, ac)
-                                      + cross(ac, abXac) * dot(ab, ab)) / d;  // circumcentre
-                immutable Vec3 sA = A - O, sB = B - O;
-                immutable float r = sA.length;
-                if (r < 1e-9f) return false;
-                float cosO = dot(sA, sB) / (r * r);
-                if (cosO >  1.0f) cosO =  1.0f;
-                if (cosO < -1.0f) cosO = -1.0f;
-                immutable float Om = acos(cosO);
-                if (Om < 1e-6f) return false;
-                Vec3 tA = sB - sA * cosO;  tA = tA / tA.length;   // unit tangent at A→B
-                Vec3 tB = sA - sB * cosO;  tB = tB / tB.length;   // unit tangent at B→A
-                immutable float arm = (4.0f / 3.0f) * tan(Om / 4.0f) * r;
-                P1[i] = A + tA * arm;
-                P2[i] = B + tB * arm;
-            }
-            Vec3 hsum = Vec3(0, 0, 0);
-            foreach (i; 0 .. n) {
-                immutable Vec3 Qi = bis[i]
-                    + ((P2[(i + n - 1) % n] - poles[i])
-                     + (P1[(i + 1) % n]     - poles[(i + 1) % n])) * 0.25f;
-                hsum = hsum + (Qi * 1.5f - bis[i] * 0.5f);        // Σ C_i
-            }
-            hub = hsum / cast(float) n;
-            return true;
-        }
-
-        // Full 3-way junction Gregory ring (Round Level 2, task 0435,
+        // Full N=3 junction Gregory ring, GENERAL Round Level (task 0435,
         // gregory_evaluator_findings + twist_reduction_findings). Each side is a
-        // rational bicubic Gregory patch (Gregory 1974 / Chiyokura–Kimura) whose
-        // 20-cell control net is ALL closed-form in the boundary Béziers +
-        // R/Q/newC/HUB laws (incl. the 4 twist cells). Returns, per side i, the
-        // interior ring points that the reference emits at Round Level 2:
-        //   typeA[i] = the R_i→HUB spoke midpoint  (patch boundary, plain cubic
-        //              Bézier — shared with the neighbour sub-quad);
-        //   typeB[i] = the sub-quad centre eval(0.5,0.5) (the genuine rational
-        //              interior point).
-        // Boundary rails stay the true-arc rail interiors (verified: the ref L2
-        // rail is the arc, not the Bézier — the Bézier is only the patch's own
-        // internal boundary). Validated bit-exact vs the reference from raw
-        // geometry (k3_ring_raw_geometry_ref.py). N=3 only.
-        static bool junctionRing(const(Vec3)[] poles, const(Vec3)[] bis,
-                                 out Vec3 hub, out Vec3[3] typeA, out Vec3[3] typeB) {
+        // standard rational bicubic Gregory patch (Gregory 1974 / Chiyokura–
+        // Kimura) whose entire 20-cell control net — the 12 boundary/spoke cells
+        // AND the 4 rational twist cells — is closed-form in the boundary Béziers
+        // + the R/Q/newC/HUB laws (all from the 3 poles). Samples it on the
+        // level-L grid ((u,v) ∈ {0,1/L,…,1}², the ref subdivides an arc into 2·L
+        // equal segments so the sub-quad boundary reuses the true-arc rail
+        // interiors 1:1). Outputs:
+        //   spokePts[i*(L-1)+(k-1)]              = R_i→HUB spoke point at t=k/L
+        //     (patch boundary, plain cubic Bézier — shared with the neighbour);
+        //   interiorPts[i*(L-1)^2+(b-1)*(L-1)+(a-1)] = rational eval at (a/L,b/L).
+        // Validated bit-exact vs the reference from raw geometry
+        // (k3_ring_raw_geometry_ref.py). N=3 only.
+        static bool junctionRing(const(Vec3)[] poles, const(Vec3)[] bis, int L,
+                                 out Vec3 hub, out Vec3[] spokePts, out Vec3[] interiorPts) {
             import std.math : tan, acos;
-            if (poles.length != 3 || bis.length != 3) return false;
+            if (poles.length != 3 || bis.length != 3 || L < 1) return false;
             Vec3[3] P1, P2, Q, newC;
-            // Boundary Bézier P1/P2 per side (circumcircle through pole,R,pole).
-            foreach (i; 0 .. 3) {
+            foreach (i; 0 .. 3) {   // boundary Bézier P1/P2 (circumcircle pole,R,pole)
                 immutable Vec3 A = poles[i], M = bis[i], B = poles[(i + 1) % 3];
                 immutable Vec3 ab = M - A, ac = B - A;
                 immutable Vec3 abXac = cross(ab, ac);
@@ -9214,47 +9172,67 @@ struct Mesh {
             }
             hub = hsum / 3.0f;
             foreach (i; 0 .. 3) newC[i] = (Q[i] * 1.5f - bis[i] * 0.5f) * (2.0f / 3.0f) + hub / 3.0f;
-            // Bernstein cubic weights at t=0.5.
-            static immutable float[4] B5 = [0.125f, 0.375f, 0.375f, 0.125f];
+            // Per-side twist cells (closed-form) + the 12 fixed cells.
+            Vec3[3] p10, p20, p01, p02, F16, F17, F5, F9, F6, F18, F10;
             foreach (i; 0 .. 3) {
                 immutable int pv = (i + 2) % 3, nx = (i + 1) % 3;
                 immutable Vec3 P0i = poles[i];
-                immutable Vec3 DA = P2[pv] - P0i;
-                immutable Vec3 DB = P1[nx] - poles[nx];
-                immutable Vec3 DAp = P2[(pv + 2) % 3] - poles[pv];      // DA_prev
-                immutable Vec3 DBp = P1[i] - P0i;                       // DB_prev (P1_{prev+1=i})
+                immutable Vec3 DA = P2[pv] - P0i,             DB  = P1[nx] - poles[nx];
+                immutable Vec3 DAp = P2[(pv + 2) % 3] - poles[pv], DBp = P1[i] - P0i;
                 immutable Vec3 DT  = DA * (2.0f / 3.0f) + DB * (1.0f / 3.0f);
                 immutable Vec3 DU  = DA * (1.0f / 3.0f) + DB * (2.0f / 3.0f);
                 immutable Vec3 DTp = DAp * (2.0f / 3.0f) + DBp * (1.0f / 3.0f);
                 immutable Vec3 DUp = DAp * (1.0f / 3.0f) + DBp * (2.0f / 3.0f);
-                immutable Vec3 p10 = (P0i + P1[i]) * 0.5f;
-                immutable Vec3 p20 = (P0i + P1[i] * 2.0f + P2[i]) * 0.25f;
-                immutable Vec3 p01 = (P2[pv] + P0i) * 0.5f;
-                immutable Vec3 p02 = (P1[pv] + P2[pv] * 2.0f + P0i) * 0.25f;
-                immutable Vec3 F16 = p10 + (DA + DT) * 0.25f;
-                immutable Vec3 F17 = p20 + (DA + DU) * 0.125f + DT * 0.25f;
-                immutable Vec3 F5  = p01 + (DBp + DUp) * 0.25f;
-                immutable Vec3 F9  = p02 + (DTp + DBp) * 0.125f + DUp * 0.25f;
-                immutable Vec3 F6  = F17 + (Q[i]  - bis[i])  * (1.0f / 6.0f);
-                immutable Vec3 F18 = F9  + (Q[pv] - bis[pv]) * (1.0f / 6.0f);
-                immutable Vec3 F10 = (newC[i] + newC[pv] - newC[nx]) * 4.0f / 3.0f
-                                   + (Q[nx] - Q[i] - Q[pv]) / 3.0f;
-                // typeA = R_i→HUB spoke Bézier midpoint (boundary, no twist).
-                typeA[i] = (bis[i] + Q[i] * 3.0f + newC[i] * 3.0f + hub) * 0.125f;
-                // typeB = rational Gregory eval at (u,v)=(0.5,0.5): every twist
-                // denominator is 1, so p11=(F16+F5)/2 etc.
-                immutable Vec3 p11 = (F16 + F5) * 0.5f;
-                immutable Vec3 p12 = (F18 + F9) * 0.5f;
-                immutable Vec3 p21 = (F17 + F6) * 0.5f;
+                p10[i] = (P0i + P1[i]) * 0.5f;
+                p20[i] = (P0i + P1[i] * 2.0f + P2[i]) * 0.25f;
+                p01[i] = (P2[pv] + P0i) * 0.5f;
+                p02[i] = (P1[pv] + P2[pv] * 2.0f + P0i) * 0.25f;
+                F16[i] = p10[i] + (DA + DT) * 0.25f;
+                F17[i] = p20[i] + (DA + DU) * 0.125f + DT * 0.25f;
+                F5[i]  = p01[i] + (DBp + DUp) * 0.25f;
+                F9[i]  = p02[i] + (DTp + DBp) * 0.125f + DUp * 0.25f;
+                F6[i]  = F17[i] + (Q[i]  - bis[i])  * (1.0f / 6.0f);
+                F18[i] = F9[i]  + (Q[pv] - bis[pv]) * (1.0f / 6.0f);
+                F10[i] = (newC[i] + newC[pv] - newC[nx]) * 4.0f / 3.0f
+                       + (Q[nx] - Q[i] - Q[pv]) / 3.0f;
+            }
+            static float[4] bern(float t) {
+                immutable float s = 1.0f - t;
+                return [s*s*s, 3.0f*t*s*s, 3.0f*t*t*s, t*t*t];
+            }
+            // Rational bicubic Gregory eval of sub-quad i at (u,v).
+            Vec3 evalSub(int i, float u, float v) {
+                immutable int pv = (i + 2) % 3;
+                Vec3 blend(Vec3 a, Vec3 b, float wa, float wb) {
+                    immutable float den = wa + wb;
+                    return den > 1e-9f ? (a * wa + b * wb) / den : (a + b) * 0.5f;
+                }
+                immutable Vec3 p11 = blend(F16[i], F5[i],  u, v);
+                immutable Vec3 p12 = blend(F18[i], F9[i],  u, 1.0f - v);
+                immutable Vec3 p21 = blend(F17[i], F6[i],  1.0f - u, v);
+                // g[a][b] = grid[(a,b)], a=u-index, b=v-index.  v=0 edge (b=0) is
+                // pole→R_i; u=0 edge (a=0) is pole→R_prev; u=1 (a=3) is the
+                // R_i→HUB spoke; v=1 (b=3) is the R_prev→HUB spoke.
                 immutable Vec3[4][4] g = [
-                    [P0i,        p10,       p20,       bis[i]  ],   // j=0 column? see order below
-                    [p01,        p11,       p21,       Q[i]    ],
-                    [p02,        p12,       F10,       newC[i] ],
-                    [bis[pv],    Q[pv],     newC[pv],  hub     ],
+                    [poles[i], p01[i],  p02[i],   bis[pv] ],
+                    [p10[i],   p11,     p12,      Q[pv]   ],
+                    [p20[i],   p21,     F10[i],   newC[pv]],
+                    [bis[i],   Q[i],    newC[i],  hub     ],
                 ];
+                immutable float[4] Bu = bern(u), Bv = bern(v);
                 Vec3 acc = Vec3(0, 0, 0);
-                foreach (a; 0 .. 4) foreach (b; 0 .. 4) acc = acc + g[a][b] * (B5[a] * B5[b]);
-                typeB[i] = acc;
+                foreach (a; 0 .. 4) foreach (b; 0 .. 4) acc = acc + g[a][b] * (Bu[a] * Bv[b]);
+                return acc;
+            }
+            immutable int m = L - 1;                    // interior samples per axis
+            spokePts.length    = 3 * m;
+            interiorPts.length = 3 * m * m;
+            immutable float inv = 1.0f / cast(float) L;
+            foreach (i; 0 .. 3) {
+                foreach (k; 1 .. L)                     // R_i→HUB spoke at u=1
+                    spokePts[i * m + (k - 1)] = evalSub(i, 1.0f, k * inv);
+                foreach (b; 1 .. L) foreach (a; 1 .. L)
+                    interiorPts[i * m * m + (b - 1) * m + (a - 1)] = evalSub(i, a * inv, b * inv);
             }
             return true;
         }
@@ -9286,96 +9264,65 @@ struct Mesh {
             }
             immutable uint srcFi = hubCapSrc[V];
 
-            // Stage B (task 0435): a 3-way junction at Round Level 2 gets the
-            // reference's rational-Gregory interior ring — HUB + 3 typeA (R→HUB
-            // spoke midpoints) + 3 typeB (sub-quad centres) — woven into a 2×2
-            // quad grid per sub-quad whose boundary REUSES the true-arc pairwise
-            // rail interiors (the reference L2 rail is the arc, not the patch's
-            // internal Bézier). Matches the reference 38v/30f cap. Round Level ≥3
-            // (grid vs 2^L rail-subdivision mismatch) and N>3 junctions keep the
-            // flat cap for now.
-            if (roundLevel == 2 && ring_.length == 3 && ring.length == 12) {
+            // 3-way junction Gregory ring, GENERAL Round Level (task 0435).
+            // Unifies the L1 fan (1×1 grid → [pole,R,HUB,R]) and the L≥2 interior
+            // ring (L×L grid): HUB + R→HUB spoke points + rational interior points
+            // woven into an L×L quad grid per sub-quad whose u=0/v=0 boundary
+            // REUSES the true-arc pairwise rail interiors (the reference rail is
+            // the arc, not the patch's internal Bézier). Bit-exact vs the
+            // reference at L1/L2/L3 (20v/15f, 38v/30f, 62v/51f). N>3 junctions
+            // use a different reference (N-sided) path and keep the flat cap.
+            if (ring_.length == 3 && roundLevel >= 1) {
+                immutable int L = roundLevel;
+                immutable int m = L - 1;
                 uint[3] poleI; int np = 0;
                 foreach (v; ring) {
                     bool isP = false; foreach (p; ring_) if (v == p) { isP = true; break; }
                     if (isP && np < 3) poleI[np++] = v;
                 }
                 bool ok = (np == 3);
-                uint[3][3] railV;
+                uint[][3] railI;
                 Vec3[3] poleP, RP;
                 if (ok) foreach (i; 0 .. 3) {
-                    uint[] ri = railInterior(poleI[i], poleI[(i + 1) % 3]);
-                    if (ri.length != 3) { ok = false; break; }
-                    railV[i][0] = ri[0]; railV[i][1] = ri[1]; railV[i][2] = ri[2];
+                    railI[i] = railInterior(poleI[i], poleI[(i + 1) % 3]);
+                    if (railI[i].length != 2 * L - 1) { ok = false; break; }
                     poleP[i] = vertices[poleI[i]];
-                    RP[i]    = vertices[ri[1]];
+                    RP[i]    = vertices[railI[i][L - 1]];       // R_i = middle interior
                 }
-                Vec3 hubPos; Vec3[3] typeA, typeB;
-                if (ok && junctionRing(poleP[], RP[], hubPos, typeA, typeB)) {
+                Vec3 hubPos; Vec3[] spokeP, interiorP;
+                if (ok && junctionRing(poleP[], RP[], L, hubPos, spokeP, interiorP)) {
                     immutable uint hubIdx = addVertex(hubPos);
-                    uint[3] tA, tB;
-                    foreach (i; 0 .. 3) { tA[i] = addVertex(typeA[i]); tB[i] = addVertex(typeB[i]); }
+                    uint[][3] spokeIdx, interiorIdx;
                     foreach (i; 0 .. 3) {
+                        spokeIdx[i].length = m;
+                        foreach (k; 0 .. m) spokeIdx[i][k] = addVertex(spokeP[i * m + k]);
+                        interiorIdx[i].length = m * m;
+                        foreach (k; 0 .. m * m) interiorIdx[i][k] = addVertex(interiorP[i * m * m + k]);
+                    }
+                    // Grid vertex of sub-quad i at (a,b), a,b ∈ 0..L. u=0/v=0 edges
+                    // reuse the rail interiors; u=1/v=1 edges are the R→HUB spokes
+                    // (shared with the neighbour sub-quad); interior = Gregory eval.
+                    uint gv(int i, int a, int b) {
                         immutable int pv = (i + 2) % 3;
-                        immutable uint g00 = poleI[i],    g10 = railV[i][0],  g20 = railV[i][1];
-                        immutable uint g01 = railV[pv][2], g02 = railV[pv][1];
-                        immutable uint g11 = tB[i], g21 = tA[i], g12 = tA[pv], g22 = hubIdx;
-                        uint[][4] quads = [
-                            [g00, g10, g11, g01], [g10, g20, g21, g11],
-                            [g01, g11, g12, g02], [g11, g21, g22, g12],
-                        ];
-                        foreach (q; quads) {
-                            newFaces ~= q;
+                        if (a == 0 && b == 0) return poleI[i];
+                        if (a == L && b == 0) return railI[i][L - 1];        // R_i
+                        if (a == 0 && b == L) return railI[pv][L - 1];       // R_prev
+                        if (a == L && b == L) return hubIdx;
+                        if (b == 0)           return railI[i][a - 1];        // pole_i→R_i
+                        if (a == 0)           return railI[pv][2 * L - 1 - b]; // pole_i→R_prev
+                        if (a == L)           return spokeIdx[i][b - 1];     // R_i→HUB
+                        if (b == L)           return spokeIdx[pv][a - 1];    // R_prev→HUB
+                        return interiorIdx[i][(b - 1) * m + (a - 1)];
+                    }
+                    foreach (i; 0 .. 3)
+                        foreach (b; 0 .. L) foreach (a; 0 .. L) {
+                            newFaces ~= [gv(i, a, b), gv(i, a + 1, b),
+                                         gv(i, a + 1, b + 1), gv(i, a, b + 1)];
                             newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
                             newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
                             newOrd  ~= 0;
                             newSub  ~= isFaceSubpatch(srcFi);
                         }
-                    }
-                    continue;
-                }
-            }
-
-            // Stage A (task 0435): a 3-way junction rounded at Round Level 1
-            // gets the reference's central Gregory hub vertex + a [pole,R,HUB,R]
-            // quad fan (matching the reference 20v/15f K3 cap) instead of one
-            // flat N-gon. The hub is level-independent, but the L≥2 interior
-            // ring (rational Gregory evaluator) is not yet implemented, so higher
-            // levels keep the flat cap; N>3 junctions use a different reference
-            // N-sided path and also keep the flat cap for now.
-            if (roundLevel == 1 && ring_.length == 3 && ring.length == 6) {
-                // Classify the (possibly winding-reversed) threaded ring into its
-                // 3 poles + 3 bisectors by membership in ring_ (the miter
-                // corners); the reverse above can start on a bisector, so a fixed
-                // even/odd split is unsafe. bis[i] is the arc midpoint between
-                // poles[i] and poles[(i+1)%3].
-                bool isPole(uint v) { foreach (p; ring_) if (p == v) return true; return false; }
-                int start = -1;
-                foreach (k; 0 .. 6) if (isPole(ring[k])) { start = k; break; }
-                uint[3] poleIdx, bisIdx;
-                bool ok = start >= 0;
-                if (ok) foreach (i; 0 .. 3) {
-                    immutable uint pv = ring[(start + 2 * i) % 6];
-                    immutable uint bv = ring[(start + 2 * i + 1) % 6];
-                    if (!isPole(pv) || isPole(bv)) { ok = false; break; }
-                    poleIdx[i] = pv; bisIdx[i] = bv;
-                }
-                Vec3 hubPos;
-                if (ok && junctionHub(
-                        [vertices[poleIdx[0]], vertices[poleIdx[1]], vertices[poleIdx[2]]],
-                        [vertices[bisIdx[0]],  vertices[bisIdx[1]],  vertices[bisIdx[2]]],
-                        hubPos))
-                {
-                    immutable uint hubIdx = addVertex(hubPos);
-                    foreach (i; 0 .. 3) {
-                        // pole_i flanked by its after-bisector bis[i] and its
-                        // before-bisector bis[(i-1)%3] == bis[(i+2)%3].
-                        newFaces ~= [poleIdx[i], bisIdx[i], hubIdx, bisIdx[(i + 2) % 3]];
-                        newMat  ~= srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u;
-                        newPart ~= srcFi < facePart.length     ? facePart[srcFi]     : 0u;
-                        newOrd  ~= 0;
-                        newSub  ~= isFaceSubpatch(srcFi);
-                    }
                     continue;
                 }
             }
@@ -15523,8 +15470,8 @@ unittest { // bevelEdgesByMask: roundLevel DoS clamp — an absurd roundLevel
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
     size_t n = m.bevelEdgesByMask(mask, 0.1f, 1_000_000);
     assert(n == 1, "should still process (roundLevel clamped, not rejected)");
-    // MAX_ROUND_LEVEL=10 → 2^10=1024 quad rings for this one edge — bounded,
-    // not the ~2^1000000 the unclamped request would imply.
+    // MAX_ROUND_LEVEL=10 → 2·10=20 quad rings for this one edge — bounded,
+    // not the ~2000000 the unclamped 2·request would imply.
     assert(m.faces.length > 7 && m.faces.length < 2100,
         "chamfer ring count should reflect the CLAMPED level, not the raw request");
 }
@@ -15752,13 +15699,12 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
     }
 }
 
-unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at Round Level
-           // 1 AND 2 (task 0435). L1 = central Gregory hub + [pole,R,HUB,R] fan
-           // (20v/15f); L2 = the full rational-Gregory interior ring (HUB + 3
-           // typeA + 3 typeB over a 2×2-per-sub-quad grid, 38v/30f). The 3
-           // pairwise boundary arcs are geodesics on the corner-rounding sphere
-           // (centre V−width·Σn̂), not the per-vertex fillet. Round Level ≥3 and
-           // N>3 junctions still keep the flat N-gon cap (XFAIL).
+unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at every Round
+           // Level (task 0435). One general L×L Gregory ring: L1=20v/15f (fan),
+           // L2=38v/30f, L3=62v/51f. The central Gregory hub is level-independent;
+           // the 3 pairwise boundary arcs are geodesics on the corner-rounding
+           // sphere (centre V−width·Σn̂) subdivided into 2·L segments (not 2^L).
+           // N>3 junctions still keep the flat N-gon cap (different reference).
     import std.math : SQRT1_2;
     static int findEdge(ref Mesh mm, uint va, uint vb) {
         foreach (i; 0 .. mm.edges.length) {
@@ -15767,7 +15713,7 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at Round Level
         }
         return -1;
     }
-    foreach (level; [1, 2]) {
+    foreach (level; [1, 2, 3]) {
         auto m = makeCube();
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
@@ -15776,43 +15722,66 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, BIT-EXACT at Round Level
             mask[ei] = true;
         }
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
-        immutable int n = 1 << level;
+        // The central Gregory hub is level-independent; present at every level.
+        immutable Vec3 wantHub = Vec3(0.460948f, 0.460948f, 0.460948f);
+        bool foundHub = false;
+        foreach (v; m.vertices) if ((v - wantHub).length < 1e-4f) foundHub = true;
+        assert(foundHub, "K3 central Gregory hub (0.4609)³ not reproduced");
+        int[int] fvd;
+        foreach (f; m.faces) ++fvd[cast(int)f.length];
         if (level == 1) {
-            // 13 L0 + 6 rail interiors + 1 central HUB = 20 verts; 10 + 3 strips
-            // + 2 (the 3-quad fan replaces the single flat cap) = 15 faces.
+            // 13 L0 + 6 rail interiors + 1 HUB = 20v; 10 + 3 strips + 2 (3-quad
+            // fan replaces the flat cap) = 15f. The pairwise arc must round to
+            // (0.4,0.4707,0.4707), not the (0.4,0.45,0.45) degenerate midpoint.
             assert(m.vertices.length == 20 && m.faces.length == 15,
                 "K3 L1 must be the reference 20v/15f hub-fan cap");
             immutable float off = 0.1f * SQRT1_2;
-            immutable Vec3 wantHub = Vec3(0.460948f, 0.460948f, 0.460948f);
-            immutable Vec3 wantBis = Vec3(0.4f, 0.4f + off, 0.4f + off);  // a pairwise bisector
-            bool foundHub = false, foundBis = false;
-            foreach (v; m.vertices) {
-                if ((v - wantHub).length < 1e-4f) foundHub = true;
-                if ((v - wantBis).length < 1e-4f) foundBis = true;
-            }
-            assert(foundHub, "K3 L1 central Gregory hub (0.4609)³ not reproduced");
-            assert(foundBis, "K3 L1 pairwise arc must round to (0.4,0.4707,0.4707), not the "
-                ~ "(0.4,0.45,0.45) degenerate linear midpoint");
-        } else {
-            // Round Level 2: the reference's rational-Gregory interior ring —
-            // HUB + 3 typeA + 3 typeB woven into a 2×2-per-sub-quad grid over the
-            // true-arc rail interiors. 38v/30f {quad:27, octagon:3}, bit-exact.
+            bool foundBis = false;
+            foreach (v; m.vertices)
+                if ((v - Vec3(0.4f, 0.4f + off, 0.4f + off)).length < 1e-4f) foundBis = true;
+            assert(foundBis, "K3 L1 pairwise arc must be the true-arc bisector");
+        } else if (level == 2) {
+            // Rational-Gregory interior ring over a 2×2-per-sub-quad grid.
             assert(m.vertices.length == 38 && m.faces.length == 30,
                 "K3 L2 must be the reference 38v/30f Gregory-ring cap");
-            immutable Vec3 wantHub = Vec3(0.460948f, 0.460948f, 0.460948f);
-            immutable Vec3 wantA   = Vec3(0.468270f, 0.468270f, 0.435948f);  // typeA
-            immutable Vec3 wantB   = Vec3(0.439017f, 0.485392f, 0.439017f);  // typeB
-            bool fHub = false, fA = false, fB = false;
+            bool fA = false, fB = false;
             foreach (v; m.vertices) {
-                if ((v - wantHub).length < 1e-4f) fHub = true;
-                if ((v - wantA).length   < 1e-4f) fA   = true;
-                if ((v - wantB).length   < 1e-4f) fB   = true;
+                if ((v - Vec3(0.468270f, 0.468270f, 0.435948f)).length < 1e-4f) fA = true;
+                if ((v - Vec3(0.439017f, 0.485392f, 0.439017f)).length < 1e-4f) fB = true;
             }
-            assert(fHub && fA && fB,
-                "K3 L2 Gregory ring must reproduce the hub + typeA + typeB points");
-            int[int] fvd;
-            foreach (f; m.faces) ++fvd[cast(int)f.length];
+            assert(fA && fB, "K3 L2 Gregory ring must reproduce the typeA + typeB points");
             assert(fvd.get(8, 0) == 3, "K3 L2 must keep the 3 octagon absorber faces");
+            // Topology guard: a specific reference cap quad must exist by
+            // position — [pairwise-rail interior, typeB, typeA, R bisector].
+            // Catches the g-transpose class of bug (the right vertex SET woven
+            // with the WRONG connectivity, which a Hausdorff/count/manifold
+            // check silently passes — the transpose leaves positions, edge
+            // lengths and manifoldness identical, only re-weaving the ring onto
+            // the neighbouring sub-quad's rails).
+            immutable Vec3[4] wantQuad = [
+                Vec3(0.43827f, 0.49239f, 0.4f),      // pairwise-rail interior
+                Vec3(0.43902f, 0.48539f, 0.43902f),  // typeB
+                Vec3(0.46827f, 0.46827f, 0.43595f),  // typeA
+                Vec3(0.47071f, 0.47071f, 0.4f),      // R bisector
+            ];
+            bool foundQuad = false;
+            foreach (f; m.faces) {
+                if (f.length != 4) continue;
+                int matched = 0;
+                foreach (w; wantQuad)
+                    foreach (vi; f) if ((m.vertices[vi] - w).length < 1e-4f) { ++matched; break; }
+                if (matched == 4) { foundQuad = true; break; }
+            }
+            assert(foundQuad,
+                "K3 L2 ring must weave the reference [rail,typeB,typeA,R] quad; a "
+                ~ "count/manifold-clean pass with the wrong connectivity fails here");
+        } else {
+            // Round Level 3: general L×L Gregory ring — the arc is subdivided
+            // into 2·L segments (5 rail interiors), not 2^L. 62v/51f {quad:48,
+            // decagon:3}, bit-exact.
+            assert(m.vertices.length == 62 && m.faces.length == 51,
+                "K3 L3 must be the reference 62v/51f Gregory-ring cap");
+            assert(fvd.get(10, 0) == 3, "K3 L3 must keep the 3 decagon absorber faces");
         }
         assertBevelManifoldClean(m, "junction shared rails");
     }
