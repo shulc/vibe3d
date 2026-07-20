@@ -8543,17 +8543,27 @@ struct Mesh {
         // Edge→(≤2 faces) adjacency, one pass (same idiom as extrudeEdgesByMask).
         auto edgeFaces = buildEdgeFaces();
 
-        // Step 1: qualifying selected edges — interior (exactly 2 incident
-        // faces) only. A boundary edge (one incident face) is still skipped.
+        // Step 1: qualifying selected edges. An edge with TWO incident faces
+        // gets the ordinary chamfer (two rails plus a bridge quad between
+        // them). An edge with exactly ONE incident face is a RIM edge, and
+        // the reference bevels it too — but differently: the lone face's
+        // border simply insets by `width` and NO bridge quad is created
+        // (reference captures `edge_bevel_open_{rimedge,bothends}_w015`; the
+        // cap rule is "+1 bridge quad iff 2 incident faces, 0 new faces iff
+        // 1", orthogonal to whether the endpoints are on a rim). Both kinds
+        // count as "selected" for the per-vertex fan logic below; only the
+        // 2-face kind becomes a ChamferSpan.
         bool[] qualifies = new bool[](edges.length);
+        bool[] rimOnly   = new bool[](edges.length);
         size_t nQual = 0;
         foreach (i; 0 .. edges.length) {
             if (!mask[i]) continue;
             uint v0 = edges[i][0], v1 = edges[i][1];
             auto fp = edgeKeyOrdered(v0, v1) in edgeFaces;
             if (fp is null) continue;
-            if ((*fp)[0] < 0 || (*fp)[1] < 0) continue;
+            if ((*fp)[0] < 0) continue;          // no incident face at all
             qualifies[i] = true;
+            rimOnly[i]   = ((*fp)[1] < 0);       // exactly one incident face
             ++nQual;
         }
         if (nQual == 0) return 0;
@@ -8594,24 +8604,35 @@ struct Mesh {
             // task already had to walk back once.
             if (openFan && roundLevel > 0) return 0;
 
-            // A face whose BOTH bordering edges are unselected takes the
-            // partial-notch branch below, which retains V on the inactive side
-            // and has no free-end cap — it leaves a hole, at EVERY Round Level
-            // including L0. Walking the fan, such a face exists iff two
-            // fan-adjacent slots are both unselected. Slots are adjacent
-            // exactly when they bound a common face: cyclic on a closed fan,
-            // linear on an open one.
+            // The one unsupported shape is the partial-notch `keep V` branch
+            // below: a face whose BOTH bordering edges are unselected but only
+            // ONE side is active. It retains V with no free-end cap and leaves
+            // a hole, at EVERY Round Level including L0. Its sibling — BOTH
+            // sides active — fully cuts the corner and is fine (it is exactly
+            // what the reference does at a beveled rim edge).
             //
-            // A closed fan of d <= 3 cannot express such a gap while still
-            // having a selected edge, so it is exempt (ordinary cube-corner
-            // geometry, byte-identical).
-            if (openFan) {
-                foreach (k; 0 .. d)
-                    if (!fanSelected[k] && !fanSelected[k + 1]) return 0;
-            } else {
-                if (d <= 3) continue;
-                foreach (k; 0 .. d)
-                    if (!fanSelected[k] && !fanSelected[(k + 1) % d]) return 0;
+            // So mirror the `active` relation used by the per-vertex pass and
+            // reject only on the single-active case. Slots are fan-adjacent
+            // when they bound a common face (cyclic closed / linear open),
+            // plus the open fan's two rim ends, which the boundary joins.
+            immutable size_t nSlots = fanSelected.length;
+            bool[] fanActive = new bool[](nSlots);
+            foreach (k; 0 .. nSlots) {
+                if (fanSelected[k]) continue;
+                if (openFan) {
+                    fanActive[k] = (k > 0 && fanSelected[k - 1]) ||
+                                   (k + 1 < nSlots && fanSelected[k + 1]);
+                    if (!fanActive[k] && (k == 0 || k == nSlots - 1))
+                        fanActive[k] = fanSelected[k == 0 ? nSlots - 1 : 0];
+                } else {
+                    fanActive[k] = fanSelected[(k + nSlots - 1) % nSlots] ||
+                                   fanSelected[(k + 1) % nSlots];
+                }
+            }
+            foreach (k; 0 .. d) {
+                immutable size_t kr = (k + 1) % nSlots;
+                if (fanSelected[k] || fanSelected[kr]) continue;
+                if (fanActive[k] != fanActive[kr]) return 0;   // the `keep V` notch
             }
         }
 
@@ -8863,6 +8884,14 @@ struct Mesh {
                 if (selE[k]) continue;
                 if (openFan) {
                     active[k] = (k > 0 && selE[k - 1]) || (k + 1 < nE && selE[k + 1]);
+                    // The two END slots of an open fan are the rim edges. They
+                    // share no FACE, but the boundary itself joins them — so a
+                    // selected RIM edge has to cut the corner on the far side
+                    // too, otherwise the re-routed boundary has nowhere to go.
+                    // Reference: `edge_bevel_open_rimedge_w015` cuts V into a
+                    // slide on EACH remaining edge (V is not retained).
+                    if (!active[k] && (k == 0 || k == nE - 1))
+                        active[k] = selE[k == 0 ? nE - 1 : 0];
                 } else {
                     active[k] = selE[(k - 1 + d) % d] || selE[(k + 1) % d];
                 }
@@ -8970,10 +8999,22 @@ struct Mesh {
         // (pre-substitution) face array, and its 4 chamfer/arc-rail corners.
         struct ChamferSpan { uint v0, v1, fL, fR; }
         ChamferSpan[] spans;
+        // RIM edges (one incident face) never become spans: there is no second
+        // rail to bridge to, so the reference adds no face for them. Their
+        // whole effect — the lone face's border insetting by `width`, and the
+        // neighbouring faces absorbing the corner cut — is already produced by
+        // the per-vertex substitution pass. They still count as processed.
+        size_t rimProcessed = 0;
         foreach (i; 0 .. edges.length) {
             if (!qualifies[i]) continue;
             uint v0 = edges[i][0], v1 = edges[i][1];
             auto fp = edgeKeyOrdered(v0, v1) in edgeFaces;
+            if (rimOnly[i]) {
+                immutable uint fOnly = cast(uint)(*fp)[0];
+                if (vfKey(v0, fOnly) in cornerAtVF && vfKey(v1, fOnly) in cornerAtVF)
+                    ++rimProcessed;
+                continue;
+            }
             int fa = (*fp)[0], fb = (*fp)[1];
             uint fL = uint.max, fR = uint.max;
             foreach (k; 0 .. faces[fa].length) {
@@ -8996,11 +9037,11 @@ struct Mesh {
                 continue;
             spans ~= ChamferSpan(v0, v1, fL, fR);
         }
-        if (spans.length == 0) {
+        if (spans.length == 0 && rimProcessed == 0) {
             vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass
             return 0;
         }
-        immutable size_t processed = spans.length;
+        immutable size_t processed = spans.length + rimProcessed;
 
         // Resolve every original face to its L0 boundary before rounded
         // vertices exist.  This is also the authoritative support-consumer
@@ -15522,14 +15563,14 @@ unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
            // is now supported (the per-vertex pass walks its OPEN fan), so the
            // reason this case still no-ops has MOVED: the other endpoint is
            // the grid's fully interior vertex 4, a valence-FOUR free end
-           // (K == 1). Its fan therefore has a gap of three unselected
-           // edges, so a face there would take the partial-notch branch,
-           // which has no free-end cap at valence > 3 and would leave holes.
-           // The preflight rejects that shape before any mutation, at every
-           // Round Level.
+           // (K == 1). One of its faces then has both bordering edges
+           // unselected with exactly ONE side active — the partial-notch
+           // `keep V` branch, which has no free-end cap at valence > 3 and
+           // would leave holes. The preflight rejects that shape before any
+           // mutation, at every Round Level.
            //
            // Verified: with the notch guard removed this very mesh produces a
-           // 12-edge rim where 9 is correct — i.e. the no-op is load-bearing,
+           // 12-edge rim where 8 is correct — i.e. the no-op is load-bearing,
            // not incidental. A proper valence>3 free-end cap needs its own
            // reference capture and is tracked separately.
     //   0   1   2
@@ -15987,6 +16028,8 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
            // dropped and a 3-edge selection produced ONE chamfer.  The fan is
            // now walked as an open slot sequence e_0..e_d with no wrap.
            //
+           // Every number below is reference-captured
+           // (`edge_bevel_open_*_w015`, width 0.15) and reproduced bit-exactly.
     Mesh cubeMinusBottom() {
         // Unit cube with the y == -0.5 face removed: 8 verts, 5 faces, one
         // open rim of 4 edges. Rim vertices are 0, 1, 4, 7.
@@ -16091,6 +16134,52 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
             "the refusal must leave the mesh byte-identical");
     }
 
+    // `rimedge`: a selected RIM edge (exactly ONE incident face) bevels too,
+    // but adds NO face — its lone face's border insets by `width` and the
+    // neighbours absorb the corner cut, becoming pentagons. 10v/5f.
+    {
+        auto m = cubeMinusBottom();
+        auto mask = selectPairs(m, [[7u, 4u]]);
+        assert(m.bevelEdgesByMask(mask, 0.15f, 0) == 1,
+            "a rim edge with one incident face must still bevel");
+        assert(m.vertices.length == 10 && m.faces.length == 5,
+            "rim-edge bevel adds two verts and NO face");
+        foreach (want; [Vec3(0.5f, -0.35f, -0.5f), Vec3(0.5f, -0.35f, 0.5f),
+                        Vec3(0.35f, -0.5f, -0.5f), Vec3(0.35f, -0.5f,  0.5f)])
+            assert(hasVert(m, want), "expected rim-edge bevel vertex missing");
+        // The source endpoints are NOT retained — the corner is fully cut.
+        foreach (gone; [Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, 0.5f)])
+            assert(!hasVert(m, gone), "rim-edge endpoint must be cut, not kept");
+        assert(edgeUseProfile(m)[1] == 0, "rim-edge bevel must add no non-manifold edge");
+    }
+
+    // `bothends`: same law when BOTH endpoints are on a rim — an open tube
+    // (both Y faces removed) beveled on F-G, which has one incident face.
+    // 10v/4f.
+    {
+        Mesh tube;
+        tube.vertices = [
+            Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f, 0.5f),
+            Vec3(-0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f,-0.5f),
+            Vec3( 0.5f,-0.5f,-0.5f), Vec3( 0.5f, 0.5f,-0.5f),
+            Vec3( 0.5f, 0.5f, 0.5f), Vec3( 0.5f,-0.5f, 0.5f),
+        ];
+        tube.addFace([0u, 1u, 2u, 3u]);
+        tube.addFace([4u, 5u, 6u, 7u]);
+        tube.addFace([0u, 3u, 5u, 4u]);
+        tube.addFace([1u, 7u, 6u, 2u]);
+        tube.buildLoops();
+        tube.syncSelection();
+        auto mask = selectPairs(tube, [[5u, 6u]]);
+        assert(tube.bevelEdgesByMask(mask, 0.15f, 0) == 1,
+            "an edge with both endpoints on a rim must bevel");
+        assert(tube.vertices.length == 10 && tube.faces.length == 4,
+            "both-ends-on-rim bevel adds two verts and NO face");
+        foreach (want; [Vec3(0.5f, 0.35f, -0.5f), Vec3(0.5f, 0.35f, 0.5f),
+                        Vec3(0.35f, 0.5f, -0.5f), Vec3(0.35f, 0.5f,  0.5f)])
+            assert(hasVert(tube, want), "expected both-ends-on-rim bevel vertex missing");
+        assert(edgeUseProfile(tube)[1] == 0, "must add no non-manifold edge");
+    }
 }
 
 unittest { // bevelEdgesByMask: a partial K2 fan at valence FOUR whose selected
