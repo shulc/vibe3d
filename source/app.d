@@ -5729,18 +5729,33 @@ void main(string[] args) {
             // tool holds an uncommitted edit commits it as its own undo entry
             // and re-arms the SAME tool session in place (no drop — ACEN/AXIS/
             // pipe state persist): commit-into-history then re-arm-in-place.
-            // The click is consumed; the user then drags the re-armed
-            // tool for the next application (a "series of bevels"). When the
-            // active tool has NO open edit, or opts out of in-place commit
-            // (transform tools already commit per gesture), applyAndContinue()
-            // returns false and this Shift+LMB falls through unchanged to the
-            // selection-add path below — no edit is ever lost. Alt/Ctrl chords
-            // stay excluded (camera / axis-lock).
+            //
+            // COMBINED GESTURE: after the commit+rearm, THIS same Shift+LMB is
+            // forwarded to the re-armed tool as a fresh gesture-start, so a
+            // Shift+click+drag applies the old edit AND immediately hauls the
+            // new one in one motion — no lift between operations (a "series of
+            // bevels"). Shift is masked for the forwarded down because the
+            // opted-in tools reject a raw Shift+LMB (reserving it for sel-add);
+            // masking makes them treat it as a plain gesture-start. The forward
+            // reads the live modifier state, so the mask must go through the
+            // real SDL modstate (restored immediately after via scope(exit)).
+            //
+            // When the active tool has NO open edit, or opts out of in-place
+            // commit (transform tools already commit per gesture),
+            // applyAndContinue() returns false and this Shift+LMB falls through
+            // unchanged to the selection-add path below — no edit is ever lost.
+            // Alt/Ctrl chords stay excluded (camera / axis-lock).
             if (btn.button == SDL_BUTTON_LEFT && viewportInputAllowed()
                 && (SDL_GetModState() & KMOD_SHIFT)
                 && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))
-                && session.applyAndContinue())
+                && session.applyAndContinue()) {
+                SDL_Keymod savedMods = SDL_GetModState();
+                SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
+                scope(exit) SDL_SetModState(savedMods);
+                SubjectPacket subjR; VectorStack vtsR; buildToolVts(subjR, vtsR);
+                activeTool.onMouseButtonDown(btn, vtsR);
                 return;
+            }
             // Refresh the hover pick at the click position BEFORE the tool sees
             // the event, so a tool that click-picks an element (XfrmTransformTool
             // under falloff.element) reads hover for THIS cursor, not the last

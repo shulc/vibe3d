@@ -293,12 +293,14 @@ unittest {
     assert(getJson("/api/tool/state")["built"].type == JSONType.true_,
         "expected an uncommitted standing edit before Shift+click");
 
-    // Shift+LMB elsewhere → commit + re-arm. The driver consumes the click, so
-    // the tool never starts a fresh drag.
+    // Shift+LMB elsewhere with NO drag motion: the apply+rearm fires, the
+    // combined gesture starts a zero-length haul on the re-armed tool, and the
+    // mouse-up ends it — so the tool lands back idle with a zeroed baseline
+    // (params 0, built cleared) while the mesh keeps the committed bevel.
     play(button("SDL_MOUSEBUTTONDOWN", EX + 120, EY, LSHIFT));
     play(button("SDL_MOUSEBUTTONUP",   EX + 120, EY, LSHIFT));
     auto st = getJson("/api/tool/state");
-    assert(st["dragPart"].integer == -1, "Shift+click must not start a drag (driver consumes it)");
+    assert(st["dragPart"].integer == -1, "zero-motion apply gesture left a drag open");
     assert(fabs(st["shift"].floating) < 1e-6, "re-arm did not zero shift");
     assert(fabs(st["inset"].floating) < 1e-6, "re-arm did not zero inset");
     assert(st["built"].type == JSONType.false_, "re-arm did not clear the built flag");
@@ -350,4 +352,50 @@ unittest {
     post(BASE ~ "/api/undo", "");
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "second undo did not restore the cube (each apply is its own undo step)");
+}
+
+// Combined gesture (reference-exact): a Shift+LMB+DRAG on a standing edit commits it
+// AND immediately hauls a NEW edit in the SAME gesture — no lift between ops.
+// The app.d dispatch masks Shift for the forwarded down so the re-armed tool
+// starts a fresh free-drag; the ongoing drag then hauls the new bevel.
+unittest {
+    enum int EX = 400, EY = 450;
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+
+    // Standing bevel #1 (drag + release).
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX, EY - 90, 1));
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 90));
+    assert(getJson("/api/tool/state")["built"].type == JSONType.true_, "no standing edit #1");
+
+    // Shift+LMB DOWN (off the handles) → commit #1 + re-arm; the SAME gesture
+    // starts a fresh free-drag on the re-armed tool from a zeroed baseline.
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY, LSHIFT));
+    auto mid = getJson("/api/tool/state");
+    assert(mid["dragPart"].integer == 2,
+        "combined gesture: Shift+LMB down must start a fresh free-drag on the re-armed tool");
+    assert(mid["built"].type == JSONType.false_ && fabs(mid["shift"].floating) < 1e-6,
+        "combined gesture: the new haul must start from a zeroed re-armed baseline");
+
+    // Drag within the SAME gesture (Shift still physically held) → new bevel grows.
+    play(motion(EX, EY - 80, 1, LSHIFT));
+    auto haul = getJson("/api/tool/state");
+    assert(haul["shift"].floating > 1e-3,
+        "combined gesture: dragging after the Shift-down did not haul the new edit");
+    assert(haul["built"].type == JSONType.true_, "new haul did not build a preview");
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 80, LSHIFT));
+
+    // One committed (#1) + one standing (#2, committed on tool-drop) ⇒ two
+    // discrete undo steps back to the cube.
+    cmd("tool.set poly.bevel off");
+    post(BASE ~ "/api/undo", ""); // peel #2
+    assert(getJson("/api/model")["vertexCount"].integer > 8,
+        "first undo overshot — combined-gesture steps collapsed");
+    post(BASE ~ "/api/undo", ""); // peel #1
+    assert(getJson("/api/model")["vertexCount"].integer == 8,
+        "combined gesture did not yield two discrete undo steps");
 }
