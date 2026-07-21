@@ -406,6 +406,33 @@ final class EditSession {
         return ok;
     }
 
+    // Framework "apply and continue" (task 0461 — the reference editor's
+    // apply-and-continue gesture, Shift+click on a creation/interactive-edit
+    // tool). If the active tool holds an open edit AND supports in-place
+    // commit, finalize that edit as its own discrete undo entry
+    // (commitUncommittedEdit) and re-arm the SAME session in place
+    // (resyncSession) — never a deactivate/reactivate, so the tool's ACEN/
+    // AXIS/pipe state and identity survive: commit-into-history then
+    // re-arm-in-place, in that order.
+    //
+    // Returns true iff it committed+rearmed (⇒ the caller consumes the
+    // triggering click). Returns false — and does NOTHING — when there is no
+    // tool, no open edit, or the tool opts OUT of in-place commit
+    // (commitUncommittedEdit()==false, the base default). The opt-out is
+    // load-bearing: it guarantees a tool with an open edit it can't finalize
+    // in place (e.g. a transform tool's panel session) is left fully intact
+    // for the caller's normal path, never re-armed onto a lost edit.
+    bool applyAndContinue() {
+        auto t = tool_();
+        if (t is null || !t.hasUncommittedEdit()) return false;
+        if (!t.commitUncommittedEdit()) return false;   // opted out ⇒ leave the edit
+        // Re-read (same tolerant discipline as navigate()): the commit ran
+        // main-thread synchronously, so t is stable, but mirror the pattern.
+        auto t2 = tool_();
+        if (t2 !is null) t2.resyncSession();
+        return true;
+    }
+
     // Discard the active tool's in-progress edit WITHOUT committing it and
     // WITHOUT touching history (cancel bodies are pure mesh restores). The
     // tool.reset path uses this so a reset THROWS the open edit away rather

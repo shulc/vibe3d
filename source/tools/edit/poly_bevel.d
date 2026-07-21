@@ -169,6 +169,19 @@ public:
         reinitSession();
     }
 
+    // Framework "apply and continue" (task 0461, Shift+click): record the
+    // current live bevel as its own undo entry, keeping the tool active. The
+    // driver (EditSession.applyAndContinue) follows with resyncSession() ⇒
+    // reinitSession(), which re-baselines `before` onto the just-committed
+    // mesh and zeroes inset/shift — so hasUncommittedEdit() is true here and
+    // false after the driver's re-arm. Mirrors deactivate()'s commit guard
+    // exactly, minus the teardown.
+    public override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitEdit();
+        return true;
+    }
+
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
     }

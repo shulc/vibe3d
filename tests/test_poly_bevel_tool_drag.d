@@ -56,6 +56,7 @@ string button(string kind, int x, int y, uint mod = 0) {
 }
 
 enum uint LCTRL = 64; // KMOD_LCTRL
+enum uint LSHIFT = 1; // KMOD_LSHIFT
 
 // Screen position of the tool's published handle part (0 = Shift, 1 = Inset).
 void handleScreen(int part, out int x, out int y) {
@@ -266,4 +267,87 @@ unittest {
     assert(fabs(st["shift"].floating) < 1e-6, "Ctrl horizontal-dominant drag must NOT change shift");
     play(button("SDL_MOUSEBUTTONUP", EX + 100, EY - 35, LCTRL));
     cmd("tool.set poly.bevel off");
+}
+
+// Shift+click "apply and continue" (task 0461 — the reference editor's `reset`
+// input role). A standing bevel is committed as its OWN undo entry and the
+// tool re-arms in place: params zero, the built flag clears, but the mesh
+// KEEPS the committed bevel. The generic driver (EditSession.applyAndContinue)
+// fires from app.d BEFORE the tool sees the click, so the click is consumed —
+// no fresh drag starts (dragPart stays -1) and no edit is lost.
+unittest {
+    enum int EX = 400, EY = 450;
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+
+    // Build a standing bevel via a free drag (off the handles), then release —
+    // the edit is live/previewed but NOT yet recorded to history.
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX, EY - 100, 1)); // vertical up → shift grows
+    assert(getJson("/api/tool/state")["shift"].floating > 1e-3, "drag did not build a shift");
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 100));
+    assert(getJson("/api/model")["vertices"].array.length > 8, "standing bevel not present pre-apply");
+    assert(getJson("/api/tool/state")["built"].type == JSONType.true_,
+        "expected an uncommitted standing edit before Shift+click");
+
+    // Shift+LMB elsewhere → commit + re-arm. The driver consumes the click, so
+    // the tool never starts a fresh drag.
+    play(button("SDL_MOUSEBUTTONDOWN", EX + 120, EY, LSHIFT));
+    play(button("SDL_MOUSEBUTTONUP",   EX + 120, EY, LSHIFT));
+    auto st = getJson("/api/tool/state");
+    assert(st["dragPart"].integer == -1, "Shift+click must not start a drag (driver consumes it)");
+    assert(fabs(st["shift"].floating) < 1e-6, "re-arm did not zero shift");
+    assert(fabs(st["inset"].floating) < 1e-6, "re-arm did not zero inset");
+    assert(st["built"].type == JSONType.false_, "re-arm did not clear the built flag");
+    assert(getJson("/api/model")["vertices"].array.length > 8,
+        "apply-and-continue must KEEP the committed bevel in the mesh");
+
+    // One discrete undo entry: dropping the tool must NOT double-commit
+    // (hasUncommittedEdit is false after re-arm), and one undo restores the cube.
+    cmd("tool.set poly.bevel off");
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    assert(undo["status"].str == "ok", "undo failed");
+    assert(getJson("/api/model")["vertexCount"].integer == 8,
+        "one undo after apply-and-continue did not restore the cube (commit granularity)");
+}
+
+// Series of bevels: two Shift+click applies ⇒ two DISCRETE undo steps, never a
+// single collapsed entry (mirrors the reference editor's "apply a series of
+// bevels, each undoable").
+unittest {
+    enum int EX = 400, EY = 450;
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+
+    // First bevel + apply.
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX, EY - 90, 1));
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 90));
+    play(button("SDL_MOUSEBUTTONDOWN", EX + 120, EY, LSHIFT));
+    play(button("SDL_MOUSEBUTTONUP",   EX + 120, EY, LSHIFT));
+    long v1 = getJson("/api/model")["vertexCount"].integer;
+    assert(v1 > 8, "first apply lost the bevel");
+
+    // Second bevel + apply, chained on the SAME re-armed tool.
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX, EY - 90, 1));
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 90));
+    play(button("SDL_MOUSEBUTTONDOWN", EX + 120, EY, LSHIFT));
+    play(button("SDL_MOUSEBUTTONUP",   EX + 120, EY, LSHIFT));
+    long v2 = getJson("/api/model")["vertexCount"].integer;
+    assert(v2 > v1, "second chained bevel did not add geometry");
+
+    cmd("tool.set poly.bevel off");
+    post(BASE ~ "/api/undo", "");
+    assert(getJson("/api/model")["vertexCount"].integer == v1,
+        "first undo did not peel exactly the second bevel (steps must not collapse)");
+    post(BASE ~ "/api/undo", "");
+    assert(getJson("/api/model")["vertexCount"].integer == 8,
+        "second undo did not restore the cube (each apply is its own undo step)");
 }

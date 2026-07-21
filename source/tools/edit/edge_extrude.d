@@ -245,6 +245,16 @@ public:
         reinitSession();
     }
 
+    // Framework "apply and continue" (task 0461, Shift+click): commit the live
+    // edit as its own undo entry, keeping the tool active; the driver follows
+    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
+    // guard minus the teardown.
+    public override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitEdit();
+        return true;
+    }
+
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
     // (set by PropertyPanel only):
     //   - Interactive Tool Properties edit → rebuild the live preview from the

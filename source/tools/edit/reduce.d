@@ -123,6 +123,16 @@ public:
         before = MeshSnapshot.capture(*mesh);
     }
 
+    // Framework "apply and continue" (task 0461, Shift+click): commit the live
+    // edit as its own undo entry, keeping the tool active; the driver follows
+    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
+    // guard minus the teardown.
+    override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitEdit();
+        return true;
+    }
+
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
     }

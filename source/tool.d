@@ -299,6 +299,26 @@ class Tool : ParamProvider {
     // post-mode re-init in P1.
     void resyncSession() {}
 
+    // Framework "apply and continue" (Shift+click on a creation/interactive-
+    // edit tool, task 0461 — the reference editor's apply-and-continue
+    // gesture). Finalize the tool's CURRENT open edit as its own permanent
+    // undo entry WITHOUT dropping the tool, so the caller can then re-arm the
+    // SAME session in place via resyncSession() — structurally commit-into-
+    // history then re-arm-in-place, never a deactivate/reactivate (ACEN/AXIS/
+    // pipe state persist).
+    //
+    // Returns true if it committed a discrete undo entry (⇒ the driver
+    // re-arms). Default false — the tool opts OUT of in-place apply, and the
+    // driver then LEAVES the open edit untouched (never re-arms on a no-op
+    // commit, so a still-open edit is never silently discarded). Transform
+    // tools that already commit per gesture (record+consolidate) keep the
+    // default: they have nothing extra to finalize here. Only interactive
+    // create/edit tools that hold a STANDING uncommitted edit
+    // (hasUncommittedEdit()==true across frames) override this to record
+    // that edit; the invariant is postcondition hasUncommittedEdit()==true
+    // BEFORE and, after the driver's follow-up resyncSession(), ==false.
+    bool commitUncommittedEdit() { return false; }
+
     // Refire (record-once, re-evaluate panel-edit sessions, undo/redo
     // migration P4) moved to the optional RefireClient interface in
     // edit_session.d (task 0428) — wantsRefire / buildRefireCommand /

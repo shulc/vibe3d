@@ -163,6 +163,16 @@ public:
     public override void cancelUncommittedEdit() { cancelLiveEdit(); }
     public override void resyncSession() { if (active) reinitSession(); }
 
+    // Framework "apply and continue" (task 0461, Shift+click): commit the live
+    // edit as its own undo entry, keeping the tool active; the driver follows
+    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
+    // guard minus the teardown.
+    public override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitEdit();
+        return true;
+    }
+
     // Captured finding (gesture_model.no_headless_path): no numeric
     // tool.attr can drive geometry for this tool on the reference — see
     // class doc comment. Faithful port of that no-op; use the one-shot

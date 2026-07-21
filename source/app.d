@@ -5724,6 +5724,23 @@ void main(string[] args) {
             return;
         }
         if (activeTool) {
+            // Framework "apply and continue" (the reference editor's apply-
+            // and-continue gesture, task 0461): a Shift+LMB while the active
+            // tool holds an uncommitted edit commits it as its own undo entry
+            // and re-arms the SAME tool session in place (no drop — ACEN/AXIS/
+            // pipe state persist): commit-into-history then re-arm-in-place.
+            // The click is consumed; the user then drags the re-armed
+            // tool for the next application (a "series of bevels"). When the
+            // active tool has NO open edit, or opts out of in-place commit
+            // (transform tools already commit per gesture), applyAndContinue()
+            // returns false and this Shift+LMB falls through unchanged to the
+            // selection-add path below — no edit is ever lost. Alt/Ctrl chords
+            // stay excluded (camera / axis-lock).
+            if (btn.button == SDL_BUTTON_LEFT && viewportInputAllowed()
+                && (SDL_GetModState() & KMOD_SHIFT)
+                && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))
+                && session.applyAndContinue())
+                return;
             // Refresh the hover pick at the click position BEFORE the tool sees
             // the event, so a tool that click-picks an element (XfrmTransformTool
             // under falloff.element) reads hover for THIS cursor, not the last
