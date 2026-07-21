@@ -11824,22 +11824,18 @@ struct Mesh {
     ///
     /// Gates mirror the recovered per-hop dispatch (findings.md
     /// `SelLoop_GetNextEdge`), evaluated once using the seed's own hop pivot:
-    ///   1. odd valence >= 5 at the pivot vertex while the seed is an
+    ///   1. ANY odd valence at the pivot vertex while the seed is an
     ///      interior edge (2 incident faces) dead-ends this direction
-    ///      outright — the through-the-pole-center direction of a
-    ///      valence-5 spoke seed. The >=5 floor (not "any odd valence") is
-    ///      a calibration the 11 captures don't pin directly but the cube
-    ///      regression invariant does: a valence-3 pivot is the ordinary
-    ///      closed corner of ANY box-like quad mesh (3 quads meeting in a
-    ///      complete fan, no boundary) — the walk only ever needs 2 local
-    ///      neighbours of the pivot within whichever single face it is
-    ///      currently in, which a valence-3 corner always has, same as a
-    ///      valence-4 one — so gating it off would break ordinary cube
-    ///      loops (`tests/test_select_topology.d`'s cube edge-0 case).
-    ///      Every odd-valence pivot actually exercised by the 11 captures
-    ///      is either >=5 (the pole centre) or independently border-caught
-    ///      by gate 3 (the tube-rail cases' valence-3 rail-end vertex), so
-    ///      this floor is consistent with all validated evidence.
+    ///      outright — no floor. This fires just as readily on a plain
+    ///      valence-3 vertex (every corner of an ordinary closed cube/box
+    ///      is one) as on a valence-5 pole centre: a stock cube's edge-loop
+    ///      is genuinely the 4-edge fallback face below, not a 7-edge union
+    ///      of two adjacent perimeters — confirmed by a dedicated closed-
+    ///      mesh capture (`cube_corner_edge0`) plus an rr/gdb trace of
+    ///      `SelLoop_GetNextEdge` reaching this exact bail with vcount=3,
+    ///      MeshEdgePolyCount==2 (see findings.md's Gate-1 section; an
+    ///      earlier `>=5`-floor calibration here was an un-traced
+    ///      hypothesis, since ruled out).
     ///   2. an even (>=4) valence pivot touching more than 2 border edges
     ///      also dead-ends (spec-complete; not exercised by the 11 cases).
     ///   3. a non-border seed whose pivot vertex is itself boundary-adjacent
@@ -11864,7 +11860,7 @@ struct Mesh {
         uint pivot0 = sfv0[(cast(uint)si + 1) % sfv0.length];
 
         uint vcount = vertexValence(pivot0);
-        if (vcount >= 5 && (vcount & 1) != 0) return [];                 // gate 1
+        if ((vcount & 1) != 0) return [];                                // gate 1
         if (vcount >= 4 && borderEdgeCountAtVertex(pivot0) > 2) return [];// gate 2
         if (isVertexBorder(pivot0)) return [];                          // gate 3
 

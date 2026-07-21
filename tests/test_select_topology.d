@@ -153,17 +153,22 @@ unittest { // connect from face 3 → all 6 faces
 // select.loop (edges)
 // ---------------------------------------------------------------------------
 
-unittest { // loop from edge 0 — walks both adjacent faces' perimeters
+unittest { // loop from edge 0 — reference-validated: face 0's own perimeter
     resetCube();
     setSelection("edges", [0]);
     runCmd("select.loop");
-    // Edge 0 is shared between face 0 (back) and face 2 (left). The loop
-    // walker yields each adjacent face's perimeter:
-    //   back  perimeter [0, 3, 2, 1]
-    //   left  perimeter [0, 8, 7, 9]
-    // Union: 7 edges.
+    // Edge 0 (0,3) is shared between face 0 (back, [0,3,2,1]) and face 2
+    // (left, [0,4,7,3]); every cube vertex is an interior valence-3 corner,
+    // so BOTH walk directions dead-end at the seed (odd valence + interior
+    // edge) and the shared fallback (rules 4/6) fires: the seed's own
+    // largest-vertex-count incident face (both are plain quads here, tie ->
+    // first-found -> face 0) — its 4-edge perimeter [0,3,2,1] = edges
+    // 0,1,2,3. This is a reference-captured expectation (frozen fixture
+    // `cube_corner_edge0` in tests/fixtures/select_loop_parity.json,
+    // task 0457 Phase-3 hand-off), not the legacy 7-edge two-face-union
+    // assumption this test carried before that capture existed.
     assertSet(selected("selectedEdges"),
-        [0, 1, 2, 3, 7, 8, 9], "loop edge 0");
+        [0, 1, 2, 3], "loop edge 0");
 }
 
 // ---------------------------------------------------------------------------
