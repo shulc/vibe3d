@@ -8683,7 +8683,14 @@ struct Mesh {
             // function's own doc comment above for the full rule.
             uint[] splitToNext, splitToPrev;
             bool[] isRidgeCorner;
-            if (square) {
+            // 0458 Phase-3 hardening (reviewer SHOULD-FIX): a zero effective
+            // inset (inset=0 with shift>0 — reachable via the square UI toggle)
+            // gives splitStep=0, collapsing the split points onto the corner →
+            // degenerate zero-area caps + duplicate-vertex n-gons. Gate the WHOLE
+            // square path on a non-degenerate inset so it falls back to the plain
+            // (square=false) ring treatment there.
+            immutable bool doSquare = square && effInset > 1e-6f;
+            if (doSquare) {
                 splitToNext   = new uint[](Nc);
                 splitToPrev   = new uint[](Nc);
                 isRidgeCorner = new bool[](Nc);
@@ -8715,7 +8722,7 @@ struct Mesh {
                     immutable ulong key = edgeKeyOrdered(origFaceVerts[i], origFaceVerts[next]);
                     if (internalEdgeSet.get(key, false)) continue; // internal — dissolves, no bridge
                 }
-                if (square) {
+                if (doSquare) {
                     // Outermost (t=0) bridge is replaced by the square
                     // edge-panel; deeper segment rings (t=1..Nseg-1) stay
                     // plain, unchanged (Q3 finding — square wraps only the
@@ -8734,7 +8741,7 @@ struct Mesh {
                                  ringVerts[t+1][next], ringVerts[t+1][i]]);
                 }
             }
-            if (square) {
+            if (doSquare) {
                 // Quad cap per STANDALONE corner only — a ridge corner's
                 // neighbourhood is already closed by the two edge-panels
                 // above meeting at the original vertex (Q4 finding).
@@ -8749,7 +8756,7 @@ struct Mesh {
             ++processed;
         }
         if (processed == 0) return 0;
-        if (square) {
+        if (square && squareSplitAt.length > 0) {
             // Splice each surviving split point into the UNSELECTED face
             // sharing that original edge, so the mesh stays watertight (no
             // T-junction) — task 0458 Phase 3, findings.md §3. Only
@@ -17407,6 +17414,30 @@ unittest { // bevelFacesByMask: square=false is byte-identical to the
     assert(m0.vertices.length == 12, "square=false: 8 orig + 4 final — no split points, no retained-original-plus-final duplication");
     foreach (i; 0 .. m0.vertices.length)
         assert((m0.vertices[i] - m1.vertices[i]).length < 1e-9f, "square=false must be byte-identical regardless of how it's spelled");
+}
+
+unittest { // bevelFacesByMask: 0458 Phase-3 hardening — square with a ZERO
+           // effective inset (inset=0, shift>0, square=true — reachable via the
+           // square UI toggle) must NOT produce degenerate zero-area caps or
+           // duplicate verts. The `doSquare = square && effInset>eps` gate makes
+           // it fall back to the plain (square=false) shift bevel.
+    auto m0 = makeCube();
+    auto m1 = makeCube();
+    bool[] mask; mask.length = m0.faces.length; mask[] = false;
+    mask[4] = true;
+    m0.bevelFacesByMask(mask, 0.0f, 0.15f, false, 0, true);  // inset=0, square ON
+    m1.bevelFacesByMask(mask, 0.0f, 0.15f, false, 0, false); // inset=0, square OFF
+    assert(m0.vertices.length == m1.vertices.length,
+        "square+inset=0 must fall back to the plain bevel — no extra split/cap verts");
+    assert(m0.faces.length == m1.faces.length,
+        "square+inset=0 must fall back to the plain bevel — no extra cap/panel faces");
+    foreach (i; 0 .. m0.vertices.length)
+        assert((m0.vertices[i] - m1.vertices[i]).length < 1e-9f,
+            "square+inset=0 must be byte-identical to square=false (doSquare gate)");
+    foreach (i; 0 .. m0.vertices.length)
+        foreach (j; i + 1 .. m0.vertices.length)
+            assert((m0.vertices[i] - m0.vertices[j]).length > 1e-7f,
+                "square+inset=0 must not introduce coincident/duplicate vertices");
 }
 
 unittest { // bevelFacesByMask: group=false is byte-identical to the pre-0391
