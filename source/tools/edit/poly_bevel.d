@@ -72,7 +72,7 @@ private:
     enum int PART_SHIFT = 0;
     enum int PART_INSET = 1;
     int   dragPart = -1;
-    int   dragLastMX, dragLastMY;
+    int   dragStartMX, dragStartMY;
     float dragBaseShift, dragBaseInset;
 
     Arrow      shiftArrow;
@@ -223,7 +223,7 @@ public:
         // exactly this reason (xfrm_transform.d onMouseButtonDown).
         int part = toolHandles.test(e.x, e.y, cachedVp);
 
-        dragLastMX    = e.x; dragLastMY = e.y;
+        dragStartMX   = e.x; dragStartMY = e.y;
         dragBaseShift = shift_;
         dragBaseInset = inset_;
 
@@ -247,8 +247,18 @@ public:
         if (!active || dragPart < 0 || !gizmoValid) return false;
         Vec3 axis = (dragPart == PART_SHIFT) ? shiftAxis : insetAxis;
         bool skip;
-        Vec3 delta = screenAxisDelta(e.x, e.y, dragLastMX, dragLastMY,
-                                     anchor, axis, cachedVp, skip);
+        // TOTAL delta from the mouse-DOWN position (dragStart, fixed), NOT the
+        // last motion — a smooth multi-event drag must ACCUMULATE, not jump to
+        // each SDL motion's tiny increment (otherwise the value depends on how
+        // SDL split one physical drag into events → visible jumping). This is
+        // the exact bug edge.bevel had and fixed; mirror its onMouseMotion.
+        //
+        // Project against the FIXED `baseAnchor`, NOT the live `anchor` (which
+        // draw() slides along the normal by the current shift): a moving
+        // projection reference drifts the screen→world mapping mid-drag, so the
+        // same screen pixel would map to a different value each event.
+        Vec3 delta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
+                                     baseAnchor, axis, cachedVp, skip);
         if (!skip) {
             float d = dot(delta, axis);
             if (dragPart == PART_SHIFT) shift_ = dragBaseShift + d;
@@ -256,8 +266,6 @@ public:
             if (inset_ < 0.0f) inset_ = 0.0f;
             rebuildPreview();
         }
-        dragLastMX = e.x;
-        dragLastMY = e.y;
         return true;
     }
 

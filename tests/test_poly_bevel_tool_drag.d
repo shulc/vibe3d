@@ -2,18 +2,23 @@
 //
 // The poly.bevel TOOL's interactive mouse drag had ZERO test coverage — every
 // poly-bevel fixture drives the mesh.bevel COMMAND / applyHeadless, never the
-// tool's Shift/Inset drag handles. That gap let a hit-test regression ship
-// (a stale queryMouse made the handles unclickable; fixed by hit-testing at
-// the click event's own e.x/e.y). This drives the published handles directly:
-// press each, drag, and assert it captures, the param grows, and the mesh
-// bevels. NOTE: EventPlayer freshens the mouse position per injected event, so
-// playback cannot reproduce the real-GUI queryMouse staleness itself — this is
-// a "the interactive drag works" guard, not a queryMouse-vs-e.x/e.y unit test.
+// tool's Shift/Inset drag handles. That gap let TWO regressions ship:
+//   1. a stale queryMouse made the handles unclickable (fixed: hit-test at the
+//      click event's own e.x/e.y);
+//   2. onMouseMotion measured the delta from the LAST motion, not the mouse-
+//      DOWN — so a smooth multi-event drag jumped/jittered per SDL event
+//      instead of accumulating the total (fixed: measure from dragStart). This
+//      is the same last-event/base bug edge.bevel had and fixed.
+// NOTE: EventPlayer freshens the mouse position per injected event, so playback
+// cannot reproduce the real-GUI queryMouse staleness of (1); the (2) assertions
+// (monotonic multi-batch growth + backward-restores-baseline + one-step ==
+// three-step) DO catch the accumulation bug directly.
 
 import std.net.curl;
 import std.json;
 import std.conv : to;
 import std.format : format;
+import std.math : fabs;
 import core.thread : Thread;
 import core.time : msecs;
 
@@ -65,45 +70,79 @@ void selectFaceZero() {
     assert(sel["status"].str == "ok", "face select failed");
 }
 
-// Shift handle: a DIRECT press (no hover) must capture, grow shift, and bevel.
+double shiftNow() { return getJson("/api/tool/state")["shift"].floating; }
+
+// Shift handle: direct press captures; a SMOOTH multi-batch drag accumulates the
+// TOTAL delta (not per-event); backward restores baseline; one-step == three-step.
 unittest {
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
-
     cmd("tool.set poly.bevel on");
     settle(); // draw() must publish the handle bank + compute the gizmo frame.
 
-    // The handles must be published + visible (they weren't introspectable at all
-    // before this task — no toolHandlesJson override).
     auto handles = getJson("/api/tool/handles")["handles"];
     assert(handles["parts"].array.length == 2, "poly.bevel must publish 2 handles (Shift + Inset)");
 
     int sx, sy;
     handleScreen(0, sx, sy);
+    enum int DX = -60, DY = -105; // up-left along the shift (normal) screen axis
+
     play(button("SDL_MOUSEBUTTONDOWN", sx, sy));
     assert(getJson("/api/tool/state")["dragPart"].integer == 0,
         "Shift handle did not capture on a direct mouse-down — hit-test regression");
 
-    play(motion(sx - 40, sy - 70, 1)); // up-left along the shift (normal) axis
-    auto st = getJson("/api/tool/state");
-    assert(st["shift"].floating > 1e-4, "dragging the Shift handle did not grow shift");
-    assert(st["built"].type == JSONType.true_, "non-zero shift did not build a live preview");
-    auto m = getJson("/api/model");
-    assert(m["vertices"].array.length > 8 && m["faces"].array.length > 6,
-        "Shift drag did not bevel the mesh (8v/6f cube unchanged)");
+    play(motion(sx, sy, 1));
+    assert(shiftNow() < 1e-6, "zero motion changed shift");
 
-    play(button("SDL_MOUSEBUTTONUP", sx - 40, sy - 70));
+    // Three SEPARATE motion batches (defeats SDL coalescing). With the old
+    // last-event delta this jumps per event instead of growing monotonically.
+    double prev = 0;
+    foreach (k; [1, 2, 3]) {
+        play(motion(sx + DX * k / 3, sy + DY * k / 3, 1));
+        double s = shiftNow();
+        assert(s > prev + 1e-5, "shift not monotonic at batch " ~ k.to!string
+            ~ " (per-event jump bug): " ~ s.to!string);
+        assert(getJson("/api/tool/state")["built"].type == JSONType.true_,
+            "non-zero shift did not build a live preview");
+        prev = s;
+    }
+    double multiShift = prev;
+    string multiVerts = getJson("/api/model")["vertices"].toString;
+    assert(getJson("/api/model")["vertices"].array.length > 8, "shift drag did not bevel the mesh");
+
+    // Backward to the press pixel: a total-delta drag returns to baseline.
+    play(motion(sx, sy, 1));
+    assert(shiftNow() < 1e-5, "backward drag to the press pixel did not restore the shift baseline");
+    // Forward to the endpoint again: same total.
+    play(motion(sx + DX, sy + DY, 1));
+    assert(fabs(shiftNow() - multiShift) < 1e-5, "returning to the endpoint changed shift");
+
+    play(button("SDL_MOUSEBUTTONUP", sx + DX, sy + DY));
     assert(getJson("/api/tool/state")["dragPart"].integer == -1, "mouse-up kept Shift captured");
-
     cmd("tool.set poly.bevel off");
     auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
     assert(undo["status"].str == "ok", "undo failed");
     assert(getJson("/api/model")["vertexCount"].integer == 8, "one undo did not restore the cube");
+
+    // One-step drag to the same endpoint == the three-step drag (accumulation).
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+    handleScreen(0, sx, sy);
+    play(button("SDL_MOUSEBUTTONDOWN", sx, sy));
+    play(motion(sx + DX, sy + DY, 1));
+    assert(fabs(shiftNow() - multiShift) < 1e-4,
+        "one-step vs three-step drag shift differ (accumulation bug): "
+        ~ shiftNow().to!string ~ " vs " ~ multiShift.to!string);
+    assert(getJson("/api/model")["vertices"].toString == multiVerts,
+        "one-step vs three-step drag geometry differ");
+    play(button("SDL_MOUSEBUTTONUP", sx + DX, sy + DY));
+    cmd("tool.set poly.bevel off");
 }
 
-// Inset handle: a DIRECT press must capture on its own part (proves both
-// handles are independently hit-testable, not just the first-registered).
+// Inset handle: a DIRECT press captures on its own part (both handles are
+// independently hit-testable, not just the first-registered).
 unittest {
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
     assert(reset["status"].str == "ok", "cube reset failed");
