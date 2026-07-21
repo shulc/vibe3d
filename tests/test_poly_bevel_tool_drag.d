@@ -77,6 +77,14 @@ void selectFaceZero() {
 
 double shiftNow() { return getJson("/api/tool/state")["shift"].floating; }
 
+// True while poly.bevel is the active tool (its toolStateJson reports "tool").
+// After a tool DROP, /api/tool/state is "{}" (app.d: activeTool is null → "{}").
+bool polyBevelActive() {
+    auto st = getJson("/api/tool/state");
+    return st.type == JSONType.object && ("tool" in st) !is null
+        && st["tool"].str == "polyBevel";
+}
+
 // Shift handle: direct press captures; a SMOOTH multi-batch drag accumulates the
 // TOTAL delta (not per-event); backward restores baseline; one-step == three-step.
 unittest {
@@ -352,6 +360,46 @@ unittest {
     post(BASE ~ "/api/undo", "");
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "second undo did not restore the cube (each apply is its own undo step)");
+}
+
+// Post-mode finalize (task 0463): firing a Model (scene-mutating) command —
+// Delete — while poly.bevel is armed with a live edit DROPS the tool first,
+// committing the pending bevel, then runs the command. Mirrors the reference
+// editor's LXfCMD_MODEL post-mode end-callback (a hard drop, not a re-arm).
+unittest {
+    enum int EX = 400, EY = 450;
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+
+    // Build a live bevel (free drag up → shift), release, leave it uncommitted.
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX, EY - 100, 1));
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 100));
+    assert(polyBevelActive(), "poly.bevel should be active before Delete");
+    assert(getJson("/api/tool/state")["built"].type == JSONType.true_,
+        "expected a live uncommitted bevel before Delete");
+    long vBevel = getJson("/api/model")["vertexCount"].integer;
+    assert(vBevel > 8, "bevel drag did not add geometry");
+
+    // Delete (a Model command) → drop the tool (committing the bevel), then delete.
+    cmd("mesh.delete");
+
+    assert(!polyBevelActive(),
+        "Model command (mesh.delete) must DROP the armed tool — /api/tool/state still reports poly.bevel");
+    assert(getJson("/api/model")["vertexCount"].integer > 8,
+        "the pending bevel must be COMMITTED (not reverted) when the tool drops on Delete");
+
+    // The bevel commit and the delete are two discrete undo steps: undoing the
+    // delete restores the committed beveled mesh; undoing again restores the cube.
+    post(BASE ~ "/api/undo", "");
+    assert(getJson("/api/model")["vertexCount"].integer == vBevel,
+        "first undo (delete) did not restore the committed beveled mesh");
+    post(BASE ~ "/api/undo", "");
+    assert(getJson("/api/model")["vertexCount"].integer == 8,
+        "second undo (bevel) did not restore the cube — bevel was not committed as its own step");
 }
 
 // Combined gesture (reference-exact): a Shift+LMB+DRAG on a standing edit commits it

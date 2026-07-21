@@ -2368,6 +2368,48 @@ void main(string[] args) {
     // Equivalence per call site is documented at each call below.
     enum RecordMode { Record, Coalescing }
     void applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
+        // Post-mode finalize (task 0463, SDK-derived — LXfCMD_MODEL +
+        // ILxCmdSysListener post-mode lifecycle; see
+        // toolcards/_framework/shift_apply_rearm.md "Command-fired post-mode
+        // finalize"). A Model (scene-mutating) command executed while an
+        // interactive tool is armed DROPS the tool FIRST — committing any
+        // pending live edit via deactivate() — then runs. In the reference
+        // editor a MODEL-class command triggers the armed post-mode session's
+        // registered end-callback, which for an interactive mesh tool tears the
+        // toolpipe down (a hard DROP, not the Shift+click commit-and-rearm); it
+        // fires regardless of whether the command's target relates to the
+        // tool's own geometry (measured — deleting an unrelated face still
+        // drops the armed bevel). Without this, Delete-while-bevelling ran on
+        // the live-preview mesh, leaving the tool's session desynced.
+        //
+        // The single chokepoint: both runCommand (keyboard / UI) and the HTTP
+        // /api/command dispatch funnel here. This targets INCREMENTAL mesh-edit
+        // commands (delete / subdivide / bevel / extrude …) that build on the
+        // current mesh. Excluded families keep the tool (or manage it
+        // themselves):
+        //   * tool.* — the tool's OWN commands (tool.attr / tool.set are
+        //     SideEffect anyway; tool.doApply is Model but is the tool applying
+        //     itself). They CONTINUE the session, never end it.
+        //   * scene.* / file.* — scene-REPLACE / lifecycle commands
+        //     (scene.reset = file.new, file.load, scene.loadMesh). They DISCARD
+        //     the armed edit via their own dropArmedPreview()+setActiveTool(null)
+        //     teardown; a commit-and-drop here would land a bogus edit entry
+        //     ahead of the reset (test_scene_reset_armed_tool).
+        //   * selection / edit-mode commands are UiState (not Model), already
+        //     skipped by the flag.
+        // Never fires during a refire bracket (those carry only SideEffect
+        // tool.attr); after the drop activeTool is null so the tool's own
+        // lifecycle-undo emit cannot re-enter this branch.
+        if (activeTool !is null && (cmd.cmdFlags() & CmdFlags.Model)) {
+            import std.string : startsWith;
+            string cn = cmd.name();
+            if (!cn.startsWith("tool.")
+                && !cn.startsWith("scene.")
+                && !cn.startsWith("file.")) {
+                setActiveTool(null);
+                activeToolId = "";
+            }
+        }
         if (history.refireActive) {
             if (!history.fire(cmd) && throwMsg !is null)
                 throw new Exception(throwMsg);
