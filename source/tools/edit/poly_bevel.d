@@ -264,10 +264,8 @@ public:
                 freeLockAxis = (abs(dy) >= abs(dx)) ? PART_SHIFT : PART_INSET;
             if (!freeCtrl || freeLockAxis == PART_SHIFT)
                 shift_ = dragBaseShift + cast(float)dy * freeWorldPerPixel;
-            if (!freeCtrl || freeLockAxis == PART_INSET) {
-                inset_ = dragBaseInset + cast(float)dx * freeWorldPerPixel;
-                if (inset_ < 0.0f) inset_ = 0.0f;
-            }
+            if (!freeCtrl || freeLockAxis == PART_INSET)
+                inset_ = dragBaseInset + cast(float)dx * freeWorldPerPixel; // may go < 0 (outset)
             rebuildPreview();
             return true;
         }
@@ -292,8 +290,7 @@ public:
             // drag TOWARD the center (−insetAxis) shrinks the cap → inset grows,
             // so its sign is inverted (scale-handle feel: pull the box inward).
             if (dragPart == PART_SHIFT) shift_ = dragBaseShift + d;
-            else                        inset_ = dragBaseInset - d;
-            if (inset_ < 0.0f) inset_ = 0.0f;
+            else                        inset_ = dragBaseInset - d; // may go < 0 (outset)
             rebuildPreview();
         }
         return true;

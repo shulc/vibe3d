@@ -227,7 +227,11 @@ unittest {
     st = getJson("/api/tool/state");
     assert(st["inset"].floating > 1e-3, "horizontal (right) free drag did not grow inset");
     assert(fabs(st["shift"].floating) < 1e-6, "a purely horizontal free drag changed shift");
-    play(button("SDL_MOUSEBUTTONUP", EX + 100, EY));
+    // LEFT of the press point → NEGATIVE inset (outset): must NOT clamp at 0.
+    play(motion(EX - 100, EY, 1));
+    assert(getJson("/api/tool/state")["inset"].floating < -1e-3,
+        "left free drag must let inset go negative (outset) — no >=0 clamp");
+    play(button("SDL_MOUSEBUTTONUP", EX - 100, EY));
     cmd("tool.set poly.bevel off");
 }
 
