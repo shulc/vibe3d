@@ -19,6 +19,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 alias PolyBevelEditFactory = MeshSessionEdit delegate();
 
@@ -169,6 +170,26 @@ public:
     }
     override void evaluate() {}
 
+    // Read-only test/introspection seams (mirror edge.bevel). The handle
+    // registry stays the hit-testing authority; these expose its drawn state
+    // + the tool's live params to /api/tool/handles + /api/tool/state.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]     = JSONValue("polyBevel");
+        root["shift"]    = JSONValue(shift_);
+        root["inset"]    = JSONValue(inset_);
+        root["group"]    = JSONValue(group_);
+        root["segments"] = JSONValue(segments_);
+        root["square"]   = JSONValue(square_);
+        root["built"]    = JSONValue(built);
+        root["dragPart"] = JSONValue(dragPart);
+        return root;
+    }
+
     override bool applyHeadless() {
         if (*editMode != EditMode.Polygons) return false;
         if (built && before.filled) {
@@ -193,9 +214,14 @@ public:
         if (*editMode != EditMode.Polygons) return false;
         if (!gizmoValid) return false;
 
-        int hmx, hmy;
-        queryMouse(hmx, hmy);
-        int part = toolHandles.test(hmx, hmy, cachedVp);
+        // Hit-test at the CLICK EVENT's own coords (e.x,e.y) — the exact
+        // position of this click — NOT the queryMouse() global override.
+        // The override can be stale/stuck at a prior position (app.d keeps it
+        // "in lockstep" with motion but a discrete click can still read a
+        // stale value → the hit-test misses and the drag silently does
+        // nothing). The proven transform gizmo hit-tests with e.x,e.y for
+        // exactly this reason (xfrm_transform.d onMouseButtonDown).
+        int part = toolHandles.test(e.x, e.y, cachedVp);
 
         dragLastMX    = e.x; dragLastMY = e.y;
         dragBaseShift = shift_;
