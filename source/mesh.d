@@ -19563,6 +19563,160 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L3
     assertBevelManifoldCleanOpen(m, "mixed K4fe w0.10 L3 (task 0456 owner)", 2);
 }
 
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L0
+           // OWNER MESH (task 0456 flat-cap freeze): once-subdivided cube, N=4 hub
+           // at an interior cube-edge midpoint, Round Level 0 (flat chamfer, no
+           // rounding). Transcribed FROM the reference capture dump
+           // edge_bevel_mixed_k4fe_w0p05_L0 — NOT our kernel's output. L0 has no
+           // free-end duplicate quirk (35v/31f, 0 coincident); a clean parity
+           // freeze of the N-way flat-cap topology the rounding builds on.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.05f, 0);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0.0f, 0.0f, -0.5f), Vec3(-0.5f, 0.0f, -0.5f), Vec3(0.0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.0f, -0.5f), Vec3(0.0f, -0.5f, -0.5f), Vec3(0.0f, 0.0f, 0.5f),
+            Vec3(0.0f, -0.5f, 0.5f), Vec3(0.5f, 0.0f, 0.5f), Vec3(0.0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0.0f, 0.5f), Vec3(0.0f, -0.5f, 0.0f), Vec3(0.5f, -0.5f, 0.0f),
+            Vec3(-0.5f, -0.5f, 0.0f), Vec3(-0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.0f, 0.0f),
+            Vec3(0.44999998807907104f, 0.5f, -0.5f), Vec3(0.5f, 0.44999998807907104f, -0.5f), Vec3(0.5f, 0.44999998807907104f, 0.5f),
+            Vec3(0.44999998807907104f, 0.5f, 0.5f), Vec3(-0.05000000074505806f, 0.5f, 0.0f), Vec3(0.0f, 0.5f, 0.05000000074505806f),
+            Vec3(0.0f, 0.5f, -0.05000000074505806f), Vec3(0.5f, 0.44999998807907104f, 0.05000000074505806f), Vec3(0.5f, 0.44999998807907104f, -0.05000000074505806f),
+            Vec3(0.44999998807907104f, 0.5f, -0.05000000074505806f), Vec3(0.44999998807907104f, 0.5f, 0.05000000074505806f), Vec3(0.5f, 0.0f, -0.05000000074505806f),
+            Vec3(0.5f, 0.0f, 0.05000000074505806f), Vec3(0.5f, -0.05000000074505806f, 0.0f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 7u, 6u, 10u], [2u, 8u, 6u, 7u], [17u, 34u, 33u, 13u, 4u],
+            [1u, 10u, 6u, 9u], [3u, 12u, 11u, 15u], [4u, 13u, 11u, 12u],
+            [13u, 33u, 28u, 23u], [5u, 15u, 11u, 14u], [0u, 10u, 16u, 18u],
+            [1u, 17u, 16u, 10u], [4u, 12u, 16u, 17u], [3u, 18u, 16u, 12u],
+            [29u, 32u, 9u, 22u], [9u, 32u, 34u, 17u, 1u], [8u, 27u, 30u, 21u],
+            [31u, 26u, 14u, 24u], [0u, 18u, 20u, 7u], [3u, 15u, 20u, 18u],
+            [5u, 19u, 20u, 15u], [2u, 7u, 20u, 19u], [14u, 26u, 25u, 19u, 5u],
+            [19u, 25u, 27u, 8u, 2u], [24u, 14u, 11u, 13u, 23u], [22u, 9u, 6u, 8u, 21u],
+            [31u, 24u, 23u, 28u], [26u, 31u, 30u, 27u], [21u, 30u, 29u, 22u],
+            [32u, 29u, 28u, 33u], [25u, 26u, 27u], [28u, 29u, 30u, 31u],
+            [32u, 33u, 34u],
+        ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "mixed K4fe w0.05 L0 (task 0456 flat-cap freeze)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.05 L0 (task 0456 flat-cap freeze)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L0
+           // OWNER MESH (task 0456 flat-cap freeze): as w0.05 L0 but width 0.10.
+           // Transcribed FROM the reference capture dump edge_bevel_mixed_k4fe_w0p10_L0
+           // — NOT our kernel's output. 35v/31f, 0 coincident.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.10f, 0);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0.0f, 0.0f, -0.5f), Vec3(-0.5f, 0.0f, -0.5f), Vec3(0.0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.0f, -0.5f), Vec3(0.0f, -0.5f, -0.5f), Vec3(0.0f, 0.0f, 0.5f),
+            Vec3(0.0f, -0.5f, 0.5f), Vec3(0.5f, 0.0f, 0.5f), Vec3(0.0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0.0f, 0.5f), Vec3(0.0f, -0.5f, 0.0f), Vec3(0.5f, -0.5f, 0.0f),
+            Vec3(-0.5f, -0.5f, 0.0f), Vec3(-0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.0f, 0.0f),
+            Vec3(0.4000000059604645f, 0.5f, -0.5f), Vec3(0.5f, 0.4000000059604645f, -0.5f), Vec3(0.5f, 0.4000000059604645f, 0.5f),
+            Vec3(0.4000000059604645f, 0.5f, 0.5f), Vec3(-0.10000000149011612f, 0.5f, 0.0f), Vec3(0.0f, 0.5f, 0.10000000149011612f),
+            Vec3(0.0f, 0.5f, -0.10000000149011612f), Vec3(0.5f, 0.4000000059604645f, 0.10000000149011612f), Vec3(0.5f, 0.4000000059604645f, -0.10000000149011612f),
+            Vec3(0.4000000059604645f, 0.5f, -0.10000000149011612f), Vec3(0.4000000059604645f, 0.5f, 0.10000000149011612f), Vec3(0.5f, 0.0f, -0.10000000149011612f),
+            Vec3(0.5f, 0.0f, 0.10000000149011612f), Vec3(0.5f, -0.10000000149011612f, 0.0f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [0u, 7u, 6u, 10u], [2u, 8u, 6u, 7u], [17u, 34u, 33u, 13u, 4u],
+            [1u, 10u, 6u, 9u], [3u, 12u, 11u, 15u], [4u, 13u, 11u, 12u],
+            [13u, 33u, 28u, 23u], [5u, 15u, 11u, 14u], [0u, 10u, 16u, 18u],
+            [1u, 17u, 16u, 10u], [4u, 12u, 16u, 17u], [3u, 18u, 16u, 12u],
+            [29u, 32u, 9u, 22u], [9u, 32u, 34u, 17u, 1u], [8u, 27u, 30u, 21u],
+            [31u, 26u, 14u, 24u], [0u, 18u, 20u, 7u], [3u, 15u, 20u, 18u],
+            [5u, 19u, 20u, 15u], [2u, 7u, 20u, 19u], [14u, 26u, 25u, 19u, 5u],
+            [19u, 25u, 27u, 8u, 2u], [24u, 14u, 11u, 13u, 23u], [22u, 9u, 6u, 8u, 21u],
+            [31u, 24u, 23u, 28u], [26u, 31u, 30u, 27u], [21u, 30u, 29u, 22u],
+            [32u, 29u, 28u, 33u], [25u, 26u, 27u], [28u, 29u, 30u, 31u],
+            [32u, 33u, 34u],
+        ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "mixed K4fe w0.10 L0 (task 0456 flat-cap freeze)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.10 L0 (task 0456 flat-cap freeze)", 2);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L0
+           // Flat-cap freeze (task 0456): the asymmetric-K4 tripod-plus hub at
+           // Round Level 0 (no rounding). Transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_asym1_level0 — NOT our kernel's output.
+           // Complements the symmetric-K4 L0 freeze (task 0443) with a genuinely
+           // asymmetric flat-cap case (12v/9f).
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.6f,0,1.3f),
+        Vec3(0.3f,1.9f,1.6f),
+        Vec3(-1.4f,0.5f,1.0f),
+        Vec3(0,-1.2f,1.9f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 0);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.11276852339506149f, 0.17703141272068024f, 0.2041655331850052f), Vec3(-0.12384378165006638f, -0.04040201008319855f, 0.22246038913726807f), Vec3(0.1376064270734787f, -0.09467793256044388f, 0.2617119252681732f),
+            Vec3(0.15481653809547424f, 0.13121001422405243f, 0.21944820880889893f), Vec3(1.5160075426101685f, 0.12275818735361099f, 1.3193827867507935f), Vec3(1.4850609302520752f, -0.08620436489582062f, 1.3431020975112915f),
+            Vec3(0.18828248977661133f, 1.8079973459243774f, 1.5605703592300415f), Vec3(0.383992463350296f, 1.777241826057434f, 1.5806171894073486f), Vec3(-1.3117303848266602f, 0.392815500497818f, 1.0567446947097778f),
+            Vec3(-1.2882823944091797f, 0.5920026898384094f, 1.0394296646118164f), Vec3(0.11493915319442749f, -1.1137956380844116f, 1.8568978309631348f), Vec3(-0.08826958388090134f, -1.0928155183792114f, 1.8432552814483643f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 2u, 5u], [3u, 7u, 6u, 0u],
+            [0u, 9u, 8u, 1u], [1u, 11u, 10u, 2u], [0u, 1u, 2u, 3u],
+        ];
+    assertFacesMatchByPosition(m, wantVerts, wantFaces, "K4 junction (asymmetric) L0 (task 0456 flat-cap freeze)");
+    assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L0 (task 0456 flat-cap freeze)", 1);
+}
+
 unittest { // bevelEdgesByMask: MAX_JUNCTION_VALENCE DoS backstop (task 0456).
            // A rounded N-way hub emits ~valence·(2^L)² faces, so a crafted
            // high-valence full hub is an attacker-scalable allocation vector.
