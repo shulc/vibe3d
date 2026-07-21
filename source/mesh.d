@@ -11760,6 +11760,274 @@ struct Mesh {
         return res;
     }
 
+    // -----------------------------------------------------------------------
+    // select.loop (edge) — recovered-algorithm helper (task 0457)
+    // -----------------------------------------------------------------------
+    // The bare "select.loop" edge command reproduces the reference tool's
+    // recovered behavior, which is a strictly richer superset of the plain
+    // quad edge-strip walk above (`walkEdgeLoop`): for a REGULAR seed edge
+    // (both incident faces are quads, and neither hop lands on a valence
+    // irregularity or a boundary-adjacent vertex) it degenerates to exactly
+    // that walk run from each incident face and combined — so the two are
+    // deliberately layered rather than merged: `walkEdgeLoop` stays untouched
+    // for its other ordered-walk consumers (`select.more`, `select.between`,
+    // support-loop candidate generation), and `selectLoopEdges` composes it
+    // with the extra branches below. Provenance/validation:
+    // `toolcards/select.loop/findings.md` (private).
+
+    /// True if edge `ei` sits on an open boundary of the CURRENT face set —
+    /// exactly one incident face. Purely topological (face-count), matching
+    /// the recovered border predicate; deliberately NOT a material/UV-seam
+    /// classifier (a distinct, unrelated family ruled out during recovery).
+    bool isEdgeBorder(uint ei) const {
+        uint n = 0;
+        foreach (fi; facesAroundEdge(ei)) { ++n; if (n > 1) break; }
+        return n == 1;
+    }
+
+    /// True if vertex `vi` touches at least one border edge (`isEdgeBorder`).
+    bool isVertexBorder(uint vi) const {
+        foreach (ei; edgesAroundVertex(vi))
+            if (isEdgeBorder(ei)) return true;
+        return false;
+    }
+
+    /// Count of border edges (`isEdgeBorder`) incident to vertex `vi`.
+    uint borderEdgeCountAtVertex(uint vi) const {
+        uint n = 0;
+        foreach (ei; edgesAroundVertex(vi))
+            if (isEdgeBorder(ei)) ++n;
+        return n;
+    }
+
+    /// Return the OTHER edge of triangle `tri` that touches vertex `pivot`,
+    /// excluding the edge with key `excludeKey` (the one just arrived on /
+    /// the seed) — a triangle vertex touches exactly 2 of the triangle's 3
+    /// edges, so this is unambiguous. Returns `~0u` if not found (defensive;
+    /// shouldn't happen for a well-formed triangle touching `pivot`).
+    private uint triangleOtherEdgeAt(const(uint)[] tri, uint pivot, ulong excludeKey) const {
+        foreach (j; 0 .. 3) {
+            uint va = tri[j], vb = tri[(j + 1) % 3];
+            if (va != pivot && vb != pivot) continue;
+            ulong k = edgeKey(va, vb);
+            if (k == excludeKey) continue;
+            uint ei = edgeIndexByKey(k);
+            if (ei != ~0u) return ei;
+        }
+        return ~0u;
+    }
+
+    /// One direction of the recovered edge-loop walk: `seedEdge` combined
+    /// with one of its (up to two) incident faces, `startFace`. Returns the
+    /// ADDITIONAL edges this direction contributes (never includes the seed
+    /// itself; empty means "this direction dead-ends at the seed").
+    ///
+    /// Gates mirror the recovered per-hop dispatch (findings.md
+    /// `SelLoop_GetNextEdge`), evaluated once using the seed's own hop pivot:
+    ///   1. odd valence >= 5 at the pivot vertex while the seed is an
+    ///      interior edge (2 incident faces) dead-ends this direction
+    ///      outright — the through-the-pole-center direction of a
+    ///      valence-5 spoke seed. The >=5 floor (not "any odd valence") is
+    ///      a calibration the 11 captures don't pin directly but the cube
+    ///      regression invariant does: a valence-3 pivot is the ordinary
+    ///      closed corner of ANY box-like quad mesh (3 quads meeting in a
+    ///      complete fan, no boundary) — the walk only ever needs 2 local
+    ///      neighbours of the pivot within whichever single face it is
+    ///      currently in, which a valence-3 corner always has, same as a
+    ///      valence-4 one — so gating it off would break ordinary cube
+    ///      loops (`tests/test_select_topology.d`'s cube edge-0 case).
+    ///      Every odd-valence pivot actually exercised by the 11 captures
+    ///      is either >=5 (the pole centre) or independently border-caught
+    ///      by gate 3 (the tube-rail cases' valence-3 rail-end vertex), so
+    ///      this floor is consistent with all validated evidence.
+    ///   2. an even (>=4) valence pivot touching more than 2 border edges
+    ///      also dead-ends (spec-complete; not exercised by the 11 cases).
+    ///   3. a non-border seed whose pivot vertex is itself boundary-adjacent
+    ///      dead-ends too — the rim-vertex direction of the same pole case.
+    /// Past the gates, this steps quad-to-quad exactly like `walkEdgeLoop`
+    /// (kept as a separate stepper, not a shared call, precisely so that
+    /// helper stays byte-identical for its other ordered-walk consumers) —
+    /// but reacts differently at a crossing that lands on an irregular face,
+    /// wherever along the chain it occurs (rule 5 is not always the very
+    /// first face touching the seed — a triangle can sit several quads in):
+    ///   * a triangle succeeds exactly that ONE hop (the triangle's other
+    ///     edge touching the current pivot) and stops — no further chaining,
+    ///     no fallback.
+    ///   * an n-gon (>=5 sides) fails outright from that point — whatever
+    ///     was accumulated before it stands as this direction's result.
+    int[] selectLoopDirectionEdges(uint seedEdge, uint startFace) const {
+        if (startFace >= faces.length) return [];
+        const sfv0 = faces[startFace];
+        if (sfv0.length < 3) return [];
+        int si = findEdgeInFace(startFace, edgeKeyOf(seedEdge));
+        if (si < 0) return [];
+        uint pivot0 = sfv0[(cast(uint)si + 1) % sfv0.length];
+
+        uint vcount = vertexValence(pivot0);
+        if (vcount >= 5 && (vcount & 1) != 0) return [];                 // gate 1
+        if (vcount >= 4 && borderEdgeCountAtVertex(pivot0) > 2) return [];// gate 2
+        if (isVertexBorder(pivot0)) return [];                          // gate 3
+
+        if (sfv0.length == 3) {
+            uint ei = triangleOtherEdgeAt(sfv0, pivot0, edgeKeyOf(seedEdge));
+            return ei != ~0u ? [cast(int)ei] : [];
+        }
+        if (sfv0.length != 4) return []; // n-gon immediately across the seed
+
+        uint a = sfv0[si], b = pivot0;
+        int curFace = cast(int)startFace;
+        int[] res;
+        bool[ulong] vis; vis[edgeKeyOf(seedEdge)] = true;
+        while (true) {
+            const face = faces[curFace];
+            if (face.length != 4) break; // reached via `nf` below; already a quad here
+            int jb = -1;
+            foreach (j; 0 .. 4) if (face[j] == b) { jb = j; break; }
+            if (jb < 0) break;
+            uint prev = face[(jb - 1 + 4) % 4], next = face[(jb + 1) % 4], c;
+            if      (prev == a) c = next;
+            else if (next == a) c = prev;
+            else break;
+            uint sei = edgeIndex(b, c);
+            if (sei == ~0u) break;
+            int nf = adjacentFaceThrough(sei, cast(uint)curFace);
+            if (nf < 0) break; // open boundary — natural terminating chain
+            const nface = faces[nf];
+            if (nface.length == 3) {
+                uint ei = triangleOtherEdgeAt(nface, b, edgeKey(b, c));
+                if (ei != ~0u) res ~= cast(int)ei;
+                break;
+            }
+            if (nface.length != 4) break; // n-gon: fails outright from here
+            int jb2 = -1;
+            foreach (j; 0 .. 4) if (nface[j] == b) { jb2 = j; break; }
+            if (jb2 < 0) break;
+            uint p2 = nface[(jb2 - 1 + 4) % 4], n2 = nface[(jb2 + 1) % 4], d;
+            if      (p2 == c) d = n2;
+            else if (n2 == c) d = p2;
+            else break;
+            uint bd_ei = edgeIndex(b, d);
+            if (bd_ei == ~0u) break;
+            ulong ck = edgeKey(b, d);
+            if (ck in vis) break; // closure
+            vis[ck] = true;
+            res ~= cast(int)bd_ei;
+            a = b; b = d; curFace = nf;
+        }
+        return res;
+    }
+
+    /// Fallback shared by the two "both directions dead-ended at the seed"
+    /// rules (an n-gon or a valence pole immediately across the seed): select
+    /// every edge of the seed's own largest-vertex-count incident face, ties
+    /// broken by whichever face is found first (i.e. `incFaces`' own order).
+    int[] selectLoopFallbackFace(const(uint)[] incFaces) const {
+        uint best = incFaces[0];
+        foreach (fi; incFaces[1 .. $])
+            if (faces[fi].length > faces[best].length) best = fi;
+        const fv = faces[best];
+        int[] result;
+        bool[ulong] seen;
+        foreach (j; 0 .. fv.length) {
+            ulong k = edgeKey(fv[j], fv[(j + 1) % fv.length]);
+            uint ei = edgeIndexByKey(k);
+            if (ei == ~0u || (k in seen)) continue;
+            seen[k] = true;
+            result ~= cast(int)ei;
+        }
+        return result;
+    }
+
+    /// Rule 7: `seedEdge` is itself on an open boundary — chain along the
+    /// boundary loop instead of the regular quad-opposite walk. From each
+    /// endpoint in turn, repeatedly hop to another border edge at the far
+    /// vertex (excluding the edge just arrived on) until either a dead end
+    /// (no other border edge there) or closure (the far vertex lands back on
+    /// one of the seed's own two endpoints — the boundary loop is closed).
+    /// Closure stops the walk immediately and skips the second endpoint
+    /// entirely, matching the recovered algorithm's "combine, don't restart"
+    /// closure behavior (also used by the plain quad walk above).
+    int[] selectLoopBorderChain(uint seedEdge) const {
+        uint u = edges[seedEdge][0], v = edges[seedEdge][1];
+
+        struct ChainResult { int[] edges; bool closed; }
+        ChainResult chainFrom(uint from) {
+            int[] res;
+            bool[ulong] vis; vis[edgeKeyOf(seedEdge)] = true;
+            uint cur = from;
+            uint lastEdge = seedEdge;
+            while (true) {
+                int next = -1;
+                foreach (ei; edgesAroundVertex(cur)) {
+                    if (ei == lastEdge) continue;
+                    ulong k = edgeKeyOf(ei);
+                    if (k in vis) continue;
+                    if (!isEdgeBorder(ei)) continue;
+                    next = cast(int)ei;
+                    break;
+                }
+                if (next < 0) return ChainResult(res, false);
+                vis[edgeKeyOf(cast(uint)next)] = true;
+                res ~= next;
+                uint a = edges[next][0], b = edges[next][1];
+                uint far = (a == cur) ? b : a;
+                if (far == u || far == v) return ChainResult(res, true);
+                cur = far;
+                lastEdge = cast(uint)next;
+            }
+        }
+
+        auto dirV = chainFrom(v);
+        int[] result = [cast(int)seedEdge] ~ dirV.edges;
+        if (dirV.closed) return result;
+
+        auto dirU = chainFrom(u);
+        bool[ulong] seen;
+        foreach (ei; result) seen[edgeKeyOf(cast(uint)ei)] = true;
+        foreach (ei; dirU.edges) {
+            ulong k = edgeKeyOf(cast(uint)ei);
+            if (k in seen) continue;
+            seen[k] = true;
+            result ~= ei;
+        }
+        return result;
+    }
+
+    /// Recovered `select.loop` (edge) algorithm — the single entry point
+    /// `commands/select/loop.d`'s edge branch calls per initially-selected
+    /// seed edge. See findings.md (private) for the full per-rule provenance
+    /// and the 11-case validation this reproduces bit-exact.
+    int[] selectLoopEdges(uint seedEdge) const {
+        if (seedEdge >= edges.length) return [];
+
+        uint[] incFaces;
+        foreach (fi; facesAroundEdge(seedEdge)) incFaces ~= fi;
+
+        if (incFaces.length == 0) return [cast(int)seedEdge]; // stray/degenerate edge
+        if (incFaces.length == 1) return selectLoopBorderChain(seedEdge); // rule 7
+
+        bool anyHops = false;
+        int[][] dirResults = new int[][](incFaces.length);
+        foreach (i, fi; incFaces) {
+            dirResults[i] = selectLoopDirectionEdges(seedEdge, fi);
+            if (dirResults[i].length > 0) anyHops = true;
+        }
+
+        if (!anyHops) return selectLoopFallbackFace(incFaces); // rules 4 & 6
+
+        bool[ulong] seen;
+        int[] result;
+        void add(int ei) {
+            ulong k = edgeKeyOf(cast(uint)ei);
+            if (k in seen) return;
+            seen[k] = true;
+            result ~= ei;
+        }
+        add(cast(int)seedEdge);
+        foreach (dr; dirResults) foreach (ei; dr) add(ei);
+        return result;
+    }
+
     // Loop-slice ring walk + insertion kernel family (loopSliceRingEdges /
     // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
     // — see source/mesh_ops/loop_slice.d (task 0417, 0407 §B.V2).

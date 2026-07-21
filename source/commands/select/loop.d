@@ -40,9 +40,8 @@ class SelectLoop : Command {
             bool[] initSel = mesh.selectedEdges.dup;
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                foreach (fi; mesh.facesAroundEdge(cast(uint)i))
-                    foreach (ei; mesh.walkEdgeLoop(cast(int)i, cast(int)fi))
-                        mesh.selectEdge(ei);
+                foreach (ei; mesh.selectLoopEdges(cast(uint)i))
+                    mesh.selectEdge(ei);
             }
             return true;
         }

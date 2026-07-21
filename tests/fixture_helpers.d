@@ -1022,3 +1022,89 @@ void runAttrEchoSuite(string fixtureJson) {
         }
     }
 }
+
+// Canonical undirected-pair key for two vertex INDICES (order-independent).
+private ulong indexPairKey(int a, int b) {
+    uint lo = cast(uint)(a < b ? a : b);
+    uint hi = cast(uint)(a < b ? b : a);
+    return (cast(ulong)lo << 32) | hi;
+}
+
+/// `select-loop` verifier (task 0457): loads a captured mesh VERBATIM (vertex/
+/// face order is preserved 1:1 by /api/load-mesh), selects a single seed edge
+/// by its vertex-INDEX pair (into that same mesh — no coordinate matching
+/// needed since the load is index-faithful), runs `select.loop`, then asserts
+/// the resulting selected-edge SET equals the frozen `expected_edges` — also
+/// given as vertex-index pairs, canonicalized order-independently. The golden
+/// is the frozen reference capture's post-loop edge set (never vibe3d's own
+/// output). Schema:
+///   { "name": "...", "provenance": {...},
+///     "cases": [ { "name": "...",
+///                  "mesh": { "vertices": [[x,y,z],...], "faces": [[i,j,k,...],...] },
+///                  "seed": [u, v],
+///                  "expected_edges": [[a,b], [c,d], ...] } ] }
+void runSelectLoopSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<select-loop-suite>";
+    requireProvenance(fx, suite);
+
+    foreach (cs; fx["cases"].array) {
+        string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+
+        post(BASE ~ "/api/reset?empty=true", "");
+        auto lr = parseJSON(cast(string) post(BASE ~ "/api/load-mesh", cs["mesh"].toString));
+        if ("status" in lr) assert(lr["status"].str == "ok",
+            format("%s: load-mesh failed: %s", cn, lr.toString));
+
+        auto seedPair = cs["seed"].array;
+        int su = cast(int) seedPair[0].integer, sv = cast(int) seedPair[1].integer;
+
+        auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+        auto modelEdges = model["edges"].array;
+        int seedIdx = -1;
+        foreach (i, e; modelEdges) {
+            auto ee = e.array;
+            int a = cast(int) ee[0].integer, b = cast(int) ee[1].integer;
+            if ((a == su && b == sv) || (a == sv && b == su)) { seedIdx = cast(int) i; break; }
+        }
+        assert(seedIdx >= 0,
+            format("%s: seed edge (%d,%d) not found after load-mesh", cn, su, sv));
+
+        auto selR = parseJSON(cast(string) post(BASE ~ "/api/select",
+            format(`{"mode":"edges","indices":[%d]}`, seedIdx)));
+        if ("status" in selR) assert(selR["status"].str == "ok",
+            format("%s: seed select failed: %s", cn, selR.toString));
+
+        auto cmdR = parseJSON(cast(string) post(BASE ~ "/api/command", `{"id":"select.loop"}`));
+        if ("status" in cmdR) assert(cmdR["status"].str == "ok",
+            format("%s: select.loop command failed: %s", cn, cmdR.toString));
+
+        auto sel    = parseJSON(cast(string) get(BASE ~ "/api/selection"));
+        auto model2 = parseJSON(cast(string) get(BASE ~ "/api/model"));
+        auto edges2 = model2["edges"].array;
+
+        bool[ulong] got;
+        foreach (si; sel["selectedEdges"].array) {
+            long ei = si.integer;
+            if (ei < 0 || ei >= cast(long) edges2.length) continue;
+            auto ee = edges2[cast(size_t) ei].array;
+            got[indexPairKey(cast(int) ee[0].integer, cast(int) ee[1].integer)] = true;
+        }
+
+        bool[ulong] want;
+        foreach (ep; cs["expected_edges"].array) {
+            auto pr = ep.array;
+            want[indexPairKey(cast(int) pr[0].integer, cast(int) pr[1].integer)] = true;
+        }
+
+        assert(got.length == want.length,
+            format("%s: edge-count mismatch — expected %d, got %d",
+                   cn, want.length, got.length));
+        foreach (k, _; want)
+            assert((k in got) !is null,
+                format("%s: expected edge (key %d) missing from selection", cn, k));
+        foreach (k, _; got)
+            assert((k in want) !is null,
+                format("%s: unexpected extra edge (key %d) in selection", cn, k));
+    }
+}
