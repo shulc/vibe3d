@@ -8,7 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
+import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize, getGizmoPixels;
 import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -71,9 +71,13 @@ private:
 
     enum int PART_SHIFT = 0;
     enum int PART_INSET = 1;
+    enum int PART_FREE  = 2;   // free 2D drag off the handles: vertical→shift, horizontal→inset
     int   dragPart = -1;
     int   dragStartMX, dragStartMY;
     float dragBaseShift, dragBaseInset;
+    bool  freeCtrl;            // Ctrl held at free-drag start → lock to one axis
+    int   freeLockAxis = -1;   // PART_SHIFT / PART_INSET, decided on first motion
+    float freeWorldPerPixel;
 
     Arrow      shiftArrow;
     CubicArrow insetArrow;
@@ -232,7 +236,14 @@ public:
             toolHandles.setHaul(part);
             return true;
         }
-        return false;
+        // No handle hit → free 2D drag on empty space: vertical → shift (up = +),
+        // horizontal → inset (right = +), both at once. With Ctrl held, lock to
+        // whichever axis the drag first moves along (only that one changes).
+        dragPart          = PART_FREE;
+        freeCtrl          = (mods & KMOD_CTRL) != 0;
+        freeLockAxis      = -1;
+        freeWorldPerPixel = haulWorldPerPixel();
+        return true;
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -245,6 +256,22 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || !gizmoValid) return false;
+
+        if (dragPart == PART_FREE) {
+            int dx = e.x - dragStartMX;   // right +
+            int dy = dragStartMY - e.y;   // up +
+            if (freeCtrl && freeLockAxis < 0 && (abs(dx) > 3 || abs(dy) > 3))
+                freeLockAxis = (abs(dy) >= abs(dx)) ? PART_SHIFT : PART_INSET;
+            if (!freeCtrl || freeLockAxis == PART_SHIFT)
+                shift_ = dragBaseShift + cast(float)dy * freeWorldPerPixel;
+            if (!freeCtrl || freeLockAxis == PART_INSET) {
+                inset_ = dragBaseInset + cast(float)dx * freeWorldPerPixel;
+                if (inset_ < 0.0f) inset_ = 0.0f;
+            }
+            rebuildPreview();
+            return true;
+        }
+
         Vec3 axis = (dragPart == PART_SHIFT) ? shiftAxis : insetAxis;
         bool skip;
         // TOTAL delta from the mouse-DOWN position (dragStart, fixed), NOT the
@@ -298,8 +325,8 @@ public:
         toolHandles.begin();
         toolHandles.add(shiftArrow, PART_SHIFT);
         toolHandles.add(insetArrow, PART_INSET);
-        if (dragPart >= 0) toolHandles.setHaul(dragPart);
-        else               toolHandles.setHaul(-1);
+        if (dragPart == PART_SHIFT || dragPart == PART_INSET) toolHandles.setHaul(dragPart);
+        else                                                  toolHandles.setHaul(-1);
         int hmx, hmy;
         queryMouse(hmx, hmy);
         toolHandles.update(hmx, hmy, vp);
@@ -316,6 +343,14 @@ private:
             return m;
         }
         return mesh.selectedFaces;
+    }
+
+    // World units per screen pixel at the gizmo anchor — the free 2D drag's
+    // pixel→world scale (mirrors PolyInsetTool.haulWorldPerPixel).
+    float haulWorldPerPixel() {
+        float px = getGizmoPixels();
+        if (px < 1e-6f) px = 90.0f;
+        return gizmoSize(anchor, cachedVp, 1.0f) / px;
     }
 
     void computeGizmoFrame() {

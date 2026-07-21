@@ -47,13 +47,15 @@ void play(string log) {
     settle(); // EventPlayer reports posted, not processed — let the queue drain.
 }
 
-string motion(int x, int y, int state = 0) {
-    return format(`{"t":0.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":0}`,
-                  x, y, state);
+string motion(int x, int y, int state = 0, uint mod = 0) {
+    return format(`{"t":0.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":%u}`,
+                  x, y, state, mod);
 }
-string button(string kind, int x, int y) {
-    return format(`{"t":0.0,"type":"%s","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, kind, x, y);
+string button(string kind, int x, int y, uint mod = 0) {
+    return format(`{"t":0.0,"type":"%s","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%u}`, kind, x, y, mod);
 }
+
+enum uint LCTRL = 64; // KMOD_LCTRL
 
 // Screen position of the tool's published handle part (0 = Shift, 1 = Inset).
 void handleScreen(int part, out int x, out int y) {
@@ -190,5 +192,74 @@ unittest {
         "inset box did not move toward the center as inset grew (box should follow)");
 
     play(button("SDL_MOUSEBUTTONUP", tx, ty));
+    cmd("tool.set poly.bevel off");
+}
+
+// Free 2D drag OFF the handles: click empty space + drag → vertical is shift
+// (up = +), horizontal is inset (right = +), both at once.
+unittest {
+    enum int EX = 400, EY = 450; // clearly off the two handles (near screen centre)
+
+    // vertical UP → shift grows, inset untouched.
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    assert(getJson("/api/tool/state")["dragPart"].integer == 2,
+        "click off the handles must start a FREE 2D drag (dragPart == 2)");
+    play(motion(EX, EY - 100, 1));
+    auto st = getJson("/api/tool/state");
+    assert(st["shift"].floating > 1e-3, "vertical (up) free drag did not grow shift");
+    assert(fabs(st["inset"].floating) < 1e-6, "a purely vertical free drag changed inset");
+    play(button("SDL_MOUSEBUTTONUP", EX, EY - 100));
+    cmd("tool.set poly.bevel off");
+
+    // horizontal RIGHT → inset grows, shift untouched.
+    reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY));
+    play(motion(EX + 100, EY, 1));
+    st = getJson("/api/tool/state");
+    assert(st["inset"].floating > 1e-3, "horizontal (right) free drag did not grow inset");
+    assert(fabs(st["shift"].floating) < 1e-6, "a purely horizontal free drag changed shift");
+    play(button("SDL_MOUSEBUTTONUP", EX + 100, EY));
+    cmd("tool.set poly.bevel off");
+}
+
+// Ctrl + free drag LOCKS to one axis by the initial dominant direction.
+unittest {
+    enum int EX = 400, EY = 450;
+
+    // Ctrl + up-dominant diagonal (dy > dx) → only shift.
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY, LCTRL));
+    play(motion(EX + 50, EY - 100, 1, LCTRL)); // dy=100 > dx=50 → lock to shift
+    auto st = getJson("/api/tool/state");
+    assert(st["shift"].floating > 1e-3, "Ctrl vertical-dominant drag did not grow shift");
+    assert(fabs(st["inset"].floating) < 1e-6, "Ctrl vertical-dominant drag must NOT change inset");
+    play(button("SDL_MOUSEBUTTONUP", EX + 50, EY - 100, LCTRL));
+    cmd("tool.set poly.bevel off");
+
+    // Ctrl + right-dominant (dx > dy) → only inset.
+    reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectFaceZero();
+    cmd("tool.set poly.bevel on");
+    settle();
+    play(button("SDL_MOUSEBUTTONDOWN", EX, EY, LCTRL));
+    play(motion(EX + 100, EY - 35, 1, LCTRL)); // dx=100 > dy=35 → lock to inset
+    st = getJson("/api/tool/state");
+    assert(st["inset"].floating > 1e-3, "Ctrl horizontal-dominant drag did not grow inset");
+    assert(fabs(st["shift"].floating) < 1e-6, "Ctrl horizontal-dominant drag must NOT change shift");
+    play(button("SDL_MOUSEBUTTONUP", EX + 100, EY - 35, LCTRL));
     cmd("tool.set poly.bevel off");
 }
