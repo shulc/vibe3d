@@ -87,6 +87,7 @@ struct Changes {
           totalLayerActive;
     ulong currentTypeChanged;            // selection-types Stage 1
     string lastCurrentType;
+    ulong missedPublishers;              // task 0462 — bus-contract violations
 }
 
 Changes readChanges() {
@@ -110,6 +111,7 @@ Changes readChanges() {
     c.totalLayerRenamed    = j["totalLayerRenamed"].integer;
     c.totalLayerVisible    = j["totalLayerVisible"].integer;
     c.totalLayerActive     = j["totalLayerActive"].integer;
+    c.missedPublishers     = j["missedPublishers"].integer;
     c.currentTypeChanged   = j["currentTypeChanged"].integer;
     c.lastCurrentType      = j["lastCurrentType"].str;
     return c;
@@ -243,6 +245,49 @@ unittest {
         && after.totalPolygons == before.totalPolygons,
         "a transform drag must NEVER publish Geometry (it moves positions in "
         ~ "place, no topology change)");
+}
+
+// task 0462 — a tool-side cage refresh DURING an active subpatch preview must
+// PUBLISH its Position change on the bus, not bare-bump mutationVersion. The
+// GpuMesh.upload `suppressCageUpload` redirect used to `++mutationVersion` with
+// NO change flag: the version bump triggered the main loop's GPU re-upload of a
+// preview that was never rebuilt (the rebuild is flag-gated on Position/Geometry/
+// Marks), so the displayed surface went stale / shifted — and the debug guard
+// tripped `change_bus: MISSED PUBLISHER`. Reproduce the exact scenario (every
+// face subpatch → preview active, then a recorded move drag whose mouse-up fires
+// the redirect) and assert the bus contract holds (missedPublishers stays 0).
+unittest {
+    postJson("/api/reset?empty=true", "");
+    cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
+        ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
+    cmd("select.typeFrom polygon");
+    auto tog = postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
+    assert(tog["status"].str == "ok", "subpatch toggle failed: " ~ tog.toString);
+
+    // Guard: the preview must actually be ACTIVE, else the suppressCageUpload
+    // redirect never fires and this test would false-pass. The subdivided
+    // surface exposes more face-verts than the 8·... cage.
+    auto surf = getJson("/api/gpu/face-vbo");
+    long cageVerts = 6 * 4 * 2 * 3; // seg-2 cube: 24 quads → 48 tris → 144 face-verts
+    assert(surf["faceVertCount"].integer > cageVerts,
+        "subpatch preview not active (face-verts " ~ surf["faceVertCount"].integer.to!string
+        ~ ") — redirect path would not be exercised");
+
+    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[11,12,13]}`);
+    assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
+    cmd("tool.set move on");
+    cmd("actr.local");
+
+    auto before = settleAfter(readChanges());
+    playAndWait("tests/events/acen_local_translate_drag.log");
+    auto after = settleAfter(before);
+
+    assert(after.totalPosition > before.totalPosition,
+        "drag under an active subpatch preview must still publish Position");
+    assert(after.missedPublishers == before.missedPublishers,
+        "tool-side cage upload during subpatch preview bumped mutationVersion "
+        ~ "with NO change flag (change_bus MISSED PUBLISHER): "
+        ~ before.missedPublishers.to!string ~ " → " ~ after.missedPublishers.to!string);
 }
 
 // ===========================================================================

@@ -1308,6 +1308,7 @@ class HttpServer {
                     `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
                     `"totalLayerVisible":%d,` ~
                     `"totalLayerActive":%d,` ~
+                    `"missedPublishers":%d,` ~
                     `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
                     changeBus.flushCount, changeBus.lastFlushFlags,
                     changeBus.lastSelDomains, changeBus.lastLayerKinds,
@@ -1321,6 +1322,7 @@ class HttpServer {
                     changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
                     changeBus.totalLayerVisible,
                     changeBus.totalLayerActive,
+                    changeBus.missedPublishers,
                     changeBus.currentTypeChanged,
                     selTypeToken(changeBus.lastCurrentType));
             }

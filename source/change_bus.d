@@ -119,6 +119,16 @@ struct ChangeBus {
     uint  lastLayerKinds;    // layer-change kinds of the most recent delivery
     SelType lastCurrentType; // the type made current by the most recent delivery
 
+    // Missed-publisher count (task 0462). Incremented by the per-frame debug
+    // guard in app.d whenever a layer's mutationVersion advanced with ZERO
+    // pending change flags — a mutation site bumped the version but did not
+    // noteChange/commitChange, leaving bus-keyed caches (subpatch preview,
+    // snap, symmetry, pick) stale. The guard also logs a one-shot stderr line;
+    // this counter is the test-introspectable form (via /api/changes) so a
+    // regression can assert it stays 0. Debug-build only (the guard is under
+    // `debug`); release builds leave it 0.
+    ulong missedPublishers;
+
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
     ulong totalPoints;

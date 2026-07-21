@@ -15,6 +15,7 @@ import std.math : sqrt;
 import math;    // Vec3
 import shader;  // LitShader
 import mesh;    // Mesh, FaceList
+import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
 
 // ---------------------------------------------------------------------------
 // GpuMesh
@@ -106,11 +107,22 @@ struct GpuMesh {
                 const uint[] vertOrigin = null,
                 const uint[] faceOrigin = null) {
         // Redirect tool-side cage refreshes: the GPU buffers currently hold
-        // the preview, and main loop owns re-uploads. Bumping the mutation
-        // version ensures the preview is rebuilt on the next frame against
-        // the latest cage positions.
+        // the preview, and the main loop owns re-uploads. A tool moved cage
+        // positions and asked to refresh — PUBLISH that as a Position change
+        // on the notification bus, not a bare mutationVersion bump (task 0462).
+        //
+        // Why a bare bump is wrong: the subpatch-preview rebuild is gated on
+        // the bus FLAG (`meshChangedFlags & (Position|Geometry|Marks)`, see the
+        // rebuildIfStale call in app.d), NOT on mutationVersion. A version-only
+        // bump therefore triggers the main loop's GPU RE-UPLOAD
+        // (`gpuUploadedVersion != mutationVersion`) of a preview that was never
+        // REBUILT against the moved cage — the displayed surface goes stale /
+        // shifts, and the debug build trips the `change_bus: MISSED PUBLISHER`
+        // guard (mutationVersion advanced with no pending change flags).
+        // commitChange(Position) sets the flag AND bumps mutationVersion, so
+        // the preview rebuilds and the re-upload still fires.
         if (suppressCageUpload && edgeOrigin.length == 0 && vertOrigin.length == 0) {
-            ++(cast(Mesh*)&mesh).mutationVersion;
+            (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
             return;
         }
         ++uploadVersion;

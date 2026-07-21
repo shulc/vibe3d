@@ -8015,6 +8015,7 @@ void main(string[] args) {
             debug {
                 import core.stdc.stdio : fprintf, stderr;
                 import document : Layer;
+                import change_bus : changeBus;
                 static ulong[Layer] lastSeenMutVer;
                 static bool  warnedMissedPublisher = false;
 
@@ -8031,6 +8032,10 @@ void main(string[] args) {
                         // First observation of this layer — seed, do not compare.
                         lastSeenMutVer[layer] = layer.mesh.mutationVersion;
                     } else if (layer.mesh.mutationVersion != *seen && lf == 0) {
+                        // Test-introspectable count (via /api/changes) — always
+                        // ticks, even after the one-shot stderr line latches, so
+                        // a regression test can assert it stays 0 (task 0462).
+                        changeBus.missedPublishers++;
                         if (!warnedMissedPublisher) {
                             fprintf(stderr,
                                 "change_bus: MISSED PUBLISHER — mutationVersion " ~
