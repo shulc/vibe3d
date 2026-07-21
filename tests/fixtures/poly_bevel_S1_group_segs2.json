@@ -1,0 +1,44 @@
+{
+  "name": "poly_bevel_S1_group_segs2",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) GROUP x SEGMENTS interaction -- task 0458 Phase 1 (+S1), mesh.d's own pre-existing doc comment marked this combination 'KNOWN-UNTESTED'. Two adjacent cube faces (+Y top, +Z front, the same pair as poly_bevel_corner.json's sibling poly_bevel_two_faces_grouped case) grouped (group=true) AND segmented (segs=2), inset=0.25, shift=0.15. Reference topology: 8v/6f -> 20v/18f -- the group-shared ridge corner is SEGMENTED THE SAME WAY as every other boundary vertex (equal linear lerp from its original position to its group-solved final position), and critically the shared corner's INTERMEDIATE (non-final) ring vertex is shared across both faces too, not duplicated per face -- a pre-0458 topology gap this fixture pins down (the pre-fix kernel produced 22v, two coincident-position vertices at the shared corner's t=1 ring).",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_S1_group_segs2). Orthogonal cube geometry (the group shift accumulator's AVE_N law coincides with the pre-0458 naive sum here -- see poly_bevel_G1_halfshared_tent.json for the asymmetric discriminator), isolating the segments x group interaction specifically.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for group=true && segments>1, doc'd in mesh.d as KNOWN-UNTESTED before this task. Fixed alongside the group shift-accumulator AVE_N law: the shared corner's intermediate ring vertex is now memoized per ring level (sharedVertIdxByLevel), matching the reference's vertex count (20, not the pre-fix 22)."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "group_segs2",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]],
+          [[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.25, "shift": 0.15, "group": true, "segments": 2 } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 20, "faces": 18 },
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0.375, -0.375, 0.574999988079071], [-0.375, -0.375, 0.574999988079071],
+        [-0.375, 0.574999988079071, -0.375], [0.375, 0.574999988079071, -0.375],
+        [0.375, 0.574999988079071, 0.574999988079071], [-0.375, 0.574999988079071, 0.574999988079071],
+        [0.25, -0.25, 0.6499999761581421], [-0.25, -0.25, 0.6499999761581421],
+        [-0.25, 0.6499999761581421, -0.25], [0.25, 0.6499999761581421, -0.25],
+        [0.25, 0.6499999761581421, 0.6499999761581421], [-0.25, 0.6499999761581421, 0.6499999761581421]
+      ]
+    }
+  ]
+}

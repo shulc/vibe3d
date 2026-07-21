@@ -1,0 +1,62 @@
+{
+  "name": "poly_bevel_G1_halfshared_tent",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) GROUP shared-corner accumulator, half-shared branch (internalCnt==1) -- task 0458 Phase 1. Two adjacent quads sharing one ridge edge A-B, built as a NON-90-degree-dihedral, unequal-adjacent-edge-length asymmetric 'tent' (raw mesh, not a cube) so the group shift accumulator's AVE_N law (k*N/|N|^2 over the incident selected-face CORNER unit normals) is exercised off the axis-aligned degeneracy every prior grouped-poly-bevel fixture happened to sit on (a cube corner's incident normals are mutually orthogonal, where AVE_N collapses to the naive Sigma(unit normal) sum -- passing there proves nothing about the general law). group=true, inset=0.1, shift=0.1. Reference topology: 6v/2f -> 12v/8f -- the shared ridge collapses to ONE new vertex per endpoint (not one per face), its OTHER 4 standalone corners keep vibe3d's existing independent per-face inset+shift, and the ridge's own internal edge is suppressed (no bridge quad across it, only the 2 faces' remaining 3 boundary edges each get a bridge).",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_G1_halfshared_tent) -- a deliberately asymmetric raw_mesh so the shared-corner accumulator's amplified-average-normal law (recovered, toolcards/poly.bevel/findings.md) is pinned off the cube-corner degeneracy poly_bevel_corner.json sits on. Predicted-vs-measured to 6.2e-9 (float32 floor).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for the group shift accumulator's internalCnt==1 (half-shared) branch. bevelFacesByMask's pre-0458 naive Sigma(unit faceNormal) shift term coincides with the reference's AVE_N=k*N/|N|^2 ONLY when the incident corner normals are mutually orthogonal (every cube-corner fixture before this task) -- this raw_mesh is asymmetric specifically to discriminate the two laws."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "halfshared_tent",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.5, 0.8, 2.0],
+            [1.5, 0.8, 0.0],
+            [-0.7, 1.0, 0.0],
+            [-0.7, 1.0, 2.0]
+          ],
+          "faces": [
+            [0, 1, 2, 3],
+            [1, 0, 4, 5]
+          ]
+        } },
+        { "select": { "mode": "polygons", "coords": [
+          [[0.0,0.0,0.0],[0.0,0.0,2.0],[1.5,0.8,2.0],[1.5,0.8,0.0]],
+          [[0.0,0.0,2.0],[0.0,0.0,0.0],[-0.7,1.0,0.0],[-0.7,1.0,2.0]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.1, "shift": 0.1, "group": true } } }
+      ],
+      "expected_before": { "verts": 6, "faces": 2 },
+      "expected_after":  { "verts": 12, "faces": 8 },
+      "expected_vertices": [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 2.0],
+        [1.5, 0.8, 2.0],
+        [1.5, 0.8, 0.0],
+        [-0.7, 1.0, 0.0],
+        [-0.7, 1.0, 2.0],
+        [0.03111569583415985, 0.1299283653497696, 0.10000000149011612],
+        [0.03111569583415985, 0.1299283653497696, 1.899999976158142],
+        [1.3647059202194214, 0.8411765098571777, 1.899999976158142],
+        [1.3647059202194214, 0.8411765098571777, 0.10000000149011612],
+        [-0.5607305765151978, 0.9754230380058289, 0.10000000149011612],
+        [-0.5607305765151978, 0.9754230380058289, 1.899999976158142]
+      ]
+    }
+  ]
+}

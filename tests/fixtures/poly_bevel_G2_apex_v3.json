@@ -1,0 +1,57 @@
+{
+  "name": "poly_bevel_G2_apex_v3",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) GROUP shared-corner accumulator, fully-enclosed-apex branch (internalCnt>=2 && !anyBoundary) -- task 0458 Phase 1. Valence-3 apex surrounded by 3 irregular NON-planar, non-orthogonal quads (all selected) so the apex has 3 internal edges and no boundary edge -- the fully-enclosed branch, isolated on asymmetric geometry (the naive Sigma(unit normal) accumulator and the reference's AVE_N=k*N/|N|^2 coincide ONLY on the orthogonal cube-corner case every prior grouped-poly-bevel fixture happened to sit on). group=true, inset=0.1, shift=0.1. Reference topology: 7v/3f -> 13v/9f. This fixture pins the APEX vertex's position bit-exact (orig + shift*AVE_N, no inset term -- there is no boundary edge to inset against) via a lerp_checks single-point existence assertion, and the overall vertex/face counts. It intentionally does NOT assert the dump's other (ring) vertex positions bit-exact: those ring vertices are each shared between 2 of the 3 faces (the SAME half-shared law poly_bevel_G1_halfshared_tent.json pins exactly), but here the OTHER end of that shared edge is this fully-enclosed apex rather than another half-shared vertex -- a residual up to ~0.011 remains there whose exact closed form was not pinned to float precision even with rr/gdb read access to the reference (toolcards/poly.bevel/findings.md SS1) -- a documented, known gap, not silently papered over with a loosened tolerance.",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_G2_apex_v3). Apex position predicted-vs-measured to 2.6e-8 (float32 floor) using the recovered AVE_N law.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for the group shift accumulator's fully-enclosed-apex branch. Pins the apex vertex bit-exact and the topology (vertex/face counts); the SAME dump's half-shared ring vertices carry a known, documented residual (see bevelFacesByMask's doc comment in source/mesh.d) not asserted here."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "apex_v3",
+      "input": [
+        { "reset": true, "empty": true },
+        { "endpoint": "load-mesh", "body": {
+          "vertices": [
+            [1.0, 0.0, 0.0],
+            [0.6, -0.1, 1.1],
+            [-0.5, 0.05, 1.3],
+            [-1.2, -0.05, 0.2],
+            [-0.7, 0.1, -1.0],
+            [0.5, -0.2, -0.9],
+            [0.1, 1.0, 0.05]
+          ],
+          "faces": [
+            [2, 1, 0, 6],
+            [4, 3, 2, 6],
+            [0, 5, 4, 6]
+          ]
+        } },
+        { "select": { "mode": "polygons", "coords": [
+          [[0.1,1.0,0.05],[1.0,0.0,0.0],[0.6,-0.1,1.1],[-0.5,0.05,1.3]],
+          [[0.1,1.0,0.05],[-0.5,0.05,1.3],[-1.2,-0.05,0.2],[-0.7,0.1,-1.0]],
+          [[0.1,1.0,0.05],[-0.7,0.1,-1.0],[0.5,-0.2,-0.9],[1.0,0.0,0.0]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.1, "shift": 0.1, "group": true } } }
+      ],
+      "expected_before": { "verts": 7, "faces": 3 },
+      "expected_after":  { "verts": 13, "faces": 9 },
+      "lerp_checks": [
+        { "a": [0.13126321136951447, 1.187381386756897, 0.047560278326272964],
+          "b": [0.13126321136951447, 1.187381386756897, 0.047560278326272964],
+          "t": 0.0,
+          "point": [0.13126321136951447, 1.187381386756897, 0.047560278326272964] }
+      ]
+    }
+  ]
+}

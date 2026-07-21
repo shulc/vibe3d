@@ -8168,6 +8168,50 @@ struct Mesh {
         return safe;
     }
 
+    /// Per-corner unit normal at vertex `v` within face `fi`: the cross
+    /// product of the face's OWN two edges meeting at that corner
+    /// (`cross(next-cur, prev-cur)`), NOT `faceNormal()`'s whole-face
+    /// Newell average. Identical to `faceNormal()` for a planar face (any
+    /// corner of a flat polygon shares the same normal direction), but
+    /// diverges on a non-planar n-gon — task 0458's recovered
+    /// `BevelGroup_AveNormal` law is only bit-exact against this
+    /// PER-CORNER form (rr/gdb + geometry, `toolcards/poly.bevel/
+    /// findings.md` §1: reference's `verxCornerNormal`). Returns (0,1,0)
+    /// for a degenerate/tiny corner (matches `faceNormal`'s own fallback).
+    private Vec3 cornerNormalAt(uint fi, uint v) const {
+        const uint[] f = faces[fi];
+        const int N = cast(int)f.length;
+        int k = -1;
+        foreach (i; 0 .. N) if (f[i] == v) { k = i; break; }
+        assert(k >= 0, "cornerNormalAt: vertex not incident to face");
+        const Vec3 prevV = vertices[f[(k + N - 1) % N]];
+        const Vec3 curV  = vertices[f[k]];
+        const Vec3 nextV = vertices[f[(k + 1) % N]];
+        Vec3 n = cross(nextV - curV, prevV - curV);
+        float len = n.length;
+        return len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
+    }
+
+    /// `AVE_N(v) = k·N/|N|²` (task 0458, `BevelGroup_AveNormal` recovered
+    /// via rr/gdb — `toolcards/poly.bevel/findings.md` §1): `nSum` = Σ of
+    /// the `count` incident selected-face CORNER unit normals (see
+    /// `cornerNormalAt`), amplified by their own count and re-normalized
+    /// against their squared magnitude. Reduces to the naive `Σ(unit
+    /// normal)` EXACTLY when the `count` corner normals are mutually
+    /// ORTHOGONAL (there `|N|²==count`) — every group fixture before 0458
+    /// happened to be an axis-aligned cube corner, so the naive sum
+    /// (`vibe3d-bug`, pre-0458) passed every prior test: a symmetry trap,
+    /// not correctness (the same class as 0453). Falls back to the raw
+    /// (un-amplified) sum when `|N|²` is too small to safely invert — a
+    /// degenerate selection (near-antiparallel corner normals) no known
+    /// case exercises; returning the un-scaled sum avoids a NaN/Inf blowup
+    /// rather than asserting.
+    private static Vec3 aveNormal(Vec3 nSum, uint count) {
+        immutable float mag2 = dot(nSum, nSum);
+        if (mag2 < 1e-12f) return nSum;
+        return nSum * (cast(float)count / mag2);
+    }
+
     /// Polygon bevel: for each selected face, inset each corner by `inset`
     /// AND displace the inset cap by `+faceNormal*shift` along the face normal,
     /// bridging the original boundary to the offset cap with N ring quads.
@@ -8195,23 +8239,47 @@ struct Mesh {
     /// to ONE new vertex instead of each face computing its own independent
     /// corner there, and the ring quad for any EDGE shared by 2 selected
     /// faces ("internal") is suppressed entirely (no bridge — it dissolves
-    /// into the merged interior). Two corner laws, both `capture-verified`
-    /// against `poly_bevel_corner.json`'s 3-face cube-corner case:
-    ///   - a vertex with EXACTLY 1 internal edge touching it ("half-shared",
-    ///     on the group's own outer boundary but shared by the 2 faces
-    ///     either side of that internal edge): `orig + Σ(shift·faceNormal
-    ///     over every selected face incident to it) + inset·dir(orig → the
-    ///     internal edge's other endpoint)`.
-    ///   - a vertex with EVERY incident edge internal (fully enclosed by
-    ///     the group, no boundary edge left — the group's own analog of
-    ///     edge-bevel's N-way junction hub): `orig + Σ(shift·faceNormal)`,
-    ///     no inset term (there is no boundary edge left to inset against).
-    ///   - a vertex with 0 internal edges (standalone) uses today's
-    ///     unshared per-face formula unchanged.
-    ///   - a vertex with ≥2 internal edges AND ≥1 remaining boundary edge
-    ///     (a partial, "some but not all" enclosure) is NOT fixture-tested;
-    ///     falls back to the standalone per-face formula (documented gap,
-    ///     not silent — a cube's faces never exercise this shape).
+    /// into the merged interior). Shift accumulates via `aveNormal()`'s
+    /// `AVE_N = k·N/|N|²` (task 0458, `BevelGroup_AveNormal` recovered
+    /// rr/gdb — see that function's doc comment and
+    /// `toolcards/poly.bevel/findings.md`), not a plain `Σ(unit normal)` —
+    /// the two coincide only when the incident corner normals are mutually
+    /// orthogonal, which is why every pre-0458 cube-corner fixture passed
+    /// regardless (a 0453-class symmetry trap). Three corner laws
+    /// (`internalCnt`/`anyBoundary` from the vertex's own incident-edge
+    /// classification):
+    ///   - EXACTLY 1 internal edge ("half-shared", on the group's own outer
+    ///     boundary but shared by the 2 faces either side of that internal
+    ///     edge): `orig + shift·AVE_N + inset·dir(orig → the internal
+    ///     edge's other endpoint)` — bit-exact against
+    ///     `poly_bevel_G1_halfshared_tent` (6e-9), including on non-90°/
+    ///     unequal-edge-length asymmetric geometry (task 0458 Phase 1).
+    ///   - EVERY incident edge internal (fully enclosed by the group, no
+    ///     boundary edge left — the group's own analog of edge-bevel's
+    ///     N-way junction hub): `orig + shift·AVE_N`, no inset term (no
+    ///     boundary edge left to inset against) — bit-exact against
+    ///     `poly_bevel_G2_apex_v3`'s apex vertex (2.6e-8); the SAME
+    ///     dump's OTHER (half-shared) ring vertices are a known,
+    ///     unresolved position gap (see below).
+    ///   - 0 internal edges (standalone) uses today's unshared per-face
+    ///     formula unchanged.
+    ///   - ≥2 internal edges AND ≥1 remaining boundary edge (a partial,
+    ///     "some but not all" enclosure — task 0458 finding G3): SHARES one
+    ///     vertex (topology now matches the reference; the pre-0458 stub
+    ///     fell through to the per-face formula, splitting it into one
+    ///     vertex PER incident face) at `orig + shift·AVE_N` — the same
+    ///     closed form as the fully-enclosed case above. The reference adds
+    ///     a further `boundaryInset` displacement here whose closed form
+    ///     was NOT pinned to float precision even with rr/gdb read access
+    ///     (`findings.md` §1 — measured ~0.128 on
+    ///     `poly_bevel_G3_partial_fan`'s own oracle, not a derivable
+    ///     formula); this is a KNOWN, documented position gap, not a
+    ///     silent approximation. The SAME gap affects a half-shared
+    ///     vertex (above) whose internal-edge partner has `internalCnt>=2`
+    ///     (e.g. a ring vertex next to a fully-enclosed apex) — there the
+    ///     `internalCnt==1` formula is evaluated exactly as written but
+    ///     leaves a residual up to ~0.011 against `poly_bevel_G2_apex_v3`'s
+    ///     ring vertices, for the identical un-pinned reason.
     /// `group=false` (default) is byte-identical to the pre-0391 kernel.
     ///
     /// `segments` (task 0391 Phase 5, `capture-verified` LINEAR staircase —
@@ -8222,14 +8290,22 @@ struct Mesh {
     /// quads per boundary edge instead of 1 (`N-1` new intermediate rings).
     /// `segments<=1` (the default 0, or 1) is byte-identical to the flat
     /// single-ring result above. Intermediate (non-endpoint) ring vertices
-    /// are computed PER-FACE even under `group` (only the t=0 original and
-    /// t=N final corners are shared) — the captured segments law is
-    /// verified only on single-face selections, where grouping is moot.
-    /// KNOWN-UNTESTED: `group=true && segments>1` together (the combined
-    /// code path compiles and each half is independently verified, but no
-    /// fixture/unittest exercises the combination) — a cube face selection
-    /// large enough to test both simultaneously wasn't captured.
+    /// at a group-shared corner are memoized PER RING LEVEL (task 0458
+    /// +S1 — `sharedVertIdxByLevel`), same as the t=Nseg final corner —
+    /// a standalone corner (touched by only one selected face) always got
+    /// a fresh per-face vertex either way, so this only changes shared
+    /// corners. Before 0458 the intermediate rings were created per-face
+    /// unconditionally, leaving two COINCIDENT-position vertices at a
+    /// shared corner's every non-final ring level — a topology divergence
+    /// `poly_bevel_S1_group_segs2` exposed (12 new verts / 20 total
+    /// expected, 14 new / 22 total pre-fix — 2 grouped cube faces, segs=2).
+    /// `group=true && segments>1`: bit-exact against that dump (task
+    /// 0458 Phase 1) — the shared corner IS segmented the same equal-lerp
+    /// way as every other boundary vertex, orig→group-final (the middle
+    /// ring lands at exactly
+    /// half-inset/half-shift, including at the grouped shared corner).
     ///
+
     /// Two-layer DoS clamp: `segments` is hard-capped to
     /// `MAX_BEVEL_SEGMENTS` HERE (kernel-side, authoritative for any
     /// caller) since it scales ring-quad allocation linearly per selected
@@ -8274,20 +8350,29 @@ struct Mesh {
                 }
             }
 
-            // Per-vertex shift accumulator: once per (vertex, selected face
-            // it corners) pair, regardless of how many of its edges are
-            // internal — used only for vertices that end up shared.
-            Vec3[uint] shiftSum;
+            // Per-vertex CORNER-NORMAL accumulator: once per (vertex,
+            // selected face it corners) pair, regardless of how many of its
+            // edges are internal — used only for vertices that end up
+            // shared. Accumulates the RAW per-corner unit normal (task
+            // 0458's `cornerNormalAt`, NOT yet shift-scaled) plus a count,
+            // so `aveNormal()` below can apply the reference's `k·N/|N|²`
+            // amplification — a plain `Σ(unit normal)*shift` (pre-0458)
+            // only coincides with that when the corner normals are
+            // mutually orthogonal (see `aveNormal`'s doc comment).
+            Vec3[uint] normalSum;
+            uint[uint] normalCount;
             foreach (fi; 0 .. nFaces) {
                 if (fi >= mask.length || !mask[fi]) continue;
-                immutable Vec3 fn = faceNormal(cast(uint)fi);
                 foreach (v; faces[fi]) {
-                    if (auto p = v in shiftSum) *p = *p + fn * shift;
-                    else shiftSum[v] = fn * shift;
+                    immutable Vec3 cn = cornerNormalAt(cast(uint)fi, v);
+                    if (auto p = v in normalSum) *p = *p + cn;
+                    else normalSum[v] = cn;
+                    if (auto c = v in normalCount) ++(*c);
+                    else normalCount[v] = 1;
                 }
             }
 
-            foreach (v, sSum; shiftSum) {
+            foreach (v, nSum; normalSum) {
                 uint internalCnt = 0, lastInternalOther = uint.max;
                 bool anyBoundary = false;
                 foreach (ei; edgesAroundVertex(v)) {
@@ -8299,16 +8384,59 @@ struct Mesh {
                     else     { anyBoundary = true; }
                 }
                 if (internalCnt == 0) continue; // standalone — default formula below
+                immutable Vec3 sSum = aveNormal(nSum, normalCount[v]) * shift;
                 if (internalCnt == 1) {
+                    // Half-shared (task 0458 finding G1): reference's
+                    // 3-plane meet (2 shift-planes + 1 internal-edge inset
+                    // plane) reduces EXACTLY to this additive form because
+                    // the internal edge always lies in both incident
+                    // faces' planes, hence is orthogonal to both corner
+                    // normals — bit-exact against
+                    // `poly_bevel_G1_halfshared_tent` (6e-9, incl. on
+                    // non-90°/unequal-length asymmetric geometry).
                     sharedCornerPos[v] = vertices[v] + sSum +
                         safeNormalize(vertices[lastInternalOther] - vertices[v]) * inset;
                 } else if (!anyBoundary) {
-                    sharedCornerPos[v] = vertices[v] + sSum; // fully-enclosed apex, no inset term
+                    // Fully-enclosed apex (finding G2): bit-exact against
+                    // `poly_bevel_G2_apex_v3` (2.6e-8), no inset term (no
+                    // boundary edge to inset against).
+                    sharedCornerPos[v] = vertices[v] + sSum;
+                } else {
+                    // Partial — internalCnt>=2 with a remaining boundary
+                    // edge (finding G3). Reference SHARES one vertex at
+                    // `orig + shift·AVE_N + boundaryInset`; the
+                    // `boundaryInset` term's closed form was NOT pinned to
+                    // float precision even with rr/gdb read access to the
+                    // reference (`findings.md` §1: "the exact
+                    // boundary-contour offsetMeet direction is the one
+                    // fine point not closed to float precision" — measured
+                    // ~0.128 on `poly_bevel_G3_partial_fan`'s own oracle,
+                    // not a formula). This shares the vertex — the
+                    // topology divergence the pre-0458 stub had (3 split
+                    // per-face verts instead of 1) is fixed — using the
+                    // same closed `orig + shift·AVE_N` term as G2; the
+                    // missing boundary-inset displacement is a KNOWN,
+                    // documented position gap (task 0458 Phase 1 follow-up),
+                    // not a silent approximation.
+                    sharedCornerPos[v] = vertices[v] + sSum;
                 }
-                // else: partial (>=2 internal, boundary remains) — deferred, falls through.
             }
         }
-        uint[uint] sharedVertIdx; // orig vertex idx → already-created shared mesh vertex (memoized once)
+        // orig vertex idx → already-created shared mesh vertex, memoized
+        // PER RING LEVEL (index 0 unused — t=0 is always the untouched
+        // original vertex, already naturally shared). `sharedVertIdxByLevel
+        // [Nseg]` is the final ring's memo (pre-existing); task 0458 Phase 1
+        // +S1 extends the SAME memoization to every intermediate ring
+        // 1..Nseg-1 — `poly_bevel_S1_group_segs2` showed the reference
+        // shares a group corner's intermediate-ring vertex too (one vertex
+        // per distinct corner per ring, 12 new verts for 2 grouped
+        // cube faces at segs=2), where the pre-0458 per-face-only
+        // intermediate-ring code created TWO coincident-position vertices
+        // (one per incident face) at every non-final ring level for a
+        // shared corner — a topology divergence `group=true &&
+        // segments>1` never had a fixture to catch (doc'd as
+        // "KNOWN-UNTESTED" until this task).
+        uint[uint][] sharedVertIdxByLevel = new uint[uint][](Nseg + 1);
 
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
@@ -8339,10 +8467,10 @@ struct Mesh {
                 auto shP = group ? (origV in sharedCornerPos) : null;
                 if (shP !is null) {
                     finalPos[i] = *shP;
-                    if (auto p = origV in sharedVertIdx) finalVerts[i] = *p;
+                    if (auto p = origV in sharedVertIdxByLevel[Nseg]) finalVerts[i] = *p;
                     else {
                         immutable uint nv = addVertex(finalPos[i]);
-                        sharedVertIdx[origV] = nv;
+                        sharedVertIdxByLevel[Nseg][origV] = nv;
                         finalVerts[i] = nv;
                     }
                 } else {
@@ -8352,16 +8480,33 @@ struct Mesh {
             }
 
             // Intermediate segment rings: t=0 is the original boundary,
-            // t=Nseg is finalVerts; t=1..Nseg-1 are new equal-lerp rings
-            // (computed per-face even for a shared corner — see doc comment).
+            // t=Nseg is finalVerts; t=1..Nseg-1 are new equal-lerp rings.
+            // A group-shared corner (origV has a sharedCornerPos entry) is
+            // memoized per ring level too — `poly_bevel_S1_group_segs2`
+            // (task 0458 +S1): the reference shares the SAME intermediate
+            // vertex across both faces at a grouped corner, not just the
+            // final one. A standalone corner (no sharedCornerPos entry) is
+            // touched by only one face anyway, so "per-face" and "shared"
+            // coincide there — unchanged, always a fresh vertex per ring.
             uint[][] ringVerts = new uint[][](Nseg + 1);
             ringVerts[0]    = origFaceVerts.dup;
             ringVerts[Nseg] = finalVerts;
             foreach (t; 1 .. Nseg) {
                 uint[] ring = new uint[](Nc);
                 immutable float f = cast(float)t / cast(float)Nseg;
-                foreach (i; 0 .. Nc)
-                    ring[i] = addVertex(origPos[i] + (finalPos[i] - origPos[i]) * f);
+                foreach (i; 0 .. Nc) {
+                    immutable uint origV = origFaceVerts[i];
+                    if (group && (origV in sharedCornerPos) !is null) {
+                        if (auto p = origV in sharedVertIdxByLevel[t]) ring[i] = *p;
+                        else {
+                            immutable uint nv = addVertex(origPos[i] + (finalPos[i] - origPos[i]) * f);
+                            sharedVertIdxByLevel[t][origV] = nv;
+                            ring[i] = nv;
+                        }
+                    } else {
+                        ring[i] = addVertex(origPos[i] + (finalPos[i] - origPos[i]) * f);
+                    }
+                }
                 ringVerts[t] = ring;
             }
 
@@ -16702,6 +16847,154 @@ unittest { // bevelFacesByMask: group=true shared-corner accumulator manifold
     foreach (v; m.vertices)
         if ((v - Vec3(0.6f, 0.6f, 0.6f)).length < 1e-4f) foundApex = true;
     assert(foundApex, "grouped shared apex should sit at orig + per-face shift sum (0.6,0.6,0.6)");
+}
+
+private Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
+    Mesh m;
+    m.vertices = verts;
+    m.faces    = faceList;
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    return m;
+}
+
+unittest { // bevelFacesByMask: GROUP accumulator on ASYMMETRIC geometry —
+           // task 0458 Phase 1, finding G1 (internalCnt==1, half-shared).
+           // poly_bevel_corner.json's 3-face cube corner is axis-aligned —
+           // its incident normals are mutually orthogonal, where the
+           // reference's AVE_N=k·N/|N|² degenerates to the naive
+           // Σ(unit normal) sum (the SAME 0453-class symmetry trap this
+           // task's brief warns about). This raw mesh is a deliberately
+           // asymmetric "tent" (non-90° dihedral, unequal adjacent-edge
+           // lengths) — a naive-sum accumulator FAILS it; bit-exact
+           // against the frozen reference dump (`poly_bevel_
+           // G1_halfshared_tent`, 6.2e-9 on the reference side) is the
+           // discriminator. See tests/fixtures/poly_bevel_G1_halfshared_
+           // tent.json for the same case run through the HTTP fixture path.
+    auto m = buildRawMesh(
+        [Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 2.0f), Vec3(1.5f, 0.8f, 2.0f),
+         Vec3(1.5f, 0.8f, 0.0f), Vec3(-0.7f, 1.0f, 0.0f), Vec3(-0.7f, 1.0f, 2.0f)],
+        [[0u,1,2,3], [1u,0,4,5]]);
+    bool[] mask = [true, true];
+    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+    assert(n == 2);
+    assert(m.vertices.length == 12, "6 orig (unchanged) + 2 shared ridge + 4 standalone");
+    assert(m.faces.length    == 8,  "2 final quads + 2 faces x 3 remaining boundary bridges");
+
+    bool foundA = false, foundB = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(0.03111569f, 0.12992836f, 0.1f)).length < 1e-4f) foundA = true;
+        if ((v - Vec3(0.03111569f, 0.12992836f, 1.9f)).length < 1e-4f) foundB = true;
+    }
+    assert(foundA, "shared ridge endpoint A should land at the AVE_N-amplified shift + inset-along-ridge position");
+    assert(foundB, "shared ridge endpoint B (same accumulator, mirrored) should match too");
+}
+
+unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
+           // apex, internalCnt>=2 && !anyBoundary) — task 0458 Phase 1.
+           // Valence-3 apex surrounded by 3 irregular NON-planar,
+           // non-orthogonal quads (all selected); the apex has 3 internal
+           // edges and no boundary edge. `orig + shift·AVE_N` (no inset
+           // term) is bit-exact against the reference dump
+           // (`poly_bevel_G2_apex_v3`, 2.6e-8) for the apex vertex itself.
+           // The SAME dump's ring vertices (each internalCnt==1, shared
+           // between 2 of the 3 faces) are a KNOWN, documented residual
+           // (up to ~0.011) — see bevelFacesByMask's doc comment — not
+           // covered by this unittest.
+    auto m = buildRawMesh(
+        [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.6f, -0.1f, 1.1f), Vec3(-0.5f, 0.05f, 1.3f),
+         Vec3(-1.2f, -0.05f, 0.2f), Vec3(-0.7f, 0.1f, -1.0f), Vec3(0.5f, -0.2f, -0.9f),
+         Vec3(0.1f, 1.0f, 0.05f)],
+        // reference dump used reverse_winding=true for +Y outward normals —
+        // pre-reversed here so vibe3d's own faceNormal() convention matches.
+        [[2u,1,0,6], [4u,3,2,6], [0u,5,4,6]]);
+    bool[] mask = [true, true, true];
+    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+    assert(n == 3);
+    bool foundApex = false;
+    foreach (v; m.vertices)
+        if ((v - Vec3(0.13126321f, 1.18738139f, 0.04756028f)).length < 1e-4f) foundApex = true;
+    assert(foundApex, "fully-enclosed apex should sit at orig + shift*AVE_N (bit-exact against poly_bevel_G2_apex_v3)");
+}
+
+unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
+           // internalCnt>=2 && anyBoundary) — task 0458 Phase 1. Before
+           // this task the branch fell through entirely, so a partial
+           // vertex got the STANDALONE per-face formula applied once per
+           // incident face — 3 SEPARATE vertices instead of the
+           // reference's ONE shared vertex (a topology divergence, not
+           // just numeric). Valence-4 fan, only 3 of 4 quads selected, so
+           // the shared apex has 2 internal + 2 boundary edges.
+           //
+           // This asserts the TOPOLOGY fix (one shared vertex, referenced
+           // by every incident new face, matching the reference's vertex/
+           // face counts) using `orig + shift·AVE_N` — the same closed
+           // form as G2's fully-enclosed apex. The reference adds a
+           // further `boundaryInset` displacement whose closed form was
+           // NOT pinned to float precision even with rr/gdb read access
+           // (`toolcards/poly.bevel/findings.md` §1 — measured ~0.128 on
+           // this exact case, not a derivable formula) — this is a KNOWN,
+           // documented position gap (see bevelFacesByMask's doc comment),
+           // so position is intentionally NOT asserted bit-exact here.
+    import std.math : isNaN;
+    import std.conv : to;
+    auto m = buildRawMesh(
+        [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.7f, -0.1f, 0.8f), Vec3(0.0f, 0.05f, 1.2f),
+         Vec3(-0.9f, -0.05f, 0.7f), Vec3(-1.1f, 0.1f, -0.1f), Vec3(-0.6f, -0.15f, -0.9f),
+         Vec3(0.2f, 0.05f, -1.1f), Vec3(0.8f, -0.2f, -0.7f), Vec3(0.05f, 0.9f, 0.0f)],
+        // reference dump used reverse_winding=true — pre-reversed.
+        [[2u,1,0,8], [4u,3,2,8], [6u,5,4,8], [0u,7,6,8]]);
+    bool[] mask = [true, true, true, false]; // only 3 of 4 quads selected
+    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+    assert(n == 3);
+    // Reference: 9 orig + 8 new = 17 verts; 12 faces (3 final quads + the
+    // 4th untouched quad + bridges over the 4 remaining boundary edges of
+    // the 3-face selection — matches poly_bevel_G3_partial_fan's 17v/12f).
+    assert(m.vertices.length == 17, "partial-fan topology should match the reference vertex count (shared, not split)");
+    assert(m.faces.length    == 12);
+
+    // The shared partial vertex must be referenced by every incident new
+    // face exactly once (not duplicated into 3 separate vertices, one per
+    // selected face, the pre-0458 fallback's behavior).
+    Vec3 sharedPos = Vec3(float.nan, float.nan, float.nan);
+    foreach (v; m.vertices)
+        if ((v - Vec3(0.05f, 0.9f, 0.0f)).length > 0.05f && (v - Vec3(0.05f, 0.9f, 0.0f)).length < 0.3f)
+            sharedPos = v; // the moved partial vertex sits near, not at, orig
+    assert(!isNaN(sharedPos.x), "expected a moved partial-vertex position near orig (0.05,0.9,0.0)");
+    uint sharedIdx = uint.max;
+    foreach (i, v; m.vertices)
+        if ((v - sharedPos).length < 1e-6f) { sharedIdx = cast(uint)i; break; }
+    size_t refCount = 0;
+    foreach (f; m.faces)
+        foreach (v; f)
+            if (v == sharedIdx) { ++refCount; break; }
+    assert(refCount == 5, "the shared partial vertex should be referenced by all 5 incident faces (3 final + 2 bridges), got " ~ refCount.to!string);
+}
+
+unittest { // bevelFacesByMask: GROUP x SEGMENTS — task 0458 Phase 1 (+S1),
+           // finding S1. mesh.d's own doc comment marked this combination
+           // "KNOWN-UNTESTED" before this task. Orthogonal 2-face cube
+           // selection (AVE_N coincides with the naive sum here — see the
+           // asymmetric G1 unittest above for the discriminator) isolates
+           // the segments x group interaction: the shared ridge corner
+           // must be segmented the same equal-lerp way as every other
+           // boundary vertex, AND its intermediate (non-final) ring vertex
+           // must be shared across both faces (not duplicated per face —
+           // the pre-0458 kernel created 22 verts here; the reference/
+           // fixed kernel produces 20, matching poly_bevel_S1_group_segs2).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[4] = true; // +Y = [3,7,6,2]
+    mask[1] = true; // +Z = [4,5,6,7]
+    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 2);
+    assert(n == 2);
+    assert(m.vertices.length == 20, "expected 20 verts (8 orig + 6 intermediate-ring + 6 final-ring, shared corner not duplicated)");
+    assert(m.faces.length    == 18);
+    bool foundMidShared = false;
+    foreach (v; m.vertices)
+        if ((v - Vec3(0.375f, 0.575f, 0.575f)).length < 1e-4f) foundMidShared = true;
+    assert(foundMidShared, "the group-shared corner's t=1-of-2 intermediate ring vertex should land at exactly half inset/half shift (0.375,0.575,0.575)");
 }
 
 unittest { // bevelFacesByMask: group=false is byte-identical to the pre-0391
