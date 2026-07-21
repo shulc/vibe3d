@@ -22,6 +22,8 @@ import std.math : fabs;
 import core.thread : Thread;
 import core.time : msecs;
 
+import drag_helpers; // Vec3, fetchCamera, viewportFromCamera, projectToWindow
+
 void main() {}
 
 enum BASE = "http://localhost:8080";
@@ -141,8 +143,9 @@ unittest {
     cmd("tool.set poly.bevel off");
 }
 
-// Inset handle: a DIRECT press captures on its own part (both handles are
-// independently hit-testable, not just the first-registered).
+// Inset handle behaves like a SCALE box: a direct press captures its own part;
+// dragging the box TOWARD the center grows inset (cap shrinks) — inverted from a
+// naive axis drag — and the box FOLLOWS the cursor inward.
 unittest {
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
     assert(reset["status"].str == "ok", "cube reset failed");
@@ -150,11 +153,42 @@ unittest {
     cmd("tool.set poly.bevel on");
     settle();
 
-    int ix, iy;
-    handleScreen(1, ix, iy);
-    play(button("SDL_MOUSEBUTTONDOWN", ix, iy));
+    // Gizmo anchor = the selected face's centroid; project it to a screen point.
+    auto model = getJson("/api/model");
+    auto f0 = model["faces"].array[0].array;
+    Vec3 cen = Vec3(0, 0, 0);
+    foreach (vi; f0) {
+        auto v = model["vertices"].array[vi.integer].array;
+        cen = cen + Vec3(cast(float)v[0].floating, cast(float)v[1].floating, cast(float)v[2].floating);
+    }
+    cen = cen * (1.0f / cast(float)f0.length);
+    auto vp = viewportFromCamera(fetchCamera(BASE));
+    float ax, ay;
+    assert(projectToWindow(cen, vp, ax, ay), "face centroid projects off camera");
+
+    int bx, by;
+    handleScreen(1, bx, by); // inset box, out along the in-plane axis from the anchor
+    double boxToCenter0 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+
+    play(button("SDL_MOUSEBUTTONDOWN", bx, by));
     assert(getJson("/api/tool/state")["dragPart"].integer == 1,
         "Inset handle did not capture on a direct mouse-down — hit-test regression");
-    play(button("SDL_MOUSEBUTTONUP", ix, iy));
+
+    // Drag the box 60% of the way toward the centroid — the "toward center" dir.
+    int tx = bx + cast(int)((ax - bx) * 0.6f);
+    int ty = by + cast(int)((ay - by) * 0.6f);
+    play(motion(tx, ty, 1));
+    assert(getJson("/api/tool/state")["inset"].floating > 1e-3,
+        "dragging the inset box TOWARD the center did not grow inset (wrong drag sign)");
+    assert(getJson("/api/model")["vertices"].array.length > 8, "inset drag did not bevel the mesh");
+
+    // The box must have FOLLOWED the cursor toward the centroid (scale-box feel).
+    int nbx, nby;
+    handleScreen(1, nbx, nby);
+    double boxToCenter1 = (nbx - ax) * (nbx - ax) + (nby - ay) * (nby - ay);
+    assert(boxToCenter1 < boxToCenter0 - 1.0,
+        "inset box did not move toward the center as inset grew (box should follow)");
+
+    play(button("SDL_MOUSEBUTTONUP", tx, ty));
     cmd("tool.set poly.bevel off");
 }

@@ -261,8 +261,11 @@ public:
                                      baseAnchor, axis, cachedVp, skip);
         if (!skip) {
             float d = dot(delta, axis);
+            // shift: drag ALONG +normal (away from center) grows it. inset:
+            // drag TOWARD the center (−insetAxis) shrinks the cap → inset grows,
+            // so its sign is inverted (scale-handle feel: pull the box inward).
             if (dragPart == PART_SHIFT) shift_ = dragBaseShift + d;
-            else                        inset_ = dragBaseInset + d;
+            else                        inset_ = dragBaseInset - d;
             if (inset_ < 0.0f) inset_ = 0.0f;
             rebuildPreview();
         }
@@ -282,8 +285,13 @@ public:
         shiftArrow.start = anchor + shiftAxis * (armLen / 6.0f);
         shiftArrow.end   = anchor + shiftAxis * armLen;
         shiftArrow.color = SHIFT_COLOR;
-        insetArrow.start         = anchor + insetAxis * (armLen / 7.0f);
-        insetArrow.end           = anchor + insetAxis * armLen;
+        // Inset handle = a SCALE-style box: it sits out along the in-plane axis
+        // and travels TOWARD the center as inset grows, so dragging the box
+        // inward visibly shrinks the cap (the box follows the cursor 1:1).
+        float insetBoxDist = armLen - inset_;
+        if (insetBoxDist < cubeHalf * 2.5f) insetBoxDist = cubeHalf * 2.5f;
+        insetArrow.start         = anchor;
+        insetArrow.end           = anchor + insetAxis * insetBoxDist;
         insetArrow.fixedCubeHalf = cubeHalf;
         insetArrow.color         = INSET_COLOR;
 
