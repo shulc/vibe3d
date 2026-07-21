@@ -1,7 +1,7 @@
 {
   "name": "poly_bevel_G3_partial_fan",
-  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) GROUP shared-corner accumulator, PARTIAL branch (internalCnt>=2 && anyBoundary) -- task 0458 Phase 1. Valence-4 apex fan (4 irregular quads around P), only 3 of the 4 quads selected, so at P the selection has 2 internal edges (shared with 2 neighbouring selected faces) AND 2 boundary edges (shared with the 4th, unselected quad) -- a cube cannot produce this shape (a cube corner is always fully enclosed once 3 mutually-adjacent faces are selected), so this is a raw_mesh. group=true, inset=0.1, shift=0.1. Reference topology: 9v/4f -> 17v/12f -- THE central finding this fixture pins down: the reference SHARES P into ONE new vertex (referenced by all 5 incident new faces: the 3 replaced selected faces + the 2 boundary bridge quads), where vibe3d's pre-0458 kernel fell through this branch entirely and split P into 3 SEPARATE per-face vertices instead (a TOPOLOGY divergence, not just a numeric one -- the pre-fix vertex count was 19, not 17). This fixture asserts the corrected topology (vertex/face counts, which uniquely distinguish 'shared' from 'split') via expected_before/expected_after. It intentionally does NOT assert per-vertex positions: P's exact position needs a further 'boundaryInset' displacement term beyond orig+shift*AVE_N whose closed form was not pinned to float precision even with rr/gdb read access to the reference (toolcards/poly.bevel/findings.md SS1 -- measured ~0.128 on this exact case, not a derivable formula) -- a documented, known gap, not silently papered over with a loosened tolerance. (The kernel change here is topology-only: it now shares one vertex at orig+shift*AVE_N, the same closed form as poly_bevel_G2_apex_v3's fully-enclosed apex, without the missing boundary term.)",
-  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_G3_partial_fan).",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) GROUP shared-corner accumulator, PARTIAL branch (internalCnt>=2 && anyBoundary) -- task 0458 Phase 1 (+ follow-up). Valence-4 apex fan (4 irregular quads around P), only 3 of the 4 quads selected, so at P the selection has 2 internal edges (shared with 2 neighbouring selected faces) AND 2 boundary edges (shared with the 4th, unselected quad) -- a cube cannot produce this shape (a cube corner is always fully enclosed once 3 mutually-adjacent faces are selected), so this is a raw_mesh. group=true, inset=0.1, shift=0.1. Reference topology: 9v/4f -> 17v/12f -- THE central finding this fixture pins down: the reference SHARES P into ONE new vertex (referenced by all 5 incident new faces: the 3 replaced selected faces + the 2 boundary bridge quads), where vibe3d's pre-0458 kernel fell through this branch entirely and split P into 3 SEPARATE per-face vertices instead (a TOPOLOGY divergence, not just a numeric one -- the pre-fix vertex count was 19, not 17). This fixture asserts the corrected topology (vertex/face counts) AND, since the follow-up, P's exact bit-exact position via the recovered `bevGenInset` mitered-corner offset (findings.md SS1/SS5): `orig + shift*AVE_N + inset*D/(D.U)` built from P's own two group-boundary-contour edges (excluding its 2 internal spokes entirely). The fan's other two internalCnt==1 ring vertices (each sharing an internal spoke with P) are governed by the SAME recovered offset and are pinned bit-exact too. It intentionally does NOT assert the remaining (standalone, single-face) vertex positions: those touch only 1 selected face and are unaffected by this task's group-accumulator fix -- a pre-existing, separately-flagged non-group insetCorner residual (task 0458 follow-up 'bonus finding', not fixed here) remains on that path.",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_G3_partial_fan). P predicted-vs-measured to 1.1e-8, the two ring vertices to 9.0e-8/2.2e-8 (float32 floor).",
   "provenance": {
     "schema": 1,
     "source": "live-capture",
@@ -10,7 +10,7 @@
     "captured_utc": "2026-07-21T00:00:00Z",
     "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
     "task": "0458",
-    "notes": "Phase-0 dump-oracle for the group shift accumulator's partial branch -- the pre-0458 kernel had NO code path here at all (fell through to the per-face default), producing a topology divergence (3 split vertices vs the reference's 1 shared vertex). This fixture pins the corrected topology (17v/12f) via vertex/face counts; positions are a documented, known gap (see source/mesh.d's bevelFacesByMask doc comment) not asserted here."
+    "notes": "Phase-0 dump-oracle for the group shift accumulator's partial branch -- the pre-0458 kernel had NO code path here at all (fell through to the per-face default), producing a topology divergence (3 split vertices vs the reference's 1 shared vertex). Task 0458 follow-up closed the position gap via the recovered `bevGenInset` mitered-corner offset (findings.md SS1/SS5) -- this fixture now pins the corrected topology (17v/12f) AND P's + two ring vertices' bit-exact positions; the remaining standalone (single-face) vertices carry a separate, pre-existing, out-of-scope residual (see bevelFacesByMask's doc comment in source/mesh.d) not asserted here."
   },
   "tolerance": 0.0001,
   "cases": [
@@ -48,7 +48,21 @@
           "params": { "inset": 0.1, "shift": 0.1, "group": true } } }
       ],
       "expected_before": { "verts": 9, "faces": 4 },
-      "expected_after":  { "verts": 17, "faces": 12 }
+      "expected_after":  { "verts": 17, "faces": 12 },
+      "lerp_checks": [
+        { "a": [-0.07055401057004929, 1.008576512336731, 0.1030750498175621],
+          "b": [-0.07055401057004929, 1.008576512336731, 0.1030750498175621],
+          "t": 0.0,
+          "point": [-0.07055401057004929, 1.008576512336731, 0.1030750498175621] },
+        { "a": [0.007625790778547525, 0.20111210644245148, 1.17682945728302],
+          "b": [0.007625790778547525, 0.20111210644245148, 1.17682945728302],
+          "t": 0.0,
+          "point": [0.007625790778547525, 0.20111210644245148, 1.17682945728302] },
+        { "a": [-1.0779142379760742, 0.24796044826507568, -0.10330882668495178],
+          "b": [-1.0779142379760742, 0.24796044826507568, -0.10330882668495178],
+          "t": 0.0,
+          "point": [-1.0779142379760742, 0.24796044826507568, -0.10330882668495178] }
+      ]
     }
   ]
 }

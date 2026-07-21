@@ -8212,6 +8212,78 @@ struct Mesh {
         return nSum * (cast(float)count / mag2);
     }
 
+    /// Locates vertex `v`'s two GROUP-BOUNDARY-CONTOUR edges — the outer
+    /// silhouette of the selected-face region at `v`, task 0458
+    /// findings.md §1/§5's `e_a`/`e_b` — for the recovered `bevGenInset`
+    /// mitered-corner offset (`boundaryContourInset` below). Any THIRD
+    /// edge incident to `v` that is INTERNAL (shared by two selected
+    /// faces — e.g. G2's spoke to the fully-enclosed apex, or G3's two
+    /// spokes to its other interior neighbors) is excluded entirely, per
+    /// the reference's construction. `eB` is the boundary neighbor
+    /// reached via each incident selected face's PREVIOUS-index direction
+    /// (`f[k-1]`), `eA` via its NEXT-index direction (`f[k+1]`) — this
+    /// pairing (not its mirror) is the one empirically confirmed
+    /// bit-exact against the G2-ring/G3-partial dump-oracles (the
+    /// mirrored pairing negates the mitered offset, since `U` — and hence
+    /// the sign of `boundaryInset` — is built from `eB` alone). Returns
+    /// false unless exactly one of each is found, the only topology (two
+    /// group-boundary edges at `v`) this construction covers.
+    private bool findGroupBoundaryContour(uint v, const bool[] mask,
+            bool[ulong] internalEdgeSet, out uint eA, out uint eB) const {
+        bool foundA = false, foundB = false;
+        foreach (fi; facesAroundVertex(v)) {
+            if (fi >= mask.length || !mask[fi]) continue;
+            const uint[] f = faces[fi];
+            immutable int N = cast(int)f.length;
+            int k = -1;
+            foreach (i; 0 .. N) if (f[i] == v) { k = i; break; }
+            if (k < 0) continue;
+            immutable uint nxt = f[(k + 1) % N];
+            immutable uint prv = f[(k + N - 1) % N];
+            if (auto ip = edgeKeyOrdered(v, nxt) in internalEdgeSet) {
+                if (!*ip) { eA = nxt; foundA = true; }
+            }
+            if (auto ip = edgeKeyOrdered(v, prv) in internalEdgeSet) {
+                if (!*ip) { eB = prv; foundB = true; }
+            }
+        }
+        return foundA && foundB;
+    }
+
+    /// Recovered `bevGenInset` mitered-corner offset (task 0458
+    /// findings.md §1/§5, rr/gdb-traced): `boundaryInset = D · inset /
+    /// (D·U)`, a textbook mitered-polygon-corner offset generalized off
+    /// the true per-vertex shift normal `aveN` (`AVE_N`) instead of a flat
+    /// 2D plane. `D = unit(perp(eaVec,aveN)) + unit(perp(ebVec,aveN))` is
+    /// the tangent-plane (⟂ `aveN`) bisector sum of the two
+    /// group-boundary-contour edges; `U = unit(cross(ebVec,aveN))` is the
+    /// tangent-plane perpendicular of `ebVec`; `perp(e,n) = e −
+    /// (e·n/n·n)·n` projects an edge vector into the plane ⟂ `n`. Returns
+    /// false (and leaves `result` zeroed) when `|D·U|` is below `GATE_EPS`
+    /// — a genuine 0/0 singularity in the formula, NOT a code bug, that
+    /// occurs exactly when `eaVec`/`ebVec` project anti-parallel onto the
+    /// tangent plane: G1's coplanar ridge-tent measures `D·U` at machine
+    /// epsilon (both its boundary-contour edges and `aveN` are coplanar),
+    /// while G2-ring/G3-partial measure `|D·U|` in `[0.368, 0.974]` on
+    /// their dump-oracles — a clean separation (task 0458, verified
+    /// against all three case families before wiring this gate). The
+    /// caller falls back to the existing 3-plane-meet law in that case.
+    private static bool boundaryContourInset(Vec3 eaVec, Vec3 ebVec,
+            Vec3 aveN, float inset, out Vec3 result) {
+        import std.math : abs;
+        static Vec3 perp(Vec3 e, Vec3 n) {
+            immutable float nn = dot(n, n);
+            return nn > 1e-12f ? e - n * (dot(e, n) / nn) : e;
+        }
+        immutable Vec3 D = safeNormalize(perp(eaVec, aveN)) + safeNormalize(perp(ebVec, aveN));
+        immutable Vec3 U = safeNormalize(cross(ebVec, aveN));
+        immutable float dDotU = dot(D, U);
+        enum float GATE_EPS = 1e-4f;
+        if (abs(dDotU) < GATE_EPS) { result = Vec3(0, 0, 0); return false; }
+        result = D * (inset / dDotU);
+        return true;
+    }
+
     /// Polygon bevel: for each selected face, inset each corner by `inset`
     /// AND displace the inset cap by `+faceNormal*shift` along the face normal,
     /// bridging the original boundary to the offset cap with N ring quads.
@@ -8250,36 +8322,44 @@ struct Mesh {
     /// classification):
     ///   - EXACTLY 1 internal edge ("half-shared", on the group's own outer
     ///     boundary but shared by the 2 faces either side of that internal
-    ///     edge): `orig + shift·AVE_N + inset·dir(orig → the internal
-    ///     edge's other endpoint)` — bit-exact against
-    ///     `poly_bevel_G1_halfshared_tent` (6e-9), including on non-90°/
-    ///     unequal-edge-length asymmetric geometry (task 0458 Phase 1).
+    ///     edge): `orig + shift·AVE_N + boundaryInset`, where `boundaryInset`
+    ///     is the recovered `bevGenInset` mitered-corner offset
+    ///     (`boundaryContourInset`, task 0458 follow-up — findings.md
+    ///     §1/§5) built from `v`'s own two group-boundary-contour edges
+    ///     (`findGroupBoundaryContour`), NOT the internal edge. That
+    ///     construction is singular (`|D·U|→0`) exactly on a coplanar
+    ///     ridge — a gate falls back to `inset·dir(orig → the internal
+    ///     edge's other endpoint)` there, the original 3-plane-meet law,
+    ///     bit-exact against `poly_bevel_G1_halfshared_tent` (6e-9,
+    ///     including on non-90°/unequal-edge-length asymmetric geometry).
+    ///     Off the gate, bit-exact against `poly_bevel_G2_apex_v3`'s ring
+    ///     vertices (1.2e-8 to 6.4e-8) — a ring vertex whose sole internal
+    ///     edge runs to a fully-enclosed apex is the SAME `internalCnt==1`
+    ///     case, just clear of the gate.
     ///   - EVERY incident edge internal (fully enclosed by the group, no
     ///     boundary edge left — the group's own analog of edge-bevel's
     ///     N-way junction hub): `orig + shift·AVE_N`, no inset term (no
     ///     boundary edge left to inset against) — bit-exact against
-    ///     `poly_bevel_G2_apex_v3`'s apex vertex (2.6e-8); the SAME
-    ///     dump's OTHER (half-shared) ring vertices are a known,
-    ///     unresolved position gap (see below).
+    ///     `poly_bevel_G2_apex_v3`'s apex vertex (2.6e-8).
     ///   - 0 internal edges (standalone) uses today's unshared per-face
-    ///     formula unchanged.
+    ///     formula unchanged. (Task 0458 follow-up finding: the reference's
+    ///     `bevGenInset` callback applies the SAME mitered-corner offset,
+    ///     with `k=1` in `AVE_N`, to a group's "standalone" corners too —
+    ///     touched by only one selected face — and the pre-existing
+    ///     ~0.02–0.05 divergence there on non-planar quads is likely this
+    ///     same missing term on the per-face-only path. NOT ported here —
+    ///     see the per-face `insetCorner`/`offsetMeet` path instead;
+    ///     flagged as a follow-up, out of this task's scope.)
     ///   - ≥2 internal edges AND ≥1 remaining boundary edge (a partial,
     ///     "some but not all" enclosure — task 0458 finding G3): SHARES one
-    ///     vertex (topology now matches the reference; the pre-0458 stub
-    ///     fell through to the per-face formula, splitting it into one
-    ///     vertex PER incident face) at `orig + shift·AVE_N` — the same
-    ///     closed form as the fully-enclosed case above. The reference adds
-    ///     a further `boundaryInset` displacement here whose closed form
-    ///     was NOT pinned to float precision even with rr/gdb read access
-    ///     (`findings.md` §1 — measured ~0.128 on
-    ///     `poly_bevel_G3_partial_fan`'s own oracle, not a derivable
-    ///     formula); this is a KNOWN, documented position gap, not a
-    ///     silent approximation. The SAME gap affects a half-shared
-    ///     vertex (above) whose internal-edge partner has `internalCnt>=2`
-    ///     (e.g. a ring vertex next to a fully-enclosed apex) — there the
-    ///     `internalCnt==1` formula is evaluated exactly as written but
-    ///     leaves a residual up to ~0.011 against `poly_bevel_G2_apex_v3`'s
-    ///     ring vertices, for the identical un-pinned reason.
+    ///     vertex (topology matches the reference; the pre-0458 stub fell
+    ///     through to the per-face formula, splitting it into one vertex
+    ///     PER incident face) at `orig + shift·AVE_N + boundaryInset` — the
+    ///     SAME recovered mitered-corner offset as the half-shared branch
+    ///     above, using `v`'s two group-boundary-contour edges (its
+    ///     internal spokes excluded entirely) — bit-exact against
+    ///     `poly_bevel_G3_partial_fan`'s shared apex vertex (1.1e-8, task
+    ///     0458 follow-up).
     /// `group=false` (default) is byte-identical to the pre-0391 kernel.
     ///
     /// `segments` (task 0391 Phase 5, `capture-verified` LINEAR staircase —
@@ -8384,18 +8464,34 @@ struct Mesh {
                     else     { anyBoundary = true; }
                 }
                 if (internalCnt == 0) continue; // standalone — default formula below
-                immutable Vec3 sSum = aveNormal(nSum, normalCount[v]) * shift;
+                immutable Vec3 aveN = aveNormal(nSum, normalCount[v]);
+                immutable Vec3 sSum = aveN * shift;
                 if (internalCnt == 1) {
-                    // Half-shared (task 0458 finding G1): reference's
-                    // 3-plane meet (2 shift-planes + 1 internal-edge inset
-                    // plane) reduces EXACTLY to this additive form because
-                    // the internal edge always lies in both incident
-                    // faces' planes, hence is orthogonal to both corner
-                    // normals — bit-exact against
-                    // `poly_bevel_G1_halfshared_tent` (6e-9, incl. on
-                    // non-90°/unequal-length asymmetric geometry).
-                    sharedCornerPos[v] = vertices[v] + sSum +
-                        safeNormalize(vertices[lastInternalOther] - vertices[v]) * inset;
+                    // Half-shared (task 0458 finding G1) OR a ring vertex
+                    // whose sole internal edge runs to a fully-enclosed
+                    // apex (finding G2's OTHER, internalCnt>=2 vertex) —
+                    // findings.md §1/§5: BOTH are governed by the SAME
+                    // recovered mitered-corner offset built from `v`'s own
+                    // two group-boundary-contour edges (NOT the internal
+                    // edge). That construction is singular exactly on G1's
+                    // coplanar-ridge topology (`boundaryContourInset`'s
+                    // `|D·U|` gate) — there we fall back to the original
+                    // 3-plane-meet law (along the internal edge itself),
+                    // bit-exact against `poly_bevel_G1_halfshared_tent`
+                    // (6e-9, incl. on non-90°/unequal-length asymmetric
+                    // geometry). Off the gate, bit-exact against
+                    // `poly_bevel_G2_apex_v3`'s ring vertices (1.2e-8 to
+                    // 6.4e-8, task 0458 follow-up).
+                    uint eA, eB;
+                    Vec3 offset;
+                    if (findGroupBoundaryContour(v, mask, internalEdgeSet, eA, eB) &&
+                        boundaryContourInset(vertices[eA] - vertices[v],
+                                              vertices[eB] - vertices[v], aveN, inset, offset)) {
+                        sharedCornerPos[v] = vertices[v] + sSum + offset;
+                    } else {
+                        sharedCornerPos[v] = vertices[v] + sSum +
+                            safeNormalize(vertices[lastInternalOther] - vertices[v]) * inset;
+                    }
                 } else if (!anyBoundary) {
                     // Fully-enclosed apex (finding G2): bit-exact against
                     // `poly_bevel_G2_apex_v3` (2.6e-8), no inset term (no
@@ -8404,21 +8500,29 @@ struct Mesh {
                 } else {
                     // Partial — internalCnt>=2 with a remaining boundary
                     // edge (finding G3). Reference SHARES one vertex at
-                    // `orig + shift·AVE_N + boundaryInset`; the
-                    // `boundaryInset` term's closed form was NOT pinned to
-                    // float precision even with rr/gdb read access to the
-                    // reference (`findings.md` §1: "the exact
-                    // boundary-contour offsetMeet direction is the one
-                    // fine point not closed to float precision" — measured
-                    // ~0.128 on `poly_bevel_G3_partial_fan`'s own oracle,
-                    // not a formula). This shares the vertex — the
-                    // topology divergence the pre-0458 stub had (3 split
-                    // per-face verts instead of 1) is fixed — using the
-                    // same closed `orig + shift·AVE_N` term as G2; the
-                    // missing boundary-inset displacement is a KNOWN,
-                    // documented position gap (task 0458 Phase 1 follow-up),
-                    // not a silent approximation.
-                    sharedCornerPos[v] = vertices[v] + sSum;
+                    // `orig + shift·AVE_N + boundaryInset` — the SAME
+                    // recovered mitered-corner offset as the half-shared
+                    // branch above, using `v`'s two group-boundary-contour
+                    // edges (excluding its internal spokes entirely) —
+                    // bit-exact against `poly_bevel_G3_partial_fan`'s
+                    // shared apex vertex (1.1e-8, task 0458 follow-up,
+                    // `findings.md` §1/§5). The topology divergence the
+                    // pre-0458 stub had (3 split per-face verts instead of
+                    // 1) stays fixed regardless. Falls back to the plain
+                    // `orig + shift·AVE_N` term (no documented case
+                    // exercises this — the gate is only known to trigger
+                    // on G1's coplanar-ridge topology, which cannot arise
+                    // here since G3 always has a strict remaining
+                    // boundary distinct from any coplanar internal ridge).
+                    uint eA, eB;
+                    Vec3 offset;
+                    if (findGroupBoundaryContour(v, mask, internalEdgeSet, eA, eB) &&
+                        boundaryContourInset(vertices[eA] - vertices[v],
+                                              vertices[eB] - vertices[v], aveN, inset, offset)) {
+                        sharedCornerPos[v] = vertices[v] + sSum + offset;
+                    } else {
+                        sharedCornerPos[v] = vertices[v] + sSum;
+                    }
                 }
             }
         }
@@ -16892,16 +16996,18 @@ unittest { // bevelFacesByMask: GROUP accumulator on ASYMMETRIC geometry —
 }
 
 unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
-           // apex, internalCnt>=2 && !anyBoundary) — task 0458 Phase 1.
-           // Valence-3 apex surrounded by 3 irregular NON-planar,
-           // non-orthogonal quads (all selected); the apex has 3 internal
-           // edges and no boundary edge. `orig + shift·AVE_N` (no inset
-           // term) is bit-exact against the reference dump
+           // apex, internalCnt>=2 && !anyBoundary) — task 0458 Phase 1
+           // (+ follow-up). Valence-3 apex surrounded by 3 irregular
+           // NON-planar, non-orthogonal quads (all selected); the apex has
+           // 3 internal edges and no boundary edge. `orig + shift·AVE_N`
+           // (no inset term) is bit-exact against the reference dump
            // (`poly_bevel_G2_apex_v3`, 2.6e-8) for the apex vertex itself.
            // The SAME dump's ring vertices (each internalCnt==1, shared
-           // between 2 of the 3 faces) are a KNOWN, documented residual
-           // (up to ~0.011) — see bevelFacesByMask's doc comment — not
-           // covered by this unittest.
+           // between 2 of the 3 faces) are now ALSO bit-exact via the
+           // recovered `bevGenInset` mitered-corner offset
+           // (`boundaryContourInset`/`findGroupBoundaryContour`, task 0458
+           // follow-up, findings.md §1/§5) — the position gap this
+           // unittest used to document is closed.
     auto m = buildRawMesh(
         [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.6f, -0.1f, 1.1f), Vec3(-0.5f, 0.05f, 1.3f),
          Vec3(-1.2f, -0.05f, 0.2f), Vec3(-0.7f, 0.1f, -1.0f), Vec3(0.5f, -0.2f, -0.9f),
@@ -16916,28 +17022,38 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
     foreach (v; m.vertices)
         if ((v - Vec3(0.13126321f, 1.18738139f, 0.04756028f)).length < 1e-4f) foundApex = true;
     assert(foundApex, "fully-enclosed apex should sit at orig + shift*AVE_N (bit-exact against poly_bevel_G2_apex_v3)");
+
+    // Ring vertices (dump[7]/[9]/[11], near orig-vert 0/2/4): bit-exact
+    // against `poly_bevel_G2_apex_v3` via the recovered mitered-corner
+    // offset (task 0458 follow-up).
+    bool foundRing0 = false, foundRing2 = false, foundRing4 = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(1.01231349f, 0.14855729f, -0.00942456f)).length < 1e-4f) foundRing0 = true;
+        if ((v - Vec3(-0.48344547f, 0.20435742f, 1.27598262f)).length < 1e-4f) foundRing2 = true;
+        if ((v - Vec3(-0.67538124f, 0.25805962f, -0.98621768f)).length < 1e-4f) foundRing4 = true;
+    }
+    assert(foundRing0, "ring vertex near orig-vert 0 should be bit-exact against poly_bevel_G2_apex_v3's dump[7]");
+    assert(foundRing2, "ring vertex near orig-vert 2 should be bit-exact against poly_bevel_G2_apex_v3's dump[9]");
+    assert(foundRing4, "ring vertex near orig-vert 4 should be bit-exact against poly_bevel_G2_apex_v3's dump[11]");
 }
 
 unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
-           // internalCnt>=2 && anyBoundary) — task 0458 Phase 1. Before
-           // this task the branch fell through entirely, so a partial
-           // vertex got the STANDALONE per-face formula applied once per
-           // incident face — 3 SEPARATE vertices instead of the
-           // reference's ONE shared vertex (a topology divergence, not
-           // just numeric). Valence-4 fan, only 3 of 4 quads selected, so
-           // the shared apex has 2 internal + 2 boundary edges.
+           // internalCnt>=2 && anyBoundary) — task 0458 Phase 1 (+
+           // follow-up). Before Phase 1 the branch fell through entirely,
+           // so a partial vertex got the STANDALONE per-face formula
+           // applied once per incident face — 3 SEPARATE vertices instead
+           // of the reference's ONE shared vertex (a topology divergence,
+           // not just numeric). Valence-4 fan, only 3 of 4 quads selected,
+           // so the shared apex has 2 internal + 2 boundary edges.
            //
-           // This asserts the TOPOLOGY fix (one shared vertex, referenced
-           // by every incident new face, matching the reference's vertex/
-           // face counts) using `orig + shift·AVE_N` — the same closed
-           // form as G2's fully-enclosed apex. The reference adds a
-           // further `boundaryInset` displacement whose closed form was
-           // NOT pinned to float precision even with rr/gdb read access
-           // (`toolcards/poly.bevel/findings.md` §1 — measured ~0.128 on
-           // this exact case, not a derivable formula) — this is a KNOWN,
-           // documented position gap (see bevelFacesByMask's doc comment),
-           // so position is intentionally NOT asserted bit-exact here.
-    import std.math : isNaN;
+           // This asserts BOTH the topology fix (one shared vertex,
+           // referenced by every incident new face, matching the
+           // reference's vertex/face counts) AND — since the follow-up —
+           // the exact position via the recovered `bevGenInset`
+           // mitered-corner offset (`boundaryContourInset`/
+           // `findGroupBoundaryContour`, findings.md §1/§5): `orig +
+           // shift·AVE_N + boundaryInset`, bit-exact against
+           // `poly_bevel_G3_partial_fan`'s shared apex vertex (1.1e-8).
     import std.conv : to;
     auto m = buildRawMesh(
         [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.7f, -0.1f, 0.8f), Vec3(0.0f, 0.05f, 1.2f),
@@ -16954,17 +17070,16 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
     assert(m.vertices.length == 17, "partial-fan topology should match the reference vertex count (shared, not split)");
     assert(m.faces.length    == 12);
 
-    // The shared partial vertex must be referenced by every incident new
-    // face exactly once (not duplicated into 3 separate vertices, one per
-    // selected face, the pre-0458 fallback's behavior).
-    Vec3 sharedPos = Vec3(float.nan, float.nan, float.nan);
-    foreach (v; m.vertices)
-        if ((v - Vec3(0.05f, 0.9f, 0.0f)).length > 0.05f && (v - Vec3(0.05f, 0.9f, 0.0f)).length < 0.3f)
-            sharedPos = v; // the moved partial vertex sits near, not at, orig
-    assert(!isNaN(sharedPos.x), "expected a moved partial-vertex position near orig (0.05,0.9,0.0)");
+    // The shared partial vertex must sit at the bit-exact recovered
+    // position (poly_bevel_G3_partial_fan's dump[16]) AND be referenced by
+    // every incident new face exactly once (not duplicated into 3 separate
+    // vertices, one per selected face, the pre-0458 fallback's behavior).
+    immutable Vec3 expectedShared = Vec3(-0.07055401f, 1.00857651f, 0.10307505f);
     uint sharedIdx = uint.max;
     foreach (i, v; m.vertices)
-        if ((v - sharedPos).length < 1e-6f) { sharedIdx = cast(uint)i; break; }
+        if ((v - expectedShared).length < 1e-4f) { sharedIdx = cast(uint)i; break; }
+    assert(sharedIdx != uint.max,
+        "expected the shared partial vertex bit-exact at orig + shift*AVE_N + boundaryInset (poly_bevel_G3_partial_fan's dump[16])");
     size_t refCount = 0;
     foreach (f; m.faces)
         foreach (v; f)
