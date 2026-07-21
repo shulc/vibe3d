@@ -965,6 +965,88 @@ unittest {
 }
 
 // ===========================================================================
+// LANE 2b (task 0456) — FULL-HUB Round-Level census. The single-edge lane above
+// can never form an N>=4 junction hub (K<=1 per trial, no Miter corner). This
+// lane is the regression sentinel for the N-way (K==d>=4) rounded hub landed in
+// task 0454/0456: for every genuine closed-fan valence>=4 vertex it HAND-BUILDS a
+// full-ring mask (ALL incident edges) — deliberately NOT `generateTrialMasks`,
+// whose all-but-one mask is the partial-K landmine (R6: a valence-5 K=4 partial
+// fan is a free end, not a hub, with no boundary-Bézier ground truth). L0 vs L1
+// is pinned by exact equality — this pins OUR output (regression), kept distinct
+// from the reference-dump parity fixtures in mesh.d. Covers BOTH even hubs
+// (sphere segments=6, subdiv-cube valence-4) and an ODD hub (sphere segments=5,
+// valence-5 pole) so odd-N is census-covered.
+private RoundLevelCensus censusRoundLevelFullHub(string label, const ref Mesh m, float width = 0.08f) {
+    RoundLevelCensus c;
+    immutable size_t nE = m.edges.length;
+    foreach (uint V; 0 .. cast(uint)m.vertices.length) {
+        size_t d = 0;
+        foreach (f; m.faces) {
+            bool has = false;
+            foreach (v; f) if (v == V) { has = true; break; }
+            if (has) ++d;
+        }
+        size_t ne = 0;
+        foreach (ei; 0 .. nE) if (m.edges[ei][0] == V || m.edges[ei][1] == V) ++ne;
+        // Closed-fan (ne == d) valence>=4 vertex: a GENUINE full hub. Skip
+        // valence-3 (single-edge lane's territory) and open fans (ne == d+1).
+        if (d < 4 || ne != d) continue;
+        auto mask = new bool[](nE);
+        foreach (ei; 0 .. nE) if (m.edges[ei][0] == V || m.edges[ei][1] == V) mask[ei] = true;
+        auto clone0 = cloneMeshForTrial(m);
+        auto clone1 = cloneMeshForTrial(m);
+        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
+        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        ++c.total;
+        if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
+        if (p0 == 0 && p1 == 0)   { ++c.identical; continue; }
+        if (meshesGeometricallyIdentical(clone0, clone1)) ++c.identical;
+    }
+    writefln("[edge.bevel census] fullHubRL %-16s trials=%-5d identical=%-5d (%.1f%%)",
+        label, c.total, c.identical, c.total ? 100.0 * c.identical / c.total : 0.0);
+    return c;
+}
+
+unittest {
+    // Even hubs: sphere(6,6) poles valence-6 + ring verts valence-4; subdiv
+    // cubes valence-4. Odd hub: sphere(6,5) poles valence-5 (odd-N coverage).
+    auto sphereEven = makeUvSphereForCensus(6, 6);
+    auto sphereOdd  = makeUvSphereForCensus(6, 5);
+    auto subL1      = subdivideCube(1);
+    auto subL2      = subdivideCube(2);
+
+    auto hEven = censusRoundLevelFullHub("sphere_even", sphereEven);
+    auto hOdd  = censusRoundLevelFullHub("sphere_odd",  sphereOdd);
+    auto hSub1 = censusRoundLevelFullHub("subdiv_cube_L1", subL1);
+    auto hSub2 = censusRoundLevelFullHub("subdiv_cube_L2", subL2);
+
+    // A full hub must never flip accept-vs-decline between L0 and L1 (topology
+    // stays; only the cap shape changes) — a much bigger finding than a count
+    // drift, same contract as the single-edge lane.
+    assert(hEven.acceptDeclineMismatch == 0 && hOdd.acceptDeclineMismatch == 0 &&
+           hSub1.acceptDeclineMismatch == 0 && hSub2.acceptDeclineMismatch == 0,
+        "full-hub Round Level flipped accept vs decline — investigate before touching baselines");
+
+    // Baselines pinned 2026-07-21 (task 0456). Every genuine N>=4 full hub now
+    // ROUNDS at L1 (L0 != L1), so `identical` is 0 on the pyramid/sphere hubs.
+    // These pin OUR output; a rise in `identical` (a hub silently stopped
+    // rounding / dropped to the flat N-gon) or a `total` drift (the full-hub
+    // population changed) is the regression this lane exists to catch.
+    assert(hEven.total == NWAY_FULLHUB_SPHERE_EVEN_TOTAL && hEven.identical == 0,
+        "fullHubRL/sphere_even baseline moved (task 0456)");
+    assert(hOdd.total == NWAY_FULLHUB_SPHERE_ODD_TOTAL && hOdd.identical == 0,
+        "fullHubRL/sphere_odd baseline moved (task 0456)");
+    assert(hSub1.total == NWAY_FULLHUB_SUBL1_TOTAL && hSub1.identical == 0,
+        "fullHubRL/subdiv_cube_L1 baseline moved (task 0456)");
+    assert(hSub2.total == NWAY_FULLHUB_SUBL2_TOTAL && hSub2.identical == 0,
+        "fullHubRL/subdiv_cube_L2 baseline moved (task 0456)");
+}
+enum size_t NWAY_FULLHUB_SPHERE_EVEN_TOTAL = 32; // 2 valence-6 poles + 30 valence-4 ring verts
+enum size_t NWAY_FULLHUB_SPHERE_ODD_TOTAL  = 27; // 2 valence-5 poles (odd-N) + 25 valence-4 ring verts
+enum size_t NWAY_FULLHUB_SUBL1_TOTAL       = 18; // subdivided-cube valence-4 hubs
+enum size_t NWAY_FULLHUB_SUBL2_TOTAL       = 90;
+
+// ===========================================================================
 // LANE 3b (task 0449) — "identical/total" is blind to the difference between
 // a REAL rounded arc and a degenerate straight chord that just got
 // subdivided (more vertices, zero added curvature — the antipodal-fillet

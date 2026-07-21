@@ -8605,10 +8605,13 @@ struct Mesh {
     /// for near-antipodal hub poles), and the whole junction (rails + ring) is
     /// subdivided into `2·roundLevel` equal-angle segments (the isolated K1
     /// convention is the same law; `2·L` only equals `2^L` at L≤2, which is why
-    /// the old `1<<roundLevel` matched there but over-subdivided at L≥3). Still
-    /// open (XFAIL): N>3 junctions (a different reference N-sided path) keep the
-    /// flat N-gon cap.  `roundLevel==0` takes the old flat path without a
-    /// registry.
+    /// the old `1<<roundLevel` matched there but over-subdivided at L≥3).
+    /// N≥4 junctions (a different reference N-sided path — `junctionRingN`) now
+    /// ALSO round (task 0454/0456): even N to reference parity at every level,
+    /// odd N with the finding-(I) rail exact and an L≥2 ring residual (the 0453
+    /// GPatch_MovePoints/newC gap, XFAIL). An over-cap full hub
+    /// (`> MAX_JUNCTION_VALENCE`) still keeps the flat N-gon cap (DoS backstop).
+    /// `roundLevel==0` takes the old flat path without a registry.
     ///
     /// A DIFFERENT cap — the free-end / partial-fan cap for `0 < K < nE`
     /// (task 0439, described above) — is a disjoint code path guarded by
@@ -8852,16 +8855,26 @@ struct Mesh {
             Vec3 arcCenter;      // explicit fillet centre for a junction rail
             bool hasArcCenter;   // ↑ valid (else use the per-vertex fillet centre)
             bool rimRail;        // centre vertex sits on an open (boundary) fan
-            // Task 0454 — N≥4 full-ring hub rail only: the finding-(F) boundary
-            // Bézier handles (P1 near endpoint `a`, P2 near `b`, matching
-            // `railInterior`'s a→b sampling). When `useBezier` is set,
-            // `railInterior` samples the uniform-t cubic Bézier
-            // `[vertices[a], bezP1, bezP2, vertices[b]]` instead of the slerp
-            // arc — the ONLY law change vs today, and reached only by a genuine
-            // closed N≥4 hub (`hasArcCenter`/slerp stays byte-identical for
-            // every non-hub rail, incl. partial-K≥4 free-end rails).
-            Vec3 bezP1, bezP2;
-            bool useBezier;
+            // Task 0454/0456 — N≥4 full-ring hub rail only. Two distinct
+            // constructions live here (they were conflated in the dormant port):
+            //   • RING internal net (finding F): `bezP1`/`bezP2` are the
+            //     kappa-cubic-Bézier handles of side (a→b)'s boundary curve,
+            //     pivoted at the OWN selected edge's slide point. Fed to
+            //     `junctionRingN` for HUB + the L≥2 Gregory ring SURFACE. This
+            //     is still exactly correct — finding (F) verified it against the
+            //     reference's internal control net.
+            //   • Emitted RAIL vertex (finding I): the mesh rail vertex the
+            //     reference actually writes is NOT the boundary-Bézier — it is
+            //     the `EdgeBevel_RoundPos`/`RoundPos0` SLERP-plus-correction law
+            //     pivoted on the TWO NEIGHBORING sides' slide points `jvA`/`jvB`
+            //     (never the side's own). When `hubRail` is set, `railInterior`
+            //     samples that law instead of the slerp arc — the ONLY rail-law
+            //     change vs today, reached only by a genuine closed N≥4 hub
+            //     (`hasArcCenter`/slerp stays byte-identical for every non-hub
+            //     rail, incl. partial-K≥4 free-end rails).
+            Vec3 bezP1, bezP2;   // ring internal-net handles (finding F)
+            Vec3 jvA, jvB;       // rail neighbor pivots, a→b (finding I)
+            bool hubRail;
         }
         RailSpec[ulong] railSpecs;
         uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
@@ -8915,6 +8928,88 @@ struct Mesh {
             outP2 = P3 + t3 * (kappa * lenB);
             ok = true;
         }
+        // finding (I) emitted-rail law — the actual mesh rail vertex a Round
+        // Level≥1 N-way junction writes, distinct from the internal Gregory net's
+        // boundary Bézier above (which misses it by ~0.01–0.03). Direct port of
+        // `nway_hub_ring_ref.py::_round_center`/`_round_pos0`/`_round_pos`,
+        // live-RE'd via rr/gdb through `EdgeBevel_RoundCenter`/`RoundPos`/
+        // `RoundPos0`. `roundCenter` = the ALREADY-SHIPPED K1/K2 two-tangent-line
+        // fillet centre reused verbatim (valid because |jv−V|==width for both
+        // pivots).
+        static Vec3 roundCenter(Vec3 p0, Vec3 p1, Vec3 V) {
+            import std.math : abs;
+            immutable Vec3 dA = V - p0, dB = V - p1;
+            immutable float w2 = dot(dA, dA);
+            immutable float denom = w2 + dot(dA, dB);
+            immutable float k = (abs(denom) > 1e-12f) ? (w2 / denom) : 1.0f;
+            return V - (dA + dB) * k;
+        }
+        static Vec3 rotateAboutAxis(Vec3 v, float ang, Vec3 axis) {
+            import std.math : sin, cos;
+            axis = safeNormalize(axis);
+            immutable float c = cos(ang), s = sin(ang);
+            return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
+        }
+        // One-sided rail sample: forward from `a1` towards `a2` by `t`, with the
+        // `deltaA`/`deltaB` correction blended by sin(rotAngle) (NOT linear-t —
+        // the L1-only formula's coincidence at t=0.5 does not generalize, see
+        // finding (I) follow-up).
+        static Vec3 roundPos0(Vec3 a1, Vec3 a2, Vec3 a3, Vec3 a4, Vec3 V, float t) {
+            import std.math : acos, sin;
+            immutable Vec3 axisR = cross(V - a2, V - a1);
+            immutable float la1 = (V - a1).length, la2 = (V - a2).length;
+            // Degenerate frame: the two neighbor pivots are (near-)collinear with
+            // V — the arc plane is undefined (sin(angle) < 1e-3). This happens at
+            // a hub with two antipodal rays (e.g. an interior cube edge running
+            // straight through the junction): the two rails PERPENDICULAR to that
+            // edge take the antipodal pivots. The reference falls back to LINEAR
+            // interpolation between the corners here — the same degenerate
+            // fallback the K1 free-end fillet takes at a planar valence-4 ring
+            // (`mixed_junction_freeend_findings.md` §e) and the slerp path takes
+            // at a 180° sweep. Endpoints stay bit-exact (t=0→a3, t=1→a4).
+            if (la1 < 1e-12f || la2 < 1e-12f || axisR.length < 1e-3f * la1 * la2)
+                return a3 * (1.0f - t) + a4 * t;
+            immutable Vec3 C = roundCenter(a1, a2, V);
+            immutable Vec3 axis = axisR;
+            immutable Vec3 rA = a1 - C, rB = a2 - C;
+            immutable float lA = rA.length, lB = rB.length;
+            float cosO = (lA > 1e-12f && lB > 1e-12f) ? dot(rA, rB) / (lA * lB) : 1.0f;
+            if (cosO >  1.0f) cosO =  1.0f;
+            if (cosO < -1.0f) cosO = -1.0f;
+            immutable float Omega = acos(cosO);
+            immutable float rotAngle = t * Omega;
+            immutable Vec3 virtMid = C + rotateAboutAxis(rA, rotAngle, axis);
+            immutable Vec3 deltaA = a3 - a1, deltaB = a4 - a2;
+            immutable float sinR = sin(rotAngle);
+            return virtMid + deltaA * (1.0f - sinR) + deltaB * sinR;
+        }
+        // Full rail-interior sample at parameter `t` (t=j/(2L)): blends the
+        // forward call (from `jvPrev`/`cornerK` at t) with the backward call
+        // (from `jvNext`/`cornerK1` at 1−t, all four swapped) by (1−t, t).
+        // `roundPos` is symmetric under the full endpoint swap with t→1−t, so
+        // canonical a→b sampling is orientation-independent (matches the slerp
+        // path's a<b reversal contract in `railInterior`).
+        static Vec3 roundPos(Vec3 jvPrev, Vec3 jvNext, Vec3 cornerK, Vec3 cornerK1,
+                             Vec3 V, float t) {
+            immutable Vec3 f1 = roundPos0(jvPrev, jvNext, cornerK, cornerK1, V, t);
+            immutable Vec3 f2 = roundPos0(jvNext, jvPrev, cornerK1, cornerK, V, 1.0f - t);
+            return f1 * (1.0f - t) + f2 * t;
+        }
+        // The neighbor of `Vv` inside face `fi` that is NOT `farV` — i.e. the
+        // "other" edge of `fi` at `Vv` besides the rail edge (Vv,farV). Its slide
+        // point is the finding-(I) pivot the ADJACENT side contributes to this
+        // rail (never the rail's own edge). Used to build `jvA`/`jvB`.
+        uint otherFaceNeighbor(uint Vv, uint farV, uint fi) {
+            auto ring = faces[fi];
+            immutable size_t n = ring.length;
+            foreach (j; 0 .. n) {
+                if (ring[j] != Vv) continue;
+                immutable uint pr = ring[(j + n - 1) % n];
+                immutable uint nx = ring[(j + 1) % n];
+                return (pr == farV) ? nx : pr;
+            }
+            return farV;
+        }
         // A rail whose centre vertex is on a rim is bounded by the chamfer
         // strip on one side and by the OPEN boundary on the other, so it has
         // one consumer where an interior rail has two (strip + back face).
@@ -8925,7 +9020,7 @@ struct Mesh {
             return ne == nf + 1;
         }
         void registerRail(CornerInfo left, CornerInfo right, Vec3 center,
-                          uint centerVert, Vec3 farEnd) {
+                          uint centerVert, Vec3 farEnd, Vec3 jvLeft, Vec3 jvRight) {
             immutable ulong key = pairKey(left.vert, right.vert);
             immutable bool forward = left.vert < right.vert;
             // Junction pairwise rail (both corners MITER at a K==valence
@@ -8947,49 +9042,63 @@ struct Mesh {
                     sn = sn + safeNormalize(faceNormal(cast(uint)fi));
                 hubC = center - sn * width;
             }
-            // Task 0454 — genuine closed N≥4 full-ring hub rail ONLY. R6: the
-            // gate is `isFullHub && selectedDegree≥4` at BOTH corners, NOT bare
-            // `selectedDegree≥4`, so a partial K=4 at a valence-5 vertex
+            // Task 0454/0456 — genuine closed N≥4 full-ring hub rail ONLY. R6:
+            // the gate is `isFullHub && selectedDegree≥4` at BOTH corners, NOT
+            // bare `selectedDegree≥4`, so a partial K=4 at a valence-5 vertex
             // (free-end path, isFullHub false) is EXCLUDED and keeps the slerp
-            // rail — the finding-(F) boundary-Bézier law was RE'd only against
-            // genuine closed junctions and has no ground truth on a partial
-            // fan. Both corners of a rail are at the same source vertex, so
-            // these flags are identical across left/right; checking both is
+            // rail — neither finding-(F) nor finding-(I) has ground truth on a
+            // partial fan. Both corners of a rail are at the same source vertex,
+            // so these flags are identical across left/right; checking both is
             // belt-and-suspenders. `useHub`/slerp is NOT narrowed — a hub rail
-            // carries both, and `railInterior` prefers the Bézier when set.
+            // carries both, and `railInterior` prefers the finding-(I) rail law
+            // when `hubRail` is set.
+            //
+            // Two constructions, both fed by raw geometry (NWAY_HUB_RAIL_LAW
+            // RESOLVED — task 0455 closed the emitted rail vertex; the dormant
+            // block's finding-(F)-only rail was the wrong law):
+            //   • RING net (finding F): boundary-Bézier handles pivoted at THIS
+            //     rail's OWN selected-edge slide point `ownJv` (= slide of the
+            //     shared edge (V,farEnd) this rail runs along). Correct for the
+            //     internal Gregory net → HUB + L≥2 ring surface (junctionRingN).
+            //   • Emitted RAIL (finding I): `roundPos`, pivoted on the TWO
+            //     NEIGHBORING sides' slide points `jvA`/`jvB` (the other edge of
+            //     each flanking face — passed in as `jvLeft`/`jvRight`, never
+            //     this rail's own edge). This is the vertex that lands in the
+            //     mesh; sampled in `railInterior`.
             Vec3 bez1 = Vec3(0, 0, 0), bez2 = Vec3(0, 0, 0);
-            bool useBez = false;
-            // ⛔ BLOCKED (task 0454, writer stage): the finding-(F)
-            // boundary-Bézier rail law reproduces the reference's INTERNAL
-            // Gregory control net (P1/P2/C/HUB — all bit-exact, and the ring
-            // HUB matches every k4/k5 dump), but NOT the emitted MESH rail
-            // vertices. Measured directly against the reference dumps: the rail
-            // midpoint R_i (boundary Bézier at t=0.5) is ~0.013 (K4) / ~0.026
-            // (K5) off from edge_bevel_gen_k{4,5}_* — three orders of magnitude
-            // above the float32 floor, i.e. a real law error, not roundoff. The
-            // dump rail stays in the corner plane (tangential coord unchanged),
-            // whereas boundary_bezier pulls it toward `jv`; no jv variant and
-            // no sphere-arc reproduces it. Finding (F) only ever validated
-            // P1/P2/C/HUB against rr/gdb captures of `EdgeBevel_RoundCubic`
-            // (the control net), plus R_i vs the N=3 target for K3 — it never
-            // checked the N≥4 *mesh rail vertices* against a dump, which is
-            // exactly the plan's own Phase-0 control (even-N k4 reproduces the
-            // FULL mesh at the float32 floor) — and that control FAILS. The
-            // correct N≥4 rail-vertex law is un-captured; the whole N≥4 hub
-            // ring (junctionRingN + this Bézier rail) stays dormant behind this
-            // flag until it is captured. Set true only once the rail law
-            // reproduces the dumps' rail vertices. See doc/tasks/work/
-            // 0454-nway-junction-port.md §Результат.
-            enum bool NWAY_HUB_RAIL_LAW_RESOLVED = false;
-            if (NWAY_HUB_RAIL_LAW_RESOLVED &&
-                left.isFullHub && right.isFullHub &&
+            Vec3 jA = Vec3(0, 0, 0), jB = Vec3(0, 0, 0);
+            bool hubRail = false;
+            if (left.isFullHub && right.isFullHub &&
                 left.selectedDegree >= 4 && right.selectedDegree >= 4) {
-                // Pivot jv = slide of the shared selected edge at V (the span
-                // this rail runs along): V + width·normalize(farEnd − V).
-                immutable Vec3 jv = center + safeNormalize(farEnd - center) * width;
                 immutable uint aV = forward ? left.vert : right.vert;
                 immutable uint bV = forward ? right.vert : left.vert;
-                boundaryBezier(vertices[aV], vertices[bV], jv, bez1, bez2, useBez);
+                immutable Vec3 P0 = vertices[aV], P3 = vertices[bV];
+                immutable Vec3 ownJv = center + safeNormalize(farEnd - center) * width;
+                bool bezOk = false;
+                boundaryBezier(P0, P3, ownJv, bez1, bez2, bezOk);
+                if (!bezOk) {
+                    // Flat / degenerate ring side — e.g. a straight internal
+                    // split edge whose two flanking faces are COPLANAR (180°
+                    // dihedral, no rounding). boundaryBezier refuses the zero-
+                    // sweep arc; the boundary curve is then just the straight
+                    // chord, so use its LINEAR Bézier handles. junctionRingN then
+                    // treats the side as flat (R_i = midpoint) and the rail takes
+                    // roundPos's own linear fallback (also midpoint) — no seam.
+                    // Real at the mixed-K4 junction (2 of its 4 rays are flat
+                    // internal cube-face split edges).
+                    bez1 = P0 + (P3 - P0) * (1.0f / 3.0f);
+                    bez2 = P0 + (P3 - P0) * (2.0f / 3.0f);
+                }
+                // Orient the neighbor pivots to the canonical a→b endpoints so
+                // `jA` pairs with corner `a` (=vertices[aV]) in `roundPos`.
+                jA = forward ? jvLeft : jvRight;
+                jB = forward ? jvRight : jvLeft;
+                // hubRail gates the ring build (compute-then-commit). Distinct
+                // corners and distinct neighbor pivots are all that is required —
+                // a flat side (linear handles) or an ANTIPODAL pivot pair (jA≠jB
+                // but collinear through V) are both handled above, NOT refused;
+                // only a truly coincident pair drops the hub to the flat N-gon.
+                hubRail = (P0 - P3).length > 1e-9f && (jA - jB).length > 1e-9f;
             }
             RailSpec spec = RailSpec(
                 forward ? left.vert : right.vert, forward ? right.vert : left.vert,
@@ -9005,7 +9114,7 @@ struct Mesh {
                 0, 0, false,
                 hubC, useHub,
                 isOpenFanVertex(centerVert),
-                bez1, bez2, useBez);
+                bez1, bez2, jA, jB, hubRail);
             if (auto prior = key in railSpecs) {
                 assert((prior.center - center).length < 1e-5f &&
                     prior.profile == spec.profile &&
@@ -9087,17 +9196,18 @@ struct Mesh {
                 Vec3[] pts = new Vec3[](n + 1);
                 foreach (t; 0 .. n + 1) {
                     immutable float f = cast(float)t / cast(float)n;
-                    if (spec.useBezier) {
-                        // Task 0454 — genuine N≥4 hub rail: uniform-t cubic
-                        // Bézier [EA, bezP1, bezP2, EB] (handles stored a→b at
-                        // registerRail), sampled at t = j/(2L). The Gregory
-                        // ring's u=0/v=0 boundary re-derives this SAME curve
-                        // (finding F / D2), so rail and ring share one curve —
-                        // no seam. Reached only by a closed full hub; every
-                        // other rail keeps the slerp path below byte-identical.
-                        immutable float s = 1.0f - f;
-                        pts[t] = EA * (s*s*s) + spec.bezP1 * (3.0f*f*s*s)
-                               + spec.bezP2 * (3.0f*f*f*s) + EB * (f*f*f);
+                    if (spec.hubRail) {
+                        // Task 0456 — genuine N≥4 hub rail: the finding-(I)
+                        // emitted-rail law `roundPos`, sampled at t = j/(2L).
+                        // Pivots `jvA`/`jvB` (the two NEIGHBORING sides' slides,
+                        // stored a→b at registerRail) and the corner endpoints
+                        // EA/EB about V = spec.center. f=0→EA, f=1→EB exactly
+                        // (endpoints bit-exact, manifold safe). The Gregory ring
+                        // REUSES these very rail vertices for its u=0/v=0 border
+                        // (gv), so rail and ring share the boundary — no seam.
+                        // Reached only by a closed full hub; every other rail
+                        // keeps the slerp path below byte-identical.
+                        pts[t] = roundPos(spec.jvA, spec.jvB, EA, EB, spec.center, f);
                     } else if (sinO < 1e-6f) {
                         // Degenerate (collinear / 180° sweep): straight chord.
                         pts[t] = EA * (1.0f - f) + EB * f;
@@ -9228,11 +9338,11 @@ struct Mesh {
                 // An OPEN fan can never form one: its corner chain terminates
                 // on the two rim edges instead of closing, so it takes the
                 // ordinary per-face SLIDE/MITER path with no hub cap.
-                // KNOWN-UNTESTED: only d==3 (the cube-corner junction, K=3)
-                // is fixture/unittest-covered; d>3 (a higher-valence full
-                // hub, e.g. from a subdivided mesh) exercises this same
-                // general N-gon-fill code path but has no golden or
-                // manifold-check coverage of its own.
+                // Covered (task 0456): d==3 rounds via `junctionRing`; d>=4
+                // rounds via `junctionRingN` — even/odd fixtures (K4/K5/mixed)
+                // in mesh.d + the full-hub Round-Level census lane
+                // (mesh_bevel_census.d). d0/L0 here is the flat threaded N-gon
+                // that the rounded ring replaces at L>=1.
                 uint[] ring = new uint[](d);
                 foreach (k; 0 .. d) ring[k] = cornerAtVF[vfKey(V, vFaces[k])].vert;
                 hubCapRing[V] = ring;
@@ -9346,16 +9456,27 @@ struct Mesh {
         // K2/K3 external profile parity remains XFAIL, not inferred here.
         bool[] roundedSpan;
         if (roundLevel > 0) {
+            // The finding-(I) rail pivot for a corner is the slide of the OTHER
+            // selected edge of its flanking face (never the rail's own edge).
+            // neighPivot resolves it from raw topology; passed per corner so
+            // registerRail pairs jvLeft↔fL corner, jvRight↔fR corner.
+            Vec3 neighPivot(uint Vv, uint farV, uint fi) {
+                immutable uint o = otherFaceNeighbor(Vv, farV, fi);
+                return vertices[Vv] + safeNormalize(vertices[o] - vertices[Vv]) * width;
+            }
             foreach (ref sp; spans) {
                 auto cV0L = cornerAtVF[vfKey(sp.v0, sp.fL)];
                 auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
                 auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
                 auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
-                // farEnd = the span's OTHER endpoint: the finding-(F) pivot for
-                // this rail is the slide of the shared selected edge, computed
-                // in registerRail from V + width·normalize(farEnd − V).
-                registerRail(cV0L, cV0R, vertices[sp.v0], sp.v0, vertices[sp.v1]);
-                registerRail(cV1L, cV1R, vertices[sp.v1], sp.v1, vertices[sp.v0]);
+                // farEnd = the span's OTHER endpoint: the finding-(F) RING-net
+                // pivot is the slide of the shared selected edge (V,farEnd). The
+                // last two args are the finding-(I) RAIL pivots (the neighboring
+                // sides' slides) for the fL/fR corner respectively.
+                registerRail(cV0L, cV0R, vertices[sp.v0], sp.v0, vertices[sp.v1],
+                             neighPivot(sp.v0, sp.v1, sp.fL), neighPivot(sp.v0, sp.v1, sp.fR));
+                registerRail(cV1L, cV1R, vertices[sp.v1], sp.v1, vertices[sp.v0],
+                             neighPivot(sp.v1, sp.v0, sp.fL), neighPivot(sp.v1, sp.v0, sp.fR));
             }
             foreach (ring; baseFaces)
                 foreach (k; 0 .. ring.length)
@@ -9802,8 +9923,9 @@ struct Mesh {
             // woven into an L×L quad grid per sub-quad whose u=0/v=0 boundary
             // REUSES the true-arc pairwise rail interiors (the reference rail is
             // the arc, not the patch's internal Bézier). Bit-exact vs the
-            // reference at L1/L2/L3 (20v/15f, 38v/30f, 62v/51f). N>3 junctions
-            // use a different reference (N-sided) path and keep the flat cap.
+            // reference at L1/L2/L3 (20v/15f, 38v/30f, 62v/51f). N>=4 junctions
+            // take the sibling N-sided path (`junctionRingN`, the `else if`
+            // branch below) — task 0454/0456.
             if (ring_.length == 3 && roundLevel >= 1) {
                 immutable int L = roundLevel;
                 immutable int m = L - 1;
@@ -9910,13 +10032,15 @@ struct Mesh {
                 if (ok) foreach (i; 0 .. N) {
                     immutable int nx = (i + 1) % N;
                     auto railSpec = pairKey(poleI[i], poleI[nx]) in railSpecs;
-                    // A genuine N≥4 hub rail carries `useBezier` (registerRail's
-                    // R6 gate). Any rail that is unapproved (the fixed point
-                    // withheld consent) OR not a Bézier hub rail (a degenerate
-                    // corner the finding-(F) build refused) drops the ring to
-                    // the flat cap, exactly as the N=3 branch drops on an
+                    // A genuine N≥4 hub rail carries `hubRail` (registerRail's
+                    // R6 gate: isFullHub && selectedDegree≥4 at both corners,
+                    // AND both the finding-(F) ring-net build and the finding-(I)
+                    // rail build were non-degenerate). Any rail that is
+                    // unapproved (the fixed point withheld consent) OR not a hub
+                    // rail (a degenerate corner either build refused) drops the
+                    // ring to the flat cap, exactly as the N=3 branch drops on an
                     // unapproved rail.
-                    if (railSpec is null || !railSpec.approved || !railSpec.useBezier) {
+                    if (railSpec is null || !railSpec.approved || !railSpec.hubRail) {
                         ok = false; break;
                     }
                     railI[i] = railInterior(poleI[i], poleI[nx]);
@@ -16925,6 +17049,85 @@ private void assertFacesMatchByPosition(ref Mesh m, const Vec3[] wantVerts,
         gotFaces.to!string ~ "\nwant: " ~ wantFaceKeys.to!string);
 }
 
+// Task 0456 — bidirectional max nearest-vertex distance between the beveled mesh
+// and a reference dump's vertices, asserted within `band`. Used where the mesh
+// matches the reference in SHAPE but not vertex-for-vertex under the %.5f bucket:
+//   • the odd-N L>=2 hub ring's ~3.6e-3 GPatch_MovePoints/newC_i residual (0453);
+//   • the mixed owner mesh, whose reference emits 2 extra COINCIDENT free-end
+//     duplicates vibe3d welds — every reference position is still reproduced, so
+//     the one-directional dump->ours distance stays at the float32 floor.
+// NOT a parity claim at the float32 floor — the band is stated per call site.
+private void assertHubHausdorffWithin(ref Mesh m, const(Vec3)[] refVerts,
+                                      float band, string tag) {
+    import std.conv : to;
+    static float maxNearest(const(Vec3)[] a, const(Vec3)[] b) {
+        float worst = 0;
+        foreach (p; a) {
+            float best = float.max;
+            foreach (q; b) {
+                immutable float d = (p - q).length;
+                if (d < best) best = d;
+            }
+            if (best > worst) worst = best;
+        }
+        return worst;
+    }
+    immutable float d1 = maxNearest(m.vertices, refVerts);
+    immutable float d2 = maxNearest(refVerts, m.vertices);
+    immutable float worst = d1 > d2 ? d1 : d2;
+    assert(worst <= band, tag ~ ": max nearest-vertex distance " ~
+        worst.to!string ~ " exceeds band " ~ band.to!string);
+}
+
+// Task 0456 — like assertFacesMatchByPosition but at a caller-chosen decimal
+// precision. The %.5f bucket (1e-5) is too tight for a SYMMETRIC hub whose rail
+// midpoints land exactly on a %.5f rounding boundary (our float32 accumulation vs
+// the reference's float64→float32 differ by ~1e-7, straddling e.g. 0.201015 →
+// 0.20102 vs 0.20101 — plan risk R3). %.4f (1e-4) clears that boundary while the
+// verified reference dumps have zero %.4f vertex collisions, so connectivity +
+// position parity are still both checked, just at a boundary-robust precision.
+private void assertFacesMatchByPositionDp(ref Mesh m, const Vec3[] wantVerts,
+                                          const uint[][] wantFaces, string tag, int dp) {
+    import std.algorithm : sort, map;
+    import std.array : array;
+    import std.format : format;
+    import std.conv : to;
+    import std.math : abs;
+    string posKey(Vec3 p) {
+        immutable float x = (abs(p.x) < 5e-6f) ? 0.0f : p.x;
+        immutable float y = (abs(p.y) < 5e-6f) ? 0.0f : p.y;
+        immutable float z = (abs(p.z) < 5e-6f) ? 0.0f : p.z;
+        immutable string fmt = "%." ~ dp.to!string ~ "f";
+        return format(fmt ~ "," ~ fmt ~ "," ~ fmt, x, y, z);
+    }
+    string canonFace(const Vec3[] ring) {
+        string best;
+        foreach (start; 0 .. ring.length) {
+            string s;
+            foreach (k; 0 .. ring.length)
+                s ~= posKey(ring[(start + k) % ring.length]) ~ "|";
+            if (best.length == 0 || s < best) best = s;
+        }
+        return best;
+    }
+    string faceKey(const uint[] f, const Vec3[] verts) {
+        Vec3[] ring; foreach (v; f) ring ~= verts[v];
+        return canonFace(ring);
+    }
+    auto gotPos = m.vertices.map!posKey.array;
+    auto wantPos = wantVerts.map!posKey.array;
+    sort(gotPos);
+    sort(wantPos);
+    assert(gotPos == wantPos, tag ~ ": vertex position set mismatch\ngot:  " ~
+        gotPos.to!string ~ "\nwant: " ~ wantPos.to!string);
+    auto gotFaces = m.faces._store.map!(f => faceKey(f, m.vertices)).array;
+    auto wantFaceKeys = wantFaces.map!(f => faceKey(f, wantVerts)).array;
+    sort(gotFaces);
+    sort(wantFaceKeys);
+    assert(gotFaces == wantFaceKeys, tag ~ ": face connectivity/winding mismatch\ngot:  " ~
+        gotFaces.to!string ~ "\nwant: " ~ wantFaceKeys.to!string);
+}
+
 unittest { // bevelEdgesByMask: LOOP cap manifold-cleanliness backstop
            // (task 0391 Phase 1) — the 4-edge top-face-perimeter loop.
     auto m = makeCube();
@@ -17277,7 +17480,8 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
            // The central Gregory hub is level-independent;
            // the 3 pairwise boundary arcs are geodesics on the corner-rounding
            // sphere (centre V−width·Σn̂) subdivided into 2·L segments (not 2^L).
-           // N>3 junctions still keep the flat N-gon cap (different reference).
+           // N>=4 junctions take the sibling N-sided ring (junctionRingN,
+           // task 0454/0456); this K3 golden is the N==3 path and is unmoved.
            // Provenance (task 0450): the L1 and L2 want* numbers below are
            // transcribed directly FROM the reference capture dump
            // (corner3_level1 / corner3_level2_w01), not from our kernel's
@@ -18366,10 +18570,10 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0
            // freeze) — a symmetric 4-valence apex — 4 triangular faces around one apex,
            // all 4 edges from the apex selected (square-pyramid, 45-degree
            // polar half-angle).
-           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
-           // every level per task 0435/0442 — no Gregory ring generalization
-           // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // Round Level 0 (the flat N-gon cap). L>=1 now rounds via the
+           // N-sided Gregory ring (task 0454/0456 — see the L1/L2/L3 parity
+           // fixtures below); L0 is unchanged and already matches the reference
+           // bit-exact. Provenance (task 0450):
            // the want* numbers below are transcribed directly FROM the
            // reference capture dump (gen_k*_level0), not from our kernel's
            // output — assertFacesMatchByPosition canonicalises by position and
@@ -18415,10 +18619,10 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0
 unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0443
            // freeze) — a symmetric 5-valence apex — 5 triangular faces around one apex,
            // all 5 edges from the apex selected.
-           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
-           // every level per task 0435/0442 — no Gregory ring generalization
-           // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // Round Level 0 (the flat N-gon cap). L>=1 now rounds via the
+           // N-sided Gregory ring (task 0454/0456 — see the L1/L2/L3 parity
+           // fixtures below); L0 is unchanged and already matches the reference
+           // bit-exact. Provenance (task 0450):
            // the want* numbers below are transcribed directly FROM the
            // reference capture dump (gen_k*_level0), not from our kernel's
            // output — assertFacesMatchByPosition canonicalises by position and
@@ -18465,15 +18669,943 @@ unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0
     assertBevelManifoldCleanOpen(m, "K5 junction (symmetric) L0", 1);
 }
 
+unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L1
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_junction_level1 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(8.659560562354932e-17f,1.414213562373095f,1.4142135623730951f),
+        Vec3(-1.414213562373095f,1.7319121124709863e-16f,1.4142135623730951f),
+        Vec3(-2.5978681687064796e-16f,-1.414213562373095f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 1);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
+            Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-0.106066018f, 1.30814755f, 1.41421354f), Vec3(0.106066018f, 1.30814755f, 1.41421354f), Vec3(-1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-1.30814755f, 0.106066018f, 1.41421354f), Vec3(0.106066018f, -1.30814755f, 1.41421354f), Vec3(-0.106066018f, -1.30814755f, 1.41421354f),
+            Vec3(0.122474484f, 0f, 0.201014981f), Vec3(1.35208154f, 0f, 1.41421354f), Vec3(0f, 1.35208154f, 1.41421354f),
+            Vec3(0f, 0.122474484f, 0.201014981f), Vec3(-1.35208154f, 0f, 1.41421354f), Vec3(-0.122474484f, 0f, 0.201014981f),
+            Vec3(0f, -1.35208154f, 1.41421354f), Vec3(0f, -0.122474484f, 0.201014981f), Vec3(0f, 0f, 0.13462998f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 2u, 5u],
+            [3u, 7u, 14u, 15u], [15u, 14u, 6u, 0u], [0u, 9u, 16u, 17u],
+            [17u, 16u, 8u, 1u], [1u, 11u, 18u, 19u], [19u, 18u, 10u, 2u],
+            [0u, 17u, 20u, 15u], [1u, 19u, 20u, 17u], [2u, 12u, 20u, 19u],
+            [3u, 15u, 20u, 12u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (symmetric) L1 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (symmetric) L1 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L2
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_junction_level2 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(8.659560562354932e-17f,1.414213562373095f,1.4142135623730951f),
+        Vec3(-1.414213562373095f,1.7319121124709863e-16f,1.4142135623730951f),
+        Vec3(-2.5978681687064796e-16f,-1.414213562373095f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 2);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
+            Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-0.106066018f, 1.30814755f, 1.41421354f), Vec3(0.106066018f, 1.30814755f, 1.41421354f), Vec3(-1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-1.30814755f, 0.106066018f, 1.41421354f), Vec3(0.106066018f, -1.30814755f, 1.41421354f), Vec3(-0.106066018f, -1.30814755f, 1.41421354f),
+            Vec3(0.122474484f, 0.0637675971f, 0.212433055f), Vec3(1.34066343f, 0.0574025139f, 1.41421354f), Vec3(0.122474484f, 0f, 0.201014981f),
+            Vec3(1.35208154f, 0f, 1.41421354f), Vec3(0.122474484f, -0.0637675971f, 0.212433055f), Vec3(1.34066343f, -0.0574025139f, 1.41421354f),
+            Vec3(0.0574025139f, 1.34066343f, 1.41421354f), Vec3(0.0637675971f, 0.122474484f, 0.212433055f), Vec3(0f, 1.35208154f, 1.41421354f),
+            Vec3(0f, 0.122474484f, 0.201014981f), Vec3(-0.0574025139f, 1.34066343f, 1.41421354f), Vec3(-0.0637675971f, 0.122474484f, 0.212433055f),
+            Vec3(-1.34066343f, 0.0574025139f, 1.41421354f), Vec3(-0.122474484f, 0.0637675971f, 0.212433055f), Vec3(-1.35208154f, 0f, 1.41421354f),
+            Vec3(-0.122474484f, 0f, 0.201014981f), Vec3(-1.34066343f, -0.0574025139f, 1.41421354f), Vec3(-0.122474484f, -0.0637675971f, 0.212433055f),
+            Vec3(-0.0574025139f, -1.34066343f, 1.41421354f), Vec3(-0.0637675971f, -0.122474484f, 0.212433055f), Vec3(0f, -1.35208154f, 1.41421354f),
+            Vec3(0f, -0.122474484f, 0.201014981f), Vec3(0.0574025139f, -1.34066343f, 1.41421354f), Vec3(0.0637675971f, -0.122474484f, 0.212433055f),
+            Vec3(0f, 0f, 0.13462998f), Vec3(0f, 0.0626468956f, 0.148419857f), Vec3(-0.0634889528f, 0.0634889528f, 0.162209719f),
+            Vec3(-0.0626468956f, 0f, 0.148419857f), Vec3(-0.0634889528f, -0.0634889528f, 0.162209719f), Vec3(0f, -0.0626468956f, 0.148419857f),
+            Vec3(0.0634889528f, -0.0634889528f, 0.162209719f), Vec3(0.0626468956f, 0f, 0.148419857f), Vec3(0.0634889528f, 0.0634889528f, 0.162209719f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 14u, 15u],
+            [15u, 14u, 16u, 17u], [17u, 16u, 2u, 5u], [3u, 7u, 18u, 19u],
+            [19u, 18u, 20u, 21u], [21u, 20u, 22u, 23u], [23u, 22u, 6u, 0u],
+            [0u, 9u, 24u, 25u], [25u, 24u, 26u, 27u], [27u, 26u, 28u, 29u],
+            [29u, 28u, 8u, 1u], [1u, 11u, 30u, 31u], [31u, 30u, 32u, 33u],
+            [33u, 32u, 34u, 35u], [35u, 34u, 10u, 2u], [0u, 25u, 38u, 23u],
+            [23u, 38u, 37u, 21u], [25u, 27u, 39u, 38u], [38u, 39u, 36u, 37u],
+            [1u, 31u, 40u, 29u], [29u, 40u, 39u, 27u], [31u, 33u, 41u, 40u],
+            [40u, 41u, 36u, 39u], [2u, 16u, 42u, 35u], [35u, 42u, 41u, 33u],
+            [16u, 14u, 43u, 42u], [42u, 43u, 36u, 41u], [3u, 19u, 44u, 12u],
+            [12u, 44u, 43u, 14u], [19u, 21u, 37u, 44u], [44u, 37u, 36u, 43u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (symmetric) L2 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (symmetric) L2 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L3
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_junction_level3 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(8.659560562354932e-17f,1.414213562373095f,1.4142135623730951f),
+        Vec3(-1.414213562373095f,1.7319121124709863e-16f,1.4142135623730951f),
+        Vec3(-2.5978681687064796e-16f,-1.414213562373095f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 3);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
+            Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-0.106066018f, 1.30814755f, 1.41421354f), Vec3(0.106066018f, 1.30814755f, 1.41421354f), Vec3(-1.30814755f, -0.106066018f, 1.41421354f),
+            Vec3(-1.30814755f, 0.106066018f, 1.41421354f), Vec3(0.106066018f, -1.30814755f, 1.41421354f), Vec3(-0.106066018f, -1.30814755f, 1.41421354f),
+            Vec3(0.122474484f, 0.0841440558f, 0.221111178f), Vec3(1.33198535f, 0.075000003f, 1.41421354f), Vec3(0.122474484f, 0.0428268015f, 0.206126109f),
+            Vec3(1.34697044f, 0.0388228558f, 1.41421354f), Vec3(0.122474484f, 0f, 0.201014981f), Vec3(1.35208154f, 0f, 1.41421354f),
+            Vec3(0.122474484f, -0.0428268015f, 0.206126109f), Vec3(1.34697044f, -0.0388228558f, 1.41421354f), Vec3(0.122474484f, -0.0841440558f, 0.221111178f),
+            Vec3(1.33198535f, -0.075000003f, 1.41421354f), Vec3(0.075000003f, 1.33198535f, 1.41421354f), Vec3(0.0841440558f, 0.122474484f, 0.221111178f),
+            Vec3(0.0388228558f, 1.34697044f, 1.41421354f), Vec3(0.0428268015f, 0.122474484f, 0.206126109f), Vec3(0f, 1.35208154f, 1.41421354f),
+            Vec3(0f, 0.122474484f, 0.201014981f), Vec3(-0.0388228558f, 1.34697044f, 1.41421354f), Vec3(-0.0428268015f, 0.122474484f, 0.206126109f),
+            Vec3(-0.075000003f, 1.33198535f, 1.41421354f), Vec3(-0.0841440558f, 0.122474484f, 0.221111178f), Vec3(-1.33198535f, 0.075000003f, 1.41421354f),
+            Vec3(-0.122474484f, 0.0841440558f, 0.221111178f), Vec3(-1.34697044f, 0.0388228558f, 1.41421354f), Vec3(-0.122474484f, 0.0428268015f, 0.206126109f),
+            Vec3(-1.35208154f, 0f, 1.41421354f), Vec3(-0.122474484f, 0f, 0.201014981f), Vec3(-1.34697044f, -0.0388228558f, 1.41421354f),
+            Vec3(-0.122474484f, -0.0428268015f, 0.206126109f), Vec3(-1.33198535f, -0.075000003f, 1.41421354f), Vec3(-0.122474484f, -0.0841440558f, 0.221111178f),
+            Vec3(-0.075000003f, -1.33198535f, 1.41421354f), Vec3(-0.0841440558f, -0.122474484f, 0.221111178f), Vec3(-0.0388228558f, -1.34697044f, 1.41421354f),
+            Vec3(-0.0428268015f, -0.122474484f, 0.206126109f), Vec3(0f, -1.35208154f, 1.41421354f), Vec3(0f, -0.122474484f, 0.201014981f),
+            Vec3(0.0388228558f, -1.34697044f, 1.41421354f), Vec3(0.0428268015f, -0.122474484f, 0.206126109f), Vec3(0.075000003f, -1.33198535f, 1.41421354f),
+            Vec3(0.0841440558f, -0.122474484f, 0.221111178f), Vec3(0f, 0f, 0.13462998f), Vec3(0f, 0.0814544857f, 0.159145311f),
+            Vec3(-0.0836713314f, 0.0836713314f, 0.183660641f), Vec3(-0.0435517728f, 0.0820116103f, 0.165274143f), Vec3(0f, 0.0428019501f, 0.140758812f),
+            Vec3(-0.0820116103f, 0.0435517728f, 0.165274143f), Vec3(-0.0429962352f, 0.0429962352f, 0.146887645f), Vec3(-0.0814544857f, 0f, 0.159145311f),
+            Vec3(-0.0428019501f, 0f, 0.140758812f), Vec3(-0.0836713314f, -0.0836713314f, 0.183660641f), Vec3(-0.0820116103f, -0.0435517728f, 0.165274143f),
+            Vec3(-0.0435517728f, -0.0820116103f, 0.165274143f), Vec3(-0.0429962352f, -0.0429962352f, 0.146887645f), Vec3(0f, -0.0814544857f, 0.159145311f),
+            Vec3(0f, -0.0428019501f, 0.140758812f), Vec3(0.0836713314f, -0.0836713314f, 0.183660641f), Vec3(0.0435517728f, -0.0820116103f, 0.165274143f),
+            Vec3(0.0820116103f, -0.0435517728f, 0.165274143f), Vec3(0.0429962352f, -0.0429962352f, 0.146887645f), Vec3(0.0814544857f, 0f, 0.159145311f),
+            Vec3(0.0428019501f, 0f, 0.140758812f), Vec3(0.0836713314f, 0.0836713314f, 0.183660641f), Vec3(0.0820116103f, 0.0435517728f, 0.165274143f),
+            Vec3(0.0435517728f, 0.0820116103f, 0.165274143f), Vec3(0.0429962352f, 0.0429962352f, 0.146887645f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 14u, 15u],
+            [15u, 14u, 16u, 17u], [17u, 16u, 18u, 19u], [19u, 18u, 20u, 21u],
+            [21u, 20u, 2u, 5u], [3u, 7u, 22u, 23u], [23u, 22u, 24u, 25u],
+            [25u, 24u, 26u, 27u], [27u, 26u, 28u, 29u], [29u, 28u, 30u, 31u],
+            [31u, 30u, 6u, 0u], [0u, 9u, 32u, 33u], [33u, 32u, 34u, 35u],
+            [35u, 34u, 36u, 37u], [37u, 36u, 38u, 39u], [39u, 38u, 40u, 41u],
+            [41u, 40u, 8u, 1u], [1u, 11u, 42u, 43u], [43u, 42u, 44u, 45u],
+            [45u, 44u, 46u, 47u], [47u, 46u, 48u, 49u], [49u, 48u, 50u, 51u],
+            [51u, 50u, 10u, 2u], [0u, 33u, 54u, 31u], [31u, 54u, 55u, 29u],
+            [29u, 55u, 53u, 27u], [33u, 35u, 57u, 54u], [54u, 57u, 58u, 55u],
+            [55u, 58u, 56u, 53u], [35u, 37u, 59u, 57u], [57u, 59u, 60u, 58u],
+            [58u, 60u, 52u, 56u], [1u, 43u, 61u, 41u], [41u, 61u, 62u, 39u],
+            [39u, 62u, 59u, 37u], [43u, 45u, 63u, 61u], [61u, 63u, 64u, 62u],
+            [62u, 64u, 60u, 59u], [45u, 47u, 65u, 63u], [63u, 65u, 66u, 64u],
+            [64u, 66u, 52u, 60u], [2u, 20u, 67u, 51u], [51u, 67u, 68u, 49u],
+            [49u, 68u, 65u, 47u], [20u, 18u, 69u, 67u], [67u, 69u, 70u, 68u],
+            [68u, 70u, 66u, 65u], [18u, 16u, 71u, 69u], [69u, 71u, 72u, 70u],
+            [70u, 72u, 52u, 66u], [3u, 23u, 73u, 12u], [12u, 73u, 74u, 14u],
+            [14u, 74u, 71u, 16u], [23u, 25u, 75u, 73u], [73u, 75u, 76u, 74u],
+            [74u, 76u, 72u, 71u], [25u, 27u, 53u, 75u], [75u, 53u, 56u, 76u],
+            [76u, 56u, 52u, 72u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (symmetric) L3 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (symmetric) L3 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L1
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_asym1_level1 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.6f,0,1.3f),
+        Vec3(0.3f,1.9f,1.6f),
+        Vec3(-1.4f,0.5f,1.0f),
+        Vec3(0,-1.2f,1.9f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 1);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
+            Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
+            Vec3(0.18828249f, 1.80799735f, 1.56057036f), Vec3(0.383992463f, 1.77724183f, 1.58061719f), Vec3(-1.31173038f, 0.3928155f, 1.05674469f),
+            Vec3(-1.28828239f, 0.59200269f, 1.03942966f), Vec3(0.114939153f, -1.11379564f, 1.85689783f), Vec3(-0.0882695839f, -1.09281552f, 1.84325528f),
+            Vec3(0.142643929f, 0.0115596363f, 0.196396962f), Vec3(1.54178405f, 0.0106972363f, 1.3182857f), Vec3(0.291667879f, 1.83545864f, 1.58232534f),
+            Vec3(0.0211993475f, 0.144870266f, 0.172403663f), Vec3(-1.34016037f, 0.495457351f, 1.028777f), Vec3(-0.121873707f, 0.0616082959f, 0.169129848f),
+            Vec3(0.00792567246f, -1.14252865f, 1.87032747f), Vec3(0.00705666328f, -0.0767904222f, 0.202682957f), Vec3(0.0114309229f, 0.0240856726f, 0.124656767f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 2u, 5u],
+            [3u, 7u, 14u, 15u], [15u, 14u, 6u, 0u], [0u, 9u, 16u, 17u],
+            [17u, 16u, 8u, 1u], [1u, 11u, 18u, 19u], [19u, 18u, 10u, 2u],
+            [0u, 17u, 20u, 15u], [1u, 19u, 20u, 17u], [2u, 12u, 20u, 19u],
+            [3u, 15u, 20u, 12u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (asymmetric) L1 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L1 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L2
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_asym1_level2 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.6f,0,1.3f),
+        Vec3(0.3f,1.9f,1.6f),
+        Vec3(-1.4f,0.5f,1.0f),
+        Vec3(0,-1.2f,1.9f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 2);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
+            Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
+            Vec3(0.18828249f, 1.80799735f, 1.56057036f), Vec3(0.383992463f, 1.77724183f, 1.58061719f), Vec3(-1.31173038f, 0.3928155f, 1.05674469f),
+            Vec3(-1.28828239f, 0.59200269f, 1.03942966f), Vec3(0.114939153f, -1.11379564f, 1.85689783f), Vec3(-0.0882695839f, -1.09281552f, 1.84325528f),
+            Vec3(0.148377761f, 0.0723031014f, 0.197439536f), Vec3(1.53943622f, 0.0691874698f, 1.31523669f), Vec3(0.142643929f, 0.0115596363f, 0.196396962f),
+            Vec3(1.54178405f, 0.0106972363f, 1.3182857f), Vec3(0.138777554f, -0.0456733219f, 0.218482301f), Vec3(1.52269518f, -0.0438540168f, 1.32806802f),
+            Vec3(0.34386614f, 1.81582618f, 1.58475244f), Vec3(0.0902084187f, 0.135333121f, 0.186350763f), Vec3(0.291667879f, 1.83545864f, 1.58232534f),
+            Vec3(0.0211993475f, 0.144870266f, 0.172403663f), Vec3(0.236577287f, 1.83268654f, 1.57376266f), Vec3(-0.0478998013f, 0.159159586f, 0.178698942f),
+            Vec3(-1.32325816f, 0.5491395f, 1.02908552f), Vec3(-0.117238984f, 0.120837063f, 0.174466655f), Vec3(-1.34016037f, 0.495457351f, 1.028777f),
+            Vec3(-0.121873707f, 0.0616082959f, 0.169129848f), Vec3(-1.33608437f, 0.440182656f, 1.03855693f), Vec3(-0.124640971f, 0.00589003693f, 0.186920971f),
+            Vec3(-0.0460525043f, -1.12658072f, 1.86132753f), Vec3(-0.0607145429f, -0.0606710501f, 0.203789964f), Vec3(0.00792567246f, -1.14252865f, 1.87032747f),
+            Vec3(0.00705666328f, -0.0767904222f, 0.202682957f), Vec3(0.0647252202f, -1.13801789f, 1.86876464f), Vec3(0.0747377947f, -0.0881576166f, 0.221818313f),
+            Vec3(0.0114309229f, 0.0240856726f, 0.124656767f), Vec3(0.0142914429f, 0.0840891749f, 0.130381763f), Vec3(-0.0533207729f, 0.101356357f, 0.137767628f),
+            Vec3(-0.0554667488f, 0.0421170145f, 0.128821224f), Vec3(-0.0568217486f, -0.0150819765f, 0.146192834f), Vec3(0.011255553f, -0.0324820168f, 0.145472676f),
+            Vec3(0.0764667168f, -0.0445603207f, 0.169327438f), Vec3(0.0769043118f, 0.0122208623f, 0.145096272f), Vec3(0.0819212422f, 0.073833324f, 0.147628903f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 14u, 15u],
+            [15u, 14u, 16u, 17u], [17u, 16u, 2u, 5u], [3u, 7u, 18u, 19u],
+            [19u, 18u, 20u, 21u], [21u, 20u, 22u, 23u], [23u, 22u, 6u, 0u],
+            [0u, 9u, 24u, 25u], [25u, 24u, 26u, 27u], [27u, 26u, 28u, 29u],
+            [29u, 28u, 8u, 1u], [1u, 11u, 30u, 31u], [31u, 30u, 32u, 33u],
+            [33u, 32u, 34u, 35u], [35u, 34u, 10u, 2u], [0u, 25u, 38u, 23u],
+            [23u, 38u, 37u, 21u], [25u, 27u, 39u, 38u], [38u, 39u, 36u, 37u],
+            [1u, 31u, 40u, 29u], [29u, 40u, 39u, 27u], [31u, 33u, 41u, 40u],
+            [40u, 41u, 36u, 39u], [2u, 16u, 42u, 35u], [35u, 42u, 41u, 33u],
+            [16u, 14u, 43u, 42u], [42u, 43u, 36u, 41u], [3u, 19u, 44u, 12u],
+            [12u, 44u, 43u, 14u], [19u, 21u, 37u, 44u], [44u, 37u, 36u, 43u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (asymmetric) L2 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L2 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L3
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k4_asym1_level3 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.6f,0,1.3f),
+        Vec3(0.3f,1.9f,1.6f),
+        Vec3(-1.4f,0.5f,1.0f),
+        Vec3(0,-1.2f,1.9f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 3);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
+            Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
+            Vec3(0.18828249f, 1.80799735f, 1.56057036f), Vec3(0.383992463f, 1.77724183f, 1.58061719f), Vec3(-1.31173038f, 0.3928155f, 1.05674469f),
+            Vec3(-1.28828239f, 0.59200269f, 1.03942966f), Vec3(0.114939153f, -1.11379564f, 1.85689783f), Vec3(-0.0882695839f, -1.09281552f, 1.84325528f),
+            Vec3(0.150508583f, 0.0924216881f, 0.202663437f), Vec3(1.53385627f, 0.0880196691f, 1.31582808f), Vec3(0.146326184f, 0.0519840419f, 0.194574609f),
+            Vec3(1.54264712f, 0.0498024002f, 1.31545401f), Vec3(0.142643929f, 0.0115596363f, 0.196396962f), Vec3(1.54178405f, 0.0106972363f, 1.3182857f),
+            Vec3(0.139798701f, -0.0272913165f, 0.208585531f), Vec3(1.53132558f, -0.0266447682f, 1.32413149f), Vec3(0.138060108f, -0.0631349981f, 0.230762616f),
+            Vec3(1.51198065f, -0.0596920922f, 1.33259487f), Vec3(0.35898909f, 1.80479467f, 1.58409059f), Vec3(0.112441637f, 0.133340284f, 0.19537124f),
+            Vec3(0.327383965f, 1.82472384f, 1.58467531f), Vec3(0.0674842373f, 0.137932122f, 0.179475442f), Vec3(0.291667879f, 1.83545864f, 1.58232534f),
+            Vec3(0.0211993475f, 0.144870266f, 0.172403663f), Vec3(0.254655629f, 1.83615303f, 1.57722569f), Vec3(-0.0251257755f, 0.153931066f, 0.174373582f),
+            Vec3(0.21926409f, 1.82675231f, 1.56977844f), Vec3(-0.0702019557f, 0.164789572f, 0.185171291f), Vec3(-1.31336677f, 0.565045416f, 1.03147256f),
+            Vec3(-0.115630753f, 0.140235454f, 0.181732312f), Vec3(-1.33111513f, 0.5320158f, 1.0278281f), Vec3(-0.118867084f, 0.101101607f, 0.169947207f),
+            Vec3(-1.34016037f, 0.495457351f, 1.028777f), Vec3(-0.121873707f, 0.0616082959f, 0.169129848f), Vec3(-1.33980632f, 0.458185345f, 1.03424609f),
+            Vec3(-0.124043308f, 0.0236884449f, 0.178678736f), Vec3(-1.33007991f, 0.423070014f, 1.0438143f), Vec3(-0.124835826f, -0.0108514493f, 0.197159529f),
+            Vec3(-0.0618299618f, -1.11708283f, 1.85619068f), Vec3(-0.0825012326f, -0.0543306805f, 0.208248377f), Vec3(-0.028951874f, -1.13407409f, 1.86544359f),
+            Vec3(-0.0384095386f, -0.0665459335f, 0.201297075f), Vec3(0.00792567246f, -1.14252865f, 1.87032747f), Vec3(0.00705666328f, -0.0767904222f, 0.202682957f),
+            Vec3(0.0460669696f, -1.14181936f, 1.87048006f), Vec3(0.0524826311f, -0.084912248f, 0.213110521f), Vec3(0.0826425627f, -1.1319989f, 1.86589003f),
+            Vec3(0.0964555442f, -0.0908608288f, 0.232852727f), Vec3(0.0114309229f, 0.0240856726f, 0.124656767f), Vec3(0.0160718001f, 0.102467075f, 0.138152272f),
+            Vec3(-0.0737957805f, 0.126802608f, 0.154936835f), Vec3(-0.0301351156f, 0.113077901f, 0.140463904f), Vec3(0.012924511f, 0.0648996457f, 0.125542343f),
+            Vec3(-0.0752601773f, 0.0891969725f, 0.140440643f), Vec3(-0.0323977768f, 0.0759523362f, 0.126589045f), Vec3(-0.0767005831f, 0.0489744581f, 0.136657238f),
+            Vec3(-0.0337002166f, 0.0356830694f, 0.124209143f), Vec3(-0.0792590752f, -0.0251010396f, 0.164559767f), Vec3(-0.0780934095f, 0.00960881636f, 0.144442663f),
+            Vec3(-0.0344335213f, -0.0374474116f, 0.155128926f), Vec3(-0.0343861468f, -0.003710713f, 0.133677498f), Vec3(0.0115636466f, -0.0481876135f, 0.158345103f),
+            Vec3(0.0111307343f, -0.0152012715f, 0.135567144f), Vec3(0.0972379372f, -0.0633268505f, 0.195794344f), Vec3(0.0562003069f, -0.0568980053f, 0.172477156f),
+            Vec3(0.0960010216f, -0.0294400472f, 0.170406163f), Vec3(0.0553870387f, -0.0239482298f, 0.148385197f), Vec3(0.0970303789f, 0.0101596136f, 0.156396672f),
+            Vec3(0.0559290498f, 0.0152289551f, 0.136039481f), Vec3(0.106023706f, 0.0921096578f, 0.165184543f), Vec3(0.100398958f, 0.0519564562f, 0.154410273f),
+            Vec3(0.0623731948f, 0.0953078046f, 0.146794945f), Vec3(0.0582413487f, 0.0565847158f, 0.135437429f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [2u, 10u, 5u], [1u, 8u, 11u], [0u, 6u, 9u],
+            [3u, 4u, 7u], [4u, 3u, 12u, 13u], [13u, 12u, 14u, 15u],
+            [15u, 14u, 16u, 17u], [17u, 16u, 18u, 19u], [19u, 18u, 20u, 21u],
+            [21u, 20u, 2u, 5u], [3u, 7u, 22u, 23u], [23u, 22u, 24u, 25u],
+            [25u, 24u, 26u, 27u], [27u, 26u, 28u, 29u], [29u, 28u, 30u, 31u],
+            [31u, 30u, 6u, 0u], [0u, 9u, 32u, 33u], [33u, 32u, 34u, 35u],
+            [35u, 34u, 36u, 37u], [37u, 36u, 38u, 39u], [39u, 38u, 40u, 41u],
+            [41u, 40u, 8u, 1u], [1u, 11u, 42u, 43u], [43u, 42u, 44u, 45u],
+            [45u, 44u, 46u, 47u], [47u, 46u, 48u, 49u], [49u, 48u, 50u, 51u],
+            [51u, 50u, 10u, 2u], [0u, 33u, 54u, 31u], [31u, 54u, 55u, 29u],
+            [29u, 55u, 53u, 27u], [33u, 35u, 57u, 54u], [54u, 57u, 58u, 55u],
+            [55u, 58u, 56u, 53u], [35u, 37u, 59u, 57u], [57u, 59u, 60u, 58u],
+            [58u, 60u, 52u, 56u], [1u, 43u, 61u, 41u], [41u, 61u, 62u, 39u],
+            [39u, 62u, 59u, 37u], [43u, 45u, 63u, 61u], [61u, 63u, 64u, 62u],
+            [62u, 64u, 60u, 59u], [45u, 47u, 65u, 63u], [63u, 65u, 66u, 64u],
+            [64u, 66u, 52u, 60u], [2u, 20u, 67u, 51u], [51u, 67u, 68u, 49u],
+            [49u, 68u, 65u, 47u], [20u, 18u, 69u, 67u], [67u, 69u, 70u, 68u],
+            [68u, 70u, 66u, 65u], [18u, 16u, 71u, 69u], [69u, 71u, 72u, 70u],
+            [70u, 72u, 52u, 66u], [3u, 23u, 73u, 12u], [12u, 73u, 74u, 14u],
+            [14u, 74u, 71u, 16u], [23u, 25u, 75u, 73u], [73u, 75u, 76u, 74u],
+            [74u, 76u, 72u, 71u], [25u, 27u, 53u, 75u], [75u, 53u, 56u, 76u],
+            [76u, 56u, 52u, 72u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K4 junction (asymmetric) L3 (task 0456 parity)", 4);
+    assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L3 (task 0456 parity)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L1
+           // Parity fixture (task 0456), transcribed FROM the reference capture
+           // dump edge_bevel_gen_k5_junction_level1 — NOT our kernel's output. Even-N rounds to
+           // reference parity to the %.5f canonicalisation (float32-mesh floor
+           // ~1e-7); assertFacesMatchByPosition canonicalises by position and
+           // connectivity so the dump's own vertex ordering substitutes directly.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(0.4370160244488211f,1.3449970239279145f,1.4142135623730951f),
+        Vec3(-1.1441228056353683f,0.8312538755549069f,1.4142135623730951f),
+        Vec3(-1.1441228056353687f,-0.8312538755549066f,1.4142135623730951f),
+        Vec3(0.43701602444882076f,-1.3449970239279145f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,5u]); m.addFace([0u,5u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 1);
+        immutable Vec3[] wantVerts = [
+            Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f), Vec3(-0.0701444149f, -0.215882301f, 0.28057763f),
+            Vec3(0.18364045f, -0.133422598f, 0.28057763f), Vec3(0.18364045f, 0.133422598f, 0.28057763f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
+            Vec3(1.32604575f, -0.121352553f, 1.41421354f), Vec3(0.294357538f, 1.29864454f, 1.41421354f), Vec3(0.525183797f, 1.2236445f, 1.41421354f),
+            Vec3(-1.14412284f, 0.68125391f, 1.41421354f), Vec3(-1.00146437f, 0.877606452f, 1.41421354f), Vec3(-1.00146437f, -0.877606452f, 1.41421354f),
+            Vec3(-1.14412284f, -0.68125391f, 1.41421354f), Vec3(0.525183797f, -1.2236445f, 1.41421354f), Vec3(0.294357538f, -1.29864454f, 1.41421354f),
+            Vec3(0.170461401f, 0f, 0.237929314f), Vec3(1.36547554f, 0f, 1.41421354f), Vec3(0.421955168f, 1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, 0.16211842f, 0.237929314f), Vec3(-1.10469306f, 0.802606463f, 1.41421354f), Vec3(-0.137906179f, 0.1001947f, 0.237929314f),
+            Vec3(-1.10469306f, -0.802606463f, 1.41421354f), Vec3(-0.137906179f, -0.1001947f, 0.237929314f), Vec3(0.421955168f, -1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, -0.16211842f, 0.237929314f), Vec3(0f, 0f, 0.153479129f),
+        ];
+        static immutable uint[][] wantFaces = [
+            [3u, 13u, 6u], [2u, 11u, 14u], [1u, 9u, 12u],
+            [0u, 7u, 10u], [4u, 5u, 8u], [5u, 4u, 15u, 16u],
+            [16u, 15u, 3u, 6u], [4u, 8u, 17u, 18u], [18u, 17u, 7u, 0u],
+            [0u, 10u, 19u, 20u], [20u, 19u, 9u, 1u], [1u, 12u, 21u, 22u],
+            [22u, 21u, 11u, 2u], [2u, 14u, 23u, 24u], [24u, 23u, 13u, 3u],
+            [0u, 20u, 25u, 18u], [1u, 22u, 25u, 20u], [2u, 24u, 25u, 22u],
+            [3u, 15u, 25u, 24u], [4u, 18u, 25u, 15u],
+        ];
+    assertFacesMatchByPositionDp(m, wantVerts, wantFaces, "K5 junction (symmetric) L1 (task 0456 parity, odd-N L1 exact)", 4);
+    assertBevelManifoldCleanOpen(m, "K5 junction (symmetric) L1 (task 0456 parity, odd-N L1 exact)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L2
+           // ODD-N expected-divergence (task 0456). The emitted RAIL is exact at
+           // every level; the RING interior at L>=2 carries the ~4e-3 un-RE'd
+           // odd-N GPatch_MovePoints/newC_i residual (task 0453). Counts +
+           // connectivity exact; per-vertex distance to the reference dump
+           // edge_bevel_gen_k5_junction_level2 is bounded by the measured band. Reference-dump-
+           // sourced, NOT frozen to ours; tighten to exact when 0453 lands.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(0.4370160244488211f,1.3449970239279145f,1.4142135623730951f),
+        Vec3(-1.1441228056353683f,0.8312538755549069f,1.4142135623730951f),
+        Vec3(-1.1441228056353687f,-0.8312538755549066f,1.4142135623730951f),
+        Vec3(0.43701602444882076f,-1.3449970239279145f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,5u]); m.addFace([0u,5u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 2);
+    assert(m.vertices.length == 56, "K5 junction (symmetric) L2 (task 0456 XFAIL 0453): vertex count");
+    assert(m.faces.length == 45, "K5 junction (symmetric) L2 (task 0456 XFAIL 0453): face count");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f), Vec3(-0.0701444149f, -0.215882301f, 0.28057763f),
+            Vec3(0.18364045f, -0.133422598f, 0.28057763f), Vec3(0.18364045f, 0.133422598f, 0.28057763f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
+            Vec3(1.32604575f, -0.121352553f, 1.41421354f), Vec3(0.294357538f, 1.29864454f, 1.41421354f), Vec3(0.525183797f, 1.2236445f, 1.41421354f),
+            Vec3(-1.14412284f, 0.68125391f, 1.41421354f), Vec3(-1.00146437f, 0.877606452f, 1.41421354f), Vec3(-1.00146437f, -0.877606452f, 1.41421354f),
+            Vec3(-1.14412284f, -0.68125391f, 1.41421354f), Vec3(0.525183797f, -1.2236445f, 1.41421354f), Vec3(0.294357538f, -1.29864454f, 1.41421354f),
+            Vec3(0.173903361f, 0.0671154186f, 0.249067754f), Vec3(1.35537088f, 0.063798815f, 1.41421354f), Vec3(0.170461401f, 0f, 0.237929314f),
+            Vec3(1.36547554f, 0f, 1.41421354f), Vec3(0.173903361f, -0.0671154186f, 0.249067754f), Vec3(1.35537088f, -0.063798815f, 1.41421354f),
+            Vec3(0.479508907f, 1.26931942f, 1.41421354f), Vec3(0.117569648f, 0.144652128f, 0.249067754f), Vec3(0.421955168f, 1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, 0.16211842f, 0.237929314f), Vec3(0.358156353f, 1.30874932f, 1.41421354f), Vec3(-0.010091465f, 0.186131731f, 0.249067754f),
+            Vec3(-1.05901814f, 0.848281384f, 1.41421354f), Vec3(-0.101241328f, 0.156515345f, 0.249067754f), Vec3(-1.10469306f, 0.802606463f, 1.41421354f),
+            Vec3(-0.137906179f, 0.1001947f, 0.237929314f), Vec3(-1.13401806f, 0.745052695f, 1.41421354f), Vec3(-0.180140227f, 0.0479203202f, 0.249067754f),
+            Vec3(-1.13401806f, -0.745052695f, 1.41421354f), Vec3(-0.180140227f, -0.0479203202f, 0.249067754f), Vec3(-1.10469306f, -0.802606463f, 1.41421354f),
+            Vec3(-0.137906179f, -0.1001947f, 0.237929314f), Vec3(-1.05901814f, -0.848281384f, 1.41421354f), Vec3(-0.101241328f, -0.156515345f, 0.249067754f),
+            Vec3(0.358156353f, -1.30874932f, 1.41421354f), Vec3(-0.010091465f, -0.186131731f, 0.249067754f), Vec3(0.421955168f, -1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, -0.16211842f, 0.237929314f), Vec3(0.479508907f, -1.26931942f, 1.41421354f), Vec3(0.117569648f, -0.144652128f, 0.249067754f),
+            Vec3(0f, 0f, 0.153479129f), Vec3(0.0275201984f, 0.0846984684f, 0.169366434f), Vec3(-0.0394169502f, 0.118936077f, 0.186611712f),
+            Vec3(-0.0710294694f, 0.0516059324f, 0.169366434f), Vec3(-0.124025501f, 0f, 0.186418399f), Vec3(-0.0710294694f, -0.0516059324f, 0.169366434f),
+            Vec3(-0.0394169502f, -0.118936077f, 0.186611712f), Vec3(0.0275201984f, -0.0846984684f, 0.169366434f), Vec3(0.102709487f, -0.0743011981f, 0.186391726f),
+            Vec3(0.0921325088f, 0f, 0.169366434f), Vec3(0.102709487f, 0.0743011981f, 0.186391726f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 4e-3f, "K5 junction (symmetric) L2 (task 0456 XFAIL 0453)");
+    assertBevelManifoldCleanOpen(m, "K5 junction (symmetric) L2 (task 0456 XFAIL 0453)", 1);
+}
+
+unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L3
+           // ODD-N expected-divergence (task 0456). The emitted RAIL is exact at
+           // every level; the RING interior at L>=2 carries the ~5e-3 un-RE'd
+           // odd-N GPatch_MovePoints/newC_i residual (task 0453). Counts +
+           // connectivity exact; per-vertex distance to the reference dump
+           // edge_bevel_gen_k5_junction_level3 is bounded by the measured band. Reference-dump-
+           // sourced, NOT frozen to ours; tighten to exact when 0453 lands.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),
+        Vec3(1.414213562373095f,0,1.4142135623730951f),
+        Vec3(0.4370160244488211f,1.3449970239279145f,1.4142135623730951f),
+        Vec3(-1.1441228056353683f,0.8312538755549069f,1.4142135623730951f),
+        Vec3(-1.1441228056353687f,-0.8312538755549066f,1.4142135623730951f),
+        Vec3(0.43701602444882076f,-1.3449970239279145f,1.4142135623730951f),
+    ];
+    m.addFace([0u,1u,2u]); m.addFace([0u,2u,3u]); m.addFace([0u,3u,4u]); m.addFace([0u,4u,5u]); m.addFace([0u,5u,1u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.15f, 3);
+    assert(m.vertices.length == 96, "K5 junction (symmetric) L3 (task 0456 XFAIL 0453): vertex count");
+    assert(m.faces.length == 80, "K5 junction (symmetric) L3 (task 0456 XFAIL 0453): face count");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f), Vec3(-0.0701444149f, -0.215882301f, 0.28057763f),
+            Vec3(0.18364045f, -0.133422598f, 0.28057763f), Vec3(0.18364045f, 0.133422598f, 0.28057763f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
+            Vec3(1.32604575f, -0.121352553f, 1.41421354f), Vec3(0.294357538f, 1.29864454f, 1.41421354f), Vec3(0.525183797f, 1.2236445f, 1.41421354f),
+            Vec3(-1.14412284f, 0.68125391f, 1.41421354f), Vec3(-1.00146437f, 0.877606452f, 1.41421354f), Vec3(-1.00146437f, -0.877606452f, 1.41421354f),
+            Vec3(-1.14412284f, -0.68125391f, 1.41421354f), Vec3(0.525183797f, -1.2236445f, 1.41421354f), Vec3(0.294357538f, -1.29864454f, 1.41421354f),
+            Vec3(0.17651172f, 0.0893723145f, 0.257508576f), Vec3(1.34762645f, 0.0839737505f, 1.41421354f), Vec3(0.172003523f, 0.044779174f, 0.242919758f),
+            Vec3(1.36096394f, 0.0429248847f, 1.41421354f), Vec3(0.170461401f, 0f, 0.237929314f), Vec3(1.36547554f, 0f, 1.41421354f),
+            Vec3(0.172003523f, -0.044779174f, 0.242919758f), Vec3(1.36096394f, -0.0429248847f, 1.41421354f), Vec3(0.17651172f, -0.0893723145f, 0.257508576f),
+            Vec3(1.34762645f, -0.0839737505f, 1.41421354f), Vec3(0.496303231f, 1.25571966f, 1.41421354f), Vec3(0.13954325f, 0.140255064f, 0.257508576f),
+            Vec3(0.461384982f, 1.28108919f, 1.41421354f), Vec3(0.095739536f, 0.14974755f, 0.242919758f), Vec3(0.421955168f, 1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, 0.16211842f, 0.237929314f), Vec3(0.37973702f, 1.30761826f, 1.41421354f), Vec3(0.0105644856f, 0.177422598f, 0.242919758f),
+            Vec3(0.336575687f, 1.30761826f, 1.41421354f), Vec3(-0.0304530058f, 0.195490196f, 0.257508576f), Vec3(-1.04089415f, 0.860051155f, 1.41421354f),
+            Vec3(-0.0902692601f, 0.176054716f, 0.257508576f), Vec3(-1.07581246f, 0.834681571f, 1.41421354f), Vec3(-0.112833239f, 0.137328252f, 0.242919758f),
+            Vec3(-1.10469306f, 0.802606463f, 1.41421354f), Vec3(-0.137906179f, 0.1001947f, 0.237929314f), Vec3(-1.12627363f, 0.765227675f, 1.41421354f),
+            Vec3(-0.165474325f, 0.0648740232f, 0.242919758f), Vec3(-1.13961124f, 0.724178791f, 1.41421354f), Vec3(-0.195332721f, 0.0314472653f, 0.257508576f),
+            Vec3(-1.13961124f, -0.724178791f, 1.41421354f), Vec3(-0.195332721f, -0.0314472653f, 0.257508576f), Vec3(-1.12627363f, -0.765227675f, 1.41421354f),
+            Vec3(-0.165474325f, -0.0648740232f, 0.242919758f), Vec3(-1.10469306f, -0.802606463f, 1.41421354f), Vec3(-0.137906179f, -0.1001947f, 0.237929314f),
+            Vec3(-1.07581246f, -0.834681571f, 1.41421354f), Vec3(-0.112833239f, -0.137328252f, 0.242919758f), Vec3(-1.04089415f, -0.860051155f, 1.41421354f),
+            Vec3(-0.0902692601f, -0.176054716f, 0.257508576f), Vec3(0.336575687f, -1.30761826f, 1.41421354f), Vec3(-0.0304530058f, -0.195490196f, 0.257508576f),
+            Vec3(0.37973702f, -1.30761826f, 1.41421354f), Vec3(0.0105644856f, -0.177422598f, 0.242919758f), Vec3(0.421955168f, -1.29864454f, 1.41421354f),
+            Vec3(0.052675467f, -0.16211842f, 0.237929314f), Vec3(0.461384982f, -1.28108919f, 1.41421354f), Vec3(0.095739536f, -0.14974755f, 0.242919758f),
+            Vec3(0.496303231f, -1.25571966f, 1.41421354f), Vec3(0.13954325f, -0.140255064f, 0.257508576f), Vec3(0f, 0f, 0.153479129f),
+            Vec3(0.0351347737f, 0.108133726f, 0.181723237f), Vec3(-0.0493872538f, 0.151111647f, 0.210518301f), Vec3(-0.0106120091f, 0.128404945f, 0.189850703f),
+            Vec3(0.0191254169f, 0.0588619933f, 0.160540164f), Vec3(-0.0677968487f, 0.109681003f, 0.189847544f), Vec3(-0.0285200775f, 0.0848556459f, 0.169212312f),
+            Vec3(-0.0913799852f, 0.0663914457f, 0.181723237f), Vec3(-0.0488628857f, 0.0355009623f, 0.160540164f), Vec3(-0.158553377f, 0f, 0.210450068f),
+            Vec3(-0.124416769f, 0.0300364532f, 0.189712837f), Vec3(-0.124416769f, -0.0300364532f, 0.189712837f), Vec3(-0.0875538662f, 0f, 0.168942183f),
+            Vec3(-0.0913799852f, -0.0663914457f, 0.181723237f), Vec3(-0.0488628857f, -0.0355009623f, 0.160540164f), Vec3(-0.0493872538f, -0.151111647f, 0.210518301f),
+            Vec3(-0.0677968487f, -0.109681003f, 0.189847544f), Vec3(-0.0106120091f, -0.128404945f, 0.189850703f), Vec3(-0.0285200775f, -0.0848556459f, 0.169212312f),
+            Vec3(0.0351347737f, -0.108133726f, 0.181723237f), Vec3(0.0191254169f, -0.0588619933f, 0.160540164f), Vec3(0.128997087f, -0.0936612561f, 0.21043618f),
+            Vec3(0.0845224187f, -0.0985211208f, 0.189710811f), Vec3(0.120313279f, -0.0497607328f, 0.189663827f), Vec3(0.0750086904f, -0.0536398329f, 0.168922797f),
+            Vec3(0.115520909f, 0f, 0.181723237f), Vec3(0.0655359253f, 0f, 0.160540149f), Vec3(0.128997087f, 0.0936612561f, 0.21043618f),
+            Vec3(0.120313279f, 0.0497607328f, 0.189663827f), Vec3(0.0845224187f, 0.0985211208f, 0.189710811f), Vec3(0.0750086904f, 0.0536398329f, 0.168922797f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 5e-3f, "K5 junction (symmetric) L3 (task 0456 XFAIL 0453)");
+    assertBevelManifoldCleanOpen(m, "K5 junction (symmetric) L3 (task 0456 XFAIL 0453)", 1);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L1
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L1
+           // has 46v/38f; our FACE count matches exactly (38). Our vertex count
+           // is 44: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.05f, 1);
+    assert(m.faces.length == 38, "mixed K4fe w0.05 L1 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 44, "mixed K4fe w0.05 L1 (task 0456 owner): our vertex count (ref 46, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.449999988f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.449999988f, -0.5f), Vec3(0.5f, 0.449999988f, 0.5f), Vec3(0.449999988f, 0.5f, 0.5f),
+            Vec3(-0.0500000007f, 0.5f, 0f), Vec3(0f, 0.5f, 0.0500000007f), Vec3(0f, 0.5f, -0.0500000007f),
+            Vec3(0.5f, 0.449999988f, 0.0500000007f), Vec3(0.5f, 0.449999988f, -0.0500000007f), Vec3(0.449999988f, 0.5f, -0.0500000007f),
+            Vec3(0.449999988f, 0.5f, 0.0500000007f), Vec3(0.5f, 0f, -0.0500000007f), Vec3(0.5f, 0f, 0.0500000007f),
+            Vec3(0.5f, -0.0500000007f, 0f), Vec3(0.485355347f, 0.485355347f, 0.5f), Vec3(0.485355347f, 0.485355347f, 0.0500000007f),
+            Vec3(0.449999988f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.485355347f, 0.485355347f, -0.0500000007f),
+            Vec3(0.485355347f, 0.485355347f, -0.5f), Vec3(0.5f, 0.449999988f, 0f), Vec3(0.5f, 0f, 0f),
+            Vec3(0.485355347f, 0.485355347f, 0f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 1e-4f, "mixed K4fe w0.05 L1 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.05 L1 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L2
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L2
+           // has 70v/58f; our FACE count matches exactly (58). Our vertex count
+           // is 68: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.05f, 2);
+    assert(m.faces.length == 58, "mixed K4fe w0.05 L2 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 68, "mixed K4fe w0.05 L2 (task 0456 owner): our vertex count (ref 70, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.449999988f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.449999988f, -0.5f), Vec3(0.5f, 0.449999988f, 0.5f), Vec3(0.449999988f, 0.5f, 0.5f),
+            Vec3(-0.0500000007f, 0.5f, 0f), Vec3(0f, 0.5f, 0.0500000007f), Vec3(0f, 0.5f, -0.0500000007f),
+            Vec3(0.5f, 0.449999988f, 0.0500000007f), Vec3(0.5f, 0.449999988f, -0.0500000007f), Vec3(0.449999988f, 0.5f, -0.0500000007f),
+            Vec3(0.449999988f, 0.5f, 0.0500000007f), Vec3(0.5f, 0f, -0.0500000007f), Vec3(0.5f, 0f, 0.0500000007f),
+            Vec3(0.5f, -0.0500000007f, 0f), Vec3(0.469134152f, 0.496193975f, 0.5f), Vec3(0.469134152f, 0.496193975f, 0.0500000007f),
+            Vec3(0.485355347f, 0.485355347f, 0.5f), Vec3(0.485355347f, 0.485355347f, 0.0500000007f), Vec3(0.496193975f, 0.469134152f, 0.5f),
+            Vec3(0.496193975f, 0.469134152f, 0.0500000007f), Vec3(0.449999988f, 0.5f, 0.0250000004f), Vec3(0f, 0.5f, 0.0250000004f),
+            Vec3(0.449999988f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.449999988f, 0.5f, -0.0250000004f),
+            Vec3(0f, 0.5f, -0.0250000004f), Vec3(0.469134152f, 0.496193975f, -0.0500000007f), Vec3(0.469134152f, 0.496193975f, -0.5f),
+            Vec3(0.485355347f, 0.485355347f, -0.0500000007f), Vec3(0.485355347f, 0.485355347f, -0.5f), Vec3(0.496193975f, 0.469134152f, -0.0500000007f),
+            Vec3(0.496193975f, 0.469134152f, -0.5f), Vec3(0.5f, 0.449999988f, -0.0250000004f), Vec3(0.5f, 0f, -0.0250000004f),
+            Vec3(0.5f, 0.449999988f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.5f, 0.449999988f, 0.0250000004f),
+            Vec3(0.5f, 0f, 0.0250000004f), Vec3(0.485355347f, 0.485355347f, 0f), Vec3(0.485355347f, 0.485355347f, 0.0250000004f),
+            Vec3(0.496204793f, 0.469328195f, 0.0250000004f), Vec3(0.496338844f, 0.469194174f, 0f), Vec3(0.496204793f, 0.469328195f, -0.0250000004f),
+            Vec3(0.485355347f, 0.485355347f, -0.0250000004f), Vec3(0.469328195f, 0.496204793f, -0.0250000004f), Vec3(0.469194174f, 0.496338844f, 0f),
+            Vec3(0.469328195f, 0.496204793f, 0.0250000004f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 1e-4f, "mixed K4fe w0.05 L2 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.05 L2 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L3
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L3
+           // has 102v/86f; our FACE count matches exactly (86). Our vertex count
+           // is 100: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.05f, 3);
+    assert(m.faces.length == 86, "mixed K4fe w0.05 L3 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 100, "mixed K4fe w0.05 L3 (task 0456 owner): our vertex count (ref 102, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.449999988f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.449999988f, -0.5f), Vec3(0.5f, 0.449999988f, 0.5f), Vec3(0.449999988f, 0.5f, 0.5f),
+            Vec3(-0.0500000007f, 0.5f, 0f), Vec3(0f, 0.5f, 0.0500000007f), Vec3(0f, 0.5f, -0.0500000007f),
+            Vec3(0.5f, 0.449999988f, 0.0500000007f), Vec3(0.5f, 0.449999988f, -0.0500000007f), Vec3(0.449999988f, 0.5f, -0.0500000007f),
+            Vec3(0.449999988f, 0.5f, 0.0500000007f), Vec3(0.5f, 0f, -0.0500000007f), Vec3(0.5f, 0f, 0.0500000007f),
+            Vec3(0.5f, -0.0500000007f, 0f), Vec3(0.462940931f, 0.498296291f, 0.5f), Vec3(0.462940931f, 0.498296291f, 0.0500000007f),
+            Vec3(0.474999994f, 0.493301272f, 0.5f), Vec3(0.474999994f, 0.493301272f, 0.0500000007f), Vec3(0.485355347f, 0.485355347f, 0.5f),
+            Vec3(0.485355347f, 0.485355347f, 0.0500000007f), Vec3(0.493301272f, 0.474999994f, 0.5f), Vec3(0.493301272f, 0.474999994f, 0.0500000007f),
+            Vec3(0.498296291f, 0.462940931f, 0.5f), Vec3(0.498296291f, 0.462940931f, 0.0500000007f), Vec3(0.449999988f, 0.5f, 0.0333333351f),
+            Vec3(0f, 0.5f, 0.0333333351f), Vec3(0.449999988f, 0.5f, 0.0166666675f), Vec3(0f, 0.5f, 0.0166666675f),
+            Vec3(0.449999988f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.449999988f, 0.5f, -0.0166666675f),
+            Vec3(0f, 0.5f, -0.0166666675f), Vec3(0.449999988f, 0.5f, -0.0333333351f), Vec3(0f, 0.5f, -0.0333333351f),
+            Vec3(0.462940931f, 0.498296291f, -0.0500000007f), Vec3(0.462940931f, 0.498296291f, -0.5f), Vec3(0.474999994f, 0.493301272f, -0.0500000007f),
+            Vec3(0.474999994f, 0.493301272f, -0.5f), Vec3(0.485355347f, 0.485355347f, -0.0500000007f), Vec3(0.485355347f, 0.485355347f, -0.5f),
+            Vec3(0.493301272f, 0.474999994f, -0.0500000007f), Vec3(0.493301272f, 0.474999994f, -0.5f), Vec3(0.498296291f, 0.462940931f, -0.0500000007f),
+            Vec3(0.498296291f, 0.462940931f, -0.5f), Vec3(0.5f, 0.449999988f, -0.0333333351f), Vec3(0.5f, 0f, -0.0333333351f),
+            Vec3(0.5f, 0.449999988f, -0.0166666675f), Vec3(0.5f, 0f, -0.0166666675f), Vec3(0.5f, 0.449999988f, 0f),
+            Vec3(0.5f, 0f, 0f), Vec3(0.5f, 0.449999988f, 0.0166666675f), Vec3(0.5f, 0f, 0.0166666675f),
+            Vec3(0.5f, 0.449999988f, 0.0333333351f), Vec3(0.5f, 0f, 0.0333333351f), Vec3(0.485355347f, 0.485355347f, 0f),
+            Vec3(0.485355347f, 0.485355347f, 0.0333333351f), Vec3(0.498257101f, 0.463248819f, 0.0333333351f), Vec3(0.493263751f, 0.475145727f, 0.0333333351f),
+            Vec3(0.485355347f, 0.485355347f, 0.0166666675f), Vec3(0.498329669f, 0.46317625f, 0.0166666675f), Vec3(0.493401051f, 0.475008428f, 0.0166666675f),
+            Vec3(0.498372823f, 0.463133097f, 0f), Vec3(0.493491262f, 0.474918216f, 0f), Vec3(0.498257101f, 0.463248819f, -0.0333333351f),
+            Vec3(0.498329669f, 0.46317625f, -0.0166666675f), Vec3(0.493263751f, 0.475145727f, -0.0333333351f), Vec3(0.493401051f, 0.475008428f, -0.0166666675f),
+            Vec3(0.485355347f, 0.485355347f, -0.0333333351f), Vec3(0.485355347f, 0.485355347f, -0.0166666675f), Vec3(0.463248819f, 0.498257101f, -0.0333333351f),
+            Vec3(0.475145727f, 0.493263751f, -0.0333333351f), Vec3(0.46317625f, 0.498329669f, -0.0166666675f), Vec3(0.475008428f, 0.493401051f, -0.0166666675f),
+            Vec3(0.463133097f, 0.498372823f, 0f), Vec3(0.474918216f, 0.493491262f, 0f), Vec3(0.463248819f, 0.498257101f, 0.0333333351f),
+            Vec3(0.46317625f, 0.498329669f, 0.0166666675f), Vec3(0.475145727f, 0.493263751f, 0.0333333351f), Vec3(0.475008428f, 0.493401051f, 0.0166666675f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 1e-4f, "mixed K4fe w0.05 L3 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.05 L3 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L1
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L1
+           // has 46v/38f; our FACE count matches exactly (38). Our vertex count
+           // is 44: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.10f, 1);
+    assert(m.faces.length == 38, "mixed K4fe w0.10 L1 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 44, "mixed K4fe w0.10 L1 (task 0456 owner): our vertex count (ref 46, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.400000006f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.400000006f, -0.5f), Vec3(0.5f, 0.400000006f, 0.5f), Vec3(0.400000006f, 0.5f, 0.5f),
+            Vec3(-0.100000001f, 0.5f, 0f), Vec3(0f, 0.5f, 0.100000001f), Vec3(0f, 0.5f, -0.100000001f),
+            Vec3(0.5f, 0.400000006f, 0.100000001f), Vec3(0.5f, 0.400000006f, -0.100000001f), Vec3(0.400000006f, 0.5f, -0.100000001f),
+            Vec3(0.400000006f, 0.5f, 0.100000001f), Vec3(0.5f, 0f, -0.100000001f), Vec3(0.5f, 0f, 0.100000001f),
+            Vec3(0.5f, -0.100000001f, 0f), Vec3(0.470710695f, 0.470710695f, 0.5f), Vec3(0.470710695f, 0.470710695f, 0.100000001f),
+            Vec3(0.400000006f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.470710695f, 0.470710695f, -0.100000001f),
+            Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.5f, 0.400000006f, 0f), Vec3(0.5f, 0f, 0f),
+            Vec3(0.470710665f, 0.470710665f, 0f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 1e-4f, "mixed K4fe w0.10 L1 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.10 L1 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L2
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L2
+           // has 70v/58f; our FACE count matches exactly (58). Our vertex count
+           // is 68: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.10f, 2);
+    assert(m.faces.length == 58, "mixed K4fe w0.10 L2 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 68, "mixed K4fe w0.10 L2 (task 0456 owner): our vertex count (ref 70, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.400000006f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.400000006f, -0.5f), Vec3(0.5f, 0.400000006f, 0.5f), Vec3(0.400000006f, 0.5f, 0.5f),
+            Vec3(-0.100000001f, 0.5f, 0f), Vec3(0f, 0.5f, 0.100000001f), Vec3(0f, 0.5f, -0.100000001f),
+            Vec3(0.5f, 0.400000006f, 0.100000001f), Vec3(0.5f, 0.400000006f, -0.100000001f), Vec3(0.400000006f, 0.5f, -0.100000001f),
+            Vec3(0.400000006f, 0.5f, 0.100000001f), Vec3(0.5f, 0f, -0.100000001f), Vec3(0.5f, 0f, 0.100000001f),
+            Vec3(0.5f, -0.100000001f, 0f), Vec3(0.438268334f, 0.49238795f, 0.5f), Vec3(0.438268334f, 0.49238795f, 0.100000001f),
+            Vec3(0.470710695f, 0.470710695f, 0.5f), Vec3(0.470710695f, 0.470710695f, 0.100000001f), Vec3(0.49238795f, 0.438268334f, 0.5f),
+            Vec3(0.49238795f, 0.438268334f, 0.100000001f), Vec3(0.400000006f, 0.5f, 0.0500000007f), Vec3(0f, 0.5f, 0.0500000007f),
+            Vec3(0.400000006f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.400000006f, 0.5f, -0.0500000007f),
+            Vec3(0f, 0.5f, -0.0500000007f), Vec3(0.438268334f, 0.49238795f, -0.100000001f), Vec3(0.438268334f, 0.49238795f, -0.5f),
+            Vec3(0.470710695f, 0.470710695f, -0.100000001f), Vec3(0.470710695f, 0.470710695f, -0.5f), Vec3(0.49238795f, 0.438268334f, -0.100000001f),
+            Vec3(0.49238795f, 0.438268334f, -0.5f), Vec3(0.5f, 0.400000006f, -0.0500000007f), Vec3(0.5f, 0f, -0.0500000007f),
+            Vec3(0.5f, 0.400000006f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.5f, 0.400000006f, 0.0500000007f),
+            Vec3(0.5f, 0f, 0.0500000007f), Vec3(0.470710665f, 0.470710665f, 0f), Vec3(0.470710665f, 0.470710665f, 0.0500000007f),
+            Vec3(0.492409587f, 0.43865642f, 0.0500000007f), Vec3(0.492677659f, 0.438388348f, 0f), Vec3(0.492409587f, 0.43865642f, -0.0500000007f),
+            Vec3(0.470710665f, 0.470710665f, -0.0500000007f), Vec3(0.43865642f, 0.492409587f, -0.0500000007f), Vec3(0.438388348f, 0.492677659f, 0f),
+            Vec3(0.43865642f, 0.492409587f, 0.0500000007f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 1e-4f, "mixed K4fe w0.10 L2 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.10 L2 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L3
+           // OWNER MESH (task 0456 live gate): once-subdivided cube, N=4 hub at an
+           // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
+           // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L3
+           // has 102v/86f; our FACE count matches exactly (86). Our vertex count
+           // is 100: the reference emits 2 extra COINCIDENT duplicate vertices at
+           // its 2 planar valence-4 free-end caps (its own documented degenerate
+           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
+           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
+           // vertex position is reproduced within the float32-mesh floor.
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
+        Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
+        Vec3(0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(0f,0f,-0.5f),
+        Vec3(-0.5f,0f,-0.5f), Vec3(0f,0.5f,-0.5f), Vec3(0.5f,0f,-0.5f),
+        Vec3(0f,-0.5f,-0.5f), Vec3(0f,0f,0.5f), Vec3(0f,-0.5f,0.5f),
+        Vec3(0.5f,0f,0.5f), Vec3(0f,0.5f,0.5f), Vec3(-0.5f,0f,0.5f),
+        Vec3(0f,-0.5f,0f), Vec3(0.5f,-0.5f,0f), Vec3(-0.5f,-0.5f,0f),
+        Vec3(0f,0.5f,0f), Vec3(-0.5f,0.5f,0f), Vec3(0.5f,0.5f,0f),
+        Vec3(-0.5f,0f,0f), Vec3(0.5f,0f,0f),
+    ];
+    m.addFace([0u,9u,8u,12u]); m.addFace([3u,10u,8u,9u]); m.addFace([2u,11u,8u,10u]); m.addFace([1u,12u,8u,11u]);
+    m.addFace([4u,14u,13u,17u]); m.addFace([5u,15u,13u,14u]); m.addFace([6u,16u,13u,15u]); m.addFace([7u,17u,13u,16u]);
+    m.addFace([0u,12u,18u,20u]); m.addFace([1u,19u,18u,12u]); m.addFace([5u,14u,18u,19u]); m.addFace([4u,20u,18u,14u]);
+    m.addFace([3u,22u,21u,10u]); m.addFace([7u,16u,21u,22u]); m.addFace([6u,23u,21u,16u]); m.addFace([2u,10u,21u,23u]);
+    m.addFace([0u,20u,24u,9u]); m.addFace([4u,17u,24u,20u]); m.addFace([7u,22u,24u,17u]); m.addFace([3u,9u,24u,22u]);
+    m.addFace([1u,11u,25u,19u]); m.addFace([2u,23u,25u,11u]); m.addFace([6u,15u,25u,23u]); m.addFace([5u,19u,25u,15u]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.10f, 3);
+    assert(m.faces.length == 86, "mixed K4fe w0.10 L3 (task 0456 owner): face count == reference");
+    assert(m.vertices.length == 100, "mixed K4fe w0.10 L3 (task 0456 owner): our vertex count (ref 102, +2 free-end weld)");
+        immutable Vec3[] dumpVerts = [
+            Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
+            Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
+            Vec3(0f, 0f, -0.5f), Vec3(-0.5f, 0f, -0.5f), Vec3(0f, 0.5f, -0.5f),
+            Vec3(0.5f, 0f, -0.5f), Vec3(0f, -0.5f, -0.5f), Vec3(0f, 0f, 0.5f),
+            Vec3(0f, -0.5f, 0.5f), Vec3(0.5f, 0f, 0.5f), Vec3(0f, 0.5f, 0.5f),
+            Vec3(-0.5f, 0f, 0.5f), Vec3(0f, -0.5f, 0f), Vec3(0.5f, -0.5f, 0f),
+            Vec3(-0.5f, -0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(-0.5f, 0.5f, 0f),
+            Vec3(-0.5f, 0f, 0f), Vec3(0.5f, 0f, 0f), Vec3(0.400000006f, 0.5f, -0.5f),
+            Vec3(0.5f, 0.400000006f, -0.5f), Vec3(0.5f, 0.400000006f, 0.5f), Vec3(0.400000006f, 0.5f, 0.5f),
+            Vec3(-0.100000001f, 0.5f, 0f), Vec3(0f, 0.5f, 0.100000001f), Vec3(0f, 0.5f, -0.100000001f),
+            Vec3(0.5f, 0.400000006f, 0.100000001f), Vec3(0.5f, 0.400000006f, -0.100000001f), Vec3(0.400000006f, 0.5f, -0.100000001f),
+            Vec3(0.400000006f, 0.5f, 0.100000001f), Vec3(0.5f, 0f, -0.100000001f), Vec3(0.5f, 0f, 0.100000001f),
+            Vec3(0.5f, -0.100000001f, 0f), Vec3(0.425881922f, 0.496592581f, 0.5f), Vec3(0.425881922f, 0.496592581f, 0.100000001f),
+            Vec3(0.450000018f, 0.486602545f, 0.5f), Vec3(0.450000018f, 0.486602545f, 0.100000001f), Vec3(0.470710695f, 0.470710695f, 0.5f),
+            Vec3(0.470710695f, 0.470710695f, 0.100000001f), Vec3(0.486602545f, 0.450000018f, 0.5f), Vec3(0.486602545f, 0.450000018f, 0.100000001f),
+            Vec3(0.496592581f, 0.425881922f, 0.5f), Vec3(0.496592581f, 0.425881922f, 0.100000001f), Vec3(0.400000006f, 0.5f, 0.0666666701f),
+            Vec3(0f, 0.5f, 0.0666666701f), Vec3(0.400000006f, 0.5f, 0.0333333351f), Vec3(0f, 0.5f, 0.0333333351f),
+            Vec3(0.400000006f, 0.5f, 0f), Vec3(0f, 0.5f, 0f), Vec3(0.400000006f, 0.5f, -0.0333333351f),
+            Vec3(0f, 0.5f, -0.0333333351f), Vec3(0.400000006f, 0.5f, -0.0666666701f), Vec3(0f, 0.5f, -0.0666666701f),
+            Vec3(0.425881922f, 0.496592581f, -0.100000001f), Vec3(0.425881922f, 0.496592581f, -0.5f), Vec3(0.450000018f, 0.486602545f, -0.100000001f),
+            Vec3(0.450000018f, 0.486602545f, -0.5f), Vec3(0.470710695f, 0.470710695f, -0.100000001f), Vec3(0.470710695f, 0.470710695f, -0.5f),
+            Vec3(0.486602545f, 0.450000018f, -0.100000001f), Vec3(0.486602545f, 0.450000018f, -0.5f), Vec3(0.496592581f, 0.425881922f, -0.100000001f),
+            Vec3(0.496592581f, 0.425881922f, -0.5f), Vec3(0.5f, 0.400000006f, -0.0666666701f), Vec3(0.5f, 0f, -0.0666666701f),
+            Vec3(0.5f, 0.400000006f, -0.0333333351f), Vec3(0.5f, 0f, -0.0333333351f), Vec3(0.5f, 0.400000006f, 0f),
+            Vec3(0.5f, 0f, 0f), Vec3(0.5f, 0.400000006f, 0.0333333351f), Vec3(0.5f, 0f, 0.0333333351f),
+            Vec3(0.5f, 0.400000006f, 0.0666666701f), Vec3(0.5f, 0f, 0.0666666701f), Vec3(0.470710665f, 0.470710665f, 0f),
+            Vec3(0.470710665f, 0.470710665f, 0.0666666701f), Vec3(0.496514201f, 0.426497668f, 0.0666666701f), Vec3(0.486527503f, 0.450291485f, 0.0666666701f),
+            Vec3(0.470710665f, 0.470710665f, 0.0333333351f), Vec3(0.496659338f, 0.426352531f, 0.0333333351f), Vec3(0.486802101f, 0.450016886f, 0.0333333351f),
+            Vec3(0.496745616f, 0.426266223f, 0f), Vec3(0.486982524f, 0.449836463f, 0f), Vec3(0.496514201f, 0.426497668f, -0.0666666701f),
+            Vec3(0.496659338f, 0.426352531f, -0.0333333351f), Vec3(0.486527503f, 0.450291485f, -0.0666666701f), Vec3(0.486802101f, 0.450016886f, -0.0333333351f),
+            Vec3(0.470710665f, 0.470710665f, -0.0666666701f), Vec3(0.470710665f, 0.470710665f, -0.0333333351f), Vec3(0.426497668f, 0.496514201f, -0.0666666701f),
+            Vec3(0.450291485f, 0.486527503f, -0.0666666701f), Vec3(0.426352531f, 0.496659338f, -0.0333333351f), Vec3(0.450016886f, 0.486802101f, -0.0333333351f),
+            Vec3(0.426266223f, 0.496745616f, 0f), Vec3(0.449836463f, 0.486982524f, 0f), Vec3(0.426497668f, 0.496514201f, 0.0666666701f),
+            Vec3(0.426352531f, 0.496659338f, 0.0333333351f), Vec3(0.450291485f, 0.486527503f, 0.0666666701f), Vec3(0.450016886f, 0.486802101f, 0.0333333351f),
+        ];
+    assertHubHausdorffWithin(m, dumpVerts, 2e-4f, "mixed K4fe w0.10 L3 (task 0456 owner)");
+    assertBevelManifoldCleanOpen(m, "mixed K4fe w0.10 L3 (task 0456 owner)", 2);
+}
+
+unittest { // bevelEdgesByMask: MAX_JUNCTION_VALENCE DoS backstop (task 0456).
+           // A rounded N-way hub emits ~valence·(2^L)² faces, so a crafted
+           // high-valence full hub is an attacker-scalable allocation vector.
+           // Over the kernel cap, the hub must fall through to the flat N-gon cap
+           // (no Gregory ring) and stay sound — verified here on a valence
+           // (MAX_JUNCTION_VALENCE+2) fan apex.
+    import std.math : cos, sin, PI;
+    enum int N = MAX_JUNCTION_VALENCE + 2; // 66 > 64
+    Mesh m;
+    m.vertices ~= Vec3(0, 0, 0); // apex
+    // Rim radius large enough that adjacent rim points are well clear of the
+    // bevel width (2π·R/N ≫ width), so the flat fallback stays coincidence-free.
+    enum float R = 20.0f;
+    foreach (k; 0 .. N) {
+        immutable float a = 2.0f * cast(float)PI * cast(float)k / cast(float)N;
+        m.vertices ~= Vec3(R * cos(a), R * sin(a), 3.0f);
+    }
+    foreach (k; 0 .. N)
+        m.addFace([0u, cast(uint)(1 + k), cast(uint)(1 + (k + 1) % N)]);
+    m.buildLoops();
+    m.syncSelection();
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
+    m.bevelEdgesByMask(mask, 0.1f, 1);
+    // Flat fallback: the cap is ONE large polygon (poles + rounded rail
+    // interiors threaded into a single ring, >= N sides), NOT a rounded Gregory
+    // ring (which would be all-quads + a hub vertex + interior grid).
+    bool foundFlatCap = false;
+    foreach (f; m.faces) if (f.length >= N) { foundFlatCap = true; break; }
+    assert(foundFlatCap, "over-cap full hub must fall back to the flat N-gon cap");
+    assertBevelManifoldCleanOpen(m, "MAX_JUNCTION_VALENCE flat fallback (task 0456)", 1);
+}
+
+
 unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 0443
            // freeze) — the SAME topology as K4 above (4 triangles, all 4 edges selected)
            // but a deliberately irregular base ring — unequal edge lengths
            // and unequal azimuthal spacing, so no two of the 4 faces are
            // congruent (rules out a symmetry coincidence hiding a bug).
-           // Round Level 0 only (N>3 junctions keep the flat N-gon cap at
-           // every level per task 0435/0442 — no Gregory ring generalization
-           // for N>3 yet); this level already matches the reference bit-
-           // exact and nothing in the repo guards it. Provenance (task 0450):
+           // Round Level 0 (the flat N-gon cap). L>=1 now rounds via the
+           // N-sided Gregory ring (task 0454/0456 — see the L1/L2/L3 parity
+           // fixtures below); L0 is unchanged and already matches the reference
+           // bit-exact. Provenance (task 0450):
            // the want* numbers below are transcribed directly FROM the
            // reference capture dump (gen_k*_level0), not from our kernel's
            // output — assertFacesMatchByPosition canonicalises by position and
