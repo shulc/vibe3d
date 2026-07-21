@@ -1,0 +1,50 @@
+{
+  "name": "poly_bevel_Q1_single_square",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) SQUARE CORNER -- task 0458 Phase 3, finding Q1 (single face, no group). One cube top (+Y) face, inset=0.25, shift=0.15, square=true, group=false, segments=0. Reference topology: 8v/6f -> 20v/14f. Every corner is STANDALONE (no group): the original corner is RETAINED and 2 new split points are inserted on its own two boundary edges (distance=inset from the corner), plus a quad CAP; each boundary edge gets an edge-panel quad; the 4 unselected side faces absorb the 2 splits on their shared edge (quad -> hexagon).",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_Q1_single_square). Isolates the Square-Corner topology rewrite on a single face with no group interaction at all.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for square=true (single face). Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) per the recovered BevelSquare_MarkBound/_Rebuild topology rewrite (toolcards/poly.bevel/findings.md section 3)."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "single_square",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.25, "shift": 0.15, "group": false, "segments": 0, "square": true } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 20, "faces": 14 },
+      "expected_face_degrees": [4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 4, 4, 4, 4],
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.25, 0.65, -0.25],
+        [-0.25, 0.5, -0.5],
+        [-0.5, 0.5, -0.25],
+        [-0.25, 0.65, 0.25],
+        [-0.5, 0.5, 0.25],
+        [-0.25, 0.5, 0.5],
+        [0.25, 0.65, 0.25],
+        [0.25, 0.5, 0.5],
+        [0.5, 0.5, 0.25],
+        [0.25, 0.65, -0.25],
+        [0.5, 0.5, -0.25],
+        [0.25, 0.5, -0.5]
+      ]
+    }
+  ]
+}

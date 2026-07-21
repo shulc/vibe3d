@@ -38,6 +38,7 @@ import std.json;
 import std.net.curl : get, post;
 import std.math : fabs, PI;
 import std.format : format;
+import std.algorithm : sort;
 
 private enum string BASE = "http://localhost:8080";
 
@@ -894,8 +895,17 @@ private bool jApproxEq(JSONValue e, JSONValue a, double tol) {
 ///                  "expected_before": {"verts":V,"edges":E,"faces":F},
 ///                  "expected_after":  {"verts":V,"edges":E,"faces":F},
 ///                  "expected_vertices": [[x,y,z], ...],
+///                  "expected_face_degrees": [4,4,4,6,6,6,6],
 ///                  "lerp_checks": [ {"a":[..],"b":[..],"t":0.3,"point":[..]} ]
 ///                } ] }
+/// Optional `expected_face_degrees` is a CONNECTIVITY-shape check
+/// complementary to `expected_vertices`' position bijection: the
+/// multiset of post-op face vertex-counts (any order — compared sorted),
+/// e.g. `[4,4,6,6,6,6]` for a squared single-face bevel (1 inner quad +
+/// 4 hexagon sides absorbing splits + ... — see poly.bevel's Q1-Q4 task
+/// 0458 fixtures). Catches a wrong-shaped n-gon rewrite (e.g. accidentally
+/// emitting 2 pentagons instead of 1 quad + 1 hexagon) that a bare vertex/
+/// face COUNT plus a position bijection could miss.
 void runTopologyDiffSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<topo-suite>";
@@ -912,6 +922,19 @@ void runTopologyDiffSuite(string fixtureJson) {
         foreach (i, step; cs["op"].array) runStep(step, cn, "op", i);
         if ("expected_after" in cs)
             assertCounts(cn, "after", cs["expected_after"], readCounts());
+
+        if ("expected_face_degrees" in cs) {
+            auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+            long[] gotDeg;
+            foreach (f; model["faces"].array) gotDeg ~= cast(long) f.array.length;
+            gotDeg.sort();
+            long[] wantDeg;
+            foreach (w; cs["expected_face_degrees"].array) wantDeg ~= w.integer;
+            wantDeg.sort();
+            assert(gotDeg == wantDeg,
+                format("%s: face-degree multiset expected %s, got %s",
+                       cn, wantDeg, gotDeg));
+        }
 
         auto got = readVertices();
         if ("expected_vertices" in cs) {

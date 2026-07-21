@@ -1,0 +1,54 @@
+{
+  "name": "poly_bevel_Q3_square_segs2",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) SQUARE CORNER + SEGMENTS -- task 0458 Phase 3, finding Q3. One cube top (+Y) face, inset=0.25, shift=0.15, segments=2, square=true, group=false. Reference topology: 8v/6f -> 24v/18f. Square is NOT rejected when combined with segments -- it applies ONLY at the OUTERMOST ring (original boundary -> ring[1]), split distance = that ring's own inset (inset/segs = 0.125); the remaining ring (ring[1] -> ring[2]=final) interpolates via plain (unsquared) quads, unchanged from the ordinary segments path.",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_Q3_square_segs2). Tests whether the Square-Corner topology rewrite composes with the multi-ring segment staircase.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for square=true + segments=2. Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) -- square wraps only the outermost (t=0 -> t=1) ring; deeper segment rings are unaffected plain quads."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "square_segs2",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.25, "shift": 0.15, "group": false, "segments": 2, "square": true } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 24, "faces": 18 },
+      "expected_face_degrees": [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6],
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.375, 0.575, -0.375],
+        [-0.375, 0.5, -0.5],
+        [-0.5, 0.5, -0.375],
+        [-0.375, 0.575, 0.375],
+        [-0.5, 0.5, 0.375],
+        [-0.375, 0.5, 0.5],
+        [0.375, 0.575, 0.375],
+        [0.375, 0.5, 0.5],
+        [0.5, 0.5, 0.375],
+        [0.375, 0.575, -0.375],
+        [0.5, 0.5, -0.375],
+        [0.375, 0.5, -0.5],
+        [-0.25, 0.65, -0.25],
+        [-0.25, 0.65, 0.25],
+        [0.25, 0.65, 0.25],
+        [0.25, 0.65, -0.25]
+      ]
+    }
+  ]
+}

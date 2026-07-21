@@ -54,6 +54,7 @@ private:
     float shift_    = 0.0f;
     bool  group_    = true;
     int   segments_ = 0;
+    bool  square_   = false;
 
     bool         active;
     bool         built;
@@ -117,6 +118,12 @@ public:
             Param.bool_("group", "Group Polygons", &group_, true),
             Param.int_("segments", "Segments", &segments_, 0)
                 .min(0).max(MAX_BEVEL_SEGMENTS).enforceBounds(),
+            // task 0458 Phase 3: recovered Square Corner topology rewrite
+            // (`bevelFacesByMask`'s `square` — findings.md §3), parity-
+            // fixture-verified (Q1-Q4). Promoted out of Hidden now that
+            // the kernel + fixtures are green (don't-expose-unready-
+            // params rule).
+            Param.bool_("square", "Square Corner", &square_, false),
         ];
     }
 
@@ -171,7 +178,7 @@ public:
         if (mesh.faces.length == 0) return false;
         if (inset_ == 0.0f && shift_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_);
+        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -304,7 +311,7 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_);
+        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
         built = (n != 0);
         refreshCaches();
     }

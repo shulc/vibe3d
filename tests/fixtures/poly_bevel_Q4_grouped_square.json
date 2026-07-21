@@ -1,0 +1,53 @@
+{
+  "name": "poly_bevel_Q4_grouped_square",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) SQUARE CORNER + GROUP -- task 0458 Phase 3, finding Q4 (2-face group). Two adjacent cube faces (+Y top, +Z front, sharing one ridge edge -- the same pair as poly_bevel_two_faces_grouped.json / poly_bevel_S1_group_segs2.json), inset=0.25, shift=0.15, group=true, square=true, segments=0. Reference topology: 8v/6f -> 22v/16f, a full topology rewrite re-verified bit-exact against the frozen dump poly_bevel_two_faces_grouped_square1.json. The two RIDGE corners (the shared edge's endpoints) get NEITHER split NOR cap -- they stay at their ORIGINAL position, connected directly into the two edge-panels meeting there; the 4 STANDALONE corners (touching only one of the two selected faces) get the normal Q1-style split+cap treatment.",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (pre-existing dump-oracle poly_bevel_two_faces_grouped_square1.json, re-verified bit-exact under task 0458 -- see toolcards/poly.bevel/findings.md section 3, 'Q4 grouped-2-face square').",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Dump-oracle for square=true + group=true on 2 adjacent faces. Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) -- a group-shared 'ridge' corner (sharedCornerPos) gets neither a split nor a cap; its neighbourhood is closed by the two edge-panels meeting directly at the original vertex."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "grouped_square",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]],
+          [[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.25, "shift": 0.15, "group": true, "segments": 0, "square": true } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 22, "faces": 16 },
+      "expected_face_degrees": [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 4, 4],
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [0.25, -0.25, 0.65],
+        [0.25, -0.5, 0.5],
+        [0.5, -0.25, 0.5],
+        [-0.25, -0.25, 0.65],
+        [-0.5, -0.25, 0.5],
+        [-0.25, -0.5, 0.5],
+        [-0.25, 0.65, -0.25],
+        [-0.25, 0.5, -0.5],
+        [-0.5, 0.5, -0.25],
+        [0.25, 0.65, -0.25],
+        [0.5, 0.5, -0.25],
+        [0.25, 0.5, -0.5],
+        [0.25, 0.65, 0.65],
+        [-0.25, 0.65, 0.65]
+      ]
+    }
+  ]
+}

@@ -8385,6 +8385,57 @@ struct Mesh {
     /// ring lands at exactly
     /// half-inset/half-shift, including at the grouped shared corner).
     ///
+    /// `square` (task 0458 Phase 3, recovered `BevelSquare_MarkBound`/
+    /// `_Rebuild` callback post-pass — `toolcards/poly.bevel/findings.md`
+    /// §0/§3): composition order is `square( group_xor_notgroup( segments
+    /// ) )` — square wraps whatever the (group|non-group)+segments solve
+    /// above already produced, touching ONLY the outermost ring (the
+    /// original boundary → `ringVerts[1]` bridge); any deeper segment
+    /// rings (`ringVerts[1..Nseg]`) are untouched plain quads, unchanged.
+    /// For each boundary-contour vertex `V` of a selected face:
+    ///   - STANDALONE (not a group-shared corner, i.e. not in
+    ///     `sharedCornerPos` — every corner when `group=false`, since
+    ///     square is a pure per-face op there, task 0458 Q2 finding):
+    ///     `V` is RETAINED at its original position, and TWO new split
+    ///     points are inserted on `V`'s own two original boundary edges,
+    ///     each at distance `effInset/Nseg` from `V` (the OUTERMOST
+    ///     ring's own inset — Q3 finding: with segments, the split
+    ///     distance is `inset/segs`, not the full inset). A quad CAP
+    ///     replaces `V`'s corner: `[V, splitToward-next, ringVerts[1][V],
+    ///     splitToward-prev]`.
+    ///   - RIDGE (a group-shared corner, `internalCnt>=1` —
+    ///     `sharedCornerPos`, task 0458 Q4 finding): NEITHER of its two
+    ///     boundary edges gets a split near it, and NO cap is built — its
+    ///     neighbourhood is already closed by the two edge-panels
+    ///     (below) meeting directly at the original vertex, connected by
+    ///     the radial edge to its own `ringVerts[1]` position (its group-
+    ///     solved final/segment-ring position, computed above,
+    ///     unaffected by square).
+    /// Every surviving boundary edge (i.e. not group-dissolved — the
+    /// existing `internalEdgeSet` skip above already excludes internal
+    /// edges from ever reaching this code) gets an edge-panel quad:
+    /// `[pointNear-i, pointNear-next, ringVerts[1][next], ringVerts[1][i]]`
+    /// where `pointNear-*` is the new split (standalone) or the raw
+    /// original vertex (ridge). The UNSELECTED face sharing that same
+    /// original edge (there is always exactly one on a 2-manifold mesh)
+    /// absorbs whichever split point(s) were created, splicing them into
+    /// its own vertex loop between the two shared corners so the mesh
+    /// stays watertight (no T-junction) — becoming an n-gon (hexagon in
+    /// Q1/Q4, octagon in Q2 where a side face borders TWO independently-
+    /// squared faces). Reproduced bit-exact (topology + position) against
+    /// all four dump-oracles (`poly_bevel_{Q1_single_square,
+    /// Q2_nonadjacent_square,Q3_square_segs2}.json` +
+    /// `poly_bevel_two_faces_grouped_square1.json` = Q4). `square=false`
+    /// (default) touches none of this code — byte-identical to the
+    /// pre-0458-Phase-3 kernel.
+    ///
+    /// KNOWN LIMITATION (not exercised by any of the four dump-oracles,
+    /// flagged rather than guessed): the split distance `effInset/Nseg`
+    /// is not clamped against the boundary edge's own length the way the
+    /// mitered final-ring inset is (`maxSafeUniformInset`) — an
+    /// exceptionally large inset relative to a short edge could produce
+    /// an overlapping/self-intersecting cap+panel pair. Left unclamped
+    /// pending a captured case that actually exercises it.
 
     /// Two-layer DoS clamp: `segments` is hard-capped to
     /// `MAX_BEVEL_SEGMENTS` HERE (kernel-side, authoritative for any
@@ -8393,7 +8444,8 @@ struct Mesh {
     /// .enforceBounds()` hint is a shallower UI/HTTP-only second line of
     /// defense.
     size_t bevelFacesByMask(const bool[] mask, float inset, float shift,
-                             bool group = false, int segments = 0) {
+                             bool group = false, int segments = 0,
+                             bool square = false) {
         import std.math : abs;
         if (abs(inset) < 1e-6f && abs(shift) < 1e-6f) return 0;
 
@@ -8542,6 +8594,16 @@ struct Mesh {
         // "KNOWN-UNTESTED" until this task).
         uint[uint][] sharedVertIdxByLevel = new uint[uint][](Nseg + 1);
 
+        // task 0458 Phase 3 (square): per ORIGINAL boundary edge, the split
+        // point (if any) created near each of its two endpoints, keyed by
+        // an ORDERED pair `(fromVertex<<32)|towardVertex` (NOT
+        // `edgeKeyOrdered`'s canonical min/max — a single edge has two
+        // independent split points, one per direction, and this key
+        // disambiguates which). Populated while a selected face builds its
+        // own splits below; consumed afterward by the unselected-neighbour
+        // absorption pass so the mesh stays watertight (findings.md §3).
+        uint[ulong] squareSplitAt;
+
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
             const uint[] origFaceVerts = faces[fi].dup;
@@ -8614,6 +8676,33 @@ struct Mesh {
                 ringVerts[t] = ring;
             }
 
+            // task 0458 Phase 3 (square): per-corner classification + the
+            // two new split points on a STANDALONE corner's own two
+            // original boundary edges (findings.md §3). A RIDGE corner
+            // (group-shared, `sharedCornerPos`) gets neither — see the
+            // function's own doc comment above for the full rule.
+            uint[] splitToNext, splitToPrev;
+            bool[] isRidgeCorner;
+            if (square) {
+                splitToNext   = new uint[](Nc);
+                splitToPrev   = new uint[](Nc);
+                isRidgeCorner = new bool[](Nc);
+                immutable float splitStep = effInset / cast(float)Nseg;
+                foreach (i; 0 .. Nc) {
+                    immutable uint origV = origFaceVerts[i];
+                    isRidgeCorner[i] = group && (origV in sharedCornerPos) !is null;
+                    if (isRidgeCorner[i]) continue;
+                    immutable int nxt = (i + 1) % Nc;
+                    immutable int prv = (i + Nc - 1) % Nc;
+                    immutable Vec3 dirNext = safeNormalize(origPos[nxt] - origPos[i]);
+                    immutable Vec3 dirPrev = safeNormalize(origPos[prv] - origPos[i]);
+                    splitToNext[i] = addVertex(origPos[i] + dirNext * splitStep);
+                    splitToPrev[i] = addVertex(origPos[i] + dirPrev * splitStep);
+                    squareSplitAt[(cast(ulong)origV << 32) | origFaceVerts[nxt]] = splitToNext[i];
+                    squareSplitAt[(cast(ulong)origV << 32) | origFaceVerts[prv]] = splitToPrev[i];
+                }
+            }
+
             faces[fi] = finalVerts.dup;
             // Task 0389: read the source face's Subpatch bit BEFORE the ring
             // quads below grow `faceMarks` (addFace does not grow it itself —
@@ -8626,9 +8715,33 @@ struct Mesh {
                     immutable ulong key = edgeKeyOrdered(origFaceVerts[i], origFaceVerts[next]);
                     if (internalEdgeSet.get(key, false)) continue; // internal — dissolves, no bridge
                 }
-                foreach (t; 0 .. Nseg)
-                    addFace([ringVerts[t][i],     ringVerts[t][next],
-                             ringVerts[t+1][next], ringVerts[t+1][i]]);
+                if (square) {
+                    // Outermost (t=0) bridge is replaced by the square
+                    // edge-panel; deeper segment rings (t=1..Nseg-1) stay
+                    // plain, unchanged (Q3 finding — square wraps only the
+                    // outermost ring).
+                    immutable uint pointAtI    = isRidgeCorner[i]
+                        ? origFaceVerts[i] : splitToNext[i];
+                    immutable uint pointAtNext = isRidgeCorner[next]
+                        ? origFaceVerts[next] : splitToPrev[next];
+                    addFace([pointAtI, pointAtNext, ringVerts[1][next], ringVerts[1][i]]);
+                    foreach (t; 1 .. Nseg)
+                        addFace([ringVerts[t][i],     ringVerts[t][next],
+                                 ringVerts[t+1][next], ringVerts[t+1][i]]);
+                } else {
+                    foreach (t; 0 .. Nseg)
+                        addFace([ringVerts[t][i],     ringVerts[t][next],
+                                 ringVerts[t+1][next], ringVerts[t+1][i]]);
+                }
+            }
+            if (square) {
+                // Quad cap per STANDALONE corner only — a ridge corner's
+                // neighbourhood is already closed by the two edge-panels
+                // above meeting at the original vertex (Q4 finding).
+                foreach (i; 0 .. Nc)
+                    if (!isRidgeCorner[i])
+                        addFace([origFaceVerts[i], splitToNext[i],
+                                 ringVerts[1][i],   splitToPrev[i]]);
             }
             // Ring quads inherit Subpatch from the beveled source face.
             resizeSubpatch();
@@ -8636,6 +8749,28 @@ struct Mesh {
             ++processed;
         }
         if (processed == 0) return 0;
+        if (square) {
+            // Splice each surviving split point into the UNSELECTED face
+            // sharing that original edge, so the mesh stays watertight (no
+            // T-junction) — task 0458 Phase 3, findings.md §3. Only
+            // ORIGINAL (pre-op) faces can need this; a face already
+            // rebuilt above (`mask[fi]`) holds its own new ring/final
+            // verts already, not the original boundary, and is skipped.
+            foreach (fi; 0 .. nFaces) {
+                if (fi < mask.length && mask[fi]) continue;
+                const uint[] cur = faces[fi];
+                immutable int N = cast(int)cur.length;
+                if (N < 3) continue;
+                uint[] rebuilt;
+                foreach (k; 0 .. N) {
+                    immutable uint a = cur[k], b = cur[(k + 1) % N];
+                    rebuilt ~= a;
+                    if (auto p = ((cast(ulong)a << 32) | b) in squareSplitAt) rebuilt ~= *p;
+                    if (auto p2 = ((cast(ulong)b << 32) | a) in squareSplitAt) rebuilt ~= *p2;
+                }
+                faces[fi] = rebuilt;
+            }
+        }
         if (anyClamped) {
             // weldCoincidentVertices only remaps FACE references to the kept
             // vertex — the welded-away vertex slots (e.g. 3 of 4 cap corners
@@ -17110,6 +17245,168 @@ unittest { // bevelFacesByMask: GROUP x SEGMENTS — task 0458 Phase 1 (+S1),
     foreach (v; m.vertices)
         if ((v - Vec3(0.375f, 0.575f, 0.575f)).length < 1e-4f) foundMidShared = true;
     assert(foundMidShared, "the group-shared corner's t=1-of-2 intermediate ring vertex should land at exactly half inset/half shift (0.375,0.575,0.575)");
+}
+
+unittest { // bevelFacesByMask: SQUARE CORNER, finding Q1 (single-face, no
+           // group) — task 0458 Phase 3. See `poly_bevel_Q1_single_square`
+           // (toolcards/poly.bevel/findings.md §3): one cube top face,
+           // inset=0.25, shift=0.15, square=true → 20v/14f. Every corner is
+           // STANDALONE (no group): 8 orig (retained) + 4 final inset/shift
+           // corners + 8 split points (2 per original top-face edge, at
+           // distance=inset from each endpoint) = 20. 1 bottom quad + 4
+           // side hexagons (absorb the 2 splits on their shared edge) + 1
+           // inner quad + 4 edge-panel quads + 4 corner-cap quads = 14.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[4] = true; // +Y = [3,7,6,2]
+    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, false, 0, true);
+    assert(n == 1);
+    assert(m.vertices.length == 20, "8 orig + 4 final corners + 8 split points");
+    assert(m.faces.length    == 14, "1 bottom + 4 side hexagons + 1 inner + 4 panels + 4 caps");
+
+    // Original top-face corners MUST be retained (square keeps them, unlike
+    // the non-square kernel which replaces them outright).
+    foreach (orig; [Vec3(-0.5f,0.5f,-0.5f), Vec3(-0.5f,0.5f,0.5f),
+                    Vec3(0.5f,0.5f,0.5f),   Vec3(0.5f,0.5f,-0.5f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - orig).length < 1e-5f) found = true;
+        assert(found, "original top-face corner should be retained by square");
+    }
+    // The 4 final inset+shift corners (same law as the non-square kernel,
+    // just now a SEPARATE vertex from the retained original corner).
+    foreach (fc; [Vec3(-0.25f,0.65f,-0.25f), Vec3(-0.25f,0.65f,0.25f),
+                  Vec3(0.25f,0.65f,0.25f),   Vec3(0.25f,0.65f,-0.25f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - fc).length < 1e-4f) found = true;
+        assert(found, "expected final inset+shift corner missing");
+    }
+    // Split points: distance=inset (0.25) from each original corner along
+    // the ORIGINAL (un-shifted) top-face edges.
+    foreach (sp; [Vec3(-0.25f,0.5f,-0.5f), Vec3(-0.5f,0.5f,-0.25f),
+                  Vec3(-0.5f,0.5f,0.25f),  Vec3(-0.25f,0.5f,0.5f),
+                  Vec3(0.25f,0.5f,0.5f),   Vec3(0.5f,0.5f,0.25f),
+                  Vec3(0.5f,0.5f,-0.25f),  Vec3(0.25f,0.5f,-0.5f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - sp).length < 1e-4f) found = true;
+        assert(found, "expected split point missing");
+    }
+}
+
+unittest { // bevelFacesByMask: SQUARE CORNER, finding Q2 (two NON-adjacent
+           // faces) — task 0458 Phase 3. `poly_bevel_Q2_nonadjacent_square`
+           // (findings.md §3): cube top (+Y) AND bottom (-Y), group=true
+           // (inert — no shared edge, so square is pure per-face), inset=
+           // 0.25, shift=0.15 → 32v/22f: two INDEPENDENT Q1 patterns, and
+           // the 4 side faces (each bordering BOTH squares) become
+           // OCTAGONS (absorb 2 splits from top + 2 from bottom).
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[4] = true; // +Y = [3,7,6,2]
+    mask[5] = true; // -Y = [0,1,5,4]
+    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 0, true);
+    assert(n == 2);
+    assert(m.vertices.length == 32, "8 orig + 2x(4 final + 8 splits) = 32");
+    assert(m.faces.length    == 22, "2 inner + 2x(4 panels+4 caps) + 4 octagon sides = 22");
+
+    size_t octagons = 0, quads = 0;
+    foreach (f; m.faces) {
+        if (f.length == 8) ++octagons;
+        else if (f.length == 4) ++quads;
+    }
+    assert(octagons == 4, "the 4 side faces should each become an octagon");
+    // 2 inner (final) quads + 2x4 panel quads + 2x4 cap quads = 18 quads.
+    assert(quads == 18, "expected 18 remaining quads (2 inner + 8 panels + 8 caps)");
+}
+
+unittest { // bevelFacesByMask: SQUARE CORNER, finding Q3 (square + segments
+           // together) — task 0458 Phase 3. `poly_bevel_Q3_square_segs2`
+           // (findings.md §3): one cube top face, inset=0.25, shift=0.15,
+           // segments=2, square=true → 24v/18f. Square treatment applies
+           // ONLY at the outermost ring (original boundary → ring[1]),
+           // split distance = inset/segs = 0.125; the remaining ring
+           // (ring[1] → ring[2]=final) interpolates via plain (unsquared)
+           // quads, unchanged from the ordinary segments path.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[4] = true; // +Y = [3,7,6,2]
+    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, false, 2, true);
+    assert(n == 1);
+    assert(m.vertices.length == 24, "8 orig + 4 ring1(half-step) + 4 final(full-step) + 8 splits(at inset/segs=0.125)");
+    assert(m.faces.length    == 18, "1 bottom + 4 side hexagons + 1 final-inner + 4 square-panels + 4 square-caps + 4 plain ring1->final panels");
+
+    // Splits at HALF the full inset (0.125, the outermost ring's own step),
+    // NOT the full 0.25 — the Q3-specific finding.
+    foreach (sp; [Vec3(-0.375f,0.5f,-0.5f), Vec3(-0.5f,0.5f,-0.375f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - sp).length < 1e-4f) found = true;
+        assert(found, "expected split point at inset/segs=0.125, not the full inset");
+    }
+    // ring1 (half-step) corner and the true final corner both present.
+    bool foundRing1 = false, foundFinal = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(-0.375f,0.575f,-0.375f)).length < 1e-4f) foundRing1 = true;
+        if ((v - Vec3(-0.25f,0.65f,-0.25f)).length   < 1e-4f) foundFinal = true;
+    }
+    assert(foundRing1, "expected ring1 (half-step) corner");
+    assert(foundFinal, "expected the true final (full-step) corner");
+}
+
+unittest { // bevelFacesByMask: SQUARE CORNER, finding Q4 (grouped, 2
+           // adjacent faces) — task 0458 Phase 3. `poly_bevel_two_faces_
+           // grouped_square1` (findings.md §3): the SAME 2-face selection
+           // as the GROUPxSEGMENTS unittest above (+Y, +Z sharing one
+           // ridge edge), inset=0.25, shift=0.15, group=true, square=true,
+           // segments=0 → 22v/16f (a full topology rewrite, re-verified
+           // bit-exact against the reference dump). The two RIDGE corners
+           // (the shared edge's endpoints) get NEITHER split NOR cap —
+           // they stay at their ORIGINAL position, connected directly into
+           // the two edge-panels meeting there.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false;
+    mask[4] = true; // +Y = [3,7,6,2]
+    mask[1] = true; // +Z = [4,5,6,7]
+    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 0, true);
+    assert(n == 2);
+    assert(m.vertices.length == 22, "8 orig + 6 final ring corners (4 standalone + 2 shared ridge) + 8 splits (4 standalone corners x 2, ridge corners get none)");
+    assert(m.faces.length    == 16, "4 unselected hexagons + 2 inner quads + 6 panels (one per boundary-contour edge) + 4 caps (standalone corners only)");
+
+    // The ridge (shared) corner — the top-front edge's own two endpoints,
+    // (-0.5,0.5,0.5) and (0.5,0.5,0.5) — must be RETAINED at their exact
+    // original position (no split, no cap moves them).
+    foreach (orig; [Vec3(-0.5f,0.5f,0.5f), Vec3(0.5f,0.5f,0.5f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - orig).length < 1e-5f) found = true;
+        assert(found, "ridge corner should be retained at its original position");
+    }
+    // The ridge corners' shared FINAL positions (bit-exact against the
+    // non-square group law, poly_bevel_two_faces_grouped.json's own ridge
+    // verts — same formula, square just wraps it).
+    foreach (fc; [Vec3(0.25f,0.65f,0.65f), Vec3(-0.25f,0.65f,0.65f)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - fc).length < 1e-4f) found = true;
+        assert(found, "expected ridge corner's shared final (group-solved) position");
+    }
+    size_t hexagons = 0;
+    foreach (f; m.faces) if (f.length == 6) ++hexagons;
+    assert(hexagons == 4, "the 4 unselected side/bottom faces bordering the group's boundary contour should become hexagons");
+}
+
+unittest { // bevelFacesByMask: square=false is byte-identical to the
+           // pre-Phase-3 kernel — task 0458 Phase 3 regression guard. Same
+           // selection/params as the Q1 unittest above, just without the
+           // trailing `square` arg (defaults false) vs. explicitly false.
+    auto m0 = makeCube();
+    auto m1 = makeCube();
+    bool[] mask; mask.length = m0.faces.length; mask[] = false;
+    mask[4] = true;
+    size_t n0 = m0.bevelFacesByMask(mask, 0.25f, 0.15f); // pre-0458-Phase-3 call site (5 args)
+    size_t n1 = m1.bevelFacesByMask(mask, 0.25f, 0.15f, false, 0, false); // explicit square=false
+    assert(n0 == 1 && n1 == 1);
+    assert(m0.vertices.length == m1.vertices.length);
+    assert(m0.faces.length    == m1.faces.length);
+    assert(m0.vertices.length == 12, "square=false: 8 orig + 4 final — no split points, no retained-original-plus-final duplication");
+    foreach (i; 0 .. m0.vertices.length)
+        assert((m0.vertices[i] - m1.vertices[i]).length < 1e-9f, "square=false must be byte-identical regardless of how it's spelled");
 }
 
 unittest { // bevelFacesByMask: group=false is byte-identical to the pre-0391

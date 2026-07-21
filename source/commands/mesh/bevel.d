@@ -40,6 +40,7 @@ class MeshBevel : Command, Operator {
     private float            shift_      = 0.0f;
     private bool             group_      = true;
     private int              segments_   = 0;
+    private bool             square_     = false;
     private float            width_      = 0.1f;
     private int              roundLevel_ = 0;
 
@@ -63,6 +64,14 @@ class MeshBevel : Command, Operator {
             Param.bool_("group", "Group Polygons", &group_, true),
             Param.int_("segments", "Segments", &segments_, 0)
                 .min(0).max(MAX_BEVEL_SEGMENTS).enforceBounds(),
+            // task 0458 Phase 3: recovered Square Corner topology rewrite
+            // (`bevelFacesByMask`'s `square` — `BevelSquare_MarkBound`/
+            // `_Rebuild`, findings.md §3), parity-fixture-verified
+            // (Q1-Q4). Promoted out of Hidden alongside the interactive
+            // `poly.bevel` tool's own Tool Properties toggle
+            // (tools/edit/poly_bevel.d) now that the kernel + fixtures
+            // are green.
+            Param.bool_("square", "Square Corner", &square_, false),
         ];
     }
 
@@ -78,7 +87,7 @@ class MeshBevel : Command, Operator {
         if (editMode == EditMode.Polygons) {
             const all  = mesh.nothingSelected(EditMode.Polygons);
             auto  mask = all ? allTrue(mesh.faces.length) : mesh.selectedFaces;
-            n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_);
+            n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
         } else if (editMode == EditMode.Edges) {
             const all  = mesh.nothingSelected(EditMode.Edges);
             auto  mask = all ? allTrue(mesh.edges.length) : mesh.selectedEdges;

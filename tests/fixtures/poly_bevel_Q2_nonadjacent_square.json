@@ -1,0 +1,63 @@
+{
+  "name": "poly_bevel_Q2_nonadjacent_square",
+  "description": "Polygon Bevel (mesh.bevel, edit-mode Polygons) SQUARE CORNER -- task 0458 Phase 3, finding Q2 (two NON-adjacent faces). Cube +Y (top) and -Y (bottom) faces -- they share no edge, so group=true has nothing to fuse -- inset=0.25, shift=0.15, square=true. Reference topology: 8v/6f -> 32v/22f: two INDEPENDENT Q1 patterns (group is inert for non-adjacent faces), and the 4 shared cube side faces absorb splits from BOTH squares, becoming OCTAGONS.",
+  "source": "Frozen reference-editor capture via the private capture harness's polygon-bevel op (task 0458 Phase 0 dump-oracle poly_bevel_Q2_nonadjacent_square). Isolates Square-Corner's per-face behavior from any group-corner interaction.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "2026-07-21T00:00:00Z",
+    "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
+    "task": "0458",
+    "notes": "Phase-0 dump-oracle for square=true + group=true on two non-adjacent faces. Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d)."
+  },
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "nonadjacent_square",
+      "input": [
+        { "reset": true },
+        { "select": { "mode": "polygons", "coords": [
+          [[-0.5,0.5,-0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]],
+          [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[-0.5,-0.5,0.5]]
+        ] } }
+      ],
+      "op": [
+        { "endpoint": "command", "body": { "id": "mesh.bevel",
+          "params": { "inset": 0.25, "shift": 0.15, "group": true, "segments": 0, "square": true } } }
+      ],
+      "expected_before": { "verts": 8, "faces": 6 },
+      "expected_after":  { "verts": 32, "faces": 22 },
+      "expected_face_degrees": [8, 8, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+      "expected_vertices": [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.25, -0.65, -0.25],
+        [-0.5, -0.5, -0.25],
+        [-0.25, -0.5, -0.5],
+        [0.25, -0.65, -0.25],
+        [0.25, -0.5, -0.5],
+        [0.5, -0.5, -0.25],
+        [0.25, -0.65, 0.25],
+        [0.5, -0.5, 0.25],
+        [0.25, -0.5, 0.5],
+        [-0.25, -0.65, 0.25],
+        [-0.25, -0.5, 0.5],
+        [-0.5, -0.5, 0.25],
+        [-0.25, 0.65, -0.25],
+        [-0.25, 0.5, -0.5],
+        [-0.5, 0.5, -0.25],
+        [0.25, 0.65, -0.25],
+        [0.5, 0.5, -0.25],
+        [0.25, 0.5, -0.5],
+        [0.25, 0.65, 0.25],
+        [0.25, 0.5, 0.5],
+        [0.5, 0.5, 0.25],
+        [-0.25, 0.65, 0.25],
+        [-0.5, 0.5, 0.25],
+        [-0.25, 0.5, 0.5]
+      ]
+    }
+  ]
+}
