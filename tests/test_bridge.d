@@ -6,8 +6,11 @@
 //     Cap B (z=1): 4(0,0,1) 5(1,0,1) 6(1,1,1) 7(0,1,1)
 //   Faces (2): 0 = cap A [0,1,2,3], 1 = cap B [4,5,6,7]
 //
-//   Edge-mode bridge (select both rim loops): keeps the 2 caps, adds 4 quad
-//   rungs → 6 faces, 8 verts (no new verts).
+//   Edge-mode bridge (select both rim loops): bridges then DELETES both caps
+//   (each rim loop exactly bounds one cap face), leaving the 4 quad rungs → 4
+//   faces, 8 verts (open tube). Matches the reference editor's edge.bridge and
+//   vibe3d's mesh.bridgeTool (task 0467 — was 6 faces before the edge-branch
+//   learned to remove the bounding caps like the Polygon branch already did).
 //   Polygon-mode bridge (select both faces): bridges then DELETES both caps,
 //   leaving the 4 quad rungs → 4 faces, 8 verts (open tube).
 
@@ -142,10 +145,15 @@ int outwardNormals(JSONValue m, float axX = 0.5f, float axY = 0.5f) {
 }
 
 // ---------------------------------------------------------------------------
-// edge-mode bridge: 2 rim loops → 4 quad rungs, caps kept (6 faces)
+// edge-mode bridge: 2 rim loops → 4 quad rungs, caps DELETED (4 faces)
 // ---------------------------------------------------------------------------
 
-unittest { // edge-mode bridge: 2 closed 4-cycles → 6 faces, 8 verts, all quads
+unittest { // edge-mode bridge: 2 closed 4-cycles → 4 faces, 8 verts, all quads.
+           // Each rim loop exactly bounds one cap face, so the mesh.bridge
+           // COMMAND removes both caps just like its Polygon branch, the
+           // mesh.bridgeTool, and the reference editor's edge.bridge — captured
+           // ground truth: two-cap edge.bridge → 8v/4f (task 0467). Was 8v/6f
+           // (caps kept) before the edge-branch fix.
     loadCaps();
     setSelection("edges", []);  // switch to edge mode
 
@@ -162,11 +170,11 @@ unittest { // edge-mode bridge: 2 closed 4-cycles → 6 faces, 8 verts, all quad
     runCmd("mesh.bridge");
 
     auto m1 = model();
-    assert(m1["faces"].array.length == 6,
-        "expected 6 faces after edge bridge, got " ~
+    assert(m1["faces"].array.length == 4,
+        "expected 4 faces after edge bridge (caps removed), got " ~
         m1["faces"].array.length.to!string);
     assert(m1["vertexCount"].integer == 8, "no new verts after edge bridge");
-    assert(fvDist(m1).get(4, 0) == 6, "all 6 faces must be quads");
+    assert(fvDist(m1).get(4, 0) == 4, "all 4 faces must be quads");
     assert(orphanVerts(m1).length == 0, "no orphan vertices");
 
     runCmd("history.undo");
@@ -203,7 +211,9 @@ unittest { // polygon-mode bridge: caps gone, 4 quads remain
 // flip parameter: accepted, still produces a valid bridge
 // ---------------------------------------------------------------------------
 
-unittest { // flip=true accepted and still bridges to 6 faces
+unittest { // flip=true accepted and still bridges (caps removed → 4 faces).
+           // flip only reverses the bridge pairing direction; the two rim
+           // loops still each bound a cap, so both caps are removed (task 0467).
     loadCaps();
     setSelection("edges", []);
     auto m0 = model();
@@ -213,8 +223,8 @@ unittest { // flip=true accepted and still bridges to 6 faces
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "mesh.bridge with flip=true failed: " ~ r.toString);
     auto m1 = model();
-    assert(m1["faces"].array.length == 6,
-        "expected 6 faces with flip, got " ~ m1["faces"].array.length.to!string);
+    assert(m1["faces"].array.length == 4,
+        "expected 4 faces with flip (caps removed), got " ~ m1["faces"].array.length.to!string);
     assert(m1["vertexCount"].integer == 8, "no new verts with flip");
 }
 

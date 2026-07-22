@@ -90,6 +90,21 @@ class MeshBridge : Command, Operator {
             immutable bool bothOpen   = !chains[0].closed && !chains[1].closed;
             if (!bothClosed && !bothOpen) return false;   // mixed open+closed: no-op, deferred
 
+            // Faces EXACTLY bounded by either bridged loop become interior once
+            // the two rims are stitched and must be removed — matching the
+            // reference editor's edge.bridge (task 0467: captured two-cap case
+            // deletes both caps -> 4f; captured open-tube case, where no single
+            // face is bounded by a rim, deletes nothing) and vibe3d's own
+            // mesh.bridgeTool. Computed BEFORE bridging: bridgeLoops only
+            // APPENDS faces (addFace), so these indices stay valid — the same
+            // pre-mutation-capFaces pattern applyBridgeOp uses. Open rows never
+            // bound a face, so this stays an empty, safe no-op there (task
+            // 0395), preserving the pre-existing open-row behaviour.
+            uint[] caps = bothOpen
+                ? null
+                : mesh.facesBoundedByLoop(chains[0].verts)
+                  ~ mesh.facesBoundedByLoop(chains[1].verts);
+
             snap = MeshSnapshot.capture(*mesh);
             size_t n = bothOpen
                 ? mesh.bridgeOpenRows(chains[0].verts, chains[1].verts, flip_, 1u, 0.0f)
@@ -98,7 +113,20 @@ class MeshBridge : Command, Operator {
                 snap = MeshSnapshot.init;
                 return false;
             }
-            mesh.buildLoops();
+
+            // deleteFacesByMask compacts orphans + rebuilds loops internally, so
+            // no explicit buildLoops when it runs (mirrors the Polygon branch).
+            // Empty caps (open rows / no bounding face) -> keep buildLoops.
+            bool removed = false;
+            if (caps.length > 0) {
+                auto mask = new bool[](mesh.faces.length);
+                bool any = false;
+                foreach (fi; caps)
+                    if (fi < mask.length) { mask[fi] = true; any = true; }
+                if (any && mesh.deleteFacesByMask(mask) > 0)
+                    removed = true;
+            }
+            if (!removed) mesh.buildLoops();
         } else {
             return false;
         }

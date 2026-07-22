@@ -109,6 +109,36 @@ mixin template MeshBridgeOps() {
         return bridgeLoopsPaired(loopA, P);
     }
 
+    /// Face indices whose vertex ring is a cyclic rotation (either winding
+    /// direction) of `loop` — i.e. the existing polygon(s) EXACTLY bounded by
+    /// `loop`. This is the "cap" lookup a bridge uses to decide which faces
+    /// become interior (and must be removed) once the two loops are stitched:
+    /// captured reference behaviour (task 0467) is to delete precisely the
+    /// polygons whose full ring equals a bridged loop — a loop that bounds no
+    /// single face (an open hole, or a rim shared piecewise by several faces)
+    /// removes nothing. Empty result is the common, safe no-op.
+    ///
+    /// O(faces * loop-length^2); fine for edit-sized meshes. Single source of
+    /// truth — `tools/edit/bridge_tool.d`'s `facesMatchingLoop` delegates here.
+    uint[] facesBoundedByLoop(const(uint)[] loop) const {
+        uint[] hits;
+        const size_t N = loop.length;
+        outer: foreach (fi; 0 .. faces.length) {
+            auto fv = faces[fi];
+            if (fv.length != N) continue;
+            foreach (start; 0 .. N) {
+                bool fwd = true, rev = true;
+                foreach (i; 0 .. N) {
+                    if (fwd && fv[i] != loop[(start + i) % N]) fwd = false;
+                    if (rev && fv[i] != loop[(start + N - i) % N]) rev = false;
+                    if (!fwd && !rev) break;
+                }
+                if (fwd || rev) { hits ~= cast(uint)fi; continue outer; }
+            }
+        }
+        return hits;
+    }
+
     /// Hard internal cap on interior rings a single `bridgeLoopsSpans` call
     /// may generate — defense-in-depth against a DoS via a huge Segments
     /// value reaching this kernel through any path other than the

@@ -113,25 +113,12 @@ BridgeSelectionResolved resolveBridgeSelection(ref Mesh m, EditMode editMode) {
 
 /// Face indices in `m` whose vertex ring is a cyclic rotation (either
 /// winding direction) of `loop` — the Edge-mode Remove Polygons lookup
-/// (see resolveBridgeSelection's doc comment). O(faces * loop-length^2);
-/// fine for interactive-tool-sized meshes.
+/// (see resolveBridgeSelection's doc comment). Thin wrapper over the shared
+/// `Mesh.facesBoundedByLoop` (mesh_ops/bridge.d) — the single source of
+/// truth reused by `commands.mesh.bridge`'s Edge-mode cap removal (task
+/// 0467), so tool and one-shot command delete the identical faces.
 uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
-    uint[] hits;
-    const size_t N = loop.length;
-    outer: foreach (fi; 0 .. m.faces.length) {
-        auto fv = m.faces[fi];
-        if (fv.length != N) continue;
-        foreach (start; 0 .. N) {
-            bool fwd = true, rev = true;
-            foreach (i; 0 .. N) {
-                if (fwd && fv[i] != loop[(start + i) % N]) fwd = false;
-                if (rev && fv[i] != loop[(start + N - i) % N]) rev = false;
-                if (!fwd && !rev) break;
-            }
-            if (fwd || rev) { hits ~= cast(uint)fi; continue outer; }
-        }
-    }
-    return hits;
+    return m.facesBoundedByLoop(loop);
 }
 
 /// Result of one bridge application — faces added by the kernel (0 = the
