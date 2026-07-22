@@ -313,6 +313,18 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
+    // ----- GET /api/trace / POST /api/trace/reset ---------------------------
+    // Non-destructive per-step capture (task: step-trace). traceProvider
+    // returns the whole ring as a JSON array string — a snapshot-at-
+    // request-time read (mirrors historyProvider), guarded on the app.d side
+    // by StepTrace's own Mutex since appends can reallocate the backing
+    // array. traceResetHandler clears the ring; also fired from the
+    // /api/reset handler so a scene reset starts a fresh trace.
+    private alias TraceProvider = string delegate();   // returns JSON array
+    private TraceProvider traceProvider;
+    private alias TraceResetHandler = void delegate();
+    private TraceResetHandler traceResetHandler;
+
     // ----- GET /api/pick — A/B face-pick equivalence oracle (test-only) -----
     // Marshaled onto the main thread: GPU pick needs a GL context; BVH pick
     // reads mesh + GpuMesh state. engine=bvh|gpu is dispatched by the provider.
@@ -908,6 +920,22 @@ class HttpServer {
     }
 
     /**
+     * Set the GET /api/trace JSON-array provider (task: step-trace). Same
+     * snapshot-at-request-time contract as setHistoryProvider.
+     */
+    public void setTraceProvider(TraceProvider provider) {
+        this.traceProvider = provider;
+    }
+
+    /**
+     * Set the POST /api/trace/reset handler — also invoked from the app's
+     * /api/reset handler so a scene reset starts a fresh trace.
+     */
+    public void setTraceResetHandler(TraceResetHandler handler) {
+        this.traceResetHandler = handler;
+    }
+
+    /**
      * Set the /api/undo/status JSON provider. Read-only snapshot of the
      * history service ({state, lockout, canUndo, canRedo}); runs on the HTTP
      * thread like the history provider.
@@ -1118,7 +1146,8 @@ class HttpServer {
                            "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
                            "<li>tool.doApply - apply active tool one-shot (snapshot-based undo)</li>" ~
                            "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li>" ~
-                           "<li>/api/history/replay - POST {\"index\":N} — re-execute undoStack[N] against current state</li></ul>" ~
+                           "<li>/api/history/replay - POST {\"index\":N} — re-execute undoStack[N] against current state</li>" ~
+                           "<li>/api/trace - GET every discrete command since the last reset (command + args + selection in world positions + a full mesh snapshot); POST /api/trace/reset clears it</li></ul>" ~
                            "</body></html>";
             response.headers["Content-Type"] = "text/html";
         } else if (request.path == "/status") {
@@ -2008,6 +2037,18 @@ class HttpServer {
                 response.statusCode = 200;
                 response.body = historyProvider();
             }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/trace" && request.method == "GET") {
+            // Non-destructive per-step capture (task: step-trace). Returns
+            // every discrete command recorded since the last reset — see
+            // StepTrace / app.d's captureStepTrace for the entry shape.
+            response.statusCode = 200;
+            response.body = (traceProvider !is null) ? traceProvider() : "[]";
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/trace/reset" && request.method == "POST") {
+            if (traceResetHandler !is null) traceResetHandler();
+            response.statusCode = 200;
+            response.body = `{"status":"ok"}`;
             response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/history/jump" && request.method == "POST") {
             // Multi-step jump (Phase 2). Body: {"target":N}. N is the

@@ -191,6 +191,7 @@ import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
+import step_trace : StepTrace;
 import snapshot : SelectionSnapshot;
 
 import commands.tool.host     : ToolHost;
@@ -2428,7 +2429,183 @@ void main(string[] args) {
     // redo / clear-history — saving a macro after several edits
     // produces a replayable script regardless of intervening undos.
     auto macroRecorder = new MacroRecorder();
-    history.onRecord = &macroRecorder.onCommandRecorded;
+
+    // GET /api/trace — non-destructive per-step capture. Every discrete
+    // recorded command appends one entry (command + args + the resulting
+    // selection in WORLD POSITIONS + a full mesh snapshot) to `stepTrace`, so
+    // an external observer can reconstruct every intermediate editing step
+    // (mesh + selection) without the destructive /api/history/jump path
+    // (jump actually rewinds/replays the live undo stack; this is a
+    // read-only side log). See captureStepTrace() below for the coalescing
+    // guard that keeps interactive-drag gesture steps out of the ring.
+    //
+    // Null-decl here, constructed ONLY when startHttpServer (see below) —
+    // the trace is readable exclusively over HTTP, and a release/default run
+    // has HTTP off, so a release build must not pay for the ring buffer's
+    // memory at all. Every consumer (captureStepTrace, the HTTP providers,
+    // the /api/reset handler) null-guards against the unconstructed case.
+    StepTrace stepTrace;
+
+    // COALESCING GUARD: recordInSession()/replaceInSessionTail() fire
+    // onRecord once per gesture STEP of an open interactive-tool run
+    // (HistoryFlags.InSession; a falloff re-grade of that run's last gesture
+    // additionally carries Refire — see command_history.d). Capturing every
+    // one of those would spam the trace with a full-mesh snapshot per drag
+    // frame. Only entries that reach the plain record()/recordCoalescing()
+    // path — a discrete, committed command (subdivide, delete, select, or a
+    // transform once its run has consolidated into ONE entry) — are
+    // captured here; InSession/Refire entries early-return.
+    void captureStepTrace(string line, uint flags) {
+        import command_history : HistoryFlags;
+        import std.string : indexOf;
+        // Defensive only: this is wired into history.onRecord exclusively
+        // from the `if (startHttpServer)` branch below, where stepTrace is
+        // freshly constructed non-null — so this can't fire in practice, but
+        // guard it anyway rather than rely on that invariant silently.
+        if (stepTrace is null) return;
+        if (flags & (HistoryFlags.InSession | HistoryFlags.Refire)) return;
+
+        string command = line;
+        string args    = "";
+        auto sp = line.indexOf(' ');
+        if (sp >= 0) {
+            command = line[0 .. sp];
+            args    = line[sp + 1 .. $];
+        }
+
+        JSONValue vecJson(Vec3 v) {
+            return JSONValue([JSONValue(cast(double)v.x),
+                               JSONValue(cast(double)v.y),
+                               JSONValue(cast(double)v.z)]);
+        }
+
+        SelType st = selTypeOrder.current();
+
+        // Selection payload in WORLD POSITIONS — shape mirrors what
+        // geometry-diff tooling already consumes elsewhere in the project.
+        JSONValue selection = JSONValue.emptyObject;
+        selection["selType"] = JSONValue(selTypeToken(st));
+        final switch (st) {
+            case SelType.Polygon: {
+                JSONValue[] faceArr;
+                auto sel = mesh.selectedFaces;
+                foreach (fi; 0 .. mesh.faces.length) {
+                    if (fi >= sel.length || !sel[fi]) continue;
+                    JSONValue[] vp;
+                    foreach (vi; mesh.faces[fi]) vp ~= vecJson(mesh.vertices[vi]);
+                    faceArr ~= JSONValue(vp);
+                }
+                if (faceArr.length > 0) selection["faces"] = JSONValue(faceArr);
+                break;
+            }
+            case SelType.Edge: {
+                JSONValue[] edgeArr;
+                auto sel = mesh.selectedEdges;
+                foreach (ei; 0 .. mesh.edges.length) {
+                    if (ei >= sel.length || !sel[ei]) continue;
+                    JSONValue eo = JSONValue.emptyObject;
+                    eo["v0"] = vecJson(mesh.vertices[mesh.edges[ei][0]]);
+                    eo["v1"] = vecJson(mesh.vertices[mesh.edges[ei][1]]);
+                    edgeArr ~= eo;
+                }
+                if (edgeArr.length > 0) selection["edges"] = JSONValue(edgeArr);
+                break;
+            }
+            case SelType.Vertex: {
+                JSONValue[] vertArr;
+                auto sel = mesh.selectedVertices;
+                foreach (vi; 0 .. mesh.vertices.length) {
+                    if (vi >= sel.length || !sel[vi]) continue;
+                    vertArr ~= vecJson(mesh.vertices[vi]);
+                }
+                if (vertArr.length > 0) selection["verts"] = JSONValue(vertArr);
+                break;
+            }
+            case SelType.Item:
+                // Layer/item selection carries no vertex/edge/face geometry —
+                // "selType":"item" is the whole signal.
+                break;
+        }
+
+        // Full mesh snapshot — same core shape as /api/model
+        // (vertexCount/edgeCount/faceCount/vertices/faces). Built inline
+        // rather than calling the httpServer block's meshToDetailedJson():
+        // that helper is declared later AND one scope deeper (inside
+        // `if (httpServer !is null)`), out of reach from this nested
+        // function (app.d's nested functions can only see locals/functions
+        // declared lexically above them).
+        JSONValue[] vertsJson;
+        foreach (vi; 0 .. mesh.vertices.length)
+            vertsJson ~= vecJson(mesh.vertices[vi]);
+        JSONValue[] facesJson;
+        foreach (fi; 0 .. mesh.faces.length) {
+            JSONValue[] fv;
+            foreach (vi; mesh.faces[fi]) fv ~= JSONValue(vi);
+            facesJson ~= JSONValue(fv);
+        }
+        // Per-face subpatch flags, parallel to faces[] — same shape /api/model
+        // emits (`"isSubpatch": [false,false,...]`). Defensive length guard
+        // mirrors meshToDetailedJson's subCopy: isSubpatch lazy-resizes on
+        // write, so a face index can outrun it between a face-add and the
+        // next selection touch.
+        JSONValue[] subpatchJson;
+        auto subView = mesh.isSubpatch;
+        foreach (fi; 0 .. mesh.faces.length)
+            subpatchJson ~= JSONValue(fi < subView.length && subView[fi]);
+        JSONValue meshJson = JSONValue.emptyObject;
+        meshJson["vertexCount"] = JSONValue(mesh.vertices.length);
+        meshJson["edgeCount"]   = JSONValue(mesh.edges.length);
+        meshJson["faceCount"]   = JSONValue(mesh.faces.length);
+        meshJson["vertices"]    = JSONValue(vertsJson);
+        meshJson["faces"]       = JSONValue(facesJson);
+        meshJson["isSubpatch"]  = JSONValue(subpatchJson);
+
+        JSONValue entry = JSONValue.emptyObject;
+        entry["seq"]       = JSONValue(stepTrace.nextSeq());
+        entry["command"]   = JSONValue(command);
+        entry["args"]      = JSONValue(args);
+        entry["flags"]     = JSONValue(cast(long)flags);
+        entry["selType"]   = JSONValue(selTypeToken(st));
+        entry["selection"] = selection;
+        entry["mesh"]      = meshJson;
+
+        // Active tool's live params, for parametric edits (poly bevel
+        // inset/shift/group/segments/square, loop slice, edge bevel width,
+        // …) whose params live on the TOOL rather than the command's own
+        // args — mesh.bevel_edit/mesh.loop_slice_edit (MeshSessionEdit,
+        // interactive-drag commit) and the headless one-shot tool.doApply
+        // path both apply while the tool stays armed.
+        //
+        // Ordering (confirmed by reading applyOrRefire's post-mode-finalize
+        // guard above, and empirically via /api/tool/state immediately after
+        // a headless tool.doApply): a Model command from the tool's OWN
+        // family ("tool." prefix — tool.doApply included) is explicitly
+        // EXEMPTED from the auto-drop-before-record that fires for foreign
+        // Model commands, and neither ToolDoApplyCommand.apply() nor
+        // Tool.applyHeadless() deactivate the tool themselves. So at this
+        // point — inside history.record(), reached from onRecord — the tool
+        // that just produced this step (if any) is still `activeTool`, with
+        // its params untouched. toolStateJson() already returns a JSONValue
+        // (see tool.d), so it nests directly with no string round-trip.
+        // Omitted entirely when no tool is active, so plain subdivide/
+        // delete/select steps stay noise-free.
+        if (activeTool !is null) entry["tool"] = activeTool.toolStateJson();
+
+        stepTrace.append(entry.toString());
+    }
+
+    if (startHttpServer) {
+        // Only construct the ring buffer (and chain the capture closure in)
+        // when HTTP is actually reachable — /api/trace is the only consumer
+        // and a release/default run never starts the listener.
+        stepTrace = new StepTrace();
+        history.onRecord = (string line, uint flags) {
+            macroRecorder.onCommandRecorded(line, flags);
+            captureStepTrace(line, flags);
+        };
+    } else {
+        history.onRecord = &macroRecorder.onCommandRecorded;
+    }
 
     // -------------------------------------------------------------------------
     // Active-layer-switch hook (layers Stage 2). The single contract every
@@ -4967,6 +5144,21 @@ void main(string[] args) {
             return payload.toString();
         });
 
+        // GET /api/trace / POST /api/trace/reset — non-destructive per-step
+        // capture (task: step-trace). stepTrace is appended to by
+        // captureStepTrace() (installed on history.onRecord above); the
+        // provider here is just a snapshot-at-request-time read guarded by
+        // StepTrace's own Mutex. This provider-wiring block runs even when
+        // startHttpServer is false (httpServer is always constructed — see
+        // the comment at its declaration — only .start() is gated), so
+        // stepTrace can still be null here; null-guard so a stray call
+        // returns an empty trace instead of a null-dereference crash.
+        httpServer.setTraceProvider(() =>
+            stepTrace !is null ? stepTrace.snapshotJson() : "[]");
+        httpServer.setTraceResetHandler(() {
+            if (stepTrace !is null) stepTrace.reset();
+        });
+
         // Read-only undo-service status for automation: {state, lockout,
         // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
         // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
@@ -5123,6 +5315,11 @@ void main(string[] args) {
             // stale after a reset and any undo that follows belongs to the new
             // scene, not the pre-reset grab.
             aiExplore.discardPending();
+            // A reset returns to a known-good empty trace too — otherwise a
+            // test-automation instance's /api/trace would keep accumulating
+            // entries from a scene it just discarded. Null when HTTP is off
+            // (release/default runs never construct stepTrace).
+            if (stepTrace !is null) stepTrace.reset();
         });
 
         // Test-only raw-mesh injection (POST /api/load-mesh). Parses the
