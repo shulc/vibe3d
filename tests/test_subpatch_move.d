@@ -79,8 +79,8 @@ unittest { // cage vertex moves through /api/transform while subpatch is active
     // Fresh cube.
     postJson("/api/reset", "");
 
-    // mesh.subpatch_toggle requires Polygons mode; with no selection
-    // it flips every face. That mirrors the Tab keyboard handler.
+    // In Polygons mode with no selection, mesh.subpatch_toggle flips every
+    // face (whole-model). That mirrors the Tab keyboard handler.
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
 

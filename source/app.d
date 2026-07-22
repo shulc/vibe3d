@@ -5821,13 +5821,20 @@ void main(string[] args) {
                     cast(EditMode)((cast(int)editMode + 1) % 3));
                 break;
             case SDLK_TAB: {
-                // Toggle subpatch flag on selected faces; if nothing is
-                // selected, invert the flag globally. The preview rebuilds
-                // next frame via mutationVersion bumped inside setSubpatch.
+                // Toggle subpatch flag. Scope is MODE-AWARE (parity): the face
+                // selection is honored ONLY while Polygon is the current
+                // selection type — in edge/vertex/item modes a persisted face
+                // selection is ignored and the toggle applies to the WHOLE
+                // model (matches the reference editor, which drops the polygon
+                // selection's authority outside polygon mode). Whole-model when
+                // nothing is face-selected in polygon mode too. The preview
+                // rebuilds next frame via mutationVersion bumped inside
+                // setSubpatch.
                 mesh.syncSelection();
-                bool any = mesh.hasAnySelectedFaces();
+                bool scoped = currentSelType(selTypeOrder) == SelType.Polygon
+                              && mesh.hasAnySelectedFaces();
                 foreach (fi; 0 .. mesh.faces.length) {
-                    if (any && !mesh.isFaceSelected(fi))
+                    if (scoped && !mesh.isFaceSelected(fi))
                         continue;
                     mesh.setSubpatch(fi, !mesh.isFaceSubpatch(fi));
                 }

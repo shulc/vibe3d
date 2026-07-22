@@ -6,12 +6,15 @@
 // itself has zero coverage. This test exercises Tab through the live
 // SDL event pipeline.
 //
-// What the key handler does (app.d:1938-1951):
-//   • If any face is selected ⇒ toggle isSubpatch on just the selected
-//     faces; leave the rest alone.
-//   • If nothing is selected   ⇒ invert isSubpatch on every face.
+// What the key handler does (MODE-AWARE scope — parity task 0464):
+//   • Polygons mode + a face selection ⇒ toggle isSubpatch on just the
+//     selected faces; leave the rest alone.
+//   • Polygons mode + nothing selected ⇒ invert isSubpatch on every face.
+//   • edge / vertex / item mode         ⇒ a persisted face selection is
+//     IGNORED; Tab toggles the WHOLE model (matches the reference editor,
+//     which drops the polygon selection's authority outside polygon mode).
 //
-// Both branches are pinned below — independent unittests so a failure
+// All branches are pinned below — independent unittests so a failure
 // localises cleanly.
 
 import std.net.curl;
@@ -113,4 +116,31 @@ unittest { // Tab with a single face selected flips only that face
     foreach (i; 1 .. flags.length)
         assert(!flags[i],
             "face " ~ i.to!string ~ " unselected; should stay subpatch=false");
+}
+
+unittest { // MODE-AWARE (parity 0464): a face selection made in polygon mode
+           // must NOT scope the toggle once the current selection type is
+           // edge. Tab in edge mode toggles the WHOLE model — matching the
+           // reference editor (re-confirmed headless: polygon-select 2 →
+           // switch to edge → convert → all 6 become subpatch).
+    postJson("/api/reset", "");
+    // Select 2 of 6 faces in polygon mode …
+    postJson("/api/command", "select.typeFrom polygon");
+    postJson("/api/select", `{"mode":"polygons","indices":[0,1]}`);
+    // … then switch to edge mode. The face selection persists in the mesh
+    // (hasAnySelectedFaces() is still true), so the OLD, mode-blind handler
+    // would have toggled only faces 0,1. The fix keys off currentSelType.
+    postJson("/api/command", "select.typeFrom edge");
+
+    auto r = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(r["status"].str == "success",
+        "/api/play-events failed: " ~ r.toString);
+    waitPlaybackFinish();
+
+    auto flags = subpatchFlags();
+    assert(flags.length == 6, "cube has 6 faces");
+    foreach (i, b; flags)
+        assert(b,
+            "edge-mode Tab must whole-model (parity): face " ~ i.to!string ~
+            " should be subpatch=true, not just the 2 polygon-selected");
 }

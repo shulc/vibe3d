@@ -22,34 +22,37 @@ class SubpatchToggle : Command, Operator {
 
     override string name() const { return "mesh.subpatch_toggle"; }
 
-    override EditMode[] supportedModes() const {
-        return [EditMode.Polygons];
-    }
+    // No supportedModes() override → inherits the default (all geometry
+    // modes). Subpatch conversion is meaningful in every edit mode: the
+    // face selection is only HONORED in Polygons mode; in edge/vertex mode
+    // the toggle applies to the whole model (see evaluate()), so the UI
+    // button must not grey out there.
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        // Subpatch toggles a per-face flag, so the operation is
-        // meaningful only when the user is in Polygons mode and can
-        // see / curate the face selection. Refuse in other modes so a
-        // stale face selection doesn't silently flip the wrong faces.
-        if (editMode != EditMode.Polygons)
-            throw new Exception(
-                "mesh.subpatch_toggle requires Polygons edit mode "
-                ~ "(switch via `select.typeFrom polygon` or press 3)");
 
         // Snapshot just isSubpatch[] — only field we mutate.
         origSubpatch = mesh.isSubpatch.dup;
         captured     = true;
 
         mesh.syncSelection();
-        bool any = mesh.hasAnySelectedFaces();
+        // MODE-AWARE scope (parity): the persisted face selection is honored
+        // ONLY while the current selection type is Polygons. In edge/vertex
+        // mode a stale face selection is ignored and the toggle applies to
+        // the WHOLE model (matches the reference editor, which drops the
+        // polygon selection's authority outside polygon mode). Whole-model
+        // also when nothing is face-selected in polygon mode. `editMode` is
+        // the geometry-type view captured at fire time, so it is Edges /
+        // Vertices in those modes and the guard falls through to whole-model.
+        bool scoped = editMode == EditMode.Polygons
+                      && mesh.hasAnySelectedFaces();
         // Materialize the views once (each access allocates).
         auto selView = mesh.selectedFaces;
         auto subView = mesh.isSubpatch;
         foreach (fi; 0 .. mesh.faces.length) {
-            if (any && !(fi < selView.length && selView[fi]))
+            if (scoped && !(fi < selView.length && selView[fi]))
                 continue;
             bool cur = fi < subView.length && subView[fi];
             mesh.setSubpatch(fi, !cur);

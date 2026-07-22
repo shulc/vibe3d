@@ -1,8 +1,9 @@
 // Tests for the subpatch flag (.lwo PTCH faces).
 // Drives `mesh.subpatch_toggle` via /api/command — the same logic the Tab key
-// handler in app.d uses, mirroring the editor UX:
-//   • If any faces are selected, toggle isSubpatch on those faces.
-//   • If no face is selected, invert isSubpatch on every face.
+// handler in app.d uses, mirroring the editor UX (MODE-AWARE — parity 0464):
+//   • Polygons mode + selection ⇒ toggle isSubpatch on the selected faces.
+//   • Polygons mode + nothing   ⇒ invert isSubpatch on every face.
+//   • edge/vertex/item mode     ⇒ face selection ignored ⇒ whole model.
 
 import std.net.curl;
 import std.json;
@@ -12,7 +13,9 @@ void main() {}
 
 void resetCube() {
     post("http://localhost:8080/api/reset", "");
-    // mesh.subpatch_toggle requires Polygons edit mode (face-level op).
+    // Put us in Polygons mode so the tests below exercise the
+    // selection-scoped path (subpatch scope is mode-aware: a face selection
+    // only counts while the current selection type is Polygons).
     post("http://localhost:8080/api/command", "select.typeFrom polygon");
 }
 
@@ -92,4 +95,20 @@ unittest { // toggle is per-face: a second toggle on a different selection
     assert(!sub[2], "face 2 untouched");
     assert(!sub[4], "face 4 untouched");
     assert(!sub[5], "face 5 untouched");
+}
+
+unittest { // MODE-AWARE scope (parity task 0464): a face selection made in
+           // polygon mode is IGNORED once the current selection type is edge.
+           // The command whole-models instead of scoping to the 2 selected
+           // faces — and no longer throws in non-polygon mode. Matches the
+           // reference editor (re-confirmed headless: select 2 → edge → 6).
+    resetCube();                                 // leaves us in Polygons mode
+    setSelection("polygons", [0, 1]);            // 2 of 6 faces selected
+    post("http://localhost:8080/api/command", "select.typeFrom edge");
+    runCmd("mesh.subpatch_toggle");              // was: throw / 2 scoped
+    auto sub = subpatchFlags();
+    foreach (i, b; sub)
+        assert(b,
+            "edge-mode toggle must whole-model (parity): face " ~ i.to!string ~
+            " should be subpatch, not just the 2 polygon-selected");
 }
