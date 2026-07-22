@@ -8,6 +8,7 @@ import tools.common.command_wrapper : CommandWrapperTool;
 import commands.mesh.edge_slide : MeshEdgeSlide;
 
 import std.algorithm : clamp;
+import std.json : JSONValue;
 
 /// Interactive Edge Slide tool (factory id `edge.slide`).
 ///
@@ -56,5 +57,16 @@ final class EdgeSlideTool : CommandWrapperTool {
     /// Edge Slide only makes sense in Edges mode.
     override EditMode[] supportedModes() const {
         return [EditMode.Edges];
+    }
+
+    /// Read-only test/introspection seam (mirrors poly.bevel / edge.bevel):
+    /// exposes the live slide parameter to /api/tool/state + the step-trace
+    /// `tool` block so a per-step differential (trace_diff) can route an
+    /// interactive edge-slide edit by its identity and read `t`.
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"] = JSONValue("edgeSlide");
+        root["t"]    = JSONValue(inner_.slideT());
+        return root;
     }
 }

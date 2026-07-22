@@ -23,6 +23,8 @@ import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
 
+import std.json : JSONValue;
+
 /// The interactive tool reuses the dedicated MeshSessionEdit record command
 /// (a before/after MeshSnapshot pair OR an operation-log MeshEditDelta) — the
 /// same plumbing EdgeExtrudeTool uses for MeshSessionEdit. A dedicated class
@@ -282,6 +284,30 @@ public:
         if (interactiveParamEdit) rebuildPreview();
     }
     override void evaluate() {}
+
+    // Read-only test/introspection seam (mirrors poly.bevel / edge.bevel):
+    // exposes the tool's live params to /api/tool/state + the step-trace `tool`
+    // block so a per-step differential (trace_diff) can route this headless
+    // `tool.doApply` edit by its identity and read the full inset/shift +
+    // offset/rotate/scale/segments param set.
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]     = JSONValue("edgeExtend");
+        root["inset"]    = JSONValue(inset_);
+        root["shift"]    = JSONValue(shift_);
+        root["offsetX"]  = JSONValue(offsetX_);
+        root["offsetY"]  = JSONValue(offsetY_);
+        root["offsetZ"]  = JSONValue(offsetZ_);
+        root["rotateX"]  = JSONValue(rotateX_);
+        root["rotateY"]  = JSONValue(rotateY_);
+        root["rotateZ"]  = JSONValue(rotateZ_);
+        root["scaleX"]   = JSONValue(scaleX_);
+        root["scaleY"]   = JSONValue(scaleY_);
+        root["scaleZ"]   = JSONValue(scaleZ_);
+        root["segments"] = JSONValue(segments_);
+        root["built"]    = JSONValue(built);
+        return root;
+    }
 
     // Keep the embedded gizmo's per-frame state (handler center from ACEN, gizmo
     // orientation from AXIS) up to date. Forwarded so the banks co-locate at the

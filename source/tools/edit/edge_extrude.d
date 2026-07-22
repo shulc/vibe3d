@@ -22,6 +22,7 @@ import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
     undoTrackerEnabled;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — analogous to how BoxTool
@@ -268,6 +269,20 @@ public:
         if (interactiveParamEdit) rebuildPreview();
     }
     override void evaluate() {}
+
+    // Read-only test/introspection seam (mirrors poly.bevel / edge.bevel):
+    // exposes the tool's live params to /api/tool/state + the step-trace `tool`
+    // block so a per-step differential (trace_diff) can route this headless
+    // `tool.doApply` edit by its identity and read extrude/width.
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]     = JSONValue("edgeExtrude");
+        root["extrude"]  = JSONValue(extrude_);
+        root["width"]    = JSONValue(width_);
+        root["built"]    = JSONValue(built);
+        root["dragPart"] = JSONValue(dragPart);
+        return root;
+    }
 
     // -----------------------------------------------------------------------
     // Headless apply (tool.doApply). Runs the kernel on the current edge

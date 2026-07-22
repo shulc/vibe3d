@@ -45,6 +45,11 @@ class MeshEdgeSlide : Command, Operator {
     /// Setter for the interactive tool's drag-modulates-t path.
     void setT(float t) { t_ = t; }
 
+    /// Live slide parameter — the authoritative value regardless of whether it
+    /// was set by a drag, a panel edit, or a headless `t:` argstring. Read by
+    /// EdgeSlideTool.toolStateJson() for the step-trace `tool` block.
+    float slideT() const { return t_; }
+
     // Operator interface.
     mixin OperatorActrCommon;
     bool evaluate(ref VectorStack vts) {
