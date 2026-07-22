@@ -8289,8 +8289,28 @@ struct Mesh {
             immutable float nn = dot(n, n);
             return nn > 1e-12f ? e - n * (dot(e, n) / nn) : e;
         }
+        // NIT (task 0467, reviewer follow-up): gate the U-degeneracy at its
+        // SOURCE. When `ebVec` is parallel to `aveN`, `cross(ebVec,aveN)`
+        // collapses to ~0 and `safeNormalize` would fabricate a finite bogus
+        // (0,1,0) for both `U` and `perp(ebVec,aveN)` — yielding a
+        // finite-but-meaningless miter that the downstream `|D·U|` gate can
+        // MISS (D·U stays non-tiny because it is built from the fake
+        // directions). Test the true sine of the eb/aveN angle directly
+        // (`|cross(ebVec,aveN)| / (|ebVec|·|aveN|)`) so `e_b ∥ aveN` falls to
+        // the caller's 3-plane / per-face fallback instead of returning
+        // bogus geometry. This is strictly ADDITIVE to the existing `|D·U|`
+        // gate (which still catches G1's coplanar-ridge `D→0` anti-parallel
+        // case, where `ebVec` is NOT parallel to `aveN`).
+        immutable Vec3  crossEbN = cross(ebVec, aveN);
+        immutable float ebLen  = ebVec.length;
+        immutable float aveLen = aveN.length;
+        enum float SIN_EPS = 1e-4f;
+        if (ebLen < 1e-9f || aveLen < 1e-9f ||
+            crossEbN.length < SIN_EPS * ebLen * aveLen) {
+            result = Vec3(0, 0, 0); return false;
+        }
         immutable Vec3 D = safeNormalize(perp(eaVec, aveN)) + safeNormalize(perp(ebVec, aveN));
-        immutable Vec3 U = safeNormalize(cross(ebVec, aveN));
+        immutable Vec3 U = safeNormalize(crossEbN);
         immutable float dDotU = dot(D, U);
         enum float GATE_EPS = 1e-4f;
         if (abs(dDotU) < GATE_EPS) { result = Vec3(0, 0, 0); return false; }
@@ -8355,15 +8375,28 @@ struct Mesh {
     ///     N-way junction hub): `orig + shift·AVE_N`, no inset term (no
     ///     boundary edge left to inset against) — bit-exact against
     ///     `poly_bevel_G2_apex_v3`'s apex vertex (2.6e-8).
-    ///   - 0 internal edges (standalone) uses today's unshared per-face
-    ///     formula unchanged. (Task 0458 follow-up finding: the reference's
-    ///     `bevGenInset` callback applies the SAME mitered-corner offset,
-    ///     with `k=1` in `AVE_N`, to a group's "standalone" corners too —
-    ///     touched by only one selected face — and the pre-existing
-    ///     ~0.02–0.05 divergence there on non-planar quads is likely this
-    ///     same missing term on the per-face-only path. NOT ported here —
-    ///     see the per-face `insetCorner`/`offsetMeet` path instead;
-    ///     flagged as a follow-up, out of this task's scope.)
+    ///   - 0 internal edges (standalone — touched by only ONE selected face)
+    ///     on a face that is itself ISOLATED (no group-internal edge, i.e.
+    ///     `!faceGrouped` — always so when `group=false`, or a single/
+    ///     non-adjacent selected face): task 0467. The reference's
+    ///     `bevGenInset` places the inset corner by a mitered offset that
+    ///     stays in the
+    ///     TANGENT PLANE ⟂ the WHOLE-FACE Newell normal —
+    ///     `orig + faceNormal·shift + boundaryContourInset(eNext,ePrev,
+    ///     faceNormal,inset)`. The pre-0467 `insetCorner`/`offsetMeet`
+    ///     instead intersected the two offset lines along the corner's actual
+    ///     TILTED edge directions, so on a non-planar quad the meet slid off
+    ///     the tangent plane and gained a spurious normal-direction component
+    ///     (the reported ~0.005–0.05 residual, e.g. a beveled subdivided-cube
+    ///     face). Bit-exact (rr/gdb + fresh capture) against
+    ///     `poly_bevel_{W1,W2,W3}_warped_standalone*` (findings.md §6). The
+    ///     per-face path below (the `else` branch of the final-corner loop)
+    ///     gates this on an isolated face (a GROUPED face's standalone
+    ///     corners are the SEPARATE per-corner-AVE_N regime `poly_bevel_
+    ///     {G2,G3}` pin — left untouched, out of scope here) AND a genuinely
+    ///     non-planar corner (a planar corner keeps `offsetMeet`, so every
+    ///     flat-face bevel is BYTE-IDENTICAL to pre-0467) AND a
+    ///     well-conditioned miter.
     ///   - ≥2 internal edges AND ≥1 remaining boundary edge (a partial,
     ///     "some but not all" enclosure — task 0458 finding G3): SHARES one
     ///     vertex (topology matches the reference; the pre-0458 stub fell
@@ -8472,6 +8505,15 @@ struct Mesh {
         bool anyClamped = false;
         const size_t nFaces = faces.length;
 
+        // Task 0467: `faceGrouped[fi]` = does selected face `fi` share a
+        // group-internal edge with another selected face (i.e. is it part of
+        // an ADJACENT group). Its STANDALONE corners then keep the
+        // per-corner-AVE_N group regime (`poly_bevel_{G2,G3}`); an ISOLATED
+        // face (no internal edge — always so when `group=false`) uses the
+        // whole-face tangent-plane inset instead. Default false → every face
+        // isolated unless the group pre-pass proves otherwise.
+        bool[] faceGrouped = new bool[](nFaces);
+
         // --- group=true pre-pass: classify edges internal/boundary and
         // pre-compute each shared-corner vertex's target position. ---
         bool[ulong] internalEdgeSet;  // edgeKeyOrdered → true(internal)/false(boundary), only for edges bordering >=1 selected face
@@ -8491,6 +8533,7 @@ struct Mesh {
                     if (fp !is null && (*fp)[0] >= 0 && (*fp)[1] >= 0) {
                         immutable uint fa = cast(uint)(*fp)[0], fb = cast(uint)(*fp)[1];
                         internal = (fa < mask.length && mask[fa]) && (fb < mask.length && mask[fb]);
+                        if (internal) { faceGrouped[fa] = true; faceGrouped[fb] = true; }
                     }
                     internalEdgeSet[key] = internal;
                 }
@@ -8654,7 +8697,50 @@ struct Mesh {
                         finalVerts[i] = nv;
                     }
                 } else {
-                    finalPos[i]  = insetCorner(origPos, i, n, effInset) + n * shift;
+                    // Standalone (non-group-shared) corner: touched by only
+                    // ONE selected face (`internalCnt==0`, so it never got a
+                    // `sharedCornerPos` entry above) — also every corner when
+                    // `group=false`.
+                    //
+                    // Task 0467 — WARPED-quad inset on an ISOLATED face. For a
+                    // face with no group-internal edge (a single selected
+                    // face, or any non-adjacent selected face — the regime the
+                    // reported ~0.005–0.05 residual lives in, e.g. a beveled
+                    // subdivided-cube face), the reference's `bevGenInset`
+                    // places the inset corner by a mitered offset that stays
+                    // IN THE TANGENT PLANE (⟂ the whole-face Newell normal) —
+                    // `boundaryContourInset(eNext,ePrev, faceNormal, inset)`,
+                    // plus `faceNormal·shift`. The pre-0467 `insetCorner`
+                    // (`offsetMeet`) instead intersects the two offset lines
+                    // along the corner's ACTUAL (tilted) edge directions, so
+                    // on a non-planar quad the meet point slides OFF the
+                    // tangent plane and picks up a spurious normal-direction
+                    // component (the residual). rr/gdb + fresh capture
+                    // (`poly_bevel_{W1,W2,W3}_warped_standalone*`, findings.md
+                    // §6): `bevGenInset` fires per face-corner and its AVE_N
+                    // here is the WHOLE-FACE normal, NOT a per-corner
+                    // cross-product — bit-exact on all three warped oracles.
+                    //
+                    // Gated to (a) an ISOLATED face (`!faceGrouped[fi]`) so a
+                    // grouped face's standalone corners — the DIFFERENT
+                    // per-corner-AVE_N regime that `poly_bevel_{G2,G3}` pin,
+                    // out of scope here — are left exactly as before (zero
+                    // group regression); (b) a genuinely non-planar corner
+                    // (`cornerNormal ≠ faceNormal`) so every FLAT-face bevel
+                    // stays BYTE-IDENTICAL to the pre-0467 `offsetMeet` law;
+                    // and (c) a well-conditioned miter (`boundaryContourInset`
+                    // non-degenerate). Off any gate it is the unchanged old
+                    // law.
+                    immutable Vec3 cn = cornerNormalAt(cast(uint)fi, origV);
+                    Vec3 bcOffset;
+                    if (!faceGrouped[fi] && dot(cn, n) < 1.0f - 1e-6f &&
+                        boundaryContourInset(origPos[(i + 1) % Nc]      - origPos[i],
+                                             origPos[(i + Nc - 1) % Nc] - origPos[i],
+                                             n, effInset, bcOffset)) {
+                        finalPos[i] = origPos[i] + n * shift + bcOffset;
+                    } else {
+                        finalPos[i] = insetCorner(origPos, i, n, effInset) + n * shift;
+                    }
                     finalVerts[i] = addVertex(finalPos[i]);
                 }
             }
@@ -17191,6 +17277,14 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
     assert(foundRing0, "ring vertex near orig-vert 0 should be bit-exact against poly_bevel_G2_apex_v3's dump[7]");
     assert(foundRing2, "ring vertex near orig-vert 2 should be bit-exact against poly_bevel_G2_apex_v3's dump[9]");
     assert(foundRing4, "ring vertex near orig-vert 4 should be bit-exact against poly_bevel_G2_apex_v3's dump[11]");
+    // NOTE (task 0467): this dump's STANDALONE ring vertices (dump[8]/[10]/[12],
+    // near orig-vert 1/3/5 — each touches only one selected face) sit in a
+    // DIFFERENT per-corner-AVE_N regime and carry a separate residual not
+    // asserted here (see `bevelFacesByMask`'s doc comment). The 0467
+    // warped-quad fix is scoped to ISOLATED faces (`!faceGrouped`), so a
+    // grouped face like these three is deliberately left unchanged — the
+    // G2 assertions above (apex + the 3 internalCnt==1 ring verts) are
+    // untouched.
 }
 
 unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
@@ -17241,6 +17335,92 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
         foreach (v; f)
             if (v == sharedIdx) { ++refCount; break; }
     assert(refCount == 5, "the shared partial vertex should be referenced by all 5 incident faces (3 final + 2 bridges), got " ~ refCount.to!string);
+}
+
+unittest { // bevelFacesByMask: WARPED single quad, ISOLATED-face inset law —
+           // captured-reference parity (task 0467). A symmetric saddle quad
+           // (z alternates ±0.2 around the ring → strongly non-planar; its
+           // whole-face Newell normal is exactly +Z) beveled as a SINGLE
+           // face. This is the `poly_bevel_W1_warped_standalone` oracle,
+           // rr/gdb-grounded (findings.md §6): the reference places each inset
+           // corner by a mitered offset in the tangent plane ⟂ the WHOLE-FACE
+           // normal (`boundaryContourInset(faceNormal)`) plus `faceNormal·
+           // shift`, NOT by the old `offsetMeet` line-intersection (which
+           // slides off the tilted edges and lands ~0.06 off in the normal
+           // direction). The captured reference output (v4..v7) is bit-exact.
+    auto m = buildRawMesh(
+        [Vec3(-0.5f,-0.5f, 0.2f), Vec3(0.5f,-0.5f,-0.2f),
+         Vec3( 0.5f, 0.5f, 0.2f), Vec3(-0.5f, 0.5f,-0.2f)],
+        [[0u,1,2,3]]);
+    immutable float inset = 0.15f, shift = 0.1f;
+    const Vec3 n = m.faceNormal(0);
+    assert((n - Vec3(0, 0, 1)).length < 1e-6f, "saddle quad's Newell normal must be +Z");
+    size_t nb = m.bevelFacesByMask([true], inset, shift, false, 0);
+    assert(nb == 1);
+    // Captured reference (poly_bevel_W1_warped_standalone_group): the 4 inset
+    // cap corners. XY = the in-tangent-plane 90° miter (±0.35); Z = orig ±0.2
+    // shifted by +0.1 along the whole-face +Z normal (→ 0.30 / -0.10).
+    immutable Vec3[4] refCap = [
+        Vec3(-0.35f, -0.35f,  0.30f), Vec3( 0.35f, -0.35f, -0.10f),
+        Vec3( 0.35f,  0.35f,  0.30f), Vec3(-0.35f,  0.35f, -0.10f)];
+    // The old off-plane `offsetMeet` law (what the corner would get without
+    // the fix): same XY, but Z = orig ± (inset-slide) + shift — lands ~0.06
+    // off in Z. Assert the mesh is on the reference value and NOT the old one.
+    foreach (mc; refCap) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - mc).length < 1e-4f) { found = true; break; }
+        assert(found, "warped isolated-face cap corner must be bit-exact to the captured reference (poly_bevel_W1)");
+    }
+    // Guard the fix is actually engaged (not accidentally the old law): the
+    // old whole-face `offsetMeet` corner for v0 would sit at z≈0.24, absent.
+    bool foundOld = false;
+    foreach (v; m.vertices)
+        if ((v - Vec3(-0.35f, -0.35f, 0.24f)).length < 1e-3f) foundOld = true;
+    assert(!foundOld, "the pre-0467 off-plane offsetMeet corner (z≈0.24) must be gone");
+}
+
+unittest { // bevelFacesByMask: FLAT quad stays on the OLD whole-face law
+           // (task 0467 planarity gate — flat-face byte-identity guard). A
+           // planar quad's per-corner normal equals its face normal, so the
+           // gate (`dot(cn,n) >= 1-1e-6`) keeps the exact pre-0467
+           // `insetCorner + n·shift` expression — every flat-face bevel
+           // fixture is unaffected.
+    auto m = buildRawMesh(
+        [Vec3(-0.5f,-0.5f, 0.0f), Vec3(0.5f,-0.5f, 0.0f),
+         Vec3( 0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.5f, 0.0f)],
+        [[0u,1,2,3]]);
+    immutable float inset = 0.2f, shift = 0.13f;
+    Vec3[] origPos = [m.vertices[0], m.vertices[1], m.vertices[2], m.vertices[3]];
+    const Vec3 n = m.faceNormal(0);
+    Vec3[4] expOld;
+    foreach (i; 0 .. 4) {
+        immutable Vec3 cn = m.cornerNormalAt(0, cast(uint)i);
+        assert(dot(cn, n) >= 1.0f - 1e-6f, "flat quad corner normal must equal the face normal");
+        expOld[i] = m.insetCorner(origPos, cast(int)i, n, inset) + n * shift;
+    }
+    assert(m.bevelFacesByMask([true], inset, shift, false, 0) == 1);
+    foreach (i; 0 .. 4) {
+        bool exact = false;
+        foreach (v; m.vertices) if (v == expOld[i]) { exact = true; break; } // byte-exact
+        assert(exact, "flat cap corner must be BYTE-IDENTICAL to the pre-0467 insetCorner+n*shift law");
+    }
+}
+
+unittest { // boundaryContourInset degeneracy gate (task 0467 reviewer NIT):
+           // when e_b is PARALLEL to aveN the U-direction is undefined and
+           // safeNormalize would fabricate a bogus finite (0,1,0); the
+           // source-level |cross(e_b,aveN)| gate must reject it (return
+           // false) so the caller falls back — NOT return bogus geometry.
+    Vec3 res;
+    // e_b ∥ aveN (both along +Y, different magnitudes): must gate out.
+    assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,2,0), 0.1f, res),
+        "e_b ∥ aveN must fall to the fallback (degenerate U)");
+    // Anti-parallel projection (G1-style D→0): D sums to ~zero, |D·U| gate.
+    assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(-1,0,0), Vec3(0,0,1), 0.1f, res),
+        "anti-parallel tangent-plane edges (D→0) must fall to the fallback");
+    // A well-conditioned 90° corner in a plane returns a finite miter.
+    assert(Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1), 0.1f, res),
+        "a well-conditioned corner should yield a finite mitered offset");
 }
 
 unittest { // bevelFacesByMask: GROUP x SEGMENTS — task 0458 Phase 1 (+S1),
