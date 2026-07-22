@@ -71,12 +71,20 @@ jobs:
       # run_all.d --only unit fans out to ./run_test.d. --no-build reuses the
       # ./vibe3d binary from the Build step. The whole thing runs under one
       # Xvfb display so each spawned `vibe3d --test` gets a GL context.
-      # -j was pinned to 1 on the ~4 GiB runner because each source-backed test
-      # compiled with `dmd -i` peaked ~1.6 GiB, so -j4 OOM-killed dmd and took
-      # the runner service down (2026-06-06). run_test.d now builds the project
-      # once into a shared lib and links the tests against it (~0.25 GiB/worker),
-      # so the per-worker peak no longer scales with parallelism — -j$(nproc) is
-      # safe (the one-time lib build's ~1.6 GiB spike is sequential, pre-fanout).
+      # -j is CAPPED at 4 (host physical cores), NOT $(nproc). The runner is a
+      # QEMU VM that reports 16 vCPUs, but the physical host (hamster) is a
+      # 4-core / 8-thread Intel i3-10100 and the VM has 7.7 GiB RAM. RAM is no
+      # longer the constraint — run_test.d builds the project into a shared lib
+      # once (~1.6 GiB, sequential) and links each worker's tests against it
+      # (~0.25 GiB/worker), so even -j16 fits. But -j$(nproc)=16 oversubscribes
+      # the host CPU 2-4x, and under that scheduling contention the per-worker
+      # `vibe3d --test` GL boots miss run_test.d's HTTP come-up timeout:
+      # 2026-07-22 a -j16 run had 14/16 servers start but 2 time out, failing the
+      # whole run (no crash, no assertion — pure overload). -j4 = one worker per
+      # host physical core boots reliably. History: -j was pinned to 1 on the old
+      # ~4 GiB runner (dmd -i peaked ~1.6 GiB; -j4 OOM-killed dmd, 2026-06-06)
+      # before the shared-lib change removed the RAM scaling; the cap is now CPU-
+      # bound, not RAM-bound. Raise toward the host's thread count if it grows.
       # tee the output so the next step can build a pass/fail table; pipefail
       # keeps the test exit code (not tee's) as the step result.
       # RUN_ALL_EXCLUDE quarantines test_acen_pin_characterization ON CI ONLY.
@@ -95,7 +103,7 @@ jobs:
         RUN_ALL_EXCLUDE: test_acen_pin_characterization
       run: |
         set -o pipefail
-        xvfb-run -a ./run_all.d --only unit --no-build -j "$(nproc)" 2>&1 | tee integration.log
+        xvfb-run -a ./run_all.d --only unit --no-build -j 4 2>&1 | tee integration.log
 
     - name: 'Test results summary'
       # Parse run_test.d's per-test lines ("PASS  [wN]  name" / "FAIL ...") into a
