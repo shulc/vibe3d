@@ -19,10 +19,17 @@ private bool[] allTrue(size_t n) {
 }
 
 /// Tier 1.1: "Remove" (`vert.remove` / `edge.remove false` /
-/// `poly.remove`, dispatched by edit mode). In practice Remove produces
-/// the same geometry as Delete (`select.delete`) for every selection
-/// mode. We keep both as separate commands so the menu structure and
-/// shortcut layout can distinguish them.
+/// `poly.remove`, dispatched by edit mode). Remove and Delete are
+/// DISTINCT topological operations, not aliases:
+///   - Vertices: both dissolve (identical result).
+///   - Edges:    both dissolve the edge / merge the incident faces.
+///   - Polygons: Delete removes the faces AND their now-orphaned points;
+///     Remove removes ONLY the faces and leaves the orphaned points
+///     floating in place (keepOrphans — task 0465). This mirrors the
+///     reference editor, where poly-Delete drops points but poly-Remove
+///     keeps them.
+/// The two commands stay separate so the menu structure, shortcut layout,
+/// and (for polygons) the keep-points semantic can distinguish them.
 ///
 /// Revert: a full MeshSnapshot of the pre-op cage by default; when the
 /// VIBE3D_UNDO_TRACKER env toggle is on the kernel run is wrapped in a
@@ -92,8 +99,14 @@ class MeshRemove : Command, Operator {
                 if (n > 0) mesh.dissolveDegree2Verts();
                 return n;
             case EditMode.Polygons:
+                // Remove ≠ Delete for polygons: Remove drops ONLY the faces
+                // and leaves orphaned vertices floating (keepOrphans=true),
+                // whereas Delete (mesh.delete) also compacts orphans. This
+                // matches the reference editor's poly-Remove vs Delete
+                // distinction (task 0465).
                 return mesh.deleteFacesByMask(
-                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces);
+                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces,
+                    /*keepOrphans=*/true);
         }
     }
 

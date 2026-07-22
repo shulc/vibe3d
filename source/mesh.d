@@ -1797,16 +1797,27 @@ struct Mesh {
     }
     /// Drop the faces marked true in `mask`. Edges are rebuilt from the
     /// surviving faces; orphan vertices (no longer referenced by any
-    /// remaining face) are removed via compactUnreferenced(). Selection
-    /// arrays are resized and cleared (re-selecting after a delete is
-    /// the caller's responsibility — index validity is unstable across
-    /// a compact). Returns the number of faces removed.
+    /// remaining face) are removed via compactUnreferenced() UNLESS
+    /// `keepOrphans` is set. Selection arrays are resized and cleared
+    /// (re-selecting after a delete is the caller's responsibility — index
+    /// validity is unstable across a compact). Returns the number of faces
+    /// removed.
     ///
     /// This is the unified delete primitive: Tier 1.1 mesh.delete dispatches
     /// here for every edit mode by translating its selection into a face
     /// mask (verts → faces incident; edges → faces incident; polys
     /// directly).
-    size_t deleteFacesByMask(in bool[] mask) {
+    ///
+    /// `keepOrphans` distinguishes the two topological operations that share
+    /// this primitive: Delete (default, `keepOrphans=false`) drops the faces
+    /// AND compacts every now-unreferenced vertex, while Remove
+    /// (`keepOrphans=true`) drops ONLY the faces and leaves the orphaned
+    /// vertices floating in place — matching the reference editor's
+    /// polygon-Remove semantic (Delete removes points, Remove keeps them;
+    /// task 0465). With `keepOrphans` the `vertices` array is untouched, so
+    /// vertex indices/positions stay stable and no vertex reindex is recorded
+    /// into an open edit batch (the RemoveFaces entry alone reverts the op).
+    size_t deleteFacesByMask(in bool[] mask, bool keepOrphans = false) {
         if (mask.length != faces.length) return 0;
         uint[][] keptFaces;
         bool[]   keptSubpatch;
@@ -1890,7 +1901,10 @@ struct Mesh {
         rebuildEdges();
         clearEdgeSelectionResize();
         // Compact orphan vertices (no-op if all verts still referenced).
-        compactUnreferenced();
+        // Skipped for Remove (keepOrphans): the faces go, the now-unused
+        // points stay floating in place (task 0465 — reference-editor
+        // poly-Remove keeps points; only Delete removes them).
+        if (!keepOrphans) compactUnreferenced();
         // Half-edge loops carry face/vert indices that compaction just
         // invalidated; rebuild so adjacentFaces / verticesAroundVertex /
         // friends return live indices. (Without this, the next consumer
