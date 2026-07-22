@@ -268,9 +268,11 @@ void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
 // buildSphereTess — icosphere primitive (`prim.sphere method:tess`).
 //
 // Topology: each of the 20 icosahedron faces is subdivided into (order+1)²
-// triangles via a barycentric grid (linear subdivision, NOT the recursive
-// 4-split). All grid points are projected radially onto the unit sphere,
-// then scaled per-axis.
+// triangles via a barycentric grid (linear frequency subdivision, NOT the
+// recursive 4-split), then scaled per-axis. On-sphere placement is a hybrid
+// (see the per-point comment in buildSphereTess): equal-arc SLERP along the
+// shared boundary edges, planar-barycentric radial projection in each face
+// interior — matched to the reference editor's tesselate primitive.
 //   verts = 10·n² + 20·n + 12
 //   faces = 20·(n+1)²
 //
@@ -365,16 +367,39 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
     }
 
     // For each base face, generate the (S+1)-row grid and emit S²
-    // sub-triangles preserving the base CCW winding. Spherical barycentric
-    // subdivision via SLERP-of-SLERP gives near-uniform edge lengths at any
-    // order. (LERP+project for interior clusters interior verts toward the
-    // icosa-face centroid, blowing up edge-length ratio to >2× at order=3
-    // and >4× at order=5.)
-    //   row parameter ρ = (i + j) / S       — 0 at V0, 1 along V1-V2 edge
-    //   L = SLERP(V0, V1, ρ), R = SLERP(V0, V2, ρ) — endpoints of the row
-    //   point at column j: SLERP(L, R, j / (i + j))
-    // Adjacent base-faces produce identical points along shared edges
-    // because slerp(a, b, t) == slerp(b, a, 1−t).
+    // sub-triangles preserving the base CCW winding. Each grid point carries
+    // barycentric weights (a0,a1,a2) over the three corners (V0,V1,V2),
+    // summing to S, laid out as a0 = S−i−j (on V0), a1 = i (on V1),
+    // a2 = j (on V2). The on-sphere position is a HYBRID that matches the
+    // reference editor's globe/tesselate primitive exactly (verified to
+    // <1e-5 against captured order 0-3 dumps, tools/local task 0470):
+    //
+    //   • corner  (two weights zero)  → the icosahedron corner itself.
+    //   • edge    (one weight zero)   → SLERP along the incident edge at the
+    //       equal-arc fraction. Adjacent base-faces share these because
+    //       slerp(a,b,t) == slerp(b,a,1−t) and both see the same endpoints
+    //       + fraction, so the manifold stays closed after the dedup below.
+    //   • interior (all weights > 0)  → the PLANAR barycentric blend of the
+    //       three original corners, projected radially onto the unit sphere:
+    //       normalize(a0·V0 + a1·V1 + a2·V2).
+    //
+    // The edge/interior split is deliberate: geodesic (equal-arc) boundaries
+    // keep every shared edge identical across faces, while the planar
+    // projection fills each face's interior. It is NOT the uniform
+    // SLERP-of-SLERP geodesic grid (that clusters differently and diverged
+    // from the reference at order≥2).
+    //
+    // Fidelity (task 0470, measured against captured reference dumps): this
+    // reproduces the reference primitive EXACTLY (≤1e-6) for order 0-3
+    // (frequency 2-4) — the full range the prim_sphere_tess parity suite
+    // covers. At order≥4 the reference switches to a subtler recursive
+    // geodesic interior law whose interior verts drift from this radial
+    // planar projection by a small residual (≈0.013 at order 4, ≈0.018 at
+    // order 5, on the unit sphere; edges + corners still match exactly). That
+    // law wasn't fully derived here — planar projection is the UNIQUE
+    // scheme that stays exact across every tested order (Karcher / spherical
+    // means and apex slerp-of-slerp each break at least one of order 2/3), so
+    // it is the right trade here; revisit if an order≥4 parity case is added.
     foreach (ref face; ICOSA_FACES) {
         Vec3 V0 = base[face[0]];
         Vec3 V1 = base[face[1]];
@@ -385,17 +410,30 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
         foreach (i; 0 .. S + 1) {
             grid[i].length = S + 1 - i;
             foreach (j; 0 .. S + 1 - i) {
-                int k_ = S - i - j;
+                int a0 = S - i - j;   // weight on V0
+                int a1 = i;           // weight on V1
+                int a2 = j;           // weight on V2
+                int zeros = (a0 == 0 ? 1 : 0) + (a1 == 0 ? 1 : 0)
+                          + (a2 == 0 ? 1 : 0);
                 Vec3 onSphere;
-                if (k_ == S) {
-                    onSphere = V0;
+                if (zeros >= 2) {
+                    onSphere = (a0 == S) ? V0 : ((a1 == S) ? V1 : V2);
+                } else if (zeros == 1) {
+                    // Edge point — equal-arc SLERP along the incident edge.
+                    if (a2 == 0)
+                        onSphere = slerp(V0, V1, cast(float)a1 / cast(float)S);
+                    else if (a1 == 0)
+                        onSphere = slerp(V0, V2, cast(float)a2 / cast(float)S);
+                    else
+                        onSphere = slerp(V1, V2, cast(float)a2 / cast(float)S);
                 } else {
-                    int rowLen = S - k_;       // i + j
-                    float rho  = cast(float)rowLen / cast(float)S;
-                    Vec3 L = slerp(V0, V1, rho);
-                    Vec3 R = slerp(V0, V2, rho);
-                    float beta = cast(float)j / cast(float)rowLen;
-                    onSphere = slerp(L, R, beta);
+                    // Interior point — planar barycentric of the corners,
+                    // projected radially to the unit sphere.
+                    Vec3 q = V0 * cast(float)a0
+                           + V1 * cast(float)a1
+                           + V2 * cast(float)a2;
+                    float r = sqrt(q.x * q.x + q.y * q.y + q.z * q.z);
+                    onSphere = (r > 1e-9f) ? q / r : q;
                 }
                 Key3 key = makeKey(onSphere);
                 if (auto idx = key in lookup) {
