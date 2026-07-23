@@ -32,6 +32,13 @@ JSONValue model() {
     return parseJSON(get("http://localhost:8080/api/model"));
 }
 
+bool[] subpatchFlags() {
+    auto a = model()["isSubpatch"].array;
+    bool[] r;
+    foreach (n; a) r ~= n.type == JSONType.true_;
+    return r;
+}
+
 void runCmd(string id) {
     auto resp = post("http://localhost:8080/api/command",
         `{"id":"` ~ id ~ `"}`);
@@ -195,15 +202,25 @@ unittest { // subdivide_faceted in edges mode refines the whole cage too.
     assert(m["faceCount"].integer == 24);
 }
 
-unittest { // subpatch_toggle still refused in vertices mode — no whole-mesh
-           // fallback that would make sense (it's a per-face flag flip).
-    resetCube();
+unittest { // subpatch_toggle in vertices mode whole-models (parity task 0464):
+           // it no longer refuses — a stale face selection loses its authority
+           // outside polygon mode, so the toggle flips every face. Matches the
+           // reference editor (drops the polygon selection's scope in vertex
+           // mode). The scoped-vs-whole distinction is covered in test_subpatch.d.
+    resetCube();                                 // leaves us in Polygons mode
+    setSelection("polygons", [0]);               // stale selection to be ignored
     post("http://localhost:8080/api/command", "select.typeFrom vertex");
     auto resp = post("http://localhost:8080/api/command",
                      "mesh.subpatch_toggle");
     auto j = parseJSON(cast(string)resp);
-    assert(j["status"].str != "ok",
-        "mesh.subpatch_toggle should fail in vertex mode, got " ~ resp);
+    assert(j["status"].str == "ok",
+        "mesh.subpatch_toggle should succeed (whole-model) in vertex mode, got "
+        ~ resp);
+    auto sub = subpatchFlags();
+    assert(sub.length == 6, "expected 6 faces, got " ~ sub.length.to!string);
+    foreach (i, b; sub)
+        assert(b, "vertex-mode toggle must whole-model (parity): face "
+            ~ i.to!string ~ " should be subpatch, not just the 1 selected");
 }
 
 unittest { // subdivide allowed in polygon mode (resetCube already sets it)
