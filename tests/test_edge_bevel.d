@@ -370,3 +370,95 @@ unittest {
     assert(m2["faceCount"].integer   == 7,  "E: normal width must be unaffected by the guard");
     assert(noCoincidentVerts(m2), "E: normal width must have no coincident verts");
 }
+
+// ---------------------------------------------------------------------------
+// Test F — `widthMode` param through the COMMAND path. On the 90° cube edge
+//          (6,7) the two incident faces (+Y, +Z) meet at a right-angle
+//          surface-opening dihedral, so the perpendicular-width factor is
+//          1/sin(45°) = √2. With `widthMode:true` each chamfer corner must
+//          slide `width·√2` along its neighbouring face-edge (not the raw
+//          `width`), while the DEFAULT (param absent) and the explicit
+//          `widthMode:false` must stay byte-identical to the inset result
+//          (Test A: slide == width, centroid (0,0.45,0.45)). Same 10v/7f
+//          topology in both modes — only the corner positions differ.
+// ---------------------------------------------------------------------------
+
+// Distance from p to the NEARER of the beveled edge's two original endpoints.
+double distToNearestEndpoint(V3 p, V3 e0, V3 e1) {
+    double d0 = len3(sub3(p, e0)), d1 = len3(sub3(p, e1));
+    return d0 < d1 ? d0 : d1;
+}
+
+unittest {
+    immutable V3 e6 = V3( 0.5, 0.5, 0.5);
+    immutable V3 e7 = V3(-0.5, 0.5, 0.5);
+    immutable double w = 0.1;
+
+    // --- WIDTH mode: slide == w·√2 ------------------------------------------
+    resetCube();
+    auto before = getModel();
+    int v6 = vertAt(before, e6);
+    int v7 = vertAt(before, e7);
+    assert(v6 >= 0 && v7 >= 0, "F: verts 6 and 7 not found");
+    int ei = edgeIndex(before, v6, v7);
+    assert(ei >= 0, "F: edge (6,7) not found");
+    postSelect("edges", [ei]);
+
+    postCommand(`{"id":"mesh.bevel","params":{"width":0.1,"widthMode":true}}`);
+    auto mw = getModel();
+
+    // Same topology as inset mode — only corner positions move.
+    assert(mw["vertexCount"].integer == 10,
+        "F: width mode keeps 10 verts, got " ~ mw["vertexCount"].integer.to!string);
+    assert(mw["faceCount"].integer == 7,
+        "F: width mode keeps 7 faces, got " ~ mw["faceCount"].integer.to!string);
+    auto fvw = fvDist(mw);
+    assert(fvw.get(4,0) == 5 && fvw.get(5,0) == 2,
+        "F: width mode fv-dist {4:5,5:2}, got " ~ fvw.to!string);
+
+    // The chamfer quad's corners must sit w·√2 from the nearest original
+    // endpoint — the perpendicular-width dihedral factor at a 90° crease.
+    immutable double expected = w * sqrt(2.0);
+    auto selw = getSelection();
+    assert(selw["selectedFaces"].array.length == 1, "F: expected 1 selected chamfer face");
+    auto chamferW = mw["faces"].array[cast(int)selw["selectedFaces"].array[0].integer];
+    assert(chamferW.array.length == 4, "F: chamfer should be a quad");
+    foreach (c; chamferW.array) {
+        auto p = vert(mw, cast(size_t)c.integer);
+        double d = distToNearestEndpoint(p, e6, e7);
+        assert(abs(d - expected) < 1e-4,
+            "F: width-mode corner slide must equal w·√2 (" ~ expected.to!string ~
+            "), got " ~ d.to!string);
+    }
+    // Centroid shifts to (0, 0.5 - w·√2/2, 0.5 - w·√2/2) ≈ (0, 0.42929, 0.42929).
+    auto cenW = faceCentroid(mw, chamferW);
+    immutable double cExp = 0.5 - expected * 0.5;
+    assert(abs(cenW.x) < 1e-3 && abs(cenW.y - cExp) < 1e-3 && abs(cenW.z - cExp) < 1e-3,
+        "F: width-mode chamfer centroid expected (0," ~ cExp.to!string ~ "," ~
+        cExp.to!string ~ "), got (" ~ cenW.x.to!string ~ "," ~ cenW.y.to!string ~
+        "," ~ cenW.z.to!string ~ ")");
+    assert(orphanVerts(mw).length == 0, "F: width-mode orphan verts");
+    assert(isHoleFree(mw),              "F: width-mode not hole-free");
+    assert(noCoincidentVerts(mw),       "F: width-mode coincident verts");
+
+    // --- Explicit widthMode:false == inset default (byte-identical) ---------
+    resetCube();
+    auto before2 = getModel();
+    int ei2 = edgeIndex(before2, vertAt(before2, e6), vertAt(before2, e7));
+    postSelect("edges", [ei2]);
+    postCommand(`{"id":"mesh.bevel","params":{"width":0.1,"widthMode":false}}`);
+    auto mi = getModel();
+    auto seli = getSelection();
+    auto chamferI = mi["faces"].array[cast(int)seli["selectedFaces"].array[0].integer];
+    // Inset slide == raw w; centroid back at (0,0.45,0.45) (matches Test A).
+    foreach (c; chamferI.array) {
+        auto p = vert(mi, cast(size_t)c.integer);
+        double d = distToNearestEndpoint(p, e6, e7);
+        assert(abs(d - w) < 1e-4,
+            "F: widthMode:false slide must equal raw w (inset), got " ~ d.to!string);
+    }
+    auto cenI = faceCentroid(mi, chamferI);
+    assert(abs(cenI.x) < 1e-3 && abs(cenI.y - 0.45) < 1e-3 && abs(cenI.z - 0.45) < 1e-3,
+        "F: widthMode:false centroid must stay (0,0.45,0.45), got (" ~
+        cenI.x.to!string ~ "," ~ cenI.y.to!string ~ "," ~ cenI.z.to!string ~ ")");
+}

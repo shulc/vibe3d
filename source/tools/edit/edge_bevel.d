@@ -52,6 +52,11 @@ private:
 
     float width_      = 0.0f;
     int   roundLevel_ = 0;
+    // Mirrors the mesh.bevel command's edge `widthMode`: false (default) =
+    // `width_` IS the along-face slide (inset); true = `width_` is the true
+    // perpendicular bevel width (slide = width/sin(dihedral/2)). Kept in lock-
+    // step with the command so tool preview == headless apply.
+    bool  widthMode_  = false;
 
     bool         active;
     bool         built;
@@ -110,6 +115,7 @@ public:
             Param.float_("width", "Width", &width_, 0.0f),
             Param.int_("roundLevel", "Round Level", &roundLevel_, 0)
                 .min(0).max(MAX_ROUND_LEVEL).enforceBounds(),
+            Param.bool_("widthMode", "Width Mode", &widthMode_, false),
         ];
     }
 
@@ -180,7 +186,7 @@ public:
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_);
+        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -243,6 +249,7 @@ public:
         root["tool"]       = JSONValue("edgeBevel");
         root["width"]      = JSONValue(width_);
         root["roundLevel"] = JSONValue(roundLevel_);
+        root["widthMode"]  = JSONValue(widthMode_);
         root["built"]      = JSONValue(built);
         root["dragPart"]   = JSONValue(dragPart);
         return root;
@@ -323,7 +330,7 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_);
+        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
         built = (n != 0);
         refreshCaches();
     }

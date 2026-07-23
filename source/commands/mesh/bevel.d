@@ -17,16 +17,20 @@ private bool[] allTrue(size_t n) {
 /// One-shot Bevel command: dispatches by edit mode.
 ///   Polygons → bevelFacesByMask(mask, inset, shift, group, segments)
 ///              [params: inset, shift, group, segments]
-///   Edges    → bevelEdgesByMask(mask, width, roundLevel)
-///              [params: width, roundLevel]
+///   Edges    → bevelEdgesByMask(mask, width, roundLevel, widthMode)
+///              [params: width, roundLevel, widthMode]
 /// Empty face-selection ⇒ whole mesh (allTrue mask, per sibling convention).
 /// Empty edge-selection ⇒ allTrue mask.
 /// |inset|<1e-6 && |shift|<1e-6 (polygon) or width<1e-6 (edge) → status:error.
 ///
 /// Neutral param names (task 0391 — NEVER the reference-editor's own names
 /// in source/tests/config — repo neutrality convention):
-///   edge: `width` (== reference Value, inset-mode 1:1), `roundLevel`
-///         (== reference Round Level `level` — TRUE circular arc).
+///   edge: `width` (== reference Value; with `widthMode` false the value
+///         maps 1:1 to the reference's inset-mode Value), `roundLevel`
+///         (== reference Round Level `level` — TRUE circular arc),
+///         `widthMode` (== reference `mode` inset|width selector; false =
+///         inset, the default, byte-identical to the pre-change path; true =
+///         perpendicular width, slide = width/sin(dihedral/2)).
 ///   poly: `inset`, `shift` (unchanged), `group` (== reference `group`,
 ///         default TRUE at this command layer — reference default;
 ///         `bevelFacesByMask`'s own kernel default stays `false` so the
@@ -43,6 +47,7 @@ class MeshBevel : Command, Operator {
     private bool             square_     = false;
     private float            width_      = 0.1f;
     private int              roundLevel_ = 0;
+    private bool             widthMode_  = false;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -57,6 +62,12 @@ class MeshBevel : Command, Operator {
                 Param.float_("width", "Width", &width_, 0.1f),
                 Param.int_("roundLevel", "Round Level", &roundLevel_, 0)
                     .min(0).max(MAX_ROUND_LEVEL).enforceBounds(),
+                // `widthMode` selects how `width` maps to the along-face corner
+                // slide (see `bevelEdgesByMask`'s doc): false (default) = the
+                // value IS the slide (inset), byte-identical to the pre-change
+                // path; true = the value is the true PERPENDICULAR bevel width,
+                // so the slide is `width / sin(dihedral/2)` per selected edge.
+                Param.bool_("widthMode", "Width Mode", &widthMode_, false),
             ];
         return [
             Param.float_("inset", "Inset", &inset_, 0.1f),
@@ -91,7 +102,7 @@ class MeshBevel : Command, Operator {
         } else if (editMode == EditMode.Edges) {
             const all  = mesh.nothingSelected(EditMode.Edges);
             auto  mask = all ? allTrue(mesh.edges.length) : mesh.selectedEdges;
-            n = mesh.bevelEdgesByMask(mask, width_, roundLevel_);
+            n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
         }
 
         if (n == 0) {
