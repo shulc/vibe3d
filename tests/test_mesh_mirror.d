@@ -400,16 +400,20 @@ unittest {
 
 unittest { // No params ⇒ mirror across plane x=0 with weld=0.001 (defaults).
            // For a symmetric cube `[-0.5,0.5]³` this welds every cloned
-           // vert onto its original, and dedup drops every duplicated
-           // face. Result: identical cage (8 verts, 12 edges, 6 faces).
+           // vert onto its original (8 verts). FULL PARITY: the weld merges
+           // coincident VERTS only — it does NOT dedup faces, so the doubled
+           // coincident faces (each original + its winding-reversed clone)
+           // survive as an opposite-wound shell: 8 verts, 12 edges, 12 faces
+           // (matches the reference's keep-doubled weld convention).
     resetCube();
     postCommand(`{"id":"mesh.mirror","params":{}}`);
 
     auto m = getModel();
     assert(m["vertexCount"].integer == 8,
         "verts: expected 8 (full weld), got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 6,
-        "faces: expected 6 (full dedup), got "  ~ m["faceCount"].integer.to!string);
+    assert(m["faceCount"].integer == 12,
+        "faces: expected 12 (keep doubled coincident faces), got "
+        ~ m["faceCount"].integer.to!string);
     assert(m["edgeCount"].integer == 12,
         "edges: expected 12, got " ~ m["edgeCount"].integer.to!string);
 }

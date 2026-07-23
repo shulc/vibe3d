@@ -3909,6 +3909,42 @@ struct Mesh {
                 faces[cfi] = [corners[2], corners[1], corners[0]];
             bridgeMaterialSrc ~= cast(uint)srcFace;
         }
+        // Emit a triangle cap whose winding is derived from ORIENTABILITY against
+        // an adjacent already-emitted bridge quad, rather than a geometric dot
+        // test. The cap shares edge (sharedU,sharedW) with `refFace`; a
+        // consistently-oriented surface traverses a shared edge in OPPOSITE
+        // directions on its two incident faces, so the cap must walk that edge
+        // opposite to the bridge. This is edge-axis-independent — the prior
+        // `emitCap(outward=±edgeAxis)` heuristic only points the cap outward when
+        // the edge happens to align with the solid's outward direction (e.g. an
+        // axis-aligned cube corner); on a tilted free end (edge not aligned with
+        // "away from the solid") the edge-axis dot mis-orients the cap. Because
+        // the bridges are already wound outward (dot with the extrude normal ne),
+        // deriving the cap from them makes it outward too, for ANY edge tilt.
+        void emitCapShared(uint[3] corners, uint sharedU, uint sharedW,
+                           int refFace, int srcFace) {
+            // Direction refFace traverses the shared edge.
+            bool refUtoW = true;
+            auto rf = faces[refFace];
+            foreach (k; 0 .. rf.length) {
+                uint u = rf[k], w = rf[(k + 1) % rf.length];
+                if (u == sharedU && w == sharedW) { refUtoW = true;  break; }
+                if (u == sharedW && w == sharedU) { refUtoW = false; break; }
+            }
+            // Direction the cap (as given) traverses the shared edge.
+            uint[3] c = corners;
+            bool capUtoW = true;
+            foreach (k; 0 .. 3) {
+                uint u = c[k], w = c[(k + 1) % 3];
+                if (u == sharedU && w == sharedW) { capUtoW = true;  break; }
+                if (u == sharedW && w == sharedU) { capUtoW = false; break; }
+            }
+            // Want the cap OPPOSITE to refFace on the shared edge; if it matches,
+            // reverse the triangle (swap the two non-anchor corners).
+            if (capUtoW == refUtoW) { uint t = c[1]; c[1] = c[2]; c[2] = t; }
+            faces ~= [c[0], c[1], c[2]];
+            bridgeMaterialSrc ~= cast(uint)srcFace;
+        }
         // Bridge corner order is derived from the neighbor face's own corner
         // sequence; the faceNormal check is the backstop for any leftover
         // ambiguity.
@@ -3939,6 +3975,10 @@ struct Mesh {
                              || ((kIB in sharedFaceAwareInset) !is null);
                 bool capSideB = ((kIA2 in sharedFaceAwareInset) !is null)
                              || ((kIB2 in sharedFaceAwareInset) !is null);
+                // Record each bridge's face index so the free-end caps below can
+                // wind by ORIENTABILITY against the bridge they share an edge with
+                // (see emitCapShared) instead of a geometric edge-axis dot test.
+                int brA = cast(int)faces.length;
                 if (e.coplanar || capSideA) {
                     emitBridgeFromFace(insetVert[kIA], insetVert[kIB],
                                        ridgeVert[e.va], ridgeVert[e.vb], e.fA, e.fA);
@@ -3946,6 +3986,7 @@ struct Mesh {
                     emitBridge([insetVert[kIA], insetVert[kIB],
                                 ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
                 }
+                int brB = cast(int)faces.length;
                 if (e.coplanar || capSideB) {
                     emitBridgeFromFace(insetVert[kIA2], insetVert[kIB2],
                                        ridgeVert[e.va], ridgeVert[e.vb], e.fB, e.fB);
@@ -3956,18 +3997,10 @@ struct Mesh {
                 // §5.c: triangle cap closing each FREE-END corner gap between the
                 // two neighbor insets and the ridge vert. Interior chain joints
                 // (shared endpoints) get NO cap — the neighboring extruded edge
-                // closes that side.
-                // The cap lies in the plane of (insetA, insetB, ridge). Its
-                // geometric normal flips with the EXTRUDE SIGN because the ridge
-                // vertex moves to the opposite side of the inset edge when the
-                // ridge goes from outward (extrude>0) to inward (extrude<0). The
-                // edge axis alone is sign-independent, so we fold the extrude sign
-                // into the outward reference — exactly as the bridge quads stay
-                // sign-correct (their ridge position carries the sign while they
-                // validate against the fixed `ne`). Without the sign the caps wind
-                // correctly for positive extrude but reverse for negative.
-                float es = (extrude < 0.0f) ? -1.0f : 1.0f;
-                Vec3 axis = (vertices[e.vb] - vertices[e.va]) * es; // va → vb, sign-aware
+                // closes that side. The cap lies in the plane of (insetA, insetB,
+                // ridge); its winding is derived from the incident bridge quad
+                // (orientability, see capFreeEnd) so it stays outward-facing under
+                // both extrude signs and for any edge tilt.
                 // Cap the corner gap between the two perpendicular insets and the
                 // ridge. A valence-3 free end uses ONE triangle [insetA,insetB,
                 // ridge] (the cube path, unchanged). A valence>3 free end has its
@@ -3975,23 +4008,31 @@ struct Mesh {
                 // fan of TWO triangles [insetA,vAlong,ridge] + [vAlong,insetB,
                 // ridge] (vAlong is geometrically between insetA and insetB along
                 // the edge axis, so both triangles tile the same corner with no
-                // overlap). emitCap fixes each triangle's winding independently.
-                void capFreeEnd(uint v, uint iA, uint iB, Vec3 outward) {
+                // overlap). Winding comes from orientability against the incident
+                // bridge (emitCapShared): the [iA,·,ridge] triangle shares edge
+                // (iA,ridge) with the fA bridge (brA); the [·,iB,ridge] triangle
+                // shares (iB,ridge) with the fB bridge (brB). The old edge-axis dot
+                // heuristic only oriented axis-aligned free ends (cube) correctly
+                // and reversed tilted ones; the bridge is already wound outward, so
+                // deriving from it is tilt-independent and sign-independent (the
+                // ridge position carries the extrude sign into the bridge).
+                void capFreeEnd(uint v, uint iA, uint iB) {
                     if (!isInteriorFreeEnd(v)) return;
                     // A free end on the OPEN mesh boundary needs no cap — the
                     // ridge bridge already closes its corner against the boundary.
                     // (A fully-interior free end is ringed by faces and is capped.)
                     if (isOnMeshBoundary(v)) return;
+                    uint rv = ridgeVert[v];
                     if (needsAlongAt(v)) {
                         uint va2 = freeEndAlongVert[v];
-                        emitCap([iA, va2, ridgeVert[v]], outward, e.fA);
-                        emitCap([va2, iB, ridgeVert[v]], outward, e.fA);
+                        emitCapShared([iA, va2, rv], iA, rv, brA, e.fA);
+                        emitCapShared([va2, iB, rv], iB, rv, brB, e.fA);
                     } else {
-                        emitCap([iA, iB, ridgeVert[v]], outward, e.fA);
+                        emitCapShared([iA, iB, rv], iA, rv, brA, e.fA);
                     }
                 }
-                capFreeEnd(e.va, insetVert[kIA], insetVert[kIA2], -axis); // va exits −axis
-                capFreeEnd(e.vb, insetVert[kIB], insetVert[kIB2],  axis); // vb exits +axis
+                capFreeEnd(e.va, insetVert[kIA], insetVert[kIA2]);
+                capFreeEnd(e.vb, insetVert[kIB], insetVert[kIB2]);
             } else if (isChamferEnd(e.va) && isChamferEnd(e.vb)) {
                 // Boundary CHAMFER (the in-scope single-edge case). The reference
                 // IGNORES extrude on a boundary edge and emits a width-only chamfer:
@@ -5381,43 +5422,16 @@ struct Mesh {
         resizeEdgeSelection();
         clearEdgeSelection();
 
+        // FULL PARITY (weld coincident-face convention): weld merges coincident
+        // VERTS only — no face fingerprint-dedup. When the rotation maps a copy
+        // onto itself or onto the source (e.g. a 180° radial of a symmetric
+        // solid about its own axis, or a closed 360° ring whose first/last steps
+        // abut), the reference editor KEEPS the doubled coincident faces
+        // (opposite-wound shell). So we fold coincident verts and drop only the
+        // orphaned welded-away vert slots — matching arrayFaces / mirrorFaces.
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             if (weldCoincidentVertices(epsSq) > 0) {
-                import std.algorithm.sorting : sort;
-                import std.format : format;
-                bool[string] seenFp;
-                uint[][] keptFaces;
-                bool[]   keptSubpatch;
-                int[]    keptOrder;
-                bool[]   keptSelected;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                keptFaces   .reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
-                keptOrder   .reserve(faces.length);
-                keptSelected.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart    .reserve(faces.length);
-                foreach (fi, ref f; faces) {
-                    auto sorted = f.dup;
-                    sort(sorted);
-                    string fp = format("%(%d,%)", sorted);
-                    if (fp in seenFp) continue;
-                    seenFp[fp] = true;
-                    keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
-                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
-                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
-                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
-                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
-                }
-                faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
-                faceSelectionOrder = keptOrder;
-                setFacesSelectedFrom(keptSelected);
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -6021,12 +6035,11 @@ struct Mesh {
         clearEdgeSelection();
 
         // Optional weld pass: verts on the mirror plane reflected to
-        // themselves are coincident with their originals. weld>0 folds
-        // them, then a face-fingerprint dedup pass drops any face whose
-        // vertex SET matches another face's (winding-agnostic) — that's
-        // what removes the doubled seam polygon (original's seam face +
-        // its winding-reversed mirror copy) so the user doesn't get a
-        // z-fighting partition wall after Mirror+Merge.
+        // themselves are coincident with their originals, as are all verts of
+        // a symmetric object mirrored about its own centre plane. weld>0 folds
+        // those coincident VERTS (full-parity: faces are NOT deduped — the
+        // doubled coincident faces are kept as an opposite-wound shell/membrane;
+        // see the convention note at the weld call below).
         if (weld > 0.0f) {
             // Empty-mesh guard (task 0306): snapshot everything this pass
             // can touch BEFORE running it, so an aggressive weld/dedup that
@@ -6058,33 +6071,6 @@ struct Mesh {
             rbMeshMaps.reserve(meshMaps.length);
             foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
 
-            // Full-parity on-plane membrane: a masked face whose vertices ALL
-            // lie (near-)exactly ON the mirror plane doesn't move under
-            // reflection — every one of its verts maps to itself
-            // (dot(v-center,normal) ≈ 0), so its winding-reversed "clone" is an
-            // exact duplicate at the SAME location: a degenerate on-plane
-            // membrane. The reference editor KEEPS both the original seam face
-            // and its reversed clone (the doubled membrane ships verbatim, even
-            // though it makes each seam edge shared by more than two faces — a
-            // deliberate non-manifold artifact of Mirror+Merge). We therefore do
-            // NOT drop them here; the only special-casing needed is to EXEMPT
-            // on-plane faces from the winding-agnostic seam-fingerprint dedup
-            // below (which would otherwise fold the pair — identical vertex SET,
-            // opposite winding — down to a single face). A face whose clone
-            // merely lands on a DIFFERENT face's vertex set (e.g. mirroring a
-            // whole symmetric object about its own center-plane, where left/
-            // right or top/bottom faces legitimately fold onto ONE surviving
-            // copy) is OFF-plane and still deduped normally.
-            //
-            // Tolerance: `min(weld, onPlaneEpsMax)`, NOT `weld` directly. The
-            // on-plane test is a geometric-degeneracy check — unrelated to how
-            // large a gap the SEAM-MERGE pass (below) folds. Using `weld`
-            // unclamped misfires on a large `weld` (e.g. weld=100): every vertex
-            // of every face is trivially "within 100" of the plane, so EVERY
-            // masked face would wrongly count as on-plane.
-            enum float onPlaneEpsMax = 1e-5f;
-            const float onPlaneEps = (weld < onPlaneEpsMax) ? weld : onPlaneEpsMax;
-
             double epsSq = cast(double)weld * cast(double)weld;
             // Bug B fix: `protectBelow=origVertexCount` keeps this weld
             // LOCAL to the seam — two PRE-EXISTING (pre-mirror) vertices
@@ -6092,62 +6078,20 @@ struct Mesh {
             // is; only pairs touching at least one freshly-cloned vertex
             // are eligible. Without this, a large `weld` folds arbitrary
             // far-apart original vertices together across the whole mesh.
+            //
+            // FULL PARITY (weld coincident-face convention): the weld merges
+            // coincident VERTS only — it does NOT fingerprint-dedup faces. When
+            // the mirror maps geometry onto itself — a symmetric object
+            // mirrored about its own centre plane, or an on-plane seam membrane
+            // — the reference editor KEEPS the doubled coincident faces (the
+            // original + its winding-reversed clone form an opposite-wound
+            // shell / membrane), even though that leaves each shared edge
+            // incident to more than two faces: a deliberate non-manifold
+            // artifact of Mirror+Merge. So we weld verts, rebuild edges from
+            // the (now vertex-merged) faces, and drop only the orphaned
+            // welded-away vert slots via compactUnreferenced — the same
+            // keep-doubled convention as arrayFaces / radialArrayFaces.
             if (weldCoincidentVertices(epsSq, origVertexCount) > 0) {
-                // Drop faces with identical vert sets. Linear scan over
-                // `faces`: cube-scale meshes don't justify a hash here.
-                import std.algorithm.sorting : sort;
-                import std.format : format;
-                bool[string] seenFp;
-                uint[][] keptFaces;
-                bool[]   keptSubpatch;
-                int[]    keptOrder;
-                bool[]   keptSelected;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                keptFaces   .reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
-                keptOrder   .reserve(faces.length);
-                keptSelected.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart    .reserve(faces.length);
-                foreach (fi, ref f; faces) {
-                    // On-plane membrane faces (all verts on the mirror plane)
-                    // are the degenerate seam pair the reference keeps verbatim:
-                    // the original seam face and its winding-reversed clone share
-                    // the SAME vertex set, so the winding-agnostic fingerprint
-                    // would fold them to one. Keep every on-plane face
-                    // unconditionally (full-parity: the reference ships the
-                    // doubled membrane); only OFF-plane duplicates get deduped.
-                    bool onPlane = true;
-                    foreach (vid; f) {
-                        float d = dot(vertices[vid] - center, normal);
-                        if (d < 0.0f) d = -d;
-                        if (d > onPlaneEps) { onPlane = false; break; }
-                    }
-                    if (!onPlane) {
-                        auto sorted = f.dup;
-                        sort(sorted);
-                        string fp = format("%(%d,%)", sorted);
-                        if (fp in seenFp) continue;
-                        seenFp[fp] = true;
-                    }
-                    keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
-                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
-                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
-                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
-                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
-                }
-                faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
-                faceSelectionOrder = keptOrder;
-                setFacesSelectedFrom(keptSelected);
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
-
-                // Edges may now reference verts that were welded but
-                // are still recorded as endpoints; re-derive from the
-                // surviving faces.
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
