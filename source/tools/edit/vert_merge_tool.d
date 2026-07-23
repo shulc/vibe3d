@@ -178,7 +178,9 @@ public:
         if (mesh.vertices.length == 0) return false;
         if (!mesh.hasAnySelectedVertices()) return false;
         double epsSq = cast(double)dist_ * cast(double)dist_;
-        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq);
+        // average:true — survivor at per-cluster centroid, matching the
+        // vert.merge command path (source/commands/mesh/vert_merge.d).
+        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -256,7 +258,9 @@ private:
             return;
         }
         double epsSq = cast(double)dist_ * cast(double)dist_;
-        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq);
+        // average:true — survivor at per-cluster centroid, matching the
+        // vert.merge command path (source/commands/mesh/vert_merge.d).
+        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
         built = (n != 0);
         refreshCaches();
     }
