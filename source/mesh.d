@@ -9315,27 +9315,36 @@ struct Mesh {
         // 1", orthogonal to whether the endpoints are on a rim). Both kinds
         // count as "selected" for the per-vertex fan logic below; only the
         // 2-face kind becomes a ChamferSpan.
-        // A selected edge shared by THREE OR MORE faces is a separate family
-        // that this kernel does not build yet, and `buildEdgeFaces`'s `int[2]`
-        // slots cannot even witness the third face — so without this check we
-        // would silently treat it as an ordinary two-face edge and emit
-        // plausible-looking WRONG geometry. Refuse before any mutation instead.
-        //
-        // The reference DOES handle it, and the law is captured (task 0438,
-        // `edge_bevel_0438_{A3face,B4face}_*`): every incident face is inset in
-        // place by `width` along its own in-plane perpendicular — the same
-        // per-face formula used for two-face edges — and exactly ONE new N-gon
-        // fan cap is inserted at EACH END of the edge, joining that end's N rail
-        // points (triangle at N=3, quad at N=4). No face is split, N is only a
-        // fan size, and neither `sharp` nor Round Level affects the result.
-        // What is NOT captured is a 3-face edge embedded in a larger mesh, where
-        // the endpoints also carry faces not incident to the edge; building that
-        // from the fin-bundle captures would be extrapolation, so the whole
-        // family stays refused until it is measured.
+        // A selected edge shared by THREE OR MORE faces is a separate family:
+        // `buildEdgeFaces`'s `int[2]` slots cannot even witness the third face,
+        // so the ordinary two-face path below would silently emit WRONG
+        // geometry. The reference's real law IS captured for ONE measured
+        // topology — an ISOLATED fin bundle (a "book"/propeller: one spine edge
+        // shared by N≥3 fins whose two endpoints touch NOTHING but those fins),
+        // task 0438, `edge_bevel_0438_{A3face,B4face}_*`: every incident fin is
+        // inset in place by `width` along its own in-plane perpendicular (the
+        // same per-face formula two-face edges use) and exactly ONE new N-gon
+        // fan cap is inserted at EACH END of the spine, fanning that end's N rail
+        // points in incident-face order (triangle at N=3, quad at N=4). No fin is
+        // split, N is only a fan size, and neither `sharp` (not a kernel param)
+        // nor Round Level affects the result — both measured inert. A 3-face
+        // edge embedded in a LARGER mesh (endpoints carrying faces not incident
+        // to the spine) is NOT measured, so it stays refused (no extrapolation).
         {
             auto faceUse = edgeFaceUseCounts();
+            bool anyGE3 = false;
             foreach (i; 0 .. edges.length)
-                if (mask[i] && i < faceUse.length && faceUse[i] >= 3) return 0;
+                if (mask[i] && i < faceUse.length && faceUse[i] >= 3) { anyGE3 = true; break; }
+            if (anyGE3) {
+                // The measured law covers ONLY a lone spine edge selected on its
+                // own. Any richer selection that also includes a ≥3-face edge is
+                // unmeasured → refuse before any mutation.
+                size_t nSel = 0; uint theEdge = 0;
+                foreach (i; 0 .. edges.length) if (mask[i]) { ++nSel; theEdge = cast(uint)i; }
+                if (nSel == 1)
+                    return bevelIsolatedFinBundleSpine(theEdge, width);
+                return 0;
+            }
         }
 
         bool[] qualifies = new bool[](edges.length);
@@ -11100,6 +11109,123 @@ struct Mesh {
         buildLoops();
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
         return processed;
+    }
+
+    /// Bevel ONE non-manifold "spine" edge shared by N≥3 incident faces, for the
+    /// single measured topology: an ISOLATED fin bundle (task 0438). Both spine
+    /// endpoints must touch NOTHING but the N incident fins — a spine embedded in
+    /// a larger mesh (an endpoint carrying any other face) is refused. Reference
+    /// law, captured bit-exact for N=3 and N=4 (`edge_bevel_0438_{A3face,B4face}_*`):
+    ///   * each fin is inset in place — its two spine corners (a, b) are each
+    ///     replaced by a rail point `p + width·û_perp`, where û_perp is the
+    ///     in-plane direction at that corner perpendicular to the spine, toward
+    ///     the fin's interior (the identical per-face formula ordinary two-face
+    ///     edges use); the fin keeps its arity and its winding.
+    ///   * exactly one new N-gon cap is added at EACH spine end, fanning that
+    ///     end's N rail points in incident-face order. BOTH caps use the same
+    ///     order, so their winding is emergent-consistent with the reference's.
+    /// `sharp` is not a parameter here and Round Level does not round this cap —
+    /// both measured inert, so this takes neither. Returns 1 on success, or 0
+    /// (leaving the mesh byte-identical) when the isolated-bundle precondition
+    /// fails — honoring `bevelEdgesByMask`'s "return 0 ⇒ no-op" contract, so all
+    /// precondition checks run BEFORE the first mutation.
+    size_t bevelIsolatedFinBundleSpine(uint spineEdge, float width) {
+        if (spineEdge >= edges.length) return 0;
+        immutable uint a = edges[spineEdge][0];
+        immutable uint b = edges[spineEdge][1];
+        if (a == b) return 0;
+
+        // Incident fins in FACE-INDEX order (reproduces the reference's incident-
+        // polygon fan order; the winding check is rotation-invariant so the
+        // starting offset is immaterial). Scanning faces directly is non-
+        // manifold-safe, unlike a fan walk around a non-manifold vertex.
+        uint[] fins;
+        foreach (fi; 0 .. cast(uint)faces.length) {
+            auto f = faces[fi];
+            immutable L = f.length;
+            foreach (k; 0 .. L) {
+                immutable uint u = f[k], w = f[(k + 1) % L];
+                if ((u == a && w == b) || (u == b && w == a)) { fins ~= fi; break; }
+            }
+        }
+        immutable size_t N = fins.length;
+        if (N < 3) return 0;
+
+        // Isolated-bundle precondition: neither endpoint may touch any face that
+        // is NOT one of the N fins. Every fin already contains both a and b, so
+        // "incident-face count == N" at each endpoint is exactly that condition.
+        size_t facesWith(uint v) {
+            size_t c = 0;
+            foreach (f; faces) foreach (vv; f) if (vv == v) { ++c; break; }
+            return c;
+        }
+        if (facesWith(a) != N || facesWith(b) != N) return 0;
+
+        // --- Phase A: compute everything, mutate nothing (no-op contract). ---
+        Vec3 railPos(uint p, uint q, uint nbr, out bool ok) {
+            immutable Vec3 P = vertices[p];
+            Vec3 uu = vertices[q] - P;
+            immutable float ul = uu.length;
+            if (ul > 1e-12f) uu = uu / ul;
+            immutable Vec3 e = vertices[nbr] - P;
+            immutable Vec3 perp = e - uu * dot(e, uu);
+            immutable float pl = perp.length;
+            if (pl < 1e-9f) { ok = false; return P; }
+            ok = true;
+            return P + perp / pl * width;
+        }
+        Vec3[] railAPos; railAPos.reserve(N);
+        Vec3[] railBPos; railBPos.reserve(N);
+        auto finPa = new int[](N);
+        auto finPb = new int[](N);
+        foreach (idx, fi; fins) {
+            auto f = faces[fi];
+            immutable L = f.length;
+            int pa = -1, pb = -1;
+            foreach (k; 0 .. L) { if (f[k] == a) pa = cast(int)k; if (f[k] == b) pb = cast(int)k; }
+            if (pa < 0 || pb < 0) return 0;
+            immutable uint aOther = (f[(pa + 1) % L] == b) ? f[(pa + L - 1) % L] : f[(pa + 1) % L];
+            immutable uint bOther = (f[(pb + 1) % L] == a) ? f[(pb + L - 1) % L] : f[(pb + 1) % L];
+            bool okA, okB;
+            immutable Vec3 ra = railPos(a, b, aOther, okA);
+            immutable Vec3 rb = railPos(b, a, bOther, okB);
+            if (!okA || !okB) return 0;
+            railAPos ~= ra; railBPos ~= rb;
+            finPa[idx] = pa; finPb[idx] = pb;
+        }
+
+        // --- Phase B: mutate. Add rails, rewrite each fin in place, add caps. ---
+        uint[] railA; railA.reserve(N);
+        uint[] railB; railB.reserve(N);
+        foreach (idx, fi; fins) {
+            immutable uint ia = addVertex(railAPos[idx]);
+            immutable uint ib = addVertex(railBPos[idx]);
+            railA ~= ia; railB ~= ib;
+            uint[] nf = faces[fi].dup;
+            nf[finPa[idx]] = ia;
+            nf[finPb[idx]] = ib;
+            faces[fi] = nf;
+        }
+        // One N-gon fan cap per spine end, both in incident-face order.
+        immutable uint capA = cast(uint)faces.length; addFace(railA);
+        immutable uint capB = cast(uint)faces.length; addFace(railB);
+
+        // The original spine verts a, b are now unreferenced; the tail
+        // compaction drops them (net: −2 spine verts, +2N rails; +2 cap faces).
+        syncSelection();
+        clearFaceSelection();
+        foreach (fi; fins) selectFace(cast(int)fi);
+        selectFace(cast(int)capA);
+        selectFace(cast(int)capB);
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return 1;
     }
 
     /// `GPatch_CenterNormal` (task 0453, finding J, Stage 1 of newC_i's
@@ -21877,21 +22003,22 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 
     assertBevelManifoldCleanOpen(m, "K4 junction (asymmetric) L0", 1);
 }
 
-unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
-           // refused before any mutation, not silently mis-built.
+unittest { // bevelEdgesByMask: an ISOLATED fin bundle — a spine edge shared by
+           // N≥3 fins whose endpoints touch nothing else — is beveled by the
+           // measured reference law (task 0438), while a 3-face edge EMBEDDED in
+           // a larger mesh stays refused, byte-identical (unmeasured — no
+           // extrapolation).
            //
-           // `buildEdgeFaces` returns `int[2]` and physically cannot witness a
-           // third incident face, so such an edge used to be processed as an
-           // ordinary two-face one — we did not refuse, we quietly produced
-           // wrong geometry, which is worse. The reference's real law for this
-           // family IS captured (task 0438: every incident face inset in place
-           // by the usual per-face formula, plus one N-gon fan cap per edge
-           // end), but only on isolated fin bundles; a 3-face edge embedded in
-           // a larger mesh is not measured, so the family stays refused rather
-           // than extrapolated.
-    // "Propeller": one spine edge shared by three quad fins.
+           // Measured law (`edge_bevel_0438_{A3face,B4face}_*`): each fin is
+           // inset in place (its spine corner p → p + width·û_perp, the ordinary
+           // two-face per-face formula) and exactly one new N-gon fan cap is
+           // added at each spine end. `sharp` is inert (not even a kernel param)
+           // and Round Level does not round this cap — both verified inert here
+           // by asserting L0 and L1 produce the identical result.
+    import std.math : cos, sin, PI, abs;
+    // "Propeller": one spine edge (0,0,+1)-(0,0,-1) shared by `fins` quad fins
+    // fanning around z at even azimuths, radius 1 — the exact capture geometry.
     Mesh propeller(int fins) {
-        import std.math : cos, sin, PI;
         Mesh m;
         m.vertices = [Vec3(0, 0, 1), Vec3(0, 0, -1)];   // spine top / bottom
         foreach (i; 0 .. fins) {
@@ -21905,25 +22032,92 @@ unittest { // bevelEdgesByMask: an edge shared by THREE OR MORE faces must be
         m.syncSelection();
         return m;
     }
-    foreach (fins; [3, 4]) {
-        auto m = propeller(fins);
-        // Premise: the spine really is shared by `fins` faces.
-        auto use = m.edgeFaceUseCounts();
-        int spine = -1;
+    int findSpine(ref Mesh m) {
         foreach (i; 0 .. m.edges.length) {
             uint a = m.edges[i][0], b = m.edges[i][1];
-            if ((a == 0 && b == 1) || (a == 1 && b == 0)) { spine = cast(int)i; break; }
+            if ((a == 0 && b == 1) || (a == 1 && b == 0)) return cast(int)i;
         }
-        assert(spine >= 0, "spine edge missing");
-        assert(use[spine] == fins, "spine must carry every fin");
+        return -1;
+    }
+    bool hasVertNear(ref Mesh m, Vec3 p) {
+        foreach (v; m.vertices) if ((v - p).length < 1e-4f) return true;
+        return false;
+    }
+    enum float W = 0.15f;
 
+    foreach (fins; [3, 4]) {
+        // L0 and L1 must be byte-identical (Round Level inert on this cap).
+        Mesh[2] outs;
+        foreach (li, level; [0, 1]) {
+            auto m = propeller(fins);
+            auto use = m.edgeFaceUseCounts();
+            immutable int spine = findSpine(m);
+            assert(spine >= 0, "spine edge missing");
+            assert(use[spine] == fins, "spine must carry every fin");
+
+            bool[] mask; mask.length = m.edges.length; mask[] = false;
+            mask[spine] = true;
+            immutable size_t n = m.bevelEdgesByMask(mask, W, level);
+            assert(n > 0, "an isolated fin bundle must bevel, not refuse");
+
+            // Topology: −2 spine verts + 2N rails; fins unchanged + 2 caps.
+            assert(m.vertices.length == cast(size_t)(2 + 2 * fins) - 2 + 2 * fins,
+                "isolated fin bundle vertex count");
+            assert(m.faces.length == cast(size_t)fins + 2,
+                "fins stay in place (+1 cap per end)");
+            // The two spine verts are gone.
+            assert(!hasVertNear(m, Vec3(0, 0, 1)) && !hasVertNear(m, Vec3(0, 0, -1)),
+                "the spine endpoints must be consumed");
+            // Every fin's two rail points exist: p + W·(cosθ,sinθ,0) at each end.
+            foreach (i; 0 .. fins) {
+                immutable float a = 2.0f * PI * i / fins;
+                immutable Vec3 dir = Vec3(cos(a), sin(a), 0);
+                assert(hasVertNear(m, Vec3(0, 0,  1) + dir * W), "top rail missing");
+                assert(hasVertNear(m, Vec3(0, 0, -1) + dir * W), "bottom rail missing");
+            }
+            // Exactly one N-gon cap per end: a face with `fins` corners all at
+            // z=+1, and another all at z=−1 (the fins are quads spanning both).
+            int topCap = 0, botCap = 0;
+            foreach (f; m.faces) {
+                if (f.length != cast(size_t)fins) continue;
+                bool allTop = true, allBot = true;
+                foreach (vi; f) {
+                    if (abs(m.vertices[vi].z - 1.0f) > 1e-4f) allTop = false;
+                    if (abs(m.vertices[vi].z + 1.0f) > 1e-4f) allBot = false;
+                }
+                if (allTop) ++topCap;
+                if (allBot) ++botCap;
+            }
+            assert(topCap == 1 && botCap == 1,
+                "exactly one N-gon fan cap per spine end");
+            outs[li] = m;
+        }
+        // Round Level inert: L0 and L1 vertex sets + face store match exactly.
+        assert(outs[0].vertices == outs[1].vertices && outs[0].faces._store == outs[1].faces._store,
+            "Round Level must not change the N-gon end cap (measured inert)");
+    }
+
+    // EMBEDDED 3-face edge (endpoint carries an extra, non-spine face): NOT the
+    // measured topology — must still refuse, byte-identical, no mutation.
+    {
+        auto m = propeller(3);
+        // Add a triangle touching the top spine vertex (0) but NOT the spine
+        // edge — so vertex 0 now has 4 incident faces while the spine still has
+        // 3. This is the "embedded in a larger mesh" case task 0438 leaves
+        // refused. (verts 2 and 4 are two of the outer-top fin corners.)
+        m.addFace([2u, 0u, 4u]);
+        m.buildLoops();
+        m.syncSelection();
+        immutable int spine = findSpine(m);
+        assert(spine >= 0 && m.edgeFaceUseCounts()[spine] == 3,
+            "spine still shared by exactly the 3 fins");
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         mask[spine] = true;
         auto vertsBefore = m.vertices.dup;
         auto facesBefore = m.faces._store.dup;
         foreach (level; [0, 1]) {
-            assert(m.bevelEdgesByMask(mask, 0.15f, level) == 0,
-                "an edge on 3+ faces must be refused, not mis-built");
+            assert(m.bevelEdgesByMask(mask, W, level) == 0,
+                "an embedded (unmeasured) 3-face edge must be refused");
             assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
                 "the refusal must leave the mesh byte-identical");
         }
