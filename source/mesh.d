@@ -9907,6 +9907,80 @@ struct Mesh {
             //     (e_0 and e_d are the two rim edges).
             // Anything else is a malformed / non-manifold fan and is skipped.
             immutable bool openFan = (nE == d + 1);
+
+            // ---- Single-incident-face rim corner (open-mesh boundary edge) ----
+            // A vertex with exactly ONE incident face (d == 1) is a pure open-
+            // mesh boundary corner. The generic fan pass below refuses it
+            // (d < 2 guard), yet the reference DOES bevel a boundary edge
+            // terminating there: a lone selected edge at a 1-face vertex is
+            // necessarily a RIM edge (an edge of a 1-face vertex can belong to
+            // no other face), and no bridge quad is created (0 new faces). The
+            // reference splits the beveled edge's two endpoints ASYMMETRICALLY:
+            // within the bordering face's OWN winding the edge runs P0 -> P1;
+            // the SECOND endpoint P1 gains two new corners — a slide along the
+            // beveled edge toward P0, then a slide along its other boundary
+            // edge — while the FIRST endpoint P0 gains only its other-boundary-
+            // edge slide (net +1 vertex per rim-edge bevel, vs. +2 for a closed
+            // isolated edge). Measured bit-exact on two independent open
+            // layouts (a single open quad and a 2x1 open grid) and on the
+            // cross-component clamp cases: only the "other-edge" slide takes the
+            // per-direction overshoot clamp; the beveled-edge slide is never
+            // clamped. Closed and d>=2 (boundary-with-2-faces) fans are
+            // untouched — they still flow through the generic pass below.
+            if (openFan && d == 1 && vertexFanOrdered(V)) {
+                immutable uint fRim = vFaces[0];
+                auto rimRing = faces[fRim];
+                immutable size_t rimN = rimRing.length;
+                size_t jRim = size_t.max;
+                foreach (t; 0 .. rimN) if (rimRing[t] == V) { jRim = t; break; }
+                if (jRim == size_t.max) continue; // V absent from its own face (malformed)
+                immutable uint predV = rimRing[(jRim + rimN - 1) % rimN];
+                immutable uint succV = rimRing[(jRim + 1) % rimN];
+                // Resolve each bordering edge's selection through edgeIndexMap
+                // (order-independent key) rather than the fan-walk, so a
+                // malformed fan that yields a foreign edge can never reach
+                // edgeOtherVertex here.
+                bool selectedEdge(uint a, uint b) {
+                    auto p = edgeKey(a, b) in edgeIndexMap;
+                    return p !is null && *p < qualifies.length && qualifies[*p];
+                }
+                immutable bool predSel = selectedEdge(V, predV);
+                immutable bool succSel = selectedEdge(V, succV);
+                // Exactly one bordering edge selected (K == 1) is the measured
+                // shape. Anything else (both edges beveled, or a degenerate
+                // ring) is unmeasured — fall through to the generic guard,
+                // which declines it. No extrapolation.
+                if (predSel != succSel) {
+                    immutable Vec3 vp = vertices[V];
+                    if (succSel) {
+                        // V = P0 (first, edge V->succ is the beveled one): a
+                        // single slide along the UNSELECTED predecessor edge.
+                        immutable Vec3 dir = safeNormalize(vertices[predV] - vp);
+                        immutable float w = clampedWidth(V, predV);
+                        immutable uint nv = addVertex(vp + dir * w);
+                        cornerAtVF[vfKey(V, fRim)] = CornerInfo(
+                            nv, CornerKind.Slide, w < width, 1u, false, dir);
+                        faceSubs.require(fRim) ~= VertSub(V, [nv]);
+                    } else {
+                        // V = P1 (second, edge pred->V is the beveled one): two
+                        // corners in the face's own traversal order — the
+                        // beveled-edge slide toward the selected predecessor
+                        // (NEVER clamped, measured), then the other-edge slide
+                        // toward the unselected successor (clamped like any
+                        // slide).
+                        immutable Vec3 bdir = safeNormalize(vertices[predV] - vp);
+                        immutable uint nvBev = addVertex(vp + bdir * width);
+                        immutable Vec3 odir = safeNormalize(vertices[succV] - vp);
+                        immutable float ow = clampedWidth(V, succV);
+                        immutable uint nvOth = addVertex(vp + odir * ow);
+                        cornerAtVF[vfKey(V, fRim)] = CornerInfo(
+                            nvOth, CornerKind.Slide, ow < width, 1u, false, odir);
+                        faceSubs.require(fRim) ~= VertSub(V, [nvBev, nvOth]);
+                    }
+                    continue;
+                }
+            }
+
             if (d < 2 || (nE != d && !openFan)) continue;
             // Task 0447: the fan of an inconsistently-wound vertex is now
             // enumerated COMPLETELY (by the CSR fallback) with only incident
@@ -19675,16 +19749,22 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
                 "hinge page-tip vertices must stay fan-ordered");
     }
 
-    foreach (pair; [[0u, 1u], [0u, 2u], [2u, 3u]])
+    bool[] edgeMaskFor(ref Mesh m, uint pa, uint pb) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (i; 0 .. m.edges.length) {
+            immutable uint a = m.edges[i][0], b = m.edges[i][1];
+            if ((a == pa && b == pb) || (a == pb && b == pa)) { mask[i] = true; break; }
+        }
+        return mask;
+    }
+    // Pairs that TOUCH the inconsistently-wound spine (vertex 0/1, flagged
+    // not-fan-ordered above): the bevel must DECLINE, not assert, and leave
+    // the mesh byte-identical. [0,1] is the spine itself; [0,2] is a rim edge
+    // with one endpoint (v0) on the malformed spine.
+    foreach (pair; [[0u, 1u], [0u, 2u]])
         foreach (level; 0 .. 2) {
             auto m = hinge();
-            bool[] mask; mask.length = m.edges.length; mask[] = false;
-            foreach (i; 0 .. m.edges.length) {
-                immutable uint a = m.edges[i][0], b = m.edges[i][1];
-                if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) {
-                    mask[i] = true; break;
-                }
-            }
+            auto mask = edgeMaskFor(m, pair[0], pair[1]);
             auto vertsBefore = m.vertices.dup;
             auto facesBefore = m.faces._store.dup;
             // Completing at all is the regression check — this used to assert.
@@ -19693,6 +19773,21 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
             assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
                 "the decline must leave the mesh byte-identical");
         }
+
+    // Edge [2,3] is a CLEAN boundary edge of one page (face [0,2,3,1]) whose
+    // two endpoints (v2, v3) are page-tip corners with a single incident face
+    // each — fan-ordered, NOT on the malformed spine. It is exactly the open-
+    // mesh rim end-cap shape, so the single-incident-face rim-corner path must
+    // BEVEL it (asymmetric 1-vs-2 split → the touched quad becomes a pentagon,
+    // 6v/2f → 7v/2f), leaving the untouched page unchanged.
+    foreach (level; 0 .. 2) {
+        auto m = hinge();
+        auto mask = edgeMaskFor(m, 2u, 3u);
+        assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 1,
+            "a clean rim edge off the malformed spine must bevel, not decline");
+        assert(m.vertices.length == 7 && m.faces.length == 2,
+            "hinge rim-edge bevel golden must be 7v/2f");
+    }
 }
 
 unittest { // bevelEdgesByMask on a CLOSED inverted cube: task 0447. Closedness
