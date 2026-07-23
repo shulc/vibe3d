@@ -9537,6 +9537,12 @@ struct Mesh {
             Vec3 bezP1, bezP2;   // ring internal-net handles (finding F)
             Vec3 jvA, jvB;       // rail neighbor pivots, a→b (finding I)
             bool hubRail;
+            // `bezP1`/`bezP2` above are populated for EVERY full-ring hub side,
+            // K3 (`junctionRing`) as well as N≥4 (`junctionRingN`) — both consume
+            // them as the TRUE boundary curve. `hubRail` stays N≥4-only (it gates
+            // the finding-(I) emitted rail law + the odd-N ring corrections, which
+            // K3 does NOT take), so a distinct flag marks the handles as valid.
+            bool hasBez;         // bezP1/bezP2 computed (full hub, K≥3)
         }
         RailSpec[ulong] railSpecs;
         uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
@@ -9704,34 +9710,44 @@ struct Mesh {
                     sn = sn + safeNormalize(faceNormal(cast(uint)fi));
                 hubC = center - sn * width;
             }
-            // Task 0454/0456 — genuine closed N≥4 full-ring hub rail ONLY. R6:
-            // the gate is `isFullHub && selectedDegree≥4` at BOTH corners, NOT
-            // bare `selectedDegree≥4`, so a partial K=4 at a valence-5 vertex
-            // (free-end path, isFullHub false) is EXCLUDED and keeps the slerp
-            // rail — neither finding-(F) nor finding-(I) has ground truth on a
-            // partial fan. Both corners of a rail are at the same source vertex,
-            // so these flags are identical across left/right; checking both is
-            // belt-and-suspenders. `useHub`/slerp is NOT narrowed — a hub rail
-            // carries both, and `railInterior` prefers the finding-(I) rail law
-            // when `hubRail` is set.
-            //
-            // Two constructions, both fed by raw geometry (NWAY_HUB_RAIL_LAW
-            // RESOLVED — task 0455 closed the emitted rail vertex; the dormant
-            // block's finding-(F)-only rail was the wrong law):
+            // Full-ring hub rail. Two constructions, both fed by raw geometry:
             //   • RING net (finding F): boundary-Bézier handles pivoted at THIS
             //     rail's OWN selected-edge slide point `ownJv` (= slide of the
-            //     shared edge (V,farEnd) this rail runs along). Correct for the
-            //     internal Gregory net → HUB + L≥2 ring surface (junctionRingN).
+            //     shared edge (V,farEnd) this rail runs along). This is the TRUE
+            //     boundary curve of the ring side — the internal Gregory net's own
+            //     P0/P1/P2. Computed for EVERY full hub, K3 (`junctionRing`) as
+            //     well as N≥4 (`junctionRingN`): both builders take these handles
+            //     as their boundary-curve input. (The K3 path formerly re-fit each
+            //     side's boundary Bézier from a circumcircle through
+            //     pole/rail-mid/pole — correct only at the 90° cube corner, where
+            //     the emitted rail-mid happens to coincide with the true boundary
+            //     midpoint; wrong for any non-cube K3 hub, task 0435 follow-up.)
             //   • Emitted RAIL (finding I): `roundPos`, pivoted on the TWO
             //     NEIGHBORING sides' slide points `jvA`/`jvB` (the other edge of
             //     each flanking face — passed in as `jvLeft`/`jvRight`, never
             //     this rail's own edge). This is the vertex that lands in the
-            //     mesh; sampled in `railInterior`.
+            //     mesh; sampled in `railInterior`. It is what the reference emits
+            //     at EVERY full hub, K3 included — the emitted rail-mid is NOT the
+            //     corner-rounding-sphere slerp (that only coincides with `roundPos`
+            //     at the 90° cube corner; for a non-cube K3 the slerp diverges by
+            //     ~0.03 while `roundPos` matches to the float32-mesh floor).
+            //
+            // Both constructions (`bez1`/`bez2`+`hasBez` and `jvA`/`jvB`+`hubRail`)
+            // are computed for EVERY full ring hub, `isFullHub && selectedDegree≥3`
+            // at BOTH corners. A partial K≥4 at a higher-valence vertex (free-end
+            // path, isFullHub false) is EXCLUDED and keeps the plain slerp rail.
+            // Both corners of a rail are at the same source vertex, so these flags
+            // are identical across left/right; checking both is belt-and-
+            // suspenders. NOTE: `hubRail` only routes `railInterior` to `roundPos`;
+            // it does NOT change the RING evaluator — K3 stays on its own N=3
+            // fast-path (`junctionRing`), never the N≥4 sibling's odd-N center-
+            // normal / corner-move ring corrections (`junctionRingN`).
             Vec3 bez1 = Vec3(0, 0, 0), bez2 = Vec3(0, 0, 0);
             Vec3 jA = Vec3(0, 0, 0), jB = Vec3(0, 0, 0);
             bool hubRail = false;
+            bool hasBez = false;
             if (left.isFullHub && right.isFullHub &&
-                left.selectedDegree >= 4 && right.selectedDegree >= 4) {
+                left.selectedDegree >= 3 && right.selectedDegree >= 3) {
                 immutable uint aV = forward ? left.vert : right.vert;
                 immutable uint bV = forward ? right.vert : left.vert;
                 immutable Vec3 P0 = vertices[aV], P3 = vertices[bV];
@@ -9743,23 +9759,23 @@ struct Mesh {
                     // split edge whose two flanking faces are COPLANAR (180°
                     // dihedral, no rounding). boundaryBezier refuses the zero-
                     // sweep arc; the boundary curve is then just the straight
-                    // chord, so use its LINEAR Bézier handles. junctionRingN then
-                    // treats the side as flat (R_i = midpoint) and the rail takes
-                    // roundPos's own linear fallback (also midpoint) — no seam.
+                    // chord, so use its LINEAR Bézier handles. The ring builders
+                    // then treat the side as flat (R_i = midpoint) with no seam.
                     // Real at the mixed-K4 junction (2 of its 4 rays are flat
                     // internal cube-face split edges).
                     bez1 = P0 + (P3 - P0) * (1.0f / 3.0f);
                     bez2 = P0 + (P3 - P0) * (2.0f / 3.0f);
                 }
+                hasBez = true;
                 // Orient the neighbor pivots to the canonical a→b endpoints so
                 // `jA` pairs with corner `a` (=vertices[aV]) in `roundPos`.
                 jA = forward ? jvLeft : jvRight;
                 jB = forward ? jvRight : jvLeft;
-                // hubRail gates the ring build (compute-then-commit). Distinct
-                // corners and distinct neighbor pivots are all that is required —
-                // a flat side (linear handles) or an ANTIPODAL pivot pair (jA≠jB
-                // but collinear through V) are both handled above, NOT refused;
-                // only a truly coincident pair drops the hub to the flat N-gon.
+                // hubRail gates the finding-(I) rail law (compute-then-commit).
+                // Distinct corners and distinct neighbor pivots are all that is
+                // required — a flat side (linear handles) or an ANTIPODAL pivot
+                // pair (jA≠jB but collinear through V) are both handled above, NOT
+                // refused; only a truly coincident pair drops to the flat N-gon.
                 hubRail = (P0 - P3).length > 1e-9f && (jA - jB).length > 1e-9f;
             }
             RailSpec spec = RailSpec(
@@ -9776,7 +9792,7 @@ struct Mesh {
                 0, 0, false,
                 hubC, useHub,
                 isOpenFanVertex(centerVert),
-                bez1, bez2, jA, jB, hubRail);
+                bez1, bez2, jA, jB, hubRail, hasBez);
             if (auto prior = key in railSpecs) {
                 assert((prior.center - center).length < 1e-5f &&
                     prior.profile == spec.profile &&
@@ -10455,41 +10471,38 @@ struct Mesh {
         //   interiorPts[i*(L-1)^2+(b-1)*(L-1)+(a-1)] = rational eval at (a/L,b/L).
         // Validated bit-exact vs the reference from raw geometry
         // (k3_ring_raw_geometry_ref.py). N=3 only.
-        static bool junctionRing(const(Vec3)[] poles, const(Vec3)[] bis, int L,
+        static bool junctionRing(const(Vec3)[] poles, const(Vec3)[] p1s,
+                                 const(Vec3)[] p2s, int L,
                                  out Vec3 hub, out Vec3[] spokePts, out Vec3[] interiorPts) {
-            import std.math : tan, acos;
-            if (poles.length != 3 || bis.length != 3 || L < 1) return false;
-            Vec3[3] P1, P2, Q, newC;
-            foreach (i; 0 .. 3) {   // boundary Bézier P1/P2 (circumcircle pole,R,pole)
-                immutable Vec3 A = poles[i], M = bis[i], B = poles[(i + 1) % 3];
-                immutable Vec3 ab = M - A, ac = B - A;
-                immutable Vec3 abXac = cross(ab, ac);
-                immutable float d = 2.0f * dot(abXac, abXac);
-                if (d < 1e-18f) return false;
-                immutable Vec3 O = A + (cross(abXac, ab) * dot(ac, ac)
-                                      + cross(ac, abXac) * dot(ab, ab)) / d;
-                immutable Vec3 sA = A - O, sB = B - O;
-                immutable float r = sA.length;
-                if (r < 1e-9f) return false;
-                float cosO = dot(sA, sB) / (r * r);
-                if (cosO >  1.0f) cosO =  1.0f;
-                if (cosO < -1.0f) cosO = -1.0f;
-                immutable float Om = acos(cosO);
-                if (Om < 1e-6f) return false;
-                Vec3 tA = sB - sA * cosO;  tA = tA / tA.length;
-                Vec3 tB = sA - sB * cosO;  tB = tB / tB.length;
-                immutable float arm = (4.0f / 3.0f) * tan(Om / 4.0f) * r;
-                P1[i] = A + tA * arm;
-                P2[i] = B + tB * arm;
+            if (poles.length != 3 || p1s.length != 3 || p2s.length != 3 || L < 1)
+                return false;
+            // TRUE boundary curve per side (finding F): the caller supplies each
+            // side's boundary-Bézier control points P0/P1/P2 (P3_i == P0_{i+1}),
+            // built in `registerRail` from the shared-edge slide-point pivot — the
+            // SAME construction the general N≥4 builder (`junctionRingN`) consumes.
+            // R_i is the boundary Bézier at t=0.5 = (P0+3P1+3P2+P3)/8. This
+            // REPLACES the former circumcircle re-fit through pole_i/rail-mid/
+            // pole_{i+1}, which matched the reference only at the 90° cube corner
+            // (where the emitted rail-mid coincides with the true boundary mid) and
+            // bulged the hub for any non-cube K3 hub — task 0435 follow-up. The
+            // emitted mesh rail stays K3's own slerp arc (threaded by the caller,
+            // sampled via `hasArcCenter`); R_i here feeds ONLY the hub + interior/
+            // spoke solve below. Twist cells + evaluator are UNCHANGED (the N=3
+            // fast path — no odd-N center-normal / corner-move corrections).
+            Vec3[3] P1, P2, R, Q, newC;
+            foreach (i; 0 .. 3) {
+                P1[i] = p1s[i];
+                P2[i] = p2s[i];
+                R[i]  = (poles[i] + p1s[i] * 3.0f + p2s[i] * 3.0f + poles[(i + 1) % 3]) * 0.125f;
             }
             Vec3 hsum = Vec3(0, 0, 0);
             foreach (i; 0 .. 3) {
-                Q[i] = bis[i] + ((P2[(i + 2) % 3] - poles[i])
-                               + (P1[(i + 1) % 3] - poles[(i + 1) % 3])) * 0.25f;
-                hsum = hsum + (Q[i] * 1.5f - bis[i] * 0.5f);
+                Q[i] = R[i] + ((P2[(i + 2) % 3] - poles[i])
+                             + (P1[(i + 1) % 3] - poles[(i + 1) % 3])) * 0.25f;
+                hsum = hsum + (Q[i] * 1.5f - R[i] * 0.5f);
             }
             hub = hsum / 3.0f;
-            foreach (i; 0 .. 3) newC[i] = (Q[i] * 1.5f - bis[i] * 0.5f) * (2.0f / 3.0f) + hub / 3.0f;
+            foreach (i; 0 .. 3) newC[i] = (Q[i] * 1.5f - R[i] * 0.5f) * (2.0f / 3.0f) + hub / 3.0f;
             // Per-side twist cells (closed-form) + the 12 fixed cells.
             Vec3[3] p10, p20, p01, p02, F16, F17, F5, F9, F6, F18, F10;
             foreach (i; 0 .. 3) {
@@ -10509,8 +10522,8 @@ struct Mesh {
                 F17[i] = p20[i] + (DA + DU) * 0.125f + DT * 0.25f;
                 F5[i]  = p01[i] + (DBp + DUp) * 0.25f;
                 F9[i]  = p02[i] + (DTp + DBp) * 0.125f + DUp * 0.25f;
-                F6[i]  = F17[i] + (Q[i]  - bis[i])  * (1.0f / 6.0f);
-                F18[i] = F9[i]  + (Q[pv] - bis[pv]) * (1.0f / 6.0f);
+                F6[i]  = F17[i] + (Q[i]  - R[i])  * (1.0f / 6.0f);
+                F18[i] = F9[i]  + (Q[pv] - R[pv]) * (1.0f / 6.0f);
                 F10[i] = (newC[i] + newC[pv] - newC[nx]) * 4.0f / 3.0f
                        + (Q[nx] - Q[i] - Q[pv]) / 3.0f;
             }
@@ -10532,10 +10545,10 @@ struct Mesh {
                 // pole→R_i; u=0 edge (a=0) is pole→R_prev; u=1 (a=3) is the
                 // R_i→HUB spoke; v=1 (b=3) is the R_prev→HUB spoke.
                 immutable Vec3[4][4] g = [
-                    [poles[i], p01[i],  p02[i],   bis[pv] ],
+                    [poles[i], p01[i],  p02[i],   R[pv]   ],
                     [p10[i],   p11,     p12,      Q[pv]   ],
                     [p20[i],   p21,     F10[i],   newC[pv]],
-                    [bis[i],   Q[i],    newC[i],  hub     ],
+                    [R[i],     Q[i],    newC[i],  hub     ],
                 ];
                 immutable float[4] Bu = bern(u), Bv = bern(v);
                 Vec3 acc = Vec3(0, 0, 0);
@@ -10835,7 +10848,7 @@ struct Mesh {
                 }
                 bool ok = (np == 3);
                 uint[][3] railI;
-                Vec3[3] poleP, RP;
+                Vec3[3] poleP, p1s, p2s;
                 if (ok) foreach (i; 0 .. 3) {
                     // A pairwise rail here is NOT guaranteed approved. The
                     // fixed point can un-round a rail for any of several
@@ -10859,15 +10872,28 @@ struct Mesh {
                     // "unreachable": this guard is a structural backstop
                     // with no freezable trigger, and removing it needs a
                     // proof of unreachability, not an absence of failures.
-                    auto railSpec = pairKey(poleI[i], poleI[(i + 1) % 3]) in railSpecs;
-                    if (railSpec is null || !railSpec.approved) { ok = false; break; }
-                    railI[i] = railInterior(poleI[i], poleI[(i + 1) % 3]);
+                    immutable int nx = (i + 1) % 3;
+                    auto railSpec = pairKey(poleI[i], poleI[nx]) in railSpecs;
+                    // `hasBez` gates the true-boundary-curve hub build: every full
+                    // K3 hub rail carries the boundary handles (registerRail's
+                    // isFullHub && selectedDegree≥3 gate; hubCapRing entries are
+                    // always full hubs, so this holds), and an unapproved rail (the
+                    // fixed point withheld consent) drops the ring to the flat cap.
+                    if (railSpec is null || !railSpec.approved || !railSpec.hasBez) {
+                        ok = false; break;
+                    }
+                    railI[i] = railInterior(poleI[i], poleI[nx]);
                     if (railI[i].length != 2 * L - 1) { ok = false; break; }
                     poleP[i] = vertices[poleI[i]];
-                    RP[i]    = vertices[railI[i][L - 1]];       // R_i = middle interior
+                    // TRUE boundary-Bézier handles for side i, oriented to the ring
+                    // order pole_i→pole_{i+1} (bezP1/bezP2 are stored canonical
+                    // a→b) — the same orientation dance the N≥4 caller does.
+                    immutable bool fwd = poleI[i] < poleI[nx];
+                    p1s[i] = fwd ? railSpec.bezP1 : railSpec.bezP2;
+                    p2s[i] = fwd ? railSpec.bezP2 : railSpec.bezP1;
                 }
                 Vec3 hubPos; Vec3[] spokeP, interiorP;
-                if (ok && junctionRing(poleP[], RP[], L, hubPos, spokeP, interiorP)) {
+                if (ok && junctionRing(poleP[], p1s[], p2s[], L, hubPos, spokeP, interiorP)) {
                     immutable uint hubIdx = addVertex(hubPos);
                     uint[][3] spokeIdx, interiorIdx;
                     foreach (i; 0 .. 3) {
