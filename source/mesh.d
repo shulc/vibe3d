@@ -817,7 +817,14 @@ struct Mesh {
     /// interactive Vertex Merge tool and its fixtures (task 0360) only
     /// exercise the CONFIRMED boundary law on isolated pairs, not the
     /// disputed whole-mesh transitive case.
-    size_t weldVerticesByMask(in bool[] mask, double epsSq) {
+    /// `average` (opt-in, default off): position each surviving vertex at
+    /// the CENTROID of its own weld cluster's original member positions
+    /// (per-cluster — a single call may collapse several independent
+    /// clusters). Default (false) keeps the merge-to-first behavior: the
+    /// survivor stays at the lowest-index member's position. Only `vert.merge`
+    /// opts in; collapse / vert.join / decimate / drag-weld rely on the
+    /// merge-to-first placement and pass the default.
+    size_t weldVerticesByMask(in bool[] mask, double epsSq, bool average = false) {
         if (vertices.length < 2) return 0;
         if (mask.length != vertices.length) return 0;
         int[] remap;
@@ -838,6 +845,29 @@ struct Mesh {
         foreach (i; 0 .. vertices.length)
             if (remap[i] != cast(int)i) ++welded;
         if (welded == 0) return 0;
+
+        // Opt-in: relocate each surviving vertex to its cluster's centroid.
+        // remap is at most one level deep (a member points straight at its
+        // lowest-index survivor), so keying sums by remap[i] buckets each
+        // cluster exactly. Read original positions before overwriting.
+        if (average) {
+            Vec3[]   clusterSum   = new Vec3[](vertices.length);
+            size_t[] clusterCount = new size_t[](vertices.length);
+            clusterSum[] = Vec3(0, 0, 0);   // Vec3.init is NaN — zero it first
+            foreach (i; 0 .. vertices.length) {
+                int s = remap[i];
+                clusterSum[s] = clusterSum[s] + vertices[i];
+                ++clusterCount[s];
+            }
+            foreach (i; 0 .. vertices.length) {
+                if (remap[i] != cast(int)i) continue;   // survivors only
+                if (clusterCount[i] < 2)     continue;   // singletons unchanged
+                double c = cast(double)clusterCount[i];
+                vertices[i] = Vec3(cast(float)(clusterSum[i].x / c),
+                                   cast(float)(clusterSum[i].y / c),
+                                   cast(float)(clusterSum[i].z / c));
+            }
+        }
 
         uint[][] newFaces;
         bool[]   newSubpatch;
@@ -26055,6 +26085,45 @@ unittest { // adjacent same-face weld: edge collapse → succeeds, quad collapse
     }
     assert(foundKeep, "adjacent-weld: survivor position (0,0,0) missing");
     assert(!foundDrop, "adjacent-weld: drop position (1,0,0) must be absent after weld");
+}
+
+unittest { // weldVerticesByMask average flag: survivor at cluster centroid
+    import std.math : abs;
+    import std.conv : to;
+    // Two nearby verts (0.4,-0.5,-0.5) & (0.5,-0.5,-0.5) plus two far corners
+    // form a quad; welding the pair (dist 0.2 → epsSq 0.04, gap² 0.01) collapses
+    // the quad to a triangle whose surviving corner is the merged vertex.
+    Mesh makeQuad() {
+        Mesh m;
+        m.addVertex(Vec3(0.4f, -0.5f, -0.5f));  // v0  (mask)
+        m.addVertex(Vec3(0.5f, -0.5f, -0.5f));  // v1  (mask)
+        m.addVertex(Vec3(0.5f,  0.5f, -0.5f));  // v2
+        m.addVertex(Vec3(0.4f,  0.5f, -0.5f));  // v3
+        m.addFace([0u, 1u, 2u, 3u]);
+        m.buildLoops();
+        return m;
+    }
+    bool[] mask = [true, true, false, false];
+    double epsSq = 0.2 * 0.2;
+
+    // average:true — survivor lands at the pair's centroid x = 0.45.
+    Mesh ma = makeQuad();
+    assert(ma.weldVerticesByMask(mask, epsSq, true) == 1,
+        "average-weld: expected 1 weld");
+    float sx = float.nan;
+    foreach (v; ma.vertices)
+        if (abs(v.y + 0.5f) < 1e-4f && abs(v.z + 0.5f) < 1e-4f) sx = v.x;
+    assert(abs(sx - 0.45f) < 1e-4f,
+        "average-weld: survivor x expected 0.45, got " ~ sx.to!string);
+
+    // Default (average omitted) keeps merge-to-first: survivor stays at 0.4.
+    Mesh md = makeQuad();
+    assert(md.weldVerticesByMask(mask, epsSq) == 1, "first-weld: expected 1 weld");
+    float dx = float.nan;
+    foreach (v; md.vertices)
+        if (abs(v.y + 0.5f) < 1e-4f && abs(v.z + 0.5f) < 1e-4f) dx = v.x;
+    assert(abs(dx - 0.4f) < 1e-4f,
+        "first-weld: survivor x expected 0.4 (lowest-index), got " ~ dx.to!string);
 }
 
 unittest { // buildEdgeFaces: all-faces, masked, and faceLimit prefix +

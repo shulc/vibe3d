@@ -59,7 +59,9 @@ class MeshVertMerge : Command, Operator {
         double epsSq = eps * eps;
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t welded = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq);
+        // average:true — merged vertex lands at the per-cluster centroid of
+        // its coincident members (reference parity), not the lowest-index pos.
+        size_t welded = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
         if (welded == 0) {
             snap = MeshSnapshot.init;
             return false;
