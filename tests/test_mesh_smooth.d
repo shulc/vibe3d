@@ -376,6 +376,61 @@ unittest { // sharpAngle = 115° > 90° → no edge passes
         ~ "smooth should move every vert toward centroid");
 }
 
+unittest { // sharpThreshold (RADIANS wire alias) = π/4 ≈ 0.785 (45°)
+           // < 90° → every cube edge is "sharp" → all 8 verts pinned →
+           // smooth no-op. Mirrors the sharpAngle:45 case but exercises
+           // the radians wire param the parity harness sends.
+    postJson("/api/reset", "");
+    auto before = dumpVerts();
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:0.7853981633974483");
+    auto after = dumpVerts();
+    assert(before.length == after.length);
+    foreach (i; 0 .. before.length)
+        foreach (c; 0 .. 3)
+            assert(approxEq(before[i][c], after[i][c]),
+                "sharpThreshold 45°(rad): every cube edge is 90°, all verts "
+                ~ "should be pinned (no-op); v[" ~ i.to!string ~ "][" ~ c.to!string ~ "] "
+                ~ "before=" ~ before[i][c].to!string
+                ~ " after="  ~ after[i][c].to!string);
+}
+
+unittest { // sharpThreshold (RADIANS wire alias) = 2.0 (≈114.59°)
+           // > 90° → no edge passes the threshold → no lock → cube
+           // smooths toward centroid. Radians analogue of the
+           // sharpAngle:115 case; this is the parity divergence fixed
+           // in task 0473 (harness sends `sharpThreshold` in radians).
+    postJson("/api/reset", "");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:2.0");
+    auto after = dumpVerts();
+    bool anyMoved = false;
+    foreach (v; after)
+        if (!approxEq(fabs(v[0]), 0.5) || !approxEq(fabs(v[1]), 0.5)
+                                       || !approxEq(fabs(v[2]), 0.5)) {
+            anyMoved = true; break;
+        }
+    assert(anyMoved,
+        "sharpThreshold 2.0 rad: no cube edge passes threshold, "
+        ~ "smooth should move every vert toward centroid");
+}
+
+unittest { // sharpThreshold OVERRIDES sharpAngle when both supplied:
+           // sharpAngle:45 alone would pin the cube, but a radians
+           // sharpThreshold:2.0 (≈114.59°) supplied alongside wins →
+           // no lock → cube smooths. Locks in the override precedence.
+    postJson("/api/reset", "");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45 sharpThreshold:2.0");
+    auto after = dumpVerts();
+    bool anyMoved = false;
+    foreach (v; after)
+        if (!approxEq(fabs(v[0]), 0.5) || !approxEq(fabs(v[1]), 0.5)
+                                       || !approxEq(fabs(v[2]), 0.5)) {
+            anyMoved = true; break;
+        }
+    assert(anyMoved,
+        "sharpThreshold (radians) must override sharpAngle (degrees) "
+        ~ "when both are supplied");
+}
+
 unittest { // lockSharp:false ⇔ default smooth: regression — no
            // difference between explicit lockSharp:false and the
            // default omitted parameter.

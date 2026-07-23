@@ -38,6 +38,16 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     // dihedral test below. Boundary edges aren't covered here — use
     // lockBound / lockCorner for those. Greyed out (paramEnabled) unless
     // lockSharp is on, matching the reference's disabled spinner.
+    private float            sharpThresholdRad_ = -1.0f; // `sharpThreshold`,
+    // RADIANS. Wire-native alias for the sharp-edge threshold used by the
+    // parity harness / scripting callers whose schema carries the angle in
+    // radians (the interactive UI exposes `sharpAngle` in DEGREES instead).
+    // Same normal-deviation convention as `sharpAngle`: an interior edge is
+    // sharp when the angle between adjacent face normals EXCEEDS the
+    // threshold. Sentinel < 0 ⇒ "not supplied", fall back to sharpAngleDeg_;
+    // a supplied value (≥ 0) OVERRIDES the degrees field. Kept out of the
+    // Tool Properties form (config/forms/smooth.yaml) so it stays a
+    // wire-only input and the visible panel is unchanged.
     // Optional falloff packet — set via `setFalloff` from either the
     // wrapping tool (XfrmSmoothTool reads the toolpipe's FalloffStage)
     // or the HTTP injector (tests pass a `falloff` JSON alongside the
@@ -76,6 +86,11 @@ class MeshSmooth : Command, Operator, IFalloffAware {
             Param.bool_ ("preserve",   "Preserve Volume",  &preserve_,      false),
             Param.bool_ ("lockSharp",  "Lock Sharp Edges", &lockSharp_,     false),
             Param.float_("sharpAngle", "Sharp Angle",      &sharpAngleDeg_, 60.0f).min(0.0f).max(180.0f),
+            // Radians alias — wire/scripting callers (e.g. the parity
+            // harness) may pass the sharp threshold in radians under this
+            // name; overrides `sharpAngle` when supplied (≥ 0). Not surfaced
+            // in the UI form.
+            Param.float_("sharpThreshold", "Sharp Threshold (rad)", &sharpThresholdRad_, -1.0f),
         ];
     }
 
@@ -93,6 +108,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     void setLockCorner(bool v)        { lockCorner_ = v; }
     void setLockSharp(bool v)         { lockSharp_ = v; }
     void setSharpAngle(float v)       { sharpAngleDeg_ = v; }
+    void setSharpThreshold(float rad) { sharpThresholdRad_ = rad; }
     void setPreserve(bool v)          { preserve_ = v; }
     void setFalloff(FalloffPacket fp) { falloff_ = fp; }
 
@@ -162,7 +178,17 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // used inline — extracting it into `Mesh` does not change the
         // numeric result (see mesh.d's computeEdgeSharpness unittest).
         if (lockSharp_) {
-            auto sharpness = mesh.computeEdgeSharpness(sharpAngleDeg_);
+            // Resolve the effective threshold in DEGREES. A wire-supplied
+            // radians `sharpThreshold` (≥ 0) overrides the degrees field;
+            // otherwise use `sharpAngle`. computeEdgeSharpness re-applies
+            // PI/180 internally, so converting radians→degrees here yields
+            // exactly cos(radians) — bit-identical to the reference's
+            // cos(sharpThreshold) sharp test.
+            import std.math : PI;
+            immutable float effSharpDeg = (sharpThresholdRad_ >= 0.0f)
+                ? sharpThresholdRad_ * cast(float)(180.0 / PI)
+                : sharpAngleDeg_;
+            auto sharpness = mesh.computeEdgeSharpness(effSharpDeg);
             foreach (ei, ref s; sharpness) {
                 if (!s.sharp) continue;
                 uint a = mesh.edges[ei][0];
