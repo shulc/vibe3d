@@ -232,6 +232,40 @@ bool noDegenerateFaces(JSONValue m) {
     return true;
 }
 
+// Count of coincident (same-position, within tol) DISTINCT vertex pairs.
+// Under full parity the reference modeler keeps clamped inset verts coincident
+// with — but distinct from — the corner they land on, so a saturating clamp
+// legitimately produces a known, non-zero number of these pairs.
+int coincidentPairCount(JSONValue m) {
+    auto n = m["vertices"].array.length;
+    int c = 0;
+    foreach (i; 0 .. n)
+        foreach (j; i + 1 .. n)
+            if (len3(sub3(vert(m, i), vert(m, j))) < 1e-4) ++c;
+    return c;
+}
+
+// True if no face repeats a vertex INDEX (a genuinely collapsed corner — a
+// zero-length edge / non-polygon). This is a strict SUBSET of noDegenerateFaces:
+// it deliberately does NOT flag a merely zero-AREA face whose distinct-index
+// corners happen to be coincident in POSITION. The reference modeler emits
+// exactly such zero-area "seam" quads at a width clamp (two coincident inset
+// pairs bounding one quad), so under full parity they are intended output, not
+// a degeneracy — only a repeated INDEX is.
+bool noRepeatedCornerFaces(JSONValue m) {
+    foreach (f; m["faces"].array) {
+        auto idx = f.array;
+        if (idx.length < 3) return false;
+        bool[long] seen;
+        foreach (c; idx) {
+            long ci = c.integer;
+            if (ci in seen) return false;
+            seen[ci] = true;
+        }
+    }
+    return true;
+}
+
 V3 avgNeighborNormal(JSONValue before, int a, int b) {
     V3 sum = V3(0, 0, 0);
     foreach (face; before["faces"].array) {
@@ -1165,16 +1199,21 @@ unittest {
 //     insets at the bottom-front edge (y = -0.5) — exactly on the back/bottom
 //     cube corners, NOT past them.
 //
-//     Task 0313: the clamped landing COINCIDES with an existing cube corner,
-//     so it now REUSES that corner's vertex id instead of minting a separate
-//     coincident duplicate (the pre-fix behaviour this test used to pin —
-//     "the reference does NOT weld them away" — was the bug). Reusing the
-//     corner also collapses the left/right side faces (each has exactly one
-//     of the extruded edge's two free-end corners as a lone, non-neighbour
-//     corner) from a quad down to a triangle, since both of that corner's
-//     dissolved-into insets land on the SAME reused far corner. Net topology:
-//     the 2 dissolved free-end verts are replaced by 2 new ridge verts (same
-//     count, 8v), and the 2 side quads become triangles (8f, down from 10f).
+//     Full parity (task edge-extrude-keep-distinct): the clamped landing
+//     COINCIDES with an existing cube corner in POSITION, but the reference
+//     modeler keeps it a DISTINCT vertex (coincident-but-separate id) rather
+//     than welding onto that corner. This matches the cached reference dump
+//     (cached reference case edge_extrude_cube_width_clamp: 12v/10f). The four
+//     clamped insets stay distinct verts, so the two flanking side faces
+//     remain quads and NO face is dropped. Net topology: 6 surviving original
+//     corners + 2 new ridge verts + 4 distinct clamped-inset verts = 12v; the
+//     two seam quads between each coincident inset pair are legitimately
+//     ZERO-AREA (distinct-index, coincident-position corners) — exactly as the
+//     reference emits them — for 10f. This REVERTS the task-0313 far-vertex
+//     weld, which was built on a mesh-validity self-oracle (no coincident /
+//     no zero-area) that collides with reference parity; the mesh stays
+//     manifold, hole-free, orphan-free with NO repeated-INDEX (collapsed)
+//     corner — only coincident positions + zero-area seam faces, both intended.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -1192,18 +1231,18 @@ unittest {
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.1,"width":50.0}}`);
     auto m = getModel();
 
-    // Welded topology: 2 dissolved free-end verts ↔ 2 new ridge verts (8v);
-    // the 2 non-neighbour side faces each collapse from a quad to a triangle
-    // (8f, down from the unclamped case's 10f).
-    assert(m["vertexCount"].integer == 8,
-        "clamp: expected 8 verts, got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 8,
-        "clamp: expected 8 faces, got " ~ m["faceCount"].integer.to!string);
+    // Keep-distinct parity topology: 6 surviving original corners + 2 new
+    // ridge verts + 4 distinct clamped-inset verts (coincident with, but
+    // separate from, the far corners) = 12v; no side face is dropped = 10f.
+    // Matches the cached reference dump (edge_extrude_cube_width_clamp).
+    assert(m["vertexCount"].integer == 12,
+        "clamp: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "clamp: expected 10 faces, got " ~ m["faceCount"].integer.to!string);
 
     // The four clamped insets land EXACTLY on the far cube corners — not
-    // beyond — REUSING those corners (no new vertex minted there). Top-face
-    // insets clamp at the back-top edge (z = -0.5); front-face insets clamp
-    // at the bottom-front edge (y = -0.5).
+    // beyond. Top-face insets clamp at the back-top edge (z = -0.5); front-face
+    // insets clamp at the bottom-front edge (y = -0.5).
     immutable V3[4] clamped = [
         V3( 0.5,  0.5, -0.5), V3(-0.5,  0.5, -0.5),   // top-face insets, z clamped
         V3( 0.5, -0.5,  0.5), V3(-0.5, -0.5,  0.5),   // front-face insets, y clamped
@@ -1213,7 +1252,7 @@ unittest {
             "clamp: clamped inset vert missing at far corner " ~ p.to!string);
 
     // The inset must NOT overshoot the far vertex. Pre-fix vibe3d ran the full
-    // width=1.5 and landed the top-face insets at z = -1.0 and the front-face
+    // width and landed the top-face insets at z = -1.0 and the front-face
     // insets at y = -1.0 (past the corners, self-intersecting). NONE may exist.
     immutable V3[4] overshoot = [
         V3( 0.5,  0.5, -1.0), V3(-0.5,  0.5, -1.0),
@@ -1223,19 +1262,29 @@ unittest {
         assert(vertAt(m, p) < 0,
             "clamp: inset OVERSHOT the far vertex (present at " ~ p.to!string ~ ")");
 
-    // Task 0313 regression: the clamped inset REUSES the far corner's own
-    // vertex id — exactly ONE vertex at each of those positions, never two
-    // (a coincident duplicate is the exact bug this task fixes).
+    // Keep-distinct parity: the clamped inset is a DISTINCT vertex at the far
+    // corner's position — exactly TWO verts at each of those positions (the
+    // original corner + the coincident-but-separate inset). Reusing the corner
+    // (1 vert) was the task-0313 weld this parity fix reverts.
     foreach (p; clamped)
-        assert(countAt(m, p) == 1,
-            "clamp: expected the clamped inset to WELD onto the far corner " ~
-            "(1 vert) at " ~ p.to!string ~ ", got " ~ countAt(m, p).to!string);
+        assert(countAt(m, p) == 2,
+            "clamp: expected the clamped inset to stay DISTINCT from the far " ~
+            "corner (2 verts) at " ~ p.to!string ~ ", got " ~ countAt(m, p).to!string);
 
-    // No coincident duplicates anywhere, hole-free, orientable, no orphans.
-    assert(noCoincidentVerts(m), "clamp: coincident duplicate vertices present");
+    // Exactly the four coincident inset/corner pairs — the reference's intended
+    // keep-distinct output — and nothing more.
+    assert(coincidentPairCount(m) == 4,
+        "clamp: expected 4 coincident inset/corner pairs, got " ~
+        coincidentPairCount(m).to!string);
+
+    // Still a valid surface: manifold, hole-free, orientable, no orphans, and
+    // no genuinely collapsed (repeated-INDEX) corner. Coincident positions and
+    // zero-AREA seam quads are intended parity output and are NOT asserted away.
     assert(orphanVerts(m).length == 0,
         "clamp: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "clamp: result is not hole-free / has folded faces");
+    assert(noRepeatedCornerFaces(m),
+        "clamp: a face has a repeated corner index (genuinely collapsed)");
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,18 +1386,21 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 15. TASK 0313 — far-vertex overshoot clamp on a valence-4 free end must WELD
-//     onto the existing far vertex, not mint a coincident duplicate. Fuzzer
-//     repro: octahedron edge 2 (the +Y↔+Z edge), extrude=0, width=2.5. Both
-//     endpoints are interior free ends of valence 4 (NOT the valence-3 cube
-//     case exercised by test 13) so this ALSO exercises the second clamp site
-//     — the along-rim-edge inset materialised for valence>3 free ends — on
-//     top of the per-face inset clamp. width=2.5 vastly overshoots every
-//     incident (unit-length, regular-octahedron) edge, so EVERY clamp in this
-//     op saturates; on this small a mesh two of the rewritten neighbour faces
-//     (triangles) end up with both non-fixed corners welding onto their
-//     shared third corner, fully collapsing — those faces must be dropped
-//     rather than survive as a repeated-corner/zero-area triangle.
+// 15. KEEP-DISTINCT PARITY (reverts task 0313) — a saturating far-vertex
+//     overshoot clamp on a valence-4 free end keeps every inset a DISTINCT
+//     vertex at its far position instead of welding onto the existing far
+//     vertex. Fuzzer repro: octahedron edge 2 (the +Y↔+Z edge), extrude=0,
+//     width=10. Both endpoints are interior free ends of valence 4 (NOT the
+//     valence-3 cube case exercised by test 13) so this ALSO exercises the
+//     second clamp site — the along-rim-edge inset materialised for valence>3
+//     free ends — on top of the per-face inset clamp. width=10 vastly
+//     overshoots every incident (unit-length, regular-octahedron) edge, so
+//     EVERY clamp in this op saturates. The task-0313 weld this reverts was
+//     built on a mesh-validity self-oracle (no coincident / no zero-area) that
+//     collides with reference parity (the reference keeps such verts distinct);
+//     under keep-distinct the result carries coincident positions + zero-area
+//     seam faces by design, while staying manifold / hole-free / orphan-free
+//     with no repeated-INDEX corner. (12v/14f, deterministic.)
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -1366,14 +1418,18 @@ unittest {
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":10.0}}`);
     auto m = getModel();
 
-    // No coincident duplicates, no degenerate (repeated-corner / zero-area)
-    // faces, and an orientable, hole-free, non-folded surface — the exact
-    // three properties the fuzzer flagged (coincident_vertex,
-    // no_degenerate_faces, inconsistent_winding).
-    assert(noCoincidentVerts(m), "0313: coincident duplicate vertices present");
-    assert(noDegenerateFaces(m), "0313: degenerate (repeated-corner/zero-area) face present");
+    // Full parity (keep-distinct): the saturating clamps now keep every inset a
+    // DISTINCT vertex at its far position instead of welding onto the existing
+    // far vertex, so coincident positions and zero-AREA seam faces are intended
+    // output (as the reference emits them) and are NOT asserted away. What MUST
+    // still hold: an orientable, hole-free, non-folded surface (the fuzzer's
+    // inconsistent_winding class), no orphan verts, and — the genuine
+    // degeneracy the fuzzer must still catch — NO face with a repeated corner
+    // INDEX (a collapsed / zero-length-edge corner).
     assert(isHoleFree(m), "0313: result is not hole-free / has folded (inconsistently wound) faces");
     assert(orphanVerts(m).length == 0, "0313: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(noRepeatedCornerFaces(m),
+        "0313: a face has a repeated corner index (genuinely collapsed)");
 }
 
 // ---------------------------------------------------------------------------
@@ -1414,10 +1470,18 @@ unittest {
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":3}}`);
     auto m = getModel();
 
-    assert(noDegenerateFaces(m),
-        "0317: degenerate (repeated-corner/zero-area) face present");
+    // Keep-distinct parity: the two mutually-facing free ends still reroute to a
+    // shared meeting vertex (the 0317 anti-bowtie fix is UNCHANGED), and the
+    // result stays hole-free / non-folded — the crux of this test. What changed:
+    // the saturating clamps onto the surrounding STABLE far vertices now mint
+    // DISTINCT coincident inset verts instead of welding, so a couple of
+    // zero-AREA seam faces are intended output (as the reference emits them) and
+    // are no longer asserted away. The genuine degeneracy — a repeated corner
+    // INDEX or a folded/inconsistently-wound face — must still be absent.
     assert(isHoleFree(m),
         "0317: result is not hole-free / has folded (inconsistently wound) faces");
+    assert(noRepeatedCornerFaces(m),
+        "0317: a face has a repeated corner index (genuinely collapsed)");
     assert(orphanVerts(m).length == 0, "0317: orphan verts: " ~ orphanVerts(m).to!string);
 }
 
@@ -1512,9 +1576,16 @@ unittest {
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":10.0}}`);
     auto m = getModel();
 
-    assert(noCoincidentVerts(m), "trapezoid: coincident duplicate vertices present");
-    assert(noDegenerateFaces(m),
-        "trapezoid: degenerate (repeated-corner/zero-area) face present");
+    // The crux of fuzz-0321b — the four cap-miter corners of the trapezoid still
+    // collapse to ONE meeting vertex (the face centroid), NOT the `[c02,c13,
+    // c02,c13]` a,b,a,b fold — is preserved here as a REPEATED-INDEX guard: that
+    // fold is a face with a repeated corner index, exactly what
+    // noRepeatedCornerFaces still forbids. Keep-distinct parity: the surrounding
+    // faces' saturating far-vertex clamps now mint DISTINCT coincident insets
+    // instead of welding, so coincident positions + zero-AREA seam faces are
+    // intended output and are not asserted away.
+    assert(noRepeatedCornerFaces(m),
+        "trapezoid: a face has a repeated corner index (a,b,a,b fold / collapsed)");
     assert(isHoleFree(m),
         "trapezoid: result is not hole-free / has folded (inconsistently wound) faces");
     assert(orphanVerts(m).length == 0,

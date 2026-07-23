@@ -3273,8 +3273,17 @@ struct Mesh {
                 continue;
             }
             Vec3 p = vertices[v] + normalize(acc) * (*cap);
-            insetVert[k] = farVertId;
-            insetPosWeld[weldKeyOf(v, p)] = farVertId;
+            // Parity (keep-distinct): the clamp lands the inset ON the far
+            // vertex's position, but the reference KEEPS it a DISTINCT vertex
+            // (coincident-but-separate, higher vert count) rather than reusing
+            // the existing corner's id — reusing it collapses the neighbour
+            // face's corner onto its winding-neighbour (a zero-length edge the
+            // degenerate-face cleanup then drops, losing a face too). Mint a
+            // new vertex at the clamped landing instead of welding onto
+            // `farVertId`. See task edge-extrude-keep-distinct.
+            uint nv = addVertex(p);
+            insetVert[k] = nv;
+            insetPosWeld[weldKeyOf(v, p)] = nv;
             weldedToFar[k] = true;
         }
         // Pass 1b (task 0321): cap-miter convergence weld. The cap-miter path
@@ -3670,7 +3679,6 @@ struct Mesh {
                 //     direction has no well-defined far vertex along it, so (like
                 //     the perpendicular inwardDir path) it carries no cap.
                 float offLen = width;
-                bool weldToFar = false;
                 uint farVertId;
                 if (auto fp = v in alongFar) {
                     t = vertices[*fp] - vertices[v];
@@ -3679,26 +3687,30 @@ struct Mesh {
                         // Task 0313: the clamp saturated — `alongFar[v]` is a
                         // single, unambiguous far vertex (first-rim-edge-found,
                         // never overwritten — see the population loop above), so
-                        // the landing coincides exactly with it. Reuse its id
-                        // instead of minting a coincident duplicate.
+                        // the landing coincides exactly with it.
                         offLen = farLen;
-                        weldToFar = true;
                         farVertId = *fp;
                         anyOvershootSaturated = true;
+                        // Task 0317: the mutual-dissolve hazard (two free ends
+                        // facing each other across one shared boundary edge)
+                        // still reroutes to a shared midpoint to avoid a
+                        // self-intersecting swap. That path stays welded.
+                        if (isFreeEnd(farVertId)) {
+                            freeEndAlongVert[v] = mutualMeetVert(v, farVertId);
+                            continue;
+                        }
+                        // Parity (keep-distinct): otherwise the clamped inset
+                        // lands ON `farVertId`'s position but stays a DISTINCT
+                        // vertex — the reference keeps this coincident inset
+                        // separate rather than reusing the existing corner's id.
+                        // Fall through to addVertex at the clamped landing
+                        // (`offLen == farLen` ⇒ exactly that position). See task
+                        // edge-extrude-keep-distinct.
                     }
                 } else if (auto op = v in freeEndOther) {
                     t = vertices[v] - vertices[*op];   // fallback: extruded tangent
                 } else continue;
                 if (t.length < 1e-6f) continue;
-                if (weldToFar) {
-                    // Task 0317: the same mutual-dissolve hazard as the Pass 1
-                    // face-aware clamp above can occur here too — guard it the
-                    // same way (reroute to the shared midpoint vertex instead
-                    // of welding onto another dissolving free end).
-                    freeEndAlongVert[v] = isFreeEnd(farVertId)
-                        ? mutualMeetVert(v, farVertId) : farVertId;
-                    continue;
-                }
                 t = normalize(t);
                 freeEndAlongVert[v] = addVertex(vertices[v] + t * offLen);
             }
