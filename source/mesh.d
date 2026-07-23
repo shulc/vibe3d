@@ -8800,12 +8800,14 @@ struct Mesh {
                     // here is the WHOLE-FACE normal, NOT a per-corner
                     // cross-product — bit-exact on all three warped oracles.
                     //
-                    // Gated to (a) an ISOLATED face (`!faceGrouped[fi]`) so a
-                    // grouped face's standalone corners — the DIFFERENT
-                    // per-corner-AVE_N regime that `poly_bevel_{G2,G3}` pin,
-                    // out of scope here — are left exactly as before (zero
-                    // group regression); (b) a genuinely non-planar corner
-                    // (`cornerNormal ≠ faceNormal`) so every FLAT-face bevel
+                    // Gated to (a) an ISOLATED face (`!faceGrouped[fi]`) —
+                    // uses the WHOLE-FACE Newell normal for both the tangent
+                    // plane and the shift. A GROUPED face's standalone corners
+                    // are a DIFFERENT regime (`poly_bevel_{G2,G3}`): the same
+                    // mitered offset but built around the corner's own
+                    // per-corner normal `cn`, handled by the `faceGrouped[fi]`
+                    // branch just below; (b) a genuinely non-planar corner
+                    // (`cornerNormal != faceNormal`) so every FLAT-face bevel
                     // stays BYTE-IDENTICAL to the pre-0467 `offsetMeet` law;
                     // and (c) a well-conditioned miter (`boundaryContourInset`
                     // non-degenerate). Off any gate it is the unchanged old
@@ -8817,6 +8819,29 @@ struct Mesh {
                                              origPos[(i + Nc - 1) % Nc] - origPos[i],
                                              n, effInset, bcOffset)) {
                         finalPos[i] = origPos[i] + n * shift + bcOffset;
+                    } else if (faceGrouped[fi] && dot(cn, n) < 1.0f - 1e-6f &&
+                        boundaryContourInset(origPos[(i + 1) % Nc]      - origPos[i],
+                                             origPos[(i + Nc - 1) % Nc] - origPos[i],
+                                             cn, effInset, bcOffset)) {
+                        // GROUPED-STANDALONE corner (parity task): a standalone
+                        // corner (internalCnt==0) of a face that IS part of an
+                        // adjacent group (`faceGrouped[fi]`). Measured against
+                        // the reference dumps (`poly_bevel_{G2,G3}`), this
+                        // regime uses the SAME mitered-corner offset as the
+                        // isolated branch above, but built around the corner's
+                        // OWN (per-corner) shift normal `cn` — NOT the
+                        // whole-face Newell normal `n`. Both the tangent plane
+                        // fed to `boundaryContourInset` and the shift direction
+                        // use `cn`. Bit-exact (< 1e-6) against every diverging
+                        // standalone vertex in both dumps (G2 orig 1/3/5;
+                        // G3 orig 0/1/3/5/6); the whole-face-`n` variant of
+                        // this same offset is measurably worse there, so the
+                        // per-corner normal is the discriminated law. Gated on
+                        // a genuinely non-planar corner (`dot(cn,n) < 1-eps`)
+                        // so every FLAT grouped face (cube corner, tent, square,
+                        // segments) where `cn==n` stays BYTE-IDENTICAL to the
+                        // old `offsetMeet` law, and on a well-conditioned miter.
+                        finalPos[i] = origPos[i] + cn * shift + bcOffset;
                     } else {
                         finalPos[i] = insetCorner(origPos, i, n, effInset) + n * shift;
                     }
@@ -17434,14 +17459,21 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
     assert(foundRing0, "ring vertex near orig-vert 0 should be bit-exact against poly_bevel_G2_apex_v3's dump[7]");
     assert(foundRing2, "ring vertex near orig-vert 2 should be bit-exact against poly_bevel_G2_apex_v3's dump[9]");
     assert(foundRing4, "ring vertex near orig-vert 4 should be bit-exact against poly_bevel_G2_apex_v3's dump[11]");
-    // NOTE (task 0467): this dump's STANDALONE ring vertices (dump[8]/[10]/[12],
-    // near orig-vert 1/3/5 — each touches only one selected face) sit in a
-    // DIFFERENT per-corner-AVE_N regime and carry a separate residual not
-    // asserted here (see `bevelFacesByMask`'s doc comment). The 0467
-    // warped-quad fix is scoped to ISOLATED faces (`!faceGrouped`), so a
-    // grouped face like these three is deliberately left unchanged — the
-    // G2 assertions above (apex + the 3 internalCnt==1 ring verts) are
-    // untouched.
+    // STANDALONE ring vertices (dump[8]/[10]/[12], near orig-vert 1/3/5 —
+    // each touches only ONE selected face, internalCnt==0). These sit in the
+    // grouped-standalone per-corner-AVE_N regime: `orig + shift*cn +
+    // boundaryContourInset(eNext,ePrev, cn)` with `cn` the corner's own shift
+    // normal (NOT the whole-face Newell normal, which is measurably worse).
+    // Bit-exact against poly_bevel_G2_apex_v3's dump[8]/[10]/[12] (parity task).
+    bool foundStd1 = false, foundStd3 = false, foundStd5 = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(0.54333192f, 0.02258310f, 1.02778912f)).length < 1e-4f) foundStd1 = true;
+        if ((v - Vec3(-1.10951495f, 0.07091790f, 0.19473825f)).length < 1e-4f) foundStd3 = true;
+        if ((v - Vec3(0.46943665f, -0.06014295f, -0.84538692f)).length < 1e-4f) foundStd5 = true;
+    }
+    assert(foundStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G2_apex_v3's dump[8]");
+    assert(foundStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G2_apex_v3's dump[10]");
+    assert(foundStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G2_apex_v3's dump[12]");
 }
 
 unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
@@ -17492,6 +17524,24 @@ unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
         foreach (v; f)
             if (v == sharedIdx) { ++refCount; break; }
     assert(refCount == 5, "the shared partial vertex should be referenced by all 5 incident faces (3 final + 2 bridges), got " ~ refCount.to!string);
+
+    // STANDALONE corners (orig 0/1/3/5/6 — each internalCnt==0, touching one
+    // selected face). Grouped-standalone per-corner-AVE_N regime: bit-exact
+    // against poly_bevel_G3_partial_fan's dump[9]/[10]/[12]/[14]/[15]
+    // (parity task).
+    bool fStd0=false, fStd1=false, fStd3=false, fStd5=false, fStd6=false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(0.95582151f, 0.12657540f, 0.12734687f)).length < 1e-4f) fStd0 = true;
+        if ((v - Vec3(0.65931493f, 0.03504139f, 0.75914669f)).length < 1e-4f) fStd1 = true;
+        if ((v - Vec3(-0.84032083f, 0.08062109f, 0.66145885f)).length < 1e-4f) fStd3 = true;
+        if ((v - Vec3(-0.57754570f, -0.00480662f, -0.87185556f)).length < 1e-4f) fStd5 = true;
+        if ((v - Vec3(0.06068159f, 0.16000065f, -1.05715966f)).length < 1e-4f) fStd6 = true;
+    }
+    assert(fStd0, "grouped-standalone vertex near orig-vert 0 should be bit-exact against poly_bevel_G3_partial_fan's dump[9]");
+    assert(fStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G3_partial_fan's dump[10]");
+    assert(fStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G3_partial_fan's dump[12]");
+    assert(fStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G3_partial_fan's dump[14]");
+    assert(fStd6, "grouped-standalone vertex near orig-vert 6 should be bit-exact against poly_bevel_G3_partial_fan's dump[15]");
 }
 
 unittest { // bevelFacesByMask: WARPED single quad, ISOLATED-face inset law —
