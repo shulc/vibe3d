@@ -10004,41 +10004,58 @@ struct Mesh {
             }
             if (K == 0) continue;
 
-            // Valence-4 / planar / K==1 free-end cap whose single selected
-            // edge terminates on a valence-4 FULL HUB junction. This exact
-            // config (measured from reference dumps) keeps a reference cap
-            // topology that vibe3d's sound-by-default construction does not:
-            // the two reduced side faces stay anchored at the ORIGINAL
-            // free-end vertex (retained, coincident with the chamfer-strip
-            // pinch → a pinched cap quad), and the slide along the edge
-            // OPPOSITE the selected one is emitted but left as an ORPHAN.
-            // Gated narrowly so valence-3 free ends, the valence-4 rounded
-            // hub (K==d), and non-full-hub free ends stay byte-identical.
+            // Valence-4 / K==1 free-end cap at Round Level >= 1 whose reference
+            // keeps a cap topology vibe3d's sound-by-default construction does
+            // not ("Decision C"): the two reduced side faces + the ring's
+            // opposite-edge corner stay anchored at the RETAINED ORIGINAL
+            // free-end vertex (coincident with the chamfer-strip pinch wherever
+            // the rounded rail degenerates onto the free-end position → a
+            // pinched cap quad), and the slide along the edge OPPOSITE the
+            // selected one is emitted but left as an ORPHAN.
+            //
+            // FOUR measured shapes pin down EXACTLY when this fires — a fully
+            // populated 2×2 over {planar, non-planar} × {far a free end, far a
+            // full hub}:
+            //   planar     + far free end (F2, bare disk)   → Decision C
+            //   planar     + far full hub (k4fe mixed junc) → Decision C
+            //   non-planar + far full hub (F4, 90° crease)  → Decision C
+            //   non-planar + far free end (F1c, 3D tent)    → NO  (plain slide)
+            // i.e. Decision C ⇔ (the free end's fan is PLANAR) OR (its single
+            // selected edge lands on a FULL HUB). A non-planar free end whose
+            // far vertex is another free end (F1c) or a PARTIAL-K junction (the
+            // K2 valence-4 octahedron, far = two-of-four selected) keeps the
+            // plain slide, so both stay byte-identical.
             bool k4feCap = false;
             int k4feOppSlot = -1;
             // Only at Round Level >= 1: the reference's flat (L0) cap has NO
-            // such divergence (measured: L0 dumps are byte-clean, 35v ref =
-            // 35v ours), because there is no rounded chamfer rail to pinch
-            // against. Gate on roundLevel so every L0 free-end cap stays
-            // byte-identical.
+            // such divergence (measured: L0 dumps are byte-clean), because there
+            // is no rounded chamfer rail to pinch against. Gate on roundLevel so
+            // every L0 free-end cap stays byte-identical; d==4 / K==1 / !openFan
+            // keep valence-3 free ends, the valence-4 rounded hub (K==d), and
+            // boundary/open free ends byte-identical too.
             if (roundLevel > 0 && !openFan && d == 4 && K == 1) {
+                // Trigger #1 — PLANAR fan: the selected slot's two ring
+                // neighbours are ~antipodal, so the rounded rail degenerates
+                // onto the free-end position (F2 / k4fe).
                 immutable Vec3 n0f = faceNormal(vFaces[0]);
                 bool planarf = true;
                 foreach (kf; 1 .. d)
                     if (dot(n0f, faceNormal(vFaces[kf])) < 0.999f) { planarf = false; break; }
-                if (planarf) {
-                    int sf = -1;
-                    foreach (kf; 0 .. nE) if (selE[kf]) { sf = kf; break; }
-                    immutable uint farVf = vNbrs[sf];
-                    int farDegf = 0, farKf = 0;
-                    foreach (fef; edgesAroundVertex(farVf)) {
-                        ++farDegf;
-                        if (fef < qualifies.length && qualifies[fef]) ++farKf;
-                    }
-                    if (farDegf == 4 && farKf == 4) {
-                        k4feCap = true;
-                        k4feOppSlot = (sf + 2) % nE;   // edge opposite the selected one
-                    }
+                // Trigger #2 — the selected edge lands on a FULL HUB (every
+                // incident edge there selected), forcing the same retained-
+                // original cap even on non-planar geometry (F4's 90° crease).
+                int sf = -1;
+                foreach (kf; 0 .. nE) if (selE[kf]) { sf = kf; break; }
+                immutable uint farVf = vNbrs[sf];
+                int farDeg = 0, farK = 0;
+                foreach (fef; edgesAroundVertex(farVf)) {
+                    ++farDeg;
+                    if (fef < qualifies.length && qualifies[fef]) ++farK;
+                }
+                immutable bool farFullHub = (farDeg > 0 && farK == farDeg);
+                if (planarf || farFullHub) {
+                    k4feCap = true;
+                    k4feOppSlot = (sf + 2) % nE;   // valence-4 ⇒ edge opposite the selected one
                 }
             }
 
@@ -18715,9 +18732,37 @@ unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
 private void assertBevelManifoldClean(ref Mesh m, string tag) {
     import std.conv : to;
 
+    // The valence-4 free-end cap (L>=1, "Decision C") DELIBERATELY reproduces
+    // the reference's cap: at each such free end the ORIGINAL free-end vertex
+    // is RETAINED at the cap ring's opposite-edge slot (coincident with the
+    // chamfer-strip pinch wherever the rounded rail degenerates onto it), and
+    // one opposite-edge slide is left ORPHANED. The bevel records those exact
+    // positions; waive EXACTLY them here (both lists empty for every other
+    // bevel and every L0 bevel, so this is a no-op elsewhere) and exclude the
+    // intended orphans from the Euler count. Any OTHER coincident/orphan/
+    // degenerate vertex or face still fails the asserts below.
+    bool nearRecorded(Vec3 p, const(Vec3)[] recorded) {
+        foreach (r; recorded)
+            if ((p - r).length < 1e-6f) return true;
+        return false;
+    }
+    const capCoincident = m.bevelCapCoincidentPos_;
+    const capOrphan     = m.bevelCapOrphanPos_;
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    // Edges bounding an intended degenerate pinched cap. Such a cap is zero-area
+    // (all its corners collinear on the free-end edge) so its winding is
+    // ill-defined and reads back CO-ORIENTED with the real face on the other
+    // side of each shared edge — an artifact of the reference's own degenerate
+    // cap, not a cracked junction. Collected below and used to waive EXACTLY
+    // those edges' winding assert; every other co-oriented edge still fails.
+    bool[ulong] pinchedCapEdge;
+
     foreach (i; 0 .. m.vertices.length)
         foreach (j; i + 1 .. m.vertices.length)
-            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f
+                    || nearRecorded(m.vertices[i], capCoincident),
                 tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
 
     foreach (fi, f; m.faces) {
@@ -18725,6 +18770,25 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
         foreach (v; f) distinct[v] = true;
         assert(distinct.length >= 3,
             tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+        // A reference-parity PINCHED cap face carries the coincident pair
+        // (retained free-end vertex + chamfer-strip pinch) at a recorded cap
+        // position and is deliberately zero-area — the reference emits the same
+        // degenerate cap. Waive the zero-area assert for EXACTLY such a face;
+        // every other zero-area face still fails.
+        bool intendedPinchedCap = false;
+        if (capCoincident.length > 0) {
+            outer: foreach (ci; 0 .. f.length) {
+                if (!nearRecorded(m.vertices[f[ci]], capCoincident)) continue;
+                foreach (cj; ci + 1 .. f.length)
+                    if ((m.vertices[f[ci]] - m.vertices[f[cj]]).length < 1e-6f) {
+                        intendedPinchedCap = true;
+                        break outer;
+                    }
+            }
+        }
+        if (intendedPinchedCap)
+            foreach (k; 0 .. f.length)
+                pinchedCapEdge[ekey(f[k], f[(k + 1) % f.length])] = true;
         Vec3 nsum = Vec3(0, 0, 0);
         foreach (k; 0 .. f.length) {
             Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
@@ -18732,7 +18796,7 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
             nsum.y += (a.z - b.z) * (a.x + b.x);
             nsum.z += (a.x - b.x) * (a.y + b.y);
         }
-        assert(nsum.length * 0.5f > 1e-9f,
+        assert(nsum.length * 0.5f > 1e-9f || intendedPinchedCap,
             tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
     }
 
@@ -18742,9 +18806,6 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
     int[ulong] edgeUse;
     int[ulong] edgeWinding;
     uint[] vertexUse; vertexUse.length = m.vertices.length;
-    static ulong ekey(uint a, uint b) {
-        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
-    }
     foreach (f; m.faces)
         foreach (k; 0 .. f.length) {
             uint a = f[k], b = f[(k + 1) % f.length];
@@ -18752,20 +18813,29 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
             edgeWinding[ekey(a, b)] += a < b ? 1 : -1;
             ++vertexUse[a];
         }
-    foreach (vi, count; vertexUse)
+    long intendedOrphans = 0;
+    foreach (vi, count; vertexUse) {
+        if (count == 0 && nearRecorded(m.vertices[vi], capOrphan)) {
+            ++intendedOrphans;   // reference-parity orphan cap slide — expected
+            continue;
+        }
         assert(count > 0, tag ~ ": orphan vertex " ~ vi.to!string);
+    }
     size_t edgeCount = 0;
     foreach (key, count; edgeUse) {
         assert(count == 2, tag ~ ": non-manifold edge (used by " ~
             count.to!string ~ " faces, expected 2)");
-        assert(edgeWinding[key] == 0,
-            tag ~ ": co-oriented edge winding (both incident faces use the same direction)");
+        if (key !in pinchedCapEdge)
+            assert(edgeWinding[key] == 0,
+                tag ~ ": co-oriented edge winding (both incident faces use the same direction)");
         ++edgeCount;
     }
 
     // Euler characteristic: V - E + F == 2 for a closed genus-0 mesh (a
     // beveled cube stays genus-0 — bevel only adds detail, never a handle).
-    immutable long V = cast(long)m.vertices.length;
+    // Intended orphan cap slides are isolated points, not part of the surface —
+    // exclude them from V so the identity still measures the real manifold.
+    immutable long V = cast(long)m.vertices.length - intendedOrphans;
     immutable long E = cast(long)edgeCount;
     immutable long F = cast(long)m.faces.length;
     assert(V - E + F == 2,
@@ -18798,6 +18868,15 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
     }
     const capCoincident = m.bevelCapCoincidentPos_;
     const capOrphan     = m.bevelCapOrphanPos_;
+    static ulong ekey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
+    }
+    // Edges bounding an intended degenerate pinched cap — zero-area, so its
+    // winding is ill-defined and reads back CO-ORIENTED with the real face
+    // across each shared edge (the reference's own antipodal degenerate cap,
+    // not a cracked junction). Used below to waive EXACTLY those edges' winding
+    // assert; every other co-oriented interior edge still fails.
+    bool[ulong] pinchedCapEdge;
 
     foreach (i; 0 .. m.vertices.length)
         foreach (j; i + 1 .. m.vertices.length)
@@ -18828,6 +18907,9 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
                     }
             }
         }
+        if (intendedPinchedCap)
+            foreach (k; 0 .. f.length)
+                pinchedCapEdge[ekey(f[k], f[(k + 1) % f.length])] = true;
         Vec3 nsum = Vec3(0, 0, 0);
         foreach (k; 0 .. f.length) {
             Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
@@ -18842,9 +18924,6 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
     int[ulong] edgeUse;
     int[ulong] edgeWinding;
     uint[] vertexUse; vertexUse.length = m.vertices.length;
-    static ulong ekey(uint a, uint b) {
-        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
-    }
     foreach (f; m.faces)
         foreach (k; 0 .. f.length) {
             uint a = f[k], b = f[(k + 1) % f.length];
@@ -18864,7 +18943,7 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
     foreach (key, count; edgeUse) {
         assert(count == 1 || count == 2, tag ~ ": edge used by " ~ count.to!string ~
             " faces (expected 1 boundary or 2 interior)");
-        if (count == 2)
+        if (count == 2 && key !in pinchedCapEdge)
             assert(edgeWinding[key] == 0,
                 tag ~ ": co-oriented edge winding (both incident faces use the same direction)");
         ++edgeCount;
@@ -19894,9 +19973,13 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
            // L0". Since 0449 the far cap IS its rails' second consumer, so the
            // hub and its three free ends now round INDEPENDENTLY at Round
            // Level > 0 (capture-verified composition — the reference's own
-           // used-vertex counts for this exact shape are 41/59/83, matching
-           // ours once its 3 sibling-orphaned slide points are excluded). The
-           // K3 Gregory branch still must not assume its own rails are
+           // used-vertex counts for this exact shape are 41/59/83, and since
+           // this task reproduces the Decision-C free-end cap on all three
+           // valence-4 free ends, we now emit the reference's 3 orphaned
+           // opposite-edge slides too, so our TOTAL counts are 44/62/86 =
+           // 41/59/83 used + 3 orphans, matching the reference vertex array
+           // in full). The K3 Gregory branch still must not assume its own
+           // rails are
            // approved just because they usually are now — it checks approval
            // and falls back to the flat cap on any span the fixed point
            // withholds for some OTHER reason, which is what this test still
@@ -19929,9 +20012,12 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
     }
 
     // task 0449: L0 never rounds by definition (stays the flat 34v/31f base),
-    // but L1/L2 now round the hub AND all three free-end caps independently
-    // — was 34/31 at every level before this task.
-    static immutable size_t[3] wantV = [34, 41, 59];
+    // but L1/L2 now round the hub AND all three free-end caps independently.
+    // This task: the three valence-4 free ends' selected edges land on the K3
+    // corner (a FULL HUB), so each reproduces the Decision-C cap — the raw
+    // free-end original is RETAINED and its opposite-edge slide kept as an
+    // ORPHAN, adding +3 verts over the pre-task 41/59 counts ⇒ 44/62.
+    static immutable size_t[3] wantV = [34, 44, 62];
     static immutable size_t[3] wantF = [31, 36, 51];
     foreach (level; 0 .. 3) {
         auto m = subdivideCube(1);
@@ -19941,7 +20027,7 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
         assert(sel == 3, "expected the corner's three edges");
         // The assertion this guards against fired inside the kernel, so simply
         // completing is the regression check; the counts pin the composed
-        // (hub + 3 independent free-end caps) result at each Round Level.
+        // (hub + 3 independent Decision-C free-end caps) result at each level.
         immutable size_t n = m.bevelEdgesByMask(mask, 0.05f, cast(int)level);
         assert(n == 3, "all three junction edges must bevel at every Round Level");
         assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
@@ -23197,23 +23283,22 @@ unittest { // F1d: F1's own regression bar EXTENDED to `MAX_ROUND_LEVEL`
 }
 
 unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
-           // z=0) — the antipodal-fillet degeneracy (Decision C): the hub's
-           // two ring-neighbours of the selected slot sit exactly opposite
-           // each other, so `railInterior`'s `sinO < 1e-6` fallback fires
-           // and the "arc" is a straight chord. Two claims, not one: (i)
-           // our OWN result is frozen bit-exact (positions + connectivity);
-           // (ii) the DIVERGENCE from the reference is measured directly —
-           // NOT the plan's own table cell (that cell said ref-only=1,
-           // our-only=2; re-measuring against the raw capture dumps at
-           // every level gives ref-only=1, our-only=1 instead — a clean
-           // one-for-one swap, not an asymmetric one — see the task Result
-           // for how this was checked). The reference substitutes the
-           // ring's opposite unselected slot with the RAW hub position
-           // (0,0,0) and separately (unpooled) computes its own degenerate
-           // rail interior, which lands on that SAME position — two
-           // distinct vertex records at one spot, one of which we lack. We
-           // instead just emit the ordinary slide at that ring slot, which
-           // the reference orphans.
+           // z=0) — the antipodal-fillet degeneracy: the hub's two ring-
+           // neighbours of the selected slot sit exactly opposite each other,
+           // so `railInterior`'s `sinO < 1e-6` fallback fires and the "arc" is
+           // a straight chord. This is the PLANAR / far-a-free-end cell of the
+           // measured 2×2 that pins bevelEdgesByMask's Decision-C free-end cap
+           // (planar OR far-full-hub ⇒ the reference keeps the raw free-end
+           // vertex in its cap ring). The reference substitutes the ring's
+           // opposite unselected slot with the RAW hub position (0,0,0) and
+           // separately (unpooled) computes its own degenerate rail interior,
+           // which lands on that SAME position — TWO distinct vertex records at
+           // one spot (a coincident pair) — and leaves the plain slide
+           // (-0.1,0,0) that used to fill that slot as an ORPHAN referenced by
+           // no face. vibe3d now REPRODUCES this exactly: the frozen arrays
+           // below are the reference cap (positions + winding), and the
+           // coincident-pair / orphan residual — a documented XFAIL before this
+           // task — is asserted as a HARD requirement at every Round Level.
     import std.math : cos, sin, PI;
     import std.conv : to;
     Mesh makeDisk(int N) {
@@ -23236,35 +23321,44 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
         }
         return -1;
     }
+    // Reproduced reference cap ("Decision C"). Index 0 is the RETAINED raw
+    // free-end vertex (0,0,0); the chamfer pinch lands on the same spot (a
+    // coincident pair); the (-0.1,0,0) opposite-edge slide is the intended
+    // ORPHAN (present, referenced by no face — assertFacesMatchByPosition
+    // compares the full position MULTISET, so both the pair and the orphan
+    // are pinned).
     static immutable Vec3[] v4L1Verts = [
+        Vec3(0f, 0f, 0f),
         Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
         Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
-        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(1.19248811e-09f, -0.100000001f, 0f), Vec3(-0.100000001f, -8.74227801e-09f, 0f),
         Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
         Vec3(-1.58932545e-09f, 0f, 0f), Vec3(0.958578706f, 0f, 0f),
     ];
     static immutable uint[][] v4L1Faces = [
-        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
-        [5u, 7u, 9u, 8u], [8u, 9u, 6u, 3u], [3u, 4u, 5u, 8u],
+        [4u, 7u, 1u], [0u, 4u, 1u, 2u], [5u, 0u, 2u, 3u], [5u, 3u, 8u],
+        [5u, 8u, 10u, 9u], [9u, 10u, 7u, 4u], [5u, 0u, 4u, 9u],
     ];
     static immutable Vec3[] v4L2Verts = [
+        Vec3(0f, 0f, 0f),
         Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
         Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
-        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(1.19248811e-09f, -0.100000001f, 0f), Vec3(-0.100000001f, -8.74227801e-09f, 0f),
         Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
         Vec3(-2.98023228e-09f, 0.0500000045f, 0f), Vec3(-1.58932545e-09f, 0f, 0f),
         Vec3(-1.9841867e-10f, -0.0500000045f, 0f), Vec3(0.950966597f, 0.0382683501f, 0f),
         Vec3(0.958578706f, 0f, 0f), Vec3(0.950966597f, -0.0382683501f, 0f),
     ];
     static immutable uint[][] v4L2Faces = [
-        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
-        [5u, 7u, 13u, 10u], [10u, 13u, 12u, 9u], [9u, 12u, 11u, 8u],
-        [8u, 11u, 6u, 3u], [3u, 4u, 5u, 10u, 9u, 8u],
+        [4u, 7u, 1u], [0u, 4u, 1u, 2u], [5u, 0u, 2u, 3u], [5u, 3u, 8u],
+        [5u, 8u, 14u, 11u], [11u, 14u, 13u, 10u], [10u, 13u, 12u, 9u],
+        [9u, 12u, 7u, 4u], [5u, 0u, 4u, 9u, 10u, 11u],
     ];
     static immutable Vec3[] v4L3Verts = [
+        Vec3(0f, 0f, 0f),
         Vec3(-4.37113883e-08f, 1f, 0f), Vec3(-1f, -8.74227766e-08f, 0f),
         Vec3(1.19248806e-08f, -1f, 0f), Vec3(-4.37113901e-09f, 0.100000001f, 0f),
-        Vec3(-0.100000001f, -8.74227801e-09f, 0f), Vec3(1.19248811e-09f, -0.100000001f, 0f),
+        Vec3(1.19248811e-09f, -0.100000001f, 0f), Vec3(-0.100000001f, -8.74227801e-09f, 0f),
         Vec3(0.929289341f, 0.0707106814f, 0f), Vec3(0.929289341f, -0.0707106814f, 0f),
         Vec3(-3.44386786e-09f, 0.0666666701f, 0f), Vec3(-2.51659649e-09f, 0.0333333276f, 0f),
         Vec3(-1.58932545e-09f, 0f, 0f), Vec3(-6.62054189e-10f, -0.0333333388f, 0f),
@@ -23273,17 +23367,19 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
         Vec3(0.955171227f, -0.0258819126f, 0f), Vec3(0.945181191f, -0.0500000007f, 0f),
     ];
     static immutable uint[][] v4L3Faces = [
-        [3u, 6u, 0u], [4u, 3u, 0u, 1u], [5u, 4u, 1u, 2u], [5u, 2u, 7u],
-        [5u, 7u, 17u, 12u], [12u, 17u, 16u, 11u], [11u, 16u, 15u, 10u],
-        [10u, 15u, 14u, 9u], [9u, 14u, 13u, 8u], [8u, 13u, 6u, 3u],
-        [3u, 4u, 5u, 12u, 11u, 10u, 9u, 8u],
+        [4u, 7u, 1u], [0u, 4u, 1u, 2u], [5u, 0u, 2u, 3u], [5u, 3u, 8u],
+        [5u, 8u, 18u, 13u], [13u, 18u, 17u, 12u], [12u, 17u, 16u, 11u],
+        [11u, 16u, 15u, 10u], [10u, 15u, 14u, 9u], [9u, 14u, 7u, 4u],
+        [5u, 0u, 4u, 9u, 10u, 11u, 12u, 13u],
     ];
     const(Vec3[])[3]   wantVertsByLevel = [v4L1Verts, v4L2Verts, v4L3Verts];
     const(uint[][])[3] wantFacesByLevel = [v4L1Faces, v4L2Faces, v4L3Faces];
-    // The one differing corner, both positions named (task Result records
-    // the direct re-measurement this comes from):
-    static immutable Vec3 refOnlyCorner = Vec3(0.0f, 0.0f, 0.0f);   // reference's raw hub position, reused
-    static immutable Vec3 ourOnlyCorner = Vec3(-0.1f, 0.0f, 0.0f);  // our own plain slide at the same ring slot
+    // Decision C's two artefacts, HARD-asserted at every level (was a
+    // documented XFAIL residual before this task): a coincident PAIR at the
+    // retained free-end position, and the opposite-edge slide kept as an
+    // ORPHAN referenced by no face.
+    static immutable Vec3 hubPos    = Vec3(0.0f, 0.0f, 0.0f);
+    static immutable Vec3 orphanPos = Vec3(-0.1f, 0.0f, 0.0f);
     foreach (level; 1 .. 4) {
         auto m = makeDisk(4);
         int ei = findEdge(m, 0, 1);
@@ -23292,16 +23388,22 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
         assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
             "F2 disk N=4 antipodal hub-R0 L" ~ level.to!string);
-        bool foundOurCorner = false;
-        foreach (v; m.vertices)
-            if ((v - ourOnlyCorner).length < 1e-4f) foundOurCorner = true;
-        assert(foundOurCorner,
-            "F2 L" ~ level.to!string ~ ": our own slide corner " ~ ourOnlyCorner.to!string ~
-            " must be present — the frozen-result check above should already have caught this");
-        // refOnlyCorner is deliberately NOT asserted present in `m` — it is
-        // the reference's own choice, not ours (Decision C: we do not
-        // imitate the degenerate substitution). Naming it here, rather than
-        // only in prose, is what "both positions" in the plan's DoD means.
+        size_t atHub = 0, atOrphan = 0;
+        foreach (v; m.vertices) {
+            if ((v - hubPos).length    < 1e-4f) ++atHub;
+            if ((v - orphanPos).length < 1e-4f) ++atOrphan;
+        }
+        assert(atHub == 2,
+            "F2 L" ~ level.to!string ~ ": reference keeps a COINCIDENT PAIR at the free-end (0,0,0)");
+        assert(atOrphan == 1,
+            "F2 L" ~ level.to!string ~ ": the opposite-edge slide (-0.1,0,0) is retained (reference orphan)");
+        bool[] used; used.length = m.vertices.length;
+        foreach (f; m.faces) foreach (vi; f) used[vi] = true;
+        bool orphanUnref = false;
+        foreach (vi, v; m.vertices)
+            if ((v - orphanPos).length < 1e-4f && !used[vi]) orphanUnref = true;
+        assert(orphanUnref,
+            "F2 L" ~ level.to!string ~ ": the (-0.1,0,0) slide must be an ORPHAN — referenced by NO face");
         assertBevelManifoldCleanOpen(m, "F2 disk N=4 antipodal hub-R0", 1);
     }
 }
@@ -23434,17 +23536,17 @@ unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
            // (NOT `subdivideCube(1)`'s Catmull-Clark limit surface — that
            // has the same topology and thus the same vertex/face COUNTS,
            // but different smoothed POSITIONS, so it cannot stand in for a
-           // position-comparison fixture) as the reference case. L0: full
-           // position + connectivity match. L1-L3: face count matches the
-           // reference exactly; our positions are a SUBSET of the
-           // reference's FULL vertex array (including its 3 orphans — the
-           // reference orphans exactly our 3 own slide points, task 0449
-           // Замер 1); the symmetric difference against the reference's
-           // USED set is exactly 3 corners (task 0449 Замер 1, confirmed by
-           // direct re-measurement) — the 3 raw ORIGINAL free-end vertex
-           // positions the reference substitutes into its own cap rings
-           // in place of our plain slides (the same Decision C substitution
-           // as F2, independently on all three free ends here).
+           // position-comparison fixture) as the reference case. Each free
+           // end is a NON-planar 90° edge-crease whose single selected edge
+           // lands on the K3 corner — a FULL HUB — so this is the "non-planar
+           // + far-full-hub" cell of the Decision-C 2×2, and all three free
+           // ends now REPRODUCE the reference cap: the raw ORIGINAL free-end
+           // vertex is RETAINED in its cap ring (was substituted-away by our
+           // plain slide before this task), and our former slide is kept as an
+           // ORPHAN — exactly the reference's own 3 extra slide points (task
+           // 0449 Замер 1). L0 stays the reference's bit-exact 34v/31f (no
+           // rounding ⇒ no Decision C). L1-L3 now match the reference's FULL
+           // vertex COUNT (used + 3 orphans) and face count.
     import std.conv : to;
     static immutable Vec3[] baseVerts = [
         Vec3(0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f),
@@ -23479,6 +23581,9 @@ unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
         Vec3(0.5f, 0.5f, 0.0f), Vec3(0.5f, 0.0f, 0.5f), Vec3(0.0f, 0.5f, 0.5f),
     ];
     static immutable size_t[4] wantF4 = [31, 36, 51, 72];
+    // L>=1 add +3 verts over the pre-task counts: the 3 retained free-end
+    // originals (Decision C). L0 stays the reference's bit-exact 34v.
+    static immutable size_t[4] wantV4 = [34, 44, 62, 86];
     bool positionIn(Vec3 v, const Vec3[] set) {
         foreach (p; set) if ((v - p).length < 1e-4f) return true;
         return false;
@@ -23499,22 +23604,19 @@ unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
         assert(m.faces.length == wantF4[level],
             "F4 combined K3+3-free-ends L" ~ level.to!string ~ " face count mismatch");
+        assert(m.vertices.length == wantV4[level],
+            "F4 combined K3+3-free-ends L" ~ level.to!string ~ " vertex count mismatch");
+        // Count the 3 raw free-end original positions retained in the mesh.
+        size_t diffCount = 0;
+        foreach (v; m.vertices)
+            if (positionIn(v, diffCorners)) ++diffCount;
         if (level == 0) {
-            assert(m.vertices.length == 34, "F4 L0 must be the reference's own bit-exact 34v");
-        } else {
-            // Every one of our vertices is one of the 3 substituted corners
-            // OR appears somewhere in the composition (loosely: not
-            // asserting full-array-subset here to avoid a 44/62/86-entry
-            // literal for marginal extra coverage beyond F1-F3's already-
-            // exercised mechanism — the face-count pin above plus the
-            // 3-corner symmetric difference below are what Decision A/B
-            // actually need locking down for THIS composed case).
-            size_t diffCount = 0;
-            foreach (v; m.vertices)
-                if (positionIn(v, diffCorners)) ++diffCount;
             assert(diffCount == 0,
-                "F4 L" ~ level.to!string ~ ": we must not emit the reference's own substituted "
-                ~ "free-end-original-position corners — Decision C is not imitated here either");
+                "F4 L0: no rounding ⇒ no Decision C — the 3 free-end originals are cut away");
+        } else {
+            assert(diffCount == 3,
+                "F4 L" ~ level.to!string ~ ": Decision C REPRODUCED — all 3 raw free-end "
+                ~ "original positions retained in their cap rings");
         }
         assertBevelManifoldClean(m, "F4 combined K3+3-free-ends L" ~ level.to!string);
     }
@@ -23755,11 +23857,14 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
         assert(d == 4 && e == 4, "pole C must be a closed-fan valence-4 vertex");
     }
     // Test 11: span C-M01 alone (touches the pole) — task 0449: rounds at
-    // every level (was flat 16v/11f at every level before this task), but
-    // BOTH its rails are the antipodal-fillet degeneracy above, so the new
-    // vertices are on the straight chords [v11,v13] (C's rail) and
-    // [v14,v15] (M01's rail), never off them.
-    static immutable size_t[3] wantV11 = [16, 18, 22];
+    // every level (was flat 16v/11f at every level before that task), and
+    // BOTH its rails are the antipodal-fillet degeneracy above. This task: C
+    // is a PLANAR valence-4 free end, so it reproduces the Decision-C cap —
+    // the raw pole vertex (0,0,0.5) is RETAINED (a coincident pair with the
+    // degenerate chamfer pinch) and the opposite-edge slide (0,0.1,0.5) is
+    // kept as an ORPHAN. That adds +1 vert at each rounded level (16/18/22 →
+    // 16/19/23), face counts unchanged.
+    static immutable size_t[3] wantV11 = [16, 19, 23];
     static immutable size_t[3] wantF11 = [11, 12, 14];
     foreach (level; 0 .. 3) {
         auto m = quarteredTopCube();
@@ -23769,20 +23874,27 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
         assert(m.vertices.length == wantV11[level] && m.faces.length == wantF11[level],
             "pole-touching span must round to the degenerate straight-chord "
             ~ "profile at Round Level " ~ level.to!string);
-        // v11=(-0.1,0,0.5)/v13=(0.1,0,0.5) are C's own two slide corners
-        // bordering the selected edge (created at Round Level 0, indices
-        // stable across levels — rail interiors are strictly appended);
-        // v14=(0.1,-0.5,0.5)/v15=(-0.1,-0.5,0.5) are M01's. Any vertex
-        // added at this level (index >= 16) must sit on one of those two
-        // chords — a real arc would bulge off both.
+        // C's rail collapses to the straight chord through its two slides
+        // bordering the selected edge, (-0.1,0,0.5)–(0.1,0,0.5); M01's to
+        // (-0.1,-0.5,0.5)–(0.1,-0.5,0.5). Every ROUNDING vertex (index >= 16 —
+        // rail interiors are strictly appended) must sit on one of those two
+        // straight chords; a real arc would bulge off both. Named by POSITION
+        // (not index) so it survives Decision C shifting the layout: the cap
+        // retains the pole (0,0,0.5), which lies ON C's chord, and orphans the
+        // opposite-edge slide (0,0.1,0.5), which is NOT a rounding vertex and
+        // is exempt.
+        static immutable Vec3 cA = Vec3(-0.1f, 0f, 0.5f), cB = Vec3(0.1f, 0f, 0.5f);
+        static immutable Vec3 mA = Vec3(-0.1f, -0.5f, 0.5f), mB = Vec3(0.1f, -0.5f, 0.5f);
+        static immutable Vec3 capOrphan = Vec3(0f, 0.1f, 0.5f);
         enum float EPS = 1e-5f;
         foreach (vi; 16 .. m.vertices.length) {
-            immutable float dC   = distToLine(m.vertices[vi], m.vertices[11], m.vertices[13]);
-            immutable float dM01 = distToLine(m.vertices[vi], m.vertices[14], m.vertices[15]);
+            if ((m.vertices[vi] - capOrphan).length < 1e-4f) continue; // Decision-C orphan slide
+            immutable float dC   = distToLine(m.vertices[vi], cA, cB);
+            immutable float dM01 = distToLine(m.vertices[vi], mA, mB);
             assert(dC < EPS || dM01 < EPS,
                 "pole-touching span's new vertex " ~ vi.to!string ~ " at L" ~
                 level.to!string ~ " is off BOTH degenerate chords — this is a real "
-                ~ "arc, not the antipodal straight-chord degeneracy Decision C predicts");
+                ~ "arc, not the antipodal straight-chord degeneracy");
         }
         assertBevelManifoldClean(m, "degrade C-M01 span");
     }
@@ -23802,15 +23914,14 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
         }
     }
     // Test 13: span C-M01 UNION a disconnected bottom edge — task 0449: BOTH
-    // spans round now, independently (were 18v/12f -> 20v/13f -> 24v/15f
-    // before this task, the pole span held flat by the withheld-consumer
-    // mechanism). The pole span's own profile is still the antipodal
-    // straight-chord degeneracy (test 11, same C/M01 rails); the
-    // disconnected bottom edge is an ordinary cube corner and rounds to a
-    // real arc — this test only pins the composed counts, test 11 owns the
-    // per-vertex degeneracy proof.
+    // spans round now, independently. The pole span's own profile is still the
+    // antipodal straight-chord degeneracy (test 11, same C/M01 rails) and now
+    // also reproduces the Decision-C free-end cap at C (+1 vert per rounded
+    // level, so 18/22/30 → 18/23/31); the disconnected bottom edge is an
+    // ordinary cube corner and rounds to a real arc — this test only pins the
+    // composed counts, test 11 owns the per-vertex degeneracy proof.
     {
-        static immutable size_t[3] wantV = [18, 22, 30];
+        static immutable size_t[3] wantV = [18, 23, 31];
         static immutable size_t[3] wantF = [12, 14, 18];
         foreach (level; 0 .. 3) {
             auto m = quarteredTopCube();
