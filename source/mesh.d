@@ -5488,50 +5488,20 @@ struct Mesh {
         resizeEdgeSelection();
         clearEdgeSelection();
 
-        // Optional weld + face-fingerprint dedup — identical to the
-        // mirrorFaces tail. Welds coincident verts between consecutive
-        // copies (e.g. cap-to-cap arrays where step magnitude equals
-        // the source's extent along one axis) and removes any face
-        // collapsed to a duplicate of an earlier face.
+        // Optional vertex weld — FULL PARITY: the reference editor's linear
+        // array KEEPS the doubled coincident seam FACE that a cap-to-cap
+        // weld produces (e.g. a 2× cube whose copy's -X face lands exactly
+        // on the source's +X face). So we weld coincident VERTS between
+        // consecutive copies (via weldCoincidentVertices, which also
+        // rebuilds edges + collapses degenerate face corners) and then drop
+        // the now-unreferenced welded-away verts with compactUnreferenced —
+        // but we deliberately do NOT fingerprint-dedup faces, so the doubled
+        // seam face survives (11f → 12f for the 2× cube). This differs from
+        // mirrorFaces / arrayFacesGrid, which still dedup coincident faces;
+        // this line-array path matches the reference's face count instead.
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             if (weldCoincidentVertices(epsSq) > 0) {
-                import std.algorithm.sorting : sort;
-                import std.format : format;
-                bool[string] seenFp;
-                uint[][] keptFaces;
-                bool[]   keptSubpatch;
-                int[]    keptOrder;
-                bool[]   keptSelected;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                keptFaces   .reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
-                keptOrder   .reserve(faces.length);
-                keptSelected.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart    .reserve(faces.length);
-                foreach (fi, ref f; faces) {
-                    auto sorted = f.dup;
-                    sort(sorted);
-                    string fp = format("%(%d,%)", sorted);
-                    if (fp in seenFp) continue;
-                    seenFp[fp] = true;
-                    keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
-                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
-                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
-                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
-                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
-                }
-                faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
-                faceSelectionOrder = keptOrder;
-                setFacesSelectedFrom(keptSelected);
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
-                rebuildEdges();
-                clearEdgeSelectionResize();
                 compactUnreferenced();
             }
         }

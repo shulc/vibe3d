@@ -1,7 +1,8 @@
 // Tests for mesh.array (PR-3 of doc/duplicate_plan.md). Linear array:
 // insert count-1 shifted copies of the selected faces (or whole mesh
 // if nothing is selected). `count` includes the original; weld>0
-// folds coincident verts and drops duplicate seam polys.
+// folds coincident verts but KEEPS the doubled coincident seam face
+// (full reference parity — the line-array path does not dedup faces).
 //
 // Cube layout (centered at origin, size 1):
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
@@ -128,36 +129,39 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Weld cap-to-cap — single quad face arrayed with step = face extent
+// Weld cap-to-cap — whole cube arrayed with step = cube extent KEEPS the
+// doubled coincident seam face (full reference parity)
 // ---------------------------------------------------------------------------
 
-unittest { // Pick the back face (z=-0.5) and array it count=2 with offset
-           // equal to its bbox-X extent (1.0): the two right-edge verts
-           // of original coincide with the two left-edge verts of copy.
-           // After weld: 4+4-2 = 6 verts, 2 faces (no doubled seam since
-           // the two quads share an edge, not a face).
+unittest { // Array the whole cube count=2 along +X with offset equal to its
+           // X extent (1.0): the copy lands cap-to-cap so the source's +X
+           // face and the copy's -X face coincide (4 verts weld together).
+           // The reference editor KEEPS that doubled coincident seam face,
+           // so the line-array path does NOT fingerprint-dedup faces.
+           // After weld: 8+8-4 = 12 verts, 6+6 = 12 faces (the doubled seam
+           // face IS kept — it is not dropped), 20 unique edges.
     resetCube();
-    // Delete every face except f0 (back) so we're working with a single
-    // floating quad — easier than arraying an open mesh.
-    postSelect("polygons", [1, 2, 3, 4, 5]);
-    postCommand(`{"id":"mesh.delete"}`);
 
     auto pre = getModel();
-    assert(pre["vertexCount"].integer == 4,
-        "setup: expected 4 verts, got " ~ pre["vertexCount"].integer.to!string);
-    assert(pre["faceCount"].integer == 1);
+    assert(pre["vertexCount"].integer == 8,
+        "setup: expected 8 verts, got " ~ pre["vertexCount"].integer.to!string);
+    assert(pre["faceCount"].integer == 6);
 
-    // The back face spans X ∈ [-0.5, +0.5]. Offset by 1.0 ⇒ copy verts
-    // at X ∈ [+0.5, +1.5]; the seam (X=+0.5) verts coincide.
+    // Cube spans X ∈ [-0.5, +0.5]. Offset by 1.0 ⇒ copy verts at
+    // X ∈ [+0.5, +1.5]; the seam (X=+0.5) verts coincide and weld.
     postCommand(`{"id":"mesh.array","params":{
         "count":2,"offset":[1,0,0],"weld":0.001
     }}`);
 
     auto m = getModel();
-    assert(m["vertexCount"].integer == 6,
-        "verts: expected 6 (4+4-2), got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 2,
-        "faces: expected 2 (no doubled seam), got " ~ m["faceCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 12,
+        "verts: expected 12 (8+8-4 welded), got " ~ m["vertexCount"].integer.to!string);
+    // 12, NOT 11: the doubled coincident +X/-X seam face is intentionally
+    // KEPT for parity (the old behavior fingerprint-dedup'd it down to 11).
+    assert(m["faceCount"].integer == 12,
+        "faces: expected 12 (doubled seam face kept), got " ~ m["faceCount"].integer.to!string);
+    assert(m["edgeCount"].integer == 20,
+        "edges: expected 20 (shared seam edges deduped), got " ~ m["edgeCount"].integer.to!string);
 }
 
 // ---------------------------------------------------------------------------
