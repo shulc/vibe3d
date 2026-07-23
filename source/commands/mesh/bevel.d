@@ -65,8 +65,8 @@ class MeshBevel : Command, Operator {
             Param.int_("segments", "Segments", &segments_, 0)
                 .min(0).max(MAX_BEVEL_SEGMENTS).enforceBounds(),
             // task 0458 Phase 3: recovered Square Corner topology rewrite
-            // (`bevelFacesByMask`'s `square` — `BevelSquare_MarkBound`/
-            // `_Rebuild`, findings.md §3), parity-fixture-verified
+            // (`bevelFacesByMask`'s `square` — the reference's square-cap
+            // boundary-mark + rebuild, findings.md §3), parity-fixture-verified
             // (Q1-Q4). Promoted out of Hidden alongside the interactive
             // `poly.bevel` tool's own Tool Properties toggle
             // (tools/edit/poly_bevel.d) now that the kernel + fixtures

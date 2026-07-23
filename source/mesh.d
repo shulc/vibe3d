@@ -8313,9 +8313,9 @@ struct Mesh {
     /// Newell average. Identical to `faceNormal()` for a planar face (any
     /// corner of a flat polygon shares the same normal direction), but
     /// diverges on a non-planar n-gon — task 0458's recovered
-    /// `BevelGroup_AveNormal` law is only bit-exact against this
+    /// the reference's group-average-normal law is only bit-exact against this
     /// PER-CORNER form (rr/gdb + geometry, `toolcards/poly.bevel/
-    /// findings.md` §1: reference's `verxCornerNormal`). Returns (0,1,0)
+    /// findings.md` §1: the reference's per-corner vertex normal). Returns (0,1,0)
     /// for a degenerate/tiny corner (matches `faceNormal`'s own fallback).
     private Vec3 cornerNormalAt(uint fi, uint v) const {
         const uint[] f = faces[fi];
@@ -8331,7 +8331,7 @@ struct Mesh {
         return len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
     }
 
-    /// `AVE_N(v) = k·N/|N|²` (task 0458, `BevelGroup_AveNormal` recovered
+    /// `AVE_N(v) = k·N/|N|²` (task 0458, the reference's group-average-normal recovered
     /// via rr/gdb — `toolcards/poly.bevel/findings.md` §1): `nSum` = Σ of
     /// the `count` incident selected-face CORNER unit normals (see
     /// `cornerNormalAt`), amplified by their own count and re-normalized
@@ -8471,7 +8471,7 @@ struct Mesh {
     /// corner there, and the ring quad for any EDGE shared by 2 selected
     /// faces ("internal") is suppressed entirely (no bridge — it dissolves
     /// into the merged interior). Shift accumulates via `aveNormal()`'s
-    /// `AVE_N = k·N/|N|²` (task 0458, `BevelGroup_AveNormal` recovered
+    /// `AVE_N = k·N/|N|²` (task 0458, the reference's group-average-normal recovered
     /// rr/gdb — see that function's doc comment and
     /// `toolcards/poly.bevel/findings.md`), not a plain `Σ(unit normal)` —
     /// the two coincide only when the incident corner normals are mutually
@@ -8557,8 +8557,8 @@ struct Mesh {
     /// ring lands at exactly
     /// half-inset/half-shift, including at the grouped shared corner).
     ///
-    /// `square` (task 0458 Phase 3, recovered `BevelSquare_MarkBound`/
-    /// `_Rebuild` callback post-pass — `toolcards/poly.bevel/findings.md`
+    /// `square` (task 0458 Phase 3, recovered square-cap boundary-mark +
+    /// rebuild callback post-pass — `toolcards/poly.bevel/findings.md`
     /// §0/§3): composition order is `square( group_xor_notgroup( segments
     /// ) )` — square wraps whatever the (group|non-group)+segments solve
     /// above already produced, touching ONLY the outermost ring (the
@@ -9250,10 +9250,10 @@ struct Mesh {
     /// N≥4 junctions (a different reference N-sided path — `junctionRingN`) now
     /// ALSO round (task 0454/0456) to reference parity at EVERY level, both N
     /// parities: even N was already exact; odd N's L≥2 ring residual (the
-    /// GPatch_MovePoints/CenterNormal newC_i gap) is CLOSED (task 0453,
+    /// odd-N corner-move / center-normal newC_i gap) is CLOSED (task 0453,
     /// finding J) — `newC_i`'s true final value is the plain hub-law value,
-    /// planar-projected by CenterNormal (every N), then — odd N only —
-    /// magnitude-corrected by MovePoints' sin-angle recurrence. An over-cap
+    /// planar-projected by the center-normal step (every N), then — odd N only —
+    /// magnitude-corrected by the odd-N corner-move sin-angle recurrence. An over-cap
     /// full hub (`> MAX_JUNCTION_VALENCE`) still keeps the flat N-gon cap
     /// (DoS backstop).
     /// `roundLevel==0` takes the old flat path without a registry.
@@ -9527,7 +9527,7 @@ struct Mesh {
             //     reference's internal control net.
             //   • Emitted RAIL vertex (finding I): the mesh rail vertex the
             //     reference actually writes is NOT the boundary-Bézier — it is
-            //     the `EdgeBevel_RoundPos`/`RoundPos0` SLERP-plus-correction law
+            //     the rail-position SLERP-plus-correction law
             //     pivoted on the TWO NEIGHBORING sides' slide points `jvA`/`jvB`
             //     (never the side's own). When `hubRail` is set, `railInterior`
             //     samples that law instead of the slerp arc — the ONLY rail-law
@@ -9594,8 +9594,8 @@ struct Mesh {
         // Level≥1 N-way junction writes, distinct from the internal Gregory net's
         // boundary Bézier above (which misses it by ~0.01–0.03). Direct port of
         // `nway_hub_ring_ref.py::_round_center`/`_round_pos0`/`_round_pos`,
-        // live-RE'd via rr/gdb through `EdgeBevel_RoundCenter`/`RoundPos`/
-        // `RoundPos0`. `roundCenter` = the ALREADY-SHIPPED K1/K2 two-tangent-line
+        // recovered via rr/gdb tracing of the reference's own fillet-center /
+        // rail-position builders. `roundCenter` = the ALREADY-SHIPPED K1/K2 two-tangent-line
         // fillet centre reused verbatim (valid because |jv−V|==width for both
         // pivots).
         static Vec3 roundCenter(Vec3 p0, Vec3 p1, Vec3 V) {
@@ -9819,7 +9819,7 @@ struct Mesh {
                 // adjacent faces, whose radius AND sweep are set by the ACTUAL
                 // dihedral — not a fixed 90° quarter-turn (that was a cube-only
                 // degeneracy). Reconstructed from the reference's own builders
-                // (RoundCenter = two-tangent-line intersection; RoundPos =
+                // (fillet-center = two-tangent-line intersection; rail-position =
                 // angular SLERP):
                 //   dA = V - E_A,  dB = V - E_B
                 //   k  = width² / (width² + dA·dB)      // = 1 at a 90° corner
@@ -10539,7 +10539,7 @@ struct Mesh {
         }
 
         // GENERAL N-sided junction Gregory ring (N≥4, task 0454). The N-sided
-        // reference path (GPatch_NSides / GPatch_SolveEquations) is a DIFFERENT
+        // reference path (the reference's N-sided patch solve) is a DIFFERENT
         // evaluator than N=3's fast path, recovered capture-free
         // (toolcards/edge.bevel/nway_hub_ring_ref.py, findings A/B/E/F/H). Unlike
         // `junctionRing` (which re-fits each boundary Bézier from a circumcircle
@@ -10553,8 +10553,8 @@ struct Mesh {
         //     (exact decomposition of the reference's sparse (4N)×(4N) system —
         //     NO dense solver, dodges the O(N³)/allocation DoS).
         //   newC_i's TRUE final value (task 0453, finding J) = the plain hub-law
-        //     value above, THEN GPatch_CenterNormal's planar projection (EVERY
-        //     N), THEN — odd N only — GPatch_MovePoints' sin-angle magnitude
+        //     value above, THEN the center-normal planar projection (EVERY
+        //     N), THEN — odd N only — the odd-N corner-move sin-angle magnitude
         //     recurrence. Both ported below; odd N is now reference-parity at
         //     every Round Level, not just L1.
         //   evaluator: identical to N=3 EXCEPT the p22 grid cell is
@@ -10586,9 +10586,9 @@ struct Mesh {
             // TWO-STAGE correction of the plain hub-law value just computed,
             // ported bit-for-bit from `center_normal_project`/`move_points_odd_N`
             // in toolcards/edge.bevel/nway_hub_ring_ref.py (private reference,
-            // recovered from GPatch_CenterNormal/GPatch_MovePoints).
+            // recovered from the reference's center-normal + odd-N corner-move steps).
             //
-            // Stage 1 — GPatch_CenterNormal: planar-projects the WHOLE newC
+            // Stage 1 — center-normal projection: planar-projects the WHOLE newC
             // ring onto ONE common plane through hub. Runs UNCONDITIONALLY for
             // every N (even AND odd) — NOT gated on parity, unlike Stage 2
             // below. A near-no-op (~1e-17) on the near-planar rings every
@@ -10605,7 +10605,7 @@ struct Mesh {
             // unit-tested directly on a hand-built ring (see the property
             // unittest near the K5-asymmetric parity fixtures).
             centerNormalProject(N, hub, newCv);
-            // Stage 2 — GPatch_MovePoints: ODD N ONLY. Takes Stage 1's OUTPUT
+            // Stage 2 — odd-N corner-move: ODD N ONLY. Takes Stage 1's OUTPUT
             // and replaces every newC_i's hub-relative MAGNITUDE (keeping its
             // DIRECTION exactly) via a multiplicative sin-of-turning-angle
             // recurrence around the full N-cycle: forward-ADJACENT (i,i+1)
@@ -11037,12 +11037,12 @@ struct Mesh {
         // positional vs. constructive new-vertex merge") plus a live
         // rr/gdb trace of the reference's own polygon-assembly routine
         // ("rr/gdb mechanism trace — task 0436 follow-up 2") that reads and
-        // watches `EdgeBevel_AddVertex` execute. Two steps, matching two
+        // watches the reference's own face-corner append routine execute. Two steps, matching two
         // DIFFERENT parts of the reference the trace distinguishes:
         //
         // STEP 1 — IDENTITY POOLING (the trace's own open sub-question,
         // "what pools two independently-computed slide positions into one
-        // shared object" — not traced; `EdgeBevel_GetNewV` is a plausible
+        // shared object" — not traced; the reference's new-vertex allocator is a plausible
         // carrier, inspected but not confirmed). Two NEW corners (both
         // >= savedVertCount) pool into one shared representative iff they
         // coincide AND are corners of the SAME rebuilt face — this is the
@@ -11062,7 +11062,7 @@ struct Mesh {
         // face — un-pooled and therefore un-merged.
         //
         // STEP 2 — PER-FACE CONSTRUCTION (this IS the directly traced
-        // mechanism). `EdgeBevel_AddVertex` appends each candidate corner
+        // mechanism). The reference's face-corner append routine appends each candidate corner
         // to the rebuilt face's own list unless it equals — by pointer
         // identity, checked on every candidate, not just the closing one —
         // the LAST corner already accepted into THIS face's list, or the
@@ -11302,14 +11302,14 @@ struct Mesh {
         return 1;
     }
 
-    /// `GPatch_CenterNormal` (task 0453, finding J, Stage 1 of newC_i's
+    /// The center-normal projection step (task 0453, finding J, Stage 1 of newC_i's
     /// TRUE final value — see `junctionRingN`'s own call site for the full
     /// derivation). Planar-projects the WHOLE `newCv` ring onto ONE common
     /// plane through `hub`, mutating `newCv` in place. Runs UNCONDITIONALLY
     /// for every N (even AND odd) — ported bit-for-bit from
     /// `center_normal_project` in the private reference
     /// (toolcards/edge.bevel/nway_hub_ring_ref.py), recovered from
-    /// full static disassembly of `GPatch_CenterNormal`. `crossN_i` must read
+    /// full static disassembly of the reference's center-normal step. `crossN_i` must read
     /// every side's ORIGINAL (pre-projection) `newCv` — both at `i` and
     /// `i-1` — so this snapshots first: this pass's own writes must never be
     /// read back by a later `i` in the SAME pass. Factored out of
@@ -12746,7 +12746,7 @@ struct Mesh {
     /// itself; empty means "this direction dead-ends at the seed").
     ///
     /// Gates mirror the recovered per-hop dispatch (findings.md
-    /// `SelLoop_GetNextEdge`), evaluated once using the seed's own hop pivot:
+    /// the reference's loop next-edge dispatch), evaluated once using the seed's own hop pivot:
     ///   1. ANY odd valence at the pivot vertex while the seed is an
     ///      interior edge (2 incident faces) dead-ends this direction
     ///      outright — no floor. This fires just as readily on a plain
@@ -12755,8 +12755,8 @@ struct Mesh {
     ///      is genuinely the 4-edge fallback face below, not a 7-edge union
     ///      of two adjacent perimeters — confirmed by a dedicated closed-
     ///      mesh capture (`cube_corner_edge0`) plus an rr/gdb trace of
-    ///      `SelLoop_GetNextEdge` reaching this exact bail with vcount=3,
-    ///      MeshEdgePolyCount==2 (see findings.md's Gate-1 section; an
+    ///      the reference's loop next-edge dispatch reaching this exact bail with vcount=3,
+    ///      incident-face-count==2 (see findings.md's Gate-1 section; an
     ///      earlier `>=5`-floor calibration here was an un-traced
     ///      hypothesis, since ruled out).
     ///   2. an even (>=4) valence pivot touching more than 2 border edges
@@ -18943,7 +18943,7 @@ private void assertFacesMatchByPosition(ref Mesh m, const Vec3[] wantVerts,
 // Task 0456 — bidirectional max nearest-vertex distance between the beveled mesh
 // and a reference dump's vertices, asserted within `band`. Used where the mesh
 // matches the reference in SHAPE but not vertex-for-vertex under the %.5f bucket:
-//   • the odd-N L>=2 hub ring's ~3.6e-3 GPatch_MovePoints/newC_i residual (0453);
+//   • the odd-N L>=2 hub ring's ~3.6e-3 corner-move/newC_i residual (0453);
 //   • the mixed owner mesh, whose valence-4 full-hub free-end caps carry a
 //     coincident pair + orphan slide (now reproduced, not welded) — a
 //     bidirectional nearest-distance check tolerates the coincident duplicates
@@ -20973,8 +20973,8 @@ unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L1
 
 unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L2
            // Parity fixture (task 0453, flipped from the prior XFAIL Hausdorff
-           // band). newC_i's TRUE final value (GPatch_CenterNormal planar
-           // projection + GPatch_MovePoints odd-N sin-angle recurrence,
+           // band). newC_i's TRUE final value (center-normal planar
+           // projection + odd-N corner-move sin-angle recurrence,
            // finding J) closes the ~4e-3 residual finding (H) originally
            // reported — transcribed FROM the reference capture dump
            // edge_bevel_gen_k5_junction_level2, NOT our kernel's output.
@@ -21156,14 +21156,14 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L1 (task 0453)
            // irregular azimuth/radius/height (73.6/71.7/92.0/56.3/66.4 deg
            // gaps; radii 1.60/1.77/1.58/1.66/1.75; heights 1.3/1.6/1.1/1.8/1.0)
            // so every pairwise adjacent-direction angle differs. This is the
-           // capture that pinned GPatch_MovePoints' (i,i+1) forward pairing
+           // capture that pinned the odd-N corner-move's (i,i+1) forward pairing
            // (gate A4, toolcards/edge.bevel/nway_hub_law_findings.md finding
            // J) — the K5-SYMMETRIC fixture's 5-fold symmetry collapses every
            // adjacent-pair angle to <=2 distinct values, so a WRONG pairing
            // reproduces it too; this asymmetric case cannot be fooled that
            // way. L1 has NO ring surface (m=L-1=0, mesh.d ~9880) so it is a
            // topology/regression guard only — it does NOT exercise
-           // CenterNormal/MovePoints (L2/L3 below do). Transcribed FROM the
+           // the center-normal/corner-move steps (L2/L3 below do). Transcribed FROM the
            // reference capture dump edge_bevel_gen_k5_asym1_level1, NOT our
            // kernel's output.
     Mesh m;
@@ -21211,8 +21211,8 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L1 (task 0453)
 
 unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L2 (task 0453)
            // THE DISCRIMINATING NON-PLANAR ODD-N ORACLE: only BOTH
-           // GPatch_CenterNormal (Stage 1, planarizes the newC ring) AND
-           // GPatch_MovePoints (Stage 2, the odd-N sin-angle magnitude
+           // the center-normal step (Stage 1, planarizes the newC ring) AND
+           // the odd-N corner-move step (Stage 2, the odd-N sin-angle magnitude
            // recurrence with its (i,i+1)-forward pairing) wired correctly
            // pass this fixture — a Stage-1-only or Stage-2-only port fails
            // it (verified while landing this port: reverting either stage

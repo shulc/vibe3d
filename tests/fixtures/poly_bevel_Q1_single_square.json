@@ -10,7 +10,7 @@
     "captured_utc": "2026-07-21T00:00:00Z",
     "harness": "private capture harness (reference-editor polygon-bevel tool, headless scripted op-dump)",
     "task": "0458",
-    "notes": "Phase-0 dump-oracle for square=true (single face). Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) per the recovered BevelSquare_MarkBound/_Rebuild topology rewrite (toolcards/poly.bevel/findings.md section 3)."
+    "notes": "Phase-0 dump-oracle for square=true (single face). Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) per the recovered square-cap boundary-mark + rebuild topology rewrite (toolcards/poly.bevel/findings.md section 3)."
   },
   "tolerance": 0.0001,
   "cases": [
