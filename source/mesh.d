@@ -619,6 +619,22 @@ struct Mesh {
     // doc/undo_change_tracker_plan.md.
     private MeshEditTracker* editRecorder_;
 
+    // --- edge.bevel valence-4 planar free-end cap parity ------------------
+    // At a valence-4 / planar / K==1 free-end whose single selected edge
+    // terminates on a valence-4 full-hub junction, the reference cap keeps
+    // TWO coincident referenced verts at the free-end position (one anchors
+    // the reduced side faces, one the chamfer strips) PLUS one ORPHAN slide
+    // along the edge opposite the selected one (derived from measured
+    // reference dumps only). These are the intended artefacts of that exact
+    // cap and are recorded per-bevel so (a) the intended orphan survives the
+    // tail compaction (pinned), and (b) the soundness census can exempt
+    // exactly these coincident/orphan verts while still flagging any others.
+    // All three are reset at the top of every bevelEdgesByMask call and
+    // consumed only within that call (+ read by the census immediately after).
+    uint[] bevelPinnedOrphans_;      // vertex indices to keep through compaction
+    Vec3[] bevelCapCoincidentPos_;   // free-end positions holding the coincident pair
+    Vec3[] bevelCapOrphanPos_;       // opposite-edge-slide positions (intended orphan)
+
     // --- Edge-delete touched region (task 0474) ---------------------------
     // POSITIONS of the endpoints of the edges last handed to removeEdgesByMask
     // (the SELECTION the user asked to delete). Captured before any mutation,
@@ -1788,8 +1804,15 @@ struct Mesh {
         return referenced;
     }
 
-    size_t compactUnreferenced() {
+    /// `pinned` vertices are KEPT even when no face references them. The only
+    /// caller that passes a non-empty list is edge.bevel's valence-4 full-hub
+    /// free-end cap, which deliberately retains the reference's orphan cap
+    /// slide (see `bevelPinnedOrphans_`); every other call site keeps the
+    /// default (empty) and so behaves exactly as before.
+    size_t compactUnreferenced(const(uint)[] pinned = null) {
         bool[] referenced = computeReferencedVertexMask();
+        foreach (pi; pinned)
+            if (pi < referenced.length) referenced[pi] = true;
         // Build old→new index map
         uint[] remap;
         remap.length = vertices.length;
@@ -9271,6 +9294,14 @@ struct Mesh {
         // leaks orphaned vertices into the mesh.
         immutable size_t savedVertCount = vertices.length;
 
+        // Reset the valence-4 free-end cap parity bookkeeping for this call
+        // (see the field declarations). Populated only when a qualifying cap
+        // is emitted below; empty otherwise, so this is a no-op for every
+        // ordinary bevel.
+        bevelPinnedOrphans_.length     = 0;
+        bevelCapCoincidentPos_.length  = 0;
+        bevelCapOrphanPos_.length      = 0;
+
         // Edge→(≤2 faces) adjacency, one pass (same idiom as extrudeEdgesByMask).
         auto edgeFaces = buildEdgeFaces();
 
@@ -9890,6 +9921,44 @@ struct Mesh {
             }
             if (K == 0) continue;
 
+            // Valence-4 / planar / K==1 free-end cap whose single selected
+            // edge terminates on a valence-4 FULL HUB junction. This exact
+            // config (measured from reference dumps) keeps a reference cap
+            // topology that vibe3d's sound-by-default construction does not:
+            // the two reduced side faces stay anchored at the ORIGINAL
+            // free-end vertex (retained, coincident with the chamfer-strip
+            // pinch → a pinched cap quad), and the slide along the edge
+            // OPPOSITE the selected one is emitted but left as an ORPHAN.
+            // Gated narrowly so valence-3 free ends, the valence-4 rounded
+            // hub (K==d), and non-full-hub free ends stay byte-identical.
+            bool k4feCap = false;
+            int k4feOppSlot = -1;
+            // Only at Round Level >= 1: the reference's flat (L0) cap has NO
+            // such divergence (measured: L0 dumps are byte-clean, 35v ref =
+            // 35v ours), because there is no rounded chamfer rail to pinch
+            // against. Gate on roundLevel so every L0 free-end cap stays
+            // byte-identical.
+            if (roundLevel > 0 && !openFan && d == 4 && K == 1) {
+                immutable Vec3 n0f = faceNormal(vFaces[0]);
+                bool planarf = true;
+                foreach (kf; 1 .. d)
+                    if (dot(n0f, faceNormal(vFaces[kf])) < 0.999f) { planarf = false; break; }
+                if (planarf) {
+                    int sf = -1;
+                    foreach (kf; 0 .. nE) if (selE[kf]) { sf = kf; break; }
+                    immutable uint farVf = vNbrs[sf];
+                    int farDegf = 0, farKf = 0;
+                    foreach (fef; edgesAroundVertex(farVf)) {
+                        ++farDegf;
+                        if (fef < qualifies.length && qualifies[fef]) ++farKf;
+                    }
+                    if (farDegf == 4 && farKf == 4) {
+                        k4feCap = true;
+                        k4feOppSlot = (sf + 2) % nE;   // edge opposite the selected one
+                    }
+                }
+            }
+
             // A GENUINE closed full-ring hub: every incident edge selected on a
             // NON-boundary fan (`K == d`, `!openFan`). This is the ONLY shape
             // whose pairwise rails take task 0454's finding-(F) boundary-Bézier
@@ -9950,7 +10019,19 @@ struct Mesh {
                     // f_k's own ring-traversal direction at V. This is the
                     // L0 chord — `threadRails` below swaps it for the
                     // materialized rail chain wherever Round Level approved it.
-                    faceSubs.require(fi) ~= VertSub(V, [getSlide(kr), getSlide(k)]);
+                    //
+                    // EXCEPTION — the valence-4 full-hub free-end cap: the
+                    // corner on the edge OPPOSITE the single selected edge
+                    // routes to the RETAINED original free-end vertex V
+                    // (side_pinch) instead of a slide, so the two reduced
+                    // side faces share one anchor at the free-end position
+                    // (reference parity). V is an ORIGINAL vertex
+                    // (< savedVertCount), so it never enters the new-vertex
+                    // identity pool below — the coincident pinch stays two
+                    // distinct records with no pooling change needed.
+                    immutable uint sPred = (k4feCap && kr == k4feOppSlot) ? V : getSlide(kr);
+                    immutable uint sSucc = (k4feCap && k  == k4feOppSlot) ? V : getSlide(k);
+                    faceSubs.require(fi) ~= VertSub(V, [sPred, sSucc]);
                 }
             }
 
@@ -9981,7 +10062,17 @@ struct Mesh {
             if (!openFan && K > 0 && K < nE) {
                 uint[] cap;
                 foreach (k; 0 .. nE) {
-                    if (!selE[k]) cap ~= getSlide(k);
+                    if (!selE[k]) {
+                        // On the valence-4 full-hub free-end cap, the
+                        // opposite-edge corner of the ring is the retained
+                        // free-end vertex V (matching the side faces above),
+                        // which — once `threadRails` inserts the chamfer-strip
+                        // pinch on the wrap edge — yields the reference's
+                        // PINCHED cap quad [side_pinch(V), slide, chamfer_pinch,
+                        // slide]. The opposite-edge SLIDE is still created just
+                        // below and deliberately left orphaned.
+                        cap ~= (k4feCap && k == k4feOppSlot) ? V : getSlide(k);
+                    }
                     immutable int kNext = (k + 1) % nE;
                     if (k < d && selE[k] && selE[kNext])
                         cap ~= cornerAtVF[vfKey(V, vFaces[k])].vert;   // miter of face f_k
@@ -9989,6 +10080,18 @@ struct Mesh {
                 if (cap.length >= 3) {
                     freeEndCapRing[V] = cap;
                     freeEndCapSrc[V]  = vFaces[0];
+
+                    if (k4feCap) {
+                        // Materialize the opposite-edge slide the reference
+                        // keeps as an ORPHAN (unreferenced) cap vertex, and
+                        // record it so the tail compaction pins it and the
+                        // soundness census exempts it (along with the
+                        // coincident pair at the free-end position V).
+                        immutable uint orphanSlide = getSlide(k4feOppSlot);
+                        bevelPinnedOrphans_    ~= orphanSlide;
+                        bevelCapCoincidentPos_ ~= vpos;
+                        bevelCapOrphanPos_     ~= vertices[orphanSlide];
+                    }
                 }
             }
         }
@@ -10988,10 +11091,12 @@ struct Mesh {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
-        // Tail: rebuild topology + compact orphaned original vertices.
+        // Tail: rebuild topology + compact orphaned original vertices, but
+        // PIN the valence-4 full-hub free-end cap's intended orphan slides so
+        // they survive as the reference keeps them (see bevelPinnedOrphans_).
         rebuildEdges();
         buildLoops();
-        compactUnreferenced();
+        compactUnreferenced(bevelPinnedOrphans_);
         buildLoops();
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
         return processed;
@@ -18479,9 +18584,25 @@ private void assertBevelManifoldClean(ref Mesh m, string tag) {
 private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler) {
     import std.conv : to;
 
+    // The valence-4 full-hub free-end cap (L>=1) DELIBERATELY reproduces the
+    // reference's degenerate cap: a coincident pair (side_pinch + chamfer_pinch)
+    // at each free-end position, plus one orphan opposite-edge slide. The bevel
+    // records those exact positions; waive EXACTLY them here (empty for every
+    // other bevel, so this is a no-op elsewhere) and exclude the intended
+    // orphans from the Euler count. Any OTHER coincident/orphan vertex still
+    // fails the asserts below.
+    bool nearRecorded(Vec3 p, const(Vec3)[] recorded) {
+        foreach (r; recorded)
+            if ((p - r).length < 1e-6f) return true;
+        return false;
+    }
+    const capCoincident = m.bevelCapCoincidentPos_;
+    const capOrphan     = m.bevelCapOrphanPos_;
+
     foreach (i; 0 .. m.vertices.length)
         foreach (j; i + 1 .. m.vertices.length)
-            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
+            assert((m.vertices[i] - m.vertices[j]).length > 1e-6f
+                    || nearRecorded(m.vertices[i], capCoincident),
                 tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
 
     foreach (fi, f; m.faces) {
@@ -18489,6 +18610,24 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
         foreach (v; f) distinct[v] = true;
         assert(distinct.length >= 3,
             tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
+        // The reference-parity PINCHED cap face carries the coincident pair
+        // (side_pinch + chamfer_pinch) at a recorded cap position; at Round
+        // Level >= 2 its rail interiors are collinear along the free-end
+        // edge too, so the whole cap face is deliberately zero-area — the
+        // reference emits the same degenerate cap. Waive the zero-area assert
+        // for EXACTLY a face that carries such a coincident cap pair; every
+        // other zero-area face still fails.
+        bool intendedPinchedCap = false;
+        if (capCoincident.length > 0) {
+            outer: foreach (ci; 0 .. f.length) {
+                if (!nearRecorded(m.vertices[f[ci]], capCoincident)) continue;
+                foreach (cj; ci + 1 .. f.length)
+                    if ((m.vertices[f[ci]] - m.vertices[f[cj]]).length < 1e-6f) {
+                        intendedPinchedCap = true;
+                        break outer;
+                    }
+            }
+        }
         Vec3 nsum = Vec3(0, 0, 0);
         foreach (k; 0 .. f.length) {
             Vec3 a = m.vertices[f[k]], b = m.vertices[f[(k + 1) % f.length]];
@@ -18496,7 +18635,7 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
             nsum.y += (a.z - b.z) * (a.x + b.x);
             nsum.z += (a.x - b.x) * (a.y + b.y);
         }
-        assert(nsum.length * 0.5f > 1e-9f,
+        assert(nsum.length * 0.5f > 1e-9f || intendedPinchedCap,
             tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
     }
 
@@ -18513,8 +18652,14 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
             edgeWinding[ekey(a, b)] += a < b ? 1 : -1;
             ++vertexUse[a];
         }
-    foreach (vi, count; vertexUse)
+    long intendedOrphans = 0;
+    foreach (vi, count; vertexUse) {
+        if (count == 0 && nearRecorded(m.vertices[vi], capOrphan)) {
+            ++intendedOrphans;   // reference-parity orphan cap slide — expected
+            continue;
+        }
         assert(count > 0, tag ~ ": orphan vertex " ~ vi.to!string);
+    }
     size_t edgeCount = 0;
     foreach (key, count; edgeUse) {
         assert(count == 1 || count == 2, tag ~ ": edge used by " ~ count.to!string ~
@@ -18525,7 +18670,9 @@ private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler
         ++edgeCount;
     }
 
-    immutable long V = cast(long)m.vertices.length;
+    // Intended orphan cap slides are not part of the surface — exclude them
+    // from V so the Euler characteristic still measures the real manifold.
+    immutable long V = cast(long)m.vertices.length - intendedOrphans;
     immutable long E = cast(long)edgeCount;
     immutable long F = cast(long)m.faces.length;
     assert(V - E + F == wantEuler,
@@ -18597,9 +18744,10 @@ private void assertFacesMatchByPosition(ref Mesh m, const Vec3[] wantVerts,
 // and a reference dump's vertices, asserted within `band`. Used where the mesh
 // matches the reference in SHAPE but not vertex-for-vertex under the %.5f bucket:
 //   • the odd-N L>=2 hub ring's ~3.6e-3 GPatch_MovePoints/newC_i residual (0453);
-//   • the mixed owner mesh, whose reference emits 2 extra COINCIDENT free-end
-//     duplicates vibe3d welds — every reference position is still reproduced, so
-//     the one-directional dump->ours distance stays at the float32 floor.
+//   • the mixed owner mesh, whose valence-4 full-hub free-end caps carry a
+//     coincident pair + orphan slide (now reproduced, not welded) — a
+//     bidirectional nearest-distance check tolerates the coincident duplicates
+//     while still holding every reference position at the float32 floor.
 // NOT a parity claim at the float32 floor — the band is stated per call site.
 private void assertHubHausdorffWithin(ref Mesh m, const(Vec3)[] refVerts,
                                       float band, string tag) {
@@ -21083,11 +21231,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L1
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L1
            // has 46v/38f; our FACE count matches exactly (38). Our vertex count
-           // is 44: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21112,7 +21263,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L1
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.05f, 1);
     assert(m.faces.length == 38, "mixed K4fe w0.05 L1 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 44, "mixed K4fe w0.05 L1 (task 0456 owner): our vertex count (ref 46, +2 free-end weld)");
+    assert(m.vertices.length == 46, "mixed K4fe w0.05 L1 (task 0456 owner): vertex count matches reference (46)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -21140,11 +21291,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L2
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L2
            // has 70v/58f; our FACE count matches exactly (58). Our vertex count
-           // is 68: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21169,7 +21323,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L2
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.05f, 2);
     assert(m.faces.length == 58, "mixed K4fe w0.05 L2 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 68, "mixed K4fe w0.05 L2 (task 0456 owner): our vertex count (ref 70, +2 free-end weld)");
+    assert(m.vertices.length == 70, "mixed K4fe w0.05 L2 (task 0456 owner): vertex count matches reference (70)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -21205,11 +21359,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L3
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p05_L3
            // has 102v/86f; our FACE count matches exactly (86). Our vertex count
-           // is 100: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21234,7 +21391,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L3
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.05f, 3);
     assert(m.faces.length == 86, "mixed K4fe w0.05 L3 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 100, "mixed K4fe w0.05 L3 (task 0456 owner): our vertex count (ref 102, +2 free-end weld)");
+    assert(m.vertices.length == 102, "mixed K4fe w0.05 L3 (task 0456 owner): vertex count matches reference (102)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -21280,11 +21437,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L1
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L1
            // has 46v/38f; our FACE count matches exactly (38). Our vertex count
-           // is 44: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21309,7 +21469,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L1
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.10f, 1);
     assert(m.faces.length == 38, "mixed K4fe w0.10 L1 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 44, "mixed K4fe w0.10 L1 (task 0456 owner): our vertex count (ref 46, +2 free-end weld)");
+    assert(m.vertices.length == 46, "mixed K4fe w0.10 L1 (task 0456 owner): vertex count matches reference (46)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -21337,11 +21497,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L2
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L2
            // has 70v/58f; our FACE count matches exactly (58). Our vertex count
-           // is 68: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21366,7 +21529,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L2
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.10f, 2);
     assert(m.faces.length == 58, "mixed K4fe w0.10 L2 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 68, "mixed K4fe w0.10 L2 (task 0456 owner): our vertex count (ref 70, +2 free-end weld)");
+    assert(m.vertices.length == 70, "mixed K4fe w0.10 L2 (task 0456 owner): vertex count matches reference (70)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -21402,11 +21565,14 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L3
            // interior cube-edge midpoint (2 of its 4 rays are FLAT internal split
            // edges, 2 are 90deg cube edges). Reference edge_bevel_mixed_k4fe_w0p10_L3
            // has 102v/86f; our FACE count matches exactly (86). Our vertex count
-           // is 100: the reference emits 2 extra COINCIDENT duplicate vertices at
-           // its 2 planar valence-4 free-end caps (its own documented degenerate
-           // free-end quirk, mixed_junction_freeend_findings §b/§e) which vibe3d
-           // welds — pre-existing, OUT OF SCOPE for the hub port. Every reference
-           // vertex position is reproduced within the float32-mesh floor.
+           // now MATCHES the reference: at each planar valence-4 full-hub free-end
+           // cap (Round Level >= 1) the two reduced side faces stay anchored
+           // at the RETAINED original free-end vertex (coincident with the
+           // chamfer-strip pinch → a pinched cap quad), and the slide along
+           // the OPPOSITE edge is kept as an intended orphan — reproducing the
+           // reference cap topology derived purely from its measured dumps.
+           // Every reference vertex position is reproduced within the
+           // float32-mesh floor.
     Mesh m;
     m.vertices = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f),
@@ -21431,7 +21597,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L3
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
     m.bevelEdgesByMask(mask, 0.10f, 3);
     assert(m.faces.length == 86, "mixed K4fe w0.10 L3 (task 0456 owner): face count == reference");
-    assert(m.vertices.length == 100, "mixed K4fe w0.10 L3 (task 0456 owner): our vertex count (ref 102, +2 free-end weld)");
+    assert(m.vertices.length == 102, "mixed K4fe w0.10 L3 (task 0456 owner): vertex count matches reference (102)");
         immutable Vec3[] dumpVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
