@@ -9220,8 +9220,22 @@ struct Mesh {
     /// .enforceBounds()` hint is a shallower, UI/HTTP-only second line of
     /// defense.
     ///
+    /// `widthMode` (parity task — the D1 fuzz divergence): selects how the
+    /// tool value maps to the along-face corner slide.
+    ///   • `false` (default, "inset"): the value IS the along-face slide — the
+    ///     distance each corner travels along its neighbouring non-bevel edge.
+    ///     Every offset below is byte-identical to the pre-`widthMode` path.
+    ///   • `true` ("width"): the value is the true PERPENDICULAR bevel width —
+    ///     the distance across the new chamfer strip, held CONSTANT for every
+    ///     selected edge regardless of its dihedral. On a crease whose two
+    ///     incident faces meet at surface-opening angle θ, the along-face slide
+    ///     it produces is `value / sin(θ/2)` — so a sharper crease slides
+    ///     further to keep the same perpendicular width. θ is the per-edge
+    ///     dihedral (it varies across a non-uniform selection); a boundary/rim
+    ///     edge (no second face) has no dihedral and keeps the raw value.
     /// Returns the count of edges actually processed (0 ⇒ no-op, all skipped).
-    size_t bevelEdgesByMask(const bool[] mask, float width, int roundLevel = 0) {
+    size_t bevelEdgesByMask(const bool[] mask, float width, int roundLevel = 0,
+                            bool widthMode = false) {
         if (width < 1e-6f) return 0;
         if (mask.length != edges.length) return 0;
 
@@ -9305,6 +9319,44 @@ struct Mesh {
             ++nQual;
         }
         if (nQual == 0) return 0;
+
+        // Width-mode dihedral conversion (parity task, fuzz divergence D1).
+        // In "width" mode the tool value is the true PERPENDICULAR bevel width
+        // (the distance across the new chamfer strip), so the along-face corner
+        // slide it produces on a crease of surface-opening angle θ is
+        // `width / sin(θ/2)`, NOT the raw value. `edgeFactor[e] = 1/sin(θ/2)`
+        // per selected edge; every along-face offset below multiplies the raw
+        // `width` by this factor. In "inset" mode the array stays empty and
+        // every offset is byte-identical to the pre-change path.
+        //   θ = the surface-opening dihedral between the beveled edge's two
+        //   incident faces (π ⇒ flat ⇒ factor 1; π/2 ⇒ cube corner ⇒ factor
+        //   √2). With `c = clamp(n̂_A · n̂_B, -1, 1)` the OUTWARD face-normal
+        //   cosine (`= −cos θ` for consistently wound faces),
+        //   `sin(θ/2) = sqrt((1 + c)/2)`, so `factor = sqrt(2/(1 + c))`.
+        //   Near-flat (c→1) ⇒ factor→1 (a flat crease's width IS its slide);
+        //   a near-closed crease (c→−1, θ→0) is clamped so the slide stays
+        //   finite. A boundary/rim edge (one incident face) has no dihedral and
+        //   keeps factor 1.
+        float[] edgeFactor;
+        if (widthMode) {
+            edgeFactor = new float[](edges.length);
+            edgeFactor[] = 1.0f;
+            foreach (i; 0 .. edges.length) {
+                if (!qualifies[i] || rimOnly[i]) continue;
+                auto fp = edgeKeyOrdered(edges[i][0], edges[i][1]) in edgeFaces;
+                if (fp is null || (*fp)[0] < 0 || (*fp)[1] < 0) continue;
+                immutable Vec3 nA = faceNormal(cast(uint)(*fp)[0]);
+                immutable Vec3 nB = faceNormal(cast(uint)(*fp)[1]);
+                float c = dot(nA, nB);
+                if (c >  1.0f) c =  1.0f;
+                if (c < -1.0f) c = -1.0f;
+                immutable float sinHalf2 = (1.0f + c) * 0.5f;   // sin²(θ/2)
+                // Clamp a near-closed crease (sinHalf2 → 0) so the factor
+                // stays finite (≤ 1000); near-flat needs no clamp (→ 1).
+                immutable float s = sinHalf2 > 1e-6f ? sqrt(sinHalf2) : 1e-3f;
+                edgeFactor[i] = 1.0f / s;
+            }
+        }
 
         // Step 2: affected vertices = endpoints of any qualifying edge.
         bool[] affected = new bool[](vertices.length);
@@ -10071,13 +10123,37 @@ struct Mesh {
             immutable Vec3 vpos = vertices[V];
             uint[int] slideVert;    // local edge-slot k → new vertex (memoized per V)
             bool[int] slideClamped; // local edge-slot k → did the overshoot guard clamp it?
+            // Width-mode along-face slide magnitude for the OTHER-edge slide on
+            // slot `k` (an UNSELECTED edge). The slide is induced by the beveled
+            // (selected) edge that shares a face with slot k — slot k-1 (face
+            // f_{k-1}) or slot k+1 (face f_k). In width mode that edge's
+            // `edgeFactor` scales the raw value (`width / sin(θ/2)`); in inset
+            // mode `edgeFactor` is empty ⇒ the raw value. A free slide with no
+            // adjacent beveled edge keeps the raw value. Computed here (not at
+            // the call sites) so the memoized slide is one consistent, order-
+            // independent value shared watertightly across its two faces.
+            float slideEffWidth(int k) {
+                if (edgeFactor.length == 0) return width;   // inset mode
+                int prev = openFan ? (k >= 1 ? k - 1 : -1)
+                                   : cast(int)((k + nE - 1) % nE);
+                int next = openFan ? (k + 1 < nE ? k + 1 : -1)
+                                   : cast(int)((k + 1) % nE);
+                foreach (s; [prev, next]) {
+                    if (s < 0) continue;
+                    if (selE[s] && vEdges[s] < edgeFactor.length)
+                        return width * edgeFactor[vEdges[s]];
+                }
+                return width;
+            }
             uint getSlide(int k) {
                 if (auto p = k in slideVert) return *p;
                 Vec3 dir = safeNormalize(vertices[vNbrs[k]] - vpos);
-                immutable float w = clampedWidth(V, vNbrs[k]);
+                immutable float effW = slideEffWidth(k);
+                immutable float farLen = (vertices[vNbrs[k]] - vpos).length;
+                immutable float w = (farLen > 1e-9f && effW >= farLen) ? farLen : effW;
                 uint nv = addVertex(vpos + dir * w);
                 slideVert[k]    = nv;
-                slideClamped[k] = (w < width);
+                slideClamped[k] = (w < effW);
                 return nv;
             }
             Vec3 slideDir(int k) { return safeNormalize(vertices[vNbrs[k]] - vpos); }
@@ -10097,7 +10173,15 @@ struct Mesh {
                     // insetCorner's own prev/next-in-face convention.
                     Vec3 ePrev = safeNormalize(vertices[vNbrs[kr]] - vpos);
                     Vec3 eNext = safeNormalize(vertices[vNbrs[k]]  - vpos);
-                    Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), width, width);
+                    // Both bordering edges are beveled; each contributes its own
+                    // along-face offset. In width mode that is `width/sin(θ/2)`
+                    // per edge (its `edgeFactor`); in inset mode both stay the
+                    // raw `width` (empty array), so the meet is byte-identical.
+                    immutable float wPrev = (edgeFactor.length && vEdges[kr] < edgeFactor.length)
+                        ? width * edgeFactor[vEdges[kr]] : width;
+                    immutable float wNext = (edgeFactor.length && vEdges[k] < edgeFactor.length)
+                        ? width * edgeFactor[vEdges[k]] : width;
+                    Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), wPrev, wNext);
                     uint nv = addVertex(m);
                     cornerAtVF[vfKey(V, fi)] = CornerInfo(
                         nv, CornerKind.Miter, false, cast(uint)K, isFullHub, Vec3(0,0,0));
@@ -18467,6 +18551,160 @@ unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0
     }
     float dot = n.y * (1.0f/sqrt(2.0f)) + n.z * (1.0f/sqrt(2.0f));
     assert(dot > 0.9f, "chamfer normal should point outward (+Y+Z direction)");
+}
+
+// Width-mode dihedral conversion (parity task, fuzz divergence D1). In WIDTH
+// mode the tool value is the true PERPENDICULAR bevel width, so the along-face
+// corner slide it produces on a crease of surface-opening angle θ is
+// `width / sin(θ/2)`. INSET mode keeps the value AS the along-face slide
+// (byte-identical to the pre-change path). Verified against the exact law:
+//   • 90° cube edge  ⇒ slide = w / sin(45°) = w·√2.
+//   • 120° tent edge ⇒ slide = w / sin(60°) = w·(2/√3).
+unittest {
+    import std.math : abs, sqrt;
+
+    int findEdge(ref Mesh m, uint a, uint b) {
+        foreach (i; 0 .. m.edges.length) {
+            uint x = m.edges[i][0], y = m.edges[i][1];
+            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
+        }
+        return -1;
+    }
+    bool[] edgeMask(ref Mesh m, uint a, uint b) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        int ei = findEdge(m, a, b);
+        assert(ei >= 0, "edge not found");
+        mask[ei] = true;
+        return mask;
+    }
+    // Distance from p to the NEARER of the beveled edge's two (original)
+    // endpoints — a slide corner sits exactly `slide` away from its source.
+    float distToNearestEndpoint(Vec3 p, Vec3 e0, Vec3 e1) {
+        immutable float d0 = (p - e0).length, d1 = (p - e1).length;
+        return d0 < d1 ? d0 : d1;
+    }
+
+    immutable float w = 0.1f;
+
+    // ---- 90° cube edge (6,7): endpoints (0.5,0.5,0.5) and (-0.5,0.5,0.5). ----
+    immutable Vec3 c6 = Vec3( 0.5f, 0.5f, 0.5f);
+    immutable Vec3 c7 = Vec3(-0.5f, 0.5f, 0.5f);
+
+    // WIDTH mode: every chamfer corner slides w/sin(45°) = w·√2 from its source.
+    {
+        auto m = makeCube();
+        assert(m.bevelEdgesByMask(edgeMask(m, 6, 7), w, 0, /*widthMode=*/true) == 1);
+        assert(m.vertices.length == 10 && m.faces.length == 7,
+               "width mode keeps the same topology (no clamp): 10v/7f");
+        immutable float expected = w * sqrt(2.0f);   // w / sin(45°)
+        int corners = 0;
+        foreach (fi; 0 .. m.faces.length) {
+            if (!m.isFaceSelected(fi)) continue;   // the chamfer face
+            corners = cast(int)m.faces[fi].length;
+            foreach (vi; m.faces[fi]) {
+                immutable float dist = distToNearestEndpoint(m.vertices[vi], c6, c7);
+                assert(abs(dist - expected) < 1e-5f,
+                       "90° width-mode slide must equal w·√2");
+            }
+            break;
+        }
+        assert(corners == 4, "chamfer is a quad");
+    }
+
+    // INSET mode on the SAME edge is UNCHANGED: the value IS the slide (w),
+    // and the chamfer centroid stays (0, 0.45, 0.45) — the pre-change result.
+    {
+        auto m = makeCube();
+        assert(m.bevelEdgesByMask(edgeMask(m, 6, 7), w, 0, /*widthMode=*/false) == 1);
+        Vec3 cen = Vec3(0, 0, 0);
+        int n = 0;
+        foreach (fi; 0 .. m.faces.length) {
+            if (!m.isFaceSelected(fi)) continue;
+            n = cast(int)m.faces[fi].length;
+            foreach (vi; m.faces[fi]) {
+                cen = cen + m.vertices[vi];
+                immutable float dist = distToNearestEndpoint(m.vertices[vi], c6, c7);
+                assert(abs(dist - w) < 1e-5f,
+                       "inset-mode slide is the raw value w (UNCHANGED)");
+            }
+            cen = cen * (1.0f / cast(float)n);
+            break;
+        }
+        assert(abs(cen.x) < 1e-3f && abs(cen.y - 0.45f) < 1e-3f
+               && abs(cen.z - 0.45f) < 1e-3f,
+               "inset chamfer centroid unchanged at (0,0.45,0.45)");
+    }
+
+    // Equivalence: on a uniform-dihedral single edge, WIDTH(w) is IDENTICAL
+    // to INSET at the scaled value — the whole point of the factor. Proves the
+    // rounding/rebuild stay consistent, not just the raw corner positions.
+    {
+        auto mW = makeCube();
+        mW.bevelEdgesByMask(edgeMask(mW, 6, 7), w, 0, /*widthMode=*/true);
+        auto mI = makeCube();
+        mI.bevelEdgesByMask(edgeMask(mI, 6, 7), w * sqrt(2.0f), 0, /*widthMode=*/false);
+        assert(mW.vertices.length == mI.vertices.length);
+        foreach (i; 0 .. mW.vertices.length)
+            assert((mW.vertices[i] - mI.vertices[i]).length < 1e-5f,
+                   "width(w) == inset(w·√2) on a 90° edge");
+    }
+
+    // ---- Non-90° "tent": two quads meeting at a 120° surface-opening
+    // dihedral (factor = 1/sin(60°) = 2/√3). The along-face slide must scale
+    // by exactly that factor — this is what "varies per edge" means. ----
+    {
+        immutable float z = sqrt(3.0f) / 2.0f;   // sin(120°)
+        // Freshly-built mesh each call — never a struct copy (Mesh's array
+        // fields would alias and the bevel's appends could clobber the source).
+        Mesh makeTent() {
+            Mesh t;
+            t.vertices = [
+                Vec3(0.0f, 0.0f, 0.0f),   // 0  V0  (shared-edge start)
+                Vec3(2.0f, 0.0f, 0.0f),   // 1  V1  (shared-edge end)
+                Vec3(0.0f, 1.0f, 0.0f),   // 2  A0  (+Y face)
+                Vec3(2.0f, 1.0f, 0.0f),   // 3  A1
+                Vec3(0.0f, -0.5f, z),     // 4  B0  (folded face, +120°)
+                Vec3(2.0f, -0.5f, z),     // 5  B1
+            ];
+            t.addFace([0, 1, 3, 2]);   // face A, normal +Z
+            t.addFace([1, 0, 4, 5]);   // face B, folded (consistent winding)
+            t.buildLoops();
+            return t;
+        }
+
+        immutable float factor = 2.0f / sqrt(3.0f);   // 1/sin(60°)
+
+        auto mW = makeTent();
+        assert(mW.bevelEdgesByMask(edgeMask(mW, 0, 1), w, 0, /*widthMode=*/true) == 1,
+               "tent edge must bevel in width mode");
+        auto mI = makeTent();
+        assert(mI.bevelEdgesByMask(edgeMask(mI, 0, 1), w * factor, 0,
+                                   /*widthMode=*/false) == 1);
+        // width(w) on the 120° crease == inset at w/sin(60°): the code's
+        // per-edge dihedral factor equals 2/√3.
+        assert(mW.vertices.length == mI.vertices.length,
+               "tent width/inset vertex counts match");
+        foreach (i; 0 .. mW.vertices.length)
+            assert((mW.vertices[i] - mI.vertices[i]).length < 1e-4f,
+                   "120° width(w) == inset(w·2/√3)");
+
+        // Direct magnitude: each chamfer corner sits w·(2/√3) from V0 or V1
+        // (the beveled edge's original endpoints).
+        immutable Vec3 v0 = Vec3(0, 0, 0), v1 = Vec3(2, 0, 0);
+        immutable float expected = w * factor;   // w / sin(60°)
+        int checked = 0;
+        foreach (fi; 0 .. mW.faces.length) {
+            if (!mW.isFaceSelected(fi)) continue;   // the chamfer face
+            foreach (vi; mW.faces[fi]) {
+                immutable float dist = distToNearestEndpoint(mW.vertices[vi], v0, v1);
+                assert(abs(dist - expected) < 1e-4f,
+                       "120° width-mode slide must equal w/sin(60°) = w·2/√3");
+                ++checked;
+            }
+            break;
+        }
+        assert(checked >= 2, "tent bevel produced a selected chamfer face");
+    }
 }
 
 // Case A (task 0304 overshoot guard, re-measured task 0436): an isolated
