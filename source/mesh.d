@@ -5401,15 +5401,33 @@ struct Mesh {
     /// between consecutive copies are welded and identical seam faces
     /// dropped (same dedup pass as `mirrorFaces`).
     ///
-    /// Selection ends on the newly created copies (originals deselected
-    /// for face selection, vert / edge selections cleared).
-    /// Returns the number of new faces inserted.
+    /// `detachSubsetSource` selects the reference editor's poly.array copy
+    /// model for a PARTIAL selection. The reference REPLACES each selected
+    /// source polygon with `count` fresh copies rather than keeping the
+    /// source and appending `count-1` — so a copy landing at the source
+    /// position gets its OWN duplicated verts instead of sharing the seam
+    /// verts with the unselected neighbours it was welded to. When the flag
+    /// is set AND the selection is a strict subset (`selCount < faces.length`)
+    /// the source faces are detached first (their verts duplicated at
+    /// offset 0, the faces repointed to the duplicates) so the total is
+    /// `count` independent instances. For a WHOLE-MESH array there are no
+    /// unselected neighbours to share with, so keep+`count-1` and
+    /// replace-with-`count` are geometrically identical and the detach is
+    /// skipped, leaving that path byte-for-byte unchanged. The flag defaults
+    /// off so the interactive Clone tool / clone command keep their exact
+    /// original (source-preserving) behaviour.
+    ///
+    /// Selection ends on the resulting copies (all `count` instances for a
+    /// detached subset — the repointed source is copy 0; otherwise the
+    /// `count-1` marched copies with originals deselected). Vert / edge
+    /// selections are cleared. Returns the number of new faces inserted.
     ///
     /// Rotate / scale per-step variants are deferred to a follow-up —
     /// per-step rotation pivot semantics overlap with Radial Array
     /// (which has its own pivot/axis schema) so they live in that
     /// command's surface, not here.
-    size_t arrayFaces(in bool[] mask, int count, Vec3 offset, float weld) {
+    size_t arrayFaces(in bool[] mask, int count, Vec3 offset, float weld,
+                      bool detachSubsetSource = false) {
         if (mask.length != faces.length) return 0;
         if (count <= 1) return 0;
         // DoS backstop (task 0365 P1): `count` allocates `count-1` new
@@ -5430,6 +5448,36 @@ struct Mesh {
             if (mask[fi]) sourceFaces ~= fi;
         size_t origFaceCount = faces.length;
         size_t[] newFaceIndices;
+
+        // FULL-PARITY sub-face copy model (reference poly.array): for a
+        // strict subset the selected source polygons are REPLACED by `count`
+        // fresh copies, so the copy that lands at the source position must
+        // own duplicated verts rather than share the seam verts it was
+        // welded to. Realise that by DETACHING the source: duplicate its
+        // verts at offset 0 and repoint the source faces to the duplicates.
+        // The `count-1` marched copies below then bring the total to `count`
+        // independent instances (e.g. arraying one top face 3× → 8 cube +
+        // 3×4 = 20 verts / 8 faces, matching the reference, instead of the
+        // 16 verts a shared seam produced). Whole-mesh arrays have no
+        // unselected neighbour to share with, so this is a no-op there and
+        // the existing keep+`count-1` path is left untouched (whole-cube
+        // array cases stay byte-for-byte exact).
+        bool detachSource = detachSubsetSource && (selCount < faces.length);
+        if (detachSource) {
+            uint[uint] seamMap;
+            foreach (fi; sourceFaces) {
+                foreach (vid; faces[fi]) {
+                    if (vid !in seamMap) {
+                        seamMap[vid] = cast(uint)vertices.length;
+                        Vec3 p = vertices[vid];   // offset 0 ⇒ same position
+                        vertices ~= p;
+                    }
+                }
+            }
+            foreach (fi; sourceFaces)
+                foreach (k, vid; faces[fi])
+                    faces[fi][k] = seamMap[vid];
+        }
 
         // For each step i ∈ [1..count-1], clone the original masked
         // verts at offset i*step and emit cloned faces referencing them.
@@ -5482,6 +5530,13 @@ struct Mesh {
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             facePart[idx]     = (srcFi < facePart.length     ? facePart[srcFi]     : 0u);
             selectFace(cast(int)idx);
+        }
+        // For a detached subset the repointed source faces are copy 0 of the
+        // array, so they join the marched copies in the resulting selection
+        // (all `count` instances end selected — the source is no longer the
+        // shared original, it now owns its duplicated verts).
+        if (detachSource) {
+            foreach (fi; sourceFaces) selectFace(cast(int)fi);
         }
         resizeVertexSelection();
         clearVertexSelection();

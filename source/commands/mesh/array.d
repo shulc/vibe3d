@@ -70,7 +70,12 @@ class MeshArray : Command, Operator {
         }
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t inserted = mesh.arrayFaces(mask, count_, offset_, weld_);
+        // detachSubsetSource: reference parity for a PARTIAL selection — the
+        // reference's poly.array replaces each source poly with `count` fresh
+        // copies (seam verts duplicated) rather than keeping the source and
+        // appending count-1 (seam verts shared). No-op for a whole-mesh array.
+        // The interactive Clone tool/command deliberately leave this off.
+        size_t inserted = mesh.arrayFaces(mask, count_, offset_, weld_, true);
         if (inserted == 0) {
             snap = MeshSnapshot.init;
             return false;

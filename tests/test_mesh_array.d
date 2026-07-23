@@ -1,8 +1,11 @@
 // Tests for mesh.array (PR-3 of doc/duplicate_plan.md). Linear array:
-// insert count-1 shifted copies of the selected faces (or whole mesh
-// if nothing is selected). `count` includes the original; weld>0
-// folds coincident verts but KEEPS the doubled coincident seam face
-// (full reference parity — the line-array path does not dedup faces).
+// for a WHOLE-MESH array (empty selection) insert count-1 shifted copies
+// keeping the source. For a PARTIAL (sub-face) selection, full reference
+// parity REPLACES the source poly with `count` fresh copies — the copy at
+// the source position owns duplicated seam verts instead of sharing them —
+// so the total is `count` independent instances. `count` includes the
+// original; weld>0 folds coincident verts but KEEPS the doubled coincident
+// seam face (full reference parity — the line-array path does not dedup faces).
 //
 // Cube layout (centered at origin, size 1):
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
@@ -88,8 +91,15 @@ unittest { // count=4 along +X with offset 2 ⇒ 4 cubes spaced 2 apart.
 // Selected-face-only array
 // ---------------------------------------------------------------------------
 
-unittest { // Array top face count=3 along +Y. Original 8 verts + 2*4 = 16
-           // verts; 6 + 2*1 = 8 faces.
+unittest { // Array top face count=3 along +Y. FULL-PARITY sub-face copy
+           // model: the reference's poly.array REPLACES the source poly with
+           // `count` fresh copies (the copy at the source position owns its
+           // OWN duplicated seam verts instead of sharing the cube's shared
+           // top verts). So the 8 cube verts stay (top 4 still referenced by
+           // the side faces) and the array adds 3×4 = 12 fresh verts ⇒ 20
+           // verts total (NOT the 16 a shared seam produced), 6 - 1 + 3 = 8
+           // faces. Scoped to a PARTIAL selection — whole-mesh arrays share
+           // no seam and keep the old keep+count-1 shape (see cases above).
     resetCube();
     postSelect("polygons", [4]);   // top face
 
@@ -98,17 +108,21 @@ unittest { // Array top face count=3 along +Y. Original 8 verts + 2*4 = 16
     }}`);
 
     auto m = getModel();
-    assert(m["vertexCount"].integer == 16,
-        "verts: expected 16, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 20,
+        "verts: expected 20 (8 cube + 3×4 detached copies), got "
+        ~ m["vertexCount"].integer.to!string);
     assert(m["faceCount"].integer == 8,
         "faces: expected 8, got "  ~ m["faceCount"].integer.to!string);
 
-    // Selection should be the 2 new face indices (6, 7).
+    // Selection ends on all 3 array instances: the detached (repointed)
+    // source at its original slot (4) plus the 2 marched copies (6, 7).
     auto sel = getSelection();
     auto selFaces = sel["selectedFaces"].array;
-    assert(selFaces.length == 2);
-    assert(selFaces[0].integer == 6 && selFaces[1].integer == 7,
-        "expected new face indices [6,7], got " ~ sel["selectedFaces"].toString);
+    assert(selFaces.length == 3,
+        "expected 3 selected instances, got " ~ sel["selectedFaces"].toString);
+    assert(selFaces[0].integer == 4 && selFaces[1].integer == 6
+           && selFaces[2].integer == 7,
+        "expected instance face indices [4,6,7], got " ~ sel["selectedFaces"].toString);
 }
 
 // ---------------------------------------------------------------------------
