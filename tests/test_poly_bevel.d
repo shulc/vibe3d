@@ -230,7 +230,10 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test C — inset=0, shift=0 → status:error, mesh unchanged.
+// Test C — inset=0, shift=0 on a selected face is NOT a no-op (fuzz D6
+// parity): the reference builds a ZERO-WIDTH bevel ring whose inset cap
+// coincides with the original boundary → 12 verts (8 orig + 4 coincident
+// cap), 10 all-quad faces. Mesh must change accordingly.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -240,10 +243,15 @@ unittest {
     postSelect("polygons", [topFi]);
 
     auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"inset":0.0,"shift":0.0}}`);
-    assert(r["status"].str == "error", "C: expected error for no-op params, got " ~ r["status"].str);
+    assert(r["status"].str == "ok",
+        "C: inset=0/shift=0 must build a zero-width ring (D6 parity), got " ~ r["status"].str);
     auto m = getModel();
-    assert(m["vertexCount"].integer == 8, "C: mesh should be unchanged (8 verts)");
-    assert(m["faceCount"].integer   == 6, "C: mesh should be unchanged (6 faces)");
+    assert(m["vertexCount"].integer == 12, "C: zero-width ring expected 12 verts");
+    assert(m["faceCount"].integer   == 10, "C: zero-width ring expected 10 faces");
+    // Every face stays a quad (degenerate ring, not a fan).
+    int quads = 0;
+    foreach (f; m["faces"].array) if (f.array.length == 4) ++quads;
+    assert(quads == 10, "C: zero-width ring — all 10 faces must be quads");
 }
 
 // ---------------------------------------------------------------------------
@@ -273,16 +281,17 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test E — overshoot guard (task 0304, fuzz-found): inset at/beyond the
-//          top face's inradius (0.5) must never produce coincident verts
-//          or degenerate (zero-area) faces. Before the fix, inset=0.5
-//          collapsed all 4 cap corners onto the centroid (0,0.5,0) and
-//          inset=1.0 (2x inradius) landed them on the diagonally-opposite
-//          existing corner — both silently reported status:"ok".
+// Test E — exact-collapse ring (fuzz D3 parity): inset at/beyond the top
+//          face's inradius (0.5) clamps to the collapse point. The reference
+//          KEEPS the degenerate quad ring — 12v/10f all-quad, the 4 cap
+//          corners stacked on the shifted centroid, still watertight (no
+//          holes, no orphans) — rather than welding + fan-triangulating.
+//          (Was the task-0304 overshoot guard, which welded the collapse
+//          away — a `vibe3d-divergence` corrected here.)
 // ---------------------------------------------------------------------------
 
 unittest {
-    // E1 — inset == inradius exactly (the primary repro).
+    // E1 — inset == inradius exactly (the primary D3 repro).
     resetCube();
     auto before = getModel();
     int topFi = faceWithCentroid(before, V3(0, 0.5, 0));
@@ -290,20 +299,21 @@ unittest {
     postSelect("polygons", [topFi]);
 
     auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"inset":0.5,"shift":0.0}}`);
+    assert(r["status"].str == "ok",
+        "E1: inset==inradius must build the degenerate collapse ring, got " ~ r["status"].str);
     auto m = getModel();
-    // Either the overshoot guard clamps it (status ok, geometry changed) or it
-    // is an honest no-op (status error, mesh unchanged) — never a corrupted mesh.
-    if (r["status"].str == "ok") {
-        assert(noCoincidentVerts(m),  "E1: coincident verts at inset==inradius");
-        assert(noDegenerateFaces(m),  "E1: degenerate face at inset==inradius");
-        assert(isHoleFree(m),         "E1: not hole-free at inset==inradius");
-        assert(orphanVerts(m).length == 0, "E1: orphan verts at inset==inradius");
-    } else {
-        assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
-            "E1: no-op must leave mesh unchanged");
-    }
+    assert(m["vertexCount"].integer == 12, "E1: collapse ring expected 12 verts");
+    assert(m["faceCount"].integer   == 10, "E1: collapse ring expected 10 faces");
+    int e1quads = 0;
+    foreach (f; m["faces"].array) if (f.array.length == 4) ++e1quads;
+    assert(e1quads == 10, "E1: collapse ring — all 10 faces must stay quads (not a fan)");
+    assert(countAt(m, V3(0, 0.5, 0)) == 4,
+        "E1: 4 cap corners must coincide at the collapse point (0,0.5,0)");
+    // Degenerate but still watertight: no holes, no orphan verts.
+    assert(isHoleFree(m),               "E1: collapse ring must stay hole-free");
+    assert(orphanVerts(m).length == 0,  "E1: collapse ring must leave no orphan verts");
 
-    // E2 — inset == 2x inradius (the "lands on the diagonal corner" repro).
+    // E2 — inset == 2x inradius clamps to the SAME collapse point → same ring.
     resetCube();
     auto before2 = getModel();
     int topFi2 = faceWithCentroid(before2, V3(0, 0.5, 0));
@@ -311,16 +321,18 @@ unittest {
     postSelect("polygons", [topFi2]);
 
     auto r2 = postCommandRaw(`{"id":"mesh.bevel","params":{"inset":1.0,"shift":0.0}}`);
+    assert(r2["status"].str == "ok",
+        "E2: inset==2x inradius must build the degenerate collapse ring, got " ~ r2["status"].str);
     auto m2 = getModel();
-    if (r2["status"].str == "ok") {
-        assert(noCoincidentVerts(m2), "E2: coincident verts at inset==2x inradius");
-        assert(noDegenerateFaces(m2), "E2: degenerate face at inset==2x inradius");
-        assert(isHoleFree(m2),        "E2: not hole-free at inset==2x inradius");
-        assert(orphanVerts(m2).length == 0, "E2: orphan verts at inset==2x inradius");
-    } else {
-        assert(m2["vertexCount"].integer == 8 && m2["faceCount"].integer == 6,
-            "E2: no-op must leave mesh unchanged");
-    }
+    assert(m2["vertexCount"].integer == 12, "E2: collapse ring expected 12 verts");
+    assert(m2["faceCount"].integer   == 10, "E2: collapse ring expected 10 faces");
+    int e2quads = 0;
+    foreach (f; m2["faces"].array) if (f.array.length == 4) ++e2quads;
+    assert(e2quads == 10, "E2: collapse ring — all 10 faces must stay quads");
+    assert(countAt(m2, V3(0, 0.5, 0)) == 4,
+        "E2: 4 cap corners must coincide at the collapse point (0,0.5,0)");
+    assert(isHoleFree(m2),              "E2: collapse ring must stay hole-free");
+    assert(orphanVerts(m2).length == 0, "E2: collapse ring must leave no orphan verts");
 
     // E3 — sanity: a normal small inset must be completely unaffected by
     // the overshoot guard (no clamping should kick in below the inradius).

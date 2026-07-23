@@ -8400,13 +8400,15 @@ struct Mesh {
     /// reference bumps the inset ... and stops"). Clamping can still land
     /// several corners on (or very near) the same position — e.g. a square
     /// face clamped to its inradius collapses every corner onto the
-    /// centroid, an elongated face collapses pairwise onto a line — so a
-    /// clamped pass finishes with `weldCoincidentVertices`, which merges
-    /// the coincident corners and drops any face that falls below 3
-    /// distinct vertices (the fully-collapsed cap), leaving the ring
-    /// quads as valid triangles instead of coincident-vertex / zero-area
-    /// geometry. (Overshoot clamping is NOT applied to `group`'s shared
-    /// corners below — untested combination, documented gap.)
+    /// centroid, an elongated face collapses pairwise onto a line. The
+    /// reference KEEPS that collapse as a DEGENERATE QUAD RING (fuzz D3):
+    /// the coincident cap corners stay distinct referenced verts, so the
+    /// cap and each ring quad remain 4-vertex zero-area faces. The clamped
+    /// pass therefore does NOT weld — welding + the resulting fan-to-triangle
+    /// topology was a `vibe3d-divergence` (task 0304), corrected here to the
+    /// reference's coincident-corner quad ring. (Overshoot clamping is NOT
+    /// applied to `group`'s shared corners below — untested combination,
+    /// documented gap.)
     ///
     /// `group` (task 0391 Phase 4, `capture-verified` default TRUE at the
     /// command/tool layer — see `commands/mesh/bevel.d`): when true and ≥2
@@ -8563,7 +8565,15 @@ struct Mesh {
                              bool group = false, int segments = 0,
                              bool square = false) {
         import std.math : abs;
-        if (abs(inset) < 1e-6f && abs(shift) < 1e-6f) return 0;
+        // Parity (fuzz D6): inset==0 && shift==0 is NOT a no-op — the
+        // reference still builds a ZERO-WIDTH bevel ring (the inset cap
+        // ring lands exactly on the original boundary, giving coincident
+        // inner=outer corners + zero-area ring quads + a degenerate cap).
+        // We therefore let a masked face through even at 0/0 and let the
+        // per-face loop decide: an EMPTY mask still returns 0 (processed
+        // stays 0 below → no commit), so a genuine "nothing selected"
+        // call is unaffected. `shift==0` alone (inset>0) and `inset==0`
+        // alone (shift!=0) already built a ring before this change.
 
         int segN = segments;
         if (segN < 0) segN = 0;
@@ -8972,13 +8982,17 @@ struct Mesh {
                 faces[fi] = rebuilt;
             }
         }
-        if (anyClamped) {
-            // weldCoincidentVertices only remaps FACE references to the kept
-            // vertex — the welded-away vertex slots (e.g. 3 of 4 cap corners
-            // that all clamped onto the same centroid) stay in `vertices[]`
-            // as now-unreferenced orphans unless compacted away here too.
-            weldCoincidentVertices(1e-10);
-        }
+        // Parity (fuzz D3): a positive inset clamped to `maxSafeUniformInset`
+        // lands the cap ring AT the collapse point — several (or all) cap
+        // corners coincide (a square face → all four onto the centroid). The
+        // reference KEEPS that as a degenerate quad ring: the coincident
+        // corners stay DISTINCT referenced verts, so the cap and every ring
+        // quad remain 4-vertex (zero-area) faces rather than being welded
+        // down + fan-triangulated. We therefore do NOT weld the clamped
+        // pass — the ring quads/cap the loop already emitted are exactly the
+        // reference topology (byte-verified against the fuzz repro's
+        // 12v/10f all-quad dump). A non-clamped bevel never reaches here
+        // (`anyClamped` stays false), so normal poly-bevel is byte-identical.
         if (anyClamped || group) {
             // group's fully-enclosed apex vertices (every incident edge
             // internal) are never referenced by any surviving face or ring
@@ -17803,12 +17817,31 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
 
-    // no-op guard
-    assert(m.bevelFacesByMask(mask, 0.0f, 0.0f) == 0, "inset=0, shift=0 must be no-op");
-    assert(m.vertices.length == 8);
-    assert(m.faces.length    == 6);
+    // Parity (fuzz D6): inset==0 && shift==0 is NOT a no-op — the reference
+    // still builds a ZERO-WIDTH bevel ring (the inset cap coincides with the
+    // original boundary). 8 orig + 4 coincident cap verts = 12; 6-1+1+4 = 10
+    // all-quad faces. An EMPTY mask remains a genuine no-op.
+    {
+        auto mz = makeCube();
+        bool[] mzmask; mzmask.length = mz.faces.length; mzmask[] = false; mzmask[4] = true;
+        assert(mz.bevelFacesByMask(mzmask, 0.0f, 0.0f) == 1,
+            "inset=0, shift=0 must build a zero-width ring (fuzz D6 parity)");
+        assert(mz.vertices.length == 12, "zero-width ring: expected 12 verts");
+        assert(mz.faces.length    == 10, "zero-width ring: expected 10 faces");
+        int[int] fvd;
+        foreach (f; mz.faces) fvd[cast(int)f.length]++;
+        assert(fvd.get(4, 0) == 10, "zero-width ring: all faces must stay quads");
 
-    // inset=0.1, shift=0.2
+        auto me = makeCube();
+        bool[] emptyMask; emptyMask.length = me.faces.length; emptyMask[] = false;
+        assert(me.bevelFacesByMask(emptyMask, 0.0f, 0.0f) == 0,
+            "empty mask must remain a no-op even at inset=0/shift=0");
+        assert(me.vertices.length == 8);
+        assert(me.faces.length    == 6);
+    }
+
+    // inset=0.1, shift=0.2 (m is still a pristine cube — the D6 block used
+    // its own fresh meshes).
     assert(m.bevelFacesByMask(mask, 0.1f, 0.2f) == 1, "should process 1 face");
     assert(m.vertices.length == 12, "expected 12 verts");
     assert(m.faces.length    == 10, "expected 10 faces");
@@ -17841,65 +17874,72 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
     assert(hasV2(-0.5f, 0.7f,  0.5f), "shift-only inner corner (-0.5,0.7, 0.5) missing");
 }
 
-unittest { // bevelFacesByMask: overshoot guard (task 0304, fuzz-found) —
-           // inset at/beyond the top face's inradius must never leave
-           // coincident vertices or degenerate (zero-area) faces behind.
-    import std.math : abs;
+unittest { // bevelFacesByMask: exact-collapse ring (fuzz D3 parity) — an
+           // inset at/beyond a face's inradius clamps to the collapse point.
+           // The reference KEEPS that as a DEGENERATE QUAD RING (coincident
+           // cap corners, zero-area cap + ring quads all stay 4-vertex), NOT
+           // a welded + fan-triangulated cap. This is the corrected behaviour
+           // of the former task-0304 overshoot guard, which welded the
+           // collapse away (a `vibe3d-divergence`).
     import std.conv : to;
 
-    float newellArea(Mesh m, const uint[] f) {
-        Vec3 nsum = Vec3(0, 0, 0);
-        foreach (i; 0 .. f.length) {
-            Vec3 a = m.vertices[f[i]];
-            Vec3 b = m.vertices[f[(i + 1) % f.length]];
-            nsum.x += (a.y - b.y) * (a.z + b.z);
-            nsum.y += (a.z - b.z) * (a.x + b.x);
-            nsum.z += (a.x - b.x) * (a.y + b.y);
+    // The top face (index 4 = [3,7,6,2]) is a unit square at y=0.5, normal
+    // +Y, centroid (0,0.5,0). At/over inradius the four cap corners all land
+    // on the shifted centroid → 12 verts (8 orig + 4 coincident cap), 10
+    // all-quad faces (5 cube + 1 cap + 4 ring), with exactly 4 verts stacked
+    // at the collapse point.
+    void assertCollapseRing(ref Mesh m, string tag, float shift) {
+        assert(m.vertices.length == 12,
+            tag ~ ": expected 12 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length == 10,
+            tag ~ ": expected 10 faces, got " ~ m.faces.length.to!string);
+        int quads = 0, tris = 0;
+        foreach (f; m.faces) {
+            if      (f.length == 4) ++quads;
+            else if (f.length == 3) ++tris;
         }
-        return nsum.length * 0.5f;
+        assert(quads == 10 && tris == 0,
+            tag ~ ": expected 10 quads / 0 tris (degenerate quad ring, not a "
+            ~ "fan), got " ~ quads.to!string ~ " quads / " ~ tris.to!string ~ " tris");
+        immutable Vec3 collapse = Vec3(0, 0.5f + shift, 0);
+        int atCollapse = 0;
+        foreach (v; m.vertices)
+            if ((v - collapse).length < 1e-5f) ++atCollapse;
+        assert(atCollapse == 4,
+            tag ~ ": expected 4 coincident cap corners at the collapse point, got "
+            ~ atCollapse.to!string);
     }
 
-    void assertClean(Mesh m, string tag) {
-        foreach (i; 0 .. m.vertices.length)
-            foreach (j; i + 1 .. m.vertices.length)
-                assert((m.vertices[i] - m.vertices[j]).length > 1e-6f,
-                    tag ~ ": coincident verts " ~ i.to!string ~ "," ~ j.to!string);
-        foreach (fi, f; m.faces) {
-            bool[uint] distinct;
-            foreach (v; f) distinct[v] = true;
-            assert(distinct.length >= 3,
-                tag ~ ": face " ~ fi.to!string ~ " has <3 distinct verts");
-            assert(newellArea(m, f) > 1e-9f,
-                tag ~ ": face " ~ fi.to!string ~ " is degenerate (zero-area)");
-        }
-    }
-
-    // Top face (index 4) has side length 1 → inradius 0.5. inset==0.5 is the
-    // primary repro (all 4 cap corners used to collapse onto the centroid).
+    // inset==inradius (0.5 on a unit face) — the primary D3 repro.
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
         size_t n = m.bevelFacesByMask(mask, 0.5f, 0.0f);
         assert(n == 1, "inset==inradius should still process (clamped)");
-        assertClean(m, "inset==inradius");
+        assertCollapseRing(m, "inset==inradius", 0.0f);
     }
 
-    // inset==2x inradius is the "lands on the diagonal corner" repro.
+    // inset==2x inradius clamps to the SAME collapse point → same ring.
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
         size_t n = m.bevelFacesByMask(mask, 1.0f, 0.0f);
         assert(n == 1, "inset==2x inradius should still process (clamped)");
-        assertClean(m, "inset==2x inradius");
+        assertCollapseRing(m, "inset==2x inradius", 0.0f);
     }
 
-    // Sanity: a normal small inset must be completely unaffected by the guard.
+    // Sanity: a normal small inset does NOT reach the collapse path — 12v/10f
+    // with all four cap corners still DISTINCT (none stacked on the centroid).
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
         assert(m.bevelFacesByMask(mask, 0.1f, 0.0f) == 1);
-        assert(m.vertices.length == 12, "normal inset must be unaffected by the overshoot guard");
+        assert(m.vertices.length == 12, "normal inset must be unaffected by the collapse path");
         assert(m.faces.length    == 10);
+        int atCentroid = 0;
+        foreach (v; m.vertices)
+            if ((v - Vec3(0, 0.5f, 0)).length < 1e-5f) ++atCentroid;
+        assert(atCentroid == 0, "normal inset must not collapse any cap corner onto the centroid");
     }
 }
 
