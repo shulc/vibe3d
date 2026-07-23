@@ -71,6 +71,34 @@ JSONValue getModel() {
     return parseJSON(get("http://localhost:8080/api/model"));
 }
 
+JSONValue getSelection() {
+    return parseJSON(get("http://localhost:8080/api/selection"));
+}
+
+JSONValue postRedo() {
+    return parseJSON(post("http://localhost:8080/api/redo", ""));
+}
+
+/// The set of selected-edge indices in the /api/selection payload.
+int[] selEdges(JSONValue s) {
+    int[] r;
+    foreach (e; s["selectedEdges"].array) r ~= cast(int)e.integer;
+    return r;
+}
+
+/// True iff EVERY selected edge has BOTH endpoints among the newly-created
+/// loop vertices (index >= `firstNewVert`) — the reference-editor (v11)
+/// post-slice selection law (task 0476): the active selection is exactly the
+/// edges that live entirely inside the inserted loop geometry.
+bool allSelEdgesAmongNewVerts(JSONValue m, JSONValue s, int firstNewVert) {
+    foreach (ei; selEdges(s)) {
+        auto e = m["edges"].array[ei].array;
+        int a = cast(int)e[0].integer, b = cast(int)e[1].integer;
+        if (a < firstNewVert || b < firstNewVert) return false;
+    }
+    return true;
+}
+
 // ----- Connectivity helpers --------------------------------------------------
 
 /// Index of the undirected edge {a,b} in model["edges"], or -1.
@@ -330,4 +358,131 @@ unittest {
            "edge count must not change when triangle is incident on seed");
     assert(after["faceCount"].integer   == before["faceCount"].integer,
            "face count must not change when triangle is incident on seed");
+}
+
+// ---------------------------------------------------------------------------
+// Case 7 — Post-slice selection parity (task 0476): mesh.addLoop leaves the
+//   ACTIVE selection on the freshly-inserted loop — the 4 new transverse loop
+//   edges, in edge mode, and ONLY edges (no verts, no faces). Confirmed
+//   against the reference editor (v11): a count-1 loopSlice/addLoop selects the
+//   4 loop edges, active selmode = edge. (Pre-0476 the command left NO
+//   selection at all — the parity gap this case locks shut.)
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : sort;
+    postReset();
+    auto before = getModel();
+    int eiSeed = edgeIdx(before, 0, 1);
+    assert(eiSeed >= 0, "belt edge 0-1 must exist");
+    postSelect("edges", [eiSeed]);
+
+    postCommand("mesh.addLoop");
+
+    auto after = getModel();
+    auto sel = getSelection();
+
+    assert(sel["selType"].str == "edge",
+        "post-addLoop active selection type must be edge, got " ~ sel["selType"].str);
+    auto edges = selEdges(sel);
+    assert(edges.length == 4,
+        "addLoop must select the 4 new loop edges, got "
+        ~ edges.length.to!string);
+    assert(sel["selectedVertices"].array.length == 0,
+        "addLoop post-selection must be edges-only (no vertices)");
+    assert(sel["selectedFaces"].array.length == 0,
+        "addLoop post-selection must be edges-only (no faces)");
+    // Every selected edge lives entirely inside the inserted loop (both ends
+    // are new midpoint verts, index >= the pre-cut vertex count of 8).
+    assert(allSelEdgesAmongNewVerts(after, sel, 8),
+        "every selected edge must have both endpoints among the new loop verts");
+
+    // Exact membership: the selection is precisely the closed loop ring
+    // mA-mB-mC-mD-mA around x=0.
+    int mA = vertNear(after, 0.0f, -0.5f, -0.5f);
+    int mB = vertNear(after, 0.0f,  0.5f, -0.5f);
+    int mC = vertNear(after, 0.0f,  0.5f,  0.5f);
+    int mD = vertNear(after, 0.0f, -0.5f,  0.5f);
+    int[] ring = [edgeIdx(after, mA, mB), edgeIdx(after, mB, mC),
+                  edgeIdx(after, mC, mD), edgeIdx(after, mD, mA)];
+    foreach (r; ring) assert(r >= 0, "all four loop ring edges must exist");
+    sort(ring);
+    sort(edges);
+    assert(edges == ring,
+        "the selected edges must be exactly the loop ring mA-mB-mC-mD");
+}
+
+// ---------------------------------------------------------------------------
+// Case 8 — Post-slice selection parity for count>1 (task 0476): a count=3
+//   loopSlice selects EVERY edge of the inserted loops — the 12 transverse
+//   loop edges PLUS the 8 along-rail segments between consecutive loop
+//   midpoints = 20 edges (measured against the reference editor v11: count 3
+//   selects 20 edges, active selmode = edge). Still edges-only.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    auto before = getModel();
+    int eiSeed = edgeIdx(before, 0, 1);
+    assert(eiSeed >= 0, "belt edge 0-1 must exist");
+    postSelect("edges", [eiSeed]);
+
+    postCommandParams("mesh.loopSlice", `{"count":3}`);
+
+    auto after = getModel();
+    auto sel = getSelection();
+
+    assert(sel["selType"].str == "edge",
+        "post-loopSlice active selection type must be edge, got " ~ sel["selType"].str);
+    auto edges = selEdges(sel);
+    assert(edges.length == 20,
+        "loopSlice count=3 must select 20 loop edges (12 transverse + 8 "
+        ~ "along-rail), got " ~ edges.length.to!string);
+    assert(sel["selectedVertices"].array.length == 0,
+        "loopSlice post-selection must be edges-only (no vertices)");
+    assert(sel["selectedFaces"].array.length == 0,
+        "loopSlice post-selection must be edges-only (no faces)");
+    // All 20 edges are among the 12 new midpoint verts (index >= 8).
+    assert(allSelEdgesAmongNewVerts(after, sel, 8),
+        "every selected edge must have both endpoints among the new loop verts");
+}
+
+// ---------------------------------------------------------------------------
+// Case 9 — Undo/redo round-trip preserves the selection timeline (task 0476):
+//   the loop's post-slice edge selection is part of the command's undo entry
+//   (MeshSnapshot captures/restores selection). Undo restores the PRE-slice
+//   seed selection; redo restores the loop-edge selection.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : sort;
+    postReset();
+    auto before = getModel();
+    int eiSeed = edgeIdx(before, 0, 1);
+    assert(eiSeed >= 0, "belt edge 0-1 must exist");
+    postSelect("edges", [eiSeed]);
+
+    postCommand("mesh.addLoop");
+    auto loopSel = selEdges(getSelection());
+    assert(loopSel.length == 4, "sanity: addLoop selects 4 loop edges");
+    sort(loopSel);
+
+    // Undo → back to the pristine cube AND the original seed-edge selection.
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    auto restored = getModel();
+    assert(restored["vertexCount"].integer == 8, "undo must restore 8 verts");
+    assert(restored["faceCount"].integer   == 6, "undo must restore 6 faces");
+    auto selU = getSelection();
+    int seedRestored = edgeIdx(restored, 0, 1);
+    assert(seedRestored >= 0, "seed edge 0-1 must be back after undo");
+    assert(selEdges(selU) == [seedRestored],
+        "undo must restore exactly the pre-slice seed edge selection");
+
+    // Redo → back to the cut AND the loop-edge selection.
+    auto r = postRedo();
+    assert(r["status"].str == "ok", "redo failed: " ~ r.toString);
+    auto recut = getModel();
+    assert(recut["vertexCount"].integer == 12, "redo must reinsert the loop (12 verts)");
+    auto selR = selEdges(getSelection());
+    sort(selR);
+    assert(selR.length == 4 && allSelEdgesAmongNewVerts(recut, getSelection(), 8),
+        "redo must restore the 4-edge loop selection");
 }
