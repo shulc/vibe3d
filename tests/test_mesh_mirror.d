@@ -110,6 +110,32 @@ void assertManifold(JSONValue m, string ctx) {
     }
 }
 
+// Full-parity membrane oracle. When a masked face lies ENTIRELY on the
+// mirror plane it doesn't move under reflection, so its winding-reversed
+// clone lands on the exact same verts: a degenerate on-plane membrane. The
+// reference editor keeps BOTH copies (the doubled membrane ships verbatim),
+// so exactly one vertex SET ends up claimed by two coincident faces. Assert
+// that doubled seam face is present — the whole point of the parity fix.
+// (This is deliberately non-manifold: the membrane makes each of its seam
+// edges shared by more than two faces, which is why assertManifold is NOT
+// applied to the on-plane weld-seam cases below.)
+void assertMembranePresent(JSONValue m, string ctx) {
+    import std.algorithm.sorting : sort;
+    int[string] setCount;
+    foreach (f; m["faces"].array) {
+        long[] vs;
+        foreach (v; f.array) vs ~= v.integer;
+        sort(vs);
+        string key;
+        foreach (i, v; vs) { if (i > 0) key ~= ","; key ~= v.to!string; }
+        setCount[key] = setCount.get(key, 0) + 1;
+    }
+    size_t doubled = 0;
+    foreach (key, count; setCount) if (count >= 2) ++doubled;
+    assert(doubled >= 1, ctx ~ ": expected a doubled on-plane membrane face "
+        ~ "(one vertex set claimed by 2 coincident faces), found none");
+}
+
 // Task 0306's systemic gap: a weld/mirror op that cascades to an empty
 // document must not silently report success over 0v/0f.
 void assertNonEmpty(JSONValue m, string ctx) {
@@ -152,22 +178,26 @@ unittest { // mirror whole cube across plane x=1 (center=(1,0,0)): cloned
 }
 
 // ---------------------------------------------------------------------------
-// Whole-mesh mirror with weld — the doubled seam face is dropped ENTIRELY
-// (both the coplanar original and its clone), leaving a manifold result.
+// Whole-mesh mirror with weld — FULL PARITY: the doubled on-plane seam face
+// is KEPT (both the coplanar original AND its winding-reversed clone), so the
+// result carries a degenerate on-plane membrane exactly as the reference
+// editor ships it.
 //
-// Task 0306 bug A: the +x face (v1,v2,v5,v6) lies ENTIRELY on the mirror
-// plane (center=[0.5,0,0]) — it doesn't move under reflection, so its
-// clone lands back on the exact same 4 verts: a degenerate internal
-// "membrane", not new geometry. The old fingerprint dedup dropped only
-// the clone and kept the original in place, leaving each of its 4
-// boundary edges shared by 3 faces (itself + the two genuine side faces
-// that already close the seam) — non-manifold. The fix drops BOTH
-// copies, so faceCount = 10, not 11.
+// The +x face (v1,v2,v5,v6) lies ENTIRELY on the mirror plane
+// (center=[0.5,0,0]) — it doesn't move under reflection, so its clone lands
+// back on the exact same 4 verts: a degenerate on-plane membrane. The
+// reference keeps BOTH copies, so faceCount = 12 (6 orig + 6 clones, nothing
+// dropped). This makes each of the 4 seam edges shared by more than two faces
+// — a deliberate non-manifold artifact of Mirror+Merge — so assertManifold is
+// intentionally NOT applied here; assertMembranePresent guards the doubled
+// seam face instead. (The seam-vertex weld itself is unchanged: the 4 on-plane
+// clone verts still collapse onto v1,v2,v5,v6.)
 // ---------------------------------------------------------------------------
 
 unittest { // Cube reflected across plane x=0.5 with weld=0.001: verts on
            // the +x face (v1,v2,v5,v6) coincide with their clones and get
-           // welded; the coplanar +x face and its clone are both dropped.
+           // welded; the coplanar +x face and its clone are BOTH kept
+           // (doubled on-plane membrane, full parity).
     resetCube();
 
     postCommand(`{"id":"mesh.mirror","params":{
@@ -181,21 +211,24 @@ unittest { // Cube reflected across plane x=0.5 with weld=0.001: verts on
     // compacted out.
     assert(m["vertexCount"].integer == 12,
         "verts: expected 12, got " ~ m["vertexCount"].integer.to!string);
-    // 6 orig + 6 clones − 2 (BOTH copies of the coplanar +x face dropped).
-    assert(m["faceCount"].integer == 10,
-        "faces: expected 10 (both seam-face copies dropped), got "
+    // 6 orig + 6 clones, nothing dropped — the coplanar +x face and its
+    // winding-reversed clone both survive as the on-plane membrane.
+    assert(m["faceCount"].integer == 12,
+        "faces: expected 12 (doubled on-plane membrane kept), got "
         ~ m["faceCount"].integer.to!string);
-    // Edge count: unaffected by dropping the coplanar face pair — its 4
-    // boundary edges are still needed by the 4 adjacent side faces (and
-    // their mirrored copies), just no longer ALSO claimed by the membrane.
+    // Edge count unchanged (20): the membrane reuses the 4 seam edges the
+    // adjacent side faces already provide — it adds no new edges, it just
+    // ALSO claims them (which is what makes those 4 edges non-manifold).
     assert(m["edgeCount"].integer == 20,
         "edges: expected 20, got "  ~ m["edgeCount"].integer.to!string);
-    assertManifold(m, "mirror weld coplanar (X)");
+    // Intentionally non-manifold (seam edges shared by >2 faces); assert the
+    // membrane is present instead of the manifold invariant.
+    assertMembranePresent(m, "mirror weld coplanar (X)");
 }
 
 unittest { // Same repro mirrored on Y instead of X (axis=Y,
            // center=[0,0.5,0]) — the +y (top) face is the coplanar one
-           // this time. Regression for the bug report's second repro.
+           // this time. Full-parity: the doubled on-plane membrane is kept.
     resetCube();
 
     postCommand(`{"id":"mesh.mirror","params":{
@@ -206,11 +239,12 @@ unittest { // Same repro mirrored on Y instead of X (axis=Y,
     assertNonEmpty(m, "mirror weld coplanar (Y)");
     assert(m["vertexCount"].integer == 12,
         "verts: expected 12, got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 10,
-        "faces: expected 10, got "  ~ m["faceCount"].integer.to!string);
+    assert(m["faceCount"].integer == 12,
+        "faces: expected 12 (doubled on-plane membrane kept), got "
+        ~ m["faceCount"].integer.to!string);
     assert(m["edgeCount"].integer == 20,
         "edges: expected 20, got "  ~ m["edgeCount"].integer.to!string);
-    assertManifold(m, "mirror weld coplanar (Y)");
+    assertMembranePresent(m, "mirror weld coplanar (Y)");
 }
 
 // ---------------------------------------------------------------------------

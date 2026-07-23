@@ -5968,91 +5968,32 @@ struct Mesh {
             rbMeshMaps.reserve(meshMaps.length);
             foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
 
-            // Bug A fix: a masked face whose vertices ALL lie (near-)exactly
-            // ON the mirror plane doesn't move under reflection — every one
-            // of its verts maps to itself (dot(v-center,normal) ≈ 0), so its
-            // "clone" is a winding-reversed exact duplicate at the SAME
-            // location: a degenerate internal membrane, not new geometry.
-            // Drop BOTH instances before the seam-fingerprint dedup below
-            // runs — keeping either one leaves every one of its boundary
-            // edges shared by 3 faces (itself + the two genuine side faces
-            // that already close the seam on their own). This is distinct
-            // from a face whose clone merely lands on a DIFFERENT face's
-            // vertex set (e.g. mirroring a whole symmetric object about its
-            // own center-plane, where e.g. left/right or top/bottom faces
-            // legitimately fold onto ONE surviving copy) — that case is
-            // still handled correctly by the ordinary fingerprint dedup
-            // just below, unmodified.
+            // Full-parity on-plane membrane: a masked face whose vertices ALL
+            // lie (near-)exactly ON the mirror plane doesn't move under
+            // reflection — every one of its verts maps to itself
+            // (dot(v-center,normal) ≈ 0), so its winding-reversed "clone" is an
+            // exact duplicate at the SAME location: a degenerate on-plane
+            // membrane. The reference editor KEEPS both the original seam face
+            // and its reversed clone (the doubled membrane ships verbatim, even
+            // though it makes each seam edge shared by more than two faces — a
+            // deliberate non-manifold artifact of Mirror+Merge). We therefore do
+            // NOT drop them here; the only special-casing needed is to EXEMPT
+            // on-plane faces from the winding-agnostic seam-fingerprint dedup
+            // below (which would otherwise fold the pair — identical vertex SET,
+            // opposite winding — down to a single face). A face whose clone
+            // merely lands on a DIFFERENT face's vertex set (e.g. mirroring a
+            // whole symmetric object about its own center-plane, where left/
+            // right or top/bottom faces legitimately fold onto ONE surviving
+            // copy) is OFF-plane and still deduped normally.
             //
-            // Tolerance: `min(weld, onPlaneEpsMax)`, NOT `weld` directly.
-            // "Lies on the mirror plane" is a geometric-degeneracy test —
-            // unrelated to how large a gap the user wants the SEAM-MERGE
-            // pass (below) to fold. Using `weld` unclamped here misfires on
-            // a large `weld` (task 0306 bug B's weld=100 repro): every
-            // vertex of every face is trivially "within 100" of the plane,
-            // so EVERY masked face would be wrongly flagged as on-plane and
-            // dropped, before the seam weld even runs.
+            // Tolerance: `min(weld, onPlaneEpsMax)`, NOT `weld` directly. The
+            // on-plane test is a geometric-degeneracy check — unrelated to how
+            // large a gap the SEAM-MERGE pass (below) folds. Using `weld`
+            // unclamped misfires on a large `weld` (e.g. weld=100): every vertex
+            // of every face is trivially "within 100" of the plane, so EVERY
+            // masked face would wrongly count as on-plane.
             enum float onPlaneEpsMax = 1e-5f;
             const float onPlaneEps = (weld < onPlaneEpsMax) ? weld : onPlaneEpsMax;
-            bool[] dropFace;
-            dropFace.length = faces.length;
-            bool anyOnPlaneDropped = false;
-            foreach (k, fi; toClone) {
-                bool onPlane = true;
-                foreach (vid; faces[fi]) {
-                    float d = dot(vertices[vid] - center, normal);
-                    if (d < 0.0f) d = -d;
-                    if (d > onPlaneEps) { onPlane = false; break; }
-                }
-                if (onPlane) {
-                    dropFace[fi]                 = true;
-                    dropFace[origFaceCount + k]  = true;
-                    anyOnPlaneDropped = true;
-                }
-            }
-            if (anyOnPlaneDropped) {
-                uint[][] keptFaces;
-                bool[]   keptSubpatch;
-                int[]    keptOrder;
-                bool[]   keptSelected;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                keptFaces   .reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
-                keptOrder   .reserve(faces.length);
-                keptSelected.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart    .reserve(faces.length);
-                foreach (fi, ref f; faces) {
-                    if (dropFace[fi]) continue;
-                    keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
-                    keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
-                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
-                    keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
-                    keptPart     ~= (fi < facePart.length           ? facePart[fi]           : 0u);
-                }
-                faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
-                faceSelectionOrder = keptOrder;
-                setFacesSelectedFrom(keptSelected);
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
-
-                // The dropped faces' own edges are otherwise left dangling
-                // (still recorded in `edges`, no longer referenced by any
-                // surviving face) whenever the weld pass below returns 0 —
-                // e.g. `weld` too small to actually merge the seam verts,
-                // or a caller reusing this on-plane-drop path in isolation.
-                // Re-derive `edges` from the surviving `faces` right away so
-                // the mesh is never left with phantom edges regardless of
-                // what the (possibly skipped) weld dedup below does.
-                // Deliberately NOT compactUnreferenced() here — that would
-                // shift vertex indices and invalidate `origVertexCount` as
-                // the `protectBelow` bound for the weld pass right below.
-                rebuildEdges();
-                clearEdgeSelectionResize();
-            }
 
             double epsSq = cast(double)weld * cast(double)weld;
             // Bug B fix: `protectBelow=origVertexCount` keeps this weld
@@ -6080,11 +6021,26 @@ struct Mesh {
                 keptMaterial.reserve(faces.length);
                 keptPart    .reserve(faces.length);
                 foreach (fi, ref f; faces) {
-                    auto sorted = f.dup;
-                    sort(sorted);
-                    string fp = format("%(%d,%)", sorted);
-                    if (fp in seenFp) continue;
-                    seenFp[fp] = true;
+                    // On-plane membrane faces (all verts on the mirror plane)
+                    // are the degenerate seam pair the reference keeps verbatim:
+                    // the original seam face and its winding-reversed clone share
+                    // the SAME vertex set, so the winding-agnostic fingerprint
+                    // would fold them to one. Keep every on-plane face
+                    // unconditionally (full-parity: the reference ships the
+                    // doubled membrane); only OFF-plane duplicates get deduped.
+                    bool onPlane = true;
+                    foreach (vid; f) {
+                        float d = dot(vertices[vid] - center, normal);
+                        if (d < 0.0f) d = -d;
+                        if (d > onPlaneEps) { onPlane = false; break; }
+                    }
+                    if (!onPlane) {
+                        auto sorted = f.dup;
+                        sort(sorted);
+                        string fp = format("%(%d,%)", sorted);
+                        if (fp in seenFp) continue;
+                        seenFp[fp] = true;
+                    }
                     keptFaces    ~= f;
                     keptSubpatch ~= isFaceSubpatch(fi);
                     keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
