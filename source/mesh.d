@@ -619,6 +619,23 @@ struct Mesh {
     // doc/undo_change_tracker_plan.md.
     private MeshEditTracker* editRecorder_;
 
+    // --- Edge-delete touched region (task 0474) ---------------------------
+    // POSITIONS of the endpoints of the edges last handed to removeEdgesByMask
+    // (the SELECTION the user asked to delete). Captured before any mutation,
+    // so — since compaction never moves a vertex — a surviving endpoint keeps a
+    // bit-identical position and can be re-found afterwards. `dissolveDegree2Verts`
+    // uses this as its scoping region so the post-remove 2-valent cleanup only
+    // touches verts the edge-delete actually reduced, never a distant pre-existing
+    // 2-valent vertex (e.g. a 90° corner). Vertex positions, not indices, because
+    // removeEdgesByMask reindexes verts through compactUnreferenced. Overwritten
+    // on every removeEdgesByMask call; only the edge-delete/remove commands read it.
+    private Vec3[] lastEdgeDeleteRegion_;
+
+    /// The touched-region positions captured by the most recent
+    /// `removeEdgesByMask` (see `lastEdgeDeleteRegion_`). Consumed by the
+    /// edge-mode delete/remove commands to scope `dissolveDegree2Verts`.
+    Vec3[] edgeDeleteRegion() const { return lastEdgeDeleteRegion_.dup; }
+
     // Open an edit batch: install the recorder so the mutation hooks start
     // logging. `declared` is the advisory change scope. The pointer must
     // out-live the batch (callers stack-allocate a MeshEditTracker and pass its
@@ -2078,8 +2095,22 @@ struct Mesh {
     /// into one. Used as a cleanup pass after removeEdgesByMask: the
     /// `delete` / `remove` behavior on edge selections dissolves the
     /// edge AND drops the now-orphaned 2-valent endpoints.
+    ///
+    /// `region` (task 0474): when non-null, ONLY verts whose position matches
+    /// an entry are eligible — the touched region of an edge delete (the
+    /// endpoints of the deleted edges, from `edgeDeleteRegion`). This scopes the
+    /// cleanup to the verts the edit actually reduced to 2-valent, matching the
+    /// reference editor's edge-delete: a pre-existing 2-valent vertex NOT touched
+    /// by the removed edges (a 90° corner, a straight-through midpoint elsewhere)
+    /// is left in place. Passing null keeps the legacy mesh-wide behavior (the
+    /// opt-in `dissolve2Valent` hygiene sweep in cleanupMesh). NB the eligibility
+    /// is purely region membership — there is deliberately NO collinearity /
+    /// angle test: the reference editor dissolves a touched endpoint regardless
+    /// of the angle its two survivors make (a 135° bent endpoint of a removed
+    /// edge is dissolved just like a straight one; only being outside the region
+    /// spares a vertex — measured against the reference editor, task 0474).
     /// Returns the number of verts dissolved.
-    size_t dissolveDegree2Verts() {
+    size_t dissolveDegree2Verts(in Vec3[] region = null) {
         // Tally the number of edges incident to each vertex.
         int[] degree;
         degree.length = vertices.length;
@@ -2092,10 +2123,27 @@ struct Mesh {
         mask.length = vertices.length;
         size_t cnt = 0;
         foreach (i, d; degree) {
-            if (d == 2) { mask[i] = true; ++cnt; }
+            if (d != 2) continue;
+            if (region !is null && !positionInRegion(vertices[i], region)) continue;
+            mask[i] = true; ++cnt;
         }
         if (cnt == 0) return 0;
         return dissolveVerticesByMask(mask);
+    }
+
+    /// True iff `p` coincides (within a tight epsilon) with any position in
+    /// `region`. Used by `dissolveDegree2Verts` to scope its cleanup. The
+    /// positions flow through unchanged (compaction copies verts by value, never
+    /// recomputes), so an exact match would suffice; the small epsilon only
+    /// guards against future float re-derivation. Linear scan — both the region
+    /// (deleted-edge endpoints) and the 2-valent candidate set are tiny.
+    private static bool positionInRegion(in Vec3 p, in Vec3[] region) {
+        enum float epsSq = 1e-12f;
+        foreach (ref r; region) {
+            immutable dx = p.x - r.x, dy = p.y - r.y, dz = p.z - r.z;
+            if (dx*dx + dy*dy + dz*dz <= epsSq) return true;
+        }
+        return false;
     }
 
     /// Dissolve the edges marked true in `mask`: each selected edge is
@@ -2113,13 +2161,30 @@ struct Mesh {
     size_t removeEdgesByMask(in bool[] mask) {
         if (mask.length != edges.length) return 0;
 
+        // Touched-region capture (task 0474): remember the POSITIONS of the
+        // endpoints of the edges the caller asked to delete, BEFORE any mutation.
+        // The edge-mode delete/remove commands use this to scope the follow-up
+        // dissolveDegree2Verts so pre-existing 2-valent verts elsewhere (90°
+        // corners, straight-through midpoints far from the edit) are left alone.
+        // Positions (not indices) survive removeEdgesByMask's vert reindexing.
+        lastEdgeDeleteRegion_ = null;
+
         // Snapshot selected edges as undirected keys; edge-array indices
         // are unstable across compactUnreferenced.
         bool[ulong] selectedEdgeKeys;
+        bool[uint]  regionSeen;
         foreach (i; 0 .. edges.length)
-            if (mask[i])
-                selectedEdgeKeys[edgeKeyOrdered(edges[i][0], edges[i][1])] = true;
-        if (selectedEdgeKeys.length == 0) return 0;
+            if (mask[i]) {
+                uint a = edges[i][0], b = edges[i][1];
+                selectedEdgeKeys[edgeKeyOrdered(a, b)] = true;
+                if (a < vertices.length && a !in regionSeen) {
+                    regionSeen[a] = true; lastEdgeDeleteRegion_ ~= vertices[a];
+                }
+                if (b < vertices.length && b !in regionSeen) {
+                    regionSeen[b] = true; lastEdgeDeleteRegion_ ~= vertices[b];
+                }
+            }
+        if (selectedEdgeKeys.length == 0) { lastEdgeDeleteRegion_ = null; return 0; }
 
         // PolyVertex remap, mechanism (b): merging faces rewrites the corner
         // LIST (the merged poly is a boundary walk). Capture the OLD CSR corner

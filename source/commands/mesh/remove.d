@@ -96,7 +96,11 @@ class MeshRemove : Command, Operator {
             case EditMode.Edges:
                 auto n = mesh.removeEdgesByMask(
                     all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
-                if (n > 0) mesh.dissolveDegree2Verts();
+                // Scope the 2-valent cleanup to the removed edges' endpoints
+                // (task 0474): a pre-existing 2-valent vertex the remove did not
+                // touch — a 90° corner, a straight-through midpoint elsewhere —
+                // must survive (reference-editor parity).
+                if (n > 0) mesh.dissolveDegree2Verts(mesh.edgeDeleteRegion());
                 return n;
             case EditMode.Polygons:
                 // Remove ≠ Delete for polygons: Remove drops ONLY the faces
