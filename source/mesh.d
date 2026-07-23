@@ -4883,7 +4883,8 @@ struct Mesh {
         // Distinct face planes per corner (deduped by face id).
         Vec3[][uint] cornerNormals;          // v → distinct incident face normals
         bool[ulong]  cornerFaceSeen;         // (v<<32|fi) → already counted at v
-        Vec3[uint]   cornerShiftTerm;        // v → Σ boundary shift·in-plane-perp
+        Vec3[uint]   cornerShiftTerm;        // v → Σ boundary shift·in-plane-perp (deduped)
+        Vec3[][uint] cornerShiftDirs;        // v → unit outward-perps already folded
         void addCornerFace(uint v, int fi) {
             if (fi < 0) return;
             ulong fk = (cast(ulong)v << 32) | cast(uint)fi;
@@ -4931,7 +4932,19 @@ struct Mesh {
             if (dot(d, ctr - mid) > 0.0f) d = -d;   // outward = away from centroid
             return d;
         }
-        void addCornerShift(uint v, Vec3 term) {
+        // Fold one boundary edge's `shift·(unit outward-perp)` into vertex v, but
+        // DEDUP by direction: ≥2 COLLINEAR boundary edges meeting at a straight
+        // mid-rim vertex present the SAME outward-perp, and reference slides that
+        // shared vertex ONCE (not once per incident edge). Skip a contribution
+        // whose unit perp coincides with one already folded at v; a GENUINE corner
+        // (non-parallel edges → distinct perps, dot≈0) still accumulates both, so
+        // L-corners and interior chains are unaffected.
+        void addCornerShift(uint v, Vec3 dir) {
+            if (auto seen = v in cornerShiftDirs)
+                foreach (ref d0; *seen)
+                    if (dot(d0, dir) > 0.999999f) return;   // collinear → count once
+            cornerShiftDirs.update(v, () => [dir], (ref Vec3[] acc) { acc ~= dir; });
+            Vec3 term = dir * shift;
             cornerShiftTerm.update(v, () => term, (ref Vec3 acc) { acc = acc + term; });
         }
         // Corner face planes are gathered above over ALL incident faces. Here we
@@ -4941,8 +4954,9 @@ struct Mesh {
         foreach (ref e; exEdges) {
             if (e.fB == -1 && shift != 0.0f) {
                 Vec3 perp = boundaryOutwardPerp(e.va, e.vb, e.fA);
-                addCornerShift(e.va, perp * shift);
-                addCornerShift(e.vb, perp * shift);
+                if (perp.length < 1e-6f) continue;          // degenerate edge → no slide
+                addCornerShift(e.va, perp);
+                addCornerShift(e.vb, perp);
             }
         }
 
@@ -15548,6 +15562,84 @@ unittest { // extendEdgesByMask: boundary edge — bridge tuple proof + shift sl
     long bf = findFaceByVerts_(m, [3u, na, nb, 0u]);
     if (bf < 0) bf = findFaceByVerts_(m, [3u, nb, na, 0u]);
     assert(bf >= 0, "boundary bridge face contains {3, new, new, 0}");
+}
+
+unittest { // extendEdgesByMask: COLLINEAR boundary chain — shared mid-rim vertex
+           // slides ONCE (not once per incident edge). Task 0475 regression.
+    import std.math : abs;
+    // Open 3×3 grid in the XZ plane (Y=0). The x=−1 rim carries THREE collinear
+    // boundary verts (0,3,6); selecting the two collinear boundary edges (3,0)
+    // and (6,3) shares vertex 3. inset=0, shift=0.2 → each new vert slides by
+    // exactly shift along the outward −X perp. The BUG doubled the shared vert
+    // (−1.4 instead of −1.2). Reference slides it once.
+    Mesh m;
+    m.vertices = [
+        Vec3(-1, 0, -1),  // 0
+        Vec3( 0, 0, -1),  // 1
+        Vec3( 1, 0, -1),  // 2
+        Vec3(-1, 0,  0),  // 3
+        Vec3( 0, 0,  0),  // 4
+        Vec3( 1, 0,  0),  // 5
+        Vec3(-1, 0,  1),  // 6
+        Vec3( 0, 0,  1),  // 7
+        Vec3( 1, 0,  1),  // 8
+    ];
+    m.addFace([0u, 1u, 4u, 3u]);
+    m.addFace([1u, 2u, 5u, 4u]);
+    m.addFace([3u, 4u, 7u, 6u]);
+    m.addFace([4u, 5u, 8u, 7u]);
+    m.buildLoops();
+    m.resetSelection();
+    selectEdgeByEnds_(m, m.vertices[3], m.vertices[0]);  // collinear rim edge (−1,z∈[−1,0])
+    selectEdgeByEnds_(m, m.vertices[6], m.vertices[3]);  // collinear rim edge (−1,z∈[0,1])
+    auto n = m.extendEdgesByMask(selMask_(m), 0.0f, 0.2f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 2);
+    // 9 grid verts + 3 new (verts 0,3,6 → one new each; 3 welds two edges) = 12.
+    assert(m.vertices.length == 12, "collinear chain: 9 + 3 new");
+    assert(m.faces.length == 6, "collinear chain: 4 grid + 2 bridges");
+    // The three new verts each slide once by shift=0.2 along −X:
+    //   vert 0 (−1,0,−1) → (−1.2,0,−1)   free end
+    //   vert 3 (−1,0, 0) → (−1.2,0, 0)   SHARED — the regression point
+    //   vert 6 (−1,0, 1) → (−1.2,0, 1)   free end
+    bool sharedHit = false, fe0 = false, fe6 = false, doubled = false;
+    foreach (i; 9 .. m.vertices.length) {
+        auto v = m.vertices[i];
+        if (near_(v, Vec3(-1.2f, 0, 0)))  sharedHit = true;
+        if (near_(v, Vec3(-1.2f, 0, -1))) fe0 = true;
+        if (near_(v, Vec3(-1.2f, 0, 1)))  fe6 = true;
+        if (abs(v.x + 1.4f) < 1e-4f)      doubled = true;  // −1.4 = the BUG
+    }
+    assert(!doubled, "collinear shared vertex must NOT double-shift (no −1.4)");
+    assert(sharedHit, "shared mid-rim vertex slid once → (−1.2,0,0)");
+    assert(fe0 && fe6, "free ends slid once → (−1.2,0,∓1)");
+}
+
+unittest { // extendEdgesByMask: GENUINE L-corner (non-parallel boundary edges) still
+           // accumulates BOTH perp shifts — dedup must not over-collapse. Task 0475.
+    // Single unit quad in XZ; two adjacent boundary edges meet at vertex 0 with
+    // PERPENDICULAR outward perps (−Z and −X). inset=0, shift=0.2 ⇒ the shared
+    // corner gets BOTH: (0,0,0)+shift·(−Z)+shift·(−X) = (−0.2,0,−0.2).
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),  // 0  shared corner
+        Vec3(1, 0, 0),  // 1
+        Vec3(1, 0, 1),  // 2
+        Vec3(0, 0, 1),  // 3
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resetSelection();
+    selectEdgeByEnds_(m, m.vertices[0], m.vertices[1]);  // +X edge, outward perp −Z
+    selectEdgeByEnds_(m, m.vertices[3], m.vertices[0]);  // +Z edge, outward perp −X
+    auto n = m.extendEdgesByMask(selMask_(m), 0.0f, 0.2f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 2);
+    // Shared corner 0 must carry BOTH perp slides → (−0.2, 0, −0.2).
+    bool corner = false;
+    foreach (i; 4 .. m.vertices.length)
+        if (near_(m.vertices[i], Vec3(-0.2f, 0, -0.2f))) corner = true;
+    assert(corner, "genuine L-corner accumulates both perp shifts → (−0.2,0,−0.2)");
 }
 
 unittest { // extendEdgesByMask: wire-edge / no-op — mask selecting nothing returns 0
