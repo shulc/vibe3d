@@ -9495,6 +9495,28 @@ struct Mesh {
         uint[][uint] freeEndCapRing;
         uint[uint]   freeEndCapSrc;
 
+        // Round-Level ≥ 1 K==2 "narrow notch" cap interior tessellation
+        // (parity task). A closed-fan vertex with exactly two selected edges
+        // whose two gaps have widths {1, 2} produces a TRIANGLE free-end cap:
+        // the width-1 gap's single slide is the APEX where the two selected
+        // edges' hub arcs meet, and the width-2 gap's two slides are the base
+        // edge. At L ≥ 1 the reference subdivides that triangle into a
+        // (2·L)×(2·L) grid (4·L² faces) whose boundary reuses the two hub arcs
+        // + a base arc about the source vertex, and whose interior follows a
+        // recursive circular-fillet law (pivot = the apex, sweep between the
+        // two hub-arc samples) — decoded and verified BIT-EXACT against the
+        // reference dumps at L1–L3. Populated per qualifying vertex, consumed
+        // once in the emission tail; empty for every other bevel (including
+        // any WIDER notch — a gap ≥ 3 routes the interior through a different
+        // reference builder whose control mapping is not yet decoded, so those
+        // caps intentionally stay flat).
+        struct NotchCapPlan {
+            bool valid;
+            uint apex;              // shared corner slide (width-1 gap) — hub-arc meet
+            uint gapEndL, gapEndR;  // the two ends of the width-2 base gap
+        }
+        NotchCapPlan[uint] notchCapPlans;
+
         // Round Level rail registry.  Identity is the unordered pair of L0
         // endpoints; callers receive the stored chain in their own winding.
         // A RailSpec still records its corner-construction class (below), but
@@ -9906,6 +9928,25 @@ struct Mesh {
             return rev;
         }
 
+        // Sin-weighted circular slerp about a centre `C`, sweeping the short
+        // way from `PA` to `PB` at parameter `f` — the SAME arc law
+        // `railInterior` samples for a rounded rail (radius is interpolated
+        // when |PA-C| != |PB-C|). Reused for the narrow-notch cap's base-gap
+        // arc (centre = the source vertex) and its recursive interior fillet
+        // (centre = the apex corner). Parity task.
+        Vec3 slerpAbout(Vec3 C, Vec3 PA, Vec3 PB, float f) {
+            import std.math : sin, acos;
+            immutable Vec3 rA = PA - C, rB = PB - C;
+            immutable float lA = rA.length, lB = rB.length;
+            float co = (lA > 1e-12f && lB > 1e-12f) ? dot(rA, rB) / (lA * lB) : 1.0f;
+            if (co >  1.0f) co =  1.0f;
+            if (co < -1.0f) co = -1.0f;
+            immutable float Om = acos(co), sO = sin(Om);
+            if (sO < 1e-6f) return C + rA * (1.0f - f) + rB * f;
+            immutable float wa = sin((1.0f - f) * Om) / sO, wb = sin(f * Om) / sO;
+            return C + rA * wa + rB * wb;
+        }
+
         foreach (V; 0 .. cast(uint)vertices.length) {
             if (V >= affected.length || !affected[V]) continue;
 
@@ -10208,6 +10249,35 @@ struct Mesh {
                         bevelCapCoincidentPos_ ~= vpos;
                         bevelCapOrphanPos_     ~= vertices[orphanSlide];
                     }
+
+                    // Narrow-notch interior tessellation plan (parity task): a
+                    // closed-fan K==2 cap whose two gaps are widths {1,2}. The
+                    // width-1 gap's lone slide is the apex where the two hub
+                    // arcs meet; the width-2 gap's two slides are the base
+                    // ends. Recorded here (full fan context in hand) and acted
+                    // on in the emission tail. Wider notches (any gap ≥ 3) are
+                    // deliberately NOT recorded — their interior routes through
+                    // an undecoded reference builder, so they keep the flat cap.
+                    if (roundLevel > 0 && !k4feCap && K == 2) {
+                        int s0 = -1, s1 = -1;
+                        foreach (kk; 0 .. nE)
+                            if (selE[kk]) { if (s0 < 0) s0 = kk; else s1 = kk; }
+                        int prv(int kk) { return (kk + nE - 1) % nE; }
+                        int nxt(int kk) { return (kk + 1) % nE; }
+                        immutable int gapFwd = s1 - s0 - 1;       // unselected slots s0→s1
+                        immutable int gapBwd = nE - 2 - gapFwd;   // the wrap-around gap
+                        if (gapFwd == 1 && gapBwd == 2) {
+                            // shared slot s0+1 == s1-1 is the apex; base gap is
+                            // the wrap side (slots s1+1, s0-1).
+                            notchCapPlans[V] = NotchCapPlan(true,
+                                getSlide(nxt(s0)), getSlide(prv(s0)), getSlide(nxt(s1)));
+                        } else if (gapBwd == 1 && gapFwd == 2) {
+                            // shared slot s0-1 == s1+1 is the apex; base gap is
+                            // the forward side (slots s0+1, s1-1).
+                            notchCapPlans[V] = NotchCapPlan(true,
+                                getSlide(prv(s0)), getSlide(nxt(s0)), getSlide(prv(s1)));
+                        }
+                    }
                 }
             }
         }
@@ -10380,6 +10450,33 @@ struct Mesh {
             // already known symbolically.
             foreach (key, spec; railSpecs)
                 if (spec.approved) railInterior(spec.a, spec.b);
+
+            // Narrow-notch base-gap arc (parity task): materialize the width-2
+            // gap's own edge as a circular arc about the SOURCE vertex and
+            // register it in `railInteriorMemo` so `threadRails` inserts the
+            // SAME subdivision points into the neighbouring reduced face that
+            // the cap grid uses — otherwise the cap would carry the arc while
+            // its neighbour kept the straight chord, a T-junction. Only for
+            // plans whose BOTH hub arcs actually materialized; any un-approved
+            // hub arc leaves the plan on the flat path (emission checks the
+            // same condition). Stored canonical (lo→hi), like every rail.
+            import std.algorithm : reverse, min, max;
+            foreach (Vn, plan; notchCapPlans) {
+                if (!plan.valid) continue;
+                if (!(pairKey(plan.gapEndL, plan.apex) in railInteriorMemo)) continue;
+                if (!(pairKey(plan.gapEndR, plan.apex) in railInteriorMemo)) continue;
+                immutable ulong gkey = pairKey(plan.gapEndL, plan.gapEndR);
+                if (gkey in railInteriorMemo) continue;
+                immutable int nn = 2 * roundLevel;
+                immutable Vec3 hp  = vertices[Vn];
+                immutable uint glo = min(plan.gapEndL, plan.gapEndR);
+                immutable uint ghi = max(plan.gapEndL, plan.gapEndR);
+                immutable Vec3 loP = vertices[glo], hiP = vertices[ghi];
+                uint[] interior = new uint[](nn - 1);
+                foreach (t; 1 .. nn)
+                    interior[t - 1] = addVertex(slerpAbout(hp, loP, hiP, cast(float)t / cast(float)nn));
+                railInteriorMemo[gkey] = interior;
+            }
         }
 
         // Thread only L0 boundaries.  Rounded strip faces are emitted below
@@ -11035,6 +11132,88 @@ struct Mesh {
         // the OTHER reasons the fixed point can withhold consent) still
         // commits this cap flat, same as before.
         foreach (V, ring_; freeEndCapRing) {
+            // Round-Level narrow-notch cap interior tessellation (parity task).
+            // A recorded plan + BOTH hub-arc rails + the base-gap arc all
+            // materialized ⇒ emit the (2·L)×(2·L) triangle-cap grid instead of
+            // the flat fill. The two hub arcs are the selected edges' own
+            // chamfer rails; the base edge is the gap arc registered during
+            // materialization (SHARED with the neighbouring reduced face, so no
+            // T-junction); the interior is a recursive fillet pivoted at the
+            // apex. Any un-materialized rail (a degraded span) falls through to
+            // the flat path below, byte-identical to before.
+            auto planP = V in notchCapPlans;
+            immutable ulong baseKeyN = (planP !is null)
+                ? pairKey(planP.gapEndL, planP.gapEndR) : 0UL;
+            if (planP !is null && planP.valid && roundLevel > 0 &&
+                (pairKey(planP.gapEndL, planP.apex) in railInteriorMemo) &&
+                (pairKey(planP.gapEndR, planP.apex) in railInteriorMemo) &&
+                (baseKeyN in railInteriorMemo)) {
+                import std.algorithm : reverse;
+                immutable int n = 2 * roundLevel;
+                immutable uint apex = planP.apex;
+                immutable Vec3 apexP = vertices[apex];
+                // Full hub-arc rails: [gapEnd, interior…, apex], n+1 entries.
+                // `railInterior(a,b)` yields the interior in a→b order.
+                uint[] arcL; arcL ~= planP.gapEndL; arcL ~= railInterior(planP.gapEndL, apex); arcL ~= apex;
+                uint[] arcR; arcR ~= planP.gapEndR; arcR ~= railInterior(planP.gapEndR, apex); arcR ~= apex;
+                // Base gap arc: [gapEndL, interior…, gapEndR]. Reuse the SAME
+                // memoized vertices `threadRails` inserted into the neighbour
+                // (stored canonical lo→hi; orient to gapEndL→gapEndR here).
+                uint[] gInt = railInteriorMemo[baseKeyN].dup;
+                if (planP.gapEndL > planP.gapEndR) reverse(gInt);
+                uint[] baseE = planP.gapEndL ~ gInt ~ planP.gapEndR;
+                // Interior grid G[i][j], i,j ∈ 1..n-1: recursive fillet pivoted
+                // at the apex, sweeping between the two hub-arc samples of row i.
+                uint[][] Gint;
+                Gint.length = n;
+                foreach (i; 1 .. n) {
+                    Gint[i].length = n;
+                    immutable Vec3 aL = vertices[arcL[i]], aR = vertices[arcR[i]];
+                    foreach (j; 1 .. n)
+                        Gint[i][j] = addVertex(slerpAbout(apexP, aL, aR, cast(float)j / cast(float)n));
+                }
+                uint gv(int i, int j) {
+                    if (i == n) return apex;      // apex row collapses to one point
+                    if (j == 0) return arcL[i];
+                    if (j == n) return arcR[i];
+                    if (i == 0) return baseE[j];
+                    return Gint[i][j];
+                }
+                // Build the grid faces, then align their winding to the fan's
+                // average face normal (same convention as the flat cap).
+                uint[][] gridFaces;
+                foreach (i; 0 .. n) foreach (j; 0 .. n) {
+                    if (i + 1 == n)
+                        gridFaces ~= [gv(i, j + 1), gv(i, j), apex];   // triangle at apex
+                    else
+                        gridFaces ~= [gv(i, j + 1), gv(i, j), gv(i + 1, j), gv(i + 1, j + 1)];
+                }
+                Vec3 gN = Vec3(0, 0, 0);
+                foreach (f; gridFaces)
+                    foreach (k; 0 .. f.length) {
+                        Vec3 a = vertices[f[k]], b = vertices[f[(k + 1) % f.length]];
+                        gN.x += (a.y - b.y) * (a.z + b.z);
+                        gN.y += (a.z - b.z) * (a.x + b.x);
+                        gN.z += (a.x - b.x) * (a.y + b.y);
+                    }
+                Vec3 avgN = Vec3(0, 0, 0);
+                foreach (fi; facesAroundVertex(V)) {
+                    Vec3 fn = faceNormal(cast(uint)fi);
+                    avgN.x += fn.x; avgN.y += fn.y; avgN.z += fn.z;
+                }
+                immutable bool flip = dot(gN, avgN) < 0;
+                immutable uint srcFiN = freeEndCapSrc[V];
+                foreach (ref f; gridFaces) {
+                    if (flip) reverse(f);
+                    newFaces ~= f;
+                    newMat  ~= srcFiN < faceMaterial.length ? faceMaterial[srcFiN] : 0u;
+                    newPart ~= srcFiN < facePart.length     ? facePart[srcFiN]     : 0u;
+                    newOrd  ~= 0;
+                    newSub  ~= isFaceSubpatch(srcFiN);
+                }
+                continue;
+            }
+
             uint[] ring = ring_.dup;
             immutable int Ncap = cast(int)ring.length;
             Vec3 newellN = Vec3(0, 0, 0);
@@ -23435,13 +23614,22 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
 }
 
 unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
-           // gap(1,3), L1-L3 — a SUBSET fixture (Decision B): every vertex
-           // we emit matches SOME reference position bit-exact (4 boundary
-           // arcs are decoded and closed), but we do not decode the 2-3
-           // remaining interior points of the cap's own tessellation, so
-           // our result is a strict subset of the reference's used-vertex
-           // positions. Counts are pinned exactly (they freeze the KNOWN
-           // incompleteness, not just a lower bound).
+           // gap(1,3), L1-L3.
+           //   • N=5 gap(1,2) — the NARROW notch: CLOSED bit-exact (parity
+           //     task). The triangle cap is tessellated into a (2·L)×(2·L)
+           //     grid whose base edge is a circular arc about the source
+           //     vertex and whose interior is a recursive circular fillet
+           //     pivoted at the apex corner. Asserted as a full set-equality
+           //     against the reference dump at EVERY level (both directions:
+           //     nothing emitted is off-reference, nothing on-reference is
+           //     missing) — not just a subset.
+           //   • N=6 gap(1,3) — the WIDE notch: still a SUBSET fixture. Its
+           //     count law + base-gap CHORD subdivision are decoded, but the
+           //     interior grid's central points route through an undecoded
+           //     reference (Gregory hub) builder, so we leave that cap FLAT:
+           //     every vertex we emit still matches SOME reference position
+           //     bit-exact, but our result stays a strict subset. Counts pin
+           //     the KNOWN incompleteness exactly.
     import std.math : cos, sin, PI;
     import std.conv : to;
     Mesh makeDisk(int N) {
@@ -23472,12 +23660,26 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
         }
         return true;
     }
+    // Full set-equality: every emitted vertex is on-reference AND every
+    // reference position is emitted. Combined with an exact count assert this
+    // is a bit-exact reproduction of the dump's used-vertex SET.
+    bool vertexSetEqualsReference(ref Mesh m, const Vec3[] refPositions) {
+        if (!everyVertexMatchesSomeReference(m, refPositions)) return false;
+        foreach (r; refPositions) {
+            bool ok = false;
+            foreach (v; m.vertices) if ((v - r).length < 1e-4f) { ok = true; break; }
+            if (!ok) return false;
+        }
+        return true;
+    }
 
-    // N=5 gap(1,2): our counts 14v/10f, 22v/14f, 30v/18f (task 0449 Замер 1).
+    // N=5 gap(1,2) — NARROW notch, CLOSED bit-exact (parity task). Full
+    // reference counts (16v/13f, 34v/29f, 60v/53f) and full set-equality vs
+    // the reference dump at every level.
     {
-        static immutable size_t[3] wantV = [14, 22, 30];
-        static immutable size_t[3] wantF = [10, 14, 18];
-        static immutable Vec3[] refL1 = [
+        static immutable size_t[3] wantV = [16, 34, 60];
+        static immutable size_t[3] wantF = [13, 29, 53];
+        static immutable Vec3[] refV5L1 = [
             Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
             Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
             Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
@@ -23495,6 +23697,105 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
             Vec3(-0.030901696532964706f, -0.09510564804077148f, 0.0f),
             Vec3(0.001146096852608025f, 0.0035273197572678328f, 0.0f),
         ];
+        static immutable Vec3[] refV5L2 = [
+            Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+            Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+            Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+            Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+            Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+            Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+            Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+            Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+            Vec3(-0.80901700258255f, 0.4877852499485016f, 0.0f),
+            Vec3(-0.7139113545417786f, 0.6186869740486145f, 0.0f),
+            Vec3(0.019627584144473076f, 0.04814557731151581f, 0.0f),
+            Vec3(0.9607715606689453f, 0.0425325408577919f, 0.0f),
+            Vec3(0.015838444232940674f, 0.0f, 0.0f),
+            Vec3(0.9675080180168152f, 0.0f, 0.0f),
+            Vec3(0.019627584144473076f, -0.04814557731151581f, 0.0f),
+            Vec3(0.9607715606689453f, -0.0425325408577919f, 0.0f),
+            Vec3(-0.7522805333137512f, 0.5991368889808655f, 0.0f),
+            Vec3(0.012420213781297207f, 0.05048739165067673f, 0.0f),
+            Vec3(-0.7827304601669312f, 0.5686869621276855f, 0.0f),
+            Vec3(-0.01281356904655695f, 0.009309601970016956f, 0.0f),
+            Vec3(-0.8022804856300354f, 0.5303177833557129f, 0.0f),
+            Vec3(-0.044178307056427f, -0.027413787320256233f, 0.0f),
+            Vec3(-0.05877852439880371f, -0.08090169727802277f, 0.0f),
+            Vec3(-0.030901696532964706f, -0.09510564804077148f, 0.0f),
+            Vec3(1.566544893805144e-09f, -0.09999999403953552f, 0.0f),
+            Vec3(0.0028683547861874104f, -0.04582749679684639f, 0.0f),
+            Vec3(-0.013502245768904686f, -0.04155564308166504f, 0.0f),
+            Vec3(-0.02925727143883705f, -0.0353892482817173f, 0.0f),
+            Vec3(0.008422976359724998f, 0.001475027995184064f, 0.0f),
+            Vec3(0.001146096852608025f, 0.0035273197572678328f, 0.0f),
+            Vec3(-0.005947329103946686f, 0.006144222337752581f, 0.0f),
+            Vec3(0.017792632803320885f, 0.04862440004944801f, 0.0f),
+            Vec3(0.015977893024683f, 0.04917489364743233f, 0.0f),
+            Vec3(0.014186167158186436f, 0.049796212464571f, 0.0f),
+        ];
+        static immutable Vec3[] refV5L3 = [
+            Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
+            Vec3(-0.80901700258255f, -0.5877852439880371f, 0.0f),
+            Vec3(0.30901700258255005f, -0.9510565400123596f, 0.0f),
+            Vec3(0.030901700258255005f, 0.09510564804077148f, 0.0f),
+            Vec3(-0.08090169727802277f, -0.05877852439880371f, 0.0f),
+            Vec3(0.030901700258255005f, -0.09510564804077148f, 0.0f),
+            Vec3(0.9412214756011963f, 0.08090169727802277f, 0.0f),
+            Vec3(0.9412214756011963f, -0.08090169727802277f, 0.0f),
+            Vec3(-0.80901700258255f, 0.4877852499485016f, 0.0f),
+            Vec3(-0.7139113545417786f, 0.6186869740486145f, 0.0f),
+            Vec3(0.02256392128765583f, 0.06398863345384598f, 0.0f),
+            Vec3(0.955608606338501f, 0.055982496589422226f, 0.0f),
+            Vec3(0.01752443239092827f, 0.032170552760362625f, 0.0f),
+            Vec3(0.9645003080368042f, 0.028616588562726974f, 0.0f),
+            Vec3(0.015838444232940674f, 0.0f, 0.0f),
+            Vec3(0.9675080180168152f, 0.0f, 0.0f),
+            Vec3(0.01752443239092827f, -0.032170552760362625f, 0.0f),
+            Vec3(0.9645003080368042f, -0.028616588562726974f, 0.0f),
+            Vec3(0.02256392128765583f, -0.06398863345384598f, 0.0f),
+            Vec3(0.955608606338501f, -0.055982496589422226f, 0.0f),
+            Vec3(-0.7401978969573975f, 0.6069834232330322f, 0.0f),
+            Vec3(0.01935698464512825f, 0.06503063440322876f, 0.0f),
+            Vec3(-0.7634767293930054f, 0.590070366859436f, 0.0f),
+            Vec3(0.004731815308332443f, 0.03632712364196777f, 0.0f),
+            Vec3(-0.7827304601669312f, 0.5686869621276855f, 0.0f),
+            Vec3(-0.01281356904655695f, 0.009309601970016956f, 0.0f),
+            Vec3(-0.7971175312995911f, 0.5437677502632141f, 0.0f),
+            Vec3(-0.03308693692088127f, -0.01572592183947563f, 0.0f),
+            Vec3(-0.8060092926025391f, 0.5164018273353577f, 0.0f),
+            Vec3(-0.055866170674562454f, -0.038505155593156815f, 0.0f),
+            Vec3(-0.06691306084394455f, -0.07431448251008987f, 0.0f),
+            Vec3(-0.04999999701976776f, -0.08660253882408142f, 0.0f),
+            Vec3(-0.030901696532964706f, -0.09510564804077148f, 0.0f),
+            Vec3(-0.010452844202518463f, -0.0994521901011467f, 0.0f),
+            Vec3(0.010452847927808762f, -0.0994521826505661f, 0.0f),
+            Vec3(0.008729668334126472f, -0.06265654414892197f, 0.0f),
+            Vec3(-0.004935841076076031f, -0.06012379378080368f, 0.0f),
+            Vec3(-0.018328607082366943f, -0.05640965327620506f, 0.0f),
+            Vec3(-0.031346697360277176f, -0.05154239013791084f, 0.0f),
+            Vec3(-0.04389104247093201f, -0.04555904492735863f, 0.0f),
+            Vec3(0.00867867935448885f, -0.03092736378312111f, 0.0f),
+            Vec3(-5.880459139007144e-05f, -0.029070153832435608f, 0.0f),
+            Vec3(-0.008645452558994293f, -0.026607971638441086f, 0.0f),
+            Vec3(-0.017039431259036064f, -0.02355281449854374f, 0.0f),
+            Vec3(-0.02519984357059002f, -0.019919563084840775f, 0.0f),
+            Vec3(0.010881642811000347f, 0.0009186886018142104f, 0.0f),
+            Vec3(0.005979715380817652f, 0.0020955370273441076f, 0.0f),
+            Vec3(0.001146096852608025f, 0.0035273197572678328f, 0.0f),
+            Vec3(-0.0036059634294360876f, 0.005210112314671278f, 0.0f),
+            Vec3(-0.008263440802693367f, 0.00713930232450366f, 0.0f),
+            Vec3(0.015336178243160248f, 0.03267575055360794f, 0.0f),
+            Vec3(0.013166888616979122f, 0.03325701132416725f, 0.0f),
+            Vec3(0.011019205674529076f, 0.03391362354159355f, 0.0f),
+            Vec3(0.008895746432244778f, 0.03464478626847267f, 0.0f),
+            Vec3(0.00679909810423851f, 0.03544961288571358f, 0.0f),
+            Vec3(0.022022124379873276f, 0.06413888931274414f, 0.0f),
+            Vec3(0.021483032032847404f, 0.06429857760667801f, 0.0f),
+            Vec3(0.020946810021996498f, 0.0644676461815834f, 0.0f),
+            Vec3(0.02041362039744854f, 0.06464605033397675f, 0.0f),
+            Vec3(0.019883623346686363f, 0.06483373045921326f, 0.0f),
+        ];
+        static immutable(Vec3[])[3] refV5 = [refV5L1, refV5L2, refV5L3];
         foreach (level; 1 .. 4) {
             auto m = makeDisk(5);
             bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -23502,20 +23803,28 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
             assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
             assert(m.vertices.length == wantV[level - 1] && m.faces.length == wantF[level - 1],
                 "F3 disk N=5 gap(1,2) L" ~ level.to!string ~ " count mismatch");
-            // Subset check only at L1, where the reference literal above is
-            // complete for — the 34/60 L2/L3 reference sets would be a
-            // large literal for marginal extra coverage; L1 already
-            // exercises the same 4-boundary-arc mechanism at the smallest
-            // cell, and the vertex/face COUNTS above still pin L2/L3 exactly.
-            if (level == 1)
-                assert(everyVertexMatchesSomeReference(m, refL1),
-                    "F3 disk N=5 gap(1,2) L1: emitted a position not in the reference dump — "
-                    ~ "our output must stay a STRICT SUBSET of the reference's used vertices");
+            // Bit-exact SET equality at every level: the narrow-notch cap
+            // interior is fully decoded (base-gap arc + recursive apex fillet).
+            assert(vertexSetEqualsReference(m, refV5[level - 1]),
+                "F3 disk N=5 gap(1,2) L" ~ level.to!string
+                ~ ": emitted vertex set must equal the reference dump bit-exact");
             assertBevelManifoldCleanOpen(m, "F3 disk N=5 gap(1,2)", 1);
         }
     }
 
-    // N=6 gap(1,3): our counts 16v/11f, 24v/15f, 32v/19f (task 0449 Замер 1).
+    // N=6 gap(1,3) — WIDE notch: still SUBSET, cap left FLAT (parity task).
+    // Our counts 16v/11f, 24v/15f, 32v/19f (a strict subset of the reference's
+    // 19/14, 39/30, 67/54). The count law + the base-gap CHORD subdivision law
+    // (the reference's v16/v17 — a width-3 gap's f_gap>=2 chords, not an arc)
+    // ARE decoded, but the interior grid's central (2L-1)^2 point(s) route
+    // through a different reference builder (an N-sided Gregory hub patch) whose
+    // pole/boundary-curve mapping is not yet decoded — position-fit alone fails
+    // by ~0.003 (transfinite Coons) to ~0.08 (every arc/slerp candidate),
+    // above the ~1e-6 float floor, so we do NOT emit a placeholder we can't
+    // verify. This cap therefore stays flat until a narrow rr/gdb follow-up
+    // pins the Gregory argument setup for the K=2 wide-gap case. The narrow
+    // (N=5) cap above IS fully closed; the two differ because the wide gap's
+    // base is a polyline (>=2 chords) rather than a single arc edge.
     {
         static immutable size_t[3] wantV = [16, 24, 32];
         static immutable size_t[3] wantF = [11, 15, 19];
