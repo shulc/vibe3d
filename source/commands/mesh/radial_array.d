@@ -19,6 +19,16 @@ import snapshot : MeshSnapshot;
 /// Axis is restricted to the principal axes (X/Y/Z). Arbitrary axis
 /// vectors are a follow-up; their main downstream use case is the
 /// helix sweep, which currently uses extra_step_translate instead.
+///
+/// `total_angle` semantics: the default 2π (full ring, step = 2π/count)
+/// is the interoperable mode and matches external reference editors
+/// exactly. A `total_angle < 2π` selects a PARTIAL (open) arc sweep
+/// (step = total_angle/count, copies span [0, total_angle) leaving the
+/// closing gap open) — this is a vibe3d-only extension with no external
+/// reference equivalent (legacy reference radial-array commands expose no
+/// sweep-angle argument and always fill a full 360°). Do NOT "fix" a
+/// partial-sweep parity divergence by forcing step = 2π/count: that would
+/// delete this feature. See task 0472 (radial-array-quarter-winding).
 class MeshRadialArray : Command, Operator {
     mixin OperatorActrCommon;
     private MeshSnapshot     snap;
