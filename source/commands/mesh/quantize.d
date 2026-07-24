@@ -104,14 +104,18 @@ class MeshQuantize : Command, Operator, IFalloffAware {
             if (!vmask[i]) continue;
             touchedIdx  ~= cast(uint)i;
             touchedPrev ~= mesh.vertices[i];
-            // floor(x / step + 0.5) is the standard banker-free round for
-            // positive AND negative values when step > 0. Using
-            // round(x / step) would be cleaner but std.math.round drags
-            // in libm and rounds half-to-even; floor(...+0.5) gives
-            // half-away-from-zero, the intuitive snap for an editor.
-            float qx = floor(mesh.vertices[i].x / stepX_ + 0.5f) * stepX_;
-            float qy = floor(mesh.vertices[i].y / stepY_ + 0.5f) * stepY_;
-            float qz = floor(mesh.vertices[i].z / stepZ_ + 0.5f) * stepZ_;
+            // Snap with floor(pos/step + 0.5) — round-half-toward-+∞ — but
+            // evaluate the ratio in DOUBLE precision. In float, a coord like
+            // 0.45f (stored as 0.44999998807907104, genuinely below 0.45)
+            // divided by 0.1f rounds to *exactly* 4.5 because both operands'
+            // float error conspires; floor(4.5+0.5) then snaps it a whole
+            // grid cell too far (0.5 instead of 0.4). In double the true ratio
+            // is 4.4999998, which floors to the correct cell. Only the
+            // precision changes — the tie-break stays floor(x+0.5).
+            Vec3 v = mesh.vertices[i];
+            float qx = cast(float)(floor(cast(double)v.x / cast(double)stepX_ + 0.5) * cast(double)stepX_);
+            float qy = cast(float)(floor(cast(double)v.y / cast(double)stepY_ + 0.5) * cast(double)stepY_);
+            float qz = cast(float)(floor(cast(double)v.z / cast(double)stepZ_ + 0.5) * cast(double)stepZ_);
             // Falloff blend: lerp between original and quantised pos.
             // Weight is evaluated at the original (pre-quantise) pos
             // so the per-vert weight is deterministic regardless of
