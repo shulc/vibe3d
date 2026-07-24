@@ -663,6 +663,12 @@ struct EditorApp {
     // distinct from `topoPenBuildEditFactory` since a re-snap move never
     // adds/removes geometry (Position-only editScope, not Geometry|Marks).
     MeshSessionEdit delegate() topoPenMoveEditFactory;
+    // Task 0477 (topology-pen P5, doc/topopen_p5_remove_plan.md, opponent
+    // KILLER-1): the Remove gesture's own generic session-edit factory,
+    // wireName "mesh.topoPen_remove" — kept distinct from BOTH
+    // `topoPenBuildEditFactory` and `topoPenMoveEditFactory` (a single-face
+    // delete IS a topology change, Geometry editScope, not Position-only).
+    MeshSessionEdit delegate() topoPenRemoveEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

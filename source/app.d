@@ -3040,6 +3040,14 @@ void main(string[] args) {
     // Position-only, not Geometry|Marks.
     auto topoPenMoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
+    // Topology Pen P5's Remove gesture (task 0477, doc/topopen_p5_remove_plan.md,
+    // opponent KILLER-1): its OWN typed edit factory, distinct from BOTH
+    // `topoPenBuildEditFactory` and `topoPenMoveEditFactory` — a single-face
+    // delete IS a topology change (wire name "mesh.topoPen_remove", editScope
+    // Geometry), so reusing either sibling factory would corrupt undo
+    // history / event-log replay / macros with the wrong wire name.
+    auto topoPenRemoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3151,6 +3159,7 @@ void main(string[] args) {
     app.strokeExtrudeEditFactory = strokeExtrudeEditFactory;
     app.topoPenBuildEditFactory  = topoPenBuildEditFactory;
     app.topoPenMoveEditFactory   = topoPenMoveEditFactory;
+    app.topoPenRemoveEditFactory = topoPenRemoveEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

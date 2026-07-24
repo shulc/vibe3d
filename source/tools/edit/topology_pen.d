@@ -15,6 +15,7 @@ import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
 import constraint           : resolveHoverTarget, kTopoPenSnapPx;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
+import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -52,6 +53,18 @@ alias TopoPenBuildFactory = MeshSessionEdit delegate();
 /// app.d construction site, mirroring `topoPenBuildEditFactory`.
 alias TopoPenMoveFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER REMOVE GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P5, doc/topopen_p5_remove_plan.md D4,
+/// opponent KILLER-1) — a THIRD dedicated factory, distinct from BOTH
+/// `TopoPenBuildFactory` and `TopoPenMoveFactory`: reusing either would bake
+/// the wrong `wireName` ("mesh.topoPen_build"/"mesh.topoPen_move" on a
+/// face-removal — corrupts undo history / event-log replay / macros) and,
+/// for the build factory, the wrong `editScope` (Geometry|Marks vs the
+/// plain Geometry a face delete actually is). Wired with
+/// `wireName="mesh.topoPen_remove"` and `MeshEditScope.Geometry` at the
+/// app.d construction site, mirroring `topoPenMoveEditFactory`.
+alias TopoPenRemoveFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -80,7 +93,7 @@ private enum GestureSlot {
     ShiftMmb,      // Shift,      MMB — Add Loop                       (NOT YET IMPLEMENTED)
     CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide             (NOT YET IMPLEMENTED)
     CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
-    CtrlMmb,       // Ctrl,       MMB — Remove                         (NOT YET IMPLEMENTED)
+    CtrlMmb,       // Ctrl,       MMB — Remove — THIS PHASE (P5)
     ShiftCtrlLmb,  // Shift+Ctrl, LMB — Smoothing                      (NOT YET IMPLEMENTED)
     ShiftCtrlRmb,  // Shift+Ctrl, RMB — Smoothing + Edge Loop           (NOT YET IMPLEMENTED)
     ShiftCtrlMmb,  // Shift+Ctrl, MMB — undocumented slot               (NOT YET IMPLEMENTED)
@@ -116,9 +129,29 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 }
 
 // ---------------------------------------------------------------------------
-// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 of the topology-pen port
-// (factory id `mesh.topoPen`, doc/topopen_p0_plan.md, doc/topopen_p1_plan.md,
-// doc/topopen_p2_plan.md, doc/topopen_p3_plan.md, doc/topopen_p4_plan.md).
+// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 of the topology-pen
+// port (factory id `mesh.topoPen`, doc/topopen_p0_plan.md,
+// doc/topopen_p1_plan.md, doc/topopen_p2_plan.md, doc/topopen_p3_plan.md,
+// doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md).
+//
+// P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`GestureSlot.CtrlMmb`,
+// doc/topopen_p5_remove_plan.md): remove-on-DOWN (D2, capture-faithful and
+// the simplest composition — no `onMouseButtonUp` involvement at all, so
+// it is disjoint from every LEFT-button gesture above). One press picks the
+// front-most PRIMARY-layer face under the cursor via the tool's own
+// `BvhPick` (`pickPrimaryFace`, D1) and deletes ONLY that face
+// (`removeFaceAt`, D5) — `keepOrphans`+`keepFloatingEdges` both true, so
+// orphaned points AND orphaned edges survive, one atomic undo entry via its
+// OWN dedicated `removeEditFactory_` (D4, opponent KILLER-1: never
+// `buildEditFactory_`/`moveEditFactory_`, which would bake the wrong wire
+// name onto a removal). A miss (-1, cursor off every polygon silhouette) is
+// a clean no-op that still CONSUMES the click (D3) — Ctrl+MMB is
+// unambiguously the Remove gesture. Remove arms no session state of its
+// own, but its mutation COMPACTS `faces[]`, so a successful removal calls
+// `resyncSession()` (opponent KILLER-2) to invalidate any OTHER gesture
+// that might be armed on a different button (P3's `dragArmed_` build, P4's
+// `moveArmed_` grab) — `isDragging()` is never overridden, so those CAN be
+// armed concurrently with a Ctrl+MMB press.
 //
 // P4 adds MOVE on the plain (unmodified) **LMB** slot (`GestureSlot.Lmb`) —
 // the dispatch backbone's base behavior, every modifier an overlay on top of
@@ -258,6 +291,13 @@ private:
     EdgeCache*       ec_;
     FaceBoundsCache* fc_;
 
+    // --- P5 Remove gesture's own BVH face pick (doc/topopen_p5_remove_plan.md
+    // D1) — self-contained: the tool already holds gpu_/meshSrc_ from P2, so
+    // this instance is lazily constructed (`pickPrimaryFace`) and used ONLY
+    // for `pickFace` on the PRIMARY cage mesh — zero coupling to app
+    // internals / the app's own hover-pick instance.
+    BvhPick removePick_;
+
     CommandHistory    history_;
     VertexNewFactory  addVertexFactory_;
 
@@ -266,6 +306,10 @@ private:
 
     // --- P4 Move gesture deps (doc/topopen_p4_plan.md, OBJ-3 FOLDED) ---
     TopoPenMoveFactory moveEditFactory_;
+
+    // --- P5 Remove gesture deps (doc/topopen_p5_remove_plan.md, opponent
+    // KILLER-1) ---
+    TopoPenRemoveFactory removeEditFactory_;
 
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
@@ -338,11 +382,13 @@ public:
 
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
-                        TopoPenMoveFactory mf = null) {
-        history_          = h;
-        addVertexFactory_ = f;
-        buildEditFactory_ = bf;
-        moveEditFactory_  = mf;
+                        TopoPenMoveFactory mf = null,
+                        TopoPenRemoveFactory rf = null) {
+        history_           = h;
+        addVertexFactory_  = f;
+        buildEditFactory_  = bf;
+        moveEditFactory_   = mf;
+        removeEditFactory_ = rf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -456,20 +502,20 @@ public:
         final switch (resolveGestureSlot(e.button, SDL_GetModState())) {
             case GestureSlot.Lmb:      return onPlainLmbDown(e, vts);
             case GestureSlot.ShiftLmb: return onShiftLmbDown(e, vts);
+            case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
             case GestureSlot.Rmb:
             case GestureSlot.Mmb:
             case GestureSlot.ShiftRmb:
             case GestureSlot.ShiftMmb:
             case GestureSlot.CtrlLmb:
             case GestureSlot.CtrlRmb:
-            case GestureSlot.CtrlMmb:
             case GestureSlot.ShiftCtrlLmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Move / Move+Edge-Loop / Split / Duplicate Loop / Add
-                // Loop / Slide / the 2 undocumented slots / Remove /
-                // Smoothing / Smoothing+Edge-Loop — gesture_map.md table A,
-                // slots 1/2/3/5/6/7/8/9/10/11/12. Not implemented yet.
+                // TODO: Move+Edge-Loop / Split / Duplicate Loop / Add Loop /
+                // Slide / the 2 undocumented slots / Smoothing /
+                // Smoothing+Edge-Loop — gesture_map.md table A, slots
+                // 2/3/5/6/7/8/10/11/12. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -524,6 +570,42 @@ public:
         dragStartY_     = e.y;
         classifiedCase_ = classifySource(src);
         return true;   // consume; the build (if any) commits on release
+    }
+
+    // P5 (doc/topopen_p5_remove_plan.md D1): the front-most PRIMARY-layer
+    // face under (mx,my), via the tool's OWN `BvhPick` — positional,
+    // orientation-independent (a back-facing face is still hit; Remove is
+    // not a front-facing-only pick), -1 on a miss (cursor off every polygon
+    // silhouette). `FaceBoundsCache` is deliberately NOT used here (D1's
+    // rejection: its backface cull-by-normal would wrongly reject a
+    // back-facing face). Lazily constructs `removePick_` — mirrors
+    // `findSourceVertex`'s guard shape.
+    private int pickPrimaryFace(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null || gpu_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (removePick_ is null) removePick_ = new BvhPick();
+        return removePick_.pickFace(mx, my, vp, *m, *gpu_);
+    }
+
+    // P5 (doc/topopen_p5_remove_plan.md D2), on the Ctrl+MMB "Remove" slot:
+    // remove-on-DOWN — one press deletes exactly the front-most
+    // primary-layer face under the cursor, capture-faithful (measured a
+    // click, down px == up px) and the simplest composition: no
+    // `onMouseButtonUp` involvement (that handler stays LEFT-only, so this
+    // is disjoint from the P3 build / P4 Move LMB arms above) and no armed
+    // state of its own, so it naturally caps at one face per press (a held
+    // drag emits no further removes — the drag-sweep extension is
+    // UNMEASURED and explicitly deferred, D2/scope). A miss (-1) is a clean
+    // no-op (D3) but the gesture is still CONSUMED (`return true`) either
+    // way — Ctrl+MMB is unambiguously the Remove gesture, so it should
+    // never fall through to camera/selection handling.
+    private bool onCtrlMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int fi = pickPrimaryFace(e.x, e.y, vp);
+        if (fi >= 0) removeFaceAt(fi);
+        return true;
     }
 
     // Commits whichever gesture is armed at RELEASE, at the release event's
@@ -770,6 +852,49 @@ public:
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
         refreshDisplay(m, gpu_, vc_, ec_, fc_);
+    }
+
+    // P5 (doc/topopen_p5_remove_plan.md D4/D5): commit a single-face removal
+    // — deletes ONLY `faceIdx`, keeping orphaned points AND orphaned edges
+    // (`deleteFacesByMask(keepOrphans:true, keepFloatingEdges:true)`, D5), as
+    // one atomic undo entry via the DEDICATED `removeEditFactory_`
+    // (`MeshEditScope.Geometry` — a removal IS a topology change, unlike
+    // Move's Position-only scope; opponent KILLER-1 — never
+    // `buildEditFactory_`/`moveEditFactory_`, which would bake the wrong
+    // wire name onto this op). A miss/out-of-range `faceIdx` bails BEFORE
+    // any mutation (D3) — mirrors `moveVertexTo`'s up-front guard shape.
+    //
+    // On SUCCESS, calls `resyncSession()` (opponent KILLER-2, Risk 1): the
+    // tool never overrides `isDragging()`, so a Ctrl+MMB Remove can fire
+    // while a Shift+LMB build (`dragArmed_`/`quadTriFi_`) or an LMB Move
+    // (`moveArmed_`/`grabbedVert_`) is armed on a DIFFERENT button; this
+    // kernel call COMPACTS `faces[]`, so those cached indices would dangle
+    // (silent mis-delete or a RangeError on the sibling gesture's eventual
+    // release) unless invalidated here, before the sibling ever reads them
+    // again — the same idiom `resyncSession` already provides for an
+    // external undo/redo navigation.
+    private void removeFaceAt(int faceIdx) {
+        if (meshSrc_ is null || history_ is null || removeEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null || faceIdx < 0 || faceIdx >= cast(int)m.faces.length) return;
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        auto mask = new bool[](m.faces.length);
+        mask[faceIdx] = true;
+        m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = removeEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Remove");
+        history_.record(cmd);
+
+        // Opponent KILLER-2: invalidate any OTHER armed gesture's cached
+        // indices now that faces[] has been compacted out from under them.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
     // Stored drag-arm index/case dangle across an external history
@@ -1075,4 +1200,180 @@ unittest {
     auto after = MeshSnapshot.capture(m);
     assert(after.vertices == before.vertices, "stationary grab must not move the vertex");
     assert(!history.canUndo(), "stationary grab must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — Ctrl+MMB dispatch guard (P5, doc/topopen_p5_remove_plan.md
+// D6): a pure Tier-A pin so a bad merge that silently reverted the `CtrlMmb`
+// dispatch case would be caught by `dub test`, not just by best-effort
+// Tier-C (the P3 dispatch had no such guard prior to this phase).
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_CTRL) == GestureSlot.CtrlMmb,
+        "Ctrl+MMB must resolve to the Remove gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// removeFaceAt — T1 (P5, doc/topopen_p5_remove_plan.md §Testing, DOMINO):
+// removing an INTERIOR/shared-edge face must keep the OTHER face
+// byte-unchanged and every edge/vertex in place — the strongest
+// keepOrphans+keepFloatingEdges proof (default flags would drop the 3
+// now-floating edges instead, discriminating). Driven directly (private,
+// same-module access; no gpu_/BVH needed — the display tail is guarded off).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_remove", "Topology Remove",
+                                                     MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    // Two quads sharing edge 1-2: F0=[0,1,2,3], F1=[1,4,5,2].
+    m.addVertex(Vec3(0, 0, 0));   // 0
+    m.addVertex(Vec3(1, 0, 0));   // 1
+    m.addVertex(Vec3(1, 0, 1));   // 2
+    m.addVertex(Vec3(0, 0, 1));   // 3
+    m.addVertex(Vec3(2, 0, 0));   // 4
+    m.addVertex(Vec3(2, 0, 1));   // 5
+    m.addFace([0u, 1u, 2u, 3u]);   // F0 = face index 0
+    m.addFace([1u, 4u, 5u, 2u]);   // F1 = face index 1
+    m.buildLoops();
+
+    assert(m.vertices.length == 6 && m.edges.length == 7 && m.faces.length == 2,
+        "setup: pre-state must be the hand-enumerated domino (6v/7e/2f)");
+
+    t.removeFaceAt(0);   // remove F0
+
+    assert(m.faces.length == 1 && m.faces[0] == [1u, 4u, 5u, 2u],
+        "F1 must survive byte-unchanged");
+    assert(m.edges.length == 7,
+        "keepFloatingEdges must preserve every edge, incl. the 3 now-floating ones (01,23,30)");
+    assert(m.vertices.length == 6,
+        "keepOrphans must preserve every vertex, incl. 0 and 3 now face-unreferenced");
+    assert(history.canUndo(), "a real removal must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// removeFaceAt — T2 (P5, doc/topopen_p5_remove_plan.md §Testing, GRID
+// CORNER): removing a CORNER face on a multi-face grid must leave the
+// other 3 faces byte-unchanged and the corner's 2 exclusive boundary edges
+// surviving as floating edges — confirms Remove leaves every OTHER face
+// intact on a mesh bigger than a single pair.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_remove", "Topology Remove",
+                                                     MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(2);   // 2x2 quads: 9 verts, 12 edges, 4 faces
+    t.meshSrc_ = () => &m;
+
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        "setup: pre-state must be the 2x2 grid");
+
+    auto other1 = m.faces[1].dup;
+    auto other2 = m.faces[2].dup;
+    auto other3 = m.faces[3].dup;
+
+    t.removeFaceAt(0);   // corner face
+
+    assert(m.faces.length == 3, "exactly one face must be removed");
+    assert(m.faces[0] == other1 && m.faces[1] == other2 && m.faces[2] == other3,
+        "the other 3 faces must survive byte-unchanged");
+    assert(m.edges.length == 12,
+        "keepFloatingEdges must preserve all 12 edges, incl. the corner's 2 now-floating ones");
+    assert(m.vertices.length == 9, "keepOrphans must preserve every vertex");
+    assert(history.canUndo(), "a real removal must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// removeFaceAt — T3 (P5, doc/topopen_p5_remove_plan.md §Testing, D3): a miss
+// (-1) or an out-of-range face index must be a byte-identical no-op — no
+// mutation, no undo entry recorded.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_remove", "Topology Remove",
+                                                     MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(1, 0, 0));
+    uint v2 = m.addVertex(Vec3(1, 0, 1));
+    m.addFace([v0, v1, v2]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.removeFaceAt(-1);                       // miss
+    t.removeFaceAt(cast(int)m.faces.length);  // out-of-range
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces, "miss/out-of-range must not mutate the mesh");
+    assert(!history.canUndo(), "miss/out-of-range must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// removeFaceAt — T4 (P5, doc/topopen_p5_remove_plan.md §Testing): a real
+// removal must undo back to the exact pre-removal state, including the
+// kept orphan edges/vertices and the removed face itself.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_remove", "Topology Remove",
+                                                     MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 0, 1));
+    m.addVertex(Vec3(0, 0, 1));
+    m.addVertex(Vec3(2, 0, 0));
+    m.addVertex(Vec3(2, 0, 1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([1u, 4u, 5u, 2u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.removeFaceAt(0);
+    assert(history.canUndo(), "a real removal must be undoable");
+    history.undo();
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "undo must restore the exact pre-removal state, incl. the removed face");
 }
