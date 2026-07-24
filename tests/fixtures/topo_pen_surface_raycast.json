@@ -1,6 +1,6 @@
 {
   "name": "topo_pen_surface_raycast",
-  "description": "Topology Pen P0 (doc/topopen_p0_plan.md): the CONS stage's background-surface raycast branch, probed through GET /api/surface-raycast. Every case's camera uses the 'focus-point trick' -- the viewport CENTRE pixel's ray passes through the camera's `focus` point EXACTLY (a property of the lookAt-based camera construction, independent of azimuth/elevation/distance) -- so a case sets `focus` to the exact world point it wants the raycast to land on. All expected numbers are hand-derived analytically (fan-triangle cross products, point-to-segment distances) and cross-checked with an independent Python re-implementation of screenRay/lookAt/sphericalToCartesian; no reference 3D modeling tool was used (P0 is pinned-geometry only per the task brief).",
+  "description": "Topology Pen P0/P2 (doc/topopen_p0_plan.md, doc/topopen_p2_plan.md): the CONS stage's background-surface constraint, probed through GET /api/surface-raycast. The original P0 cases all exercise `geometry screen` (camera-ray -- the CENTRE pixel's ray passes through the camera's `focus` point EXACTLY, a property of the lookAt-based camera construction, independent of azimuth/elevation/distance, so a case sets `focus` to the exact world point it wants the ray to land on); they were authored under a `geometry point` argstring back when P0's raycast branch was gated on Point but ALWAYS did a camera-ray search regardless of mode -- P2 fixed that bug (Point now means nearest-foot-from-the-workplane-seed), so these cases are relabeled `geometry screen` here (Screen = camera-ray, unchanged values -- the relabel is honest, not a fudge: every one of these genuinely exercises a camera ray, never a nearest-foot magnet). The `point_*` cases appended at the end are NEW P2 cases exercising the corrected Point mode: a Y-dominant (near-top-down) or X-dominant (near-side-on) camera makes the AUTO work-plane resolve to a world axis-aligned plane through the origin, and a `focus` with its on-plane coordinate at exactly 0 makes the work-plane-cursor SEED equal `focus` too (same underlying lookAt property as the Screen-mode trick, just intersected with the work-plane instead of the mesh) -- so `focus`'s OFF-plane coordinate(s), when they exceed the cube's +-0.5 half-extent, predict the nearest-foot analytically via simple axis-aligned clamping. All expected numbers are hand-derived analytically (fan-triangle cross products, point-to-segment distances, axis-aligned box clamping) and cross-checked with an independent Python re-implementation of screenRay/lookAt/sphericalToCartesian/rayPlaneIntersect; no reference 3D modeling tool was used.",
   "provenance": {
     "schema": 1,
     "source": "analytic",
@@ -8,8 +8,8 @@
     "method": "hand + independent Python re-derivation",
     "captured_utc": "unknown",
     "harness": null,
-    "task": "topopen-p0",
-    "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md). Every hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal. 'bg_quad_tilted_normal' (review NIT-4) is 'bg_quad_offcenter' rotated 30deg about world X -- every other case's background face is axis-aligned, so this is the only case whose expected normal has all three components nonzero, exercising pickSurfaceRay's cross(b-a,c-a) fan-triangle normal against a genuinely oblique FACE (not just an oblique camera ray)."
+    "task": "topopen-p0-p2",
+    "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md) and P2's Point-mode nearest-foot correction (doc/topopen_p2_plan.md). Every camera-ray (`screen`) case's hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal. 'bg_quad_tilted_normal' (review NIT-4) is 'bg_quad_offcenter' rotated 30deg about world X -- every other case's background face is axis-aligned, so this is the only case whose expected normal has all three components nonzero, exercising pickSurfaceRay's cross(b-a,c-a) fan-triangle normal against a genuinely oblique FACE (not just an oblique camera ray). The `point_*` cases (P2) each pick a camera dominant along ONE world axis (Y for the +X/-Z faces, X for the -Y face, via `mostFacingAxis`'s abs-dot argmax over the camera's back vector) so the auto work-plane's normal is that axis and its plane passes through the world origin (WorkplaneStage's auto-mode publish); `focus`'s component along that SAME axis is set to exactly 0 so the work-plane-cursor seed coincides with `focus` (mirrors the screen-mode trick, just against the work-plane instead of the mesh) -- the other two `focus` components are chosen so exactly one of them exceeds the unit cube's +-0.5 half-extent, making the expected nearest-foot a simple per-axis clamp of `focus` against the box, landing on a specific face/normal with no tie (each case's excess axis is >=1.5 units past the boundary, comfortably outside any float/BVH-adjacent tie region)."
   },
   "tolerance": 0.02,
   "cases": [
@@ -18,7 +18,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -43,7 +43,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
@@ -70,7 +70,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,5,-8.660254],[10,5,-8.660254],[10,-5,8.660254],[-10,-5,8.660254]],
@@ -96,7 +96,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -123,7 +123,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -145,7 +145,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
@@ -171,7 +171,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:PlaneHigh" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,2,-10],[10,2,-10],[10,2,10],[-10,2,10]],
@@ -203,7 +203,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -225,7 +225,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -252,7 +252,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -279,10 +279,88 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" }
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" }
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": { "hit": false }
+    },
+    {
+      "name": "point_cube_posx_face",
+      "_comment": "P2 nearest-foot: Y-dominant (near-top-down) camera -> auto work-plane = world XZ (normal +Y) through the origin. focus=(2,0,0.15) has its Y (the plane's own axis) at exactly 0, so the work-plane-cursor seed equals focus (same lookAt property the Screen-mode cases use, applied to the work-plane instead of the mesh). Nearest point on the unit cube (+-0.5 half-extent) to seed (2,0,0.15): X clamps 2->0.5, Y and Z (0, 0.15) are already inside [-0.5,0.5] so pass through unchanged -> (0.5,0,0.15), the +X face (face 3, normal (1,0,0)) -- the SAME face 'bg_cube_side_oblique' hits via camera-ray, now reached via the magnet instead, discriminating Point from Screen mode (a straight-down camera-ray at this pixel would hit the +Y top face, not +X).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.3, "elevation": 1.4, "distance": 5,
+            "focus": {"x": 2, "y": 0, "z": 0.15}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 1, "face": 3,
+        "point": [0.5, 0, 0.15], "normal": [1, 0, 0]
+      }
+    },
+    {
+      "name": "point_cube_negz_face",
+      "_comment": "P2 nearest-foot: same Y-dominant camera family as point_cube_posx_face (auto work-plane = world XZ, normal +Y, through the origin), different azimuth. focus=(0.1,0,-2) again has Y=0 so the seed equals focus. Nearest point on the cube: Z clamps -2->-0.5, X (0.1) and Y (0) pass through -> (0.1,0,-0.5), the -Z face (face 0, normal (0,0,-1)) -- exercises the SAME work-plane basis with the EXCESS on the other in-plane axis (X excess -> +X face above; Z excess -> this face), plus a distinct normal direction.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": -0.2, "elevation": 1.4, "distance": 5,
+            "focus": {"x": 0.1, "y": 0, "z": -2}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 1, "face": 0,
+        "point": [0.1, 0, -0.5], "normal": [0, 0, -1]
+      }
+    },
+    {
+      "name": "point_cube_negy_face",
+      "_comment": "P2 nearest-foot, X-dominant camera (az=pi/2, el=0.3 -> camera back vector's X component dominates over Y/Z, so `mostFacingAxis` picks world X and the auto work-plane becomes X=0 through the origin, unlike the two Y-dominant cases above). focus=(0,-2,0.1) has X=0 (the plane's own axis) so the seed equals focus. Nearest point on the cube: Y clamps -2->-0.5, X (0) and Z (0.1) pass through -> (0,-0.5,0.1), the -Y bottom face (face 5, normal (0,-1,0)) -- reaches the axis this fixture's other cases cannot (a Y-dominant camera's seed is pinned at Y=0, which can never clamp onto +-Y itself; only an X- or Z-dominant work-plane can put excess on Y).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 1.5707963, "elevation": 0.3, "distance": 5,
+            "focus": {"x": 0, "y": -2, "z": 0.1}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 1, "face": 5,
+        "point": [0, -0.5, 0.1], "normal": [0, -1, 0]
+      }
     }
   ]
 }

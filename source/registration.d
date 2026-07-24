@@ -440,10 +440,18 @@ void registerTools(EditorApp app) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
 
-    // Topology Pen P0 (doc/topopen_p0_plan.md) — thin consumer of the CONS
-    // stage's background-surface-raycast packet; no mesh mutation yet, so
-    // no ToolHeadlessCommand / undo wiring (unlike Tack/Bridge above).
-    reg.toolFactories["mesh.topoPen"] = () => cast(Tool) new TopologyPenTool();
+    // Topology Pen P0-P2 (doc/topopen_p0_plan.md, doc/topopen_p2_plan.md) —
+    // thin consumer of the CONS stage's background-surface constraint
+    // packet; P2 adds placement, via the existing `mesh.addVertex` command
+    // (MeshVertexNew) — same generic ctor-deps shape as VertexTool
+    // (prim.vertex, above), no ToolHeadlessCommand entry (interactive-only,
+    // like Vertex/Pen).
+    reg.toolFactories["mesh.topoPen"] = () {
+        auto t = new TopologyPenTool(() => &mesh(), &gpu(),
+                                     &vertexCache(), &edgeCache(), &faceCache());
+        t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode));
+        return cast(Tool)t;
+    };
 
     // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
     // from the one-shot mesh.bridge command. Same generic MeshSessionEdit/

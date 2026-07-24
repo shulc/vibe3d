@@ -27,14 +27,24 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 // runs as a post-pass loop in xfrm_transform.d::applyTRS after
 // applyFold writes the final per-vertex positions.
 //
-// Functional scope (Stages 1-4 of doc/cons_constraint_plan.md):
-//   * `point` mode  — nearest world-space foot on the background mesh
-//                     (working assumption; revisited on Stage-0 capture).
-//   * `screen`/`vector` modes — accepted attrs, round-trip cleanly,
-//                     but currently no-op (return movingPos unchanged)
-//                     until Stage 0 resolves their projection direction.
-//   * `offset`, `handle`, `dblSided` — accepted attrs, round-trip,
-//                     no-op pending Stage-0 captures.
+// Functional scope (topology-pen P2, doc/topopen_p2_plan.md, supersedes the
+// earlier Stage-0 "working assumption" comment below):
+//   * `point` mode  — background-surface MAGNET: nearest world-space foot
+//                     on the background mesh to the work-plane∩cursor SEED
+//                     (NOT the camera-ray hit — see `pointNearestFootBackground`
+//                     below). This is the Topology Pen's mode.
+//   * `screen` mode — camera-ray∩surface (search perpendicular to the
+//                     view); this is the Topology Sketch sibling's mode
+//                     (see `screenRaycastBackground` below, unchanged from
+//                     the original P0 raycast).
+//   * `vector` mode — accepted attrs, round-trips cleanly, but currently
+//                     no-op (no per-vertex motion delta exists for a
+//                     placement click; out of scope until a drag-based
+//                     consumer needs it).
+//   * `offset`, `handle`, `dblSided` — accepted attrs, round-trip;
+//                     `offset` is honored by both raycast branches via
+//                     `constraint.applyOffset`; `handle`/`dblSided` remain
+//                     no-op pending a later phase.
 //
 // HTTP setAttr keys (via tool.pipe.attr constrain <name> <value>):
 //   `enabled`  : "true" / "false"
@@ -74,30 +84,171 @@ public:
         _publishedPacket = pkt;
         vts.put(&_publishedPacket);
 
-        // Background-surface raycast: gated on Point mode (the only mode a
-        // raycast makes sense for in P0 — screen/vector stay the existing
-        // no-op post-pass) AND a THREAD-SAFE cursor. `subj.cursorValid` is
-        // stamped true ONLY on the main-thread mouse-event dispatch path
-        // (app.d's buildToolVts) and the main-thread-bridged
-        // /api/surface-raycast provider — every HTTP-thread evaluate()
-        // caller (/api/toolpipe, /api/snap, /api/constrain, /api/path)
-        // leaves it false, so this branch never mutates `_bgBvh` off the
-        // main thread (R1 of doc/topopen_p0_plan.md).
-        if (geom == ConstrainGeom.Point) {
+        // Background-surface constraint: gated on Point OR Screen mode —
+        // both produce a hit packet (topology-pen P2, doc/topopen_p2_plan.md
+        // P2a-2; Vector/Off publish none) — AND a THREAD-SAFE cursor.
+        // `subj.cursorValid` is stamped true ONLY on the main-thread
+        // mouse-event dispatch path (app.d's buildToolVts) and the
+        // main-thread-bridged /api/surface-raycast provider — every
+        // HTTP-thread evaluate() caller (/api/toolpipe, /api/snap,
+        // /api/constrain, /api/path) leaves it false, so this branch never
+        // mutates `_bgBvh` off the main thread (R1 of doc/topopen_p0_plan.md).
+        if (geom == ConstrainGeom.Point || geom == ConstrainGeom.Screen) {
             auto subj = vts.get!SubjectPacket();
             if (subj !is null && subj.cursorValid && subj.viewport.width > 0)
-                raycastBackground(*subj, vts);
+                constrainBackground(*subj, vts);
         }
         return true;
     }
 
-    // Cast a ray from the current cursor pixel through every background
-    // layer's mesh (snap.backgroundSourcesSnapshot(), world-space, PINNED
-    // identity transform for P0 — R4), keep the globally nearest hit, and
-    // publish it as a ConstrainHitPacket. Reuses BvhPick/pickSurface
+    // Mode dispatch (topology-pen P2, doc/topopen_p2_plan.md P2a-2; neutral
+    // name replacing P0's `raycastBackground`, which only ever did the
+    // camera-ray search now split out as `screenRaycastBackground` below).
+    // Point = nearest-foot magnet (`pointNearestFootBackground`); Screen =
+    // camera-ray (`screenRaycastBackground`, byte-identical to the original
+    // P0 body). Off/Vector are unreachable through the evaluate() gate
+    // above — kept here only so the `final switch` stays exhaustive.
+    private void constrainBackground(ref SubjectPacket subj, ref VectorStack vts) {
+        final switch (geom) {
+            case ConstrainGeom.Point:
+                pointNearestFootBackground(subj, vts);
+                return;
+            case ConstrainGeom.Screen:
+                screenRaycastBackground(subj, vts);
+                return;
+            case ConstrainGeom.Off:
+            case ConstrainGeom.Vector:
+                return;
+        }
+    }
+
+    // Point mode — background-surface MAGNET (topology-pen P2,
+    // doc/topopen_p2_plan.md P2a-2): nearest world-space foot on any
+    // background-layer mesh to the work-plane∩cursor SEED (NOT the
+    // camera-ray hit — that is Screen mode, `screenRaycastBackground`
+    // below). This is the mode the Topology Pen uses.
+    //
+    // Seed derivation:
+    //   1. Work-plane basis: prefer the WorkplanePacket already published
+    //      earlier in THIS SAME evaluate() pass (WORK sits at Task.Work=0,
+    //      before Task.Cons=3, so it always runs first — see pipeline.d's
+    //      per-Task-slot walk). Absent WorkplanePacket (WORK stage missing
+    //      from the pipe) falls back to a direct `pickMostFacingPlane`
+    //      read — the SAME auto-pick WorkplaneStage itself would use —
+    //      with `center = Vec3(0,0,0)` deliberately mirroring
+    //      WorkplaneStage's own auto-mode publish (`_publishedPacket.center
+    //      = Vec3(0,0,0)`, workplane.d), NOT `pickWorkplaneFrame`'s
+    //      `vp.focus` fallback (that one is for CREATE tools placing
+    //      geometry AT the camera focus — a different concern from this
+    //      constraint seed).
+    //   2. Seed = the cursor ray (from `subj.viewport.eye` along
+    //      `screenRay(subj.cursorX, subj.cursorY, subj.viewport)`)
+    //      intersected with that plane. No intersection (ray parallel to
+    //      the plane) leaves `hit.hit = false` — an UNDEFINED seed, not a
+    //      "no bg surface" miss.
+    //   3. `constraint.closestPointOnMeshes(seed, bgSrc, ...)` finds the
+    //      globally nearest foot across every background source — this
+    //      ALWAYS finds a point when at least one bg source has faces
+    //      (nearest-foot never "misses" the way a ray can), so `hit.hit`
+    //      is false here only when there is no background source at all.
+    //   4. The candidate-fill block (nearestVert/nearestEdge +
+    //      world-position pairs) is the SAME logic `screenRaycastBackground`
+    //      already runs (P1, review NIT-1's `consistentCandidateIndex`
+    //      guard) — sourced from the WINNING bg mesh/face this branch
+    //      resolved, so P1 hover keeps working unchanged over the
+    //      corrected point.
+    private void pointNearestFootBackground(ref SubjectPacket subj, ref VectorStack vts) {
+        import snap        : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
+        import constraint  : closestPointOnMeshes, nearestFaceVertex, nearestFaceEdge,
+                             consistentCandidateIndex, applyOffset;
+        import toolpipe.packets : WorkplanePacket;
+        import tools.create.create_common : pickMostFacingPlane;
+        import math        : Vec3, screenRay, rayPlaneIntersect;
+        import std.math     : sqrt;
+
+        auto bgSrc      = backgroundSourcesSnapshot();
+        auto bgSrcLayer = backgroundSourceLayerIndices();
+
+        ConstrainHitPacket hit;   // hit.hit == false by default
+
+        Vec3 wpCenter, wpNormal;
+        if (auto wp = vts.get!WorkplanePacket()) {
+            wpCenter = wp.center;
+            wpNormal = wp.normal;
+        } else {
+            // WORK didn't publish this pass (stage missing from the pipe) —
+            // fall back to the same auto-pick WorkplaneStage itself would
+            // use. `center = Vec3(0,0,0)` deliberately mirrors
+            // WorkplaneStage's own auto-mode publish (see doc comment
+            // above) — not a `vp.focus`-anchored fallback.
+            auto bp = pickMostFacingPlane(subj.viewport);
+            wpCenter = Vec3(0, 0, 0);
+            wpNormal = bp.normal;
+        }
+
+        Vec3 dir = screenRay(subj.cursorX, subj.cursorY, subj.viewport);
+        Vec3 seed;
+        if (!rayPlaneIntersect(subj.viewport.eye, dir, wpCenter, wpNormal, seed)) {
+            _hitPkt = hit;   // ray parallel to the work-plane — undefined seed
+            vts.put(&_hitPkt);
+            return;
+        }
+
+        Vec3 fpt, fn;
+        int  srcIdx, face;
+        float d2;
+        if (!closestPointOnMeshes(seed, bgSrc, dblSided, fpt, fn, srcIdx, face, d2)) {
+            _hitPkt = hit;   // no background source with faces — no hit
+            vts.put(&_hitPkt);
+            return;
+        }
+
+        hit.hit    = true;
+        hit.point  = applyOffset(fpt, fn, offset);
+        hit.normal = fn;
+        hit.layer  = (srcIdx >= 0 && srcIdx < cast(int)bgSrcLayer.length)
+                     ? bgSrcLayer[srcIdx] : srcIdx;
+        hit.face   = face;
+        hit.t      = sqrt(d2);
+
+        // Same candidate-fill block as Screen mode (P1, review NIT-1),
+        // sourced from the WINNING bg mesh/face this branch resolved.
+        if (srcIdx >= 0 && srcIdx < cast(int)bgSrc.length && bgSrc[srcIdx] !is null) {
+            auto src = bgSrc[srcIdx];
+            hit.nearestVert = nearestFaceVertex(*src, face, fpt);
+            hit.nearestEdge = nearestFaceEdge(*src, face, fpt);
+
+            hit.nearestVert = consistentCandidateIndex(
+                hit.nearestVert, (*src).vertices.length);
+            if (hit.nearestVert >= 0)
+                hit.nearestVertPos = (*src).vertices[hit.nearestVert];
+
+            hit.nearestEdge = consistentCandidateIndex(
+                hit.nearestEdge, (*src).edges.length);
+            if (hit.nearestEdge >= 0) {
+                auto e = (*src).edges[hit.nearestEdge];
+                if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
+                    hit.nearestEdgeA = (*src).vertices[e[0]];
+                    hit.nearestEdgeB = (*src).vertices[e[1]];
+                } else {
+                    hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
+                }
+            }
+        }
+
+        _hitPkt = hit;
+        vts.put(&_hitPkt);
+    }
+
+    // Screen mode — cast a ray from the current cursor pixel through every
+    // background layer's mesh (snap.backgroundSourcesSnapshot(), world-space,
+    // PINNED identity transform for P0 — R4), keep the globally nearest hit,
+    // and publish it as a ConstrainHitPacket. Reuses BvhPick/pickSurface
     // (source/bvh_pick.d) — no new raycast machinery, per the topology-pen
-    // P0 layering rule.
-    private void raycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
+    // P0 layering rule. Byte-identical to the original P0 `raycastBackground`
+    // body (topology-pen P2 REV: only the enclosing gate/dispatch changed —
+    // this branch's OWN behavior did not).
+    private void screenRaycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
         import snap       : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
 

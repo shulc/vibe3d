@@ -1,6 +1,6 @@
 {
   "name": "topo_pen_hover_target",
-  "description": "Topology Pen P1 (doc/topopen_p1_plan.md): the constraint layer's `resolveHoverTarget` (source/constraint.d), probed end-to-end through GET /api/surface-raycast's `targetKind`/`targetVert`/`targetEdge` fields. Builds on the P0 'focus-point trick' (see topo_pen_surface_raycast.json's provenance) -- every case's camera `focus` lands the raycast hit EXACTLY at that world point, at the viewport CENTRE pixel (475,300). All expected numbers (including the threshold-flip cases' projected pixel distances) are derived analytically from vibe3d's own documented camera formulas (sphericalToCartesian / lookAt / perspectiveMatrix / projectToWindowFull, math.d + view.d) via a standalone (uncommitted) Python replica of those formulas -- the SAME method topo_pen_surface_raycast.json's author used, not a call into resolveHoverTarget itself. No reference 3D modeling tool was used (P1's resolution rule is an explicit PLACEHOLDER, not a claim of reference parity -- see case 9 and doc/topopen_p1_plan.md's Deferred section).",
+  "description": "Topology Pen P1 (doc/topopen_p1_plan.md): the constraint layer's `resolveHoverTarget` (source/constraint.d), probed end-to-end through GET /api/surface-raycast's `targetKind`/`targetVert`/`targetEdge` fields. Builds on the P0 'focus-point trick' (see topo_pen_surface_raycast.json's provenance) -- every case's camera `focus` lands the raycast hit EXACTLY at that world point, at the viewport CENTRE pixel (475,300). All expected numbers (including the threshold-flip cases' projected pixel distances) are derived analytically from vibe3d's own documented camera formulas (sphericalToCartesian / lookAt / perspectiveMatrix / projectToWindowFull, math.d + view.d) via a standalone (uncommitted) Python replica of those formulas -- the SAME method topo_pen_surface_raycast.json's author used, not a call into resolveHoverTarget itself. No reference 3D modeling tool was used (P1's resolution rule is an explicit PLACEHOLDER, not a claim of reference parity -- see case 9 and doc/topopen_p1_plan.md's Deferred section). P2 CORRECTION (doc/topopen_p2_plan.md): every case here drives the raycast oracle through a real camera + `geometry` argstring, exactly like topo_pen_surface_raycast.json -- these are camera-ray (Screen-mode) hit resolutions, not synthetic-packet calls (those live separately as constraint.d's own `makeHoverTestViewport` module unittests, run under `dub test`). Originally authored under `geometry point` back when P0's raycast branch always did a camera-ray search regardless of mode; relabeled `geometry screen` here for the same reason and with the same byte-identical-values guarantee as topo_pen_surface_raycast.json's relabel.",
   "provenance": {
     "schema": 1,
     "source": "analytic",
@@ -8,8 +8,8 @@
     "method": "hand + independent Python re-derivation of math.d/view.d (sphericalToCartesian, lookAt, perspectiveMatrix, projectToWindowFull)",
     "captured_utc": "unknown",
     "harness": null,
-    "task": "topopen-p1",
-    "notes": "Most cases use an az=0/el=0 camera (eye = focus + (0,0,distance), forward = -Z) or az=pi/2/el=0 (forward = -X) so the camera's rotation is axis-aligned with a face the case tests head-on -- for any offset confined to that face's own plane (zero depth-component relative to the camera), the perspective projection collapses to an EXACT uniform pixel scale S = (1+sqrt(2)) * 0.5 * viewportHeight / distance (viewportHeight=544 for the default --test window), independent of which in-plane direction the offset points. Cases 5/6 (threshold_wide_vertex / threshold_narrow_face) use this to hand-derive the corner's exact projected distance from the hit point: offset (0.15,0.15,0) at distance=5 -> S=131.3332 px/unit -> corner pixel distance = S*0.15*sqrt(2) = 27.860px, nearest-edge pixel distance = S*0.15 = 19.700px (both independently verified against the standalone Python replica, not against resolveHoverTarget's own output). Case 9 (vertex_beats_edge) uses the same face/camera with a smaller offset (0.03,0.03,0): vertex=5.572px, edge=3.940px -- BOTH inside the default 12px radius, so the PLACEHOLDER Vertex>Edge precedence (not the reference editor's real precedence -- deferred to C2/P4) is what picks 'vertex' despite the edge being the geometrically closer candidate. Cases 4 and 10 reuse topo_pen_surface_raycast.json's 'ray_miss' and 'bg_hidden_not_hit' camera/geometry verbatim (already-verified misses)."
+    "task": "topopen-p1-p2",
+    "notes": "Most cases use an az=0/el=0 camera (eye = focus + (0,0,distance), forward = -Z) or az=pi/2/el=0 (forward = -X) so the camera's rotation is axis-aligned with a face the case tests head-on -- for any offset confined to that face's own plane (zero depth-component relative to the camera), the perspective projection collapses to an EXACT uniform pixel scale S = (1+sqrt(2)) * 0.5 * viewportHeight / distance (viewportHeight=544 for the default --test window), independent of which in-plane direction the offset points. Cases 5/6 (threshold_wide_vertex / threshold_narrow_face) use this to hand-derive the corner's exact projected distance from the hit point: offset (0.15,0.15,0) at distance=5 -> S=131.3332 px/unit -> corner pixel distance = S*0.15*sqrt(2) = 27.860px, nearest-edge pixel distance = S*0.15 = 19.700px (both independently verified against the standalone Python replica, not against resolveHoverTarget's own output). Case 9 (vertex_beats_edge) uses the same face/camera with a smaller offset (0.03,0.03,0): vertex=5.572px, edge=3.940px -- BOTH inside the default 12px radius, so the PLACEHOLDER Vertex>Edge precedence (not the reference editor's real precedence -- deferred to C2/P4) is what picks 'vertex' despite the edge being the geometrically closer candidate. Cases 4 and 10 reuse topo_pen_surface_raycast.json's 'ray_miss' and 'bg_hidden_not_hit' camera/geometry verbatim (already-verified misses, now both `screen`). All 10 cases relabeled `geometry point` -> `geometry screen` for P2 (doc/topopen_p2_plan.md): every camera here is an axis-aligned head-on view whose auto work-plane and camera-ray direction are NOT generally coincident, so under the corrected Point-mode (nearest-foot-from-work-plane-seed) semantics these same setups would resolve to DIFFERENT hit points than the camera-ray hit these values were derived against -- Screen mode is the honest label for what these cases actually exercise."
   },
   "cases": [
     {
@@ -18,7 +18,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -41,7 +41,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
@@ -63,7 +63,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -86,7 +86,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -109,7 +109,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -132,7 +132,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -155,7 +155,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:PlaneHigh" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-10,2,-10],[10,2,-10],[10,2,10],[-10,2,10]],
@@ -183,7 +183,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -206,7 +206,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
@@ -229,7 +229,7 @@
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
-        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry screen" },
         { "endpoint": "command", "argstring": "layer.add name:Bg" },
         { "endpoint": "load-mesh", "body": {
             "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],

@@ -4,6 +4,7 @@ import bindbc.sdl;
 import std.json : JSONValue;
 
 import tool;
+import mesh                : Mesh, GpuMesh;
 import math               : Vec3, Viewport, projectToWindowFull;
 import shader              : Shader;
 import operator            : VectorStack;
@@ -13,26 +14,46 @@ import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
 import constraint           : resolveHoverTarget, kTopoPenSnapPx;
+import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
+import command_history      : CommandHistory;
+import commands.mesh.vertex_new : MeshVertexNew;
+import display_sync         : refreshDisplay;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
+/// Factory the tool calls PER CLICK to obtain a fresh, primary-bound
+/// `MeshVertexNew` (P2, doc/topopen_p2_plan.md REV-1) — mirrors
+/// `tools.create.vertex_place`'s `VertexEditFactory` alias shape. Binding
+/// happens at CALL time (`() => new MeshVertexNew(&mesh(), ...)` at the
+/// registration.d wiring site), so each click's command targets whichever
+/// layer is primary AT THAT MOMENT.
+alias VertexNewFactory = MeshVertexNew delegate();
+
 // ---------------------------------------------------------------------------
-// TopologyPenTool — Phases P0 + P1 of the topology-pen port (factory id
-// `mesh.topoPen`, doc/topopen_p0_plan.md, doc/topopen_p1_plan.md).
+// TopologyPenTool — Phases P0 + P1 + P2 of the topology-pen port (factory id
+// `mesh.topoPen`, doc/topopen_p0_plan.md, doc/topopen_p1_plan.md,
+// doc/topopen_p2_plan.md).
 //
 // LAYERED like the reference editor (owner hard rule #1): the background-
-// surface raycast lives ENTIRELY in the mesh-CONSTRAINT toolpipe stage
-// (ConstrainStage's raycast branch, source/toolpipe/stages/constrain.d,
-// reusing the existing BvhPick — source/bvh_pick.d, no new module), and the
-// hover snap-target RESOLUTION lives ENTIRELY in the constraint (pure-math)
-// layer (`resolveHoverTarget`, source/constraint.d — P1, review REV-A).
-// This tool is a THIN CONSUMER of both: it does NOT raycast, does NOT
-// touch BvhPick directly, does NOT resolve a snap target inline (it only
-// CALLS `resolveHoverTarget`), and does NOT mutate the mesh. P0 shipped the
-// raycast plumbing; P1 adds hover-preview rendering + the resolved target
-// exposed over `toolStateJson()`. The actual pen/topology-drawing
-// behaviour (placing verts/edges/faces from the hit) is a later phase.
+// surface constraint (Point-mode nearest-foot magnet, Screen-mode
+// camera-ray) lives ENTIRELY in the mesh-CONSTRAINT toolpipe stage
+// (ConstrainStage's mode-dispatched branches, source/toolpipe/stages/
+// constrain.d, reusing the existing BvhPick — source/bvh_pick.d — for
+// Screen mode and `constraint.closestPointOnMeshes` for Point mode), and
+// the hover snap-target RESOLUTION lives ENTIRELY in the constraint
+// (pure-math) layer (`resolveHoverTarget`, source/constraint.d — P1,
+// review REV-A). This tool is a THIN CONSUMER of both: it does NOT
+// raycast, does NOT touch BvhPick or `closestPointOnMeshes` directly, does
+// NOT resolve a snap target inline (it only CALLS `resolveHoverTarget`),
+// and mutates the mesh ONLY through the `mesh.addVertex` command
+// (`MeshVertexNew`, P2) — never a direct `mesh.addVertex` call of its own.
+// P0 shipped the raycast plumbing; P1 added hover-preview rendering + the
+// resolved target exposed over `toolStateJson()`; P2 adds the actual
+// placement: a click with a hit creates ONE vertex in the PRIMARY layer at
+// `ConstrainHitPacket.point` (now the corrected nearest-foot point under
+// Point mode). Polygon/strip building from a chain of placed verts is a
+// later phase (P3, doc/topopen_p2_plan.md §Extension).
 //
 // Lifecycle:
 //   activate()   — composes CONS (enabled + geometry=Point) via the
@@ -94,6 +115,21 @@ private:
     ConstrainHitPacket lastHit_;
     HoverTarget         lastTarget_;
 
+    // --- P2 placement deps (doc/topopen_p2_plan.md) — wired by
+    // registration.d, mirroring VertexTool's ctor/setUndoBindings shape
+    // (tools/create/vertex_place.d). All may be left unset (test/no-app
+    // construction); `placeVertexAt` degrades to a no-op rather than
+    // crashing when `addVertexFactory_` is null.
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() { return meshSrc_(); }
+    GpuMesh*         gpu_;
+    VertexCache*     vc_;
+    EdgeCache*       ec_;
+    FaceBoundsCache* fc_;
+
+    CommandHistory    history_;
+    VertexNewFactory  addVertexFactory_;
+
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
@@ -117,6 +153,25 @@ private:
     }
 
 public:
+    // Deps default-unset (matches the pre-P2 `new TopologyPenTool()`
+    // registration site — every existing P0/P1 caller/test keeps working
+    // unchanged); `setUndoBindings` supplies the placement path.
+    this() {}
+
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu,
+         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+        this.meshSrc_ = meshSrc;
+        this.gpu_     = gpu;
+        this.vc_      = vc;
+        this.ec_      = ec;
+        this.fc_      = fc;
+    }
+
+    void setUndoBindings(CommandHistory h, VertexNewFactory f) {
+        history_          = h;
+        addVertexFactory_ = f;
+    }
+
     override string name() const { return "Topology Pen"; }
 
     override void activate() {
@@ -145,11 +200,71 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         readHit(vts);
-        return false;   // never consumes the event — P1 places nothing yet
+        return false;   // never consumes — placement happens on button-down, not motion
     }
 
     override void update(ref VectorStack vts) {
         readHit(vts);
+    }
+
+    // P2 (doc/topopen_p2_plan.md): a plain LEFT click with a background hit
+    // places ONE vertex in the primary layer at the (now nearest-foot-
+    // corrected) hit point. Dispatched via app.d's general `if
+    // (activeTool)` mouse-down block (app.d:6135-6136), which already ran
+    // `buildToolVts(..., btn.x, btn.y, true)` -> `cursorValid=true` ->
+    // pipeline.evaluate(vts) BEFORE calling here, so CONS has already
+    // published this event's ConstrainHitPacket onto `vts` — `readHit`
+    // below reads it fresh rather than trusting a possibly-stale
+    // `lastHit_` from the last motion event.
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
+                                    ref VectorStack vts) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & KMOD_ALT) return false;                  // camera orbit/pan/zoom
+        // Reserved for later-phase pen gestures (Duplicate/Slide/Split —
+        // behavior_from_docs.md §D); not handled yet, so don't consume.
+        if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
+
+        readHit(vts);
+        if (!lastHit_.hit) return true;   // claimed the click; no bg/degenerate seed -> place nothing
+
+        placeVertexAt(lastHit_.point, vts);
+        return true;
+    }
+
+    // Create one isolated vertex at `point` in the PRIMARY layer via the
+    // `mesh.addVertex` command (P2 REV-1, doc/topopen_p2_plan.md): fires
+    // the real `MeshVertexNew` through its Operator interface
+    // (`cmd.evaluate(vts)`, using the TOOL's own vts so the command's
+    // internal `SubjectPacket` guard is satisfied) and records it
+    // POST-apply via `history_.record(cmd)` — no re-apply, one
+    // non-coalescing undo entry per click (mirrors the precedent at
+    // `tools/common/command_wrapper.d`'s `applyWithLivePipeline`, NOT
+    // VertexTool's snapshot-diff path: `addVertexFactory_` binds `&mesh()`
+    // = primary at CALL time, so the command targets whichever layer is
+    // primary right now, and its own `MeshSnapshot`-based `revert()`
+    // handles undo). Returns the new vertex's index (`-1` on a no-op —
+    // missing factory or a rejected `evaluate`), for P3's chain-building to
+    // reuse (doc/topopen_p2_plan.md §Extension); this tool itself does not
+    // use the return value yet.
+    private int placeVertexAt(Vec3 point, ref VectorStack vts) {
+        if (addVertexFactory_ is null) return -1;
+
+        auto cmd = addVertexFactory_();   // binds &mesh() = primary NOW
+        cmd.setPos(point);
+        if (!cmd.evaluate(vts)) return -1;
+
+        if (history_ !is null) history_.record(cmd);   // non-coalescing -> one undo entry
+
+        // meshSrc_/gpu_/vc_/ec_/fc_ are wired together (registration.d) —
+        // guard on meshSrc_ alone so a partially-constructed tool (e.g. the
+        // no-arg ctor with only setUndoBindings called) never null-derefs.
+        if (meshSrc_ is null) return -1;
+        if (gpu_ !is null) gpu_.upload(*mesh);
+        mesh.syncSelection();
+        refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
+
+        return cast(int)(mesh.vertices.length - 1);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp,

@@ -31,6 +31,14 @@ class MeshVertexNew : Command, Operator {
     override string name()  const { return "mesh.addVertex"; }
     override string label() const { return "Add Vertex"; }
 
+    /// Aim the command at an absolute world position before firing it —
+    /// topology-pen P2 (doc/topopen_p2_plan.md): `pos_` is private (only
+    /// `params()` exposes it, for the generic Param-driven argstring path),
+    /// so a direct caller like `TopologyPenTool.placeVertexAt` needs this
+    /// setter rather than reaching into the field or going through
+    /// `params()`/setAttr for a single write.
+    void setPos(Vec3 p) { pos_ = p; }
+
     override Param[] params() {
         return [
             Param.vec3_("pos", "Position", &pos_, Vec3(0, 0, 0)),

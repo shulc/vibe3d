@@ -4,9 +4,16 @@
 // mutation), so this is a direct, hand-written HTTP-driving test rather
 // than a JSON fixture.
 //
+// P2 (doc/topopen_p2_plan.md): this test exercises the `_bgBvh`
+// mutationVersion cache, which is a SCREEN-mode-only concern (Point mode's
+// nearest-foot search is a brute-force scan with no per-bg cache to go
+// stale — see constrain.d's `pointNearestFootBackground`). Relabeled
+// `geometry point` -> `geometry screen` accordingly; values unchanged
+// (this was always a camera-ray probe).
+//
 // Recipe:
 //   1. Two-layer scene: layer0 = cube (primary), layer1 = cube (background,
-//      visible). CONS enabled, geometry=point.
+//      visible). CONS enabled, geometry=screen.
 //   2. Camera focus = the TOP FACE centre of layer1's cube (0, 0.5, 0) —
 //      the "focus-point trick" (see topo_pen_surface_raycast.json's
 //      provenance notes) guarantees the centre-pixel ray lands there
@@ -95,7 +102,7 @@ unittest {
     postJson("/api/reset", "");
 
     cmd("tool.pipe.attr constrain enabled true");
-    cmd("tool.pipe.attr constrain geometry point");
+    cmd("tool.pipe.attr constrain geometry screen");
 
     cmd("layer.add name:Bg");
     auto lr = postJson("/api/load-mesh", cubeMeshBody());

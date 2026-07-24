@@ -1,25 +1,35 @@
-// Topology Pen P1 (doc/topopen_p1_plan.md) — Tier C: the resolved hover
-// target crosses the toolpipe seam into TopologyPenTool.
+// Topology Pen P1/P2 (doc/topopen_p1_plan.md, doc/topopen_p2_plan.md) —
+// Tier C: the resolved hover target crosses the toolpipe seam into
+// TopologyPenTool.
 //
-// Recipe:
-//   1. Reproduce the SAME scene + camera as
-//      tests/fixtures/topo_pen_hover_target.json's "vertex_snap_corner"
-//      case (a background cube, camera focus'd just short of the top-face
-//      corner (0.5,0.5,0.5) -- see that fixture's provenance notes for the
-//      "focus-point trick" and the independently-derived pixel distance).
-//   2. Activate mesh.topoPen (`tool.set mesh.topoPen on`) — its activate()
+// Recipe (P2-recomputed — TopologyPenTool.activate() composes Point mode,
+// so the golden hit here must be a NEAREST-FOOT value; reuses the SAME
+// scene/camera as test_fixture_topology_pen_tool.d's P2 recompute, so both
+// Tier-C tests agree on what the tool actually resolves for this
+// pixel/camera):
+//   1. Background cube, Y-dominant (near-top-down) camera, `focus=(2,0,0)`
+//      -- work-plane-cursor seed = focus (Y=0, the plane's own axis);
+//      nearest-foot on the unit cube is (0.5,0,0), the +X face (face 3,
+//      normal (1,0,0)) -- see test_fixture_topology_pen_tool.d's header
+//      for the full derivation.
+//   2. (0.5,0,0) is the face's CENTRE -- independently, its distance (in
+//      world units) to the nearest corner/edge of that face is 0.5 world
+//      units in both Y and Z, which at any reasonable camera distance
+//      projects to comfortably more than the default 12px snap radius, so
+//      the hover resolution must be `face` (no vert/edge candidate wins).
+//   3. Activate mesh.topoPen (`tool.set mesh.topoPen on`) — its activate()
 //      enables CONS+Point itself, mirroring test_fixture_topology_pen_tool.d
 //      (P0's Tier-C test).
-//   3. Play a ONE-motion-event log at the viewport centre pixel through
+//   4. Play a ONE-motion-event log at the viewport centre pixel through
 //      /api/play-events (handleMouseMotion's buildToolVts call passes
 //      cursorValid=true for this real mouse event).
-//   4. GET /api/tool/state and assert the cached `hover.targetKind` /
+//   5. GET /api/tool/state and assert the cached `hover.targetKind` /
 //      `hover.targetVert` match the Tier-B golden for the SAME pixel/
 //      camera (proves TopologyPenTool's `resolveHoverTarget` call — reading
 //      the packet's viewport from the SAME vts CONS published into —
 //      agrees with /api/surface-raycast's own `resolveHoverTarget` call,
 //      i.e. both sides of the CONS→ACTR seam share one pure function).
-//   5. Deactivate (`tool.set mesh.topoPen off`) and assert the mesh
+//   6. Deactivate (`tool.set mesh.topoPen off`) and assert the mesh
 //      (foreground layer) is byte-identical before/after — the tool never
 //      mutates the mesh, hover preview included.
 //
@@ -86,26 +96,13 @@ double[3][] readVertices() {
     return outv;
 }
 
-// Resolve a world-space vertex coordinate to its index within `layer`'s
-// own mesh (mirrors fixture_helpers.resolveVertexInLayer — duplicated here
-// since this test does not import fixture_helpers, matching P0's Tier-C
-// test's self-contained style).
-int resolveVertexInLayer(int layer, double[3] coord) {
-    auto m = parseJSON(cast(string) get(baseUrl ~ format("/api/model?layer=%d", layer)));
-    foreach (i, v; m["vertices"].array) {
-        auto c = v.array;
-        double[3] got = [c[0].floating, c[1].floating, c[2].floating];
-        bool same = true;
-        foreach (k; 0 .. 3) if (fabs(got[k] - coord[k]) > 1e-4) same = false;
-        if (same) return cast(int) i;
-    }
-    assert(false, format("no vertex at %s in layer %d", coord, layer));
-}
-
 unittest {
     postJson("/api/reset", "");
 
-    // Same scene as the Tier-B "vertex_snap_corner" fixture case.
+    // Same scene/camera as test_fixture_topology_pen_tool.d's P2 recompute
+    // (Y-dominant near-top-down camera, focus=(2,0,0) -> nearest-foot
+    // (0.5,0,0), the +X face's centre — see that file's header comment
+    // for the derivation).
     cmd("layer.add name:Bg");
     auto lr = postJson("/api/load-mesh", cubeMeshBody());
     assert(lr["status"].str == "ok", "load-mesh failed: " ~ lr.toString);
@@ -114,9 +111,7 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.4, 0.6, 4.0, 0.46, 0.5, 0.46));
-
-    int wantVertIdx = resolveVertexInLayer(1, [0.5, 0.5, 0.5]);
+        0.3, 1.4, 5.0, 2.0, 0.0, 0.0));
 
     auto vertsBefore = readVertices();
 
@@ -144,11 +139,14 @@ unittest {
     auto hover = st["hover"];
     assert(hover["hit"].type == JSONType.true_,
         "hover.hit should mirror the cached raycast hit; got " ~ st.toString);
-    assert(hover["targetKind"].str == "vertex",
-        "hover.targetKind should match the Tier-B golden (vertex); got " ~ st.toString);
-    assert(hover["targetVert"].integer == wantVertIdx,
-        format("hover.targetVert should match the Tier-B golden (idx %d); got %s",
-               wantVertIdx, st.toString));
+    // (0.5,0,0) is the +X face's CENTRE — 0.5 world units from its nearest
+    // corner/edge in both Y and Z, comfortably outside the default 12px
+    // snap radius at this camera distance, so the hover must resolve to a
+    // free face-point (no vert/edge candidate wins).
+    assert(hover["targetKind"].str == "face",
+        "hover.targetKind should match the P2 golden (face); got " ~ st.toString);
+    assert(hover["targetVert"].integer == -1 && hover["targetEdge"].integer == -1,
+        "a 'face' target must carry no vert/edge index; got " ~ st.toString);
 
     // Deactivate — no mesh mutation across activate/deactivate, hover
     // preview included (the tool renders from cached state, never mutates).

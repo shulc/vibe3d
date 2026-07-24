@@ -90,6 +90,16 @@ Vec3 closestPointOnTriangle(Vec3 p, Vec3 a, Vec3 b, Vec3 c)
 // nearest foot. Fan-triangulates polygons (vertex 0 as the fan pivot).
 // `dblSided` is reserved for the capture-gated back-face rule — for now
 // all faces are considered regardless.
+//
+// `srcIndex`/`face` (topology-pen P2, doc/topopen_p2_plan.md) identify the
+// WINNING source (index into `sources`) and its winning face (index into
+// that source mesh's `m.faces`) — additive over the original two-out-param
+// shape, so the CONS stage's Point-mode branch can feed the same face into
+// `nearestFaceVertex`/`nearestFaceEdge` the way the Screen-mode branch
+// already does from its own `SurfaceHit.face`. Both are set to -1 when
+// `!found` (empty `sources`, or every source has fewer than 3 verts per
+// face).
+//
 // Returns false when sources is empty or has no faces (caller keeps
 // movingPos unchanged).
 // ---------------------------------------------------------------------------
@@ -98,23 +108,30 @@ bool closestPointOnMeshes(Vec3 p,
                           bool dblSided,
                           out Vec3 hit,
                           out Vec3 hitNormal,
+                          out int srcIndex,
+                          out int face,
                           out float dist2)
 {
     bool found = false;
     float bestD2 = float.infinity;
     Vec3  bestPt = p;
     Vec3  bestN  = Vec3(0, 1, 0);
+    int   bestSrcIndex = -1;
+    int   bestFace     = -1;
 
-    foreach (src; sources) {
+    foreach (si, src; sources) {
         if (src is null) continue;
         const verts = src.vertices;
-        foreach (face; src.faces.range) {
-            if (face.length < 3) continue;
+        // `poly` (REV-2 rename, doc/topopen_p2_plan.md): the polygon's own
+        // vertex-index array — renamed from the original `face` so it does
+        // not shadow this function's new `face`-INDEX out-param above.
+        foreach (fi, poly; src.faces.range) {
+            if (poly.length < 3) continue;
             // Fan triangulation: (0,i,i+1) for i in [1, n-2]
-            Vec3 a = verts[face[0]];
-            for (size_t i = 1; i + 1 < face.length; ++i) {
-                Vec3 b = verts[face[i]];
-                Vec3 cc = verts[face[i + 1]];
+            Vec3 a = verts[poly[0]];
+            for (size_t i = 1; i + 1 < poly.length; ++i) {
+                Vec3 b = verts[poly[i]];
+                Vec3 cc = verts[poly[i + 1]];
                 Vec3 cpt = closestPointOnTriangle(p, a, b, cc);
                 Vec3 d = cpt - p;
                 float d2 = dot(d, d);
@@ -125,6 +142,8 @@ bool closestPointOnMeshes(Vec3 p,
                     Vec3 n = cross(b - a, cc - a);
                     float nlen = sqrt(dot(n, n));
                     bestN = (nlen > 1e-12f) ? n * (1.0f / nlen) : Vec3(0, 1, 0);
+                    bestSrcIndex = cast(int)si;
+                    bestFace     = cast(int)fi;
                     found = true;
                 }
             }
@@ -132,9 +151,14 @@ bool closestPointOnMeshes(Vec3 p,
     }
 
     if (found) {
-        hit      = bestPt;
+        hit       = bestPt;
         hitNormal = bestN;
-        dist2    = bestD2;
+        srcIndex  = bestSrcIndex;
+        face      = bestFace;
+        dist2     = bestD2;
+    } else {
+        srcIndex = -1;
+        face     = -1;
     }
     return found;
 }
@@ -421,8 +445,9 @@ Vec3 constrainPoint(Vec3 movingPos,
         case ConstrainGeom.Point: {
             Vec3 hit, hitN;
             float d2;
+            int _si, _fi;   // winning source/face — unused by this caller
             if (!closestPointOnMeshes(movingPos, sources, cfg.dblSided,
-                                      hit, hitN, d2))
+                                      hit, hitN, _si, _fi, d2))
                 return movingPos;
             return applyOffset(hit, hitN, cfg.offset);
         }
@@ -511,13 +536,60 @@ unittest { // closestPointOnMeshes — vert projects onto unit quad at y=0
     const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
     Vec3 p = Vec3(0.5f, 3.0f, 0.5f);  // above centre of quad
     Vec3 hit, hitN;
+    int si, fc;
     float d2;
-    bool ok = closestPointOnMeshes(p, srcs, false, hit, hitN, d2);
+    bool ok = closestPointOnMeshes(p, srcs, false, hit, hitN, si, fc, d2);
     assert(ok, "closestPointOnMeshes should find a hit");
     import std.math : fabs;
     assert(fabs(hit.x - 0.5f) < 1e-4f, "hit x on quad");
     assert(fabs(hit.y - 0.0f) < 1e-4f, "hit y = 0 on quad");
     assert(fabs(hit.z - 0.5f) < 1e-4f, "hit z on quad");
+}
+
+unittest { // closestPointOnMeshes — P2 (doc/topopen_p2_plan.md): srcIndex/face
+           // identify the WINNING source/face, feeding the CONS stage's
+           // Point-mode branch the same face the Screen-mode branch already
+           // gets from BvhPick's SurfaceHit.face.
+    import mesh : Mesh;
+    // Same quad as above: faces[0]=(0,1,2) covers the XZ half where x>=z,
+    // faces[1]=(0,2,3) covers the half where z>=x.
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.faces    = [[0u,1u,2u], [0u,2u,3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    import std.math : fabs;
+
+    // Seed over face 0's interior (x > z).
+    Vec3 hitA, hitNA;
+    int siA, faceA;
+    float d2A;
+    bool okA = closestPointOnMeshes(Vec3(0.7f, 3.0f, 0.2f), srcs, false,
+                                    hitA, hitNA, siA, faceA, d2A);
+    assert(okA, "expected a hit over face 0's interior");
+    assert(siA == 0, "single source -> srcIndex 0");
+    assert(faceA == 0, "seed over face 0's interior must resolve to face 0");
+    assert(fabs(hitA.x - 0.7f) < 1e-4f && fabs(hitA.y - 0.0f) < 1e-4f
+        && fabs(hitA.z - 0.2f) < 1e-4f,
+        "hit must equal closestPointOnTriangle's own foot");
+
+    // Seed over face 1's interior (z > x).
+    Vec3 hitB, hitNB;
+    int siB, faceB;
+    float d2B;
+    bool okB = closestPointOnMeshes(Vec3(0.2f, 3.0f, 0.7f), srcs, false,
+                                    hitB, hitNB, siB, faceB, d2B);
+    assert(okB && siB == 0 && faceB == 1,
+        "seed over face 1's interior must resolve to face 1");
+}
+
+unittest { // closestPointOnMeshes — P2: not-found leaves srcIndex/face at -1
+    const(Mesh)*[] srcs = [];
+    Vec3 hit, hitN;
+    int si, fc;
+    float d2;
+    bool ok = closestPointOnMeshes(Vec3(0,0,0), srcs, false, hit, hitN, si, fc, d2);
+    assert(!ok, "empty sources must not find a hit");
+    assert(si == -1 && fc == -1, "not-found must leave srcIndex/face at -1");
 }
 
 unittest { // constrainPoint — point mode projects onto plane
