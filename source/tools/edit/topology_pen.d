@@ -581,9 +581,23 @@ public:
                 // the triangle in the CAPTURED index order [A, B, N] (hub,
                 // newest, older-neighbor). autoOrient:false — this winding is
                 // a fixed construction-order convention, not adjacency
-                // -derived (doc/topopen_p3_plan.md "WINDING" finding).
-                m.makePolygonFromVerts([cast(uint)a, b, cast(uint)n], false,
-                                       /*autoOrient*/false);
+                // -derived (doc/topopen_p3_plan.md "WINDING" finding); it
+                // assumes an OUTWARD-side release. A wrong-side or exactly
+                // collinear release makes [A,B,N] self-intersecting or
+                // zero-area — `makePolygonFromVerts` rejects the zero-area
+                // case (-1, review SHOULD-FIX: rolled back below) but NOT a
+                // merely self-intersecting one, which is accepted verbatim,
+                // matching the reference (no wrong-side capture contradicts
+                // it).
+                if (m.makePolygonFromVerts([cast(uint)a, b, cast(uint)n], false,
+                                           /*autoOrient*/false) < 0) {
+                    // Degenerate/wrong-side release (collinear A-B-N ->
+                    // Newell-null): only `b` itself would be left stray.
+                    // Restore `before` so the whole gesture is a clean
+                    // no-op rather than a silently-committed stray vertex.
+                    before.restore(*m);
+                    return;
+                }
                 break;
             case BuildCase.Quad: {
                 // CASE-QUAD: A is the hub of one existing triangle (P,A,Q in
@@ -594,11 +608,25 @@ public:
                 // old P-Q edge borders no surviving face afterward and must
                 // survive as a non-bounding diagonal, exactly like the
                 // SESSION-3 capture — never a `rebuildEdges*` in this path.
+                // Same winding caveat as CASE-TRI above: [P,A,Q,B] assumes an
+                // outward-side release; a wrong-side B yields a bowtie
+                // (self-intersecting quad), accepted verbatim unless its
+                // signed area cancels to zero (Newell-null — rejected below).
                 auto mask = new bool[](m.faces.length);
                 mask[triFi] = true;
                 m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
-                m.makePolygonFromVerts([cast(uint)p, cast(uint)a, cast(uint)q, b],
-                                       false, /*autoOrient*/false);
+                if (m.makePolygonFromVerts([cast(uint)p, cast(uint)a, cast(uint)q, b],
+                                           false, /*autoOrient*/false) < 0) {
+                    // Degenerate/wrong-side release (review SHOULD-FIX): by
+                    // this point the source triangle is ALREADY deleted and
+                    // `b` already added — a bare `return` here would leave 3
+                    // floating edges + a stray vertex committed as this
+                    // gesture's one undo entry. `before` predates BOTH the
+                    // triangle delete and the vertex add, so restoring it
+                    // makes the whole gesture a clean no-op instead.
+                    before.restore(*m);
+                    return;
+                }
                 break;
             }
         }
@@ -756,5 +784,96 @@ public:
         root["case"] = JSONValue(caseToken);
 
         return root;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// buildFromSource — degenerate/wrong-side release is a clean no-op (review
+// SHOULD-FIX, doc/topopen_p3_plan.md). `makePolygonFromVerts(autoOrient:
+// false)` returns -1 on a collinear/zero-area (Newell-null) vertex order,
+// and by the time either CASE-TRI or CASE-QUAD reaches that call the mesh
+// has ALREADY been mutated (the new vertex `b`, and CASE-QUAD's own
+// source-triangle delete) — so a bare `return` on that -1 used to leave
+// the partial mutation committed as the gesture's one undo entry
+// (CASE-QUAD: 3 floating edges + a stray vertex; CASE-TRI: a stray
+// vertex). Driven directly (private, same-module access — this failure
+// path never reaches gpu_/refreshDisplay, so it's safe under a bare
+// `dub test` with no GL context) with a `bPos` placed EXACTLY at an
+// existing vertex's own position:
+//   CASE-TRI:  B == N's position -> [A,B,N] collapses to a doubled line
+//              (zero area is an exact geometric fact for 3 points where
+//              two coincide, not a float-precision coincidence).
+//   CASE-QUAD: B == A's position -> the spliced quad's two triangular
+//              lobes (P,A,Q) and (Q,B,P) cancel EXACTLY: SignedArea
+//              (Q,B,P) with B==A equals -SignedArea(P,A,Q) by the same
+//              "reverse the vertex order negates signed area" identity,
+//              regardless of P/A/Q's actual coordinates.
+// Both are exact identities (no camera/raycast round-trip involved), so
+// the Newell-null rejection triggers deterministically.
+unittest {
+    import view            : View;
+    import editmode        : EditMode;
+    import mesh_edit_delta : MeshEditScope;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.buildEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_build", "Topology Build",
+                                                    MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    // --- CASE-TRI: hub A(0) with one bare edge to N(1); release collinear
+    // (B placed exactly at N's own position) ---
+    {
+        Mesh m;
+        t.meshSrc_ = () => &m;
+
+        uint a = m.addVertex(Vec3(0, 0, 0));
+        uint n = m.addVertex(Vec3(2, 0, 0));
+        m.addEdge(a, n);
+        m.buildLoops();
+
+        auto before = MeshSnapshot.capture(m);
+        t.buildFromSource(cast(int)a, BuildCase.Tri, cast(int)n, -1, -1, -1,
+                          Vec3(2, 0, 0));   // == N's own position -> collinear
+        auto after = MeshSnapshot.capture(m);
+
+        assert(after.vertices == before.vertices,
+            "CASE-TRI degenerate release must not leave a stray vertex");
+        assert(after.edges == before.edges,
+            "CASE-TRI degenerate release must not add a stray edge");
+        assert(after.faces == before.faces,
+            "CASE-TRI degenerate release must not add a face");
+        assert(!history.canUndo(),
+            "CASE-TRI degenerate release must record NO undo entry");
+    }
+
+    // --- CASE-QUAD: hub A is the apex of an existing triangle [P,A,Q];
+    // release at B == A's own position -> the spliced quad's two lobes
+    // cancel exactly (Newell-null) ---
+    {
+        Mesh m;
+        t.meshSrc_ = () => &m;
+
+        uint p = m.addVertex(Vec3(1, 0, 0));
+        uint a = m.addVertex(Vec3(0, 1, 0));
+        uint q = m.addVertex(Vec3(-1, 0, 0));
+        int triFi = m.makePolygonFromVerts([p, a, q], false);
+        assert(triFi >= 0, "setup: the source triangle must be valid");
+
+        auto before = MeshSnapshot.capture(m);
+        t.buildFromSource(cast(int)a, BuildCase.Quad, -1, cast(int)p, cast(int)q, triFi,
+                          Vec3(0, 1, 0));   // == A's own position -> bowtie cancels to zero area
+        auto after = MeshSnapshot.capture(m);
+
+        assert(after.vertices == before.vertices,
+            "CASE-QUAD degenerate release must not leave a stray vertex");
+        assert(after.edges == before.edges,
+            "CASE-QUAD degenerate release must not leave floating edges");
+        assert(after.faces == before.faces,
+            "CASE-QUAD degenerate release must restore the ORIGINAL triangle, not a partial mutation");
+        assert(!history.canUndo(),
+            "CASE-QUAD degenerate release must record NO undo entry");
     }
 }

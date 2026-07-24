@@ -6,7 +6,7 @@
 //
 // A SECOND drag from the SAME hub A (now carrying exactly one bare edge to
 // N from a prior drag) auto-closes a triangle, in the CAPTURED index order
-// [A, B, N] = [hub, newest, older-neighbor] (dragweld_build_capture.md
+// [A, B, N] = [hub, newest, older-neighbor] (doc/topopen_p3_plan.md
 // SESSION 2's "v0_second_drag_DECISIVE" finding). This is the KILLER-1
 // end-to-end guard: `classifySource` must see A's bare edge via the raw
 // `edgeNeighbors` scan (edgesAroundVertex/vertexValence, seeded from
