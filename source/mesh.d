@@ -10272,6 +10272,30 @@ struct Mesh {
                 if (cosO < -1.0f) cosO = -1.0f;
                 immutable float Omega = acos(cosO);
                 immutable float sinO  = sin(Omega);
+                // Overshoot-clamp rail. When a bare-end K1 slide overshoots its
+                // neighbour edge (width > farLen), the emitted corner stops AT the
+                // far vertex (clamped), but the reference still shapes the rounded
+                // rail from the UNCLAMPED offset: the arc centre & sweep come from
+                // the raw-width pivots (V + width·dir), while the endpoints stay the
+                // clamped slides. That is exactly the finding-(I) rail law the hub
+                // path uses — raw pivots + clamped corners through `roundPos`, whose
+                // delta term shifts the raw arc onto the clamped endpoints. Below
+                // clamp the pivots EQUAL the corners (|EA−V| == width for an
+                // unclamped slide, so the reconstructed pivot is EA itself), and
+                // `roundPos(pivot==corner)` reduces bit-exactly to the symmetric
+                // slerp below — so this branch is inert unless a slide actually
+                // clamped. Verified bit-exact against the reference on symmetric and
+                // asymmetric-dihedral BOTH-clamped bare ends (and reduces to the
+                // slerp on every non-clamped rail); a one-side-only clamp is a
+                // documented best-effort approximation (no reference test covers it).
+                immutable bool clampRail =
+                    spec.aKind == CornerKind.Slide && spec.bKind == CornerKind.Slide &&
+                    spec.aSelectedDegree == 1 && spec.bSelectedDegree == 1 &&
+                    !spec.hasArcCenter && (spec.aClamped || spec.bClamped);
+                immutable Vec3 pivA = clampRail
+                    ? spec.center + safeNormalize(EA - spec.center) * width : EA;
+                immutable Vec3 pivB = clampRail
+                    ? spec.center + safeNormalize(EB - spec.center) * width : EB;
                 Vec3[] pts = new Vec3[](n + 1);
                 foreach (t; 0 .. n + 1) {
                     immutable float f = cast(float)t / cast(float)n;
@@ -10287,6 +10311,11 @@ struct Mesh {
                         // Reached only by a closed full hub; every other rail
                         // keeps the slerp path below byte-identical.
                         pts[t] = roundPos(spec.jvA, spec.jvB, EA, EB, spec.center, f);
+                    } else if (clampRail) {
+                        // Overshoot-clamped bare-end rail: raw-width pivots +
+                        // clamped corners (see the block above). f=0→EA, f=1→EB
+                        // exactly, so the arc stays welded to the emitted corners.
+                        pts[t] = roundPos(pivA, pivB, EA, EB, spec.center, f);
                     } else if (sinO < 1e-6f) {
                         // Degenerate (collinear / 180° sweep): straight chord.
                         pts[t] = EA * (1.0f - f) + EB * f;
