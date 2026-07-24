@@ -1,8 +1,8 @@
-// Topology Pen P2 (doc/topopen_p2_plan.md) — place_multi_accumulate.
+// Topology Pen — place_multi_accumulate.
 //
 // Three clicks at three distinct pixels (in ONE /api/play-events call)
 // accumulate three vertices in the primary layer, each independently
-// verified as an on-surface nearest-foot — proving the tool stays armed
+// verified as an on-surface camera-ray hit — proving the tool stays armed
 // across repeated clicks (no auto-deactivate) and each click is its own
 // command (three additions, not one merged edit). The background sphere's
 // vertex count is asserted unchanged throughout (primary-only mutation).
@@ -25,7 +25,7 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 10.0, 3.0 * R, 0.0, 0.0));
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
 
     auto c = fetchCamera();
     int cx = c.vpX + c.width / 2, cy = c.vpY + c.height / 2;
@@ -38,8 +38,8 @@ unittest {
 
     Vec3[3] expected;
     foreach (i, p; pts) {
-        bool ok = expectedNearestFootOnSphere(c, cast(float)p[0], cast(float)p[1], R, expected[i]);
-        assert(ok, format("seed %d must be computable", i));
+        bool ok = expectedRayHitOnSphere(c, cast(float)p[0], cast(float)p[1], R, expected[i]);
+        assert(ok, format("click %d's camera-ray must hit the sphere", i));
     }
 
     int bgBefore = vertexCountLayer(0);
@@ -56,10 +56,10 @@ unittest {
 
     foreach (i, exp; expected) {
         assert(hasVertexNear(1, exp, TOL),
-            format("click %d's independently-computed nearest-foot (%f,%f,%f) "
+            format("click %d's independently-computed camera-ray hit (%f,%f,%f) "
                  ~ "must be present among the placed vertices", i, exp.x, exp.y, exp.z));
         double dist = sqrt(exp.x*exp.x + exp.y*exp.y + exp.z*exp.z);
-        assert(abs(dist - R) < TOL, "each expected foot must itself be on-surface (sanity)");
+        assert(abs(dist - R) < TOL, "each expected hit must itself be on-surface (sanity)");
     }
 
     assert(vertexCountLayer(0) == bgBefore,

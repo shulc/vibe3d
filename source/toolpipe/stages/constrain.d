@@ -7,6 +7,7 @@ import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;
+import mesh             : Mesh;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
 // fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
@@ -27,16 +28,28 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 // runs as a post-pass loop in xfrm_transform.d::applyTRS after
 // applyFold writes the final per-vertex positions.
 //
-// Functional scope (topology-pen P2, doc/topopen_p2_plan.md, supersedes the
-// earlier Stage-0 "working assumption" comment below):
-//   * `point` mode  — background-surface MAGNET: nearest world-space foot
-//                     on the background mesh to the work-plane∩cursor SEED
-//                     (NOT the camera-ray hit — see `pointNearestFootBackground`
-//                     below). This is the Topology Pen's mode.
+// Functional scope (topology-pen placement-seed fix, a live cross-engine
+// differential against the reference editor —
+// toolcards/topology_pen/cross_engine_differential.md — supersedes P2's
+// doc/topopen_p2_plan.md derivation below, which itself superseded the
+// earlier Stage-0 "working assumption" comment):
+//   * `point` mode  — background-surface PLACEMENT: the camera-ray∩bg-
+//                     surface hit under the cursor. CONFIRMED by the live
+//                     differential (6 live placements, all landed on
+//                     the ray-struck face at 3-12x the distance a
+//                     work-plane-cursor nearest-foot would have predicted)
+//                     — the P2 derivation (work-plane∩cursor SEED) was
+//                     wrong. This is the Topology Pen's mode; see
+//                     `pointNearestFootBackground` below for why
+//                     nearest-foot-of-the-ray-hit collapses to the ray-hit
+//                     itself for an over-surface click (the const.bg
+//                     Point/nearest-foot doc-semantics still apply to an
+//                     edit-time DRAG, a later phase).
 //   * `screen` mode — camera-ray∩surface (search perpendicular to the
 //                     view); this is the Topology Sketch sibling's mode
 //                     (see `screenRaycastBackground` below, unchanged from
-//                     the original P0 raycast).
+//                     the original P0 raycast — now SHARES its BVH
+//                     raycast with Point mode via `bgSurfaceRayHit`).
 //   * `vector` mode — accepted attrs, round-trips cleanly, but currently
 //                     no-op (no per-vertex motion delta exists for a
 //                     placement click; out of scope until a drag-based
@@ -104,10 +117,14 @@ public:
     // Mode dispatch (topology-pen P2, doc/topopen_p2_plan.md P2a-2; neutral
     // name replacing P0's `raycastBackground`, which only ever did the
     // camera-ray search now split out as `screenRaycastBackground` below).
-    // Point = nearest-foot magnet (`pointNearestFootBackground`); Screen =
-    // camera-ray (`screenRaycastBackground`, byte-identical to the original
-    // P0 body). Off/Vector are unreachable through the evaluate() gate
-    // above — kept here only so the `final switch` stays exhaustive.
+    // Point = camera-ray∩bg-surface hit, refined through the nearest-foot
+    // machinery (`pointNearestFootBackground` — CONFIRMED by a live
+    // cross-engine differential against the reference editor to be the
+    // correct seed, superseding P2's work-plane-cursor derivation); Screen
+    // = the SAME camera-ray hit, published directly
+    // (`screenRaycastBackground`, unchanged from the original P0 body).
+    // Off/Vector are unreachable through the evaluate()
+    // gate above — kept here only so the `final switch` stays exhaustive.
     private void constrainBackground(ref SubjectPacket subj, ref VectorStack vts) {
         final switch (geom) {
             case ConstrainGeom.Point:
@@ -122,48 +139,85 @@ public:
         }
     }
 
-    // Point mode — background-surface MAGNET (topology-pen P2,
-    // doc/topopen_p2_plan.md P2a-2): nearest world-space foot on any
-    // background-layer mesh to the work-plane∩cursor SEED (NOT the
-    // camera-ray hit — that is Screen mode, `screenRaycastBackground`
-    // below). This is the mode the Topology Pen uses.
+    // Shared BVH raycast — cast a ray from the current cursor pixel through
+    // every background layer's mesh (snap.backgroundSourcesSnapshot(),
+    // world-space, PINNED identity transform for P0 — R4), keep the
+    // globally nearest hit. Reuses BvhPick/pickSurface (source/bvh_pick.d)
+    // — no new raycast machinery, per the topology-pen P0 layering rule.
+    // Shared by BOTH mode branches below: Screen mode
+    // (`screenRaycastBackground`) publishes this hit directly as the
+    // placement; Point mode (`pointNearestFootBackground`) uses it as the
+    // placement SEED — see that function's doc comment for why a live
+    // cross-engine differential against the reference editor proved Point
+    // mode's placement IS this same camera-ray hit, not a work-plane-cursor
+    // nearest-foot.
     //
-    // Seed derivation:
-    //   1. Work-plane basis: prefer the WorkplanePacket already published
-    //      earlier in THIS SAME evaluate() pass (WORK sits at Task.Work=0,
-    //      before Task.Cons=3, so it always runs first — see pipeline.d's
-    //      per-Task-slot walk). Absent WorkplanePacket (WORK stage missing
-    //      from the pipe) falls back to a direct `pickMostFacingPlane`
-    //      read — the SAME auto-pick WorkplaneStage itself would use —
-    //      with `center = Vec3(0,0,0)` deliberately mirroring
-    //      WorkplaneStage's own auto-mode publish (`_publishedPacket.center
-    //      = Vec3(0,0,0)`, workplane.d), NOT `pickWorkplaneFrame`'s
-    //      `vp.focus` fallback (that one is for CREATE tools placing
-    //      geometry AT the camera focus — a different concern from this
-    //      constraint seed).
-    //   2. Seed = the cursor ray (from `subj.viewport.eye` along
-    //      `screenRay(subj.cursorX, subj.cursorY, subj.viewport)`)
-    //      intersected with that plane. No intersection (ray parallel to
-    //      the plane) leaves `hit.hit = false` — an UNDEFINED seed, not a
-    //      "no bg surface" miss.
-    //   3. `constraint.closestPointOnMeshes(seed, bgSrc, ...)` finds the
-    //      globally nearest foot across every background source — this
-    //      ALWAYS finds a point when at least one bg source has faces
-    //      (nearest-foot never "misses" the way a ray can), so `hit.hit`
-    //      is false here only when there is no background source at all.
-    //   4. The candidate-fill block (nearestVert/nearestEdge +
-    //      world-position pairs) is the SAME logic `screenRaycastBackground`
-    //      already runs (P1, review NIT-1's `consistentCandidateIndex`
-    //      guard) — sourced from the WINNING bg mesh/face this branch
-    //      resolved, so P1 hover keeps working unchanged over the
-    //      corrected point.
+    // `_bgBvh` cache entries are pruned here (once per call) so a
+    // removed/hidden background layer's BVH is freed regardless of which
+    // mode is driving the prune.
+    private bool bgSurfaceRayHit(ref SubjectPacket subj, const(Mesh)*[] bgSrc,
+                                 out SurfaceHit outHit, out size_t outSrcIdx) {
+        bool[size_t] live;
+        foreach (src; bgSrc)
+            if (src !is null) live[cast(size_t)src] = true;
+        size_t[] stale;
+        foreach (addr, bp; _bgBvh)
+            if ((addr in live) is null) stale ~= addr;
+        foreach (addr; stale) _bgBvh.remove(addr);
+
+        float bestT = float.infinity;
+        bool  found = false;
+        foreach (i, src; bgSrc) {
+            if (src is null) continue;
+            size_t addr = cast(size_t)src;
+            auto pp = addr in _bgBvh;
+            BvhPick bp;
+            if (pp is null) {
+                bp = new BvhPick();
+                _bgBvh[addr] = bp;
+            } else {
+                bp = *pp;
+            }
+            SurfaceHit sh;
+            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src, sh))
+                continue;
+            if (sh.t >= bestT) continue;
+            bestT     = sh.t;
+            outHit    = sh;
+            outSrcIdx = i;
+            found     = true;
+        }
+        return found;
+    }
+
+    // Point mode — background-surface PLACEMENT. The SEED is the
+    // camera-ray∩bg-surface hit (`bgSurfaceRayHit` above — the SAME BVH
+    // raycast Screen mode uses), CONFIRMED by a live cross-engine
+    // differential against the reference editor
+    // (toolcards/topology_pen/cross_engine_differential.md: 6 live
+    // placements, every one landed on the camera-ray-struck face, at
+    // 3-12x the distance a work-plane-cursor nearest-foot seed would have
+    // predicted) — superseding P2's doc/topopen_p2_plan.md derivation
+    // (work-plane∩cursor seed), which was wrong. The const.bg
+    // Point/nearest-foot doc-semantics still apply to an edit-time DRAG (a
+    // later phase) — but for an over-surface CLICK the seed is already ON
+    // the surface, so nearest-foot-of-the-seed collapses to the seed
+    // itself: the `closestPointOnMeshes` call below is kept for its
+    // srcIndex/face/normal out-params (so the SAME candidate-fill block
+    // Screen mode already runs stays one piece of shared code, feeding
+    // P1's hover/snap resolution unchanged) but is a NO-OP refinement, not
+    // an independent search.
+    //
+    // The ray missing every background surface (`bgSurfaceRayHit` returns
+    // false — no background source at all, or the cursor is over empty
+    // space) leaves `hit.hit == false`: an empty-area unconstrained-point
+    // stays deferred to a later phase (P3), unlike P2's magnet, which
+    // never missed as long as any bg source existed.
     private void pointNearestFootBackground(ref SubjectPacket subj, ref VectorStack vts) {
         import snap        : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
         import constraint  : closestPointOnMeshes, nearestFaceVertex, nearestFaceEdge,
                              consistentCandidateIndex, applyOffset;
-        import toolpipe.packets : WorkplanePacket;
-        import tools.create.create_common : pickMostFacingPlane;
-        import math        : Vec3, screenRay, rayPlaneIntersect;
+        import math        : Vec3;
         import std.math     : sqrt;
 
         auto bgSrc      = backgroundSourcesSnapshot();
@@ -171,25 +225,10 @@ public:
 
         ConstrainHitPacket hit;   // hit.hit == false by default
 
-        Vec3 wpCenter, wpNormal;
-        if (auto wp = vts.get!WorkplanePacket()) {
-            wpCenter = wp.center;
-            wpNormal = wp.normal;
-        } else {
-            // WORK didn't publish this pass (stage missing from the pipe) —
-            // fall back to the same auto-pick WorkplaneStage itself would
-            // use. `center = Vec3(0,0,0)` deliberately mirrors
-            // WorkplaneStage's own auto-mode publish (see doc comment
-            // above) — not a `vp.focus`-anchored fallback.
-            auto bp = pickMostFacingPlane(subj.viewport);
-            wpCenter = Vec3(0, 0, 0);
-            wpNormal = bp.normal;
-        }
-
-        Vec3 dir = screenRay(subj.cursorX, subj.cursorY, subj.viewport);
-        Vec3 seed;
-        if (!rayPlaneIntersect(subj.viewport.eye, dir, wpCenter, wpNormal, seed)) {
-            _hitPkt = hit;   // ray parallel to the work-plane — undefined seed
+        SurfaceHit seedHit;
+        size_t     seedSrcIdx;
+        if (!bgSurfaceRayHit(subj, bgSrc, seedHit, seedSrcIdx)) {
+            _hitPkt = hit;   // ray missed every bg surface — no placement seed
             vts.put(&_hitPkt);
             return;
         }
@@ -197,8 +236,8 @@ public:
         Vec3 fpt, fn;
         int  srcIdx, face;
         float d2;
-        if (!closestPointOnMeshes(seed, bgSrc, dblSided, fpt, fn, srcIdx, face, d2)) {
-            _hitPkt = hit;   // no background source with faces — no hit
+        if (!closestPointOnMeshes(seedHit.point, bgSrc, dblSided, fpt, fn, srcIdx, face, d2)) {
+            _hitPkt = hit;   // unreachable in practice — a ray hit implies >=1 bg source
             vts.put(&_hitPkt);
             return;
         }
@@ -206,14 +245,19 @@ public:
         hit.hit    = true;
         hit.point  = applyOffset(fpt, fn, offset);
         hit.normal = fn;
-        hit.layer  = (srcIdx >= 0 && srcIdx < cast(int)bgSrcLayer.length)
+        hit.layer  = (srcIdx < cast(int)bgSrcLayer.length)
                      ? bgSrcLayer[srcIdx] : srcIdx;
         hit.face   = face;
         hit.t      = sqrt(d2);
 
         // Same candidate-fill block as Screen mode (P1, review NIT-1),
         // sourced from the WINNING bg mesh/face this branch resolved.
-        if (srcIdx >= 0 && srcIdx < cast(int)bgSrc.length && bgSrc[srcIdx] !is null) {
+        // `srcIdx >= 0` is no longer checked here (review NIT, this fix):
+        // `closestPointOnMeshes` only reaches this point on a `true`
+        // return, which per its own doc comment guarantees srcIdx is a
+        // valid (non-negative) index — the `>= 0` half of the old guard
+        // was always true.
+        if (srcIdx < cast(int)bgSrc.length && bgSrc[srcIdx] !is null) {
             auto src = bgSrc[srcIdx];
             hit.nearestVert = nearestFaceVertex(*src, face, fpt);
             hit.nearestEdge = nearestFaceEdge(*src, face, fpt);
@@ -240,14 +284,13 @@ public:
         vts.put(&_hitPkt);
     }
 
-    // Screen mode — cast a ray from the current cursor pixel through every
-    // background layer's mesh (snap.backgroundSourcesSnapshot(), world-space,
-    // PINNED identity transform for P0 — R4), keep the globally nearest hit,
-    // and publish it as a ConstrainHitPacket. Reuses BvhPick/pickSurface
-    // (source/bvh_pick.d) — no new raycast machinery, per the topology-pen
-    // P0 layering rule. Byte-identical to the original P0 `raycastBackground`
-    // body (topology-pen P2 REV: only the enclosing gate/dispatch changed —
-    // this branch's OWN behavior did not).
+    // Screen mode — publish `bgSurfaceRayHit`'s camera-ray∩surface hit
+    // directly as a ConstrainHitPacket. Reuses BvhPick/pickSurface
+    // (source/bvh_pick.d) via the shared helper above — no new raycast
+    // machinery, per the topology-pen P0 layering rule. Behaviorally
+    // byte-identical to the original P0 `raycastBackground` body (only the
+    // BVH-scan loop itself moved into `bgSurfaceRayHit`, above, so Point
+    // mode can share it).
     private void screenRaycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
         import snap       : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
@@ -260,75 +303,58 @@ public:
         // slot itself below, so this never indexes out of bounds.
         auto bgSrcLayer = backgroundSourceLayerIndices();
 
-        // Prune cache entries whose mesh left the current background set.
-        bool[size_t] live;
-        foreach (src; bgSrc)
-            if (src !is null) live[cast(size_t)src] = true;
-        size_t[] stale;
-        foreach (addr, bp; _bgBvh)
-            if ((addr in live) is null) stale ~= addr;
-        foreach (addr; stale) _bgBvh.remove(addr);
-
         ConstrainHitPacket hit;
-        float bestT = float.infinity;
-        foreach (i, src; bgSrc) {
-            if (src is null) continue;
-            size_t addr = cast(size_t)src;
-            auto pp = addr in _bgBvh;
-            BvhPick bp;
-            if (pp is null) {
-                bp = new BvhPick();
-                _bgBvh[addr] = bp;
+        SurfaceHit sh;
+        size_t     srcI;
+        if (!bgSurfaceRayHit(subj, bgSrc, sh, srcI)) {
+            _hitPkt = hit;
+            vts.put(&_hitPkt);
+            return;
+        }
+
+        auto src = bgSrc[srcI];
+        hit.hit         = true;
+        hit.point       = sh.point;
+        hit.normal      = sh.normal;
+        hit.layer       = (srcI < bgSrcLayer.length) ? bgSrcLayer[srcI] : cast(int)srcI;
+        hit.face        = sh.face;
+        hit.t           = sh.t;
+        hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
+        hit.nearestEdge = nearestFaceEdge(*src, sh.face, sh.point);
+
+        // topology-pen P1 (doc/topopen_p1_plan.md): candidate world
+        // positions, so resolveHoverTarget (constraint.d) stays a pure
+        // function of the packet alone. Index-guarded — best-effort,
+        // same posture as nearestFaceVertex/nearestFaceEdge themselves
+        // (the bg mesh may have mutated out from under `src` since the
+        // BVH was built).
+        //
+        // Review NIT-1: re-derive the index through
+        // consistentCandidateIndex() (constraint.d) rather than only
+        // gating the position-fill on an inline bounds check — a
+        // candidate whose position we cannot fill is reset to -1 here
+        // too, so `hit.nearestVert`/`hit.nearestEdge` and
+        // `hit.nearestVertPos`/`nearestEdgeA`/`nearestEdgeB` can never
+        // go inconsistent (a `>=0` index left paired with the struct's
+        // default `Vec3(0,0,0)` position — a phantom vertex/edge at the
+        // world origin that resolveHoverTarget would otherwise trust).
+        hit.nearestVert = consistentCandidateIndex(
+            hit.nearestVert, (*src).vertices.length);
+        if (hit.nearestVert >= 0)
+            hit.nearestVertPos = (*src).vertices[hit.nearestVert];
+
+        hit.nearestEdge = consistentCandidateIndex(
+            hit.nearestEdge, (*src).edges.length);
+        if (hit.nearestEdge >= 0) {
+            auto e = (*src).edges[hit.nearestEdge];
+            if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
+                hit.nearestEdgeA = (*src).vertices[e[0]];
+                hit.nearestEdgeB = (*src).vertices[e[1]];
             } else {
-                bp = *pp;
-            }
-            SurfaceHit sh;
-            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src, sh))
-                continue;
-            if (sh.t >= bestT) continue;
-            bestT           = sh.t;
-            hit.hit         = true;
-            hit.point       = sh.point;
-            hit.normal      = sh.normal;
-            hit.layer       = (i < bgSrcLayer.length) ? bgSrcLayer[i] : cast(int)i;
-            hit.face        = sh.face;
-            hit.t           = sh.t;
-            hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
-            hit.nearestEdge = nearestFaceEdge(*src, sh.face, sh.point);
-
-            // topology-pen P1 (doc/topopen_p1_plan.md): candidate world
-            // positions, so resolveHoverTarget (constraint.d) stays a pure
-            // function of the packet alone. Index-guarded — best-effort,
-            // same posture as nearestFaceVertex/nearestFaceEdge themselves
-            // (the bg mesh may have mutated out from under `src` since the
-            // BVH was built).
-            //
-            // Review NIT-1: re-derive the index through
-            // consistentCandidateIndex() (constraint.d) rather than only
-            // gating the position-fill on an inline bounds check — a
-            // candidate whose position we cannot fill is reset to -1 here
-            // too, so `hit.nearestVert`/`hit.nearestEdge` and
-            // `hit.nearestVertPos`/`nearestEdgeA`/`nearestEdgeB` can never
-            // go inconsistent (a `>=0` index left paired with the struct's
-            // default `Vec3(0,0,0)` position — a phantom vertex/edge at the
-            // world origin that resolveHoverTarget would otherwise trust).
-            hit.nearestVert = consistentCandidateIndex(
-                hit.nearestVert, (*src).vertices.length);
-            if (hit.nearestVert >= 0)
-                hit.nearestVertPos = (*src).vertices[hit.nearestVert];
-
-            hit.nearestEdge = consistentCandidateIndex(
-                hit.nearestEdge, (*src).edges.length);
-            if (hit.nearestEdge >= 0) {
-                auto e = (*src).edges[hit.nearestEdge];
-                if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
-                    hit.nearestEdgeA = (*src).vertices[e[0]];
-                    hit.nearestEdgeB = (*src).vertices[e[1]];
-                } else {
-                    hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
-                }
+                hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
             }
         }
+
         _hitPkt = hit;
         vts.put(&_hitPkt);
     }

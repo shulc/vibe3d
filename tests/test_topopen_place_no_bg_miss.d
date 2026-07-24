@@ -1,13 +1,13 @@
-// Topology Pen P2 (doc/topopen_p2_plan.md) — place_no_bg_miss.
+// Topology Pen — place_no_bg_miss.
 //
-// Under Point mode's nearest-foot rule, a click ALWAYS finds a point when a
-// background surface exists — there is no "missed the silhouette" the way
-// camera-ray had (see the plan's "Behavioral consequence" note). The only
-// remaining miss is when there is NO background source at all: this test
-// hides the sphere background layer (`layer.setVisible index:0 value:false`
-// -> `snap.backgroundSourcesSnapshot()` returns empty -> CONS's
-// `pointNearestFootBackground` finds no source -> `hit.hit == false`) and
-// asserts the click places nothing.
+// Placement seed = camera-ray∩bg-surface hit (source/toolpipe/stages/
+// constrain.d's `pointNearestFootBackground`), so a click CAN miss even
+// with a background surface present, if the ray doesn't land on it — this
+// file only covers the simplest, unambiguous miss: NO background source at
+// all. Hides the sphere background layer (`layer.setVisible index:0
+// value:false` -> `snap.backgroundSourcesSnapshot()` returns empty ->
+// CONS's `bgSurfaceRayHit` finds nothing to raycast against ->
+// `hit.hit == false`) and asserts the click places nothing.
 //
 // Run via: ./run_test.d topopen_place_no_bg_miss
 
@@ -26,7 +26,7 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 10.0, 3.0 * R, 0.0, 0.0));
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
 
     auto c = fetchCamera();
     int cx = c.vpX + c.width / 2;

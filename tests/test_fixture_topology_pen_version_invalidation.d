@@ -4,12 +4,15 @@
 // mutation), so this is a direct, hand-written HTTP-driving test rather
 // than a JSON fixture.
 //
-// P2 (doc/topopen_p2_plan.md): this test exercises the `_bgBvh`
-// mutationVersion cache, which is a SCREEN-mode-only concern (Point mode's
-// nearest-foot search is a brute-force scan with no per-bg cache to go
-// stale — see constrain.d's `pointNearestFootBackground`). Relabeled
-// `geometry point` -> `geometry screen` accordingly; values unchanged
-// (this was always a camera-ray probe).
+// This test exercises the `_bgBvh` mutationVersion cache via
+// `constrain.d`'s shared `bgSurfaceRayHit` helper — SCREEN mode's own
+// values are asserted here, but the cache is shared with Point mode too
+// (both dispatch through the same helper: Point mode's placement seed is
+// now the camera-ray hit, per a live cross-engine differential against the reference editor —
+// see constrain.d's `pointNearestFootBackground`), so Point mode is
+// subject to the identical invalidation behavior, just not separately
+// re-asserted here. Uses `geometry screen` (this was always a camera-ray
+// probe, unaffected by the placement-seed fix); values unchanged.
 //
 // Recipe:
 //   1. Two-layer scene: layer0 = cube (primary), layer1 = cube (background,

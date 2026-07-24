@@ -1,17 +1,23 @@
-// Shared helpers for the Topology Pen P2 placement tests
-// (test_topopen_place_*.d, doc/topopen_p2_plan.md). Mirrors drag_helpers.d's
-// standalone-compile convention (test binaries pull no app source, so the
-// small bits of camera/projection math this needs are duplicated here) plus
-// test_acen_auto_relocate.d's precedent of adding a private
-// screenRay/rayPlaneIntersect reimplementation on top of drag_helpers'
-// Vec3/Viewport/fetchCamera/viewportFromCamera.
+// Shared helpers for the Topology Pen placement tests
+// (test_topopen_place_*.d). Mirrors drag_helpers.d's standalone-compile
+// convention (test binaries pull no app source, so the small bits of
+// camera/projection math this needs are duplicated here) plus
+// test_acen_auto_relocate.d's precedent of adding a private screenRay
+// reimplementation on top of drag_helpers' Vec3/Viewport/fetchCamera/
+// viewportFromCamera.
 //
-// Every expected placement position in the test files that import this
-// module is computed by the functions below — an INDEPENDENT reimplementation
-// of screenRay / rayPlaneIntersect / the work-plane axis pick / nearest-point-
-// on-sphere, not a call into source/constraint.d or source/toolpipe/stages/
-// constrain.d (the code under test). Server responses are compared against
-// these independently-computed values, never against each other.
+// Placement seed = camera-ray∩bg-surface hit (CONFIRMED by a live
+// cross-engine differential against the reference editor —
+// toolcards/topology_pen/cross_engine_differential.md — superseding the P2
+// work-plane-cursor derivation this file originally used; see
+// source/toolpipe/stages/constrain.d's `pointNearestFootBackground` for the
+// full finding). Every
+// expected placement position in the test files that import this module is
+// computed by the functions below — an INDEPENDENT reimplementation of
+// screenRay / ray-sphere / ray-AABB intersection, not a call into
+// source/constraint.d or source/toolpipe/stages/constrain.d (the code under
+// test). Server responses are compared against these independently-computed
+// values, never against each other.
 
 module topopen_place_helpers;
 
@@ -62,10 +68,10 @@ void waitPlayerIdle() {
 }
 
 // ---------------------------------------------------------------------------
-// screenRay / rayPlaneIntersect — duplicated from source/math.d (same
-// precedent as test_acen_auto_relocate.d's testScreenRay/testRayPlaneIntersect;
-// test binaries compile standalone, so this stays a small, independent copy
-// rather than pulling app sources into the test binary).
+// screenRay — duplicated from source/math.d (same precedent as
+// test_acen_auto_relocate.d's testScreenRay; test binaries compile
+// standalone, so this stays a small, independent copy rather than pulling
+// app sources into the test binary).
 // ---------------------------------------------------------------------------
 
 Vec3 screenRay(float sx, float sy, const ref Viewport vp) {
@@ -81,84 +87,115 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp) {
     return len > 1e-9f ? d / len : Vec3(0, 0, -1);
 }
 
-bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n, out Vec3 hit) {
-    float denom = dot(n, dir);
-    if (abs(denom) < 1e-6f) return false;
-    Vec3 d = planePoint - origin;
-    float t = dot(n, d) / denom;
+/// Nearest (smallest positive `t`) intersection of the ray `origin + t*dir`
+/// (`dir` assumed unit-length) with a sphere of radius `R` centred at
+/// `center`. `false` on a miss (ray passes outside the sphere entirely —
+/// discriminant < 0 — or both roots are behind the ray origin). This is
+/// the independent reimplementation backing every sphere place-test's
+/// "expected" value: the placement seed the tool now uses (CONFIRMED by a
+/// live cross-engine differential against the reference editor,
+/// source/toolpipe/stages/constrain.d's `pointNearestFootBackground`) IS
+/// this camera-ray hit.
+bool raySphereIntersect(Vec3 origin, Vec3 dir, Vec3 center, float R, out Vec3 hit) {
+    Vec3 oc = origin - center;
+    float b    = dot(oc, dir);
+    float c    = dot(oc, oc) - R * R;
+    float disc = b * b - c;
+    if (disc < 0) return false;
+    float sq = sqrt(disc);
+    float t0 = -b - sq;
+    float t1 = -b + sq;
+    float t  = t0 >= 0 ? t0 : t1;
+    if (t < 0) return false;
     hit = origin + dir * t;
     return true;
 }
 
-/// Mirrors `tools.create.create_common.pickMostFacingPlane`'s abs-dot argmax
-/// over the camera's BACK vector (== `normalize(eye - focus)`, unit by
-/// construction) — an independent reimplementation, not a call into that
-/// module. Ties break X > Y > Z, matching `mostFacingAxis`'s `>=` chain.
-Vec3 mostFacingAxisNormal(Vec3 camBack) {
-    float ax = abs(camBack.x), ay = abs(camBack.y), az = abs(camBack.z);
-    if (ax >= ay && ax >= az) return Vec3(1, 0, 0);
-    if (ay >= ax && ay >= az) return Vec3(0, 1, 0);
-    return Vec3(0, 0, 1);
-}
-
-/// Nearest point on an axis-aligned box centred at the origin with
-/// half-extent `he` (e.g. 0.5 for the standard unit cube) to `seed` — a
-/// per-axis clamp. Backs the cube "flat surface" sanity case
-/// (place_cube_flat), whose background is a box, not a sphere.
-Vec3 nearestPointOnAABB(Vec3 seed, float he) {
-    float clamp(float v) { return v < -he ? -he : (v > he ? he : v); }
-    return Vec3(clamp(seed.x), clamp(seed.y), clamp(seed.z));
-}
-
-/// Nearest point on a sphere of radius `R` centred at `center` to `seed`.
-/// Undefined (returns `center`) only when `seed == center` exactly — every
-/// fixture below keeps its seed comfortably away from the centre (see
-/// doc/topopen_p2_plan.md risk #4).
-Vec3 nearestPointOnSphere(Vec3 seed, Vec3 center, float R) {
-    Vec3 d = seed - center;
-    return center + normalize(d) * R;
-}
-
-/// The auto work-plane's normal for the CURRENT live camera (mirrors
-/// WorkplaneStage's auto-mode pick) plus the work-plane-cursor SEED for
-/// pixel (px,py), then the independently-predicted nearest-foot on a
-/// sphere of radius `R` centred at the world origin. `false` when the
-/// ray is parallel to the picked plane (should not happen for the
-/// cameras/pixels these fixtures choose).
-bool expectedNearestFootOnSphere(CameraState c, float px, float py, float R,
-                                 out Vec3 expected) {
-    auto vp = viewportFromCamera(c);
-    Vec3 camBack = normalize(c.eye - c.focus);
-    Vec3 n = mostFacingAxisNormal(camBack);
+/// The camera-ray hit for pixel (px,py) under live camera state `c` against
+/// a sphere of radius `R` centred at the world origin — the expected value
+/// for every place_* sphere fixture below. `false` when the ray misses the
+/// sphere (the camera/pixel choice must aim at the sphere; unlike the old
+/// work-plane-cursor magnet, a miss here is a REAL miss, not a computation
+/// failure).
+bool expectedRayHitOnSphere(CameraState c, float px, float py, float R,
+                            out Vec3 expected) {
+    auto vp  = viewportFromCamera(c);
     Vec3 dir = screenRay(px, py, vp);
-    Vec3 seed;
-    if (!rayPlaneIntersect(vp.eye, dir, Vec3(0, 0, 0), n, seed)) return false;
-    expected = nearestPointOnSphere(seed, Vec3(0, 0, 0), R);
-    return true;
+    return raySphereIntersect(vp.eye, dir, Vec3(0, 0, 0), R, expected);
+}
+
+/// Nearest (smallest positive `t`) ENTRY intersection of the ray
+/// `origin + t*dir` with an axis-aligned box centred at the origin with
+/// half-extent `he` (e.g. 0.5 for the standard unit cube) — the ray-AABB
+/// analogue of `raySphereIntersect`, backing place_cube_flat's box
+/// background. A plain 3-axis slab scan; `false` on a miss.
+bool rayAabbIntersect(Vec3 origin, Vec3 dir, float he, out Vec3 hit) {
+    float bestT = float.infinity;
+    bool  found = false;
+
+    void consider(float t, Vec3 p, float a, float b) {
+        if (t < 0 || t >= bestT) return;
+        if (a < -he - 1e-6f || a > he + 1e-6f) return;
+        if (b < -he - 1e-6f || b > he + 1e-6f) return;
+        bestT = t;
+        hit   = p;
+        found = true;
+    }
+
+    if (abs(dir.x) > 1e-9f) {
+        foreach (sx; [-he, he]) {
+            float t = (sx - origin.x) / dir.x;
+            Vec3 p = origin + dir * t;
+            consider(t, p, p.y, p.z);
+        }
+    }
+    if (abs(dir.y) > 1e-9f) {
+        foreach (sy; [-he, he]) {
+            float t = (sy - origin.y) / dir.y;
+            Vec3 p = origin + dir * t;
+            consider(t, p, p.x, p.z);
+        }
+    }
+    if (abs(dir.z) > 1e-9f) {
+        foreach (sz; [-he, he]) {
+            float t = (sz - origin.z) / dir.z;
+            Vec3 p = origin + dir * t;
+            consider(t, p, p.x, p.y);
+        }
+    }
+    return found;
+}
+
+/// The camera-ray hit for pixel (px,py) under live camera state `c` against
+/// an axis-aligned box centred at the origin with half-extent `he` — the
+/// expected value for place_cube_flat.
+bool expectedRayHitOnAabb(CameraState c, float px, float py, float he,
+                         out Vec3 expected) {
+    auto vp  = viewportFromCamera(c);
+    Vec3 dir = screenRay(px, py, vp);
+    return rayAabbIntersect(vp.eye, dir, he, expected);
 }
 
 // ---------------------------------------------------------------------------
 // Sphere background mesh generator — parametric UV sphere at the world
 // origin.
 //
-// Resolution note (empirically calibrated, not the plan's original
-// lon>=32/lat>=24 guess): the place tests' "ground truth" is
-// `nearestPointOnSphere` — the mathematically exact nearest point on the
-// IDEALIZED sphere — compared against the server's `closestPointOnMeshes`
-// over the FACETED approximation. The relevant error source for an
-// external seed is NOT the small mid-face sagitta (~1% of R at lon=32/
-// lat=24, as the original plan estimated) but the mesh's DISCRETE vertex/
-// edge spacing: for a seed whose true-sphere nearest direction falls
-// between two sample directions, the faceted mesh's nearest point can
-// legitimately resolve to either neighbouring vertex, giving a real
-// (not-a-bug) deviation on the order of half a sample step — empirically
-// up to ~3-5% of R at lon=32/lat=24, confirmed via direct
-// /api/surface-raycast probes against the exact pixels these tests use.
-// lon=96/lat=72 (used by every place test below) shrinks that same
-// worst-case deviation to comfortably under 2% of R, safely inside the
-// tests' tolerance band — verified the same way. (The centre-pixel /
-// exact-focus cases are exempt from this: they land exactly ON a mesh
-// sample direction by construction, so they pass at ANY resolution.)
+// Resolution note (empirically calibrated when this suite still compared
+// against a work-plane-cursor nearest-foot; kept unchanged and still safe
+// under the current camera-ray model): the place tests' "ground truth" is
+// `raySphereIntersect` — the mathematically exact ray intersection against
+// the IDEALIZED sphere — compared against the server's BVH ray-triangle
+// pick over the FACETED approximation. A ray-hit's error source is the
+// facet's own mid-face sagitta (the facet is a flat chord of the true
+// sphere) — smaller, per-facet, and bounded independently of which
+// direction the ray approaches from; it does NOT depend on the
+// DISCRETE-vertex-spacing effect a *nearest-point* search (the old
+// work-plane-cursor magnet) was vulnerable to, since a ray-triangle hit
+// always lands somewhere ON the struck facet, never snapped toward a
+// neighbouring sample direction. lon=96/lat=72 (used by every place test
+// below, kept at its previously-calibrated resolution rather than relaxed
+// now that the error model shrank) keeps the facet sagitta comfortably
+// under 2% of R, safely inside the tests' tolerance band.
 // ---------------------------------------------------------------------------
 
 /// Vertex count a `sphereMeshBody(R, lon, lat)` call will produce — lets a

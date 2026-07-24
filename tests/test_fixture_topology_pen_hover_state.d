@@ -1,25 +1,20 @@
-// Topology Pen P1/P2 (doc/topopen_p1_plan.md, doc/topopen_p2_plan.md) —
-// Tier C: the resolved hover target crosses the toolpipe seam into
-// TopologyPenTool.
+// Topology Pen — Tier C: the resolved hover target crosses the toolpipe
+// seam into TopologyPenTool.
 //
-// Recipe (P2-recomputed — TopologyPenTool.activate() composes Point mode,
-// so the golden hit here must be a NEAREST-FOOT value; reuses the SAME
-// scene/camera as test_fixture_topology_pen_tool.d's P2 recompute, so both
-// Tier-C tests agree on what the tool actually resolves for this
-// pixel/camera):
-//   1. Background cube, Y-dominant (near-top-down) camera, `focus=(2,0,0)`
-//      -- work-plane-cursor seed = focus (Y=0, the plane's own axis);
-//      nearest-foot on the unit cube is (0.5,0,0), the +X face (face 3,
-//      normal (1,0,0)) -- see test_fixture_topology_pen_tool.d's header
-//      for the full derivation.
-//   2. (0.5,0,0) is the face's CENTRE -- independently, its distance (in
+// Recipe (reuses the SAME scene/camera as test_fixture_topology_pen_tool.d
+// — see that file's header for why the golden hit here is the camera-ray
+// value, not a work-plane-cursor nearest-foot: a live cross-engine
+// differential proved the latter wrong):
+//   1. Background cube, camera focus'd exactly on the top-face centre
+//      (0,0.5,0) via the lookAt "focus-point trick" — the centre-pixel
+//      camera-ray hit is (0,0.5,0), the +Y face (face 4, normal (0,1,0)).
+//   2. (0,0.5,0) is the face's CENTRE -- independently, its distance (in
 //      world units) to the nearest corner/edge of that face is 0.5 world
-//      units in both Y and Z, which at any reasonable camera distance
+//      units in both X and Z, which at any reasonable camera distance
 //      projects to comfortably more than the default 12px snap radius, so
 //      the hover resolution must be `face` (no vert/edge candidate wins).
 //   3. Activate mesh.topoPen (`tool.set mesh.topoPen on`) — its activate()
-//      enables CONS+Point itself, mirroring test_fixture_topology_pen_tool.d
-//      (P0's Tier-C test).
+//      enables CONS+Point itself, mirroring test_fixture_topology_pen_tool.d.
 //   4. Play a ONE-motion-event log at the viewport centre pixel through
 //      /api/play-events (handleMouseMotion's buildToolVts call passes
 //      cursorValid=true for this real mouse event).
@@ -99,10 +94,9 @@ double[3][] readVertices() {
 unittest {
     postJson("/api/reset", "");
 
-    // Same scene/camera as test_fixture_topology_pen_tool.d's P2 recompute
-    // (Y-dominant near-top-down camera, focus=(2,0,0) -> nearest-foot
-    // (0.5,0,0), the +X face's centre — see that file's header comment
-    // for the derivation).
+    // Same scene/camera as test_fixture_topology_pen_tool.d (focus'd
+    // exactly on the cube's top-face centre (0,0.5,0) -- see that file's
+    // header comment for the derivation).
     cmd("layer.add name:Bg");
     auto lr = postJson("/api/load-mesh", cubeMeshBody());
     assert(lr["status"].str == "ok", "load-mesh failed: " ~ lr.toString);
@@ -110,8 +104,8 @@ unittest {
     cmd("layer.select index:0");   // layer0 primary (foreground), layer1 background
 
     postJson("/api/camera", format(
-        `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 5.0, 2.0, 0.0, 0.0));
+        `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":0,"y":0.5,"z":0}}`,
+        0.4, 0.6, 4.0));
 
     auto vertsBefore = readVertices();
 
@@ -139,12 +133,12 @@ unittest {
     auto hover = st["hover"];
     assert(hover["hit"].type == JSONType.true_,
         "hover.hit should mirror the cached raycast hit; got " ~ st.toString);
-    // (0.5,0,0) is the +X face's CENTRE — 0.5 world units from its nearest
-    // corner/edge in both Y and Z, comfortably outside the default 12px
+    // (0,0.5,0) is the +Y face's CENTRE — 0.5 world units from its nearest
+    // corner/edge in both X and Z, comfortably outside the default 12px
     // snap radius at this camera distance, so the hover must resolve to a
     // free face-point (no vert/edge candidate wins).
     assert(hover["targetKind"].str == "face",
-        "hover.targetKind should match the P2 golden (face); got " ~ st.toString);
+        "hover.targetKind should match the golden (face); got " ~ st.toString);
     assert(hover["targetVert"].integer == -1 && hover["targetEdge"].integer == -1,
         "a 'face' target must carry no vert/edge index; got " ~ st.toString);
 

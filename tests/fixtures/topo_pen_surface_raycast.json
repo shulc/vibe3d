@@ -286,7 +286,7 @@
     },
     {
       "name": "point_cube_posx_face",
-      "_comment": "P2 nearest-foot: Y-dominant (near-top-down) camera -> auto work-plane = world XZ (normal +Y) through the origin. focus=(2,0,0.15) has its Y (the plane's own axis) at exactly 0, so the work-plane-cursor seed equals focus (same lookAt property the Screen-mode cases use, applied to the work-plane instead of the mesh). Nearest point on the unit cube (+-0.5 half-extent) to seed (2,0,0.15): X clamps 2->0.5, Y and Z (0, 0.15) are already inside [-0.5,0.5] so pass through unchanged -> (0.5,0,0.15), the +X face (face 3, normal (1,0,0)) -- the SAME face 'bg_cube_side_oblique' hits via camera-ray, now reached via the magnet instead, discriminating Point from Screen mode (a straight-down camera-ray at this pixel would hit the +Y top face, not +X).",
+      "_comment": "Placement seed = camera-ray surface hit (a live cross-engine differential against the reference editor (toolcards/topology_pen/cross_engine_differential.md); supersedes the P2 work-plane-cursor nearest-foot derivation this case used to exercise). Reuses the EXACT same camera as 'bg_cube_side_oblique' (Screen mode) with geometry=point instead: since the seed is now the ray-hit itself, Point mode's closestPointOnMeshes refinement is a no-op and must resolve to the IDENTICAL point/face/normal/candidates Screen mode reports for this camera -- directly proving Point and Screen now agree on an over-surface click.",
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
@@ -300,19 +300,21 @@
         { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
         { "endpoint": "command", "argstring": "layer.select index:0" },
         { "endpoint": "camera", "body": {
-            "azimuth": 0.3, "elevation": 1.4, "distance": 5,
-            "focus": {"x": 2, "y": 0, "z": 0.15}
+            "azimuth": 0.87, "elevation": 0.35, "distance": 5,
+            "focus": {"x": 0.5, "y": 0.2, "z": -0.1}
           } }
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
         "hit": true, "layer": 1, "face": 3,
-        "point": [0.5, 0, 0.15], "normal": [1, 0, 0]
+        "point": [0.5, 0.2, -0.1], "normal": [1, 0, 0],
+        "nearestVert": [0.5, 0.5, -0.5],
+        "nearestEdge": [[0.5, 0.5, -0.5], [0.5, 0.5, 0.5]]
       }
     },
     {
       "name": "point_cube_negz_face",
-      "_comment": "P2 nearest-foot: same Y-dominant camera family as point_cube_posx_face (auto work-plane = world XZ, normal +Y, through the origin), different azimuth. focus=(0.1,0,-2) again has Y=0 so the seed equals focus. Nearest point on the cube: Z clamps -2->-0.5, X (0.1) and Y (0) pass through -> (0.1,0,-0.5), the -Z face (face 0, normal (0,0,-1)) -- exercises the SAME work-plane basis with the EXCESS on the other in-plane axis (X excess -> +X face above; Z excess -> this face), plus a distinct normal direction.",
+      "_comment": "Placement seed = camera-ray surface hit (a live cross-engine differential against the reference editor; supersedes the P2 work-plane-cursor nearest-foot derivation this case used to exercise). Fresh focus-point-trick camera (no existing Screen-mode case in this fixture targets the -Z face): focus=(0.1,0,-0.5) sits exactly on the -Z face, camera on the -Z side (az=PI, el=0.3) looking toward it. Hand-verified (independent ray parametrization) that the ray's ONLY cube-boundary crossing with both other coordinates in [-0.5,0.5] is this exact point at t=distance -- a y=0.5 plane crossing occurs en route but with z far outside the top face's bounds, so it is not a real hit.",
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
@@ -326,8 +328,8 @@
         { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
         { "endpoint": "command", "argstring": "layer.select index:0" },
         { "endpoint": "camera", "body": {
-            "azimuth": -0.2, "elevation": 1.4, "distance": 5,
-            "focus": {"x": 0.1, "y": 0, "z": -2}
+            "azimuth": 3.14159265, "elevation": 0.3, "distance": 5,
+            "focus": {"x": 0.1, "y": 0, "z": -0.5}
           } }
       ],
       "raycast": { "x": 475, "y": 300 },
@@ -338,7 +340,7 @@
     },
     {
       "name": "point_cube_negy_face",
-      "_comment": "P2 nearest-foot, X-dominant camera (az=pi/2, el=0.3 -> camera back vector's X component dominates over Y/Z, so `mostFacingAxis` picks world X and the auto work-plane becomes X=0 through the origin, unlike the two Y-dominant cases above). focus=(0,-2,0.1) has X=0 (the plane's own axis) so the seed equals focus. Nearest point on the cube: Y clamps -2->-0.5, X (0) and Z (0.1) pass through -> (0,-0.5,0.1), the -Y bottom face (face 5, normal (0,-1,0)) -- reaches the axis this fixture's other cases cannot (a Y-dominant camera's seed is pinned at Y=0, which can never clamp onto +-Y itself; only an X- or Z-dominant work-plane can put excess on Y).",
+      "_comment": "Placement seed = camera-ray surface hit (a live cross-engine differential against the reference editor; supersedes the P2 work-plane-cursor nearest-foot derivation this case used to exercise). Reuses the EXACT same camera as 'bg_cube_bottom_face' (Screen mode) with geometry=point instead -- same rationale as point_cube_posx_face: proves Point and Screen agree.",
       "input": [
         { "reset": true },
         { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
@@ -352,14 +354,16 @@
         { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
         { "endpoint": "command", "argstring": "layer.select index:0" },
         { "endpoint": "camera", "body": {
-            "azimuth": 1.5707963, "elevation": 0.3, "distance": 5,
-            "focus": {"x": 0, "y": -2, "z": 0.1}
+            "azimuth": -0.61, "elevation": -0.70, "distance": 5,
+            "focus": {"x": 0.1, "y": -0.5, "z": 0.2}
           } }
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
         "hit": true, "layer": 1, "face": 5,
-        "point": [0, -0.5, 0.1], "normal": [0, -1, 0]
+        "point": [0.1, -0.5, 0.2], "normal": [0, -1, 0],
+        "nearestVert": [0.5, -0.5, 0.5],
+        "nearestEdge": [[0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]]
       }
     }
   ]

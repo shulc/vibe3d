@@ -1,9 +1,10 @@
-// Topology Pen P2 (doc/topopen_p2_plan.md) — place_offset_px.
+// Topology Pen — place_offset_px.
 //
 // Same sphere/camera family as test_topopen_place_center.d, but the click
 // lands at an OFF-CENTRE pixel (screen +X, +Y from centre) rather than the
-// exact focus-trick pixel — proving the placement follows the per-pixel
-// work-plane-cursor seed generally, not just at the one "trick" pixel.
+// exact centre — proving the placement follows the per-pixel camera-ray hit
+// generally, not just at the one pixel guaranteed to pass through the
+// sphere's centre.
 //
 // Run via: ./run_test.d topopen_place_offset_px
 
@@ -23,15 +24,15 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 10.0, 3.0 * R, 0.0, 0.0));
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
 
     auto c = fetchCamera();
     int px = c.vpX + c.width  / 2 + 80;
     int py = c.vpY + c.height / 2 + 40;
 
     Vec3 expected;
-    bool ok = expectedNearestFootOnSphere(c, cast(float)px, cast(float)py, R, expected);
-    assert(ok, "off-centre seed must be computable");
+    bool ok = expectedRayHitOnSphere(c, cast(float)px, cast(float)py, R, expected);
+    assert(ok, "off-centre camera-ray must hit the sphere");
 
     assert(vertexCountLayer(1) == 0, "primary layer must start empty");
 
@@ -47,7 +48,7 @@ unittest {
     auto verts = readVerticesLayer(1);
     assert(approxVec(expected, verts[0], TOL),
         format("placed vertex %s should match the independently-computed "
-             ~ "nearest-foot (%f,%f,%f)", verts[0], expected.x, expected.y, expected.z));
+             ~ "camera-ray hit (%f,%f,%f)", verts[0], expected.x, expected.y, expected.z));
 
     double dist = sqrt(verts[0][0]*verts[0][0] + verts[0][1]*verts[0][1] + verts[0][2]*verts[0][2]);
     assert(abs(dist - R) < TOL,

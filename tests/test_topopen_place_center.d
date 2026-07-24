@@ -1,17 +1,17 @@
-// Topology Pen P2 (doc/topopen_p2_plan.md) — place_center_predicted.
+// Topology Pen — place_center_predicted.
 //
-// Background = a UV sphere at the world origin. A Y-dominant (near-top-down)
-// camera makes the auto work-plane resolve to world XZ (normal +Y) through
-// the origin; `focus=(3R,0,0)` has Y=0 (the plane's own axis), so the
-// work-plane-cursor SEED at the viewport CENTRE pixel equals `focus` exactly
-// (the same lookAt "focus-point trick" topo_pen_surface_raycast.json uses,
-// applied to the work-plane instead of a mesh). A straight-down CAMERA-RAY
-// at this pixel would instead hit the sphere's near pole — the discriminator
-// proving this is really the nearest-foot magnet, not a leftover camera-ray.
+// Background = a UV sphere at the world origin. Placement seed = camera-ray
+// hit (CONFIRMED by a live cross-engine differential against the reference
+// editor, superseding P2's
+// work-plane-cursor derivation — see source/toolpipe/stages/constrain.d's
+// `pointNearestFootBackground`). `focus=(0,0,0)` puts the sphere's centre
+// exactly on the lookAt forward axis, so the viewport CENTRE pixel's ray is
+// guaranteed to pass through the sphere (the centre is always inside it) —
+// the simplest possible camera-ray hit to predict independently.
 //
 // Asserts: (a) exactly one vertex is added to the PRIMARY (empty) layer;
-// (b) it matches the independently-computed nearest-foot
-// R*normalize(workplane-seed); (c) it lies ON the sphere surface.
+// (b) it matches the independently-computed camera-ray∩sphere hit;
+// (c) it lies ON the sphere surface.
 //
 // Run via: ./run_test.d topopen_place_center
 
@@ -31,15 +31,15 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 10.0, 3.0 * R, 0.0, 0.0));
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
 
     auto c = fetchCamera();
     int cx = c.vpX + c.width / 2;
     int cy = c.vpY + c.height / 2;
 
     Vec3 expected;
-    bool ok = expectedNearestFootOnSphere(c, cast(float)cx, cast(float)cy, R, expected);
-    assert(ok, "centre-pixel seed must be computable");
+    bool ok = expectedRayHitOnSphere(c, cast(float)cx, cast(float)cy, R, expected);
+    assert(ok, "centre-pixel camera-ray must hit the sphere");
 
     assert(vertexCountLayer(1) == 0, "primary layer must start empty");
 
@@ -55,7 +55,7 @@ unittest {
     auto verts = readVerticesLayer(1);
     assert(approxVec(expected, verts[0], TOL),
         format("placed vertex %s should match the independently-computed "
-             ~ "nearest-foot (%f,%f,%f)", verts[0], expected.x, expected.y, expected.z));
+             ~ "camera-ray hit (%f,%f,%f)", verts[0], expected.x, expected.y, expected.z));
 
     double dist = sqrt(verts[0][0]*verts[0][0] + verts[0][1]*verts[0][1] + verts[0][2]*verts[0][2]);
     assert(abs(dist - R) < TOL,

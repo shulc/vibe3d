@@ -1,4 +1,4 @@
-// Topology Pen P2 (doc/topopen_p2_plan.md) — place_undo.
+// Topology Pen — place_undo.
 //
 // One click -> 1 vertex; POST /api/undo -> back to 0 (the REV-1 undo
 // wiring: `MeshVertexNew.evaluate()` snapshots pre-apply, `history_.record`
@@ -22,7 +22,7 @@ unittest {
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
-        0.3, 1.4, 10.0, 3.0 * R, 0.0, 0.0));
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
 
     auto c = fetchCamera();
     int cx = c.vpX + c.width / 2;

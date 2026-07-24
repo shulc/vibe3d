@@ -254,12 +254,17 @@ public:
         cmd.setPos(point);
         if (!cmd.evaluate(vts)) return -1;
 
-        if (history_ !is null) history_.record(cmd);   // non-coalescing -> one undo entry
-
         // meshSrc_/gpu_/vc_/ec_/fc_ are wired together (registration.d) —
         // guard on meshSrc_ alone so a partially-constructed tool (e.g. the
         // no-arg ctor with only setUndoBindings called) never null-derefs.
+        // Checked BEFORE history_.record (review NIT) — a partially-wired
+        // tool that can't finish the view-side effects below (GPU upload,
+        // selection sync, display refresh) shouldn't record an undo entry
+        // either.
         if (meshSrc_ is null) return -1;
+
+        if (history_ !is null) history_.record(cmd);   // non-coalescing -> one undo entry
+
         if (gpu_ !is null) gpu_.upload(*mesh);
         mesh.syncSelection();
         refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
