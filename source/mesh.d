@@ -2882,6 +2882,19 @@ struct Mesh {
             ridgeAccum.update(v, () => nf, (ref Vec3 acc) { acc = acc + nf; });
         }
         foreach (ref e; exEdges) {
+            // A BOUNDARY edge (single adjacent face) contributes NO shift lift.
+            // The reference DROPS `shift` on boundary edges (measured: shift-only
+            // on a boundary loop leaves the mesh unchanged; shift+inset == inset-
+            // only), applying width only — whether the edge is an isolated free
+            // end OR one link of a boundary rim loop. Only INTERIOR (2-face)
+            // selected edges lift their endpoints' ridge. Skipping boundary edges
+            // here means an endpoint incident ONLY to boundary edges accumulates
+            // nothing, so it is anchored to its original position just below and
+            // its shell collapses to the in-plane inset (see the anchor pass) —
+            // making a boundary loop consistent with a single boundary edge
+            // instead of lifting a whole band. Pure-interior selections keep every
+            // edge, so their ridge is byte-identical.
+            if (e.fB == -1) continue;
             accumRidgeFace(e.va, e.fA); accumRidgeFace(e.va, e.fB);
             accumRidgeFace(e.vb, e.fA); accumRidgeFace(e.vb, e.fB);
         }
@@ -2903,6 +2916,20 @@ struct Mesh {
             if (abs(extrude) < 1e-6f) { ridgeVert[v] = v; continue; }
             Vec3 dir = (acc.length < 1e-6f) ? Vec3(0, 1, 0) : normalize(acc);
             ridgeVert[v] = addVertex(vertices[v] + dir * extrude);
+        }
+        // Anchor un-lifted endpoints (those incident ONLY to boundary edges, so
+        // they got no ridge accumulation above and are absent from `ridgeVert`)
+        // to their ORIGINAL position — the same "no lift" value the extrude≈0
+        // path uses. The shared-corner shell below then emits an in-plane inset
+        // whose ridge bridge has zero height (`[vb,va,va,vb]`) and is removed by
+        // the degenerate-corner cleanup, so `shift+inset` on a boundary loop
+        // reduces to `inset`-only — matching the reference's drop-shift rule and
+        // vibe3d's own single-boundary-edge chamfer. Chamfer free ends stay
+        // dissolved (no ridge), exactly as before. (For extrude≈0 every endpoint
+        // is already anchored, so this pass is a no-op there.)
+        foreach (ref e; exEdges) {
+            if (!isChamferEnd(e.va) && (e.va in ridgeVert) is null) ridgeVert[e.va] = e.va;
+            if (!isChamferEnd(e.vb) && (e.vb in ridgeVert) is null) ridgeVert[e.vb] = e.vb;
         }
 
         // --- Pass 2: inset vertex per (endpoint v, incident neighbor face f).
@@ -4542,6 +4569,86 @@ struct Mesh {
             assert(count <= 2,
                 "pentagon shared-corner extrude=0: non-manifold edge used by " ~
                 count.to!string ~ " faces");
+    }
+
+    // Boundary-loop DROP-SHIFT rule (parity): the reference applies only `inset`
+    // to BOUNDARY edges (single adjacent face) and drops `shift` entirely —
+    // measured against the reference engine on a flat open-boundary rim loop:
+    // shift-only leaves the mesh unchanged, and shift+inset produces exactly the
+    // inset-only result (no lifted band). vibe3d already honours this for a
+    // single boundary edge (width-only chamfer); this locks in the SAME rule for
+    // a boundary LOOP whose corners are all shared, which previously lifted a
+    // spurious band along the face normal. INTERIOR edges keep their shift band
+    // (covered by the cube/coplanar reference cases), so this is scoped to the
+    // all-boundary loop.
+    unittest {
+        import std.conv : to;
+        import std.math : abs;
+
+        // Flat open quad in the y=0 plane (+Y normal): its 4 edges are all
+        // boundary edges and its 4 corners are each shared by 2 of them.
+        Vec3[4] corners = [Vec3(-0.5f, 0, -0.5f), Vec3(0.5f, 0, -0.5f),
+                           Vec3(0.5f, 0, 0.5f),   Vec3(-0.5f, 0, 0.5f)];
+        Mesh mkQuad() {
+            Mesh q;
+            uint[] r;
+            foreach (ref c; corners) r ~= q.addVertex(c);
+            q.addFace(r);
+            return q;
+        }
+
+        // shift+inset on the boundary loop: shift must be dropped → NO lift.
+        Mesh mShiftInset = mkQuad();
+        {
+            bool[] mask; mask.length = mShiftInset.edges.length; mask[] = true;
+            mShiftInset.extrudeEdgesByMask(mask, 0.2f, 0.1f);
+        }
+        foreach (i; 0 .. mShiftInset.vertices.length)
+            assert(abs(mShiftInset.vertices[i].y) < 1e-4f,
+                "boundary-loop shift+inset: vertex " ~ i.to!string ~
+                " lifted off the boundary plane to y=" ~
+                mShiftInset.vertices[i].y.to!string ~ " (shift not dropped)");
+
+        // inset-only: same rim loop, no shift. shift+inset must equal this.
+        Mesh mInsetOnly = mkQuad();
+        {
+            bool[] mask; mask.length = mInsetOnly.edges.length; mask[] = true;
+            mInsetOnly.extrudeEdgesByMask(mask, 0.0f, 0.1f);
+        }
+        assert(mShiftInset.vertices.length == mInsetOnly.vertices.length,
+            "boundary-loop shift+inset vs inset-only: vertex count differs (" ~
+            mShiftInset.vertices.length.to!string ~ " vs " ~
+            mInsetOnly.vertices.length.to!string ~ ")");
+        assert(mShiftInset.faces.length == mInsetOnly.faces.length,
+            "boundary-loop shift+inset vs inset-only: face count differs (" ~
+            mShiftInset.faces.length.to!string ~ " vs " ~
+            mInsetOnly.faces.length.to!string ~ ")");
+        // Every shift+inset vertex has a coincident inset-only counterpart.
+        foreach (i; 0 .. mShiftInset.vertices.length) {
+            bool matched = false;
+            foreach (j; 0 .. mInsetOnly.vertices.length) {
+                Vec3 dd = mShiftInset.vertices[i] - mInsetOnly.vertices[j];
+                if (dd.x*dd.x + dd.y*dd.y + dd.z*dd.z < 1e-8f) { matched = true; break; }
+            }
+            assert(matched,
+                "boundary-loop shift+inset: vertex " ~ i.to!string ~
+                " has no inset-only counterpart (shift changed the geometry)");
+        }
+
+        // shift-only on the boundary loop leaves the rim unchanged (no inset room,
+        // shift dropped) — the mesh stays the original quad.
+        Mesh mShiftOnly = mkQuad();
+        {
+            bool[] mask; mask.length = mShiftOnly.edges.length; mask[] = true;
+            mShiftOnly.extrudeEdgesByMask(mask, 0.2f, 0.0f);
+        }
+        assert(mShiftOnly.vertices.length == 4 && mShiftOnly.faces.length == 1,
+            "boundary-loop shift-only: expected the original quad (4v/1f), got " ~
+            mShiftOnly.vertices.length.to!string ~ "v/" ~
+            mShiftOnly.faces.length.to!string ~ "f");
+        foreach (i; 0 .. mShiftOnly.vertices.length)
+            assert(abs(mShiftOnly.vertices[i].y) < 1e-4f,
+                "boundary-loop shift-only: vertex " ~ i.to!string ~ " lifted");
     }
 
     /// Vertex Extrude (Cone): additive. For each vertex selected in `mask`
