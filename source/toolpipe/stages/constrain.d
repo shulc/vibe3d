@@ -99,7 +99,7 @@ public:
     // P0 layering rule.
     private void raycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
         import snap       : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
-        import constraint : nearestFaceVertex, nearestFaceEdge;
+        import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
 
         auto bgSrc      = backgroundSourcesSnapshot();
         // Parallel Document-layer-index array (NIT-3) — index i is the
@@ -151,13 +151,30 @@ public:
             // same posture as nearestFaceVertex/nearestFaceEdge themselves
             // (the bg mesh may have mutated out from under `src` since the
             // BVH was built).
-            if (hit.nearestVert >= 0 && hit.nearestVert < cast(int)(*src).vertices.length)
+            //
+            // Review NIT-1: re-derive the index through
+            // consistentCandidateIndex() (constraint.d) rather than only
+            // gating the position-fill on an inline bounds check — a
+            // candidate whose position we cannot fill is reset to -1 here
+            // too, so `hit.nearestVert`/`hit.nearestEdge` and
+            // `hit.nearestVertPos`/`nearestEdgeA`/`nearestEdgeB` can never
+            // go inconsistent (a `>=0` index left paired with the struct's
+            // default `Vec3(0,0,0)` position — a phantom vertex/edge at the
+            // world origin that resolveHoverTarget would otherwise trust).
+            hit.nearestVert = consistentCandidateIndex(
+                hit.nearestVert, (*src).vertices.length);
+            if (hit.nearestVert >= 0)
                 hit.nearestVertPos = (*src).vertices[hit.nearestVert];
-            if (hit.nearestEdge >= 0 && hit.nearestEdge < cast(int)(*src).edges.length) {
+
+            hit.nearestEdge = consistentCandidateIndex(
+                hit.nearestEdge, (*src).edges.length);
+            if (hit.nearestEdge >= 0) {
                 auto e = (*src).edges[hit.nearestEdge];
                 if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
                     hit.nearestEdgeA = (*src).vertices[e[0]];
                     hit.nearestEdgeB = (*src).vertices[e[1]];
+                } else {
+                    hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
                 }
             }
         }

@@ -299,6 +299,26 @@ int nearestFaceEdge(const ref Mesh m, int face, Vec3 p) {
     return best;
 }
 
+/// Re-derives `idx` against a just-fetched array length, returning `idx`
+/// unchanged when it is currently in range (`0 <= idx < len`) and -1
+/// otherwise. Backs the CONS stage's `raycastBackground`
+/// (source/toolpipe/stages/constrain.d), which computes
+/// `nearestVert`/`nearestEdge` via `nearestFaceVertex`/`nearestFaceEdge`
+/// above and then separately fills the candidate's world position a few
+/// lines later. Both bound their result against the SAME source mesh
+/// reference, so today the two stay consistent as an IMPLICIT consequence
+/// of nothing mutating the mesh between those two reads — this helper
+/// makes the invariant EXPLICIT at the fill site instead (review NIT-1):
+/// a caller that re-derives its index through this function before filling
+/// the position can never end up publishing a `>=0` index whose position
+/// it left at the struct default (`Vec3(0,0,0)`) — the "phantom vertex at
+/// world origin" hazard `resolveHoverTarget` below would otherwise trust
+/// unconditionally (it only guards `>= 0`, not "position was actually
+/// filled").
+int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
+    return (idx >= 0 && idx < cast(int)len) ? idx : -1;
+}
+
 // PLACEHOLDER radius for `resolveHoverTarget`'s Vertex/Edge snap test, in
 // screen pixels. This is NOT the reference editor's real snap threshold —
 // that (and the real vertex/edge/face precedence, including snapping
@@ -758,6 +778,19 @@ unittest { // nearestFaceEdge — grazing case: a point at a shared CORNER is
         "grazing corner case should still resolve to a valid edge index");
 }
 
+unittest { // consistentCandidateIndex — review NIT-1's invariant helper:
+           // in-range passes through unchanged, negative and out-of-range
+           // (a stale index whose backing array has since shrunk) collapse
+           // to -1.
+    assert(consistentCandidateIndex(2, 3) == 2, "in-range index must pass through");
+    assert(consistentCandidateIndex(0, 3) == 0, "index 0 is in-range for len 3");
+    assert(consistentCandidateIndex(-1, 3) == -1, "already-negative index stays -1");
+    assert(consistentCandidateIndex(3, 3) == -1, "index == len is out of range");
+    assert(consistentCandidateIndex(5, 3) == -1,
+        "stale index past a shrunk array must collapse to -1, not pass through");
+    assert(consistentCandidateIndex(0, 0) == -1, "any index against a zero-length array is -1");
+}
+
 // ---------------------------------------------------------------------------
 // resolveHoverTarget — topology-pen P1 (doc/topopen_p1_plan.md). GL-free
 // pure unittests: a synthetic Viewport (identity-ish lookAt at Z=5, 90°
@@ -853,25 +886,66 @@ unittest { // resolveHoverTarget — neither candidate in range -> Face
     assert(t.vert == -1 && t.edge == -1);
 }
 
-unittest { // resolveHoverTarget — threshold boundary, independently computed:
-           // a 0.15-world-unit offset at S=80px/unit projects to EXACTLY
-           // 12.0px (0.15*80=12), matching kTopoPenSnapPx exactly. The
-           // comparison is `<=`, so thPx==12.0 must snap (boundary
-           // inclusive) and thPx==11.999 (just under the exact distance)
-           // must not.
+unittest { // resolveHoverTarget — near-threshold, independently computed:
+           // a 0.1499-world-unit offset at S=80px/unit projects to ~11.992px
+           // (0.1499*80=11.992), a hair BELOW kTopoPenSnapPx (12.0) rather
+           // than exactly on it (review NIT-2 — the prior version picked an
+           // offset landing EXACTLY at the threshold and asserted `==`
+           // through the full lookAt/perspective/mulMV pipeline; that FP
+           // chain isn't guaranteed bit-exact, so resting a "must snap"
+           // assertion on hitting the boundary precisely was fragile).
+           // Comfortably-separated margins on both sides (12.0 - 11.992 =
+           // 0.008px "inside", 11.992 - 11.9 = 0.092px "outside") are each
+           // orders of magnitude larger than any plausible FP rounding
+           // noise from that pipeline, so this still exercises the `<=`
+           // inclusive comparison's intent (a just-inside point snaps)
+           // without resting on exact equality.
     auto vp = makeHoverTestViewport();
     ConstrainHitPacket h;
     h.hit           = true;
     h.point         = Vec3(0, 0, 0);
     h.nearestVert   = 7;
-    h.nearestVertPos = Vec3(0.15f, 0, 0);     // exactly 12.0px from the hit
+    h.nearestVertPos = Vec3(0.1499f, 0, 0);   // ~11.992px from the hit
     h.nearestEdge   = -1;
 
-    auto atBoundary = resolveHoverTarget(h, vp, 12.0f);
-    assert(atBoundary.kind == HoverTargetKind.Vertex,
-        "distance == thPx must snap (inclusive boundary)");
+    auto justInside = resolveHoverTarget(h, vp, 12.0f);
+    assert(justInside.kind == HoverTargetKind.Vertex,
+        "a point just inside the snap radius must snap");
 
-    auto justUnder = resolveHoverTarget(h, vp, 11.999f);
-    assert(justUnder.kind == HoverTargetKind.Face,
-        "distance just over thPx must NOT snap");
+    auto justOutside = resolveHoverTarget(h, vp, 11.9f);
+    assert(justOutside.kind == HoverTargetKind.Face,
+        "a threshold just below the point's actual distance must NOT snap");
+}
+
+unittest { // resolveHoverTarget — stale candidate reset to -1 by the
+           // producer's consistency guard (review NIT-1) resolves to Face,
+           // not a phantom vertex at the world origin. Before NIT-1,
+           // `raycastBackground` (source/toolpipe/stages/constrain.d)
+           // could leave `nearestVert`/`nearestEdge` at whatever
+           // nearestFaceVertex/nearestFaceEdge returned while separately
+           // gating ONLY the position fill on an in-bounds check — so a
+           // stale index (>= 0) could reach here paired with the packet's
+           // default `Vec3(0,0,0)` position. Since the hit point itself is
+           // ALSO at the origin, a buggy producer trusting that pairing
+           // would make resolveHoverTarget snap to a "vertex" that is
+           // really just the struct default, at 0px away — a false
+           // positive indistinguishable from a genuine coincident hit.
+           // `consistentCandidateIndex` (constraint.d) now resets the
+           // index to -1 in that case, so this packet (as the FIXED
+           // producer would actually publish it) must fall through to
+           // Face instead.
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit            = true;
+    h.point          = Vec3(0, 0, 0);          // projects to (400, 400)
+    h.nearestVert    = -1;                     // consistentCandidateIndex()'s output
+    h.nearestVertPos = Vec3(0, 0, 0);           // struct default — never actually filled
+    h.nearestEdge    = -1;                      // same story for the edge candidate
+    h.nearestEdgeA   = Vec3(0, 0, 0);
+    h.nearestEdgeB   = Vec3(0, 0, 0);
+
+    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    assert(t.kind == HoverTargetKind.Face,
+        "a reset (-1) candidate must never resolve to a phantom origin vertex/edge");
+    assert(t.vert == -1 && t.edge == -1);
 }
