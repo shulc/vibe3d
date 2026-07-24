@@ -2038,7 +2038,17 @@ struct Mesh {
     /// This is `delete vertex` semantics — it preserves the
     /// surrounding faces by re-shaping them, rather than killing every
     /// incident face like a naive "delete incident topology" would.
-    size_t dissolveVerticesByMask(in bool[] mask) {
+    /// `keepOrphans` (reference-editor parity for delete/remove): dissolving the
+    /// masked verts removes EXACTLY them. Any OTHER vertex left unreferenced
+    /// because its faces degenerated away stays as a loose point instead of
+    /// being swept. Measured: vertex delete AND vertex remove both keep such
+    /// collateral orphans (a prism whose three surviving corners lose every face
+    /// keeps those three points, 0 faces); only polygon-Delete compacts orphans.
+    /// The masked verts are dropped from every face → always unreferenced → the
+    /// compact removes them regardless; pinning the non-masked verts spares the
+    /// collateral orphans. Default false preserves the compact-all behaviour for
+    /// every other caller (edge_join, the cleanup hygiene sweep).
+    size_t dissolveVerticesByMask(in bool[] mask, bool keepOrphans = false) {
         if (mask.length != vertices.length) return 0;
         size_t dissolved = 0;
         foreach (vi; 0 .. mask.length) if (mask[vi]) ++dissolved;
@@ -2133,7 +2143,16 @@ struct Mesh {
         // dissolved (now-orphan) verts and re-derives edges yet again.
         rebuildEdges();
         clearEdgeSelectionResize();
-        compactUnreferenced();
+        if (keepOrphans) {
+            // Pin every non-masked vert so the compact removes ONLY the
+            // dissolved (masked, now unreferenced) verts, sparing collateral
+            // orphans (see the keepOrphans note on the signature).
+            uint[] pinned;
+            foreach (i; 0 .. mask.length) if (!mask[i]) pinned ~= cast(uint)i;
+            compactUnreferenced(pinned);
+        } else {
+            compactUnreferenced();
+        }
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
@@ -2163,7 +2182,12 @@ struct Mesh {
     /// edge is dissolved just like a straight one; only being outside the region
     /// spares a vertex — measured against the reference editor, task 0474).
     /// Returns the number of verts dissolved.
-    size_t dissolveDegree2Verts(in Vec3[] region = null) {
+    /// `keepOrphans` is forwarded to `dissolveVerticesByMask`: the edge
+    /// delete/remove cleanup keeps collateral orphans (verts whose faces
+    /// degenerated to < 3 while their own valence stayed > 2) as loose points,
+    /// matching the reference editor. The opt-in cleanup hygiene sweep keeps the
+    /// default (compact-all) behaviour.
+    size_t dissolveDegree2Verts(in Vec3[] region = null, bool keepOrphans = false) {
         // Tally the number of edges incident to each vertex.
         int[] degree;
         degree.length = vertices.length;
@@ -2181,7 +2205,7 @@ struct Mesh {
             mask[i] = true; ++cnt;
         }
         if (cnt == 0) return 0;
-        return dissolveVerticesByMask(mask);
+        return dissolveVerticesByMask(mask, keepOrphans);
     }
 
     /// True iff `p` coincides (within a tight epsilon) with any position in
@@ -2305,17 +2329,40 @@ struct Mesh {
         foreach (root, comp; componentFaces) {
             if (comp.length < 2) continue;
 
+            // Every edge INTERNAL to this merged component vanishes from the
+            // union boundary — not only the explicitly-selected edges. An edge
+            // shared by two of the component's faces is interior once those
+            // faces merge, even if the caller did not select it: it got
+            // internalised because its two faces were joined through OTHER
+            // selected edges. Dropping only the selected edges leaves such an
+            // edge as an antenna spike with a dangling vertex, which the
+            // reference editor does not keep (measured on non-cube prism
+            // geometry: the merged polygon is the boundary of the face union,
+            // with no interior stubs). Tally per-component edge multiplicity;
+            // an edge appearing >= 2 times among the component's faces is
+            // interior and dissolves. On a clean merge where every interior
+            // edge WAS selected (e.g. the cube-corner fan) this is identical to
+            // the selected-only drop, so those results stay byte-for-byte.
+            int[ulong] compEdgeCount;
+            foreach (fi; comp) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length)
+                    ++compEdgeCount[edgeKeyOrdered(f[k], f[(k + 1) % f.length])];
+            }
+
             // Gather directed half-edges from the component, dropping
-            // half-edges whose edge was actually dissolved (interior); selected
-            // boundary edges survive on the merged boundary. `outSrc` carries the
-            // OLD loop index of the half-edge's START corner, parallel to `outAt`.
+            // half-edges whose edge is interior to the component (appears in two
+            // of its faces); boundary edges — including selected edges with only
+            // one adjacent face in the component — survive on the merged
+            // boundary. `outSrc` carries the OLD loop index of the half-edge's
+            // START corner, parallel to `outAt`.
             uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
             uint[][uint] outSrc; // outSrc[u][i] = old loop index of u→v's start
             foreach (fi; comp) {
                 auto f = faces[fi];
                 foreach (k; 0 .. f.length) {
                     uint a = f[k], b = f[(k + 1) % f.length];
-                    if (edgeKeyOrdered(a, b) in dissolvedEdgeKeys) continue;
+                    if (compEdgeCount[edgeKeyOrdered(a, b)] >= 2) continue;
                     outAt[a] ~= b;
                     if (remapUv)
                         outSrc[a] ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, cast(uint)k);

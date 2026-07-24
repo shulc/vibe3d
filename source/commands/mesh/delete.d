@@ -110,16 +110,24 @@ class MeshDelete : Command, Operator {
         const all  = mesh.nothingSelected(mode);
         final switch (mode) {
             case EditMode.Vertices:
+                // keepOrphans (measured, task delete-remove-dissolve): a vertex
+                // dissolve removes EXACTLY the selected verts; other verts left
+                // unreferenced because their faces degenerated stay as loose
+                // points (the reference editor keeps these on non-cube geometry).
                 return mesh.dissolveVerticesByMask(
-                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);
+                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices,
+                    /*keepOrphans=*/true);
             case EditMode.Edges:
                 auto n = mesh.removeEdgesByMask(
                     all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
                 // Scope the 2-valent cleanup to the deleted edges' endpoints
                 // (task 0474): a pre-existing 2-valent vertex the delete did not
                 // touch — a 90° corner, a straight-through midpoint elsewhere —
-                // must survive (reference-editor parity).
-                if (n > 0) mesh.dissolveDegree2Verts(mesh.edgeDeleteRegion());
+                // must survive (reference-editor parity). keepOrphans keeps
+                // collateral orphans the merge/cleanup leaves behind (task
+                // delete-remove-dissolve).
+                if (n > 0) mesh.dissolveDegree2Verts(mesh.edgeDeleteRegion(),
+                                                     /*keepOrphans=*/true);
                 return n;
             case EditMode.Polygons:
                 return mesh.deleteFacesByMask(
