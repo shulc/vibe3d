@@ -5080,19 +5080,17 @@ struct Mesh {
         //     Keyed by source vertex. Built from ORIGINAL geometry only (face
         //     normals + edge axes captured before any geometry is appended).
         //
-        //     INSET LAW (parity-verified): the perpendicular drop at EVERY new
-        //     vert — free end, welded corner, boundary, all the same — is the
-        //     min-norm offset-meet `delta·n_f = −inset` over ALL DISTINCT face
-        //     planes incident at the source vertex `v` (every face that contains
-        //     `v`, NOT just the faces adjacent to the selected edges). There is NO
-        //     separate axial term: on a cube the vertex's THIRD perpendicular face
-        //     contributes the `−inset` component along the edge axis that earlier
-        //     looked like an axial shortening (corner (0.5,0.5,0.5) ∈ top+front+
-        //     right ⇒ meet (−0.1,−0.1,−0.1)). A tent free end has only 2 incident
-        //     faces, so its meet is the genuine two-plane drop (no spurious axial
-        //     pull). A vertex on a single flat face → meet = −inset·n (the boundary
-        //     one-plane case). The free-end/weld branch distinction for inset thus
-        //     disappears — one law for all corners.
+        //     INSET LAW (parity-measured): the perpendicular drop at every new
+        //     vert is built from the DISTINCT face planes incident at the source
+        //     vertex `v` (every face containing `v`, not just the selected edge's
+        //     neighbours). At an INTERIOR corner it is −inset·factor·Σn over those
+        //     planes, `factor = 1/(1 + nA·nB)` the selected edge's dihedral term
+        //     (see INSET DIHEDRAL FACTOR below); at a BOUNDARY-only corner it is the
+        //     min-norm offset-meet `delta·n_f = −inset` over the same planes (a lone
+        //     flat face → −inset·n, a two-face open fan → their bisector meet).
+        //     There is NO separate axial term. On a cube the two forms coincide
+        //     (orthonormal normals ⇒ factor = 1, meet = sum), so cube/flat grids
+        //     stay byte-identical; they diverge on arbitrary-dihedral geometry.
         // Distinct face planes per corner (deduped by face id).
         Vec3[][uint] cornerNormals;          // v → distinct incident face normals
         bool[ulong]  cornerFaceSeen;         // (v<<32|fi) → already counted at v
@@ -5173,6 +5171,43 @@ struct Mesh {
             }
         }
 
+        // --- INSET DIHEDRAL FACTOR (parity-measured). At an INTERIOR selected
+        //     edge, the reference's perpendicular inset drop at each endpoint is
+        //     the plain SUM of that corner's distinct incident face normals scaled
+        //     by −inset AND by a per-edge dihedral factor `1/(1 + nA·nB)`, where
+        //     nA,nB are the unit normals of the edge's two adjacent faces. This is
+        //     NOT the min-norm offset-meet: the two agree only when the corner's
+        //     normals are orthonormal (cube / flat grids — which is why those stay
+        //     byte-identical), but diverge on every arbitrary-dihedral geometry.
+        //     Verified bit-exact against reference dumps across prism3/prism5 side
+        //     & rim dihedrals, 2-face tents at 60°/90°/120°/asymmetric folds, and
+        //     welded chain/star corners. The factor depends on how many FOLD edges
+        //     the corner welds:
+        //       – exactly ONE incident selected fold edge → 1/(1 + nA·nB) of that
+        //         edge (free end / lone rim edge: prism rim=1, prism apex=2, tents).
+        //       – TWO OR MORE (welded chain / star junction) → factor 1, the plain
+        //         −inset·Σn drop. Parity: prism3 & cyl6 star corners take the plain
+        //         sum even when a fold edge there has g≠0 — the extra weld
+        //         constraints cancel the single-edge dihedral scaling.
+        //     A corner with only boundary or coplanar selected edges (no fold pair)
+        //     keeps the min-norm meet — the open-fan / boundary law, parity-correct.
+        int[uint]   cornerFoldCount;            // v → # incident selected FOLD edges
+        float[uint] cornerFoldG;                // v → nA·nB of that edge (count==1 only)
+        foreach (ref e; exEdges) {
+            if (e.fB == -1) continue;           // boundary edge — no dihedral pair
+            float g = dot(faceNormal(cast(uint)e.fA), faceNormal(cast(uint)e.fB));
+            // COPLANAR edges (g ≈ +1) are not a fold: the two faces share a plane
+            // and `cornerNormals` already dedups them to one normal, so the factor
+            // must NOT scale (`1/(1+1)=½` would halve the drop). Skip them — such a
+            // corner falls back to the min-norm meet, which gives the correct flat
+            // `−inset·n` (chain2_mixed / chain2_asym flat rows stay byte-identical).
+            if (g > 1.0f - 1e-4f) continue;
+            foreach (v; [e.va, e.vb]) {
+                cornerFoldCount[v] = (v in cornerFoldCount ? cornerFoldCount[v] : 0) + 1;
+                cornerFoldG[v] = g;             // only consulted when count == 1
+            }
+        }
+
         // --- Rotate(E_src about origin) then Scale(about origin), world frame,
         //     parameterised by the ring fraction t = k/N (t=1 = full TRS = the
         //     N=1 law). Rx then Ry then Rz applied in that order to the ORIGINAL
@@ -5207,20 +5242,56 @@ struct Mesh {
 
         // --- Per-source-vertex inset/shift displacement (ring-independent: full
         //     on every ring). Computed once from ORIGINAL geometry, keyed by
-        //     source vertex. INSET = min-norm offset-meet over ALL distinct faces
-        //     incident at v (free end, weld, interior, boundary alike — see INSET
-        //     LAW above). One law, no axial term. SHIFT = each incident boundary
-        //     edge's in-plane slide, already accumulated into cornerShiftTerm.
+        //     source vertex. INSET (interior corner) = −inset · dihedral-factor ·
+        //     Σ(distinct incident face normals) — see INSET DIHEDRAL FACTOR above.
+        //     INSET (boundary-only corner) = min-norm offset-meet over ALL distinct
+        //     incident faces (the open-fan law: a lone flat boundary face reduces
+        //     to −inset·n, a boundary corner spanning two faces to their 2-plane
+        //     meet). SHIFT = each incident boundary edge's in-plane slide, already
+        //     accumulated into cornerShiftTerm.
         Vec3[uint] insetShiftOf;
         void computeDelta(uint v) {
             if (v in insetShiftOf) return;
             Vec3 delta = Vec3(0, 0, 0);
             if (auto np = v in cornerNormals) {
                 Vec3[] norms = *np;
-                float[] tgts;
-                tgts.length = norms.length;
-                foreach (i; 0 .. norms.length) tgts[i] = -inset;
-                delta = minNormMeet(norms, tgts);
+                auto cp = v in cornerFoldCount;
+                // factor·sum branch requires ≥1 incident fold edge AND a SHARP
+                // corner of at most 3 distinct face planes. The `−inset·factor·Σn`
+                // law was measured on the sharp 3-plane prism / cyl family: a corner
+                // whose 3 planes robustly span R³ has a unique offset-meet that the
+                // reference OVER-shoots, taking the scaled sum instead. Two guards
+                // keep it there and off subdivided qball/cc/tess corners (which the
+                // reference leaves on the least-squares meet — the sum over-drives
+                // them):
+                //   • valence ≤ 3 distinct planes (≥4 → rank-deficient → meet), and
+                //   • the 3 planes are well-conditioned: |n₀·(n₁×n₂)| ≥ 0.6 (prism/
+                //     cyl rim corners measure ~0.87–0.95; smooth cc/tess 3-fans
+                //     ~0.36, so they stay on the meet — no subdivided-mesh change).
+                // For a single fold edge use 1/(1+g); for a weld (≥2) use the plain
+                // sum (factor 1). A near-fold single edge (g → −1) blows the factor
+                // up, so fall back to the bounded min-norm meet (meet's rank guard).
+                bool useFactor = (cp !is null) && (norms.length <= 3);
+                if (useFactor && norms.length == 3) {
+                    float triple = abs(dot(norms[0], cross(norms[1], norms[2])));
+                    if (triple < 0.6f) useFactor = false;   // smooth fan → meet
+                }
+                float factor = 1.0f;
+                if (useFactor && *cp == 1) {
+                    float g = cornerFoldG[v];
+                    if ((1.0f + g) > 1e-4f) factor = 1.0f / (1.0f + g);
+                    else useFactor = false;     // degenerate fold → meet
+                }
+                if (useFactor) {
+                    Vec3 summ = Vec3(0, 0, 0);
+                    foreach (ref nf; norms) summ = summ + nf;
+                    delta = summ * (-inset * factor);
+                } else {
+                    float[] tgts;
+                    tgts.length = norms.length;
+                    foreach (i; 0 .. norms.length) tgts[i] = -inset;
+                    delta = minNormMeet(norms, tgts);
+                }
             }
             if (auto sp = v in cornerShiftTerm) delta = delta + *sp;
             insetShiftOf[v] = delta;
@@ -5259,46 +5330,53 @@ struct Mesh {
         //
         //     The bridge is `[srcA, newA, newB, srcB]` where srcA→srcB is the
         //     source edge's DIRECTED traversal order WITHIN the orienting face (so
-        //     the bridge is manifold-consistent with that face — NOT the raw
-        //     edges[] tuple, which would flip ~half the bridges).
+        //     the bridge is manifold-consistent with — traverses the shared edge
+        //     OPPOSITE to — that face; NOT the raw edges[] tuple, which would flip
+        //     ~half the bridges). `buildEdgeFaces` stores fA = the LOWER face index,
+        //     fB = the other, so `e.fA` is already the lower-index neighbour.
         //
-        //     Which adjacent face orients a 2-face interior edge is GEOMETRICALLY
-        //     UNDER-DETERMINED at a welded fan: the bridge quad is edge-on to the
-        //     corner axis, so its normal is ⊥ to that axis and every rotation-
-        //     invariant "point outward / sum-of-normals / displacement" test ties
-        //     between the two candidate faces (verified numerically against the
-        //     golden fan dumps — both faces give identical dot products). The
-        //     reference engine's choice tracks its internal face-storage order,
-        //     which is not portable. We therefore pick the orienting face by a
-        //     two-tier DETERMINISTIC rule:
-        //       1. When the two candidate face normals DIFFER, take the one whose
-        //          unit normal sorts first under the key (n.y, −n.x, −n.z). This
-        //          fixes the star3 fan: the −Y bridge competes between two DISTINCT
-        //          (+X vs +Z) faces, and a naive lower-array-index rule orients it
-        //          backwards ([2,11,9,6] instead of [6,9,11,2]).
-        //       2. When the normals are (near-)EQUAL (the two faces are coplanar —
-        //          chain2_asym/chain2_mixed, where every rotation-invariant test
-        //          AND the normal comparator tie exactly), fall back to the LOWER
-        //          FACE INDEX. On these fixtures vibe3d's face-array order matches
-        //          the reference's input order, so lower-index reproduces the
-        //          reference choice.
-        //     This pair reproduces EVERY golden bridge tuple — cube interior
-        //     [6,8,9,7], boundary [3,6,7,0], chain2 [5,8,9,6]/[6,9,10,7], loop4 ×4,
-        //     star3 ×3 (incl. the [6,9,11,2] third bridge), and the coplanar
-        //     chain2_asym/chain2_mixed bridges. The normal comparator is a
-        //     tie-break calibrated to the axis-aligned golden fixtures, not a
-        //     derived geometric law: a future non-axis-aligned fan with DISTINCT
-        //     competing normals should be re-checked against a fresh capture rather
-        //     than silently trusted.
+        //     Which of a 2-face interior edge's neighbours orients the bridge is
+        //     GEOMETRICALLY UNDER-DETERMINED (both give a locally valid winding).
+        //     A cube rim edge and a prism rim edge are LOCALLY identical (both a
+        //     90° pair, one axis-aligned face + one perpendicular face), yet the
+        //     reference winds them oppositely — so the discriminator must be the
+        //     MESH as a whole, not the edge. Two regimes, parity-measured:
+        //
+        //       • TILTED mesh (ANY face is NOT a signed unit axis — prism / cyl /
+        //         cc / qball / tess …): wind every bridge by ORIENTABILITY against
+        //         the LOWER-INDEX neighbour (`e.fA`, which buildEdgeFaces already
+        //         stores as the min index) — the same topological rule
+        //         edge.extrude's `emitBridgeFromFace` uses. Verified bit-exact on
+        //         prism3 / prism5 rim & side edges, single edges AND welded
+        //         star/chain corners. This is the N2 winding fix: the old normal
+        //         comparator flipped every tilted bridge.
+        //
+        //       • AXIS-ALIGNED mesh (cube / flat grids — every face normal is a
+        //         signed unit axis): a symmetric interior weld is a true tie whose
+        //         resolution tracks the reference's internal face-storage order
+        //         (not portable). The calibrated normal comparator (sort by
+        //         (n.y,−n.x,−n.z), coplanar tie → lower index) reproduces the cube
+        //         star3/chain2/interior goldens, so keep it — this is what holds
+        //         cube / flat output BYTE-IDENTICAL.
+        static bool axisAligned(Vec3 n) {
+            import std.math : abs;
+            static bool onAxis(float c) { float a = abs(c); return a < 1e-4f || a > 1.0f - 1e-4f; }
+            return onAxis(n.x) && onAxis(n.y) && onAxis(n.z);
+        }
+        bool meshAxisAligned = true;
+        foreach (fi; 0 .. faces.length)
+            if (!axisAligned(faceNormal(cast(uint)fi))) { meshAxisAligned = false; break; }
         static double[3] orientKey(Vec3 n) {
             return [cast(double)n.y, cast(double)(-n.x), cast(double)(-n.z)];
         }
         int orientFaceOf(ref ExtEdge e) {
             if (e.fB == -1) return e.fA;          // boundary: the sole face
+            // Tilted mesh → portable lower-index orientability (= e.fA).
+            if (!meshAxisAligned)
+                return e.fA < e.fB ? e.fA : e.fB;
+            // Axis-aligned mesh → calibrated comparator (cube/flat byte-identical).
             auto ka = orientKey(faceNormal(cast(uint)e.fA));
             auto kb = orientKey(faceNormal(cast(uint)e.fB));
-            // Lexicographic compare with an epsilon dead-band. Within the band the
-            // two normals are (near-)coplanar → tie → lower face index decides.
             foreach (i; 0 .. 3) {
                 if (ka[i] < kb[i] - 1e-6) return e.fA;
                 if (ka[i] > kb[i] + 1e-6) return e.fB;
@@ -16531,6 +16609,74 @@ unittest { // extendEdgesByMask: boundary edge — bridge tuple proof + shift sl
     long bf = findFaceByVerts_(m, [3u, na, nb, 0u]);
     if (bf < 0) bf = findFaceByVerts_(m, [3u, nb, na, 0u]);
     assert(bf >= 0, "boundary bridge face contains {3, new, new, 0}");
+}
+
+unittest { // extendEdgesByMask: INSET DIHEDRAL FACTOR (N1) — arbitrary-dihedral
+           // corner drop is −inset·(1/(1+nA·nB))·Σn, NOT the min-norm meet.
+    import std.math : abs;
+    // Regular triangular prism (r=0.6, height=1): non-90° side dihedrals — the
+    // family where the plain min-norm meet diverged from the reference. Values
+    // measured bit-exact against the reference engine (prism3, inset=0.1).
+    enum float Z = 0.5196152423f;   // 0.6·sin(120°)
+    Mesh mk() {
+        Mesh m;
+        m.vertices = [
+            Vec3( 0.6f, -0.5f,  0.0f),  // 0  (+X apex, bottom)
+            Vec3(-0.3f, -0.5f,   Z ),   // 1
+            Vec3(-0.3f, -0.5f,  -Z ),   // 2
+            Vec3( 0.6f,  0.5f,  0.0f),  // 3  (+X apex, top)
+            Vec3(-0.3f,  0.5f,   Z ),   // 4
+            Vec3(-0.3f,  0.5f,  -Z ),   // 5
+        ];
+        m.addFace([2u, 1u, 0u]);            // bottom cap
+        m.addFace([3u, 4u, 5u]);            // top cap
+        m.addFace([0u, 1u, 4u, 3u]);        // side (contains rim edge 0-1)
+        m.addFace([1u, 2u, 5u, 4u]);        // side
+        m.addFace([2u, 0u, 3u, 5u]);        // side
+        m.buildLoops();
+        m.resetSelection();
+        return m;
+    }
+
+    // (a) Bottom RIM edge 0-1: the edge's two faces (cap ⊥ side) give nA·nB=0 ⇒
+    //     factor 1, so the drop is −inset·Σn over EACH endpoint's distinct faces.
+    //     src 0 → (0.7,-0.6,0); the min-norm meet would put x at 0.8 (twice the
+    //     inset) — asserting 0.7 pins the factor·sum law.
+    {
+        Mesh m = mk();
+        selectEdgeByEnds_(m, m.vertices[0], m.vertices[1]);
+        auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                     Vec3(0,0,0), Vec3(0,0,0), Vec3(1,1,1), 1);
+        assert(n == 1);
+        uint n0 = 0, n1 = 0;
+        foreach (i; 6 .. m.vertices.length) {
+            if (near_(m.vertices[i], Vec3(0.7f, -0.6f, 0.0f), 1e-4f)) n0 = cast(uint)i;
+            if (near_(m.vertices[i], Vec3(-0.35f, -0.6f, 0.6062178f), 1e-4f)) n1 = cast(uint)i;
+        }
+        assert(n0 != 0, "prism rim: new vert from src0 = (0.7,-0.6,0) [factor·sum, not meet 0.8]");
+        assert(n1 != 0, "prism rim: new vert from src1 = (-0.35,-0.6,0.60622)");
+        // Winding: on tilted geometry the bridge is oriented against the LOWER-
+        // index neighbour (bottom cap = face 0, which traverses 1→0), so the
+        // bridge traverses the shared edge 0→1 — i.e. the tuple [1, n1, n0, 0].
+        long bf = findFaceByVerts_(m, [1u, n1, n0, 0u]);
+        assert(bf >= 0, "prism rim bridge face present");
+        assert(tupleMatchesWound_(m.faces[cast(size_t)bf], [1u, n1, n0, 0u]),
+               "prism rim bridge wound orientable vs lower-index cap (edge 0→1)");
+    }
+
+    // (b) Vertical apex edge 0-3: its two SIDE faces meet at nA·nB=−0.5 ⇒ factor
+    //     1/(1−0.5)=2, doubling the drop. src 0 → (0.8,-0.7,0).
+    {
+        Mesh m = mk();
+        selectEdgeByEnds_(m, m.vertices[0], m.vertices[3]);
+        auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                     Vec3(0,0,0), Vec3(0,0,0), Vec3(1,1,1), 1);
+        assert(n == 1);
+        bool got = false;
+        foreach (i; 6 .. m.vertices.length)
+            if (near_(m.vertices[i], Vec3(0.8f, -0.7f, 0.0f), 1e-4f)) got = true;
+        assert(got, "prism apex edge: dihedral factor 2 ⇒ src0 → (0.8,-0.7,0)");
+    }
 }
 
 unittest { // extendEdgesByMask: COLLINEAR boundary chain — shared mid-rim vertex
