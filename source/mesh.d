@@ -1887,7 +1887,22 @@ struct Mesh {
     /// task 0465). With `keepOrphans` the `vertices` array is untouched, so
     /// vertex indices/positions stay stable and no vertex reindex is recorded
     /// into an open edit batch (the RemoveFaces entry alone reverts the op).
-    size_t deleteFacesByMask(in bool[] mask, bool keepOrphans = false) {
+    ///
+    /// `keepFloatingEdges` (task 0477, topology-pen P3): the unconditional
+    /// `rebuildEdges()` this primitive otherwise runs re-derives `edges[]`
+    /// PURELY by walking the surviving `faces[]` (mesh.d rebuildEdges), so
+    /// any edge that borders NO surviving face — an orphaned diagonal left
+    /// behind by a triangle→quad splice, or an unrelated bare floating edge
+    /// elsewhere in the mesh — is silently wiped even with `keepOrphans` (that
+    /// flag only protects floating VERTICES, not floating EDGES). Set
+    /// `keepFloatingEdges:true` to skip that rebuild entirely: `edges[]` /
+    /// `edgeIndexMap` are left exactly as they were, and the tail
+    /// `buildLoops()` (which never assigns `edges[]`, only rebuilds
+    /// `edgeIndexMap` FROM it) re-syncs loops around the untouched edge set —
+    /// so every floating edge, related or not, survives. Default `false`
+    /// (byte-identical to every pre-task-0477 caller).
+    size_t deleteFacesByMask(in bool[] mask, bool keepOrphans = false,
+                             bool keepFloatingEdges = false) {
         if (mask.length != faces.length) return 0;
         uint[][] keptFaces;
         bool[]   keptSubpatch;
@@ -1968,7 +1983,11 @@ struct Mesh {
         // entirely (only-touched the deleted faces); others stay. Always
         // do this even if no verts were orphaned — compactUnreferenced
         // skips the rebuild when removed==0.
-        rebuildEdges();
+        //
+        // `keepFloatingEdges` (task 0477, KILLER-2 fix): skip this rebuild
+        // when the caller wants floating edges (bordering no surviving
+        // face) to survive instead of being wiped — see the ctor doc above.
+        if (!keepFloatingEdges) rebuildEdges();
         clearEdgeSelectionResize();
         // Compact orphan vertices (no-op if all verts still referenced).
         // Skipped for Remove (keepOrphans): the faces go, the now-unused
@@ -12637,6 +12656,28 @@ struct Mesh {
         return n;
     }
 
+    /// Opposite endpoints of every edge in `edges[]` incident to `v` — a raw
+    /// scan of the flat edge array (task 0477, topology-pen P3 KILLER-1),
+    /// UNLIKE `edgesAroundVertex`/`vertexValence` above, which walk the
+    /// half-edge fan seeded from `vertLoop[v]`. `vertLoop` is populated ONLY
+    /// from `faces[]` (`buildLoops`'s vert-loop seed pass walks face
+    /// corners), so a vertex that sits on a bare floating edge but no face at
+    /// all keeps `vertLoop[v] == ~0u` and every loop-fan helper reads it as
+    /// isolated/degree-0 — even though `edges[]` genuinely lists an edge
+    /// touching it. This is the ONLY correct way to test "does this vertex
+    /// have an incident edge" when floating (non-face-bounded) edges are in
+    /// play — e.g. topology-pen's bare `addEdge` build case, which the
+    /// loop-fan helpers cannot see. O(E); fine for an interactive retopo
+    /// cage, not intended for hot per-frame loops over large meshes.
+    uint[] edgeNeighbors(uint v) const {
+        uint[] r;
+        foreach (e; edges) {
+            if (e[0] == v) r ~= e[1];
+            else if (e[1] == v) r ~= e[0];
+        }
+        return r;
+    }
+
     /// Return, for each edge, the indices of every OTHER edge that shares one
     /// of its two endpoint vertices (relation A: edge→edges-sharing-a-vertex).
     /// Result length == `edges.length`. No dedup pass — two distinct edges
@@ -14216,7 +14257,17 @@ struct Mesh {
     ///   - fewer than 3 distinct vertices (after collapsing consecutive dupes)
     ///   - collinear / zero-area (Newell normal magnitude < 1e-6)
     ///   - duplicate of an existing face (same unordered vertex set)
-    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip) {
+    ///
+    /// `autoOrient` (task 0477, topology-pen P3): when true (default, every
+    /// pre-task-0477 caller), the majority-vote `orientFaceConsistent` below
+    /// may reverse `idx` to stay winding-consistent with existing neighbors
+    /// (task 0394 parity). Set `false` to bypass that and emit `orderedIdx`
+    /// (post-`flip`) VERBATIM — for a caller building a fixed
+    /// construction-order convention (e.g. topology-pen's captured
+    /// `[hub, newest, older-neighbor]` triangle winding) that must not be
+    /// re-derived from adjacency. Every other guard (dedup, Newell zero-area,
+    /// duplicate-face, ≤2-per-edge manifold) still runs unconditionally.
+    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip, bool autoOrient = true) {
         if (orderedIdx.length < 3) return -1;
 
         // --- 1. copy + optional winding reversal ---
@@ -14278,8 +14329,10 @@ struct Mesh {
         // (owner): Make Polygon has no flip prompt at all — it just orients
         // correctly from context. Factored into `orientFaceConsistent` (task
         // 0395) so Bridge's new open-row strip/fan faces reuse the exact
-        // same invariant.
-        orientFaceConsistent(idx, edgeFaces);
+        // same invariant. `autoOrient:false` (task 0477) bypasses this
+        // entirely so the caller's own construction-order winding survives
+        // verbatim — every guard below still runs regardless.
+        if (autoOrient) orientFaceConsistent(idx, edgeFaces);
 
         // --- 5.7. manifold-safety guard: reject if any boundary edge of the
         // new face is already shared by 2 existing faces — adding a 3rd
@@ -28167,5 +28220,172 @@ unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
             ~ "not match the reflected source normal (flipNormals must "
             ~ "reproduce R(srcNormal), not its negation)");
     }
+}
+
+// ===========================================================================
+// Topology Pen P3 (task 0477) — the three additive kernel-seam witnesses:
+// edgeNeighbors (KILLER-1), deleteFacesByMask(keepFloatingEdges) (KILLER-2),
+// makePolygonFromVerts(autoOrient). See doc/topopen_p3_plan.md.
+// ===========================================================================
+
+unittest { // KILLER-1 RED/GREEN witness: a vertex on a bare (face-less) edge
+           // classifies as degree-1 via edgeNeighbors, NOT degree-0 as the
+           // loop-fan helpers (vertexValence/edgesAroundVertex) would report.
+    Mesh m;
+    m.addVertex(Vec3(0,0,0));   // 0 — carries a bare edge, no face at all
+    m.addVertex(Vec3(1,0,0));   // 1
+    m.addEdge(0, 1);
+    m.buildLoops();
+
+    // RED-witness precondition: the loop-fan helper is blind to a bare edge
+    // (vertLoop is seeded ONLY from face corners in buildLoops) — this
+    // documents the exact blind spot edgeNeighbors exists to fix, so a
+    // regression that made vertexValence "just see it too" would be a sign
+    // this witness needs re-checking, not silently pass either way.
+    assert(m.vertexValence(0) == 0,
+        "loop-fan vertexValence must NOT see the bare edge (documents the "
+        ~ "blind spot edgeNeighbors below fixes)");
+
+    // GREEN: the raw edges[] scan sees it correctly.
+    auto en = m.edgeNeighbors(0);
+    assert(en.length == 1, "edgeNeighbors must report exactly 1 neighbor for a bare-edge vertex");
+    assert(en[0] == 1, "edgeNeighbors must report vertex 1 as 0's neighbor");
+    assert(m.edgeNeighbors(1).length == 1 && m.edgeNeighbors(1)[0] == 0,
+        "edgeNeighbors must be symmetric for the same bare edge");
+}
+
+unittest { // KILLER-2 witness: deleteFacesByMask(keepOrphans:true,
+           // keepFloatingEdges:true) keeps EVERY former edge of the deleted
+           // face (now bordering no face) AND an unrelated floating edge
+           // elsewhere in the mesh, untouched.
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(5,5,5), Vec3(6,5,5)];
+    m.addFace([0u, 1u, 2u]);   // the face to delete
+    m.addEdge(3, 4);           // an UNRELATED floating edge elsewhere
+    m.buildLoops();
+
+    assert(m.edgeIndex(0,1) != ~0u && m.edgeIndex(1,2) != ~0u && m.edgeIndex(0,2) != ~0u);
+    assert(m.edgeIndex(3,4) != ~0u);
+    assert(m.edges.length == 4);
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[0] = true;
+    size_t removed = m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+    assert(removed == 1);
+    assert(m.faces.length == 0, "the triangle face must be gone");
+
+    // Every one of the triangle's 3 edges — now bordering NO face — must
+    // survive as a floating orphan, exactly like the unrelated edge.
+    assert(m.edgeIndex(0,1) != ~0u, "former triangle edge (0,1) must survive");
+    assert(m.edgeIndex(1,2) != ~0u, "former triangle edge (1,2) must survive");
+    assert(m.edgeIndex(0,2) != ~0u, "former triangle edge (0,2) must survive");
+    assert(m.edgeIndex(3,4) != ~0u, "unrelated floating edge must survive untouched");
+    assert(m.edges.length == 4, "no edge must be lost mesh-wide (would happen "
+        ~ "under the OLD unconditional rebuildEdges())");
+    assert(m.vertices.length == 5, "keepOrphans must leave every vertex in place");
+}
+
+unittest { // KILLER-2 end-to-end: reproduces the SESSION-3 CASE-QUAD dump
+           // bit-for-bit — triangle [0,5,4] (edges (0,4),(0,5),(4,5)) spliced
+           // into quad [5,0,4,6], the old (4,5) edge surviving as a
+           // non-bounding orphan diagonal.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),   // 0
+        Vec3(9,9,9),   // 1 (unused filler, keeps indices matching the capture)
+        Vec3(9,9,9),   // 2
+        Vec3(9,9,9),   // 3
+        Vec3(1,0,0),   // 4
+        Vec3(0,1,0),   // 5
+        Vec3(1,1,0),   // 6
+    ];
+
+    int triFi = m.makePolygonFromVerts([0u, 5u, 4u], false);
+    assert(triFi == 0, "seed triangle must build");
+    assert(m.faces[triFi] == [0u, 5u, 4u]);
+    assert(m.edges.length == 3);
+    assert(m.edgeIndex(0,4) != ~0u && m.edgeIndex(0,5) != ~0u && m.edgeIndex(4,5) != ~0u);
+
+    // Delete the triangle, keeping BOTH the orphan verts and every edge —
+    // the ONLY way to remove a face without a rebuildEdges (plan's load
+    // -bearing rule).
+    bool[] mask = new bool[](m.faces.length);
+    mask[triFi] = true;
+    size_t removed = m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+    assert(removed == 1);
+    assert(m.faces.length == 0);
+    assert(m.edges.length == 3, "all 3 former triangle edges must survive as orphans");
+
+    // Splice the quad in the prescribed verbatim construction order —
+    // winding is a fixed convention, not adjacency-derived (autoOrient:false).
+    int quadFi = m.makePolygonFromVerts([5u, 0u, 4u, 6u], false, /*autoOrient*/false);
+    assert(quadFi == 0, "quad must build");
+    assert(m.faces[quadFi] == [5u, 0u, 4u, 6u],
+        "quad winding must be emitted VERBATIM in construction order");
+
+    // Exact SESSION-3 edge-set match: (0,4),(0,5),(4,5),(4,6),(5,6) — 5 edges,
+    // the old (4,5) diagonal now bounding NO face.
+    assert(m.edges.length == 5, "expected 5 edges total (3 old + 2 new)");
+    assert(m.edgeIndex(0,4) != ~0u);
+    assert(m.edgeIndex(0,5) != ~0u);
+    assert(m.edgeIndex(4,5) != ~0u, "the old diagonal must survive, unbounded by any face");
+    assert(m.edgeIndex(4,6) != ~0u, "new boundary edge (4,6)");
+    assert(m.edgeIndex(5,6) != ~0u, "new boundary edge (5,6)");
+
+    auto ef = m.buildEdgeFaces();
+    assert((Mesh.edgeKeyOrdered(4, 5) in ef) is null,
+        "diagonal (4,5) must border zero faces post-splice");
+}
+
+unittest { // makePolygonFromVerts(autoOrient:false) — the winding bypass
+           // emits the caller's index order VERBATIM (no majority-vote
+           // reversal against an existing same-direction neighbor), while
+           // every other guard (degenerate, duplicate-face) still runs.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),   // 0
+        Vec3(1,0,0),   // 1
+        Vec3(1,1,0),   // 2
+        Vec3(0,1,0),   // 3
+        Vec3(1,0,-1),  // 4
+        Vec3(0,0,-1),  // 5
+        Vec3(2,0,0),   // 6 — collinear with 0,1 for the degenerate-guard check
+    ];
+
+    // fi0 traverses shared edge (0,1) in the 0->1 direction.
+    int fi0 = m.makePolygonFromVerts([0u, 1u, 2u, 3u], false);
+    assert(fi0 == 0);
+
+    // fi1 ALSO traverses (0,1) in the SAME 0->1 direction — a same-direction
+    // share the default autoOrient:true path would flip (task 0394
+    // majority-vote). autoOrient:false must NOT flip it.
+    int fi1 = m.makePolygonFromVerts([0u, 1u, 4u, 5u], false, /*autoOrient*/false);
+    assert(fi1 != -1, "must still build despite the bypass");
+    assert(m.faces[fi1] == [0u, 1u, 4u, 5u],
+        "autoOrient:false must emit the caller's order verbatim, even where "
+        ~ "the default auto-orient would reverse it");
+
+    // Control: the IDENTICAL index order and same-direction share, under the
+    // DEFAULT (autoOrient:true) path, DOES get reversed — proves the two
+    // modes genuinely differ, not just that the bypass never fires.
+    Mesh m2;
+    m2.vertices = m.vertices.dup;
+    m2.makePolygonFromVerts([0u, 1u, 2u, 3u], false);
+    int fi1Default = m2.makePolygonFromVerts([0u, 1u, 4u, 5u], false);
+    assert(fi1Default != -1);
+    assert(m2.faces[fi1Default] != [0u, 1u, 4u, 5u],
+        "control: the default (autoOrient:true) path DOES reverse a "
+        ~ "same-direction shared edge — otherwise this witness proves nothing");
+
+    // The bypass must not defeat any other guard.
+    assert(m.makePolygonFromVerts([0u, 1u], false, false) == -1,
+        "<3 verts must still reject with autoOrient:false");
+    assert(m.makePolygonFromVerts([0u, 0u, 0u], false, false) == -1,
+        "all-same verts must still reject with autoOrient:false");
+    assert(m.makePolygonFromVerts([0u, 1u, 6u], false, false) == -1,
+        "collinear must still reject with autoOrient:false");
+    assert(m.makePolygonFromVerts([0u, 1u, 2u, 3u], false, false) == -1,
+        "duplicate face (same unordered vertex set as fi0) must still reject "
+        ~ "with autoOrient:false");
 }
 

@@ -29,7 +29,8 @@ import core.thread  : Thread;
 import core.time    : dur;
 
 public import drag_helpers : Vec3, Viewport, CameraState, dot, cross, normalize,
-    lookAt, perspectiveMatrix, fetchCamera, viewportFromCamera, projectToWindow;
+    lookAt, perspectiveMatrix, fetchCamera, viewportFromCamera, projectToWindow,
+    buildDragLog;
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing (mirrors every other topology-pen test file's local idiom).
@@ -347,6 +348,65 @@ JSONValue modelForLayer(int layer) {
 
 int vertexCountLayer(int layer) {
     return cast(int) modelForLayer(layer)["vertexCount"].integer;
+}
+
+// ---------------------------------------------------------------------------
+// P3 (doc/topopen_p3_plan.md) build-gesture readers — edges/faces, on top of
+// the vertex readers above. Every value returned here is checked against an
+// INDEPENDENTLY-computed expectation by the test, never compared against
+// vibe3d's own prior output.
+// ---------------------------------------------------------------------------
+
+int edgeCountLayer(int layer) {
+    return cast(int) modelForLayer(layer)["edgeCount"].integer;
+}
+
+int faceCountLayer(int layer) {
+    return cast(int) modelForLayer(layer)["faceCount"].integer;
+}
+
+/// All edges of `layer` as unordered `[a,b]` index pairs (raw server order).
+int[2][] readEdgesLayer(int layer) {
+    auto m = modelForLayer(layer);
+    auto arr = m["edges"].array;
+    auto outE = new int[2][](arr.length);
+    foreach (i, e; arr) {
+        auto c = e.array;
+        outE[i] = [cast(int)c[0].integer, cast(int)c[1].integer];
+    }
+    return outE;
+}
+
+/// All faces of `layer` as ordered vertex-index arrays (raw server order —
+/// winding survives exactly as the tool emitted it).
+int[][] readFacesLayer(int layer) {
+    auto m = modelForLayer(layer);
+    auto arr = m["faces"].array;
+    auto outF = new int[][](arr.length);
+    foreach (i, f; arr) {
+        auto c = f.array;
+        auto face = new int[](c.length);
+        foreach (j, vi; c) face[j] = cast(int)vi.integer;
+        outF[i] = face;
+    }
+    return outF;
+}
+
+/// True iff SOME edge in `layer` connects `a`/`b` (unordered).
+bool hasEdgeLayer(int layer, int a, int b) {
+    foreach (e; readEdgesLayer(layer))
+        if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return true;
+    return false;
+}
+
+/// True iff `layer` contains a face whose vertex-index array is EXACTLY
+/// `expected` (same length, same order, same start — no rotation/reflection
+/// tolerance) — for asserting a captured winding verbatim, not just the
+/// unordered vertex set.
+bool hasExactFace(int layer, const int[] expected) {
+    foreach (f; readFacesLayer(layer))
+        if (f == expected) return true;
+    return false;
 }
 
 double[3][] readVerticesLayer(int layer) {

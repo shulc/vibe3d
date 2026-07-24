@@ -638,7 +638,7 @@ struct EditorApp {
     AiExplorationController aiExplore;
     AiInteractionLogWriter  aiLogWriter;
 
-    // ---- (в) by-value: the 12 typed MeshSessionEdit/MeshVertexEdit
+    // ---- (в) by-value: the 13 typed MeshSessionEdit/MeshVertexEdit
     //      factories (app.d ~2785-2832), each assigned exactly once ----
     MeshVertexEdit  delegate() vxEditFactory;
     MeshSessionEdit delegate() bevelEditFactory;
@@ -652,6 +652,12 @@ struct EditorApp {
     MeshSessionEdit delegate() radialArrayEditFactory;
     MeshSessionEdit delegate() smoothShiftEditFactory;
     MeshSessionEdit delegate() strokeExtrudeEditFactory;
+    // Task 0477 (topology-pen P3): the drag-build gesture's own generic
+    // session-edit factory, wireName "mesh.topoPen_build" — kept distinct
+    // from `bevelEditFactory` (unlike most interactive tools above, which
+    // reuse it under its "mesh.bevel_edit" wire name) so undo history /
+    // event-log replay dispatch on a name that actually describes this op.
+    MeshSessionEdit delegate() topoPenBuildEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

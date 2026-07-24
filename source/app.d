@@ -3027,6 +3027,12 @@ void main(string[] args) {
     // undo history / replay dispatch on it.
     auto strokeExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.strokeExtrude_edit", "Stroke Extrude", sessionGeomMarks);
+    // Topology Pen P3's drag-build gesture (task 0477, doc/topopen_p3_plan.md):
+    // its own typed edit factory, distinct wire name so undo history / replay
+    // dispatch describes the op rather than reusing bevelEditFactory's
+    // "mesh.bevel_edit" the way most of the tools above do.
+    auto topoPenBuildEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_build", "Topology Build", sessionGeomMarks);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3136,6 +3142,7 @@ void main(string[] args) {
     app.radialArrayEditFactory   = radialArrayEditFactory;
     app.smoothShiftEditFactory   = smoothShiftEditFactory;
     app.strokeExtrudeEditFactory = strokeExtrudeEditFactory;
+    app.topoPenBuildEditFactory  = topoPenBuildEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;
