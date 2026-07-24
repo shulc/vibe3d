@@ -9,7 +9,7 @@
     "captured_utc": "unknown",
     "harness": null,
     "task": "topopen-p0",
-    "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md). Every hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal."
+    "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md). Every hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal. 'bg_quad_tilted_normal' (review NIT-4) is 'bg_quad_offcenter' rotated 30deg about world X -- every other case's background face is axis-aligned, so this is the only case whose expected normal has all three components nonzero, exercising pickSurfaceRay's cross(b-a,c-a) fan-triangle normal against a genuinely oblique FACE (not just an oblique camera ray)."
   },
   "tolerance": 0.02,
   "cases": [
@@ -62,6 +62,33 @@
         "point": [3, 0, -2], "normal": [0, 1, 0],
         "nearestVert": [10, 0, -10],
         "nearestEdge": [[-10, 0, -10], [10, 0, 10]]
+      }
+    },
+    {
+      "name": "bg_quad_tilted_normal",
+      "_comment": "NIT-3-P0-review NIT-4: every other case hits an axis-aligned face, so pickSurfaceRay's interpolated normal (cross(b-a,c-a) from the hit face's own verts) is exercised only by ray DIRECTION, never by a genuinely oblique FACE normal -- a sign/winding bug there would still pass every other case. This is 'bg_quad_offcenter' rotated 30 degrees about the world X axis (R_x(30deg) applied to every vertex, the expected point, and the expected normal), so every expected number here is derivable by applying the SAME rotation matrix to that already-verified case's numbers rather than a fresh independent derivation: R_x(30): y'=y*cos(t)-z*sin(t), z'=y*sin(t)+z*cos(t), t=pi/6, sin(t)=0.5, cos(t)=0.8660254 (sqrt(3)/2). The resulting normal (0, 0.8660254, 0.5) has no zero-or-one axis components at all -- not aligned with X, Y, or Z.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,5,-8.660254],[10,5,-8.660254],[10,-5,8.660254],[-10,-5,8.660254]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.5, "elevation": 0.5, "distance": 6,
+            "focus": {"x": 3, "y": 1.0, "z": -1.7320508}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 1, "face": 0,
+        "point": [3, 1.0, -1.7320508], "normal": [0, 0.8660254, 0.5],
+        "nearestVert": [10, 5, -8.660254],
+        "nearestEdge": [[-10, 5, -8.660254], [10, -5, 8.660254]]
       }
     },
     {
