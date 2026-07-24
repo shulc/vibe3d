@@ -3686,16 +3686,19 @@ void main(string[] args) {
             return format(`{"faceIndex":%d}`, faceIdx);
         });
 
-        // GET /api/surface-raycast?x=&y= — background-surface raycast oracle
-        // (topology-pen P0, doc/topopen_p0_plan.md). Main-thread bridge
-        // (mirrors /api/pick above): builds a SubjectPacket with
-        // cursorValid=true at the requested pixel, evaluates the live
-        // toolpipe (the CONS stage's raycast branch fires because
-        // cursorValid is true here), and reports the resulting
-        // ConstrainHitPacket. GL-free — the CONS raycast reads
-        // snap.backgroundSourcesSnapshot() (CPU-side Mesh pointers) via
-        // BvhPick, no GPU state involved, so this needs no
-        // ensureDisplayCurrent().
+        // GET /api/surface-raycast?x=&y=[&thresholdPx=] — background-surface
+        // raycast oracle (topology-pen P0/P1, doc/topopen_p0_plan.md,
+        // doc/topopen_p1_plan.md). Main-thread bridge (mirrors /api/pick
+        // above): builds a SubjectPacket with cursorValid=true at the
+        // requested pixel, evaluates the live toolpipe (the CONS stage's
+        // raycast branch fires because cursorValid is true here), and
+        // reports the resulting ConstrainHitPacket PLUS (P1) the resolved
+        // hover snap-target (targetKind/targetVert/targetEdge), computed by
+        // the SAME `resolveHoverTarget` (constraint.d) that
+        // TopologyPenTool calls — this endpoint and the tool always agree.
+        // GL-free — the CONS raycast reads snap.backgroundSourcesSnapshot()
+        // (CPU-side Mesh pointers) via BvhPick, no GPU state involved, so
+        // this needs no ensureDisplayCurrent().
         //
         // NIT-5 (multi-viewport caveat, deferred): this uses
         // `vpm.activeSnapshot()` (the currently-ACTIVE viewport cell), while
@@ -3707,9 +3710,10 @@ void main(string[] args) {
         // accept an explicit viewport id, same as `/api/camera`'s
         // `_viewport` override — not needed until a later phase actually
         // exercises multi-viewport topology-pen.
-        httpServer.setSurfaceRaycastProvider((int x, int y) {
+        httpServer.setSurfaceRaycastProvider((int x, int y, float thresholdPx) {
             import std.format        : format;
-            import toolpipe.packets  : ConstrainHitPacket;
+            import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
+            import constraint        : resolveHoverTarget, kTopoPenSnapPx;
 
             SubjectPacket subj;
             subj.mesh        = &mesh();
@@ -3726,15 +3730,27 @@ void main(string[] args) {
 
             auto hp = vts.get!ConstrainHitPacket();
             if (hp is null)
-                return `{"hit":false}`;
+                return `{"hit":false,"targetKind":"none","targetVert":-1,"targetEdge":-1}`;
+
+            float th = (thresholdPx > 0.0f) ? thresholdPx : kTopoPenSnapPx;
+            auto tgt = resolveHoverTarget(*hp, subj.viewport, th);
+            string kindToken;
+            final switch (tgt.kind) {
+                case HoverTargetKind.None:   kindToken = "none";   break;
+                case HoverTargetKind.Vertex: kindToken = "vertex"; break;
+                case HoverTargetKind.Edge:   kindToken = "edge";   break;
+                case HoverTargetKind.Face:   kindToken = "face";   break;
+            }
 
             return format(
                 `{"hit":%s,"point":[%.6f,%.6f,%.6f],"normal":[%.6f,%.6f,%.6f],`
-              ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d}`,
+              ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d,`
+              ~ `"targetKind":"%s","targetVert":%d,"targetEdge":%d}`,
                 hp.hit ? "true" : "false",
                 hp.point.x, hp.point.y, hp.point.z,
                 hp.normal.x, hp.normal.y, hp.normal.z,
-                hp.layer, hp.face, hp.nearestVert, hp.nearestEdge);
+                hp.layer, hp.face, hp.nearestVert, hp.nearestEdge,
+                kindToken, tgt.vert, tgt.edge);
         });
 
         // POST /api/camera — set live View. Accepts azimuth, elevation,

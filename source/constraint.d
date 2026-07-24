@@ -2,9 +2,11 @@ module constraint;
 
 import std.math : sqrt;
 
-import math : Vec3, Viewport, dot, cross, normalize;
+import math : Vec3, Viewport, dot, cross, normalize,
+              projectToWindowFull, closestOnSegment2D;
 import mesh : Mesh, edgeKey;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom;
+import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+                          HoverTarget, HoverTargetKind;
 
 // ---------------------------------------------------------------------------
 // World-space geometry constraint math — Stage 3 of doc/cons_constraint_plan.md.
@@ -211,29 +213,23 @@ Vec3 applyOffset(Vec3 hitPos, Vec3 normal, float offset)
 }
 
 // ---------------------------------------------------------------------------
-// ConstrainHit / nearestFaceVertex / nearestFaceEdge — topology-pen P0
-// (doc topopen_p0_plan.md). Pure derivation over an ALREADY-RESOLVED
-// background-surface hit (face index + world point), read by the CONS
-// stage's raycast branch (source/toolpipe/stages/constrain.d) to fill the
-// "nearest element" fields of the published ConstrainHitPacket. No BVH /
-// raycast here — that lives in bvh_pick.d (BvhPick.pickSurfaceRay); this
-// module stays the pure-math layer per its existing doc comment.
+// nearestFaceVertex / nearestFaceEdge / resolveHoverTarget — topology-pen
+// P0/P1 (doc topopen_p0_plan.md, doc topopen_p1_plan.md). Pure derivation
+// over an ALREADY-RESOLVED background-surface hit (face index + world
+// point), read by the CONS stage's raycast branch
+// (source/toolpipe/stages/constrain.d) to fill the "nearest element"
+// fields of the published ConstrainHitPacket. No BVH / raycast here — that
+// lives in bvh_pick.d (BvhPick.pickSurfaceRay); this module stays the
+// pure-math layer per its existing doc comment.
+//
+// P0 shipped a standalone `ConstrainHit` struct here mirroring
+// `ConstrainHitPacket` field-for-field, intended as this module's own
+// "resolved hit" value type. It went unused (every caller passes the
+// packet's fields directly to `nearestFaceVertex`/`nearestFaceEdge`) and is
+// retired as of P1 (review REV-A) — `resolveHoverTarget` below takes
+// `ConstrainHitPacket` directly rather than reintroducing a second,
+// parallel struct.
 // ---------------------------------------------------------------------------
-
-/// Result of a resolved background-surface hit — the payload the CONS
-/// stage's raycast branch publishes (mirrored into ConstrainHitPacket,
-/// toolpipe.packets). Every field carries an explicit default (`Vec3.init`
-/// / `float.init` is NaN in this codebase's convention).
-struct ConstrainHit {
-    bool  hit         = false;
-    Vec3  point       = Vec3(0, 0, 0);
-    Vec3  normal      = Vec3(0, 1, 0);
-    int   layer       = -1;
-    int   face        = -1;
-    int   nearestVert = -1;
-    int   nearestEdge = -1;
-    float t           = float.infinity;
-}
 
 /// Closest point on segment [a, b] to `p`. Small private helper backing
 /// `nearestFaceEdge` — not exposed elsewhere (math.d already has a 2D
@@ -301,6 +297,71 @@ int nearestFaceEdge(const ref Mesh m, int face, Vec3 p) {
         }
     }
     return best;
+}
+
+// PLACEHOLDER radius for `resolveHoverTarget`'s Vertex/Edge snap test, in
+// screen pixels. This is NOT the reference editor's real snap threshold —
+// that (and the real vertex/edge/face precedence, including snapping
+// against the PRIMARY layer's own new topology, which P1 does not resolve
+// at all) is DEFERRED-CAPTURE (topology-pen C2 -> P4, doc/topopen_p1_plan.md).
+enum float kTopoPenSnapPx = 12.0f;
+
+/// PINNED shape, PLACEHOLDER precedence: pure screen-space resolution of
+/// the hover's place-target from an already-published `ConstrainHitPacket`
+/// (the CONS stage's background-surface raycast result — see
+/// `source/toolpipe/stages/constrain.d`'s `raycastBackground`). No mesh
+/// access, no cursor input — every input is carried on `h` (world
+/// positions of the raycast hit and its candidate nearest vert/edge) so
+/// `/api/surface-raycast` and `TopologyPenTool` compute IDENTICALLY from
+/// the same packet (REV-A: this lives in the constraint layer, mirroring
+/// `nearestFaceVertex`/`nearestFaceEdge` above, NOT in the CONS stage or
+/// the tool).
+///
+/// Precedence Vertex > Edge > Face at a single fixed pixel radius
+/// (`thPx`) is an explicit PLACEHOLDER (see `kTopoPenSnapPx`'s doc
+/// comment) — NOT a claim that this matches the reference editor's real
+/// snap precedence. `h.hit == false` (no surface hit at all) resolves to
+/// `HoverTargetKind.None`; a hit that is behind the camera when projected
+/// (should not normally happen — the hit itself came from a ray through
+/// the same viewport) also degrades to `None` rather than asserting.
+HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
+                               const ref Viewport vp, float thPx)
+{
+    HoverTarget r;                      // {None, -1, -1}
+    if (!h.hit) return r;               // no surface hit -> no target
+
+    r.kind = HoverTargetKind.Face;      // hit, but unsnapped default
+    float ax, ay, az;
+    if (!projectToWindowFull(h.point, vp, ax, ay, az)) return r;
+
+    // Vertex candidate — priority 1.
+    if (h.nearestVert >= 0) {
+        float vx, vy, vz;
+        if (projectToWindowFull(h.nearestVertPos, vp, vx, vy, vz)) {
+            float dx = vx - ax, dy = vy - ay;
+            if (dx * dx + dy * dy <= thPx * thPx) {
+                r.kind = HoverTargetKind.Vertex;
+                r.vert = h.nearestVert;
+                return r;
+            }
+        }
+    }
+
+    // Edge candidate — priority 2.
+    if (h.nearestEdge >= 0) {
+        float ea0, ea1, ea2, eb0, eb1, eb2;
+        if (projectToWindowFull(h.nearestEdgeA, vp, ea0, ea1, ea2)
+         && projectToWindowFull(h.nearestEdgeB, vp, eb0, eb1, eb2)) {
+            float t;
+            if (closestOnSegment2D(ax, ay, ea0, ea1, eb0, eb1, t) <= thPx) {
+                r.kind = HoverTargetKind.Edge;
+                r.edge = h.nearestEdge;
+                return r;
+            }
+        }
+    }
+
+    return r;                           // Face
 }
 
 // ---------------------------------------------------------------------------
@@ -695,4 +756,122 @@ unittest { // nearestFaceEdge — grazing case: a point at a shared CORNER is
     int got = nearestFaceEdge(*m, 0, Vec3(1.0f, 0.05f, 0.0f));  // corner (1,0,0)
     assert(got >= 0 && got < cast(int)m.edges.length,
         "grazing corner case should still resolve to a valid edge index");
+}
+
+// ---------------------------------------------------------------------------
+// resolveHoverTarget — topology-pen P1 (doc/topopen_p1_plan.md). GL-free
+// pure unittests: a synthetic Viewport (identity-ish lookAt at Z=5, 90°
+// symmetric perspective, 800x800) makes the projected-pixel math a plain
+// scale by a hand-derivable constant, so every expected pixel distance
+// below is independently computed (not round-tripped through the function
+// under test) — same rigor as the HTTP fixture's threshold-flip cases
+// (topo_pen_hover_target.json #5/#6).
+//
+// Camera: eye=(0,0,5), lookAt origin, up=(0,1,0), fovY=90 deg (f = 1/tan(45)
+// = 1), aspect=1, width=height=800. Both the hit point and every candidate
+// below sit at world Z=0 (same depth as the lookAt target), so the
+// perspective divide's w is constant (== distance == 5) across all of
+// them, and the projection collapses to a PURE uniform scale + centering:
+//   screenX = 400 + S*worldX,  screenY = 400 - S*worldY,  S = f*0.5*height/eye.z
+//           = 1 * 0.5*800/5 = 80 px per world unit.
+// (This is the SAME derivation the topo_pen_hover_target.json fixture's
+// provenance uses for its az=0/el=0 cube cases — see that file's notes.)
+// ---------------------------------------------------------------------------
+version (unittest) private Viewport makeHoverTestViewport() {
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    vp.x = 0;
+    vp.y = 0;
+    return vp;
+}
+
+unittest { // resolveHoverTarget — no hit -> None (default packet)
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;   // hit == false by default
+    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    assert(t.kind == HoverTargetKind.None, "no hit must resolve to None");
+    assert(t.vert == -1 && t.edge == -1);
+}
+
+unittest { // resolveHoverTarget — vertex within threshold wins (S=80 px/unit;
+           // a 0.1-world-unit offset at Z=0 depth projects to exactly 8px)
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit           = true;
+    h.point         = Vec3(0, 0, 0);          // projects to (400,400)
+    h.nearestVert   = 3;
+    h.nearestVertPos = Vec3(0.1f, 0, 0);      // projects to (408,400): 8px away
+    h.nearestEdge   = -1;                     // no edge candidate this case
+
+    auto wide = resolveHoverTarget(h, vp, 12.0f);     // 8 <= 12
+    assert(wide.kind == HoverTargetKind.Vertex, "8px within a 12px radius must snap to Vertex");
+    assert(wide.vert == 3);
+
+    auto narrow = resolveHoverTarget(h, vp, 4.0f);    // 8 > 4
+    assert(narrow.kind == HoverTargetKind.Face, "8px outside a 4px radius must fall through to Face");
+}
+
+unittest { // resolveHoverTarget — edge wins when the vertex candidate is far
+           // but the edge segment passes through the hit's projected pixel
+           // (vert offset (2,0,0) -> 160px away; edge endpoints (0,+-0.1,0)
+           // -> a vertical segment straddling (400,400) exactly, 0px).
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit         = true;
+    h.point       = Vec3(0, 0, 0);
+    h.nearestVert = 1;
+    h.nearestVertPos = Vec3(2.0f, 0, 0);      // 160px away — outside any sane radius
+    h.nearestEdge = 5;
+    h.nearestEdgeA = Vec3(0,  0.1f, 0);       // projects to (400, 392)
+    h.nearestEdgeB = Vec3(0, -0.1f, 0);       // projects to (400, 408)
+
+    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    assert(t.kind == HoverTargetKind.Edge, "vertex far / edge through the hit pixel must resolve to Edge");
+    assert(t.edge == 5);
+}
+
+unittest { // resolveHoverTarget — neither candidate in range -> Face
+           // (vert offset (2,0,0) -> 160px; edge same offset -> also far)
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit         = true;
+    h.point       = Vec3(0, 0, 0);
+    h.nearestVert = 0;
+    h.nearestVertPos = Vec3(2.0f, 0, 0);
+    h.nearestEdge = 0;
+    h.nearestEdgeA = Vec3(2.0f,  0.1f, 0);
+    h.nearestEdgeB = Vec3(2.0f, -0.1f, 0);
+
+    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    assert(t.kind == HoverTargetKind.Face, "no candidate within the default radius must resolve to Face");
+    assert(t.vert == -1 && t.edge == -1);
+}
+
+unittest { // resolveHoverTarget — threshold boundary, independently computed:
+           // a 0.15-world-unit offset at S=80px/unit projects to EXACTLY
+           // 12.0px (0.15*80=12), matching kTopoPenSnapPx exactly. The
+           // comparison is `<=`, so thPx==12.0 must snap (boundary
+           // inclusive) and thPx==11.999 (just under the exact distance)
+           // must not.
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit           = true;
+    h.point         = Vec3(0, 0, 0);
+    h.nearestVert   = 7;
+    h.nearestVertPos = Vec3(0.15f, 0, 0);     // exactly 12.0px from the hit
+    h.nearestEdge   = -1;
+
+    auto atBoundary = resolveHoverTarget(h, vp, 12.0f);
+    assert(atBoundary.kind == HoverTargetKind.Vertex,
+        "distance == thPx must snap (inclusive boundary)");
+
+    auto justUnder = resolveHoverTarget(h, vp, 11.999f);
+    assert(justUnder.kind == HoverTargetKind.Face,
+        "distance just over thPx must NOT snap");
 }

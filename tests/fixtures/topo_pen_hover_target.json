@@ -1,0 +1,250 @@
+{
+  "name": "topo_pen_hover_target",
+  "description": "Topology Pen P1 (doc/topopen_p1_plan.md): the constraint layer's `resolveHoverTarget` (source/constraint.d), probed end-to-end through GET /api/surface-raycast's `targetKind`/`targetVert`/`targetEdge` fields. Builds on the P0 'focus-point trick' (see topo_pen_surface_raycast.json's provenance) -- every case's camera `focus` lands the raycast hit EXACTLY at that world point, at the viewport CENTRE pixel (475,300). All expected numbers (including the threshold-flip cases' projected pixel distances) are derived analytically from vibe3d's own documented camera formulas (sphericalToCartesian / lookAt / perspectiveMatrix / projectToWindowFull, math.d + view.d) via a standalone (uncommitted) Python replica of those formulas -- the SAME method topo_pen_surface_raycast.json's author used, not a call into resolveHoverTarget itself. No reference 3D modeling tool was used (P1's resolution rule is an explicit PLACEHOLDER, not a claim of reference parity -- see case 9 and doc/topopen_p1_plan.md's Deferred section).",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand + independent Python re-derivation of math.d/view.d (sphericalToCartesian, lookAt, perspectiveMatrix, projectToWindowFull)",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "topopen-p1",
+    "notes": "Most cases use an az=0/el=0 camera (eye = focus + (0,0,distance), forward = -Z) or az=pi/2/el=0 (forward = -X) so the camera's rotation is axis-aligned with a face the case tests head-on -- for any offset confined to that face's own plane (zero depth-component relative to the camera), the perspective projection collapses to an EXACT uniform pixel scale S = (1+sqrt(2)) * 0.5 * viewportHeight / distance (viewportHeight=544 for the default --test window), independent of which in-plane direction the offset points. Cases 5/6 (threshold_wide_vertex / threshold_narrow_face) use this to hand-derive the corner's exact projected distance from the hit point: offset (0.15,0.15,0) at distance=5 -> S=131.3332 px/unit -> corner pixel distance = S*0.15*sqrt(2) = 27.860px, nearest-edge pixel distance = S*0.15 = 19.700px (both independently verified against the standalone Python replica, not against resolveHoverTarget's own output). Case 9 (vertex_beats_edge) uses the same face/camera with a smaller offset (0.03,0.03,0): vertex=5.572px, edge=3.940px -- BOTH inside the default 12px radius, so the PLACEHOLDER Vertex>Edge precedence (not the reference editor's real precedence -- deferred to C2/P4) is what picks 'vertex' despite the edge being the geometrically closer candidate. Cases 4 and 10 reuse topo_pen_surface_raycast.json's 'ray_miss' and 'bg_hidden_not_hit' camera/geometry verbatim (already-verified misses)."
+  },
+  "cases": [
+    {
+      "name": "vertex_snap_corner",
+      "_comment": "Cube top face (face 4, Y=0.5 plane); focus sits 0.04 world units (X and Z) short of corner (0.5,0.5,0.5) -- independently computed corner pixel distance ~6.05px, comfortably inside the default 12px radius (the incident edges are even closer -- 3.95/5.75px -- but Vertex has priority regardless).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.4, "elevation": 0.6, "distance": 4,
+            "focus": {"x": 0.46, "y": 0.5, "z": 0.46}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "vertex", "targetVert": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "edge_snap_boundary",
+      "_comment": "Planar quad at Y=0; focus sits 0.1 world units inside the boundary edge (10,0,10)-(10,0,-10) (a point EXACTLY on that edge is numerically borderline for the BVH raycast -- the ray can miss the mesh entirely at that precise boundary, so the focus is nudged just inside), ~10 world units from either corner -- independently computed corner pixel distances (~93px, ~165px) are far outside the default 12px radius, and the edge distance (~0.1 world units, sub-pixel at this camera's scale) is far below it vs ~149px for the quad's diagonal.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.3, "elevation": 0.5, "distance": 30,
+            "focus": {"x": 9.9, "y": 0, "z": 0}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "edge", "targetEdge": [[10, 0, 10], [10, 0, -10]] }
+    },
+    {
+      "name": "face_point_interior",
+      "_comment": "Cube top face, focus near the face centre -- independently computed distances to every corner (70-125px) and every boundary edge (48-76px) are all far outside the default 12px radius, so the hit resolves to a free face-point (no vert/edge).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.4, "elevation": 0.6, "distance": 4,
+            "focus": {"x": 0.1, "y": 0.5, "z": 0.05}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "face" }
+    },
+    {
+      "name": "off_surface_none",
+      "_comment": "Reuses topo_pen_surface_raycast.json's 'ray_miss' camera/geometry verbatim (already-verified miss) -- no surface hit at all, so hover resolution must be None regardless of threshold.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.3, "elevation": 0.5, "distance": 5,
+            "focus": {"x": 50, "y": 50, "z": 50}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "hit": false, "targetKind": "none" }
+    },
+    {
+      "name": "threshold_wide_vertex",
+      "_comment": "REV-C: SAME camera+geometry as threshold_narrow_face, only thresholdPx differs. Cube face1 (Z=0.5 plane) viewed head-on (az=0,el=0 -> forward=-Z, an EXACT axis-aligned projection for any offset confined to this Z=const face). focus=(0.35,0.35,0.5) is 0.15 world units short of corner (0.5,0.5,0.5) in both X and Z. Independently derived (see suite provenance): S = (1+sqrt2)*0.5*544/5 = 131.3332 px/world-unit; corner pixel distance = S*0.15*sqrt(2) = 27.860px. thresholdPx=60 puts that corner INSIDE the radius -> vertex.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.0, "elevation": 0.0, "distance": 5,
+            "focus": {"x": 0.35, "y": 0.35, "z": 0.5}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300, "thresholdPx": 60 },
+      "expected": { "targetKind": "vertex", "targetVert": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "threshold_narrow_face",
+      "_comment": "REV-C: SAME camera+geometry as threshold_wide_vertex -- only thresholdPx differs (60 -> 4). Independently derived (see suite provenance): corner pixel distance = 27.860px, nearest-edge pixel distance = 19.700px. thresholdPx=4 puts BOTH candidates outside the radius -> face. Margins: 27.86-4=23.86px (vertex), 19.70-4=15.70px (edge) -- comfortably outside sub-pixel sampling error.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.0, "elevation": 0.0, "distance": 5,
+            "focus": {"x": 0.35, "y": 0.35, "z": 0.5}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300, "thresholdPx": 4 },
+      "expected": { "targetKind": "face" }
+    },
+    {
+      "name": "multi_bg_nearer_vertex",
+      "_comment": "Two background planes (PlaneHigh y=2 nearer to the camera, PlaneLow y=0 further) -- the raycast's nearest-wins rule (P0) must pick PlaneHigh, and the hover resolution must use ITS corner (10,2,10), not PlaneLow's geometry. focus=(9.95,2,9.95) is 0.05 short of the corner in both X,Z -- independently computed corner pixel distance ~6.76px (well inside the default 12px radius); the corner's two incident edges are ~4.6/5.4px (closer still, but Vertex wins by priority regardless).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:PlaneHigh" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,2,-10],[10,2,-10],[10,2,10],[-10,2,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.add name:PlaneLow" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.setVisible index:2 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.26, "elevation": 0.96, "distance": 6,
+            "focus": {"x": 9.95, "y": 2, "z": 9.95}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "vertex", "targetVert": [10, 2, 10], "docLayer": 1 }
+    },
+    {
+      "name": "edge_snap_cube_side",
+      "_comment": "Direction diversity: cube +X side (face 3, X=0.5 plane) viewed head-on along -X (az=pi/2, el=0 -> forward=-X, the same axis-aligned-projection trick as cases 5/6/9 but on a different axis, avoiding the az=el=0 gimbal case's Z-only coverage). focus sits EXACTLY on the midpoint of the top edge of that face -- independently computed corner distances ~82px each (far outside the default 12px radius), edge distance 0 (on it).",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 1.5707963, "elevation": 0.0, "distance": 4,
+            "focus": {"x": 0.5, "y": 0.5, "z": 0.0}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "edge", "targetEdge": [[0.5, 0.5, -0.5], [0.5, 0.5, 0.5]] }
+    },
+    {
+      "name": "vertex_beats_edge",
+      "_comment": "PLACEHOLDER precedence (deferred to C2/P4 -- see doc/topopen_p1_plan.md's Deferred section): cube face1 (Z=0.5), same head-on camera as cases 5/6, focus 0.03 world units short of corner (0.5,0.5,0.5) in both X and Z. Independently derived (see suite provenance): vertex pixel distance = 5.572px, incident-edge pixel distance = 3.940px -- the EDGE is geometrically CLOSER, but resolveHoverTarget checks Vertex first and both are inside the default 12px radius, so 'vertex' wins. This is NOT a claim that the reference editor's real precedence prefers vertex over a closer edge -- it is this phase's explicit placeholder rule, replaced by a captured precedence in P4.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.0, "elevation": 0.0, "distance": 5,
+            "focus": {"x": 0.47, "y": 0.47, "z": 0.5}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "targetKind": "vertex", "targetVert": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "bg_hidden_none",
+      "_comment": "Reuses topo_pen_surface_raycast.json's 'bg_hidden_not_hit' camera/geometry verbatim -- the background layer is hidden (layer.setVisible false), so there is no surface hit at all and hover resolution must be None.",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:false" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.4, "elevation": 0.6, "distance": 4,
+            "focus": {"x": 0, "y": 0.5, "z": 0}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "hit": false, "targetKind": "none" }
+    }
+  ]
+}

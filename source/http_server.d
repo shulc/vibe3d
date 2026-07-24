@@ -335,8 +335,10 @@ class HttpServer {
     // (topology-pen P0, test-only). Marshaled onto the main thread (mirrors
     // PickProvider) so the CONS stage's per-cursor raycast branch — gated on
     // SubjectPacket.cursorValid, only ever true on a main-thread path — can
-    // run safely. Returns the resolved ConstrainHitPacket as JSON.
-    private alias SurfaceRaycastProvider = string delegate(int x, int y);
+    // run safely. Returns the resolved ConstrainHitPacket as JSON. `thresholdPx`
+    // (P1, doc/topopen_p1_plan.md) is the resolveHoverTarget snap radius;
+    // <= 0 means "use the tool's own default" (kTopoPenSnapPx).
+    private alias SurfaceRaycastProvider = string delegate(int x, int y, float thresholdPx);
     private SurfaceRaycastProvider surfaceRaycastProvider;
 
     // ----- /api/undo/status provider ---------------------------------------
@@ -425,7 +427,7 @@ class HttpServer {
     struct PickResp { string result; string error; }
     private MainThreadBridge!(PickReq, PickResp) pickBridge;
 
-    struct SurfaceRaycastReq  { int x; int y; }
+    struct SurfaceRaycastReq  { int x; int y; float thresholdPx = -1.0f; }
     struct SurfaceRaycastResp { string result; string error; }
     private MainThreadBridge!(SurfaceRaycastReq, SurfaceRaycastResp) surfaceRaycastBridge;
 
@@ -658,7 +660,7 @@ class HttpServer {
                     resp.error = "surface-raycast provider not set";
                 } else {
                     try {
-                        resp.result = surfaceRaycastProvider(req.x, req.y);
+                        resp.result = surfaceRaycastProvider(req.x, req.y, req.thresholdPx);
                         resp.error  = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -835,10 +837,12 @@ class HttpServer {
         this.pickProvider = provider;
     }
 
-    /// GET /api/surface-raycast?x=&y= — background-surface raycast oracle
-    /// (topology-pen P0). Provider runs on the main thread so the CONS
-    /// stage's raycast branch (gated on SubjectPacket.cursorValid) is safe
-    /// to fire.
+    /// GET /api/surface-raycast?x=&y=[&thresholdPx=] — background-surface
+    /// raycast oracle (topology-pen P0/P1). Provider runs on the main
+    /// thread so the CONS stage's raycast branch (gated on
+    /// SubjectPacket.cursorValid) is safe to fire. `thresholdPx` (P1)
+    /// overrides the hover snap-target resolution radius; omitted/<=0
+    /// means "use the tool's own default".
     public void setSurfaceRaycastProvider(SurfaceRaycastProvider provider) {
         this.surfaceRaycastProvider = provider;
     }
@@ -1647,6 +1651,8 @@ class HttpServer {
             } else {
                 surfaceRaycastBridge.req.x = parseQueryInt(request.path, "x", 0);
                 surfaceRaycastBridge.req.y = parseQueryInt(request.path, "y", 0);
+                surfaceRaycastBridge.req.thresholdPx =
+                    parseQueryFloat(request.path, "thresholdPx", -1.0f);
                 surfaceRaycastBridge.resp.result = "";
                 surfaceRaycastBridge.resp.error  = "";
                 if (!surfaceRaycastBridge.submitAndWait())
@@ -2335,6 +2341,23 @@ private int parseQueryInt(string path, string key, int def) {
         if (eq < 0) continue;
         if (kv[0 .. eq] == key) {
             try return kv[eq + 1 .. $].to!int;
+            catch (ConvException) return def;
+        }
+    }
+    return def;
+}
+
+// Parse `?key=N.N` (or `&key=N.N`) from a request path. Returns `def` when
+// the key is missing or not parseable as a float (mirrors parseQueryInt).
+private float parseQueryFloat(string path, string key, float def) {
+    import std.conv : to, ConvException;
+    auto qi = path.indexOf('?');
+    if (qi < 0) return def;
+    foreach (kv; path[qi + 1 .. $].split('&')) {
+        auto eq = kv.indexOf('=');
+        if (eq < 0) continue;
+        if (kv[0 .. eq] == key) {
+            try return kv[eq + 1 .. $].to!float;
             catch (ConvException) return def;
         }
     }

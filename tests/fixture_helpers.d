@@ -1287,3 +1287,91 @@ void runSurfaceRaycastSuite(string fixtureJson) {
         }
     }
 }
+
+/// `hover-target` verifier (topology-pen P1, doc/topopen_p1_plan.md). Same
+/// step vocabulary + camera "focus-point trick" as `runSurfaceRaycastSuite`
+/// (above), but asserts the RESOLVED hover snap-target
+/// (`targetKind`/`targetVert`/`targetEdge`, `constraint.resolveHoverTarget`)
+/// instead of the raw hit fields.
+///
+/// Schema:
+///   { "name": "...", "provenance": {...},
+///     "cases": [ { "name": "...",
+///                  "input": [ ...existing step vocabulary... ],
+///                  "raycast": { "x": 475, "y": 300, "thresholdPx": 60 },
+///                  "expected": {
+///                    "hit": true,                      // optional, default true
+///                    "targetKind": "vertex",            // "none"|"vertex"|"edge"|"face"
+///                    "targetVert": [x,y,z],             // world coord, vertex-only
+///                    "targetEdge": [[x,y,z],[x,y,z]],   // world coords, edge-only
+///                    "docLayer": 1                      // optional, default = response's own "layer"
+///                  } } ] }
+/// `raycast.thresholdPx` is optional — omitted means "use the tool's own
+/// default" (the endpoint applies `kTopoPenSnapPx`). `targetKind`
+/// "face"/"none" cases skip the targetVert/targetEdge check (there is no
+/// element to resolve — both are -1 by convention).
+void runHoverTargetSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<hover-target-suite>";
+    requireProvenance(fx, suite);
+
+    foreach (cs; fx["cases"].array) {
+        string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+
+        auto rc = cs["raycast"];
+        int rx = cast(int) rc["x"].integer;
+        int ry = cast(int) rc["y"].integer;
+        string url = BASE ~ format("/api/surface-raycast?x=%d&y=%d", rx, ry);
+        if ("thresholdPx" in rc)
+            url ~= format("&thresholdPx=%.6f", asDouble(rc["thresholdPx"]));
+        auto got = parseJSON(cast(string) get(url));
+        assert("error" !in got,
+            format("%s: /api/surface-raycast error: %s", cn, got.toString));
+
+        auto exp = cs["expected"];
+        bool wantHit = ("hit" !in exp) || exp["hit"].type == JSONType.true_;
+        bool gotHit  = "hit" in got && got["hit"].type == JSONType.true_;
+        assert(gotHit == wantHit,
+            format("%s: hit expected %s, got %s", cn, wantHit, got.toString));
+
+        assert("targetKind" in exp, format("%s: case missing expected.targetKind", cn));
+        string wantKind = exp["targetKind"].str;
+        assert("targetKind" in got,
+            format("%s: response missing targetKind: %s", cn, got.toString));
+        string gotKind = got["targetKind"].str;
+        assert(gotKind == wantKind,
+            format("%s: targetKind expected %s, got %s (full: %s)",
+                   cn, wantKind, gotKind, got.toString));
+
+        if (wantKind == "face" || wantKind == "none")
+            continue;   // no element resolved — targetVert/targetEdge are -1
+
+        // Mirrors runSurfaceRaycastSuite's layer-lookup fallback: an
+        // explicit `expected.docLayer` wins, otherwise fall back to the
+        // live response's own `layer` field (still present — the P0
+        // hit fields are unchanged/additive).
+        int layerForLookup = ("docLayer" in exp) ? cast(int) exp["docLayer"].integer
+                            : (("layer" in got) ? cast(int) got["layer"].integer : 1);
+
+        if (wantKind == "vertex") {
+            assert("targetVert" in exp, format("%s: vertex case missing expected.targetVert", cn));
+            double[3] wv = jvec3(exp["targetVert"]);
+            int wantIdx = resolveVertexInLayer(layerForLookup, wv, cn);
+            assert("targetVert" in got, format("%s: response missing targetVert: %s", cn, got.toString));
+            assert(got["targetVert"].integer == wantIdx,
+                format("%s: targetVert expected idx %d (coord %s), got %d",
+                       cn, wantIdx, wv, got["targetVert"].integer));
+        } else if (wantKind == "edge") {
+            assert("targetEdge" in exp, format("%s: edge case missing expected.targetEdge", cn));
+            auto pr = exp["targetEdge"].array;
+            double[3] wa = jvec3(pr[0]), wb = jvec3(pr[1]);
+            int wantIdx = resolveEdgeInLayer(layerForLookup, wa, wb, cn);
+            assert("targetEdge" in got, format("%s: response missing targetEdge: %s", cn, got.toString));
+            assert(got["targetEdge"].integer == wantIdx,
+                format("%s: targetEdge expected idx %d, got %d",
+                       cn, wantIdx, got["targetEdge"].integer));
+        }
+    }
+}

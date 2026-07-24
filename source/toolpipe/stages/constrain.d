@@ -144,6 +144,22 @@ public:
             hit.t           = sh.t;
             hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
             hit.nearestEdge = nearestFaceEdge(*src, sh.face, sh.point);
+
+            // topology-pen P1 (doc/topopen_p1_plan.md): candidate world
+            // positions, so resolveHoverTarget (constraint.d) stays a pure
+            // function of the packet alone. Index-guarded — best-effort,
+            // same posture as nearestFaceVertex/nearestFaceEdge themselves
+            // (the bg mesh may have mutated out from under `src` since the
+            // BVH was built).
+            if (hit.nearestVert >= 0 && hit.nearestVert < cast(int)(*src).vertices.length)
+                hit.nearestVertPos = (*src).vertices[hit.nearestVert];
+            if (hit.nearestEdge >= 0 && hit.nearestEdge < cast(int)(*src).edges.length) {
+                auto e = (*src).edges[hit.nearestEdge];
+                if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
+                    hit.nearestEdgeA = (*src).vertices[e[0]];
+                    hit.nearestEdgeB = (*src).vertices[e[1]];
+                }
+            }
         }
         _hitPkt = hit;
         vts.put(&_hitPkt);

@@ -640,6 +640,35 @@ struct ConstrainHitPacket {
     int   nearestVert = -1;
     int   nearestEdge = -1;
     float t           = float.infinity;
+
+    // --- topology-pen P1 additions (doc/topopen_p1_plan.md) ----------------
+    // World positions of the `nearestVert`/`nearestEdge` candidates, filled
+    // by the CONS stage's raycastBackground alongside the indices above
+    // (same guard: only meaningful when the paired index is >= 0). Carrying
+    // the positions on the packet keeps `resolveHoverTarget` (constraint.d)
+    // a PURE function of `(ConstrainHitPacket, Viewport, thresholdPx)` — it
+    // never reaches back into a Mesh to re-resolve a world position.
+    Vec3 nearestVertPos = Vec3(0, 0, 0);  // world pos of vertices[nearestVert]
+    Vec3 nearestEdgeA   = Vec3(0, 0, 0);  // world pos of edges[nearestEdge][0]
+    Vec3 nearestEdgeB   = Vec3(0, 0, 0);  // world pos of edges[nearestEdge][1]
+}
+
+/// The hover's resolved place-target — what a click at the current
+/// background-surface hit would snap to. `None` means no surface hit at
+/// all (mirrors `ConstrainHitPacket.hit == false`); `Face` means a surface
+/// hit that did not resolve to a nearby vertex/edge (a free place-point).
+/// Pure data — the resolution logic lives in `constraint.d` per the
+/// codebase's pure-math-layer convention (see `resolveHoverTarget`).
+enum HoverTargetKind { None, Vertex, Edge, Face }
+
+/// `vert`/`edge` are indices into the WINNING background layer's own mesh
+/// (`ConstrainHitPacket.layer`/`.nearestVert`/`.nearestEdge`) — meaningful
+/// only for the matching `kind` (e.g. `vert` is -1 whenever `kind !=
+/// Vertex`).
+struct HoverTarget {
+    HoverTargetKind kind = HoverTargetKind.None;
+    int             vert = -1;
+    int             edge = -1;
 }
 
 /// Geometry-snap candidate-type bitmask. Multiple types can be enabled
