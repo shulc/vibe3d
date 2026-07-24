@@ -535,6 +535,17 @@ public:
     // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
     // 1). Always claims the event either way.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Replay-hardening (review NIT-2): a DOWN-DOWN-UP sequence injected by
+        // an event log could otherwise arm BOTH `placeArmed_` (first DOWN)
+        // and `moveArmed_` (second DOWN); since `onMouseButtonUp` checks
+        // Place before Move, a genuine move would then commit as a Place and
+        // strand `moveArmed_`/`grabbedVert_` armed (a spurious ghost on the
+        // next frame). Reset defensively at every fresh press, BEFORE the
+        // disambiguation below re-arms exactly one of them.
+        placeArmed_  = false;
+        moveArmed_   = false;
+        grabbedVert_ = -1;
+
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int src = findSourceVertex(e.x, e.y, vp);
@@ -559,6 +570,17 @@ public:
     // documented gesture (Duplicate always starts on a pre-highlighted
     // element) — don't consume, matching the dispatch default.
     private bool onShiftLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Replay-hardening (review NIT-2, same latent shape flagged on
+        // `onPlainLmbDown` above): a replayed DOWN-DOWN-UP could otherwise
+        // leave a stale build-arm (`dragArmed_` + its classify-scratch)
+        // stranded across a second press. Reset the build-arm state
+        // defensively at every fresh press, BEFORE it is (maybe) re-armed
+        // below.
+        dragArmed_      = false;
+        sourceVert_     = -1;
+        classifiedCase_ = BuildCase.None;
+        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int src = findSourceVertex(e.x, e.y, vp);
