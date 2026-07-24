@@ -669,6 +669,12 @@ struct EditorApp {
     // `topoPenBuildEditFactory` and `topoPenMoveEditFactory` (a single-face
     // delete IS a topology change, Geometry editScope, not Position-only).
     MeshSessionEdit delegate() topoPenRemoveEditFactory;
+    // Task 0477 (topology-pen P6, doc/topopen_p6_addloop_plan.md, REV1
+    // factory precedent): the Add Loop gesture's own generic session-edit
+    // factory, wireName "mesh.topoPen_addloop" — kept distinct from EVERY
+    // sibling factory above (a loop cut is its own topology op, not a
+    // build/move/remove).
+    MeshSessionEdit delegate() topoPenAddLoopEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

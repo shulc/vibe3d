@@ -3048,6 +3048,16 @@ void main(string[] args) {
     // history / event-log replay / macros with the wrong wire name.
     auto topoPenRemoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
+    // Topology Pen P6's Add Loop gesture (task 0477, doc/topopen_p6_addloop_plan.md,
+    // REV1 factory precedent): its OWN typed edit factory, distinct from
+    // `topoPenBuildEditFactory`/`topoPenMoveEditFactory`/`topoPenRemoveEditFactory`
+    // — a loop cut IS a topology change (wire name "mesh.topoPen_addloop",
+    // editScope Geometry|Marks — the cut resizes selection arrays, same
+    // scope as `topoPenBuildEditFactory`), so reusing any sibling factory
+    // would corrupt undo history / event-log replay / macros with the
+    // wrong wire name.
+    auto topoPenAddLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3160,6 +3170,7 @@ void main(string[] args) {
     app.topoPenBuildEditFactory  = topoPenBuildEditFactory;
     app.topoPenMoveEditFactory   = topoPenMoveEditFactory;
     app.topoPenRemoveEditFactory = topoPenRemoveEditFactory;
+    app.topoPenAddLoopEditFactory = topoPenAddLoopEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

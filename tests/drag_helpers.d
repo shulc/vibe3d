@@ -152,9 +152,17 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 90.0f) {
 // events are spaced 50 ms apart so each lands in its own frame; SDL's
 // X11 backend would otherwise coalesce them and only the LAST motion
 // would reach the tool.
+//
+// `btn` (task 0477, doc/topopen_p6_addloop_plan.md — additive, defaulted to
+// 1/LEFT so every existing positional call site stays byte-identical): the
+// SDL button index (1=LEFT, 2=MIDDLE, 3=RIGHT) stamped on both the down/up
+// events' "btn" field and derived into the motion events' "state" bitmask
+// via the standard SDL_BUTTON(x) = 1 << (x-1) convention — lets a caller
+// drive a MIDDLE-button drag (e.g. Shift+MMB Add Loop) through this same
+// helper instead of hand-rolling its own JSON-Lines builder.
 string buildDragLog(int vpX, int vpY, int vpW, int vpH,
                     int x0, int y0, int x1, int y1, int steps = 20,
-                    uint mod = 0)
+                    uint mod = 0, ubyte btn = 1)
 {
     string log = format(
         `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
@@ -162,24 +170,25 @@ string buildDragLog(int vpX, int vpY, int vpW, int vpH,
 
     double tDown = 50.0;
     log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
-        tDown, x0, y0, mod);
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+        tDown, btn, x0, y0, mod);
 
     double stepMs = 50.0;
+    uint state = 1u << (btn - 1);
     int lastX = x0, lastY = y0;
     foreach (i; 1 .. steps + 1) {
         int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
         int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
         double t = tDown + i * stepMs;
         log ~= format(
-            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":%u}` ~ "\n",
-            t, x, y, x - lastX, y - lastY, mod);
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%u,"mod":%u}` ~ "\n",
+            t, x, y, x - lastX, y - lastY, state, mod);
         lastX = x; lastY = y;
     }
     double tUp = tDown + (steps + 1) * stepMs;
     log ~= format(
-        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
-        tUp, x1, y1, mod);
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+        tUp, btn, x1, y1, mod);
     return log;
 }
 

@@ -455,13 +455,17 @@ void registerTools(EditorApp app) {
     // the Ctrl+MMB Remove gesture's OWN generic MeshSessionEdit factory
     // (topoPenRemoveEditFactory, distinct wire name + Geometry editScope,
     // opponent KILLER-1 — a single-face delete must not bake either
-    // sibling gesture's wire name).
+    // sibling gesture's wire name). P6 adds the Shift+MMB Add Loop
+    // gesture's OWN generic MeshSessionEdit factory
+    // (topoPenAddLoopEditFactory, distinct wire name + Geometry|Marks
+    // editScope, doc/topopen_p6_addloop_plan.md REV1 — a loop cut must not
+    // bake ANY sibling gesture's wire name either).
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
-                         topoPenRemoveEditFactory);
+                         topoPenRemoveEditFactory, topoPenAddLoopEditFactory);
         return cast(Tool)t;
     };
 

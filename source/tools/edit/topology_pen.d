@@ -5,7 +5,8 @@ import std.json : JSONValue;
 
 import tool;
 import mesh                : Mesh, GpuMesh;
-import math               : Vec3, Viewport, projectToWindowFull;
+import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
+                             screenPointToRay, closestPointOnSegmentToRay, dot;
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
@@ -65,6 +66,18 @@ alias TopoPenMoveFactory = MeshSessionEdit delegate();
 /// app.d construction site, mirroring `topoPenMoveEditFactory`.
 alias TopoPenRemoveFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER ADD-LOOP GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P6, doc/topopen_p6_addloop_plan.md,
+/// REV1 factory precedent) — a FOURTH dedicated factory, distinct from
+/// `TopoPenBuildFactory`/`TopoPenMoveFactory`/`TopoPenRemoveFactory`:
+/// reusing any sibling would bake the wrong `wireName`
+/// ("mesh.topoPen_build"/"mesh.topoPen_move"/"mesh.topoPen_remove" on a
+/// loop-cut — corrupts undo history / event-log replay / macros). Wired
+/// with `wireName="mesh.topoPen_addloop"` and
+/// `MeshEditScope.Geometry|Marks` (the cut resizes selection arrays) at
+/// the app.d construction site, mirroring `topoPenRemoveEditFactory`.
+alias TopoPenAddLoopFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -90,7 +103,7 @@ private enum GestureSlot {
     Mmb,           // none,       MMB — Split                          (NOT YET IMPLEMENTED)
     ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
     ShiftRmb,      // Shift,      RMB — Duplicate Loop                 (NOT YET IMPLEMENTED)
-    ShiftMmb,      // Shift,      MMB — Add Loop                       (NOT YET IMPLEMENTED)
+    ShiftMmb,      // Shift,      MMB — Add Loop — THIS PHASE (P6)
     CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide             (NOT YET IMPLEMENTED)
     CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
     CtrlMmb,       // Ctrl,       MMB — Remove — THIS PHASE (P5)
@@ -129,10 +142,38 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 }
 
 // ---------------------------------------------------------------------------
-// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 of the topology-pen
-// port (factory id `mesh.topoPen`, doc/topopen_p0_plan.md,
+// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 + P6 of the
+// topology-pen port (factory id `mesh.topoPen`, doc/topopen_p0_plan.md,
 // doc/topopen_p1_plan.md, doc/topopen_p2_plan.md, doc/topopen_p3_plan.md,
-// doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md).
+// doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md,
+// doc/topopen_p6_addloop_plan.md).
+//
+// P6 adds ADD LOOP on the **Shift+MMB** overlay slot
+// (`GestureSlot.ShiftMmb`, doc/topopen_p6_addloop_plan.md): a press picks
+// the nearest primary-layer EDGE under the cursor (`findRingSeedEdge`,
+// mirroring `findSourceVertex` but over edges) and, if that edge's
+// perpendicular quad ring exists (`collectEdgeRing`), arms a loop-cut —
+// tracking a `[0,1]` ratio off the cursor (`ratioFromCursor`, the SAME
+// ray/segment projection `loop_slice_tool.d`'s scrub uses) as the mouse
+// moves, and committing on release (`onMouseButtonUp`'s MIDDLE branch).
+// The commit (`commitAddLoop`) is FULL KERNEL REUSE — a single call to
+// `Mesh.insertEdgeLoops(seedEdge, [r])` (`source/mesh_ops/loop_slice.d`,
+// the SAME kernel `mesh.addLoop`/the Loop Slice tool call), bracketed in
+// one before/after `MeshSnapshot` pair recorded through its OWN dedicated
+// `addLoopEditFactory_` (wireName "mesh.topoPen_addloop") — one gesture,
+// one atomic undo. `source/mesh_ops/loop_slice.d` and
+// `source/commands/mesh/loop_slice.d` are UNCHANGED; the tool only copies
+// the existing `MeshAddLoop.evaluate`'s open-interval guard
+// (`r<=0||r>=1` -> no-op, the captured "landing exactly on a vertex
+// inserts nothing"). `insertEdgeLoops` does a wholesale `faces=newFaces`
+// rebuild, so a successful commit calls `resyncSession()` — exactly like
+// P5's `removeFaceAt` — to invalidate any OTHER gesture's cached face/
+// vertex indices that might be armed on a different button concurrently
+// (the tool never overrides `isDragging()`). Out of scope for V1: an
+// OPEN-span ring (the kernel's own existing open-ring path runs
+// unmodified but parity there is unmeasured — flagged, not claimed) and
+// post-cut loop-edge selection (the capture did not measure one for this
+// gesture, unlike `mesh.addLoop`'s own `selectNewLoopEdges`).
 //
 // P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`GestureSlot.CtrlMmb`,
 // doc/topopen_p5_remove_plan.md): remove-on-DOWN (D2, capture-faithful and
@@ -311,6 +352,10 @@ private:
     // KILLER-1) ---
     TopoPenRemoveFactory removeEditFactory_;
 
+    // --- P6 Add Loop gesture deps (doc/topopen_p6_addloop_plan.md, REV1
+    // opponent obj-1) ---
+    TopoPenAddLoopFactory addLoopEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -342,6 +387,24 @@ private:
     bool placeArmed_  = false;
     bool moveArmed_   = false;
     int  grabbedVert_ = -1;
+
+    // --- P6 Add Loop session state (topology_pen.d,
+    // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
+    // lands on a primary-layer edge whose perpendicular ring exists
+    // (`onShiftMmbDown`); the ratio tracks the cursor on every subsequent
+    // motion event (`onMouseMotion`) and commits on release
+    // (`onMouseButtonUp`'s MIDDLE branch, `commitAddLoop`). `seedRailA_`/
+    // `seedRailB_` are the directed world-space endpoints `ratioFromCursor`
+    // measures the `[0,1]` ratio against (`seedRail`, captured once at arm
+    // time — the mesh is never mutated between arm and commit, so
+    // re-deriving them at every motion event would be redundant). Cleared
+    // by `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3/P4 arm state above.
+    int  addLoopSeed_  = -1;
+    bool addLoopArmed_ = false;
+    int  addLoopStartX_, addLoopStartY_;
+    Vec3 seedRailA_, seedRailB_;
+    float addLoopRatio_ = 0.5f;
 
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
@@ -380,15 +443,22 @@ public:
         this.fc_      = fc;
     }
 
+    // REV1 (opponent obj-1): 6th param `alf` appended for the Add Loop
+    // factory. `mf`/`rf` MUST stay assigned — `TopoPenMoveFactory` and
+    // `TopoPenRemoveFactory` are structurally identical delegate aliases,
+    // so dropping either here would SILENTLY mis-bind that sibling
+    // gesture's factory rather than fail to compile.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
-                        TopoPenRemoveFactory rf = null) {
+                        TopoPenRemoveFactory rf = null,
+                        TopoPenAddLoopFactory alf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
         moveEditFactory_   = mf;
         removeEditFactory_ = rf;
+        addLoopEditFactory_ = alf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -423,6 +493,19 @@ public:
         // CONS-snapped cursor point for the in-progress ghost preview
         // (draw(), below) — no other state changes during the drag; the
         // build itself only fires on release.
+
+        // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
+        // gesture is armed, track the ratio off THIS motion event's cursor
+        // — the only mid-drag feedback, since commit is deferred to
+        // release. Consumes (unlike the build/move ghosts above, which
+        // never claim motion) so the drag reads as this tool's own,
+        // mirroring the armed-gesture contract elsewhere in this class.
+        if (addLoopArmed_) {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            addLoopRatio_ = ratioFromCursor(e.x, e.y, vp);
+            return true;
+        }
         return false;   // never consumes — placement/build happens on button-up, not motion
     }
 
@@ -503,19 +586,19 @@ public:
             case GestureSlot.Lmb:      return onPlainLmbDown(e, vts);
             case GestureSlot.ShiftLmb: return onShiftLmbDown(e, vts);
             case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
+            case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
             case GestureSlot.Rmb:
             case GestureSlot.Mmb:
             case GestureSlot.ShiftRmb:
-            case GestureSlot.ShiftMmb:
             case GestureSlot.CtrlLmb:
             case GestureSlot.CtrlRmb:
             case GestureSlot.ShiftCtrlLmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Move+Edge-Loop / Split / Duplicate Loop / Add Loop /
-                // Slide / the 2 undocumented slots / Smoothing /
+                // TODO: Move+Edge-Loop / Split / Duplicate Loop / Slide /
+                // the 2 undocumented slots / Smoothing /
                 // Smoothing+Edge-Loop — gesture_map.md table A, slots
-                // 2/3/5/6/7/8/10/11/12. Not implemented yet.
+                // 2/3/5/7/8/10/11/12. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -630,6 +713,111 @@ public:
         return true;
     }
 
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): project every EDGE of the
+    // PRIMARY layer's mesh and return the nearest within `kTopoPenSnapPx`, or
+    // -1 — mirrors `findSourceVertex` above (same threshold, same
+    // self-contained no-CONS/no-cache contract), but over edges: each
+    // endpoint is projected (skipping the edge if either end is behind the
+    // camera) and the cursor's distance to the screen-space SEGMENT (not
+    // just the endpoints) is measured via `closestOnSegment2D`. O(E) per
+    // press.
+    private int findRingSeedEdge(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        int   best   = -1;
+        float bestD  = float.infinity;
+        foreach (ei, e; m.edges) {
+            ImVec2 pa, pb;
+            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
+            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
+            float t;
+            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                        pa.x, pa.y, pb.x, pb.y, t);
+            if (d < bestD) { bestD = d; best = cast(int)ei; }
+        }
+        if (best >= 0 && bestD <= kTopoPenSnapPx) return best;
+        return -1;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): the directed world-space
+    // endpoints `ratioFromCursor` measures the `[0,1]` ratio against — MUST
+    // match the direction `insertEdgeLoops` treats as this seed edge's
+    // p-rail, or a drag toward one end lands the cut near the OTHER end.
+    // Copied verbatim from `tools.slice.loop_slice_tool.seedRail` (exact
+    // for the CLOSED-ring case this tool scopes to; see that function's own
+    // doc comment for the open-ring caveat, inherited unchanged here).
+    private void seedRail(uint seedEdge, out Vec3 a, out Vec3 b) {
+        auto m = mesh;
+        if (m is null) return;
+        uint firstFace = uint.max;
+        foreach (fi; m.facesAroundEdge(seedEdge)) { firstFace = fi; break; }
+        if (firstFace == uint.max) {
+            uint va = m.edges[seedEdge][0], vb = m.edges[seedEdge][1];
+            a = m.vertices[va]; b = m.vertices[vb];
+            return;
+        }
+        int j0 = m.findEdgeInFace(firstFace, m.edgeKeyOf(seedEdge));
+        auto face = m.faces[firstFace];
+        uint va = face[j0], vb = face[(j0 + 1) % face.length];
+        a = m.vertices[va];
+        b = m.vertices[vb];
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): re-project the cursor
+    // onto the armed seed rail and recover the scalar `t` the kernel wants
+    // — copied verbatim from `loop_slice_tool.onMouseMotion`'s scrub math
+    // (`screenPointToRay` -> `closestPointOnSegmentToRay` -> re-project onto
+    // the UNCLAMPED `ab` direction), then clamp to `[0,1]` (REV1 point (c):
+    // `closestPointOnSegmentToRay` already clamps its returned POINT to the
+    // segment, so this clamp is a defensive backstop, not the primary
+    // mechanism). Falls back to 0.5 on a degenerate (zero-length) rail.
+    private float ratioFromCursor(int mx, int my, const ref Viewport vp) {
+        Vec3 origin, dir;
+        screenPointToRay(cast(float)mx, cast(float)my, vp, origin, dir);
+        Vec3 hit = closestPointOnSegmentToRay(seedRailA_, seedRailB_, origin, dir);
+        Vec3  ab    = seedRailB_ - seedRailA_;
+        float denom = dot(ab, ab);
+        if (denom <= 1e-12f) return 0.5f;
+        float t = dot(hit - seedRailA_, ab) / denom;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        return t;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 3), on the Shift+MMB "Add
+    // Loop" slot: a press picks the nearest primary-layer edge
+    // (`findRingSeedEdge`); if none is within snap range, or the picked
+    // edge's perpendicular quad ring doesn't exist (`collectEdgeRing`
+    // empty — a non-quad or unringed seed), this is not a documented
+    // gesture — don't consume, matching every other down-handler's miss
+    // convention. Otherwise arms the gesture, captures the seed rail
+    // (`seedRail`) once, and seeds `addLoopRatio_` from THIS press's own
+    // cursor position so a stationary click (no subsequent motion) still
+    // has a sane ratio at commit.
+    private bool onShiftMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        addLoopSeed_  = -1;
+        addLoopArmed_ = false;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;
+
+        auto m = mesh;
+        if (m is null) return false;
+        bool closed;
+        if (m.collectEdgeRing(cast(uint)seed, closed).length == 0) return false;
+
+        addLoopSeed_   = seed;
+        addLoopArmed_  = true;
+        addLoopStartX_ = e.x;
+        addLoopStartY_ = e.y;
+        seedRail(cast(uint)seed, seedRailA_, seedRailB_);
+        addLoopRatio_  = ratioFromCursor(e.x, e.y, vp);
+        return true;
+    }
+
     // Commits whichever gesture is armed at RELEASE, at the release event's
     // own CONS-snapped hit — P3's drag-build (unchanged), or P4's Move/Place
     // disambiguation (doc/topopen_p4_plan.md, Design A: both of P4's
@@ -641,6 +829,24 @@ public:
     // the next press to inherit.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
+        // --- P6 (doc/topopen_p6_addloop_plan.md Phase 3): commits the armed
+        // Add Loop gesture at the RELEASE event's own cursor-derived ratio.
+        // Disjoint from every LEFT-button gesture below (this branch only
+        // fires for MIDDLE); an unarmed MIDDLE release (no press landed on a
+        // valid ring seed) doesn't consume, matching every other slot's
+        // miss convention.
+        if (e.button == SDL_BUTTON_MIDDLE) {
+            if (!addLoopArmed_) return false;
+            int seed = addLoopSeed_;
+            addLoopSeed_  = -1;
+            addLoopArmed_ = false;
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            float r = ratioFromCursor(e.x, e.y, vp);
+            commitAddLoop(cast(uint)seed, r);
+            return true;
+        }
+
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         // --- P3: commits the armed drag-build, if any, at the RELEASE
@@ -919,6 +1125,65 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 4): commit the armed Add Loop
+    // gesture — FULL KERNEL REUSE, zero kernel change. The clamp/exact
+    // -vertex-inserts-nothing guard is copied VERBATIM from
+    // `MeshAddLoop.evaluate` (`source/commands/mesh/loop_slice.d:68-69`):
+    // `r` is already in `[0,1]` (`ratioFromCursor`'s own clamp), so this is
+    // an open-INTERVAL check, not a re-clamp. The dry-run
+    // `collectEdgeRing` call mirrors that same command's defensive
+    // re-check (the mesh is never mutated between arm and commit, so the
+    // ring cannot have vanished, but a stale seed index after some other
+    // path's mutation is cheap to guard against here too). The entire
+    // topology op is the ONE `insertEdgeLoops` call below — bracketed in a
+    // single before/after `MeshSnapshot` pair, recorded through the
+    // DEDICATED `addLoopEditFactory_` (REV1 obj-1 — never
+    // `buildEditFactory_`/`moveEditFactory_`/`removeEditFactory_`, which
+    // would bake the wrong wire name onto a loop-cut).
+    //
+    // REV1 KILLER-2: `insertEdgeLoops`/`insertEdgeLoopsMulti` does
+    // `faces = newFaces` — a WHOLESALE rebuild (every ring face expands
+    // into 2, shifting every subsequent face index). A concurrently-armed
+    // Shift+LMB build's `quadTriFi_` is a FACE index that would dangle
+    // (silent wrong-face delete on that build's eventual release) unless
+    // invalidated here — `resyncSession()` is called on SUCCESS, in the
+    // SAME position `removeFaceAt` above calls it (right after
+    // `history_.record`, before `syncSelection`/the display tail), for the
+    // identical reason (the tool never overrides `isDragging()`, so a
+    // Shift+MMB Add Loop CAN fire mid-build/mid-move on a different
+    // button). No `resizeVertexSelection` needed here — `insertEdgeLoops`
+    // already rebuilds the selection arrays itself; the `after` snapshot +
+    // `syncSelection` cover it.
+    private void commitAddLoop(uint seedEdge, float r) {
+        if (meshSrc_ is null || history_ is null || addLoopEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+
+        // Verbatim MeshAddLoop.evaluate's open-interval guard: a ratio
+        // landing exactly on a vertex (r<=0 or r>=1) inserts nothing.
+        if (r <= 0.0f || r >= 1.0f) return;
+
+        bool closed;
+        if (m.collectEdgeRing(seedEdge, closed).length == 0) return;
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        bool ok = m.insertEdgeLoops(seedEdge, [r]);
+        if (!ok) { before.restore(*m); return; }
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = addLoopEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Add Loop");
+        history_.record(cmd);
+
+        // REV1 KILLER-2: invalidate any OTHER armed gesture's cached
+        // indices now that faces[] has been wholesale-rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
     // Stored drag-arm index/case dangle across an external history
     // navigation mid-drag (a redo/undo elsewhere could delete the source
     // vertex or its incident geometry out from under an armed gesture) — the
@@ -926,6 +1191,9 @@ public:
     // state rather than trust a possibly-stale index. Covers P4's Move/Place
     // arm state (doc/topopen_p4_plan.md) the same way — an external undo/redo
     // could equally delete a grabbed vertex out from under an armed Move.
+    // P6 (doc/topopen_p6_addloop_plan.md Risk "stale armed state"): also
+    // clears the Add Loop arm — a history nav between MMB-down and MMB-up
+    // could otherwise commit against a dangling seed edge index.
     override void resyncSession() {
         sourceVert_     = -1;
         dragArmed_      = false;
@@ -934,13 +1202,42 @@ public:
         placeArmed_     = false;
         moveArmed_      = false;
         grabbedVert_    = -1;
+        addLoopSeed_    = -1;
+        addLoopArmed_   = false;
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp,
                        ref VectorStack vts, bool visualOnly = false) {
-        if (!lastHit_.hit) return;
-
         auto dl = ImGui.GetForegroundDrawList();
+
+        // P6 (doc/topopen_p6_addloop_plan.md Phase 5): the Add Loop ghost is
+        // independent of `lastHit_`/CONS (this gesture never touches the
+        // background constraint — pure current-layer topology op), so it is
+        // drawn BEFORE the `lastHit_.hit` early-return below: a primary-only
+        // scene with no background layer (hence no CONS hit ever) must still
+        // preview the armed seed ring. Purely re-reads already-classified
+        // state (`addLoopSeed_`/`seedRailA_`/`seedRailB_`/`addLoopRatio_`) —
+        // no mesh mutation, no raycast.
+        if (addLoopArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null && addLoopSeed_ >= 0 && addLoopSeed_ < cast(int)m.edges.length) {
+                enum uint loopCol = IM_COL32(255, 90, 220, 220);   // add-loop magenta
+                foreach (ei; m.loopSliceRingEdges(cast(uint)addLoopSeed_)) {
+                    if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                    auto ringE = m.edges[ei];
+                    ImVec2 ra, rb;
+                    if (projectPt(m.vertices[ringE[0]], vp, ra)
+                     && projectPt(m.vertices[ringE[1]], vp, rb))
+                        dl.AddLine(ra, rb, loopCol, 2.0f);
+                }
+                Vec3 markerPos = seedRailA_ + (seedRailB_ - seedRailA_) * addLoopRatio_;
+                ImVec2 mk;
+                if (projectPt(markerPos, vp, mk))
+                    dl.AddCircleFilled(mk, 5.0f, loopCol, 16);
+            }
+        }
+
+        if (!lastHit_.hit) return;
 
         // Re-resolve for THIS cell's camera — a multi-viewport draw may
         // run once per eligible cell, each with its own `vp`; the cached
@@ -1091,6 +1388,13 @@ public:
         root["placeArmed"]  = JSONValue(placeArmed_);
         root["moveArmed"]   = JSONValue(moveArmed_);
         root["grabbedVert"] = JSONValue(grabbedVert_);
+
+        // P6 (doc/topopen_p6_addloop_plan.md Phase 5): the armed Add Loop
+        // gesture's state, for Tier-C tests to assert the picked seed edge
+        // and tracked ratio without driving a full release.
+        root["addLoopArmed"] = JSONValue(addLoopArmed_);
+        root["addLoopSeed"]  = JSONValue(addLoopSeed_);
+        root["addLoopRatio"] = JSONValue(cast(double)addLoopRatio_);
 
         return root;
     }
@@ -1398,4 +1702,199 @@ unittest {
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "undo must restore the exact pre-removal state, incl. the removed face");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — Shift+MMB dispatch guard (P6,
+// doc/topopen_p6_addloop_plan.md), the same Tier-A pin shape as the P5
+// Ctrl+MMB guard above: a pure, camera-free regression guard so a bad merge
+// that silently reverted the `ShiftMmb` dispatch case would be caught by
+// `dub test`, not just by best-effort Tier-C.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_SHIFT) == GestureSlot.ShiftMmb,
+        "Shift+MMB must resolve to the Add Loop gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// commitAddLoop — T1 (P6, doc/topopen_p6_addloop_plan.md §Testing, "cube belt
+// r=0.5"): FULL kernel reuse via `insertEdgeLoops` on the SAME cube + seed
+// edge (0-1) as `source/mesh_ops/loop_slice.d`'s own closed-ring unittest —
+// Δv=+4/Δe=+8/Δf=+4 (8/12/6 -> 12/20/10), every new vertex at the EXACT
+// midpoint of one of the 4 crossed belt edges. Driven directly (private,
+// same-module access; `gpu_` stays null so the guarded display tail never
+// runs under bare `dub test`, mirroring `moveVertexTo`/`removeFaceAt`'s own
+// unittests above).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import std.math : abs;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max, "setup: seed edge 0-1 must exist on the default cube");
+    assert(m.vertices.length == 8 && m.edges.length == 12 && m.faces.length == 6,
+        "setup: pre-state must be the untouched cube");
+
+    t.commitAddLoop(seed, 0.5f);
+
+    assert(m.vertices.length == 12,
+        format("cube belt r=0.5 must add exactly 4 vertices; got %d", m.vertices.length));
+    assert(m.edges.length == 20,
+        format("cube belt r=0.5 must add exactly 8 edges; got %d", m.edges.length));
+    assert(m.faces.length == 10,
+        format("cube belt r=0.5 must add exactly 4 faces; got %d", m.faces.length));
+
+    static bool hasVertNear(const ref Mesh mm, float x, float y, float z, float eps = 1e-4f) {
+        foreach (v; mm.vertices)
+            if (abs(v.x - x) < eps && abs(v.y - y) < eps && abs(v.z - z) < eps) return true;
+        return false;
+    }
+    // Independently-computed midpoints of the 4 crossed belt edges (0-1,
+    // 2-3, 6-7, 4-5 — same belt loop_slice.d's own insertEdgeLoops unittest
+    // walks), from the cube's OWN hand-known vertex coordinates, never from
+    // the tool's own output.
+    assert(hasVertNear(m, 0.0f, -0.5f, -0.5f), "midpoint of edge 0-1 must exist at (0,-0.5,-0.5)");
+    assert(hasVertNear(m, 0.0f,  0.5f, -0.5f), "midpoint of edge 2-3 must exist at (0,0.5,-0.5)");
+    assert(hasVertNear(m, 0.0f,  0.5f,  0.5f), "midpoint of edge 6-7 must exist at (0,0.5,0.5)");
+    assert(hasVertNear(m, 0.0f, -0.5f,  0.5f), "midpoint of edge 4-5 must exist at (0,-0.5,0.5)");
+
+    assert(history.canUndo(), "a real Add Loop cut must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitAddLoop — T2 (P6, doc/topopen_p6_addloop_plan.md §Testing, "cube belt
+// r=0.25"): the SAME closed ring, cut at an off-center ratio — every new
+// vertex must sit at parameter 0.25 FROM ONE END of its own crossed edge
+// (the ± resolves the per-face orientation sign-flip the plan documents;
+// symmetric only at r=0.5, which T1 above already covers). Independent
+// expecteds computed from the belt edges' OWN pre-cut endpoint coordinates
+// (captured before the cut), never from the tool's own output.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import std.math : abs;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max);
+
+    // Belt edges' endpoints, captured BEFORE the cut (independent ground truth).
+    Vec3[2][4] belt = [
+        [m.vertices[0], m.vertices[1]],
+        [m.vertices[2], m.vertices[3]],
+        [m.vertices[6], m.vertices[7]],
+        [m.vertices[4], m.vertices[5]],
+    ];
+
+    t.commitAddLoop(seed, 0.25f);
+    assert(m.vertices.length == 12, "r=0.25 must still add exactly 4 vertices");
+
+    static bool near(Vec3 p, Vec3 q, float eps) {
+        return abs(p.x - q.x) < eps && abs(p.y - q.y) < eps && abs(p.z - q.z) < eps;
+    }
+    enum float eps = 1e-4f;
+    foreach (i; 8 .. 12) {
+        Vec3 v = m.vertices[i];
+        bool matched = false;
+        foreach (pair; belt) {
+            Vec3 lo = pair[0] + (pair[1] - pair[0]) * 0.25f;
+            Vec3 hi = pair[0] + (pair[1] - pair[0]) * 0.75f;
+            if (near(v, lo, eps) || near(v, hi, eps)) { matched = true; break; }
+        }
+        assert(matched,
+            "each new vertex must sit at param 0.25 (or its 0.75 sign-flip) "
+          ~ "from one end of its own crossed belt edge");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// commitAddLoop — T3 (P6, doc/topopen_p6_addloop_plan.md §Testing, "clamp ->
+// no-op"): a ratio landing exactly on a vertex (r<=0 or r>=1) must be a
+// byte-identical no-op — no mutation, no undo entry — the verbatim
+// `MeshAddLoop.evaluate` open-interval guard copied into `commitAddLoop`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+    uint seed = m.edgeIndex(0, 1);
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitAddLoop(seed, 1.0f);
+    t.commitAddLoop(seed, 0.0f);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "an exact-vertex ratio (0 or 1) must be a byte-identical no-op");
+    assert(!history.canUndo(), "clamp no-op must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitAddLoop — T4 (P6, doc/topopen_p6_addloop_plan.md §Testing, "undo
+// restores exact"): a real Add Loop cut must undo back to the exact pre-cut
+// state.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+    uint seed = m.edgeIndex(0, 1);
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitAddLoop(seed, 0.5f);
+    assert(history.canUndo(), "a real Add Loop cut must be undoable");
+    history.undo();
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "undo must restore the exact pre-cut state");
 }
