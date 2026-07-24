@@ -2102,6 +2102,7 @@ void main(string[] args) {
         import toolpipe.stages.actcenter     : ActionCenterStage;
         import toolpipe.stages.axis          : AxisStage;
         import toolpipe.stages.falloff       : FalloffStage;
+        import toolpipe.stages.constrain     : ConstrainStage;
         if (g_pipeCtx is null) return;
         foreach (s; g_pipeCtx.pipeline.allMut()) {
             // Every WGHT-task stage (the primary "falloff" AND any stacked
@@ -2129,6 +2130,17 @@ void main(string[] args) {
                 case "axis":
                     if (auto ax = cast(AxisStage)s)
                         ax.resetTransient();
+                    else
+                        s.reset();
+                    break;
+                case "constrain":
+                    // Topology-pen P0 (REV-2): a tool that composes CONS
+                    // transiently (TopologyPenTool enabling CONS+Point on
+                    // activate() without locking it) cleanly reverts on tool
+                    // switch; an explicit user `tool.pipe.attr constrain ...`
+                    // lock (userLocked) survives, same funnel as actionCenter/axis.
+                    if (auto cs = cast(ConstrainStage)s)
+                        cs.resetTransient();
                     else
                         s.reset();
                     break;
@@ -3672,6 +3684,46 @@ void main(string[] args) {
                 faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu);
             }
             return format(`{"faceIndex":%d}`, faceIdx);
+        });
+
+        // GET /api/surface-raycast?x=&y= — background-surface raycast oracle
+        // (topology-pen P0, doc/topopen_p0_plan.md). Main-thread bridge
+        // (mirrors /api/pick above): builds a SubjectPacket with
+        // cursorValid=true at the requested pixel, evaluates the live
+        // toolpipe (the CONS stage's raycast branch fires because
+        // cursorValid is true here), and reports the resulting
+        // ConstrainHitPacket. GL-free — the CONS raycast reads
+        // snap.backgroundSourcesSnapshot() (CPU-side Mesh pointers) via
+        // BvhPick, no GPU state involved, so this needs no
+        // ensureDisplayCurrent().
+        httpServer.setSurfaceRaycastProvider((int x, int y) {
+            import std.format        : format;
+            import toolpipe.packets  : ConstrainHitPacket;
+
+            SubjectPacket subj;
+            subj.mesh        = &mesh();
+            subj.editMode    = editMode;
+            subj.viewport    = vpm.activeSnapshot();
+            subj.cursorX     = x;
+            subj.cursorY     = y;
+            subj.cursorValid = true;
+
+            VectorStack vts;
+            vts.put(&subj);
+            if (g_pipeCtx !is null)
+                g_pipeCtx.pipeline.evaluate(vts);
+
+            auto hp = vts.get!ConstrainHitPacket();
+            if (hp is null)
+                return `{"hit":false}`;
+
+            return format(
+                `{"hit":%s,"point":[%.6f,%.6f,%.6f],"normal":[%.6f,%.6f,%.6f],`
+              ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d}`,
+                hp.hit ? "true" : "false",
+                hp.point.x, hp.point.y, hp.point.z,
+                hp.normal.x, hp.normal.y, hp.normal.z,
+                hp.layer, hp.face, hp.nearestVert, hp.nearestEdge);
         });
 
         // POST /api/camera — set live View. Accepts azimuth, elevation,
@@ -5619,10 +5671,28 @@ void main(string[] args) {
     // the live toolpipe, and returns the populated stack. Callers
     // hold both the subject and the vts on their own stack so the
     // packet pointer stays valid for the duration of the dispatch.
-    void buildToolVts(out SubjectPacket subj, ref VectorStack vts) {
+    //
+    // `curX`/`curY`/`curValid` (topology-pen P0, REV-1 of
+    // doc/topopen_p0_plan.md): the CURRENT mouse-event's cursor pixel,
+    // stamped onto `subj.cursorX/Y/cursorValid` for the CONS stage's
+    // background-surface raycast branch. ONLY the mouse-EVENT dispatch
+    // call sites (inside handleMouseButtonDown/Up and handleMouseMotion,
+    // passing that event's own `btn.x/y`/`mot.x/y`) pass `curValid=true` —
+    // NOT `lastMouseX/Y` (those are updated at the BOTTOM of those
+    // handlers, AFTER buildToolVts runs, so they would read one event
+    // stale). EVERY OTHER caller — the per-frame render-loop's
+    // `activeTool.update(vts)` / overlay-packet calls, and any
+    // HTTP-thread subject builder — leaves `curValid` at its default
+    // `false`, so the raycast branch runs only once per real input
+    // event, on the main thread, never off it and never every frame.
+    void buildToolVts(out SubjectPacket subj, ref VectorStack vts,
+                      int curX = -1, int curY = -1, bool curValid = false) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
         subj.viewport         = vpm.inputSnapshot();
+        subj.cursorX          = curX;
+        subj.cursorY          = curY;
+        subj.cursorValid      = curValid;
         vts.put(&subj);
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);
@@ -5670,7 +5740,22 @@ void main(string[] args) {
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
     app.activateToolById     = cast(void delegate(string))&activateToolById;
-    app.buildToolVts         = cast(void delegate(out SubjectPacket, ref VectorStack))&buildToolVts;
+    // NOT a bare same-arity cast like its neighbours above: buildToolVts
+    // grew 3 trailing-default cursor params (topology-pen P0, REV-1), but
+    // EditorApp.buildToolVts's field type (editor_app.d) is still the
+    // original 2-parameter delegate — every existing caller through that
+    // field (ui/panels.d's renderViewportSceneToFbo, a per-frame render-
+    // loop call) is exactly a "leave cursorValid=false" site anyway. A raw
+    // `cast(void delegate(out SubjectPacket, ref VectorStack))&buildToolVts`
+    // would silently reinterpret the pointer as a 2-arg ABI while the
+    // compiled callee still reads 5 argument slots — the caller's 2 real
+    // arguments land correctly but curX/curY/curValid read whatever
+    // garbage was in the unpassed slots (a real, reproducible crash: a
+    // segfault inside SubjectPacket's construction with curValid/curX/curY
+    // holding stack garbage). Wrap in a genuine 2-parameter closure instead
+    // so the trailing 3 args are filled in by buildToolVts's OWN defaults
+    // at a real call site, not by ABI coincidence.
+    app.buildToolVts = (out SubjectPacket s, ref VectorStack v) { buildToolVts(s, v); };
     app.anyFalloffActive     = cast(bool delegate())&anyFalloffActive;
     app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
@@ -5960,7 +6045,7 @@ void main(string[] args) {
             // consumes the click, fall through to the RMB lasso select as before
             // (lasso runs with NO active tool, so it is unaffected).
             if (activeTool) {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
                 if (activeTool.onMouseButtonDown(btn, vts)) return;
             }
             rmbDragging = true;
@@ -5998,7 +6083,7 @@ void main(string[] args) {
                 SDL_Keymod savedMods = SDL_GetModState();
                 SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
                 scope(exit) SDL_SetModState(savedMods);
-                SubjectPacket subjR; VectorStack vtsR; buildToolVts(subjR, vtsR);
+                SubjectPacket subjR; VectorStack vtsR; buildToolVts(subjR, vtsR, btn.x, btn.y, true);
                 activeTool.onMouseButtonDown(btn, vtsR);
                 return;
             }
@@ -6020,7 +6105,7 @@ void main(string[] args) {
                  || activeTool.wantsHoverForType(EditMode.Edges)
                  || activeTool.wantsHoverForType(EditMode.Polygons)))
                 refreshHoverPickAt(btn.x, btn.y);
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
             if (activeTool.onMouseButtonDown(btn, vts)) return;
         }
         // No tool, but the host's falloff gizmo may own this click (drag an
@@ -6029,7 +6114,7 @@ void main(string[] args) {
         if (activeTool is null && btn.button == SDL_BUTTON_LEFT
             && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
             import toolpipe.packets : FalloffPacket;
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
             Viewport vpg = vpm.originSnapshot();
@@ -6143,7 +6228,7 @@ void main(string[] args) {
             // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
             // false), let it finish its gesture (Slice bakes the final gap here).
             if (activeTool && !rmbDragging) {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
                 if (activeTool.onMouseButtonUp(btn, vts)) return;
             }
             if (rmbPath.length >= 3) {
@@ -6381,7 +6466,7 @@ void main(string[] args) {
             return;
         }
         if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
             activeTool.onMouseButtonUp(btn, vts);
         }
         // Release a host falloff-gizmo drag (no tool active). routeUp does NOT
@@ -6444,7 +6529,7 @@ void main(string[] args) {
         if (rmbDragging)
             rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, mot.x, mot.y, true);
             if (activeTool.onMouseMotion(mot, vts)) return;
         }
         // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes

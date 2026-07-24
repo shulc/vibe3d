@@ -1,0 +1,267 @@
+{
+  "name": "topo_pen_surface_raycast",
+  "description": "Topology Pen P0 (doc/topopen_p0_plan.md): the CONS stage's background-surface raycast branch, probed through GET /api/surface-raycast. Every case's camera uses the 'focus-point trick' -- the viewport CENTRE pixel's ray passes through the camera's `focus` point EXACTLY (a property of the lookAt-based camera construction, independent of azimuth/elevation/distance) -- so a case sets `focus` to the exact world point it wants the raycast to land on. All expected numbers are hand-derived analytically (fan-triangle cross products, point-to-segment distances) and cross-checked with an independent Python re-implementation of screenRay/lookAt/sphericalToCartesian; no reference 3D modeling tool was used (P0 is pinned-geometry only per the task brief).",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "hand + independent Python re-derivation",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "topopen-p0",
+    "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md). Every hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal."
+  },
+  "tolerance": 0.02,
+  "cases": [
+    {
+      "name": "bg_cube_topface_center",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.4, "elevation": 0.6, "distance": 4,
+            "focus": {"x": 0, "y": 0.5, "z": 0}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 4,
+        "point": [0, 0.5, 0], "normal": [0, 1, 0]
+      }
+    },
+    {
+      "name": "bg_quad_offcenter",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.35, "elevation": 0.87, "distance": 6,
+            "focus": {"x": 3, "y": 0, "z": -2}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 0,
+        "point": [3, 0, -2], "normal": [0, 1, 0],
+        "docLayer": 1,
+        "nearestVert": [10, 0, -10],
+        "nearestEdge": [[-10, 0, -10], [10, 0, 10]]
+      }
+    },
+    {
+      "name": "bg_cube_side_oblique",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.87, "elevation": 0.35, "distance": 5,
+            "focus": {"x": 0.5, "y": 0.2, "z": -0.1}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 3,
+        "point": [0.5, 0.2, -0.1], "normal": [1, 0, 0],
+        "docLayer": 1,
+        "nearestVert": [0.5, 0.5, -0.5],
+        "nearestEdge": [[0.5, 0.5, -0.5], [0.5, 0.5, 0.5]]
+      }
+    },
+    {
+      "name": "ray_miss",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.3, "elevation": 0.5, "distance": 5,
+            "focus": {"x": 50, "y": 50, "z": 50}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "hit": false }
+    },
+    {
+      "name": "grazing_angle",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.0, "elevation": 0.314159, "distance": 6,
+            "focus": {"x": 5, "y": 0, "z": 6}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 1,
+        "point": [5, 0, 6], "normal": [0, 1, 0],
+        "docLayer": 1,
+        "nearestVert": [10, 0, 10],
+        "nearestEdge": [[10, 0, 10], [-10, 0, -10]]
+      }
+    },
+    {
+      "name": "two_bg_layers_nearest_wins",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:PlaneHigh" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,2,-10],[10,2,-10],[10,2,10],[-10,2,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.add name:PlaneLow" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
+            "faces": [[0,2,1],[0,3,2]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.setVisible index:2 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.26, "elevation": 0.96, "distance": 6,
+            "focus": {"x": 2, "y": 2, "z": 3}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 1,
+        "point": [2, 2, 3], "normal": [0, 1, 0],
+        "docLayer": 1,
+        "nearestVert": [10, 2, 10],
+        "nearestEdge": [[10, 2, 10], [-10, 2, -10]]
+      }
+    },
+    {
+      "name": "bg_hidden_not_hit",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:false" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": 0.4, "elevation": 0.6, "distance": 4,
+            "focus": {"x": 0, "y": 0.5, "z": 0}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "hit": false }
+    },
+    {
+      "name": "bg_cube_bottom_face",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": -0.61, "elevation": -0.70, "distance": 5,
+            "focus": {"x": 0.1, "y": -0.5, "z": 0.2}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 5,
+        "point": [0.1, -0.5, 0.2], "normal": [0, -1, 0],
+        "docLayer": 1,
+        "nearestVert": [0.5, -0.5, 0.5],
+        "nearestEdge": [[0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]]
+      }
+    },
+    {
+      "name": "two_sided_backface",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" },
+        { "endpoint": "command", "argstring": "layer.add name:Bg" },
+        { "endpoint": "load-mesh", "body": {
+            "vertices": [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                         [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            "faces": [[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+          } },
+        { "endpoint": "command", "argstring": "layer.setVisible index:1 value:true" },
+        { "endpoint": "command", "argstring": "layer.select index:0" },
+        { "endpoint": "camera", "body": {
+            "azimuth": -1.05, "elevation": 0.44, "distance": 5,
+            "focus": {"x": -0.5, "y": -0.1, "z": 0.15}
+          } }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": {
+        "hit": true, "layer": 0, "face": 2,
+        "point": [-0.5, -0.1, 0.15], "normal": [-1, 0, 0],
+        "docLayer": 1,
+        "nearestVert": [-0.5, -0.5, 0.5],
+        "nearestEdge": [[-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5]]
+      }
+    },
+    {
+      "name": "no_bg_single_layer",
+      "input": [
+        { "reset": true },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain enabled true" },
+        { "endpoint": "command", "argstring": "tool.pipe.attr constrain geometry point" }
+      ],
+      "raycast": { "x": 475, "y": 300 },
+      "expected": { "hit": false }
+    }
+  ]
+}

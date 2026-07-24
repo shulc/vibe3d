@@ -50,6 +50,10 @@ private string endpointPath(string ep) {
         case "transform": return BASE ~ "/api/transform";
         case "script":    return BASE ~ "/api/script";
         case "load-mesh": return BASE ~ "/api/load-mesh";
+        // POST /api/camera (topology-pen P0 fixtures need explicit camera
+        // placement — azimuth/elevation/distance/focus — to pin a
+        // background-surface raycast's world hit point precisely).
+        case "camera":    return BASE ~ "/api/camera";
         default: assert(false, "fixture: unknown setup endpoint '" ~ ep ~ "'");
     }
 }
@@ -1129,5 +1133,158 @@ void runSelectLoopSuite(string fixtureJson) {
         foreach (k, _; got)
             assert((k in want) !is null,
                 format("%s: unexpected extra edge (key %d) in selection", cn, k));
+    }
+}
+
+// GET /api/model?layer=N and return its vertices as [x,y,z] doubles —
+// the layer-scoped counterpart to readVertices() (which always reads the
+// PRIMARY layer). Background-surface raycast fixtures need to resolve
+// nearestVert/nearestEdge expectations against a NON-primary (background)
+// layer's own geometry.
+private double[3][] readVerticesInLayer(int layer) {
+    auto model = parseJSON(cast(string) get(BASE ~ format("/api/model?layer=%d", layer)));
+    auto arr = model["vertices"].array;
+    auto outv = new double[3][](arr.length);
+    foreach (i, v; arr) {
+        auto c = v.array;
+        outv[i] = [asDouble(c[0]), asDouble(c[1]), asDouble(c[2])];
+    }
+    return outv;
+}
+
+// Resolve a world-space vertex coordinate to its index within `layer`'s
+// OWN mesh (mirrors resolveCoords's engine-neutral coordinate lookup, but
+// layer-scoped instead of primary-only).
+private int resolveVertexInLayer(int layer, double[3] coord, string ctx) {
+    auto V = readVerticesInLayer(layer);
+    foreach (i, v; V) if (veq(v, coord)) return cast(int) i;
+    assert(false, format("%s: no vertex at %s in layer %d", ctx, coord, layer));
+}
+
+// Resolve a world-space edge (endpoint pair, either order) to its index
+// within `layer`'s own mesh.
+private int resolveEdgeInLayer(int layer, double[3] a, double[3] b, string ctx) {
+    auto model = parseJSON(cast(string) get(BASE ~ format("/api/model?layer=%d", layer)));
+    auto V = model["vertices"].array;
+    double[3] vpos(long i) { return jvec3(V[cast(size_t) i]); }
+    foreach (i, e; model["edges"].array) {
+        auto ee = e.array;
+        double[3] ea = vpos(ee[0].integer), eb = vpos(ee[1].integer);
+        if ((veq(ea, a) && veq(eb, b)) || (veq(ea, b) && veq(eb, a)))
+            return cast(int) i;
+    }
+    assert(false, format("%s: no edge (%s,%s) in layer %d", ctx, a, b, layer));
+}
+
+/// `surface-raycast` verifier (topology-pen P0, doc/topopen_p0_plan.md).
+/// Runs `input` (background-layer setup + explicit camera placement via
+/// the existing engine-neutral step vocabulary, including the "camera"
+/// endpoint mapping above), fires GET /api/surface-raycast?x=&y= at the
+/// case's `raycast` pixel, and asserts the JSON result against `expected`.
+///
+/// `nearestVert`/`nearestEdge` expectations are given as WORLD COORDINATES
+/// — resolved to indices via GET /api/model?layer=N (N = `expected.layer`,
+/// or the live response's own `layer` when `expected.layer` is omitted),
+/// mirroring resolveCoords's engine-neutral coordinate-based lookup —
+/// rather than hard-coded raw indices.
+///
+/// Camera placement trick used by every case's golden (see the fixture
+/// authoring notes in tests/fixtures/topo_pen_*.json): the viewport CENTER
+/// pixel's ray passes through the camera's `focus` point EXACTLY, by
+/// construction of the lookAt-based camera (forward = normalize(focus -
+/// eye); the ray hits `focus` at ray-parameter t = distance) — regardless
+/// of azimuth/elevation/distance. So a case sets `focus` to the EXACT
+/// world point it wants the raycast to land on, and rays at the viewport
+/// centre pixel land there (within a small sub-pixel-rounding tolerance —
+/// `pickSurface` samples the pixel CENTER, `mx+0.5`).
+///
+/// Schema:
+///   { "name": "...", "provenance": {...}, "tolerance": 1e-2,
+///     "cases": [ { "name": "...",
+///                  "input": [ ...existing step vocabulary, plus
+///                             {"endpoint":"camera","body":{...}}... ],
+///                  "raycast": { "x": 475, "y": 300 },
+///                  "expected": {
+///                    "hit": true, "layer": 1, "face": 4,
+///                    "point": [0,0.5,0], "normal": [0,1,0],
+///                    "nearestVert": [0.5,0.5,-0.5],
+///                    "nearestEdge": [[0.5,0.5,-0.5],[0.5,0.5,0.5]]
+///                  } } ] }
+/// `hit:false` cases only assert the miss — no other `expected` field is
+/// read (there is no point/normal/face to check on a miss).
+void runSurfaceRaycastSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<surface-raycast-suite>";
+    requireProvenance(fx, suite);
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-2;
+
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+
+        auto rc = cs["raycast"];
+        int rx = cast(int) rc["x"].integer;
+        int ry = cast(int) rc["y"].integer;
+        auto got = parseJSON(cast(string) get(
+            BASE ~ format("/api/surface-raycast?x=%d&y=%d", rx, ry)));
+        assert("error" !in got,
+            format("%s: /api/surface-raycast error: %s", cn, got.toString));
+
+        auto exp = cs["expected"];
+        bool wantHit = ("hit" !in exp) || exp["hit"].type == JSONType.true_;
+        bool gotHit  = "hit" in got && got["hit"].type == JSONType.true_;
+        assert(gotHit == wantHit,
+            format("%s: hit expected %s, got %s", cn, wantHit, got.toString));
+
+        if (!wantHit) continue;   // a documented miss — nothing else to check
+
+        if ("layer" in exp)
+            assert(got["layer"].integer == exp["layer"].integer,
+                format("%s: layer expected %d, got %s",
+                       cn, exp["layer"].integer, got.toString));
+        if ("face" in exp)
+            assert(got["face"].integer == exp["face"].integer,
+                format("%s: face expected %d, got %s",
+                       cn, exp["face"].integer, got.toString));
+        if ("point" in exp) {
+            double[3] w = jvec3(exp["point"]);
+            double[3] g = jvec3(got["point"]);
+            assert(dist2(w, g) <= tol * tol,
+                format("%s: point expected %s, got %s (tol %.1e)", cn, w, g, tol));
+        }
+        if ("normal" in exp) {
+            double[3] w = jvec3(exp["normal"]);
+            double[3] g = jvec3(got["normal"]);
+            assert(dist2(w, g) <= tol * tol,
+                format("%s: normal expected %s, got %s (tol %.1e)", cn, w, g, tol));
+        }
+
+        // NOTE: `expected.layer` (asserted above against the response) is
+        // the packet's bgSrc-ORDER index (0, 1, ... in
+        // backgroundSourcesSnapshot() order) — NOT the Document layer
+        // index /api/model?layer=N expects. The two coincide only for a
+        // scene with exactly one background layer added AFTER the
+        // primary (Document index 1). A case with more than one
+        // background layer (e.g. two_bg_layers_nearest_wins) MUST specify
+        // `expected.docLayer` explicitly; default 1 covers the common
+        // single-background-layer case.
+        int layerForLookup = ("docLayer" in exp) ? cast(int) exp["docLayer"].integer : 1;
+        if ("nearestVert" in exp) {
+            double[3] wv = jvec3(exp["nearestVert"]);
+            int wantIdx = resolveVertexInLayer(layerForLookup, wv, cn);
+            assert(got["nearestVert"].integer == wantIdx,
+                format("%s: nearestVert expected idx %d (coord %s), got %d",
+                       cn, wantIdx, wv, got["nearestVert"].integer));
+        }
+        if ("nearestEdge" in exp) {
+            auto pr = exp["nearestEdge"].array;
+            double[3] wa = jvec3(pr[0]), wb = jvec3(pr[1]);
+            int wantIdx = resolveEdgeInLayer(layerForLookup, wa, wb, cn);
+            assert(got["nearestEdge"].integer == wantIdx,
+                format("%s: nearestEdge expected idx %d, got %d",
+                       cn, wantIdx, got["nearestEdge"].integer));
+        }
     }
 }

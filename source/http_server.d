@@ -331,6 +331,14 @@ class HttpServer {
     private alias PickProvider = string delegate(int x, int y, string engine);
     private PickProvider pickProvider;
 
+    // ----- GET /api/surface-raycast — background-surface raycast oracle -----
+    // (topology-pen P0, test-only). Marshaled onto the main thread (mirrors
+    // PickProvider) so the CONS stage's per-cursor raycast branch — gated on
+    // SubjectPacket.cursorValid, only ever true on a main-thread path — can
+    // run safely. Returns the resolved ConstrainHitPacket as JSON.
+    private alias SurfaceRaycastProvider = string delegate(int x, int y);
+    private SurfaceRaycastProvider surfaceRaycastProvider;
+
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
     // the history service — runs on the HTTP thread like historyProvider.
@@ -416,6 +424,10 @@ class HttpServer {
     struct PickReq  { int x; int y; string engine; }
     struct PickResp { string result; string error; }
     private MainThreadBridge!(PickReq, PickResp) pickBridge;
+
+    struct SurfaceRaycastReq  { int x; int y; }
+    struct SurfaceRaycastResp { string result; string error; }
+    private MainThreadBridge!(SurfaceRaycastReq, SurfaceRaycastResp) surfaceRaycastBridge;
 
     struct RefireReq  { string action; }
     struct RefireResp { string error; }
@@ -640,6 +652,20 @@ class HttpServer {
                 }
             });
 
+        surfaceRaycastBridge = new MainThreadBridge!(SurfaceRaycastReq, SurfaceRaycastResp)(this,
+            (ref SurfaceRaycastReq req, ref SurfaceRaycastResp resp) {
+                if (surfaceRaycastProvider is null) {
+                    resp.error = "surface-raycast provider not set";
+                } else {
+                    try {
+                        resp.result = surfaceRaycastProvider(req.x, req.y);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         refireBridge = new MainThreadBridge!(RefireReq, RefireResp)(this,
             (ref RefireReq req, ref RefireResp resp) {
                 if (refireHandler is null) {
@@ -807,6 +833,14 @@ class HttpServer {
     /// engine=gpu calls gpuSelect.pick directly; engine=bvh calls bvhPick.
     public void setPickProvider(PickProvider provider) {
         this.pickProvider = provider;
+    }
+
+    /// GET /api/surface-raycast?x=&y= — background-surface raycast oracle
+    /// (topology-pen P0). Provider runs on the main thread so the CONS
+    /// stage's raycast branch (gated on SubjectPacket.cursorValid) is safe
+    /// to fire.
+    public void setSurfaceRaycastProvider(SurfaceRaycastProvider provider) {
+        this.surfaceRaycastProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -1602,6 +1636,27 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"` ~ pickBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                }
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path.startsWith("/api/surface-raycast") && request.method == "GET") {
+            if (surfaceRaycastProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"surface-raycast provider not set"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else {
+                surfaceRaycastBridge.req.x = parseQueryInt(request.path, "x", 0);
+                surfaceRaycastBridge.req.y = parseQueryInt(request.path, "y", 0);
+                surfaceRaycastBridge.resp.result = "";
+                surfaceRaycastBridge.resp.error  = "";
+                if (!surfaceRaycastBridge.submitAndWait())
+                    surfaceRaycastBridge.resp.error = "timeout waiting for main thread";
+                if (surfaceRaycastBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = surfaceRaycastBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"` ~ surfaceRaycastBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }

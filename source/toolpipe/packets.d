@@ -38,6 +38,25 @@ struct SubjectPacket {
     // function parameter. Default-init (zero matrices) — stages that
     // require a real viewport early-out when this is invalid.
     Viewport   viewport;
+
+    // Cursor pixel at evaluation time — added for the CONS stage's
+    // background-surface raycast (topology-pen P0,
+    // doc/topopen_p0_plan.md REV-1). `cursorValid` is the THREAD-SAFETY
+    // gate: it is stamped true ONLY by the main-thread mouse-event
+    // dispatch path (`app.d`'s `buildToolVts` optional cursor params, set
+    // from `handleMouseMotion`/`handleMouseButtonDown`/`Up`'s own event
+    // coordinates) and the main-thread-bridged `/api/surface-raycast`
+    // provider. EVERY OTHER caller — the per-frame render-loop's
+    // `buildToolVts` calls and every HTTP-thread subject builder
+    // (`/api/toolpipe`, `/api/snap`, `/api/constrain`, `/api/path`) —
+    // leaves this at its default `false`, so a stage's raycast branch
+    // gated on `cursorValid` never runs off the main thread and never
+    // runs more than once per real input event (not once per render
+    // frame). `cursorX`/`cursorY` are meaningless when `cursorValid` is
+    // false and MUST NOT be read.
+    int  cursorX     = -1;
+    int  cursorY     = -1;
+    bool cursorValid = false;
 }
 
 /// Action-center packet — the action origin produced by ACEN stage in 7.2.
@@ -592,6 +611,30 @@ struct ConstrainPacket {
     float         offset   = 0.0f;    // standoff from surface; sign/direction capture-gated
     bool          handle   = true;    // constrain handle vs geometry; capture-gated
     bool          dblSided = false;   // project onto back faces; capture-gated
+}
+
+/// Background-surface RAYCAST result — published by the CONS stage
+/// (topology-pen P0, doc/topopen_p0_plan.md) alongside `ConstrainPacket`
+/// when `subj.cursorValid` is true. Distinct from `ConstrainPacket`
+/// (the stage's CONFIG, always published when enabled): this packet
+/// carries the per-cursor RESULT of casting a ray from the current pixel
+/// through every background layer's mesh (`snap.backgroundSourcesSnapshot`)
+/// and keeping the nearest hit — the thin `TopologyPenTool` consumer reads
+/// this, never the raycast machinery itself (BvhPick lives in
+/// `source/bvh_pick.d`; the raycast branch lives in the CONS stage).
+///
+/// Every field carries an explicit default (`Vec3.init`/`float.init` is
+/// NaN in this codebase's convention) so a struct literal / `.init` never
+/// reads as a real hit.
+struct ConstrainHitPacket {
+    bool  hit         = false;
+    Vec3  point       = Vec3(0, 0, 0);
+    Vec3  normal      = Vec3(0, 1, 0);
+    int   layer       = -1;    // index into backgroundSourcesSnapshot() order
+    int   face        = -1;
+    int   nearestVert = -1;
+    int   nearestEdge = -1;
+    float t           = float.infinity;
 }
 
 /// Geometry-snap candidate-type bitmask. Multiple types can be enabled

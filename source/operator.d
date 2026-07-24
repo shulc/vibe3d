@@ -2,7 +2,8 @@ module operator;
 
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
-                          FalloffPacket, ConstrainPacket, PathPacket;
+                          FalloffPacket, ConstrainPacket, ConstrainHitPacket,
+                          PathPacket;
 
 // ---------------------------------------------------------------------------
 // Operator architecture — Phase 0 of doc/operator_refactor_plan.md.
@@ -57,7 +58,8 @@ enum PacketKind : ubyte {
     Falloff       = 6,
     Constrain     = 7,
     Path          = 8,
-    Count         = 9
+    ConstrainHit  = 9,
+    Count         = 10
 }
 
 /// Compile-time map T → PacketKind. Used by VectorStack.put!T/get!T to
@@ -73,6 +75,7 @@ template packetKindOf(T) {
     else static if (is(T == FalloffPacket))       enum packetKindOf = PacketKind.Falloff;
     else static if (is(T == ConstrainPacket))     enum packetKindOf = PacketKind.Constrain;
     else static if (is(T == PathPacket))          enum packetKindOf = PacketKind.Path;
+    else static if (is(T == ConstrainHitPacket))  enum packetKindOf = PacketKind.ConstrainHit;
     else                                          static assert(false,
         "packetKindOf: unregistered packet type " ~ T.stringof
         ~ " — add a branch in source/operator.d");
@@ -215,6 +218,32 @@ unittest {
     vts.put(&b);
     assert(vts.get!FalloffPacket is &b);
     assert(!vts.get!FalloffPacket.enabled);
+}
+
+unittest {
+    import math : Vec3;
+    // ConstrainHitPacket put/get round-trip — pointer identity preserved,
+    // and it coexists independently with SubjectPacket + ConstrainPacket
+    // (topology-pen P0: CONS publishes its config packet AND its raycast-
+    // result packet in the same evaluate() pass).
+    VectorStack vts;
+    SubjectPacket subj;
+    ConstrainPacket cfg;
+    ConstrainHitPacket hit;
+    hit.hit  = true;
+    hit.face = 3;
+    hit.point = Vec3(1, 2, 3);
+    vts.put(&subj);
+    vts.put(&cfg);
+    vts.put(&hit);
+    assert(vts.has!ConstrainHitPacket);
+    auto got = vts.get!ConstrainHitPacket();
+    assert(got is &hit);
+    assert(got.hit && got.face == 3);
+    assert(got.point.x == 1 && got.point.y == 2 && got.point.z == 3);
+    // Neighbours untouched.
+    assert(vts.get!SubjectPacket() is &subj);
+    assert(vts.get!ConstrainPacket() is &cfg);
 }
 
 unittest {

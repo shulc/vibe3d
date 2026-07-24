@@ -1,10 +1,12 @@
 module toolpipe.stages.constrain;
 
 import toolpipe.stage   : Stage, TaskCode, ordCons;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom;
+import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+                          SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
+import bvh_pick         : BvhPick, SurfaceHit;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
 // fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
@@ -46,6 +48,16 @@ class ConstrainStage : Stage, Operator {
 private:
     ConstrainPacket _publishedPacket;
 
+    // --- Background-surface raycast (topology-pen P0) -----------------------
+    // One BvhPick per background-layer mesh, keyed by mesh ADDRESS (the
+    // stage stays Document-free — it only needs
+    // `snap.backgroundSourcesSnapshot()`, mirroring how the CONS post-pass
+    // projection in xfrm_transform.d already consumes that same snapshot).
+    // Pruned each evaluate() so a removed/hidden background layer's BVH is
+    // freed (mirrors app.d's `bgGpuByLayer` prune pattern).
+    BvhPick[size_t]    _bgBvh;
+    ConstrainHitPacket _hitPkt;
+
 public:
     // --- Operator interface -------------------------------------------------
     Task task() const { return Task.Cons; }
@@ -61,7 +73,74 @@ public:
         pkt.dblSided = dblSided;
         _publishedPacket = pkt;
         vts.put(&_publishedPacket);
+
+        // Background-surface raycast: gated on Point mode (the only mode a
+        // raycast makes sense for in P0 — screen/vector stay the existing
+        // no-op post-pass) AND a THREAD-SAFE cursor. `subj.cursorValid` is
+        // stamped true ONLY on the main-thread mouse-event dispatch path
+        // (app.d's buildToolVts) and the main-thread-bridged
+        // /api/surface-raycast provider — every HTTP-thread evaluate()
+        // caller (/api/toolpipe, /api/snap, /api/constrain, /api/path)
+        // leaves it false, so this branch never mutates `_bgBvh` off the
+        // main thread (R1 of doc/topopen_p0_plan.md).
+        if (geom == ConstrainGeom.Point) {
+            auto subj = vts.get!SubjectPacket();
+            if (subj !is null && subj.cursorValid && subj.viewport.width > 0)
+                raycastBackground(*subj, vts);
+        }
         return true;
+    }
+
+    // Cast a ray from the current cursor pixel through every background
+    // layer's mesh (snap.backgroundSourcesSnapshot(), world-space, PINNED
+    // identity transform for P0 — R4), keep the globally nearest hit, and
+    // publish it as a ConstrainHitPacket. Reuses BvhPick/pickSurface
+    // (source/bvh_pick.d) — no new raycast machinery, per the topology-pen
+    // P0 layering rule.
+    private void raycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
+        import snap       : backgroundSourcesSnapshot;
+        import constraint : nearestFaceVertex, nearestFaceEdge;
+
+        auto bgSrc = backgroundSourcesSnapshot();
+
+        // Prune cache entries whose mesh left the current background set.
+        bool[size_t] live;
+        foreach (src; bgSrc)
+            if (src !is null) live[cast(size_t)src] = true;
+        size_t[] stale;
+        foreach (addr, bp; _bgBvh)
+            if ((addr in live) is null) stale ~= addr;
+        foreach (addr; stale) _bgBvh.remove(addr);
+
+        ConstrainHitPacket hit;
+        float bestT = float.infinity;
+        foreach (i, src; bgSrc) {
+            if (src is null) continue;
+            size_t addr = cast(size_t)src;
+            auto pp = addr in _bgBvh;
+            BvhPick bp;
+            if (pp is null) {
+                bp = new BvhPick();
+                _bgBvh[addr] = bp;
+            } else {
+                bp = *pp;
+            }
+            SurfaceHit sh;
+            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src, sh))
+                continue;
+            if (sh.t >= bestT) continue;
+            bestT           = sh.t;
+            hit.hit         = true;
+            hit.point       = sh.point;
+            hit.normal      = sh.normal;
+            hit.layer       = cast(int)i;
+            hit.face        = sh.face;
+            hit.t           = sh.t;
+            hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
+            hit.nearestEdge = nearestFaceEdge(*src, sh.face, sh.point);
+        }
+        _hitPkt = hit;
+        vts.put(&_hitPkt);
     }
 
     // --- Config fields (default values match survey §2 presets) ------------
@@ -73,11 +152,15 @@ public:
     bool          handle   = true;
     bool          dblSided = false;
 
-    // Reserved for Stage 5 (capture-gated): set when the user explicitly
-    // toggles/sets CONS via constrain.toggle or tool.pipe.attr; cleared by
-    // reset() and geometry=off. Not yet consulted — CONS currently survives
-    // tool switches via the default no-op in resetTransientPipeStages (same as
-    // snap); a future resetTransient() would read this to honour an explicit lock.
+    // Set when the user explicitly locks CONS's config across a tool switch
+    // (reserved for a future explicit `constrain.toggle` / capture-gated
+    // Stage 5 lock — nothing sets this true yet, so resetTransient() below
+    // currently always resets). Consulted by `resetTransient()` (called
+    // from app.d's `resetTransientPipeStages()`, topology-pen P0 REV-2) so
+    // TopologyPenTool's own CONS+Point composition — NOT an explicit user
+    // lock — cleanly reverts when the tool deactivates, mirroring
+    // ActionCenterStage/AxisStage's userLocked pattern. Cleared by reset()
+    // and geometry=off.
     bool userLocked = false;
 
     this() { publishState(); }
@@ -96,7 +179,21 @@ public:
         handle     = true;
         dblSided   = false;
         userLocked = false;
+        _bgBvh.clear();
+        _hitPkt = ConstrainHitPacket.init;
         publishState();
+    }
+
+    /// Same as reset() but respects userLocked — called by
+    /// `resetTransientPipeStages()` (tool.set / tool switch) so an
+    /// EXPLICIT user constrain setting survives switching tools, while a
+    /// tool's own transient composition (e.g. TopologyPenTool enabling
+    /// CONS+Point on activate() without locking it) cleanly reverts.
+    /// Mirrors ActionCenterStage.resetTransient / AxisStage.resetTransient
+    /// (topology-pen P0 REV-2).
+    void resetTransient() {
+        if (userLocked) return;
+        reset();
     }
 
     // --- Typed params schema: fullParams() is the attr UNIVERSE, params()
@@ -134,7 +231,19 @@ public:
     // `knownAttrs() == fullParams() names` unittest at the bottom of this
     // file for the enforcement that replaces manual verification.
 
-    override void onParamChanged(string name) { publishState(); }
+    // Any attr write through the public setAttr() surface — HTTP
+    // `tool.pipe.attr constrain <name> <value>` OR a tool's own
+    // `cs.setAttr(...)` call — completes the userLocked contract this
+    // field's doc comment already promised ("set when the user explicitly
+    // toggles/sets CONS via ... tool.pipe.attr"; topology-pen P0 is what
+    // finally reads it, via resetTransient()). A tool that composes CONS
+    // TRANSIENTLY (TopologyPenTool.activate()) explicitly resets
+    // `userLocked = false` AFTER its own setAttr calls, overriding this —
+    // see that tool's activate() doc comment for why the ordering matters.
+    override void onParamChanged(string name) {
+        userLocked = true;
+        publishState();
+    }
 
 private:
     void publishState() {

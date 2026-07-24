@@ -3,7 +3,7 @@ module constraint;
 import std.math : sqrt;
 
 import math : Vec3, Viewport, dot, cross, normalize;
-import mesh : Mesh;
+import mesh : Mesh, edgeKey;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom;
 
 // ---------------------------------------------------------------------------
@@ -208,6 +208,99 @@ Vec3 applyOffset(Vec3 hitPos, Vec3 normal, float offset)
     pure nothrow @nogc @safe
 {
     return hitPos + normal * offset;
+}
+
+// ---------------------------------------------------------------------------
+// ConstrainHit / nearestFaceVertex / nearestFaceEdge — topology-pen P0
+// (doc topopen_p0_plan.md). Pure derivation over an ALREADY-RESOLVED
+// background-surface hit (face index + world point), read by the CONS
+// stage's raycast branch (source/toolpipe/stages/constrain.d) to fill the
+// "nearest element" fields of the published ConstrainHitPacket. No BVH /
+// raycast here — that lives in bvh_pick.d (BvhPick.pickSurfaceRay); this
+// module stays the pure-math layer per its existing doc comment.
+// ---------------------------------------------------------------------------
+
+/// Result of a resolved background-surface hit — the payload the CONS
+/// stage's raycast branch publishes (mirrored into ConstrainHitPacket,
+/// toolpipe.packets). Every field carries an explicit default (`Vec3.init`
+/// / `float.init` is NaN in this codebase's convention).
+struct ConstrainHit {
+    bool  hit         = false;
+    Vec3  point       = Vec3(0, 0, 0);
+    Vec3  normal      = Vec3(0, 1, 0);
+    int   layer       = -1;
+    int   face        = -1;
+    int   nearestVert = -1;
+    int   nearestEdge = -1;
+    float t           = float.infinity;
+}
+
+/// Closest point on segment [a, b] to `p`. Small private helper backing
+/// `nearestFaceEdge` — not exposed elsewhere (math.d already has a 2D
+/// screen-space variant, `closestOnSegment2D`, for a different caller).
+private Vec3 closestPointOnSegment3D(Vec3 p, Vec3 a, Vec3 b)
+    pure nothrow @nogc @safe
+{
+    Vec3 ab = b - a;
+    float len2 = dot(ab, ab);
+    if (len2 < 1e-12f) return a;
+    float t = dot(p - a, ab) / len2;
+    if (t < 0.0f) t = 0.0f;
+    else if (t > 1.0f) t = 1.0f;
+    return a + ab * t;
+}
+
+/// Nearest vertex of `face` (an index into `m.faces`) to world point `p` —
+/// argmin |p - vert|. Pure, best-effort: returns -1 when `face` is out of
+/// range or empty (never throws / asserts — a raycast hit against a face
+/// that has since been mutated out from under the caller degrades to "no
+/// nearest element" rather than crashing).
+int nearestFaceVertex(const ref Mesh m, int face, Vec3 p)
+    pure nothrow @safe
+{
+    if (face < 0 || face >= cast(int)m.faces.length) return -1;
+    const f = m.faces[face];
+    int best = -1;
+    float bestD2 = float.infinity;
+    foreach (vi; f) {
+        if (vi >= m.vertices.length) continue;
+        Vec3 d = m.vertices[vi] - p;
+        float d2 = dot(d, d);
+        if (d2 < bestD2) { bestD2 = d2; best = cast(int)vi; }
+    }
+    return best;
+}
+
+/// Nearest edge of `face` (an index into `m.faces`) to world point `p` —
+/// argmin point-to-segment distance over the face's boundary edges,
+/// resolved to a `m.edges` index via `edgeKey`/`edgeIndexMap`. Best-effort:
+/// returns -1 when `face` is out of range, has fewer than 2 vertices, or
+/// `m.edgeIndexMap` is not currently valid/built (P0 accepts -1 here
+/// rather than forcing a rebuild from a `const` reference — see
+/// doc/topopen_p0_plan.md risk R6). NOT `pure` — `Mesh.edgeMapUsable()`
+/// isn't itself annotated pure.
+int nearestFaceEdge(const ref Mesh m, int face, Vec3 p) {
+    if (face < 0 || face >= cast(int)m.faces.length) return -1;
+    if (!m.edgeMapUsable()) return -1;
+    const f = m.faces[face];
+    if (f.length < 2) return -1;
+
+    int best = -1;
+    float bestD2 = float.infinity;
+    foreach (i; 0 .. f.length) {
+        uint a = f[i];
+        uint b = f[(i + 1) % f.length];
+        if (a >= m.vertices.length || b >= m.vertices.length) continue;
+        Vec3 cp = closestPointOnSegment3D(p, m.vertices[a], m.vertices[b]);
+        Vec3 d  = cp - p;
+        float d2 = dot(d, d);
+        if (d2 >= bestD2) continue;
+        if (auto ep = edgeKey(a, b) in m.edgeIndexMap) {
+            bestD2 = d2;
+            best   = cast(int)*ep;
+        }
+    }
+    return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -517,4 +610,89 @@ unittest { // constrainPoint — screen mode: zero-width viewport → identity
     Vec3 pos    = Vec3(0.3f, 5.0f, 0.3f);
     Vec3 result = constrainPoint(pos, Vec3(0,0,0), vp, srcs, cfg);
     assert(fabs(result.y - 5.0f) < 1e-5f, "screen degenerate-view: identity");
+}
+
+// ---------------------------------------------------------------------------
+// P0 (topology-pen) unit tests: nearestFaceVertex / nearestFaceEdge.
+// ---------------------------------------------------------------------------
+
+unittest { // nearestFaceVertex — 4 corners of a unit quad each resolve exactly
+    import mesh : Mesh;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
+    m.buildLoops();
+
+    // A point offset slightly toward each corner resolves to that corner's
+    // vertex index — clearly closer than any other corner.
+    assert(nearestFaceVertex(*m, 0, Vec3(-0.1f, 0.05f, -0.1f)) == 0, "corner 0");
+    assert(nearestFaceVertex(*m, 0, Vec3( 1.1f, 0.05f, -0.1f)) == 1, "corner 1");
+    assert(nearestFaceVertex(*m, 0, Vec3( 1.1f, 0.05f,  1.1f)) == 2, "corner 2");
+    assert(nearestFaceVertex(*m, 0, Vec3(-0.1f, 0.05f,  1.1f)) == 3, "corner 3");
+}
+
+unittest { // nearestFaceVertex — out-of-range face -> -1 (best-effort, never throws)
+    import mesh : Mesh;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
+    m.buildLoops();
+    assert(nearestFaceVertex(*m, 7, Vec3(0,0,0)) == -1, "face index too high");
+    assert(nearestFaceVertex(*m, -1, Vec3(0,0,0)) == -1, "negative face index");
+}
+
+unittest { // nearestFaceEdge — 4 edge midpoints of a unit quad each resolve to
+           // the CORRECT mesh.edges index, looked up via edgeKey (not a
+           // hardcoded assumption about buildLoops' edge ordering).
+    import mesh : Mesh, edgeKey;
+    import std.conv : to;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
+    m.buildLoops();
+
+    uint[2][4] pairs = [[0,1], [1,2], [2,3], [3,0]];
+    Vec3[4] mids = [
+        Vec3(0.5f,  0.05f, -0.05f),  // near edge (0,1) midpoint (0.5,0,0)
+        Vec3(1.05f, 0.05f,  0.5f),   // near edge (1,2) midpoint (1,0,0.5)
+        Vec3(0.5f,  0.05f,  1.05f),  // near edge (2,3) midpoint (0.5,0,1)
+        Vec3(-0.05f,0.05f,  0.5f),   // near edge (3,0) midpoint (0,0,0.5)
+    ];
+    foreach (i; 0 .. 4) {
+        int got = nearestFaceEdge(*m, 0, mids[i]);
+        auto expPtr = edgeKey(pairs[i][0], pairs[i][1]) in m.edgeIndexMap;
+        assert(expPtr !is null, "edgeIndexMap missing pair " ~ i.to!string);
+        assert(got == cast(int)*expPtr,
+            "edge midpoint " ~ i.to!string ~ ": expected " ~ (*expPtr).to!string
+            ~ ", got " ~ got.to!string);
+    }
+}
+
+unittest { // nearestFaceEdge — miss cases: out-of-range face, and a mesh whose
+           // edgeIndexMap was never built (best-effort -1, no crash).
+    import mesh : Mesh;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
+    m.buildLoops();
+    assert(nearestFaceEdge(*m, 9, Vec3(0.5f, 0, 0)) == -1, "out-of-range face");
+
+    auto m2 = new Mesh();   // never buildLoops()'d — edgeIndexMap stale/empty
+    m2.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m2.faces    = [[0u,1u,2u,3u]];
+    assert(nearestFaceEdge(*m2, 0, Vec3(0.5f, 0, 0)) == -1,
+        "edgeIndexMap not built -> best-effort -1");
+}
+
+unittest { // nearestFaceEdge — grazing case: a point at a shared CORNER is
+           // equidistant-ish from its two incident edges; the argmin must
+           // still resolve to SOME valid edge (no crash, no spurious -1).
+    import mesh : Mesh;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
+    m.buildLoops();
+    int got = nearestFaceEdge(*m, 0, Vec3(1.0f, 0.05f, 0.0f));  // corner (1,0,0)
+    assert(got >= 0 && got < cast(int)m.edges.length,
+        "grazing corner case should still resolve to a valid edge index");
 }

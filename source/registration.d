@@ -102,6 +102,7 @@ import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
 import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
+import tools.edit.topology_pen : TopologyPenTool;
 import commands.select.connect;
 import commands.select.expand;
 import commands.select.contract;
@@ -438,6 +439,11 @@ void registerTools(EditorApp app) {
     reg.commandFactories["mesh.tack"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
+
+    // Topology Pen P0 (doc/topopen_p0_plan.md) — thin consumer of the CONS
+    // stage's background-surface-raycast packet; no mesh mutation yet, so
+    // no ToolHeadlessCommand / undo wiring (unlike Tack/Bridge above).
+    reg.toolFactories["mesh.topoPen"] = () => cast(Tool) new TopologyPenTool();
 
     // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
     // from the one-shot mesh.bridge command. Same generic MeshSessionEdit/
