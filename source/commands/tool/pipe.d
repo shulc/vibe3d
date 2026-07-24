@@ -128,8 +128,13 @@ class ToolPipeAttrCommand : Command {
         // transiently).
         if (stageId_ == "constrain" && attrName_ == "enabled") {
             import toolpipe.stages.constrain : ConstrainStage;
+            // Read the post-setAttr state (setAttr already parsed attrValue_
+            // through parseInto's bool grammar, which accepts "1"/"0" as well
+            // as "true"/"false") rather than string-matching "true" — so
+            // `... enabled 1` locks too, matching constrain.toggle's
+            // `userLocked = next`.
             if (auto cs = cast(ConstrainStage) matched)
-                cs.userLocked = (attrValue_ == "true");
+                cs.userLocked = cs.enabled;
         }
 
         // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
