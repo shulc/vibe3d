@@ -24,22 +24,34 @@ import toolpipe.stages.constrain : ConstrainStage;
 // (placing verts/edges/faces from the hit) is a later phase.
 //
 // Lifecycle:
-//   activate()   — enables CONS (geometry=Point) via the stage's own
-//                  setAttr, mirroring how a preset composes an ancillary
-//                  pipe stage. Leaves `ConstrainStage.userLocked` false
-//                  (REV-2 of the plan): this is the TOOL's own transient
-//                  composition, not an explicit user
-//                  `tool.pipe.attr constrain ...` lock, so
+//   activate()   — composes CONS (enabled + geometry=Point) via the
+//                  stage's own setAttr, mirroring how a preset composes an
+//                  ancillary pipe stage. Since ConstrainStage.onParamChanged
+//                  no longer locks on every write (review fix SF), this
+//                  setAttr call is ALREADY transient by construction — no
+//                  unlock dance needed. Critically (review fix SF-1), this
+//                  means activate() must NOT blindly clobber a pre-existing
+//                  `userLocked`: when the user already explicitly enabled
+//                  CONS (`constrain.toggle` or `tool.pipe.attr constrain
+//                  enabled true`), that lock — and the user's own
+//                  enabled/geometry choice — MUST survive this tool
+//                  activating. So activate() only composes when CONS is
+//                  NOT already user-locked; a locked CONS is left
+//                  completely untouched (the tool still reads whatever hit
+//                  packet the user's own config produces).
 //                  `resetTransientPipeStages()` (app.d, called on every
 //                  tool switch BEFORE the outgoing tool's deactivate())
-//                  cleanly reverts CONS to its pre-activation state —
+//                  cleanly reverts the tool's OWN unlocked composition —
 //                  mirroring ActionCenterStage / AxisStage's userLocked
-//                  pattern. No bespoke tool-local save/restore.
+//                  pattern — while a genuine user lock passes straight
+//                  through both this activate() and that reset. No
+//                  bespoke tool-local save/restore.
 //   deactivate() — clears the tool's own cached hit only; CONS itself is
 //                  already reverted by the funnel above by the time this
 //                  runs (or immediately after, on the "toggle same tool
 //                  off" path) — either way this tool never hand-rolls a
-//                  CONS restore.
+//                  CONS restore, and a user's prior lock was never touched
+//                  in the first place.
 //   onMouseMotion()/update() — read `vts.get!ConstrainHitPacket()` (the
 //                  packet CONS published earlier in the SAME
 //                  pipeline.evaluate() pass the dispatcher already ran)
@@ -70,21 +82,17 @@ public:
         if (g_pipeCtx is null) return;
         auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
         if (cs is null) return;
+        // SF-1: a pre-existing EXPLICIT user lock (constrain.toggle /
+        // tool.pipe.attr constrain enabled true) must survive this tool
+        // activating — do not touch CONS at all in that case, so neither
+        // the user's enabled/geometry choice nor the lock itself is
+        // clobbered. Only compose CONS+Point when it is NOT already
+        // user-locked; that composition stays unlocked (CONS.onParamChanged
+        // no longer locks — review fix SF), so resetTransientPipeStages()
+        // cleanly reverts it on the next tool switch.
+        if (cs.userLocked) return;
         cs.setAttr("enabled", "true");
         cs.setAttr("geometry", "point");
-        // ORDER MATTERS: ConstrainStage.onParamChanged sets userLocked=true
-        // on EVERY setAttr call (completing the field's pre-existing
-        // "explicit user tool.pipe.attr" contract — the same public entry
-        // point an HTTP `tool.pipe.attr constrain ...` call uses, so the
-        // stage cannot tell the two apart AT setAttr time). This tool's
-        // own composition is NOT that explicit user lock, so it must
-        // un-lock AFTER its own setAttr calls, not before (setting it
-        // false first would just get immediately overwritten back to true
-        // by the first setAttr's onParamChanged) — this is what lets
-        // resetTransientPipeStages() (REV-2) cleanly revert CONS when this
-        // tool deactivates, while a genuine external
-        // `tool.pipe.attr constrain ...` call still survives a tool switch.
-        cs.userLocked = false;
     }
 
     override void deactivate() {

@@ -114,6 +114,24 @@ class ToolPipeAttrCommand : Command {
                 fo.userLocked = (attrValue_ != "none");
         }
 
+        // A user-driven CONS enable toggle (`tool.pipe.attr constrain
+        // enabled <v>`, e.g. from the panel or an HTTP test) locks/unlocks
+        // the same way `constrain.toggle` does (commands/constrain/toggle.d)
+        // — this IS the explicit external write surface, so it survives a
+        // tool switch (topology-pen P0 review fix SF). A tool's OWN
+        // transient composition (TopologyPenTool.activate()) calls
+        // `ConstrainStage.setAttr(...)` directly on the stage instance,
+        // bypassing this command entirely, so it never reaches this branch
+        // and never locks. Other constrain attrs (geometry/offset/handle/
+        // dblSided) don't move the lock — they're only meaningful once
+        // `enabled` has already set it (or left it alone while composing
+        // transiently).
+        if (stageId_ == "constrain" && attrName_ == "enabled") {
+            import toolpipe.stages.constrain : ConstrainStage;
+            if (auto cs = cast(ConstrainStage) matched)
+                cs.userLocked = (attrValue_ == "true");
+        }
+
         // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
         // immediacy: when a tool ALREADY has a live evaluation session, the
         // session driver re-runs its apply now so the new stage state takes

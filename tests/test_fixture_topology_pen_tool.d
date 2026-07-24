@@ -123,7 +123,8 @@ unittest {
         "expected a cached hit after the motion event; got " ~ st.toString);
 
     // Tier-B golden for the SAME pixel/camera (bg_cube_topface_center):
-    // point=(0,0.5,0), normal=(0,1,0), face=4, layer=0 (bgSrc-order).
+    // point=(0,0.5,0), normal=(0,1,0), face=4, layer=1 (Document-layer
+    // index — NIT-3: the background cube lives at Document layer 1).
     auto pt = st["point"].array;
     assert(approx(pt[0].floating, 0.0) && approx(pt[1].floating, 0.5) && approx(pt[2].floating, 0.0),
         "cached hit point should match the Tier-B golden (0,0.5,0); got " ~ st.toString);
@@ -132,8 +133,8 @@ unittest {
         "cached hit normal should match the Tier-B golden (0,1,0); got " ~ st.toString);
     assert(st["face"].integer == 4,
         "cached hit face should match the Tier-B golden (4); got " ~ st.toString);
-    assert(st["layer"].integer == 0,
-        "cached hit layer should match the Tier-B golden (0); got " ~ st.toString);
+    assert(st["layer"].integer == 1,
+        "cached hit layer should match the Tier-B golden (1); got " ~ st.toString);
 
     // Deactivate — no mesh mutation across activate/deactivate.
     cmd("tool.set mesh.topoPen off");

@@ -98,10 +98,16 @@ public:
     // (source/bvh_pick.d) — no new raycast machinery, per the topology-pen
     // P0 layering rule.
     private void raycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
-        import snap       : backgroundSourcesSnapshot;
+        import snap       : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
         import constraint : nearestFaceVertex, nearestFaceEdge;
 
-        auto bgSrc = backgroundSourcesSnapshot();
+        auto bgSrc      = backgroundSourcesSnapshot();
+        // Parallel Document-layer-index array (NIT-3) — index i is the
+        // Document-layer index bgSrc[i] came from. Stays Document-free here
+        // (both are plain snapshots from snap.d); a length mismatch (an
+        // installer that didn't supply indices) falls back to the bgSrc
+        // slot itself below, so this never indexes out of bounds.
+        auto bgSrcLayer = backgroundSourceLayerIndices();
 
         // Prune cache entries whose mesh left the current background set.
         bool[size_t] live;
@@ -133,7 +139,7 @@ public:
             hit.hit         = true;
             hit.point       = sh.point;
             hit.normal      = sh.normal;
-            hit.layer       = cast(int)i;
+            hit.layer       = (i < bgSrcLayer.length) ? bgSrcLayer[i] : cast(int)i;
             hit.face        = sh.face;
             hit.t           = sh.t;
             hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
@@ -152,15 +158,21 @@ public:
     bool          handle   = true;
     bool          dblSided = false;
 
-    // Set when the user explicitly locks CONS's config across a tool switch
-    // (reserved for a future explicit `constrain.toggle` / capture-gated
-    // Stage 5 lock — nothing sets this true yet, so resetTransient() below
-    // currently always resets). Consulted by `resetTransient()` (called
-    // from app.d's `resetTransientPipeStages()`, topology-pen P0 REV-2) so
-    // TopologyPenTool's own CONS+Point composition — NOT an explicit user
-    // lock — cleanly reverts when the tool deactivates, mirroring
-    // ActionCenterStage/AxisStage's userLocked pattern. Cleared by reset()
-    // and geometry=off.
+    // Set ONLY via an explicit user-facing entry point — `constrain.toggle`
+    // (ConstrainToggleCommand.apply, below) and a `tool.pipe.attr constrain
+    // enabled <v>` write (ToolPipeAttrCommand.apply's constrain special
+    // case, commands/tool/pipe.d) — mirroring ActionCenterStage/AxisStage's
+    // `setUserMode()` / FalloffStage's `tool.pipe.attr falloff type`
+    // special case: the LOCK lives at the COMMAND layer, not inside
+    // `onParamChanged()` (review fix SF — the prior onParamChanged-sets-
+    // userLocked-on-every-write design couldn't tell an explicit user edit
+    // apart from a tool's own transient composition calling `setAttr`
+    // directly on the stage, e.g. TopologyPenTool.activate(), which is
+    // exactly the SF-1 bug this refactor fixes). Consulted by
+    // `resetTransient()` (called from app.d's `resetTransientPipeStages()`)
+    // so an explicit user lock survives a tool switch while a tool's own
+    // transient CONS composition cleanly reverts. Cleared by reset() and by
+    // an explicit `enabled=false` write through either command-layer path.
     bool userLocked = false;
 
     this() { publishState(); }
@@ -231,17 +243,23 @@ public:
     // `knownAttrs() == fullParams() names` unittest at the bottom of this
     // file for the enforcement that replaces manual verification.
 
-    // Any attr write through the public setAttr() surface — HTTP
-    // `tool.pipe.attr constrain <name> <value>` OR a tool's own
-    // `cs.setAttr(...)` call — completes the userLocked contract this
-    // field's doc comment already promised ("set when the user explicitly
-    // toggles/sets CONS via ... tool.pipe.attr"; topology-pen P0 is what
-    // finally reads it, via resetTransient()). A tool that composes CONS
-    // TRANSIENTLY (TopologyPenTool.activate()) explicitly resets
-    // `userLocked = false` AFTER its own setAttr calls, overriding this —
-    // see that tool's activate() doc comment for why the ordering matters.
+    // Deliberately does NOT touch `userLocked` (review fix SF). This fires
+    // for EVERY successful setAttr — both an explicit external
+    // `tool.pipe.attr constrain <name> <value>` write AND a tool's own
+    // internal composition (e.g. TopologyPenTool.activate() calling
+    // `cs.setAttr(...)` directly on the stage instance) — so it cannot tell
+    // the two apart. Locking here unconditionally is exactly the bug the
+    // prior version had: it forced every transient tool composition to
+    // immediately un-lock again afterward, which in turn let a tool's own
+    // un-lock clobber a genuine prior user lock. The lock now lives
+    // one layer up, at the explicit-user COMMAND entry points that can
+    // actually tell the two callers apart — `constrain.toggle`
+    // (commands/constrain/toggle.d) and `tool.pipe.attr constrain enabled
+    // <v>` (ToolPipeAttrCommand's constrain special case,
+    // commands/tool/pipe.d) — mirroring ActionCenterStage/AxisStage's
+    // `setUserMode()` and FalloffStage's `tool.pipe.attr falloff type`
+    // special case.
     override void onParamChanged(string name) {
-        userLocked = true;
         publishState();
     }
 

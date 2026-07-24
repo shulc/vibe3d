@@ -1261,16 +1261,15 @@ void runSurfaceRaycastSuite(string fixtureJson) {
                 format("%s: normal expected %s, got %s (tol %.1e)", cn, w, g, tol));
         }
 
-        // NOTE: `expected.layer` (asserted above against the response) is
-        // the packet's bgSrc-ORDER index (0, 1, ... in
-        // backgroundSourcesSnapshot() order) — NOT the Document layer
-        // index /api/model?layer=N expects. The two coincide only for a
-        // scene with exactly one background layer added AFTER the
-        // primary (Document index 1). A case with more than one
-        // background layer (e.g. two_bg_layers_nearest_wins) MUST specify
-        // `expected.docLayer` explicitly; default 1 covers the common
-        // single-background-layer case.
-        int layerForLookup = ("docLayer" in exp) ? cast(int) exp["docLayer"].integer : 1;
+        // `expected.layer` (asserted above against the response) IS the
+        // Document-layer index /api/model?layer=N expects (NIT-3: the CONS
+        // stage resolves its bgSrc-order slot to the real Document-layer
+        // index at publish time via snap.backgroundSourceLayerIndices(),
+        // so the packet's `layer` field and the Document index coincide —
+        // no separate `docLayer` field needed). Falls back to the live
+        // response's own `layer` when a case omits `expected.layer`.
+        int layerForLookup = ("layer" in exp) ? cast(int) exp["layer"].integer
+                                               : cast(int) got["layer"].integer;
         if ("nearestVert" in exp) {
             double[3] wv = jvec3(exp["nearestVert"]);
             int wantIdx = resolveVertexInLayer(layerForLookup, wv, cn);

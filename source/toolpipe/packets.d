@@ -630,7 +630,12 @@ struct ConstrainHitPacket {
     bool  hit         = false;
     Vec3  point       = Vec3(0, 0, 0);
     Vec3  normal      = Vec3(0, 1, 0);
-    int   layer       = -1;    // index into backgroundSourcesSnapshot() order
+    int   layer       = -1;    // Document-layer index (document.layers[N]) the
+                                // hit face belongs to (NIT-3; resolved from the
+                                // bgSrc-order slot via
+                                // snap.backgroundSourceLayerIndices() at publish
+                                // time — falls back to the bgSrc-order slot
+                                // itself if that mapping is unavailable)
     int   face        = -1;
     int   nearestVert = -1;
     int   nearestEdge = -1;

@@ -1814,18 +1814,25 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         }
     }
 
-    // Install background snap sources (layers Stage 5).
+    // Install background snap sources (layers Stage 5). The parallel
+    // `snapSrcLayerIdx` (topology-pen P0 NIT-3) records each source's
+    // Document-layer index (this loop's `i`) so the CONS stage's
+    // background-surface raycast can publish a real Document-layer index
+    // in `ConstrainHitPacket.layer` instead of the bgSrc-order slot.
     {
         import snap : setBackgroundSnapSources;
         import document : Document;
         const(Mesh)*[] snapSrc;
+        int[] snapSrcLayerIdx;
         if (document.layers.length > 1) {
-            foreach (lyr; document.layers) {
-                if (Document.background(lyr))
+            foreach (i, lyr; document.layers) {
+                if (Document.background(lyr)) {
                     snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
+                    snapSrcLayerIdx ~= cast(int)i;
+                }
             }
         }
-        setBackgroundSnapSources(snapSrc);
+        setBackgroundSnapSources(snapSrc, snapSrcLayerIdx);
     }
     // Install item snap frames (Stage 3).
     {

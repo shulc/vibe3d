@@ -91,15 +91,33 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
 // the same g_vgridMutex that guards the grids guards the source list.
 private __gshared const(Mesh)*[] g_snapSources;
 
+// Parallel array (topology-pen P0 NIT-3): g_snapSourceLayers[i] is the
+// Document-layer index (document.layers[N]) that g_snapSources[i] came
+// from. Filled by the SAME call that installs g_snapSources — snap.d stays
+// Document-free itself (it only stores plain ints), while the CONS stage's
+// background raycast can resolve a bgSrc-order slot back to a real
+// Document-layer index without either module importing `document`.
+private __gshared int[] g_snapSourceLayers;
+
 /// Install the background snap sources (the *visible && background* layers'
 /// meshes). The active mesh is NOT included — it is always source 0 via the
 /// `mesh` argument to snapCursor. Pass an empty slice (or never call this) for
 /// the single-layer common case. Copies into an owned buffer so the caller's
 /// slice need not outlive the frame.
-void setBackgroundSnapSources(const(Mesh)*[] sources) {
+///
+/// `layerIndices`, when non-empty, must be the same length as `sources` —
+/// `layerIndices[i]` is the Document-layer index `sources[i]` was read from
+/// (app.d/panels.d fill this in document-layer index order, skipping
+/// foreground/invisible layers, so it is generally NOT `i` itself). Callers
+/// that don't track indices (or don't need the mapping) may omit it; the
+/// mapping then reads back empty and consumers fall back to the bgSrc-order
+/// index (see `backgroundSourceLayerIndices()`).
+void setBackgroundSnapSources(const(Mesh)*[] sources, const(int)[] layerIndices = null) {
     synchronized (g_vgridMutex) {
         g_snapSources.length = sources.length;
         foreach (i, s; sources) g_snapSources[i] = s;
+        g_snapSourceLayers.length = layerIndices.length;
+        foreach (i, li; layerIndices) g_snapSourceLayers[i] = li;
     }
 }
 
@@ -209,6 +227,19 @@ const(Mesh)*[] backgroundSourcesSnapshot() {
     synchronized (g_vgridMutex) {
         if (g_snapSources.length == 0) return null;
         return g_snapSources.dup;
+    }
+}
+
+/// Point-in-time copy of the Document-layer index parallel to
+/// `backgroundSourcesSnapshot()` (topology-pen P0 NIT-3) — index i of this
+/// array is the Document-layer index `backgroundSourcesSnapshot()[i]` was
+/// installed from. May be SHORTER than (or empty relative to) the sources
+/// snapshot when the installer didn't supply indices; callers must
+/// bounds-check and fall back to the bgSrc-order index on a miss.
+const(int)[] backgroundSourceLayerIndices() {
+    synchronized (g_vgridMutex) {
+        if (g_snapSourceLayers.length == 0) return null;
+        return g_snapSourceLayers.dup;
     }
 }
 

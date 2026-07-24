@@ -13,6 +13,12 @@ import toolpipe.stage              : TaskCode;
 // `constrain.toggle` — flip the ConstrainStage's master enable flag.
 //
 // Pipe configuration is UI state, not a mesh edit. Mirrors snap.toggle.
+//
+// This is one of the two explicit-user entry points that set
+// `ConstrainStage.userLocked` (the other is `tool.pipe.attr constrain
+// enabled <v>` — ToolPipeAttrCommand's constrain special case,
+// commands/tool/pipe.d). ConstrainStage.onParamChanged() deliberately does
+// NOT lock (topology-pen P0 review fix SF) — see its doc comment.
 // ---------------------------------------------------------------------------
 class ConstrainToggleCommand : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) {

@@ -34,7 +34,7 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 4,
+        "hit": true, "layer": 1, "face": 4,
         "point": [0, 0.5, 0], "normal": [0, 1, 0]
       }
     },
@@ -58,9 +58,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 0,
+        "hit": true, "layer": 1, "face": 0,
         "point": [3, 0, -2], "normal": [0, 1, 0],
-        "docLayer": 1,
         "nearestVert": [10, 0, -10],
         "nearestEdge": [[-10, 0, -10], [10, 0, 10]]
       }
@@ -86,9 +85,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 3,
+        "hit": true, "layer": 1, "face": 3,
         "point": [0.5, 0.2, -0.1], "normal": [1, 0, 0],
-        "docLayer": 1,
         "nearestVert": [0.5, 0.5, -0.5],
         "nearestEdge": [[0.5, 0.5, -0.5], [0.5, 0.5, 0.5]]
       }
@@ -135,9 +133,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 1,
+        "hit": true, "layer": 1, "face": 1,
         "point": [5, 0, 6], "normal": [0, 1, 0],
-        "docLayer": 1,
         "nearestVert": [10, 0, 10],
         "nearestEdge": [[10, 0, 10], [-10, 0, -10]]
       }
@@ -168,9 +165,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 1,
+        "hit": true, "layer": 1, "face": 1,
         "point": [2, 2, 3], "normal": [0, 1, 0],
-        "docLayer": 1,
         "nearestVert": [10, 2, 10],
         "nearestEdge": [[10, 2, 10], [-10, 2, -10]]
       }
@@ -218,9 +214,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 5,
+        "hit": true, "layer": 1, "face": 5,
         "point": [0.1, -0.5, 0.2], "normal": [0, -1, 0],
-        "docLayer": 1,
         "nearestVert": [0.5, -0.5, 0.5],
         "nearestEdge": [[0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]]
       }
@@ -246,9 +241,8 @@
       ],
       "raycast": { "x": 475, "y": 300 },
       "expected": {
-        "hit": true, "layer": 0, "face": 2,
+        "hit": true, "layer": 1, "face": 2,
         "point": [-0.5, -0.1, 0.15], "normal": [-1, 0, 0],
-        "docLayer": 1,
         "nearestVert": [-0.5, -0.5, 0.5],
         "nearestEdge": [[-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5]]
       }

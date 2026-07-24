@@ -3696,6 +3696,17 @@ void main(string[] args) {
         // snap.backgroundSourcesSnapshot() (CPU-side Mesh pointers) via
         // BvhPick, no GPU state involved, so this needs no
         // ensureDisplayCurrent().
+        //
+        // NIT-5 (multi-viewport caveat, deferred): this uses
+        // `vpm.activeSnapshot()` (the currently-ACTIVE viewport cell), while
+        // the real mouse-event dispatch path (buildToolVts, further down)
+        // uses `vpm.inputSnapshot()` (the cell the event itself landed in).
+        // The two coincide for P0's single-viewport test scenes, so `x`/`y`
+        // here are unambiguous; a multi-viewport caller wanting the
+        // raycast scoped to a NON-active cell would need this endpoint to
+        // accept an explicit viewport id, same as `/api/camera`'s
+        // `_viewport` override — not needed until a later phase actually
+        // exercises multi-viewport topology-pen.
         httpServer.setSurfaceRaycastProvider((int x, int y) {
             import std.format        : format;
             import toolpipe.packets  : ConstrainHitPacket;

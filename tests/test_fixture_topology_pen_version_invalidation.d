@@ -109,7 +109,7 @@ unittest {
     assert(r1["hit"].boolean == true, "raycast #1: expected a hit; got " ~ r1.toString);
     assert(approx(r1["point"].array[1].floating, 0.5),
         "raycast #1: expected top-face Y~0.5; got " ~ r1.toString);
-    assert(r1["layer"].integer == 0, "raycast #1: expected bgSrc layer 0");
+    assert(r1["layer"].integer == 1, "raycast #1: expected Document layer 1");
 
     // Promote layer1 to primary, select all 8 verts, translate by TY=2 via
     // /api/transform (mutationVersion-correct — see the file header), then
@@ -131,5 +131,5 @@ unittest {
     assert(approx(r2["point"].array[1].floating, 2.5),
         "raycast #2: expected top-face Y~2.5 (surface-pick cache must have "
         ~ "rebuilt after the mutationVersion bump) — got " ~ r2.toString);
-    assert(r2["layer"].integer == 0, "raycast #2: expected bgSrc layer 0");
+    assert(r2["layer"].integer == 1, "raycast #2: expected Document layer 1");
 }
