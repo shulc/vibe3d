@@ -658,6 +658,11 @@ struct EditorApp {
     // reuse it under its "mesh.bevel_edit" wire name) so undo history /
     // event-log replay dispatch on a name that actually describes this op.
     MeshSessionEdit delegate() topoPenBuildEditFactory;
+    // Task 0477 (topology-pen P4, OBJ-3 FOLDED): the Move gesture's own
+    // generic session-edit factory, wireName "mesh.topoPen_move" — kept
+    // distinct from `topoPenBuildEditFactory` since a re-snap move never
+    // adds/removes geometry (Position-only editScope, not Geometry|Marks).
+    MeshSessionEdit delegate() topoPenMoveEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

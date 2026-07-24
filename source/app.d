@@ -3033,6 +3033,13 @@ void main(string[] args) {
     // "mesh.bevel_edit" the way most of the tools above do.
     auto topoPenBuildEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_build", "Topology Build", sessionGeomMarks);
+    // Topology Pen P4's Move gesture (task 0477, doc/topopen_p4_plan.md,
+    // OBJ-3 FOLDED): its OWN typed edit factory, distinct from
+    // `topoPenBuildEditFactory` — a grab-and-re-snap move never adds/removes
+    // geometry, so its wire name is "mesh.topoPen_move" and its editScope is
+    // Position-only, not Geometry|Marks.
+    auto topoPenMoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3143,6 +3150,7 @@ void main(string[] args) {
     app.smoothShiftEditFactory   = smoothShiftEditFactory;
     app.strokeExtrudeEditFactory = strokeExtrudeEditFactory;
     app.topoPenBuildEditFactory  = topoPenBuildEditFactory;
+    app.topoPenMoveEditFactory   = topoPenMoveEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

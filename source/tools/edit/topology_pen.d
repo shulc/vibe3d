@@ -20,6 +20,7 @@ import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
+import change_bus            : MeshEditScope;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -39,6 +40,17 @@ alias VertexNewFactory = MeshVertexNew delegate();
 /// `bevelEditFactory`). Binding happens at CALL time, so the build's undo
 /// entry targets whichever layer is primary when the gesture commits.
 alias TopoPenBuildFactory = MeshSessionEdit delegate();
+
+/// Factory the tool calls ONCE PER MOVE GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P4, doc/topopen_p4_plan.md OBJ-3
+/// FOLDED) — a DEDICATED factory, distinct from `TopoPenBuildFactory`:
+/// reusing the build factory would bake the wrong `wireName`
+/// ("mesh.topoPen_build" for a move — corrupts undo history / event-log
+/// replay / macros) and the wrong `editScope` (Geometry|Marks vs the
+/// position-only write a re-snap move actually is). Wired with
+/// `wireName="mesh.topoPen_move"` and `MeshEditScope.Position` at the
+/// app.d construction site, mirroring `topoPenBuildEditFactory`.
+alias TopoPenMoveFactory = MeshSessionEdit delegate();
 
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
@@ -60,7 +72,7 @@ private enum BuildCase { None, Edge, Tri, Quad }
 // later modes (Move, Split, Add Loop, Slide, Remove, Duplicate Loop, Move
 // Edge Loop, Smoothing, ...) to plug into without re-deriving the grid.
 private enum GestureSlot {
-    Lmb,           // none,       LMB — Move                          (NOT YET IMPLEMENTED)
+    Lmb,           // none,       LMB — Move — THIS PHASE (P4)
     Rmb,           // none,       RMB — Move + Edge Loop               (NOT YET IMPLEMENTED)
     Mmb,           // none,       MMB — Split                          (NOT YET IMPLEMENTED)
     ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
@@ -104,9 +116,29 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 }
 
 // ---------------------------------------------------------------------------
-// TopologyPenTool — Phases P0 + P1 + P2 + P3 of the topology-pen port
+// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 of the topology-pen port
 // (factory id `mesh.topoPen`, doc/topopen_p0_plan.md, doc/topopen_p1_plan.md,
-// doc/topopen_p2_plan.md, doc/topopen_p3_plan.md).
+// doc/topopen_p2_plan.md, doc/topopen_p3_plan.md, doc/topopen_p4_plan.md).
+//
+// P4 adds MOVE on the plain (unmodified) **LMB** slot (`GestureSlot.Lmb`) —
+// the dispatch backbone's base behavior, every modifier an overlay on top of
+// it (capture-verified, doc/topopen_p4_plan.md "The MEASURED mechanism").
+// Design A: BOTH Move and Place now commit on RELEASE, not DOWN — a plain
+// LMB press disambiguates at press time (`onPlainLmbDown`, reusing P3's
+// `findSourceVertex`, kTopoPenSnapPx threshold, over the PRIMARY layer
+// only): landing on an existing vertex arms Move (`moveArmed_`/
+// `grabbedVert_`); landing on empty background arms Place (`placeArmed_`,
+// the same P2 `placeVertexAt` path, now deferred). `onMouseButtonUp`
+// commits whichever is armed at the release event's own CONS-snapped hit:
+// Move re-snaps the grabbed vertex to that hit (`moveVertexTo` — a direct
+// `m.vertices[i]=pos` + `m.commitChange(Position)` write, no new mesh.d
+// seam, its own `topoPenMoveEditFactory`/wireName "mesh.topoPen_move", OBJ-3
+// FOLDED); Place creates one vertex exactly as P2 always did. A release
+// landing back within eps of the grabbed vertex's CURRENT position
+// (stationary click, or an all-on-surface no-move) is a clean no-op — no
+// mutation, no undo entry, mirroring P3's degenerate-release convention.
+// `draw()` renders a live Move ghost (grabbed vertex's re-snapped position)
+// since commit is deferred to release — the only mid-drag feedback.
 //
 // P3 adds the DRAG-FROM-VERTEX build gesture on the **Shift+LMB** overlay
 // slot (doc-mined gesture grid, cross-confirmed by 3 independent reference
@@ -126,12 +158,13 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 // P0-P2); P3's new logic is the gesture/classify/build state machine living
 // entirely in this tool + the three additive `Mesh` seams it consumes
 // (`edgeNeighbors`, `deleteFacesByMask(keepFloatingEdges)`,
-// `makePolygonFromVerts(autoOrient)`). Plain (unmodified) LMB stays
-// `placeVertexAt` (P2's press-on-empty click) — UNTOUCHED, dispatched via
-// `GestureSlot.Lmb` below exactly as it always was. Every other slot in the
-// grid (Move, Split, Add Loop, Slide, Remove, the two loop-variant overlays,
-// Smoothing, the 2 undocumented slots) is a named, inert stub for later
-// phases — see `GestureSlot`'s own doc comment.
+// `makePolygonFromVerts(autoOrient)`). Plain (unmodified) LMB now runs P4's
+// Move/Place disambiguation (`onPlainLmbDown`, above) — P2's placement
+// still fires verbatim on the Place branch, just deferred to release.
+// Every other slot in the grid (Move+Edge-Loop, Split, Add Loop, Slide,
+// Remove, the two loop-variant overlays, Smoothing, the 2 undocumented
+// slots) is a named, inert stub for later phases — see `GestureSlot`'s own
+// doc comment.
 //
 // LAYERED like the reference editor (owner hard rule #1): the background-
 // surface constraint (Point-mode nearest-foot magnet, Screen-mode
@@ -231,6 +264,9 @@ private:
     // --- P3 drag-build gesture deps (doc/topopen_p3_plan.md) ---
     TopoPenBuildFactory buildEditFactory_;
 
+    // --- P4 Move gesture deps (doc/topopen_p4_plan.md, OBJ-3 FOLDED) ---
+    TopoPenMoveFactory moveEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -247,6 +283,21 @@ private:
     int       quadP_          = -1;   // Quad case: cyclic-next(A) in the triangle
     int       quadQ_          = -1;   // Quad case: cyclic-prev(A) in the triangle
     int       quadTriFi_      = -1;   // Quad case: the triangle face index to splice
+
+    // --- P4 Move/Place session state (topology_pen.d, doc/topopen_p4_plan.md,
+    // Design A). Both outcomes of a plain-LMB press are ARMED at DOWN
+    // (`onPlainLmbDown`'s findSourceVertex disambiguation) and COMMITTED at
+    // UP (`onMouseButtonUp`) — never at DOWN, so a stationary click's
+    // DOWN-then-UP pair stays bit-identical to the pre-P4 DOWN-commit
+    // behavior (the byte-identity gate P4 step 1 proves). `placeArmed_`
+    // mirrors P2's original press-on-empty-background click; `moveArmed_`/
+    // `grabbedVert_` arm when the SAME press instead lands on an existing
+    // primary-layer vertex. Cleared by `onMouseButtonUp` on every
+    // commit/no-op path and by `resyncSession` on an external history
+    // navigation, exactly like the P3 drag-build state above.
+    bool placeArmed_  = false;
+    bool moveArmed_   = false;
+    int  grabbedVert_ = -1;
 
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
@@ -286,10 +337,12 @@ public:
     }
 
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
-                        TopoPenBuildFactory bf = null) {
+                        TopoPenBuildFactory bf = null,
+                        TopoPenMoveFactory mf = null) {
         history_          = h;
         addVertexFactory_ = f;
         buildEditFactory_ = bf;
+        moveEditFactory_  = mf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -423,23 +476,28 @@ public:
         }
     }
 
-    // P2 (doc/topopen_p2_plan.md): a plain (unmodified) LEFT click with a
-    // background hit places ONE vertex in the primary layer at the (now
-    // nearest-foot-corrected) hit point. UNCHANGED by P3 — a plain LMB press
-    // never checks for an existing vertex under the cursor at all (Move, the
-    // reference's plain-LMB action, is a later phase; see `GestureSlot.Lmb`'s
-    // doc comment). Dispatched via app.d's general `if (activeTool)`
-    // mouse-down block (app.d:6135-6136), which already ran
-    // `buildToolVts(..., btn.x, btn.y, true)` -> `cursorValid=true` ->
-    // pipeline.evaluate(vts) BEFORE calling here, so CONS has already
-    // published this event's ConstrainHitPacket onto `vts` — `readHit`
-    // below reads it fresh rather than trusting a possibly-stale
-    // `lastHit_` from the last motion event.
+    // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
+    // plain (unmodified) LEFT press disambiguates HERE, at press time,
+    // between grabbing an existing primary-layer vertex (Move) and placing
+    // a new one on the background surface (Place) — reusing P3's
+    // `findSourceVertex` (the SAME `kTopoPenSnapPx` screen-space threshold,
+    // over the PRIMARY mesh only; the background is the snap reference,
+    // never grabbed). Neither outcome commits here: both are armed only,
+    // and the actual mutation happens on RELEASE (`onMouseButtonUp`) at
+    // THAT event's own CONS-snapped hit — a stationary click's DOWN+UP
+    // pixel pair therefore still yields exactly one placement/no mutation,
+    // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
+    // 1). Always claims the event either way.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        readHit(vts);
-        if (!lastHit_.hit) return true;   // claimed the click; no bg/degenerate seed -> place nothing
-
-        placeVertexAt(lastHit_.point, vts);
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int src = findSourceVertex(e.x, e.y, vp);
+        if (src >= 0) {
+            moveArmed_   = true;
+            grabbedVert_ = src;
+        } else {
+            placeArmed_ = true;
+        }
         return true;
     }
 
@@ -468,45 +526,79 @@ public:
         return true;   // consume; the build (if any) commits on release
     }
 
-    // P3 (doc/topopen_p3_plan.md): commits the armed drag-build, if any, at
-    // the RELEASE event's own CONS-snapped hit. A release with no armed
-    // drag (P2's plain click already handled everything on the matching
-    // down event) or with no real motion since press (a stationary
-    // click-on-vertex — "revisit = Move/no-op", capture SESSION 1) builds
-    // nothing. Always disarms before returning, so a rejected/no-op release
-    // never leaves a stale armed source for the NEXT press to inherit.
+    // Commits whichever gesture is armed at RELEASE, at the release event's
+    // own CONS-snapped hit — P3's drag-build (unchanged), or P4's Move/Place
+    // disambiguation (doc/topopen_p4_plan.md, Design A: both of P4's
+    // outcomes now commit here, never at DOWN). At most one of
+    // `dragArmed_`/`placeArmed_`/`moveArmed_` is ever set at a time (each is
+    // armed by a distinct GestureSlot's down-handler), so these branches are
+    // mutually exclusive in practice; each disarms its own state before
+    // returning so a rejected/no-op release never leaves anything stale for
+    // the next press to inherit.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
-        if (!dragArmed_) return false;
 
-        int       a     = sourceVert_;
-        BuildCase casee  = classifiedCase_;
-        int       n      = triN_;
-        int       p      = quadP_;
-        int       q      = quadQ_;
-        int       triFi  = quadTriFi_;
-        int       startX = dragStartX_, startY = dragStartY_;
+        // --- P3: commits the armed drag-build, if any, at the RELEASE
+        // event's own CONS-snapped hit. A release with no real motion since
+        // press (a stationary click-on-vertex — "revisit = Move/no-op",
+        // capture SESSION 1) builds nothing.
+        if (dragArmed_) {
+            int       a     = sourceVert_;
+            BuildCase casee  = classifiedCase_;
+            int       n      = triN_;
+            int       p      = quadP_;
+            int       q      = quadQ_;
+            int       triFi  = quadTriFi_;
+            int       startX = dragStartX_, startY = dragStartY_;
 
-        sourceVert_     = -1;
-        dragArmed_      = false;
-        classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+            sourceVert_     = -1;
+            dragArmed_      = false;
+            classifiedCase_ = BuildCase.None;
+            triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
 
-        readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
 
-        // A release back at (near enough) the press pixel is a stationary
-        // click on the source vertex, not a drag — capture-confirmed no-op
-        // (a near-zero-displacement Move), never a build.
-        enum int kMinDragPx = 3;
-        int dx = e.x - startX, dy = e.y - startY;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+            // A release back at (near enough) the press pixel is a stationary
+            // click on the source vertex, not a drag — capture-confirmed no-op
+            // (a near-zero-displacement Move), never a build.
+            enum int kMinDragPx = 3;
+            int dx = e.x - startX, dy = e.y - startY;
+            if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
 
-        if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
-        if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
+            if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
+            if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
 
-        buildFromSource(a, casee, n, p, q, triFi, lastHit_.point);
-        return true;
+            buildFromSource(a, casee, n, p, q, triFi, lastHit_.point);
+            return true;
+        }
+
+        // --- P4 Place: the deferred P2 placement (doc/topopen_p4_plan.md
+        // step 1) — commit the SAME `placeVertexAt` path P2 always used,
+        // just at release instead of press. A stationary click's DOWN+UP
+        // pair still yields exactly one placement (or none, on a bg miss),
+        // matching the pre-P4 DOWN-commit behavior bit-for-bit.
+        if (placeArmed_) {
+            placeArmed_ = false;
+            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+            if (lastHit_.hit) placeVertexAt(lastHit_.point, vts);
+            return true;
+        }
+
+        // --- P4 Move: re-snap the grabbed vertex to the release event's own
+        // CONS-snapped hit (doc/topopen_p4_plan.md "The MEASURED mechanism").
+        // `moveVertexTo` itself applies the eps no-op guard (stationary grab
+        // / all-on-surface no-move -> clean no-op, no undo entry).
+        if (moveArmed_) {
+            int vi = grabbedVert_;
+            moveArmed_   = false;
+            grabbedVert_ = -1;
+            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+            if (lastHit_.hit) moveVertexTo(vi, lastHit_.point);
+            return true;
+        }
+
+        return false;
     }
 
     // Create one isolated vertex at `point` in the PRIMARY layer via the
@@ -544,6 +636,45 @@ public:
         refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
 
         return cast(int)(mesh.vertices.length - 1);
+    }
+
+    // P4 (doc/topopen_p4_plan.md): commit the armed Move gesture — a
+    // position-only write, direct kernel mutation with NO new mesh.d seam
+    // (the plan's kernel-layering decision): `m.vertices[vi] = pos` +
+    // `m.commitChange(MeshEditScope.Position)` from OUTSIDE `Mesh` is
+    // idiomatic in this codebase (`commands/mesh/move_vertex.d`,
+    // `edge_slide.d`, `linear_align.d` all do exactly this), bracketed in
+    // ONE before/after `MeshSnapshot` pair recorded through the DEDICATED
+    // `moveEditFactory_` (OBJ-3 FOLDED — wireName "mesh.topoPen_move", NOT
+    // `buildEditFactory_`'s "mesh.topoPen_build"), so one Move drag is one
+    // atomic undo entry, mirroring `buildFromSource`'s own
+    // capture/mutate/record/refresh shape. A release that re-snaps back to
+    // (within eps of) the vertex's CURRENT position — a stationary grab, or
+    // an all-on-surface no-move — is a clean no-op: no mutation, no undo
+    // entry, matching `buildFromSource`'s degenerate-release convention
+    // (this path never partially mutates before the check, so the guard is
+    // a simple up-front distance test rather than a restore-after-the-fact).
+    private void moveVertexTo(int vi, Vec3 pos) {
+        if (meshSrc_ is null || history_ is null || moveEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null || vi < 0 || vi >= cast(int)m.vertices.length) return;
+
+        Vec3 origPos = m.vertices[vi];
+        enum float kMoveEps = 1e-4f;   // stationary-grab / all-on-surface no-move guard
+        if ((pos - origPos).length <= kMoveEps) return;
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+        m.vertices[vi] = pos;
+        m.commitChange(MeshEditScope.Position);
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+
+        auto cmd = moveEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Move");
+        history_.record(cmd);
+
+        m.syncSelection();
+        if (gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m, gpu_, vc_, ec_, fc_);
     }
 
     // P3 (doc/topopen_p3_plan.md): fire the classified build (EDGE/TRI/QUAD)
@@ -645,12 +776,17 @@ public:
     // navigation mid-drag (a redo/undo elsewhere could delete the source
     // vertex or its incident geometry out from under an armed gesture) — the
     // driver calls this on every such navigation; clear the whole armed
-    // state rather than trust a possibly-stale index.
+    // state rather than trust a possibly-stale index. Covers P4's Move/Place
+    // arm state (doc/topopen_p4_plan.md) the same way — an external undo/redo
+    // could equally delete a grabbed vertex out from under an armed Move.
     override void resyncSession() {
         sourceVert_     = -1;
         dragArmed_      = false;
         classifiedCase_ = BuildCase.None;
         triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        placeArmed_     = false;
+        moveArmed_      = false;
+        grabbedVert_    = -1;
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp,
@@ -727,6 +863,24 @@ public:
                 }
             }
         }
+
+        // P4 (doc/topopen_p4_plan.md): ghost preview of an in-progress Move
+        // drag — since the commit is deferred to RELEASE (Design A), this is
+        // the ONLY live feedback for the grabbed vertex: a line from its
+        // CURRENT (pre-commit) position to the live CONS-snapped re-snap
+        // point, plus a ghost dot at that point. Mirrors the `dragArmed_`
+        // ghost block immediately above (same `hitPt`/projectPt inputs); no
+        // mesh mutation, no raycast.
+        if (moveArmed_ && hitPtOk && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null && grabbedVert_ >= 0 && grabbedVert_ < cast(int)m.vertices.length) {
+                enum uint moveGhostCol = IM_COL32(80, 220, 120, 220);   // move ghost green
+                ImVec2 fromPt;
+                if (projectPt(m.vertices[grabbedVert_], vp, fromPt))
+                    dl.AddLine(fromPt, hitPt, moveGhostCol, 2.0f);
+                dl.AddCircleFilled(hitPt, 5.0f, moveGhostCol, 16);
+            }
+        }
     }
 
     // ----- Test-introspection (task 0234 pattern, GET /api/tool/state) ----
@@ -782,6 +936,14 @@ public:
             case BuildCase.Quad: caseToken = "quad"; break;
         }
         root["case"] = JSONValue(caseToken);
+
+        // P4 (doc/topopen_p4_plan.md): the armed Move/Place disambiguation
+        // state, for Tier-C tests to assert WHICH gesture a plain-LMB press
+        // armed (and the grabbed vertex, for Move) without driving a full
+        // release.
+        root["placeArmed"]  = JSONValue(placeArmed_);
+        root["moveArmed"]   = JSONValue(moveArmed_);
+        root["grabbedVert"] = JSONValue(grabbedVert_);
 
         return root;
     }
@@ -876,4 +1038,41 @@ unittest {
         assert(!history.canUndo(),
             "CASE-QUAD degenerate release must record NO undo entry");
     }
+}
+
+// ---------------------------------------------------------------------------
+// moveVertexTo — the eps no-op guard (P4, doc/topopen_p4_plan.md hard
+// requirement #4): a release landing back within eps of the grabbed
+// vertex's CURRENT position (stationary grab / all-on-surface no-move)
+// must leave the mesh untouched and record NO undo entry. Driven directly
+// (private, same-module access) — the no-op path returns BEFORE the
+// `refreshDisplay`/`gpu_.upload` tail, so it's safe under a bare `dub test`
+// with no GL context, mirroring the buildFromSource degenerate-release
+// unittest immediately above. (The committing/"real move" path — which DOES
+// reach `gpu_.upload` and therefore needs a live GL context — is covered
+// end-to-end by the HTTP suite instead: test_topopen_move_drag.d /
+// test_topopen_move_undo_redo.d.)
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_move", "Topology Move",
+                                                   MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(1, 2, 3));
+
+    // Stationary grab: release EXACTLY at the vertex's own position.
+    auto before = MeshSnapshot.capture(m);
+    t.moveVertexTo(cast(int)a, Vec3(1, 2, 3));
+    auto after = MeshSnapshot.capture(m);
+    assert(after.vertices == before.vertices, "stationary grab must not move the vertex");
+    assert(!history.canUndo(), "stationary grab must record NO undo entry");
 }

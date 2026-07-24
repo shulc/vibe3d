@@ -440,20 +440,22 @@ void registerTools(EditorApp app) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
 
-    // Topology Pen P0-P3 (doc/topopen_p0_plan.md, doc/topopen_p2_plan.md,
-    // doc/topopen_p3_plan.md) — thin consumer of the CONS stage's
-    // background-surface constraint packet; P2 adds placement, via the
-    // existing `mesh.addVertex` command (MeshVertexNew) — same generic
-    // ctor-deps shape as VertexTool (prim.vertex, above), no
+    // Topology Pen P0-P4 (doc/topopen_p0_plan.md, doc/topopen_p2_plan.md,
+    // doc/topopen_p3_plan.md, doc/topopen_p4_plan.md) — thin consumer of the
+    // CONS stage's background-surface constraint packet; P2 adds placement,
+    // via the existing `mesh.addVertex` command (MeshVertexNew) — same
+    // generic ctor-deps shape as VertexTool (prim.vertex, above), no
     // ToolHeadlessCommand entry (interactive-only, like Vertex/Pen). P3
     // adds the drag-from-vertex build gesture's own generic MeshSessionEdit
     // factory (topoPenBuildEditFactory, distinct wire name, app.d) for its
-    // one-atomic-undo-per-gesture commit.
+    // one-atomic-undo-per-gesture commit. P4 adds the plain-LMB Move
+    // gesture's OWN generic MeshSessionEdit factory (topoPenMoveEditFactory,
+    // distinct wire name + Position-only editScope, OBJ-3 FOLDED).
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
-                         topoPenBuildEditFactory);
+                         topoPenBuildEditFactory, topoPenMoveEditFactory);
         return cast(Tool)t;
     };
 
