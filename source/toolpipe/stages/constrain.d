@@ -42,11 +42,12 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 //                     wrong. This is the Topology Pen's mode; see
 //                     `pointNearestFootBackground` below for why
 //                     nearest-foot-of-the-ray-hit collapses to the ray-hit
-//                     itself for an over-surface click (the const.bg
-//                     Point/nearest-foot doc-semantics still apply to an
-//                     edit-time DRAG, a later phase).
+//                     itself for an over-surface click (the reference
+//                     editor's background-constraint Point/nearest-foot
+//                     doc-semantics still apply to an edit-time DRAG, a
+//                     later phase).
 //   * `screen` mode — camera-ray∩surface (search perpendicular to the
-//                     view); this is the Topology Sketch sibling's mode
+//                     view); the camera-ray sibling mode
 //                     (see `screenRaycastBackground` below, unchanged from
 //                     the original P0 raycast — now SHARES its BVH
 //                     raycast with Point mode via `bgSurfaceRayHit`).
@@ -198,8 +199,8 @@ public:
     // placements, every one landed on the camera-ray-struck face, at
     // 3-12x the distance a work-plane-cursor nearest-foot seed would have
     // predicted) — superseding P2's doc/topopen_p2_plan.md derivation
-    // (work-plane∩cursor seed), which was wrong. The const.bg
-    // Point/nearest-foot doc-semantics still apply to an edit-time DRAG (a
+    // (work-plane∩cursor seed), which was wrong. The reference editor's
+    // background-constraint Point/nearest-foot doc-semantics still apply to an edit-time DRAG (a
     // later phase) — but for an over-surface CLICK the seed is already ON
     // the surface, so nearest-foot-of-the-seed collapses to the seed
     // itself: the `closestPointOnMeshes` call below is kept for its
