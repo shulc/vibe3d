@@ -10279,15 +10279,19 @@ struct Mesh {
                 // the raw-width pivots (V + width·dir), while the endpoints stay the
                 // clamped slides. That is exactly the finding-(I) rail law the hub
                 // path uses — raw pivots + clamped corners through `roundPos`, whose
-                // delta term shifts the raw arc onto the clamped endpoints. Below
-                // clamp the pivots EQUAL the corners (|EA−V| == width for an
-                // unclamped slide, so the reconstructed pivot is EA itself), and
-                // `roundPos(pivot==corner)` reduces bit-exactly to the symmetric
-                // slerp below — so this branch is inert unless a slide actually
-                // clamped. Verified bit-exact against the reference on symmetric and
-                // asymmetric-dihedral BOTH-clamped bare ends (and reduces to the
-                // slerp on every non-clamped rail); a one-side-only clamp is a
-                // documented best-effort approximation (no reference test covers it).
+                // delta term shifts the raw arc onto the clamped endpoints.
+                //
+                // Byte-identity for every currently-passing rail comes from the GATE,
+                // not from a reduction: `clampRail` requires `aClamped || bClamped`, so
+                // a non-clamped K1 slide-slide rail fails the gate and takes the
+                // unchanged slerp branch below verbatim. (On equal pivots `roundPos`
+                // and that slerp trace the same arc but via different float ops —
+                // Rodrigues rotation vs sin-weighted spoke blend — so they agree only
+                // to a few ULP, NOT bit-for-bit; do not rely on a bit-exact reduction.
+                // It is moot because the gate never routes a non-clamped rail here.)
+                // Verified against the reference on symmetric and asymmetric-dihedral
+                // BOTH-clamped bare ends; a one-side-only clamp is a documented
+                // best-effort approximation (no reference test covers it).
                 immutable bool clampRail =
                     spec.aKind == CornerKind.Slide && spec.bKind == CornerKind.Slide &&
                     spec.aSelectedDegree == 1 && spec.bSelectedDegree == 1 &&
