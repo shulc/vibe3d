@@ -2909,23 +2909,56 @@ struct Mesh {
         }
         bool isChamferEnd(uint v) { return (v in chamferNeighborFace) !is null; }
 
+        // Per-CORNER normal at vertex `v` within face `fi` — the local triangle
+        //     normal spanned by fi's two boundary edges AT v, not the whole-face
+        //     Newell normal. On a PLANAR face every corner's local normal is
+        //     parallel to the face normal, so this returns `faceNormal(fi)`
+        //     VERBATIM (planarity guard below) and planar geometry — cube, prism,
+        //     flat grids, every dihedral — stays byte-identical. On a NON-planar
+        //     face (Catmull-Clark / qball / tessellated quads) the two endpoints
+        //     of the same selected edge see DIFFERENT local normals, which is the
+        //     direction the reference extrudes each free-end corner along (measured
+        //     bit-exact on cc1 and on twisted 2-quad tents: the reference lifts the
+        //     free end by `extrude` along the SUM of its incident faces' per-corner
+        //     normals; the whole-face Newell average carries a spurious along-edge
+        //     tilt that the reference does not — hence the ~0.015–0.027 offset on
+        //     non-cube geometry). Reflex/degenerate corners fold back to the face
+        //     normal so a non-convex planar face also stays byte-identical.
+        Vec3 cornerNormalAt(uint v, int fi) {
+            Vec3 fn = faceNormal(cast(uint)fi);
+            const uint[] f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                if (f[k] != v) continue;
+                uint prev = f[(k + f.length - 1) % f.length];
+                uint next = f[(k + 1) % f.length];
+                Vec3 cn = cross(vertices[next] - vertices[v], vertices[prev] - vertices[v]);
+                if (cn.length < 1e-6f) return fn;          // degenerate corner
+                cn = normalize(cn);
+                if (dot(cn, fn) < 0.0f) cn = -cn;          // align to face winding
+                // Planar corner (local normal ≈ face normal) → return the face
+                // normal unchanged so planar meshes are bit-for-bit identical.
+                if (dot(cn, fn) > 1.0f - 1e-6f) return fn;
+                return cn;
+            }
+            return fn;                                     // v not in fi (guard)
+        }
         // --- Pass 1: welded ridge vertex per original endpoint. The ridge is
-        //     displaced along the average of the DISTINCT neighbour-face normals
-        //     of every selected edge incident to v (§1.4.1). Deduping by face id
-        //     matters at shared corners: two co-incident selected edges that
-        //     border the SAME neighbour face must count that face once, otherwise
-        //     it is double-weighted and skews the direction. For a free end the
-        //     single edge's two neighbour faces are already distinct, so this is
-        //     identical to summing the per-edge averaged normal there (no
-        //     single-edge regression).
-        Vec3[uint] ridgeAccum;            // Σ distinct neighbour-face normals
+        //     displaced along the average of the DISTINCT neighbour-face PER-CORNER
+        //     normals (cornerNormalAt) of every selected edge incident to v
+        //     (§1.4.1). Deduping by face id matters at shared corners: two
+        //     co-incident selected edges that border the SAME neighbour face must
+        //     count that face once, otherwise it is double-weighted and skews the
+        //     direction. For a free end the single edge's two neighbour faces are
+        //     already distinct, so this is identical to summing the per-edge
+        //     averaged corner normal there (no single-edge regression).
+        Vec3[uint] ridgeAccum;            // Σ distinct neighbour-face per-corner normals
         bool[ulong] ridgeFaceSeen;        // (v<<32|fi) → already counted at v
         void accumRidgeFace(uint v, int fi) {
             if (fi < 0) return;
             ulong fk = (cast(ulong)v << 32) | cast(uint)fi;
             if (fk in ridgeFaceSeen) return;
             ridgeFaceSeen[fk] = true;
-            Vec3 nf = faceNormal(cast(uint)fi);
+            Vec3 nf = cornerNormalAt(v, fi);
             ridgeAccum.update(v, () => nf, (ref Vec3 acc) { acc = acc + nf; });
         }
         foreach (ref e; exEdges) {
@@ -4696,6 +4729,96 @@ struct Mesh {
         foreach (i; 0 .. mShiftOnly.vertices.length)
             assert(abs(mShiftOnly.vertices[i].y) < 1e-4f,
                 "boundary-loop shift-only: vertex " ~ i.to!string ~ " lifted");
+    }
+
+    // edge.extrude free-end ridge uses PER-CORNER normals on non-planar faces
+    // (parity-measured bit-exact vs the reference on cc1 + twisted 2-quad tents).
+    // A single interior edge shared by two TWISTED (non-planar) quads is
+    // extruded; its two free ends must lift along DIFFERENT directions — each
+    // the sum of its own faces' per-corner normals — NOT the shared whole-face
+    // Newell average (which would lift both ends identically and miss the
+    // reference by ~0.015). A PLANAR tent is the byte-identical control: there
+    // the per-corner normal equals the face normal, so both ends lift the same.
+    unittest {
+        import std.conv : to;
+        import std.math : abs, sqrt;
+
+        // Build a tent: two quads sharing the interior edge P0-P1 (along Z).
+        // `warp` twists each quad's far edge in Y, making the quads non-planar
+        // by different amounts on the two sides (asymmetric).
+        Mesh mkTent(float warp) {
+            Mesh m;
+            uint p0 = m.addVertex(Vec3(0, 0, -1));           // 0
+            uint p1 = m.addVertex(Vec3(0, 0, 1));            // 1
+            uint a1 = m.addVertex(Vec3(1, -0.3f + warp, 1)); // 2
+            uint a0 = m.addVertex(Vec3(1, -0.3f, -1));       // 3
+            uint b0 = m.addVertex(Vec3(-1, -0.3f, -1));      // 4
+            uint b1 = m.addVertex(Vec3(-1, -0.3f - warp, 1));// 5
+            m.addFace([p0, p1, a1, a0]);
+            m.addFace([p1, p0, b0, b1]);
+            return m;
+        }
+        // Mask selecting only the shared interior edge (endpoints {0,1}).
+        bool[] edgeMask(ref Mesh m) {
+            bool[] mask; mask.length = m.edges.length;
+            foreach (i; 0 .. m.edges.length) {
+                uint a = m.edges[i][0], b = m.edges[i][1];
+                if ((a == 0 && b == 1) || (a == 1 && b == 0)) mask[i] = true;
+            }
+            return mask;
+        }
+        // Does the mesh contain a vertex at `p` (within tol)?
+        bool hasVert(ref Mesh m, Vec3 p, float tol) {
+            foreach (i; 0 .. m.vertices.length) {
+                Vec3 d = m.vertices[i] - p;
+                if (sqrt(d.x*d.x + d.y*d.y + d.z*d.z) < tol) return true;
+            }
+            return false;
+        }
+
+        // NON-planar (warp 0.2): the two free-end ridges land on distinct,
+        // reference-matched positions — P0 straight down (its faces are locally
+        // symmetric there), P1 tilted (its faces twist away). A whole-face Newell
+        // average would place BOTH at (±0.0137, -0.149, ±1) — see the negative
+        // assertions — so these pin the per-corner-normal behaviour.
+        {
+            Mesh m = mkTent(0.2f);
+            auto mask = edgeMask(m);
+            m.extrudeEdgesByMask(mask, -0.15f, 0.1f);
+            assert(hasVert(m, Vec3(0.0f, -0.15f, -1.0f), 1e-4f),
+                "non-planar free-end ridge P0 not at per-corner position (0,-0.15,-1)");
+            assert(hasVert(m, Vec3(0.027148f, -0.147523f, 1.0f), 1e-4f),
+                "non-planar free-end ridge P1 not at per-corner position (0.0271,-0.1475,1)");
+            // The old whole-face-Newell ridge for P1 was (~0.0137,-0.1494,1); the
+            // fix must NOT leave a vertex there.
+            assert(!hasVert(m, Vec3(0.0137f, -0.1494f, 1.0f), 1e-4f),
+                "free-end ridge P1 still at the whole-face-Newell position (fix inactive)");
+            // Each ridge is displaced by exactly |extrude| perpendicular to the
+            // Z-aligned shared edge (z unchanged).
+            assert(hasVert(m, Vec3(0.0f, -0.15f, -1.0f), 1e-4f), "P0 ridge z shifted");
+        }
+
+        // PLANAR control (warp 0): per-corner == face normal, so BOTH free ends
+        // lift to the identical (x,y) — byte-identical to the pre-fix Newell path.
+        {
+            Mesh m = mkTent(0.0f);
+            auto mask = edgeMask(m);
+            m.extrudeEdgesByMask(mask, -0.15f, 0.1f);
+            // Symmetric flat tent: both ridges share the same (x,y), differing
+            // only in z (the two edge endpoints). Find them and compare.
+            Vec3[] ridges;
+            foreach (i; 0 .. m.vertices.length) {
+                // ridge verts sit ~|extrude| below the y=-0.15 line near x=0
+                Vec3 p = m.vertices[i];
+                if (abs(p.x) < 0.05f && p.y < -0.1f) ridges ~= p;
+            }
+            assert(ridges.length == 2,
+                "planar tent: expected 2 free-end ridges, got " ~ ridges.length.to!string);
+            assert(abs(ridges[0].x - ridges[1].x) < 1e-5f &&
+                   abs(ridges[0].y - ridges[1].y) < 1e-5f,
+                "planar tent free-end ridges diverged in (x,y) — per-corner path " ~
+                "must reduce to the face normal on planar faces");
+        }
     }
 
     /// Vertex Extrude (Cone): additive. For each vertex selected in `mask`
