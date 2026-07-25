@@ -688,6 +688,13 @@ struct EditorApp {
     // multi-pass smooth gesture must never bake either sibling's wire name
     // onto its own coalesced undo entry).
     MeshSessionEdit delegate() topoPenSmoothEditFactory;
+    // Task 0477 (topology-pen P9, doc/topopen_p9_split_plan.md): the Split
+    // gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_split" — kept distinct from EVERY sibling factory above
+    // (a vertex-to-vertex polygon split is its own topology op — Geometry
+    // editScope, like Remove — never Move's/Slide's/Smooth's Position-only
+    // scope or Remove's/Add Loop's own wire name).
+    MeshSessionEdit delegate() topoPenSplitEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

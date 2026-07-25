@@ -102,6 +102,18 @@ alias TopoPenSlideFactory = MeshSessionEdit delegate();
 /// app.d construction site, mirroring `topoPenSlideEditFactory`.
 alias TopoPenSmoothFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER SPLIT GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P9, doc/topopen_p9_split_plan.md) — a
+/// SEVENTH dedicated factory, distinct from every sibling above: a
+/// vertex-to-vertex polygon split IS a topology change (new edge, one face
+/// becomes two — like `TopoPenRemoveFactory`/`TopoPenAddLoopFactory`), but
+/// reusing either would bake the wrong `wireName` ("mesh.topoPen_remove"/
+/// "mesh.topoPen_addloop" on a split — corrupts undo history / event-log
+/// replay / macros). Wired with `wireName="mesh.topoPen_split"` and
+/// `MeshEditScope.Geometry` at the app.d construction site, mirroring
+/// `topoPenRemoveEditFactory`.
+alias TopoPenSplitFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -438,6 +450,9 @@ private:
     // --- P8 Smooth gesture deps (doc/topopen_p8_smooth_plan.md) ---
     TopoPenSmoothFactory smoothEditFactory_;
 
+    // --- P9 Split gesture deps (doc/topopen_p9_split_plan.md) ---
+    TopoPenSplitFactory splitEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -526,6 +541,23 @@ private:
     int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
     float smoothDragPx_ = 0.0f;
 
+    // --- P9 Split session state (topology_pen.d,
+    // doc/topopen_p9_split_plan.md). Armed on a plain-MMB press that lands
+    // on an existing primary-layer vertex A (`onPlainMmbDown`);
+    // `splitTargetVert_` tracks the CURRENT snap target C off every
+    // subsequent motion event (`onMouseMotion`) and is re-resolved once more
+    // at the release pixel (`onMouseButtonUp`'s MIDDLE branch, `commitSplit`)
+    // — the release event's own resolution is authoritative, never the
+    // last-motion value (a mouse-up with no intervening motion event must
+    // still resolve C at ITS OWN pixel). `-1` means "no vertex under the
+    // cursor" (the deferred mid-edge-insert case stays a clean no-op in V1).
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
+    // an external history navigation, exactly like the P3/P4/P6/P7/P8 arm
+    // state above.
+    bool splitArmed_       = false;
+    int  splitSourceVert_  = -1;
+    int  splitTargetVert_  = -1;
+
     // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
     // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
     // per-pass relax+re-snap LAW itself is measured): a drag of
@@ -593,13 +625,22 @@ public:
     // compile. `bf`/`mf`/`rf`/`alf`/`sf` MUST stay in their existing
     // positions — every existing positional caller (registration.d) stays
     // byte-unchanged through `sf`.
+    // P9 (doc/topopen_p9_split_plan.md): 9th positional param `spf` appended
+    // LAST (after `smf`) for the Split factory — same rationale as every
+    // prior addition: `TopoPenSplitFactory` is yet another structurally
+    // identical delegate alias, so inserting it anywhere but the tail would
+    // silently mis-bind a sibling gesture's factory rather than fail to
+    // compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf` MUST stay in their existing
+    // positions — every existing positional caller (registration.d) stays
+    // byte-unchanged through `smf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
                         TopoPenRemoveFactory rf = null,
                         TopoPenAddLoopFactory alf = null,
                         TopoPenSlideFactory sf = null,
-                        TopoPenSmoothFactory smf = null) {
+                        TopoPenSmoothFactory smf = null,
+                        TopoPenSplitFactory spf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -608,6 +649,7 @@ public:
         addLoopEditFactory_ = alf;
         slideEditFactory_   = sf;
         smoothEditFactory_  = smf;
+        splitEditFactory_   = spf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -691,6 +733,21 @@ public:
             smoothLastY_ = e.y;
             return true;
         }
+
+        // P9 (doc/topopen_p9_split_plan.md Phase 3): while a Split gesture is
+        // armed, resolve the CURRENT snap-target vertex C off THIS motion
+        // event's cursor — the only mid-drag feedback (the ghost preview,
+        // draw() below) and the source of the "snap to a non-adjacent vertex"
+        // affordance, since commit is deferred to release. `-1` (no vertex
+        // under the cursor) is a normal, valid state — the ghost preview
+        // simply tracks the raw cursor instead. Consumes, mirroring the Add
+        // Loop/Slide/Smooth branches above.
+        if (splitArmed_) {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            splitTargetVert_ = findSourceVertex(e.x, e.y, vp);
+            return true;
+        }
         return false;   // never consumes — placement/build happens on button-up, not motion
     }
 
@@ -758,6 +815,52 @@ public:
         return BuildCase.None;
     }
 
+    // P9 (doc/topopen_p9_split_plan.md, kernel-reuse verdict): the ONLY new
+    // mesh-adjacent logic this phase adds — resolve WHICH face to pass to
+    // `mesh.splitFaceByVertices` as `faceIdx`. Scans `facesAroundVertex(a)`
+    // (reliable here — A and C are both existing ON-FACE vertices, unlike
+    // the bare/floating-edge verts `classifySource` above has to special-case)
+    // and returns the FIRST face that also contains C, non-adjacently in
+    // that face's winding — a deterministic non-manifold tie-break (stable
+    // iteration order). Returns -1 for every no-op condition: a/c invalid or
+    // equal, out of bounds, no shared face, or A/C adjacent (chord would be
+    // an existing edge) in every shared face.
+    //
+    // REV1 FIX-3 (MODERATE): `lo`/`hi` are the SORTED winding positions,
+    // computed BEFORE the adjacency reject — using the unsorted
+    // (posA, posC) pair directly would let a wrap-around adjacent pair (one
+    // endpoint at `len-1`, the other at `0`) evade BOTH reject terms
+    // (`hi==lo+1` and `lo==0 && hi==len-1`) whenever posA/posC happen to be
+    // passed in the "wrong" relative order, mis-classifying a real edge as
+    // splittable in non-manifold topology (a 3+-incident-face edge) where
+    // another shared face WOULD have offered a genuine split — this function
+    // would then silently return a face where the kernel itself rejects the
+    // split (0), dropping a legitimate split the caller can't tell apart
+    // from "no common face at all".
+    private int findCommonSplitFace(Mesh* m, int a, int c) {
+        if (m is null || a < 0 || c < 0 || a == c) return -1;
+        if (a >= cast(int)m.vertices.length || c >= cast(int)m.vertices.length) return -1;
+
+        foreach (fi; m.facesAroundVertex(cast(uint)a)) {
+            auto f = m.faces[fi];
+            int len = cast(int)f.length;
+            int posA = -1, posC = -1;
+            foreach (k, vv; f) {
+                if (vv == cast(uint)a) posA = cast(int)k;
+                if (vv == cast(uint)c) posC = cast(int)k;
+            }
+            if (posC < 0) continue;   // C not on this face -> not the shared one
+
+            int lo = posA < posC ? posA : posC;
+            int hi = posA < posC ? posC : posA;
+            bool adjacent = (hi == lo + 1) || (lo == 0 && hi == len - 1);
+            if (adjacent) continue;   // chord would be an existing edge here
+
+            return cast(int)fi;
+        }
+        return -1;
+    }
+
     // Dispatch entry point: resolve which of the 12 documented slots this
     // press belongs to (`GestureSlot`, above) and route to the one live
     // handler (`ShiftLmb` -> the P3 build-arm) or the unchanged P2 handler
@@ -774,16 +877,15 @@ public:
             case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
             case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
             case GestureSlot.ShiftCtrlLmb: return onShiftCtrlLmbDown(e, vts);
+            case GestureSlot.Mmb:      return onPlainMmbDown(e, vts);
             case GestureSlot.Rmb:
-            case GestureSlot.Mmb:
             case GestureSlot.ShiftRmb:
             case GestureSlot.CtrlRmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Move+Edge-Loop / Split / Duplicate Loop /
-                // the 2 undocumented slots / Smoothing+Edge-Loop —
-                // gesture_map.md table A, slots 2/3/5/8/10/11/12. Not
-                // implemented yet.
+                // TODO: Move+Edge-Loop / Duplicate Loop / the 2 undocumented
+                // slots / Smoothing+Edge-Loop — gesture_map.md table A,
+                // slots 2/5/8/10/11/12. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -847,6 +949,15 @@ public:
         // P8 Smooth (doc/topopen_p8_smooth_plan.md)
         smoothArmed_  = false;
         smoothDragPx_ = 0.0f;
+        // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
+        // LEFT-button trio's own reset closes a stray split arm too (e.g. an
+        // external history navigation via `resyncSession`, below); the
+        // MIDDLE-button `onPlainMmbDown` does NOT call this helper (REV1
+        // FIX-1 — see that handler's own doc comment) and uses its own
+        // narrow self-reset instead.
+        splitArmed_      = false;
+        splitSourceVert_ = -1;
+        splitTargetVert_ = -1;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -1149,6 +1260,41 @@ public:
         return true;
     }
 
+    // P9 (doc/topopen_p9_split_plan.md Phase 3), on the plain-MMB "Split"
+    // slot: a press picks the nearest primary-layer VERTEX (`findSourceVertex`,
+    // reused verbatim from P3/P4); if none is within snap range, this is not
+    // a documented gesture — don't consume, matching every other down-
+    // handler's miss convention. Otherwise arms the gesture at the picked
+    // source vertex A; the target C is resolved live on every subsequent
+    // motion event (`onMouseMotion`) and once more, authoritatively, at
+    // release (`onMouseButtonUp`'s MIDDLE branch, `commitSplit`).
+    //
+    // REV1 FIX-1 (KILLER-1): this handler does ONLY its own narrow
+    // self-reset — `resetAllGestureArms()` is DELIBERATELY NOT called here,
+    // mirroring `onShiftMmbDown`/`onCtrlMmbDown` immediately above (the
+    // MIDDLE-button discipline; see `resetAllGestureArms`'s own doc comment
+    // for the full rationale): a MIDDLE press can legitimately be a
+    // two-button chord while a LEFT gesture (Build/Move/Slide/Smooth) is
+    // still held, so an unconditional full reset here would silently cancel
+    // that in-progress drag before the user's eventual LEFT release commits
+    // it. A same-slot MIDDLE re-press is guarded by this handler's own
+    // top-of-function reset, exactly like Add Loop's.
+    private bool onPlainMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        splitArmed_      = false;
+        splitSourceVert_ = -1;
+        splitTargetVert_ = -1;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int src = findSourceVertex(e.x, e.y, vp);
+        if (src < 0) return false;   // no vertex under the cursor -> no documented gesture
+
+        splitArmed_      = true;
+        splitSourceVert_ = src;
+        splitTargetVert_ = -1;
+        return true;
+    }
+
     // P8 (doc/topopen_p8_smooth_plan.md Phase 3), on the Shift+Ctrl+LMB
     // "Smooth" slot: arms a whole-primary-mesh relax+re-snap gesture — NO
     // source-vertex/edge pick (unlike every other gesture above, this one
@@ -1183,22 +1329,49 @@ public:
     // the next press to inherit.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
-        // --- P6 (doc/topopen_p6_addloop_plan.md Phase 3): commits the armed
-        // Add Loop gesture at the RELEASE event's own cursor-derived ratio.
-        // Disjoint from every LEFT-button gesture below (this branch only
-        // fires for MIDDLE); an unarmed MIDDLE release (no press landed on a
-        // valid ring seed) doesn't consume, matching every other slot's
-        // miss convention.
+        // --- P6/P9 (doc/topopen_p6_addloop_plan.md Phase 3,
+        // doc/topopen_p9_split_plan.md REV1 FIX-2): commits whichever MIDDLE
+        // gesture is armed, at the RELEASE event's own cursor-derived
+        // resolution. REV1 FIX-2 (KILLER-2): per-arm GUARDED returns, not a
+        // single unconditional `if (!addLoopArmed_) return false;` early-out
+        // — that old shape made a `splitArmed_` check placed "after" it
+        // categorically unreachable (Add Loop unarmed -> return false BEFORE
+        // ever testing Split). `addLoopArmed_`/`splitArmed_` are armed by
+        // disjoint DOWN slots (Shift+MMB vs plain MMB) and
+        // `resetAllGestureArms()`/`onPlainMmbDown`'s own narrow reset keep
+        // them mutually exclusive in practice, so branch order is immaterial;
+        // Add Loop stays first to minimize diff. An unarmed MIDDLE release
+        // (no press landed on a valid ring seed / vertex) doesn't consume,
+        // matching every other slot's miss convention.
         if (e.button == SDL_BUTTON_MIDDLE) {
-            if (!addLoopArmed_) return false;
-            int seed = addLoopSeed_;
-            addLoopSeed_  = -1;
-            addLoopArmed_ = false;
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-            float r = ratioFromCursor(e.x, e.y, vp);
-            commitAddLoop(cast(uint)seed, r);
-            return true;
+            if (addLoopArmed_) {
+                int seed = addLoopSeed_;
+                addLoopSeed_  = -1;
+                addLoopArmed_ = false;
+                Viewport vp;
+                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+                float r = ratioFromCursor(e.x, e.y, vp);
+                commitAddLoop(cast(uint)seed, r);
+                return true;
+            }
+            if (splitArmed_) {
+                int a = splitSourceVert_;
+                splitArmed_      = false;
+                splitSourceVert_ = -1;
+                Viewport vp;
+                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+                // C is resolved AT THE RELEASE PIXEL — authoritative, never
+                // the last-motion `splitTargetVert_` (a release with no
+                // intervening motion event must still resolve C at its own
+                // pixel). `-1` (no vertex under the cursor) is the deferred
+                // mid-edge-insert case — `commitSplit` treats it as a clean
+                // no-op (V1-SCOPE LINE).
+                int c = findSourceVertex(e.x, e.y, vp);
+                splitTargetVert_ = -1;
+                commitSplit(a, c);
+                return true;
+            }
+            return false;
         }
 
         if (e.button != SDL_BUTTON_LEFT) return false;
@@ -1848,6 +2021,55 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
+    // P9 (doc/topopen_p9_split_plan.md Phase 2): commit the armed Split
+    // gesture — FULL KERNEL REUSE, zero kernel change. Mirrors `removeFaceAt`
+    // above exactly: resolve the shared face (`findCommonSplitFace` — every
+    // no-op condition, incl. C==-1/the deferred mid-edge case, C==A, and
+    // cross-polygon/adjacent A-C, funnels through its -1 return with NO
+    // snapshot and NO undo entry), bracket the ONE kernel call in a single
+    // before/after `MeshSnapshot` pair, record through the DEDICATED
+    // `splitEditFactory_` (never `removeEditFactory_`/`addLoopEditFactory_`,
+    // which would bake the wrong wire name onto a split).
+    //
+    // KILLER-2 (sibling index dangle): `splitFaceByVertices` ->
+    // `rebuildFacesWithChordSplits` calls `rebuildEdges()`+`buildLoops()`, so
+    // `faces[]`/`edges[]` are wholesale-rebuilt (Δf=+1/Δe=+1) — any OTHER
+    // gesture armed on a different button holding a face/edge index would
+    // dangle. `resyncSession()` is called on SUCCESS, in the SAME position
+    // `removeFaceAt`/`commitAddLoop` call it, for the identical reason (the
+    // tool never overrides `isDragging()`, so a plain-MMB Split CAN fire
+    // mid-build/mid-move/mid-slide on a different button). Vertices are NOT
+    // compacted here — no orphans are created by a split — so a concurrently
+    // armed gesture's VERTEX index stays valid regardless; `resyncSession()`
+    // is still the uniform, cheap-to-call safety net every sibling commit
+    // uses.
+    private void commitSplit(int a, int c) {
+        if (meshSrc_ is null || history_ is null || splitEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+
+        int fi = findCommonSplitFace(m, a, c);
+        if (fi < 0) return;   // every no-op condition (C==-1, C==A, no shared
+                               // face, adjacent A/C) funnels here — no mutation
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        size_t n = m.splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
+        if (n == 0) return;   // defensive; `before` discarded, mesh unmutated
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = splitEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Split");
+        history_.record(cmd);
+
+        // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
+        // indices now that faces[]/edges[] have been rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
     // Stored drag-arm index/case dangle across an external history
     // navigation mid-drag (a redo/undo elsewhere could delete the source
     // vertex or its incident geometry out from under an armed gesture) — the
@@ -1960,6 +2182,32 @@ public:
             ImVec2 cur = ImVec2(cast(float)smoothLastX_, cast(float)smoothLastY_);
             dl.AddCircle(cur, 14.0f, smoothCol, 24, 2.5f);
             dl.AddCircleFilled(cur, 4.0f, smoothCol, 16);
+        }
+
+        // P9 (doc/topopen_p9_split_plan.md Phase 4): the Split ghost is
+        // likewise independent of `lastHit_`/CONS (Split never touches the
+        // background constraint — pure current-layer topology op), so it too
+        // is drawn BEFORE the `lastHit_.hit` early-return, mirroring the Add
+        // Loop/Slide ghosts above. A line from the armed source A to the
+        // current snap target C (drawn only once C resolves to a real
+        // vertex — the deferred mid-edge case has no line to preview),
+        // plus a small filled circle at C as the snap affordance. Purely
+        // re-reads already-armed state (`splitSourceVert_`/
+        // `splitTargetVert_`) — no mesh mutation, no raycast.
+        if (splitArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null && splitSourceVert_ >= 0 && splitSourceVert_ < cast(int)m.vertices.length) {
+                enum uint splitCol = IM_COL32(80, 200, 230, 220);   // split cyan
+                ImVec2 aPt;
+                if (projectPt(m.vertices[splitSourceVert_], vp, aPt)
+                 && splitTargetVert_ >= 0 && splitTargetVert_ < cast(int)m.vertices.length) {
+                    ImVec2 cPt;
+                    if (projectPt(m.vertices[splitTargetVert_], vp, cPt)) {
+                        dl.AddLine(aPt, cPt, splitCol, 2.0f);
+                        dl.AddCircleFilled(cPt, 5.0f, splitCol, 16);
+                    }
+                }
+            }
         }
 
         if (!lastHit_.hit) return;
@@ -2142,6 +2390,13 @@ public:
         int smoothPassCount = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
         if (smoothPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
         root["smoothPassCount"] = JSONValue(smoothPassCount);
+
+        // P9 (doc/topopen_p9_split_plan.md Phase 4): the armed Split
+        // gesture's state, for Tier-C tests to assert the picked source
+        // vertex and tracked snap target without driving a full release.
+        root["splitArmed"]      = JSONValue(splitArmed_);
+        root["splitSourceVert"] = JSONValue(splitSourceVert_);
+        root["splitTargetVert"] = JSONValue(splitTargetVert_);
 
         return root;
     }
@@ -3264,4 +3519,486 @@ unittest {
         format("this rig must actually discriminate the exclusion — the full-ring (regressed) "
              ~ "target must be MEASURABLY different from the open-edge-only one; "
              ~ "distToFullRing=%f", distToFullRing));
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — plain-MMB dispatch guard (P9,
+// doc/topopen_p9_split_plan.md), the same Tier-A pin shape as the P5/P6
+// guards above: a pure, camera-free regression guard so a bad merge that
+// silently reverted the `Mmb` (plain, no modifier) dispatch case — or
+// collapsed it into the Ctrl/Shift MMB slots — would be caught by
+// `dub test`, not just by best-effort Tier-C. Also pins that Ctrl/Shift+MMB
+// still resolve to their OWN slots, never Split's.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, cast(SDL_Keymod)0) == GestureSlot.Mmb,
+        "plain MMB (no modifier) must resolve to the Split gesture slot");
+    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_CTRL) == GestureSlot.CtrlMmb,
+        "Ctrl+MMB must still resolve to Remove, not Split");
+    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_SHIFT) == GestureSlot.ShiftMmb,
+        "Shift+MMB must still resolve to Add Loop, not Split");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T1 (P9, doc/topopen_p9_split_plan.md §Testing): QUAD
+// diagonal split (v0->v2). Independent expected — cross-checked against
+// `mesh.d`'s own `splitFaceByVertices` unittest (`mesh.d:27551-27563`), but
+// re-derived here rather than re-asserted, since `commitSplit` is the thing
+// under test (the snapshot/undo bracket + factory wiring around the kernel
+// call, not the kernel itself).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    m.addVertex(Vec3(0, 0, 0));   // 0
+    m.addVertex(Vec3(1, 0, 0));   // 1
+    m.addVertex(Vec3(1, 1, 0));   // 2
+    m.addVertex(Vec3(0, 1, 0));   // 3
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    t.commitSplit(0, 2);
+
+    assert(m.faces.length == 2, "commitSplit: expected 2 faces after a quad diagonal split");
+    assert(m.edges.length == 5, "commitSplit: expected 5 edges (4 boundary + 1 chord)");
+    bool hasF1 = false, hasF2 = false;
+    foreach (f; m.faces) {
+        if (f[] == [0u, 1u, 2u]) hasF1 = true;
+        if (f[] == [2u, 3u, 0u]) hasF2 = true;
+    }
+    assert(hasF1, "commitSplit: expected face [0,1,2]");
+    assert(hasF2, "commitSplit: expected face [2,3,0]");
+    assert(m.vertices.length == 4, "commitSplit: split is Δv=0 — no vertex is added");
+    assert(history.canUndo(), "a real split must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T2 (P9, doc/topopen_p9_split_plan.md §Testing): HEXAGON
+// non-adjacent split (v0->v3), proving the split isn't quad-only.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    m.addVertex(Vec3( 2.0f,  0.0f,    0));   // 0
+    m.addVertex(Vec3( 1.0f,  1.732f,  0));   // 1
+    m.addVertex(Vec3(-1.0f,  1.732f,  0));   // 2
+    m.addVertex(Vec3(-2.0f,  0.0f,    0));   // 3
+    m.addVertex(Vec3(-1.0f, -1.732f,  0));   // 4
+    m.addVertex(Vec3( 1.0f, -1.732f,  0));   // 5
+    m.addFace([0u, 1u, 2u, 3u, 4u, 5u]);
+    m.buildLoops();
+
+    assert(m.vertices.length == 6 && m.edges.length == 6 && m.faces.length == 1,
+        "setup: pre-state must be the hand-enumerated hexagon (6v/6e/1f)");
+
+    t.commitSplit(0, 3);
+
+    assert(m.faces.length == 2, "commitSplit: expected 2 faces after a hexagon non-adjacent split");
+    assert(m.edges.length == 7, "commitSplit: expected 7 edges (6 boundary + 1 chord)");
+    bool hasF1 = false, hasF2 = false;
+    foreach (f; m.faces) {
+        if (f[] == [0u, 1u, 2u, 3u]) hasF1 = true;
+        if (f[] == [3u, 4u, 5u, 0u]) hasF2 = true;
+    }
+    assert(hasF1, "commitSplit: expected face [0,1,2,3]");
+    assert(hasF2, "commitSplit: expected face [3,4,5,0]");
+    assert(m.vertices.length == 6, "commitSplit: split is Δv=0 — no vertex is added");
+    assert(history.canUndo(), "a real split must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T3 (P9, doc/topopen_p9_split_plan.md §Testing): adjacent A/C
+// (chord would duplicate an existing edge) must be a byte-identical no-op —
+// no mutation, no undo entry.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 1, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSplit(0, 1);   // adjacent (standard, not wrap)
+    t.commitSplit(3, 0);   // adjacent (wrap-around)
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces, "adjacent A/C must not mutate the mesh");
+    assert(!history.canUndo(), "adjacent A/C must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T4 (P9, doc/topopen_p9_split_plan.md §Testing): A==C must be
+// a byte-identical no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 1, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSplit(0, 0);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces, "A==C must not mutate the mesh");
+    assert(!history.canUndo(), "A==C must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T5 (P9, doc/topopen_p9_split_plan.md §Testing, V1-SCOPE
+// LINE): a release that does not land on a vertex (C == -1, the deferred
+// mid-edge-insert case) must be a byte-identical no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 1, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSplit(0, -1);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces, "release-not-on-vertex must not mutate the mesh");
+    assert(!history.canUndo(), "release-not-on-vertex must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T6 (P9, doc/topopen_p9_split_plan.md §Testing): A and C on
+// two DISJOINT faces (no shared polygon at all) must be a byte-identical
+// no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));   // 0 (F0)
+    m.addVertex(Vec3(1, 0, 0));   // 1 (F0)
+    m.addVertex(Vec3(1, 1, 0));   // 2 (F0)
+    m.addVertex(Vec3(0, 1, 0));   // 3 (F0)
+    m.addVertex(Vec3(5, 0, 0));   // 4 (F1)
+    m.addVertex(Vec3(6, 0, 0));   // 5 (F1)
+    m.addVertex(Vec3(6, 1, 0));   // 6 (F1)
+    m.addVertex(Vec3(5, 1, 0));   // 7 (F1)
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([4u, 5u, 6u, 7u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSplit(0, 4);   // v0 in F0, v4 in F1 -> no common face
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces, "cross-polygon A/C must not mutate the mesh");
+    assert(!history.canUndo(), "cross-polygon A/C must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// findCommonSplitFace / commitSplit — T7 (P9 REV1 FIX-3, MODERATE): two
+// faces share A(0) and C(1) — a TRIANGLE where A-C is a real WRAP-AROUND
+// edge (A at the LAST winding position, C at the FIRST — the exact case an
+// UNSORTED `i=posA,j=posC` adjacency check evades: `j==i+1` is false
+// (0 != 2+1) and `i==0&&j==len-1` is false (i=2 != 0), so an unfixed version
+// would wrongly treat this face as non-adjacent) and a PENTAGON where A and
+// C are genuinely non-adjacent (splittable). The two faces are wired to
+// share edge A-D so `facesAroundVertex(A)` walks BOTH via the dart fan (a
+// setup sanity check below pins that this rig actually exercises the
+// tie-break, rather than one face being unreachable). The FIXED
+// (sorted-lo/hi) implementation must SKIP the triangle and split the
+// pentagon; the buggy unsorted version would return the triangle first,
+// the kernel would then correctly reject it (real edge) and return 0, and
+// `commitSplit` would silently no-op — losing the legitimate pentagon split
+// this test pins.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    // A=0, C=1, D=2, E=3, F=4
+    foreach (i; 0 .. 5) m.addVertex(Vec3(cast(float)i, 0, 0));
+    m.addFace([1u, 2u, 0u]);          // face0: triangle [C,D,A] -> A@pos2(len-1), C@pos0 (wrap-adjacent)
+    m.addFace([0u, 2u, 3u, 1u, 4u]);  // face1: pentagon [A,D,E,C,F] -> A@pos0, C@pos3 (non-adjacent)
+                                       // shares edge A-D with face0, so both
+                                       // faces are on A's dart fan.
+    m.buildLoops();
+
+    // Setup sanity: `facesAroundVertex(A)` must actually enumerate BOTH
+    // faces, or this rig isn't testing the tie-break at all (it would just
+    // be testing "the only reachable face wins").
+    int incidentCount = 0;
+    foreach (fi; m.facesAroundVertex(0u)) ++incidentCount;
+    assert(incidentCount == 2,
+        "setup: vertex A(0) must be incident to BOTH the triangle and the pentagon");
+
+    auto triangleBefore = m.faces[0].dup;
+
+    t.commitSplit(0, 1);
+
+    assert(m.faces.length == 3,
+        "expected the PENTAGON to split into 2 sub-faces (triangle survives untouched) -- "
+      ~ "3 total faces");
+    bool triangleSurvives = false;
+    foreach (f; m.faces) if (f[] == triangleBefore[]) triangleSurvives = true;
+    assert(triangleSurvives,
+        "the adjacent triangle (where A-C is a real edge) must survive byte-unchanged -- "
+      ~ "the tool must have picked the PENTAGON, not the triangle");
+    assert(history.canUndo(), "the pentagon split must be a real, undoable mutation");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T8 (P9, doc/topopen_p9_split_plan.md §Testing): a real split
+// must undo back to the exact pre-split state.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 1, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSplit(0, 2);
+    assert(history.canUndo(), "a real split must be undoable");
+    history.undo();
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "undo must restore the exact pre-split state");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonDown / onMouseButtonUp — MANDATORY DISPATCH (P9 REV1 FIX-2,
+// doc/topopen_p9_split_plan.md): drives the REAL dispatch path directly —
+// `onMouseButtonDown` (plain MMB -> `onPlainMmbDown`) and `onMouseButtonUp`
+// (the restructured MIDDLE branch -> `commitSplit`) — rather than calling
+// `commitSplit` directly as the 8 Tier-B cases above do. Those 8 cases
+// exercise the MUTATION but bypass dispatch entirely, so they would NOT
+// have caught the pre-FIX-2 shape (`if (!addLoopArmed_) return false; ...`)
+// that made a `splitArmed_` check placed after it categorically
+// unreachable. Also pins the guard-structure sanity FIX-2 calls for
+// separately: `onMouseButtonDown`'s MIDDLE routing must send a Ctrl/Shift
+// chord to Remove/Add Loop, never to Split.
+//
+// SDL's dynamic bindings must be resolved before any real `SDL_GetModState`/
+// `SDL_SetModState` call (`onMouseButtonDown` reads the LIVE modifier state
+// internally) — under a bare `dub test`, app.d's own `loadSDL()` (called
+// from `main()`, which never runs before unittests execute) has NOT run
+// yet; calling an unresolved dynamic SDL function segfaults. `loadSDL()`
+// itself needs no `SDL_Init`/video subsystem — `SDL_GetModState`/
+// `SDL_SetModState` are plain global-variable accessors in the real SDL2
+// library, safe to call the moment the dynamic symbols are resolved, and
+// `loadSDL()` is idempotent (safe to call more than once across unittests).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import toolpipe.packets : SubjectPacket;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(-0.3f, 0, -0.3f));   // 0
+    m.addVertex(Vec3( 0.3f, 0, -0.3f));   // 1
+    m.addVertex(Vec3( 0.3f, 0,  0.3f));   // 2
+    m.addVertex(Vec3(-0.3f, 0,  0.3f));   // 3
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    float sx0, sy0, sx2, sy2, ndcZ;
+    assert(projectToWindowFull(m.vertices[0], vp, sx0, sy0, ndcZ),
+        "setup: v0 must project on-screen for this rig");
+    assert(projectToWindowFull(m.vertices[2], vp, sx2, sy2, ndcZ),
+        "setup: v2 must project on-screen for this rig");
+
+    // --- Guard-structure sanity: onMouseButtonDown's MIDDLE routing must
+    // send a Ctrl/Shift chord to the Remove/Add Loop handlers, never to
+    // Split's onPlainMmbDown. Each probe closes its OWN gesture with a
+    // matching release before the next probe presses the SAME (middle)
+    // button again — real hardware can never emit two DOWNs for one button
+    // without an intervening UP, so leaving Add Loop's press unreleased
+    // here would fabricate exactly the malformed same-button DOWN-DOWN
+    // sequence `resetAllGestureArms`'s own doc comment says is NOT
+    // (and need not be) guarded against; a real press/release cycle never
+    // strands `addLoopArmed_` for the next press to inherit. ---
+    SDL_SetModState(KMOD_CTRL);
+    {
+        SDL_MouseButtonEvent eCtrl;
+        eCtrl.button = SDL_BUTTON_MIDDLE;
+        eCtrl.x = cast(int)sx0;
+        eCtrl.y = cast(int)sy0;
+        t.onMouseButtonDown(eCtrl, vts);
+        assert(!t.splitArmed_, "Ctrl+MMB must route to Remove, never arm Split");
+        // Remove is a remove-on-DOWN gesture with no armed state of its own
+        // (D2) — nothing to release.
+    }
+    SDL_SetModState(KMOD_SHIFT);
+    {
+        SDL_MouseButtonEvent eShiftDown;
+        eShiftDown.button = SDL_BUTTON_MIDDLE;
+        eShiftDown.x = cast(int)sx0;
+        eShiftDown.y = cast(int)sy0;
+        t.onMouseButtonDown(eShiftDown, vts);
+        assert(!t.splitArmed_, "Shift+MMB must route to Add Loop, never arm Split");
+
+        SDL_MouseButtonEvent eShiftUp;
+        eShiftUp.button = SDL_BUTTON_MIDDLE;
+        eShiftUp.x = cast(int)sx0;
+        eShiftUp.y = cast(int)sy0;
+        t.onMouseButtonUp(eShiftUp, vts);
+        assert(!t.addLoopArmed_,
+            "closing the probe's own press/release must disarm Add Loop, "
+          ~ "leaving nothing stranded for the real Split press below");
+    }
+
+    // --- The real end-to-end drive: plain-MMB DOWN on v0, plain-MMB UP on
+    // the diagonal v2 -- must arm at DOWN and commit the split at UP, through
+    // the ACTUAL dispatch path (onMouseButtonDown -> onPlainMmbDown;
+    // onMouseButtonUp -> the FIX-2-restructured MIDDLE branch -> commitSplit). ---
+    SDL_SetModState(cast(SDL_Keymod)0);
+    SDL_MouseButtonEvent eDown;
+    eDown.button = SDL_BUTTON_MIDDLE;
+    eDown.x = cast(int)sx0;
+    eDown.y = cast(int)sy0;
+    bool downConsumed = t.onMouseButtonDown(eDown, vts);
+    assert(downConsumed, "plain-MMB press on a vertex must be consumed");
+    assert(t.splitArmed_, "plain-MMB press on a vertex must arm Split");
+    assert(t.splitSourceVert_ == 0, "must arm the pressed vertex (0) as the split source");
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_MIDDLE;
+    eUp.x = cast(int)sx2;
+    eUp.y = cast(int)sy2;
+    bool upConsumed = t.onMouseButtonUp(eUp, vts);
+    assert(upConsumed, "plain-MMB release on the diagonal vertex must be consumed");
+    assert(!t.splitArmed_, "release must disarm Split regardless of outcome");
+
+    assert(m.faces.length == 2, "the real dispatch path must have split the quad into 2 faces");
+    assert(m.edges.length == 5, "the real dispatch path must have added the diagonal chord edge");
+    assert(history.canUndo(), "the real dispatch path must record one undo entry");
+
+    SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }

@@ -469,14 +469,18 @@ void registerTools(EditorApp app) {
     // distinct wire name + Position-only editScope, doc/topopen_p8_smooth_plan.md)
     // — appended LAST (8th param), never inserted mid-list, since every
     // sibling factory alias is a structurally identical delegate and this
-    // caller stays positional.
+    // caller stays positional. P9 adds the plain-MMB Split gesture's OWN
+    // generic MeshSessionEdit factory (topoPenSplitEditFactory, distinct
+    // wire name + Geometry editScope, doc/topopen_p9_split_plan.md) —
+    // appended LAST (9th param), never inserted mid-list, same rationale.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
-                         topoPenSlideEditFactory, topoPenSmoothEditFactory);
+                         topoPenSlideEditFactory, topoPenSmoothEditFactory,
+                         topoPenSplitEditFactory);
         return cast(Tool)t;
     };
 

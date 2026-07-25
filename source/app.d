@@ -3075,6 +3075,15 @@ void main(string[] args) {
     // event-log replay / macros.
     auto topoPenSmoothEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
+    // Topology Pen P9's Split gesture (task 0477, doc/topopen_p9_split_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above — a
+    // vertex-to-vertex polygon split IS a topology change (wire name
+    // "mesh.topoPen_split", editScope Geometry, same scope as
+    // `topoPenRemoveEditFactory`), so reusing any sibling factory would
+    // corrupt undo history / event-log replay / macros with the wrong wire
+    // name.
+    auto topoPenSplitEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3190,6 +3199,7 @@ void main(string[] args) {
     app.topoPenAddLoopEditFactory = topoPenAddLoopEditFactory;
     app.topoPenSlideEditFactory   = topoPenSlideEditFactory;
     app.topoPenSmoothEditFactory  = topoPenSmoothEditFactory;
+    app.topoPenSplitEditFactory   = topoPenSplitEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;
