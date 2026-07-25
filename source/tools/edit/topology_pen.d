@@ -1513,10 +1513,16 @@ public:
     // A vertex with zero (usable) neighbors — an isolated point, or
     // (defensively; should not occur — the classifying edge is itself an
     // open-edge neighbor) a boundary vertex with none — returns `readPos[v]`
-    // UNCHANGED: a true no-op, bit-identical (no arithmetic performed),
-    // which is what lets `applySmoothPasses`'s REV1 FIX-2 guard detect a
-    // genuinely inert gesture.
-    private static Vec3 smoothedRelaxTarget(Mesh* m, uint v, const(Vec3)[] readPos) {
+    // UNCHANGED: a true no-op, bit-identical (no arithmetic performed).
+    // `hadNeighbors` reports WHICH case this was so the caller
+    // (`applySmoothPasses`) can tell "genuinely relaxed" apart from
+    // "passthrough no-op" and skip a 0-neighbor vertex ENTIRELY — no relax,
+    // no background re-snap either (review NIT-2: snapping an isolated/
+    // loose point onto a background surface is a deliberate NON-goal here,
+    // and UNMEASURED against the reference — flagged, not modeled — so a
+    // 0-neighbor vertex is left untouched rather than guessed at).
+    private static Vec3 smoothedRelaxTarget(Mesh* m, uint v, const(Vec3)[] readPos,
+                                            out bool hadNeighbors) {
         const(size_t)[] adjOff;
         const(uint)[]   adjNbrs;
         m.vertexAdjacencyCSR(adjOff, adjNbrs);
@@ -1541,6 +1547,7 @@ public:
         }
         if (!any) return readPos[v];   // defensive; should not occur (see doc comment above)
 
+        hadNeighbors = true;
         Vec3 mean = weightedSum * (1.0f / weightSum);
         enum float kStrength = 1.0f;   // V1 fixed (full relax)
         return readPos[v] + (mean - readPos[v]) * kStrength;
@@ -1596,7 +1603,15 @@ public:
         foreach (pass; 0 .. passCount) {
             Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot
             foreach (vi; 0 .. nV) {
-                Vec3 relaxed = smoothedRelaxTarget(m, cast(uint)vi, read);
+                bool hadNeighbors;
+                Vec3 relaxed = smoothedRelaxTarget(m, cast(uint)vi, read, hadNeighbors);
+                // NIT-2: a vertex with no relaxation neighbors is a loose
+                // (0-neighbor) point — skip it ENTIRELY, including the
+                // background re-snap below, so it is a TRUE no-op rather
+                // than getting silently pulled onto the background surface
+                // (see this function's own doc comment above — this is
+                // what keeps `smoothedRelaxTarget`'s no-op premise true).
+                if (!hadNeighbors) continue;
                 if (sources.length) {
                     Vec3  hit, hitN;
                     int   si, fi;
@@ -1608,7 +1623,6 @@ public:
                 m.vertices[vi] = relaxed;
             }
         }
-        m.commitChange(MeshEditScope.Position);
 
         // REV1 FIX-2: unconditional no-op check — a gesture that nets to
         // ZERO vertex movement (within eps) restores `before` exactly and
@@ -1618,6 +1632,12 @@ public:
         foreach (i; 0 .. nV)
             if ((m.vertices[i] - before.vertices[i]).length > kSmoothEps) { changed = true; break; }
         if (!changed) { before.restore(*m); return; }   // no mutation worth recording — no GPU churn
+
+        // NIT-1: fire the change-bus Position commit only on the CHANGED
+        // path — committing unconditionally (the old placement, above the
+        // no-op check) recomputed every position-keyed cache to identical
+        // values on the routine no-op gesture the guard above just caught.
+        m.commitChange(MeshEditScope.Position);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = smoothEditFactory_();
@@ -2112,10 +2132,16 @@ public:
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
         // gesture's state, for Tier-C tests to assert click-vs-drag pass
         // counts without driving a full release. `smoothPassCount` reports
-        // the SAME `1 + floor(smoothDragPx_ / kSmoothPassStridePx)`
-        // `onMouseButtonUp`'s Smooth branch will apply if released now.
+        // the SAME `1 + floor(smoothDragPx_ / kSmoothPassStridePx)`,
+        // clamped to `MAX_TOPOPEN_SMOOTH_PASSES` exactly like
+        // `applySmoothPasses`'s own clamp, that `onMouseButtonUp`'s Smooth
+        // branch will apply if released now (NIT-3: reporting the
+        // unclamped value here would make that "will apply" doc-comment
+        // false for an extreme drag).
         root["smoothArmed"]     = JSONValue(smoothArmed_);
-        root["smoothPassCount"] = JSONValue(1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx));
+        int smoothPassCount = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
+        if (smoothPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
+        root["smoothPassCount"] = JSONValue(smoothPassCount);
 
         return root;
     }
@@ -3054,7 +3080,9 @@ unittest {
     m.buildLoops();
 
     Vec3[] readPos = m.vertices.dup;
-    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v, readPos);
+    bool hadNeighbors;
+    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v, readPos, hadNeighbors);
+    assert(hadNeighbors, "a hub of 3 bare edges must report usable relax neighbors");
 
     // Independently-computed candidates — never re-deriving the tool's own
     // implementation by calling back into it.
@@ -3121,4 +3149,119 @@ unittest {
         "a disconnected patch with no background source must be a byte-identical no-op");
     assert(!history.canUndo(),
         "a disconnected/no-bg Smooth gesture must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// applySmoothPasses — isolated (0-neighbor) vertex WITH a background present
+// (review NIT-2): T7 above only covers "no background source at all". This
+// covers the previously-untested combination — a loose point plus a LIVE
+// background layer — which used to fall through to the `sources.length`
+// re-snap branch and get pulled onto the background surface even though it
+// has zero relaxation neighbors, contradicting the FIX-2 "0-neighbor = true
+// no-op" premise (and this behavior was never measured against the
+// reference — a deliberate NON-goal, not a modeled law). The fix skips a
+// 0-neighbor vertex entirely, so it stays byte-unchanged regardless of
+// whether a background exists; since it is the ONLY vertex here, the whole
+// gesture nets to no-op and records no undo entry either. `gpu_` stays
+// null and this path returns before ever reaching `refreshDisplay` — safe
+// under bare `dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import snap : setBackgroundSnapSources;
+
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-10, -10, -5), Vec3(10, -10, -5), Vec3(10, 10, -5), Vec3(-10, 10, -5)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);   // don't leak into later dub-test unittests
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_smooth", "Topology Smooth",
+                                                     MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));   // single isolated point -> 0 neighbors, background IS present
+
+    auto before = MeshSnapshot.capture(m);
+    t.applySmoothPasses(1);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices,
+        "an isolated (0-neighbor) vertex must stay byte-unchanged even WITH a background "
+      ~ "present — loose points are never snapped to a surface");
+    assert(!history.canUndo(),
+        "the only vertex in the gesture is untouched -> no undo entry, even with a background");
+}
+
+// ---------------------------------------------------------------------------
+// smoothedRelaxTarget — boundary-restriction coverage (review NIT-4): no
+// existing P8 test exercises the branch that EXCLUDES a boundary vertex's
+// interior (2-face-shared) edge neighbors from its relax average — T4 above
+// is an all-bare-edge hub (every incident edge is open, so the exclusion
+// never actually removes anyone) and the click/build tests use a single
+// triangle (no interior edge exists at all to exclude). This rig gives
+// boundary vertex `v0` BOTH kinds of neighbor at once: `v1`/`v3` via open
+// (single-face) edges, `v2` via the edge shared by both triangles — so a
+// regression that dropped the exclusion (falling back to the full 1-ring)
+// would still pass every other P8 test but fail this one.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+
+    Mesh m;
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(1, 0, 0));    // open-edge neighbor  (v0-v1: face0 only)
+    uint v2 = m.addVertex(Vec3(10, 10, 0));  // INTERIOR neighbor   (v0-v2: shared by both faces)
+    uint v3 = m.addVertex(Vec3(0, 1, 0));    // open-edge neighbor  (v0-v3: face1 only)
+    m.addFace([v0, v1, v2]);
+    m.addFace([v0, v2, v3]);
+    m.buildLoops();
+
+    // Rig sanity: v0-v2 must actually be the shared (interior) edge, and v0
+    // must actually classify as a boundary vertex, or this rig isn't
+    // testing what it claims to.
+    uint eV0V2 = m.edgeIndex(v0, v2);
+    assert(eV0V2 != uint.max, "setup: v0-v2 must exist as an edge");
+    assert(!TopologyPenTool.isOpenEdge(&m, eV0V2),
+        "setup: v0-v2 must be INTERIOR (shared by both faces) for this rig to test anything");
+    const(size_t)[] adjOff;
+    const(uint)[]   adjNbrs;
+    m.vertexAdjacencyCSR(adjOff, adjNbrs);
+    assert(TopologyPenTool.isOpenVertex(&m, v0, adjOff, adjNbrs),
+        "setup: v0 must classify as a boundary vertex (has open edges v0-v1/v0-v3)");
+
+    Vec3[] readPos = m.vertices.dup;
+    bool hadNeighbors;
+    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v0, readPos, hadNeighbors);
+    assert(hadNeighbors, "v0 has usable (open-edge) relax neighbors");
+
+    // Independently-computed expected target using ONLY the open-edge
+    // neighbors v1/v3 — never re-deriving the implementation under test.
+    float w1 = 1.0f / (readPos[v0] - readPos[v1]).length;
+    float w3 = 1.0f / (readPos[v0] - readPos[v3]).length;
+    Vec3 openOnlyTarget = (readPos[v1] * w1 + readPos[v3] * w3) * (1.0f / (w1 + w3));
+
+    // The target that WOULD result if the exclusion regressed away and the
+    // interior neighbor v2 leaked into the average.
+    float w2 = 1.0f / (readPos[v0] - readPos[v2]).length;
+    Vec3 fullRingTarget = (readPos[v1] * w1 + readPos[v2] * w2 + readPos[v3] * w3)
+                         * (1.0f / (w1 + w2 + w3));
+
+    float distToOpenOnly = (actual - openOnlyTarget).length;
+    float distToFullRing = (actual - fullRingTarget).length;
+    assert(distToOpenOnly < 1e-4f,
+        format("boundary relax must use ONLY the open-edge neighbors (v1,v3), excluding the "
+             ~ "interior neighbor v2; distToOpenOnly=%f", distToOpenOnly));
+    assert(distToFullRing > 0.05f,
+        format("this rig must actually discriminate the exclusion — the full-ring (regressed) "
+             ~ "target must be MEASURABLY different from the open-edge-only one; "
+             ~ "distToFullRing=%f", distToFullRing));
 }
