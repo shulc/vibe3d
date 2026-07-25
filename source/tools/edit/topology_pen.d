@@ -168,8 +168,8 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 // along its own remaining edge, `[0,1]`-clamped at the neighbor
 // (`slidePoint`, a pure clamped lerp; `t=1` lands EXACTLY on the neighbor's
 // pre-slide position). An endpoint with zero or 2+ remaining incident edges
-// is HELD FIXED — the reference's `CrossEdges` direction-discriminator never
-// fired in the capture (plan §5); rather than guess which of ≥2 colinear/
+// is HELD FIXED — the reference's (deferred) per-vertex valence>2 direction-
+// selection rule never fired in the capture (plan §5); rather than guess which of ≥2 colinear/
 // non-colinear neighbors it would pick, V1 conservatively holds such an
 // endpoint fixed (an under-approximation, never a wrong direction) and
 // defers the extension to a follow-up capture (plan §Follow-up capture).
@@ -614,9 +614,10 @@ public:
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
             auto m = mesh;
             if (m !is null) {
-                if (slideNbrA_ >= 0)
+                immutable vlen = cast(int)m.vertices.length;
+                if (slideNbrA_ >= 0 && slideNbrA_ < vlen && slideEndA_ >= 0 && slideEndA_ < vlen)
                     slideTA_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndA_], m.vertices[slideNbrA_]);
-                if (slideNbrB_ >= 0)
+                if (slideNbrB_ >= 0 && slideNbrB_ < vlen && slideEndB_ >= 0 && slideEndB_ < vlen)
                     slideTB_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndB_], m.vertices[slideNbrB_]);
             }
             return true;
@@ -971,7 +972,10 @@ public:
     private static Vec3 slidePoint(Vec3 x, Vec3 neighbor, float t) {
         if (t < 0.0f) t = 0.0f;
         if (t > 1.0f) t = 1.0f;
-        return x + (neighbor - x) * t;
+        // Canonical lerp form (neighbor*t + x*(1-t)) — FP-exact at BOTH ends
+        // (t=1 lands bit-exactly on `neighbor`, the captured clamp), unlike
+        // `x + (neighbor-x)*t`. Matches the project's taper-lerp convention.
+        return neighbor * t + x * (1.0f - t);
     }
 
     // P7 (doc/topopen_p7_slide_plan.md, V1-scope Option B): the endpoint
@@ -980,7 +984,7 @@ public:
     // KILLER-1, the only adjacency that sees bare/diagonal edges a
     // loop-fan helper would miss). Returns `-1` when `x` has zero
     // (grabbed-edge-only, valence-1) or 2+ (valence>2, the UNMEASURED
-    // `CrossEdges` direction-discriminator — deliberately unhandled, never
+    // per-vertex direction-selection rule — deliberately unhandled, never
     // guessed, plan §Follow-up capture) remaining neighbors: either way the
     // endpoint is held FIXED, not slid.
     private static int continuationNeighbor(Mesh* m, uint x, uint other) {
@@ -999,8 +1003,8 @@ public:
     // verbatim from P6); each endpoint that has EXACTLY ONE remaining
     // incident edge (after excluding the grabbed edge itself) is slidable
     // along that edge (`continuationNeighbor`); an endpoint with zero or 2+
-    // remaining incident edges is HELD FIXED (the UNMEASURED `CrossEdges`
-    // direction-discriminator — never guessed, plan §Follow-up capture). If
+    // remaining incident edges is HELD FIXED (the UNMEASURED per-vertex
+    // valence>2 direction-selection rule — never guessed, plan §Follow-up capture). If
     // NEITHER endpoint is slidable, nothing is armed (no documented gesture
     // to perform) — don't consume, matching every other down-handler's miss
     // convention. The commit itself is deferred to release
