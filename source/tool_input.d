@@ -71,19 +71,30 @@ enum InputMod : ubyte { None = 0, Shift = 1, Ctrl = 2, Alt = 4 }
 /// matching.
 private enum ubyte AllMods = InputMod.Shift | InputMod.Ctrl | InputMod.Alt;
 
-/// When the action THIS row resolves to arms at Down, how much prior arming
-/// state does it clear?
+/// When the action THIS row resolves to arms at Down, does it also signal
+/// the tool to clear its OWN seed state via `Tool.onInputResetAll`?
 ///   - `SelfButton` (default, and correct for nearly every binding): only
-///     this row's OWN button slot gets (re-)armed; a different button's
-///     armed action is untouched, so a chord on one button can never cancel
-///     a gesture in progress on another. This is what makes "which action is
-///     armed on which button" a per-button fact instead of a single shared
-///     set of flags that has to be reset all-or-nothing.
-///   - `AllButtons`: clears every button's armed action (`Tool.onInputResetAll`)
-///     before arming this row. Reserved for a combo that is DELIBERATELY a
-///     full reset (e.g. external history navigation moving the mesh out from
-///     under an in-progress gesture) — a decision a binding row states as
-///     data, not a hand-placed call buried in a specific handler.
+///     this row's OWN button slot gets (re-)armed; `onInputResetAll` is not
+///     called, and — same as every other row — no OTHER button's armed
+///     action is ever touched. This is what makes "which action is armed on
+///     which button" a per-button fact instead of a single shared set of
+///     flags that has to be reset all-or-nothing.
+///   - `AllButtons`: additionally fires `Tool.onInputResetAll()` — a hook for
+///     whatever per-gesture seed state the TOOL ITSELF keeps — before arming
+///     THIS row's button slot. Reserved for a combo that is DELIBERATELY a
+///     full reset of the tool's own state (e.g. external history navigation
+///     moving the mesh out from under an in-progress gesture) — a decision a
+///     binding row states as data, not a hand-placed call buried in a
+///     specific handler.
+///
+/// Neither value EVER clears a DIFFERENT button's `armed_` slot — not even
+/// `AllButtons` (despite the name: it means "reset the tool's state fully",
+/// not "clear every button's arm"). `dispatchInput`'s per-button isolation
+/// is REQUIRED for the two-button-chord property (a chord on one button must
+/// never cancel a gesture in progress on another — see the chord unittest in
+/// `tool.d`) and must hold regardless of `ResetScope`. To drop every
+/// button's armed action in one call, use `Tool.resetAllArmed()` instead —
+/// a distinct seam for external resync, not a `ResetScope`.
 enum ResetScope { SelfButton, AllButtons }
 
 /// One row of a tool's declarative (button, exact-modifier-combo) → action
@@ -147,11 +158,14 @@ import bindbc.sdl : SDL_Keymod, KMOD_SHIFT, KMOD_CTRL, KMOD_ALT,
                      SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT;
 
 /// SDL's raw `button` field (`SDL_BUTTON_LEFT`/`_MIDDLE`/`_RIGHT`) → the
-/// neutral `InputButton`. Anything else (a 4th/5th mouse button) falls back
-/// to `Left` — none of today's tools bind extra buttons, and `dispatchInput`
-/// simply won't match any row for a button no table lists.
+/// neutral `InputButton`. `LEFT` is matched explicitly so `default` means
+/// strictly "unknown button" (a 4th/5th mouse button) rather than silently
+/// covering LEFT too; it still falls back to `Left` — none of today's tools
+/// bind extra buttons, and `dispatchInput` simply won't match any row for a
+/// button no table lists.
 InputButton toButton(ubyte sdlButton) {
     switch (sdlButton) {
+        case SDL_BUTTON_LEFT:   return InputButton.Left;
         case SDL_BUTTON_MIDDLE: return InputButton.Middle;
         case SDL_BUTTON_RIGHT:  return InputButton.Right;
         default:                return InputButton.Left;

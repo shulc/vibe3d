@@ -172,10 +172,23 @@ class Tool : ParamProvider {
     /// early return silently shadow another's. Default: unhandled.
     bool onToolAction(ToolAction a, InputPhase p, ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
 
-    /// Full clear of every per-button armed action AND whatever per-gesture
-    /// seed state the tool itself keeps (called when a binding row declares
-    /// `ResetScope.AllButtons`, and by tools that also wire it to external
-    /// history navigation moving the mesh out from under an open gesture).
+    /// Hook fired when a binding row declares `ResetScope.AllButtons` (and by
+    /// tools that also wire it to external history navigation moving the
+    /// mesh out from under an open gesture): clears whatever per-gesture
+    /// SEED state the tool itself keeps (e.g. a cached start-vertex index).
+    ///
+    /// This does NOT clear any button's `armed_` slot — `dispatchInput`
+    /// never clears a DIFFERENT button's armed action from here, only ever
+    /// (re)arms the SAME button it is processing this Down on. That
+    /// per-button isolation is REQUIRED for the two-button-chord property (a
+    /// chord on one button must never cancel a gesture in progress on a
+    /// different button — see the chord unittest below) and holds regardless
+    /// of which `ResetScope` fired this hook.
+    ///
+    /// To drop EVERY button's armed action in one call regardless of button
+    /// (the seam external resync — e.g. an undo/redo that invalidates cached
+    /// indices — needs), call `resetAllArmed()` instead; it is a distinct
+    /// primitive from this hook, not something this default should do.
     /// Default: no-op.
     void onInputResetAll() {}
 
@@ -185,6 +198,21 @@ class Tool : ParamProvider {
     // what makes a chord on one button structurally unable to clear a
     // gesture in progress on a different button.
     private ToolAction[3] armed_ = [PassThrough, PassThrough, PassThrough];
+
+    /// Drops EVERY button's armed action (`armed_[] = PassThrough`) in one
+    /// call — distinct from `ResetScope` above, which only ever (re)arms the
+    /// SAME button `dispatchInput` is processing this Down on and never
+    /// touches another button's slot. This is the seam an external resync
+    /// trigger (e.g. an undo/redo that invalidates cached vertex/edge
+    /// indices) needs to cancel every gesture in flight regardless of which
+    /// button it is armed on — `armed_` is otherwise module-private, so
+    /// nothing outside `dispatchInput` itself could reach it before this
+    /// existed. Does NOT call `onInputResetAll()` — a caller that needs both
+    /// (clear the tool's own seed state AND drop every arm) calls both
+    /// explicitly; they are separate primitives.
+    protected final void resetAllArmed() {
+        armed_[] = PassThrough;
+    }
 
     /// The central per-button dispatcher: resolves+arms on Down, routes to
     /// the armed action (then clears it) on Up, and forwards Move to
@@ -196,9 +224,13 @@ class Tool : ParamProvider {
                               ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         final switch (phase) {
         case InputPhase.Down: {
-            auto a = resolveToolAction(bindings(), button, mods);
+            // bindings() scanned ONCE and shared by both resolvers below —
+            // a migrated tool returning an array literal would otherwise
+            // allocate twice per Down for no reason (NIT-2).
+            auto table = bindings();
+            auto a = resolveToolAction(table, button, mods);
             if (a == PassThrough) return false;
-            if (resolveResetScope(bindings(), button, mods) == ResetScope.AllButtons)
+            if (resolveResetScope(table, button, mods) == ResetScope.AllButtons)
                 onInputResetAll();
             armed_[button] = a;
             return onToolAction(a, InputPhase.Down, e, vts);
@@ -512,7 +544,10 @@ unittest {
 // The two-button-chord property: a MIDDLE Down/Up pair (its own action, its
 // own button slot) does NOT touch a LEFT gesture that is still armed —
 // proves ResetScope.SelfButton (the default for the Left row here) means a
-// held drag on one button survives a chord on another.
+// held drag on one button survives a chord on another. Deliberately uses
+// MIDDLE's `AllButtons` row (not a plain SelfButton one) as the a-fortiori
+// case: if firing onInputResetAll() still leaves armed_[Left] untouched,
+// a weaker SelfButton chord trivially leaves it untouched too.
 unittest {
     auto t = new RecordingTool();
     auto e = dummyEvent();
@@ -587,4 +622,31 @@ unittest {
     t.log = [];
     assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Move, e, vts));
     assert(t.log == ["a=0 p=Move"]);
+}
+
+// resetAllArmed() (the Phase 2 resync seam): arm TWO different buttons, call
+// resetAllArmed(), and confirm BOTH armed_ slots are cleared — a subsequent
+// Up on EITHER button now routes nothing. Distinct from ResetScope.AllButtons
+// above: resetAllArmed() clears every button's arm but does NOT itself call
+// onInputResetAll() (they are separate primitives a resync caller can invoke
+// together if it needs both effects).
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1); // MIDDLE's row is AllButtons — fired once on its own Down
+    t.log = [];
+    t.resetAllCount = 0;
+
+    t.resetAllArmed();
+
+    // Both armed_ slots are now PassThrough: neither button's Up routes to
+    // onToolAction, and resetAllArmed() itself never touched onInputResetAll.
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(!t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.log == []);
+    assert(t.resetAllCount == 0);
 }
