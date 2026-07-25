@@ -3838,6 +3838,74 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// findCommonSplitFace / commitSplit — T7b (P9 REVIEW NIT-1, vacuous-pass
+// hazard): T7 above pins the FIX-3 sorted-lo/hi tie-break, but it only
+// EXERCISES the tie-break if `facesAroundVertex(A)`'s dart fan visits the
+// triangle (the must-be-rejected face) before the pentagon -- T7 does not
+// pin that ordering. `buildLoops`'s serial `vertLoop` seed pass is
+// last-write-wins over increasing loop index (face-major order), so the
+// face added LAST at the shared vertex is the one the fan visits FIRST; in
+// T7 (triangle added, then pentagon) that means the pentagon is visited
+// first and `findCommonSplitFace` returns it before the triangle's
+// adjacency check is ever reached -- an unsorted-variant regression would
+// ALSO pass T7, vacuously. This rig is IDENTICAL to T7 except the two
+// `addFace` calls are swapped, flipping which face is added last so the
+// triangle is visited first instead. Together the two tests guarantee the
+// triangle is first-in-fan in at least one of them, so the pair catches an
+// unsorted-variant regression regardless of fan-walk order.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    // A=0, C=1, D=2, E=3, F=4 -- same rig as T7, `addFace` calls SWAPPED
+    // (pentagon first, triangle second) so the triangle is added last.
+    foreach (i; 0 .. 5) m.addVertex(Vec3(cast(float)i, 0, 0));
+    m.addFace([0u, 2u, 3u, 1u, 4u]);  // pentagon [A,D,E,C,F] -> A@pos0, C@pos3 (non-adjacent)
+    m.addFace([1u, 2u, 0u]);          // triangle [C,D,A] -> A@pos2(len-1), C@pos0 (wrap-adjacent)
+                                       // shares edge A-D with the pentagon, so both
+                                       // faces are on A's dart fan.
+    m.buildLoops();
+
+    // Setup sanity: same as T7, plus this rig's whole POINT -- the triangle
+    // (not the pentagon) must be first-in-fan here, the opposite of T7.
+    int incidentCount = 0;
+    int firstFi = -1;
+    foreach (fi; m.facesAroundVertex(0u)) { if (firstFi < 0) firstFi = cast(int)fi; ++incidentCount; }
+    assert(incidentCount == 2,
+        "setup: vertex A(0) must be incident to BOTH the triangle and the pentagon");
+    assert(m.faces[firstFi].length == 3,
+        "setup: this rig must visit the TRIANGLE first in A's dart fan (the opposite of T7) -- "
+      ~ "otherwise it duplicates T7 instead of covering the flipped order");
+
+    int triangleFi = (m.faces[0].length == 3) ? 0 : 1;
+    auto triangleBefore = m.faces[triangleFi].dup;
+
+    t.commitSplit(0, 1);
+
+    assert(m.faces.length == 3,
+        "expected the PENTAGON to split into 2 sub-faces (triangle survives untouched) -- "
+      ~ "3 total faces");
+    bool triangleSurvives = false;
+    foreach (f; m.faces) if (f[] == triangleBefore[]) triangleSurvives = true;
+    assert(triangleSurvives,
+        "the adjacent triangle (where A-C is a real edge) must survive byte-unchanged -- "
+      ~ "the tool must have picked the PENTAGON, not the triangle, even when the triangle "
+      ~ "is visited FIRST in the dart fan");
+    assert(history.canUndo(), "the pentagon split must be a real, undoable mutation");
+}
+
+// ---------------------------------------------------------------------------
 // commitSplit — T8 (P9, doc/topopen_p9_split_plan.md §Testing): a real split
 // must undo back to the exact pre-split state.
 // ---------------------------------------------------------------------------
