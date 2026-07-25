@@ -5,10 +5,10 @@
 // KEYBOARD Ctrl+Z path (SDL_KEYDOWN through handleKeyDown -> navHistory ->
 // EditSession.navigate, which calls resyncSession on the active tool) — NOT
 // the plain `/api/undo` HTTP endpoint, which deliberately bypasses
-// navHistory (see test_topopen_move_state.d's own doc comment / memory
-// undo_modo_migration_plan) — restores the primary layer EXACTLY to its
-// pre-drag state (all new geometry removed, vertex/edge/face counts back to
-// the untouched grid, every original vertex position unchanged); the
+// navHistory (see test_topopen_move_state.d's own doc comment / app.d's
+// navHistory frozen-contract comment) — restores the primary layer EXACTLY
+// to its pre-drag state (all new geometry removed, vertex/edge/face counts
+// back to the untouched grid, every original vertex position unchanged); the
 // keyboard Ctrl+Shift+Z redo path re-applies the exact post-drag topology +
 // positions.
 //

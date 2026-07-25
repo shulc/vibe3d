@@ -5,8 +5,8 @@
 // handleKeyDown -> navHistory -> EditSession.navigate, which calls
 // resyncSession on the active tool) — NOT the plain `/api/undo` HTTP
 // endpoint, which deliberately bypasses navHistory (see
-// test_topopen_move_state.d's own doc comment / memory
-// undo_modo_migration_plan) — restores every loop vertex's EXACT pre-drag
+// test_topopen_move_state.d's own doc comment / app.d's navHistory
+// frozen-contract comment) — restores every loop vertex's EXACT pre-drag
 // position; the keyboard Ctrl+Shift+Z redo path re-applies the exact
 // post-drag positions.
 //

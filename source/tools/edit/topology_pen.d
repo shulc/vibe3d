@@ -6405,6 +6405,7 @@ unittest {
 
     loadSDL();
     SDL_SetModState(KMOD_SHIFT);
+    scope(exit) SDL_SetModState(cast(SDL_Keymod)0);   // don't leak into later dub-test unittests
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
@@ -6481,6 +6482,4 @@ unittest {
     foreach (vi; 0 .. 9)
         assert((m.vertices[vi] - gridPos[vi]).length < 1e-5f,
             format("original grid vertex %d must be left exactly alone", vi));
-
-    SDL_SetModState(cast(SDL_Keymod)0);
 }

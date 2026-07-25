@@ -17059,6 +17059,15 @@ unittest { // extendEdgesByMask: CLOSED-RING boundary probe (task 0477 P11 REV1
     auto loop = m.selectLoopEdges(seed);
     assert(loop.length == 8, "boundary seed must gather the FULL closed 8-edge rim");
 
+    // Capture each rim edge by its STABLE ENDPOINT vertex pair before the
+    // kernel's internal rebuildEdges() runs. `loop`'s raw edge indices only
+    // happen to stay valid afterwards because this kernel is pure-add and
+    // rebuildEdges preserves slots 0..11 here -- re-resolving by endpoints
+    // (below, post-kernel) keeps the probe robust to any future edge-index
+    // reordering rather than relying on that incidental preservation.
+    uint[2][] rimEndpoints;
+    foreach (ei; loop) rimEndpoints ~= [m.edges[ei][0], m.edges[ei][1]];
+
     bool[] mask; mask.length = m.edges.length;
     foreach (ei; loop) mask[ei] = true;
 
@@ -17089,8 +17098,12 @@ unittest { // extendEdgesByMask: CLOSED-RING boundary probe (task 0477 P11 REV1
     // Manifold promotion: every original rim edge must now have EXACTLY 2
     // incident faces (its own cell face + the new bridge) -- not a
     // non-manifold 3-face triple, which is the wrap-around failure mode
-    // this probe exists to catch.
-    foreach (ei; loop) {
+    // this probe exists to catch. Re-resolve each rim edge by its stable
+    // endpoint pair (captured pre-kernel, above) rather than trusting the
+    // pre-kernel `loop` indices to still point at the same edges.
+    foreach (ep; rimEndpoints) {
+        uint ei = m.edgeIndex(ep[0], ep[1]);
+        assert(ei != uint.max, "rim edge must still resolve by its stable endpoints after extend");
         int cnt = 0;
         foreach (fi; m.facesAroundEdge(ei)) ++cnt;
         assert(cnt == 2,
