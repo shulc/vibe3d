@@ -303,14 +303,18 @@ unittest {
 // `edges[]`/`vertices[]` resize/rebuild for a sibling's cached index to
 // dangle against). REV1 FIX-1 (cross-arm coupling): a private
 // `resetAllGestureArms()` helper now clears EVERY arm group (P3 build, P4
-// Move/Place, P6 Add Loop, P7 Slide) and is called at the TOP of every
-// LEFT-button gesture-DOWN handler (`onPlainLmbDown`/`onShiftLmbDown`/
-// `onCtrlLmbDown`) BEFORE that press (maybe) re-arms exactly one of them —
-// superseding the old per-handler partial resets, which left OTHER arm
-// groups stranded true across a replayed/malformed DOWN-DOWN-UP sequence (a
-// later release would then fire the WRONG committer against stale
-// indices). `resyncSession()` itself is now a one-line call to the same
-// helper. `onCtrlMmbDown`/`onShiftMmbDown` (the MIDDLE-button handlers)
+// Move/Place, P6 Add Loop, P7 Slide) and fires BEFORE every LEFT-button
+// gesture-DOWN handler (`onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`)
+// runs — originally via each handler's own top-of-body call, now (Phase-3
+// dispatch cleanup, doc/topopen_input_dispatch_phase2_plan.md §Phase 3) via
+// `dispatchInput`'s `onInputResetAll()` hook instead, since every LEFT row
+// in `kTopoPenBindings` is `ResetScope.AllButtons` — before that press
+// (maybe) re-arms exactly one of them — superseding the old per-handler
+// partial resets, which left OTHER arm groups stranded true across a
+// replayed/malformed DOWN-DOWN-UP sequence (a later release would then fire
+// the WRONG committer against stale indices). `resyncSession()` itself is
+// now a one-line call to the same helper. `onCtrlMmbDown`/`onShiftMmbDown`
+// (the MIDDLE-button handlers)
 // deliberately do NOT get this call: unlike the same-physical-button
 // DOWN-DOWN-without-UP hazard the LEFT-button trio can only suffer from a
 // malformed replay, a DIFFERENT button (MIDDLE) genuinely CAN be pressed
@@ -1240,9 +1244,13 @@ public:
     // (now deleted) `GestureSlot`/`resolveGestureSlot` switch.
     override const(InputBinding)[] bindings() const { return kTopoPenBindings; }
 
-    // The `ResetScope.AllButtons` hook: identical to what the LEFT-button
-    // trio's own top-of-handler `resetAllGestureArms()` call already does —
-    // this is simply that SAME call reachable through the dispatch seam.
+    // The `ResetScope.AllButtons` hook: fires before every LEFT-button
+    // gesture-DOWN handler (each LEFT row in `kTopoPenBindings` is
+    // `ResetScope.AllButtons`). Phase-3 dispatch cleanup
+    // (doc/topopen_input_dispatch_phase2_plan.md §Phase 3) removed the now-redundant
+    // duplicate `resetAllGestureArms()` call the LEFT-button trio's own
+    // handlers used to make at their own top — this hook is the sole path
+    // that fires it on a LEFT Down now.
     override void onInputResetAll() { resetAllGestureArms(); }
 
     // Dispatch entry point: `dispatchInput` resolves (button, live modifier
@@ -1404,14 +1412,13 @@ public:
     // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
     // 1). Always claims the event either way.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md): full symmetric close —
-        // clear EVERY arm group (not just this handler's own
-        // `placeArmed_`/`moveArmed_`/`grabbedVert_`, the old NIT-2 partial
-        // reset) before the disambiguation below re-arms exactly one.
-        // Supersedes the old per-handler partial resets; see
-        // `resetAllGestureArms`'s own doc comment for the full hazard this
-        // closes.
-        resetAllGestureArms();
+        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
+        // the full symmetric close this handler used to do itself here is now
+        // guaranteed by `dispatchInput`'s `onInputResetAll()` hook — this
+        // row's `ResetScope.AllButtons` (`kTopoPenBindings`) fires
+        // `resetAllGestureArms()` unconditionally BEFORE this handler is
+        // called. See `resetAllGestureArms`'s own doc comment for the full
+        // hazard this closes.
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -1437,12 +1444,10 @@ public:
     // documented gesture (Duplicate always starts on a pre-highlighted
     // element) — don't consume, matching the dispatch default.
     private bool onShiftLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md, same rationale as
-        // `onPlainLmbDown` above): full symmetric close, superseding the old
-        // per-handler partial reset (which only cleared THIS handler's own
-        // `dragArmed_` + classify-scratch, leaving Move/Place/Slide's arm
-        // state untouched).
-        resetAllGestureArms();
+        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3,
+        // same rationale as `onPlainLmbDown` above): this row's
+        // `ResetScope.AllButtons` already fires `resetAllGestureArms()` via
+        // `dispatchInput`'s `onInputResetAll()` hook before this handler runs.
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -1665,11 +1670,11 @@ public:
     // press's own cursor, so a stationary click still has a sane (harmless,
     // near-zero) fraction at commit.
     private bool onCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md): full symmetric close —
-        // clear EVERY arm group before (maybe) re-arming Slide, superseding
-        // the old per-handler partial resets. See `resetAllGestureArms`'s
-        // own doc comment for the full hazard this closes.
-        resetAllGestureArms();
+        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
+        // this row's `ResetScope.AllButtons` already fires
+        // `resetAllGestureArms()` via `dispatchInput`'s `onInputResetAll()`
+        // hook before this handler runs. See `resetAllGestureArms`'s own doc
+        // comment for the full hazard this closes.
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -2042,16 +2047,17 @@ public:
     // is scope-free: it relaxes the ENTIRE primary mesh, not a
     // press-selected element) and NO mutation on down. Commit is deferred
     // to release (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`),
-    // reading the accumulated drag distance to derive the pass count. Full
-    // symmetric close via `resetAllGestureArms()` (same LEFT-button
-    // discipline as `onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown` — see
-    // that helper's own doc comment) before arming, so a stray Move/Build/
-    // Slide arm from an earlier press can never survive into this one.
-    // Always claims the event (Shift+Ctrl+LMB is unambiguously the Smooth
-    // gesture, regardless of what — if anything — is under the cursor).
+    // reading the accumulated drag distance to derive the pass count.
+    // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
+    // the full symmetric close (same LEFT-button discipline as
+    // `onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`) is now guaranteed by
+    // this row's `ResetScope.AllButtons`, which fires `resetAllGestureArms()`
+    // via `dispatchInput`'s `onInputResetAll()` hook before this handler
+    // runs, so a stray Move/Build/Slide arm from an earlier press can never
+    // survive into this one. Always claims the event (Shift+Ctrl+LMB is
+    // unambiguously the Smooth gesture, regardless of what — if anything —
+    // is under the cursor).
     private bool onShiftCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        resetAllGestureArms();
-
         smoothArmed_  = true;
         smoothStartX_ = smoothLastX_ = e.x;
         smoothStartY_ = smoothLastY_ = e.y;
