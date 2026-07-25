@@ -9,6 +9,8 @@ import params : Param, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
 import std.json : JSONValue;
+import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
+                    ResetScope, InputBinding, resolveToolAction, resolveResetScope;
 
 // ---------------------------------------------------------------------------
 // Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
@@ -138,6 +140,82 @@ class Tool : ParamProvider {
     bool onMouseMotion    (ref const SDL_MouseMotionEvent  e, ref VectorStack vts) { return false; }
     bool onKeyDown        (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
     bool onKeyUp          (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
+
+    // ----- Centralized tool-input / modifier dispatch (Phase 1, ADDITIVE +
+    // INERT — doc/tool_input_dispatch_design.md) -----------------------------
+    //
+    // A shared alternative to hand-rolling a button×modifier grid inside a
+    // tool: a tool DECLARES its (button, modifier) → action table via
+    // `bindings()` instead of writing its own DOWN-side classifier, and
+    // implements `onToolAction()` instead of writing its own UP-side
+    // arm-flag cascade. `dispatchInput()` below is the shared per-button
+    // state machine every opted-in tool reuses.
+    //
+    // Every method here defaults to the INERT no-op shown: `bindings()`
+    // empty means `resolveToolAction` always answers `PassThrough` for this
+    // tool, so `dispatchInput()` always returns `false` without ever calling
+    // `onToolAction()`. A tool that does not override any of this trio, and
+    // does not call `dispatchInput()` from its own `onMouseButtonDown`/`Up`,
+    // is completely unaffected by this seam existing — its own
+    // `onMouseButtonDown`/`onMouseButtonUp`/`onMouseMotion` overrides above
+    // keep running exactly as before. No tool opts in during Phase 1.
+
+    /// Declarative (button, exact modifier combo) → `ToolAction` table for
+    /// this tool. Default: empty, so nothing this tool binds to
+    /// `dispatchInput` ever resolves to anything but `PassThrough`.
+    const(InputBinding)[] bindings() const { return []; }
+
+    /// Deliver one resolved action at one phase. DOWN and UP for the SAME
+    /// gesture arrive with the SAME `a` (the id `dispatchInput` armed on
+    /// Down) — never re-derived from which of several bool flags happens to
+    /// be set, so a tool's `final switch (a)` here can't have one case's
+    /// early return silently shadow another's. Default: unhandled.
+    bool onToolAction(ToolAction a, InputPhase p, ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
+
+    /// Full clear of every per-button armed action AND whatever per-gesture
+    /// seed state the tool itself keeps (called when a binding row declares
+    /// `ResetScope.AllButtons`, and by tools that also wire it to external
+    /// history navigation moving the mesh out from under an open gesture).
+    /// Default: no-op.
+    void onInputResetAll() {}
+
+    // One armed `ToolAction` slot per physical button (`InputButton.Left`/
+    // `Middle`/`Right`), set at Down and read back (then cleared) at Up.
+    // Tracking arming PER BUTTON — instead of one shared set of flags — is
+    // what makes a chord on one button structurally unable to clear a
+    // gesture in progress on a different button.
+    private ToolAction[3] armed_ = [PassThrough, PassThrough, PassThrough];
+
+    /// The central per-button dispatcher: resolves+arms on Down, routes to
+    /// the armed action (then clears it) on Up, and forwards Move to
+    /// whatever is currently armed on `button` (or declines if nothing is).
+    /// `button`/`mods` are already the neutral `InputButton`/`InputMod`-mask
+    /// forms (`tool_input.toButton`/`toMods` convert from raw SDL at the
+    /// call site); `e`/`vts` pass through untouched to `onToolAction`.
+    final bool dispatchInput(InputButton button, ubyte mods, InputPhase phase,
+                              ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        final switch (phase) {
+        case InputPhase.Down: {
+            auto a = resolveToolAction(bindings(), button, mods);
+            if (a == PassThrough) return false;
+            if (resolveResetScope(bindings(), button, mods) == ResetScope.AllButtons)
+                onInputResetAll();
+            armed_[button] = a;
+            return onToolAction(a, InputPhase.Down, e, vts);
+        }
+        case InputPhase.Up: {
+            auto a = armed_[button];
+            if (a == PassThrough) return false;
+            armed_[button] = PassThrough;
+            return onToolAction(a, InputPhase.Up, e, vts);
+        }
+        case InputPhase.Move: {
+            auto a = armed_[button];
+            if (a == PassThrough) return false;
+            return onToolAction(a, InputPhase.Move, e, vts);
+        }
+        }
+    }
 
     // Called once per frame after the 3-D geometry has been drawn.
     // Receives the freshly-evaluated toolpipe vts; override to render
@@ -352,4 +430,161 @@ class Tool : ParamProvider {
     EditMode[] supportedModes() const {
         return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
     }
+}
+
+// ---------------------------------------------------------------------------
+// Centralized tool-input dispatch — Tool-base seam tests (Phase 1, ADDITIVE +
+// INERT, doc/tool_input_dispatch_design.md). No SDL runtime call, no GL, no
+// live vibe3d instance: `SDL_MouseButtonEvent` is a plain POD struct and
+// `VectorStack` default-constructs empty, so `dispatchInput` is exercised as
+// bare data exactly like `tool_input.resolveToolAction` is in its own module.
+// ---------------------------------------------------------------------------
+
+version(unittest) {
+    private enum : ToolAction { TestActionMove = 0, TestActionRemove = 1 }
+
+    /// Test-only stub: a non-empty bindings() table plus a recording
+    /// onToolAction/onInputResetAll, so the tests below can assert exactly
+    /// which (action, phase) pairs dispatchInput delivered.
+    private class RecordingTool : Tool {
+        override const(InputBinding)[] bindings() const {
+            return [
+                InputBinding(InputButton.Left,   InputMod.None,  TestActionMove),
+                InputBinding(InputButton.Middle, InputMod.Ctrl,  TestActionRemove, ResetScope.AllButtons),
+            ];
+        }
+
+        string[] log;
+        int resetAllCount;
+
+        override bool onToolAction(ToolAction a, InputPhase p, ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+            import std.conv : to;
+            log ~= "a=" ~ a.to!string ~ " p=" ~ p.to!string;
+            return true;
+        }
+
+        override void onInputResetAll() { resetAllCount++; }
+    }
+
+    /// Plain base `Tool` — empty bindings(), inert onToolAction/onInputResetAll
+    /// defaults. Stands in for every one of today's unmigrated tool subclasses.
+    private SDL_MouseButtonEvent dummyEvent() {
+        SDL_MouseButtonEvent e;
+        return e;
+    }
+}
+
+// A tool with an EMPTY bindings() (the base Tool default — i.e. every
+// existing, unmigrated subclass) gets PassThrough for every button/phase:
+// dispatchInput declines (returns false) without ever calling onToolAction,
+// so nothing about this seam existing changes an unmigrated tool's behavior.
+unittest {
+    auto t = new Tool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(!t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.Right, InputMod.Shift, InputPhase.Move, e, vts));
+}
+
+// Down arms armed_[button]; Up routes to onToolAction with that SAME action
+// id, then clears the arm — a second Up on the same button (no intervening
+// Down) is then correctly PassThrough.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.log == ["a=0 p=Down"]);
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Down", "a=0 p=Up"]);
+
+    // Arm was cleared by the Up above — a second Up is a no-op PassThrough.
+    t.log = [];
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == []);
+}
+
+// The two-button-chord property: a MIDDLE Down/Up pair (its own action, its
+// own button slot) does NOT touch a LEFT gesture that is still armed —
+// proves ResetScope.SelfButton (the default for the Left row here) means a
+// held drag on one button survives a chord on another.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    // Arm LEFT first (a plain-LMB gesture "in progress").
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+
+    // A MIDDLE+Ctrl chord arrives mid-drag. Its row is ResetScope.AllButtons,
+    // so onInputResetAll() DOES fire — but that only clears state the tool
+    // itself keeps; the armed_[] slots stay per-button, so LEFT's slot is
+    // unaffected by MIDDLE's own Down/Up below.
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1);
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.log == ["a=1 p=Down", "a=1 p=Up"]);
+
+    // LEFT's arm (from before the MIDDLE chord) is untouched: its Up still
+    // resolves to the ORIGINAL action, not PassThrough.
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Up"]);
+}
+
+// A DIFFERENT button's Down never touches another button's armed_ slot even
+// when that other row's ResetScope is SelfButton (the ordinary case) —
+// dispatchInput only ever writes/reads armed_[button] for the button of the
+// event it's handling.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    // A second, unrelated Down on a button with no matching row (Right is
+    // unbound in RecordingTool's table) resolves to PassThrough and must not
+    // disturb armed_[Left].
+    assert(!t.dispatchInput(InputButton.Right, InputMod.None, InputPhase.Down, e, vts));
+
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Up"]);
+}
+
+// AllButtons reset scope: onInputResetAll() fires exactly once per qualifying
+// Down, not per Up, and not at all for a SelfButton row.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 0);   // SelfButton row: no reset-all
+
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1);   // AllButtons row: fires once on Down
+
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.resetAllCount == 1);   // Up never triggers a reset
+}
+
+// Move is delivered to whatever is currently armed on that button, and
+// declines once nothing is armed there.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Move, e, vts)); // nothing armed yet
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Move, e, vts));
+    assert(t.log == ["a=0 p=Move"]);
 }
