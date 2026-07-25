@@ -159,73 +159,29 @@ alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 private enum BuildCase { None, Edge, Tri, Quad }
 
 // ---------------------------------------------------------------------------
-// GestureSlot — the reference's COMPLETE 3-button × 4-modifier-state input
-// grid for this tool (12 slots; doc-mined, cross-confirmed by 3 independent
-// sources — help text, per-mode cfg Desc strings, and the input-map cfg's
-// abstract-event grid — see toolcards/topology_pen/gesture_map.md, PRIVATE).
-// There is NO Alt-modified slot (Alt is reserved for camera nav everywhere in
-// vibe3d, unconditionally excluded below). Only `ShiftLmb` — the
-// Duplicate/build overlay this class implements — is WIRED this phase; every
-// other slot is a named, inert stub so the dispatch structure is in place for
-// later modes (Move, Split, Add Loop, Slide, Remove, Duplicate Loop, Move
-// Edge Loop, Smoothing, ...) to plug into without re-deriving the grid.
-private enum GestureSlot {
-    Lmb,           // none,       LMB — Move — THIS PHASE (P4)
-    Rmb,           // none,       RMB — Move + Edge Loop — THIS PHASE (P10)
-    Mmb,           // none,       MMB — Split — THIS PHASE (P9)
-    ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
-    ShiftRmb,      // Shift,      RMB — Duplicate Loop — THIS PHASE (P11)
-    ShiftMmb,      // Shift,      MMB — Add Loop — THIS PHASE (P6)
-    CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide — THIS PHASE (P7)
-    CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
-    CtrlMmb,       // Ctrl,       MMB — Remove — THIS PHASE (P5)
-    ShiftCtrlLmb,  // Shift+Ctrl, LMB — Smoothing                      (NOT YET IMPLEMENTED)
-    ShiftCtrlRmb,  // Shift+Ctrl, RMB — Smoothing + Edge Loop — THIS PHASE (P12)
-    ShiftCtrlMmb,  // Shift+Ctrl, MMB — undocumented slot               (NOT YET IMPLEMENTED)
-    None,          // Alt held (camera), or a button this grid doesn't cover
-}
-
-/// Resolve which of the 12 documented slots a mouse button + the live
-/// modifier mask maps to. Pure/stateless — reused identically by any future
-/// down/up handler; the only slot currently acted on is `ShiftLmb`.
-private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
-    if (mods & KMOD_ALT) return GestureSlot.None;   // camera orbit/pan/zoom — never ours
-    bool shift = (mods & KMOD_SHIFT) != 0;
-    bool ctrl  = (mods & KMOD_CTRL)  != 0;
-    switch (button) {
-        case SDL_BUTTON_LEFT:
-            if (shift && ctrl) return GestureSlot.ShiftCtrlLmb;
-            if (shift)         return GestureSlot.ShiftLmb;
-            if (ctrl)          return GestureSlot.CtrlLmb;
-            return GestureSlot.Lmb;
-        case SDL_BUTTON_RIGHT:
-            if (shift && ctrl) return GestureSlot.ShiftCtrlRmb;
-            if (shift)         return GestureSlot.ShiftRmb;
-            if (ctrl)          return GestureSlot.CtrlRmb;
-            return GestureSlot.Rmb;
-        case SDL_BUTTON_MIDDLE:
-            if (shift && ctrl) return GestureSlot.ShiftCtrlMmb;
-            if (shift)         return GestureSlot.ShiftMmb;
-            if (ctrl)          return GestureSlot.CtrlMmb;
-            return GestureSlot.Mmb;
-        default:
-            return GestureSlot.None;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// TopoPenAction / kTopoPenBindings — the Phase-1 declarative dispatch table
-// (`source/tool_input.d`, doc/topopen_input_dispatch_phase2_plan.md), landed
-// here ADDITIVELY: `GestureSlot`/`resolveGestureSlot` above stay the
-// authoritative DOWN classifier for now (`onMouseButtonDown`'s `final switch`
-// still drives every gesture) — nothing in this tool calls `dispatchInput()`
-// yet, so `bindings()`/`onToolAction()` below are inert scaffolding, exercised
-// only by their own unittest. `kTopoPenBindings` is a 1:1 transcription of
-// `resolveGestureSlot`'s 10 WIRED slots (the 2 undocumented slots — Ctrl+RMB,
-// Shift+Ctrl+MMB — and every Alt combo are simply ABSENT, so
-// `resolveToolAction` answers `PassThrough` for them, matching
-// `resolveGestureSlot`'s own `CtrlRmb`/`ShiftCtrlMmb`/`None` → the dispatch
-// no-ops these slots fall through to today).
+// TopoPenAction / kTopoPenBindings — the declarative (button, modifier) ->
+// action dispatch table (`source/tool_input.d`,
+// doc/topopen_input_dispatch_phase2_plan.md), now the LIVE, authoritative
+// classifier: `onMouseButtonDown`/`onMouseButtonUp` route every press through
+// the base's `dispatchInput()` state machine against `kTopoPenBindings`
+// below, which replaces the tool's own former hand-rolled DOWN-side
+// `GestureSlot`/`resolveGestureSlot` classifier + UP-side arm-flag cascade
+// (Phase 2 input-dispatch migration — a pure restructuring, no behavior
+// change; see the plan for the byte-identity argument).
+//
+// The reference's COMPLETE 3-button × 4-modifier-state input grid for this
+// tool (12 slots; doc-mined, cross-confirmed by 3 independent sources — help
+// text, per-mode cfg Desc strings, and the input-map cfg's abstract-event
+// grid — see toolcards/topology_pen/gesture_map.md, PRIVATE) has NO
+// Alt-modified slot (Alt is reserved for camera nav everywhere in vibe3d,
+// hard-blocked by `resolveToolAction` itself, above any table scan) and 2
+// slots that stay undocumented/unimplemented (Ctrl+RMB, Shift+Ctrl+MMB).
+// `kTopoPenBindings` is a 1:1 transcription of the 10 WIRED slots; the 2
+// undocumented slots and every Alt combo are simply ABSENT from the table,
+// so `resolveToolAction` answers `PassThrough` for them and `dispatchInput`
+// returns `false` without ever calling `onToolAction` — byte-identical to
+// the old classifier's own `CtrlRmb`/`ShiftCtrlMmb`/`None` cases falling
+// through unconsumed.
 // ---------------------------------------------------------------------------
 private enum TopoPenAction : ToolAction {
     LmbPlaceOrMove,   // plain LMB       — place-on-empty OR grab-move (resolved at Down)
@@ -265,15 +221,15 @@ private immutable InputBinding[] kTopoPenBindings = [
 // ---------------------------------------------------------------------------
 // kTopoPenBindings — exhaustive resolver-grid pin. A single pure,
 // camera-free regression guard covering EVERY (button, modifier) combo this
-// tool's grid can see — the eventual replacement for the 7 scattered
-// `resolveGestureSlot` guards below (Ctrl+MMB/Shift+MMB/Ctrl+LMB/plain-MMB/
-// plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table so a bad
-// merge that silently drops or misroutes a row is caught here rather than by
-// 7 separate best-effort pins. All 10 bound slots resolve to their
-// documented action; the 2 undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) and
-// every Alt-held combo resolve to `PassThrough` (Alt is hard-blocked by
-// `resolveToolAction` itself, above the table scan — this pin also proves
-// that holds for THIS tool's table).
+// tool's grid can see — replaces the 7 scattered `resolveGestureSlot` guards
+// the pre-Phase-2 classifier used to need (Ctrl+MMB/Shift+MMB/Ctrl+LMB/
+// plain-MMB/plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table
+// so a bad merge that silently drops or misroutes a row is caught here
+// rather than by 7 separate best-effort pins. All 10 bound slots resolve to
+// their documented action; the 2 undocumented slots (Ctrl+RMB,
+// Shift+Ctrl+MMB) and every Alt-held combo resolve to `PassThrough` (Alt is
+// hard-blocked by `resolveToolAction` itself, above the table scan — this
+// pin also proves that holds for THIS tool's table).
 // ---------------------------------------------------------------------------
 unittest {
     // The 10 documented slots.
@@ -322,7 +278,7 @@ unittest {
 // doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md,
 // doc/topopen_p6_addloop_plan.md, doc/topopen_p7_slide_plan.md).
 //
-// P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`GestureSlot.CtrlLmb`,
+// P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`TopoPenAction.Slide`,
 // doc/topopen_p7_slide_plan.md, V1-scope Option B — EDGE grab): a press
 // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused verbatim
 // from P6) and arms a constrained slide for each grabbed endpoint that has
@@ -375,7 +331,7 @@ unittest {
 // `slideStartX_`/`slideStartY_` genuinely read).
 //
 // P6 adds ADD LOOP on the **Shift+MMB** overlay slot
-// (`GestureSlot.ShiftMmb`, doc/topopen_p6_addloop_plan.md): a press picks
+// (`TopoPenAction.AddLoop`, doc/topopen_p6_addloop_plan.md): a press picks
 // the nearest primary-layer EDGE under the cursor (`findRingSeedEdge`,
 // mirroring `findSourceVertex` but over edges) and, if that edge's
 // perpendicular quad ring exists (`collectEdgeRing`), arms a loop-cut —
@@ -401,7 +357,7 @@ unittest {
 // post-cut loop-edge selection (the capture did not measure one for this
 // gesture, unlike `mesh.addLoop`'s own `selectNewLoopEdges`).
 //
-// P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`GestureSlot.CtrlMmb`,
+// P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`TopoPenAction.Remove`,
 // doc/topopen_p5_remove_plan.md): remove-on-DOWN (D2, capture-faithful and
 // the simplest composition — no `onMouseButtonUp` involvement at all, so
 // it is disjoint from every LEFT-button gesture above). One press picks the
@@ -420,7 +376,7 @@ unittest {
 // `moveArmed_` grab) — `isDragging()` is never overridden, so those CAN be
 // armed concurrently with a Ctrl+MMB press.
 //
-// P4 adds MOVE on the plain (unmodified) **LMB** slot (`GestureSlot.Lmb`) —
+// P4 adds MOVE on the plain (unmodified) **LMB** slot (`TopoPenAction.LmbPlaceOrMove`) —
 // the dispatch backbone's base behavior, every modifier an overlay on top of
 // it (capture-verified, doc/topopen_p4_plan.md "The MEASURED mechanism").
 // Design A: BOTH Move and Place now commit on RELEASE, not DOWN — a plain
@@ -445,7 +401,7 @@ unittest {
 // sources — toolcards/topology_pen/gesture_map.md, PRIVATE; the "Duplicate"
 // overlay while the tool would otherwise be in its Move mode; correction to
 // the initial mode-less draft, applied BEFORE this phase shipped — see
-// `GestureSlot`/`resolveGestureSlot` above): a Shift+LMB press landing on an
+// `TopoPenAction`/`kTopoPenBindings` above): a Shift+LMB press landing on an
 // existing primary-layer vertex A arms a drag-build (`findSourceVertex`/
 // `classifySource`, both handled entirely by THIS class — no CONS
 // involvement, the source pick/classify is intrinsic to the gesture, not a
@@ -463,7 +419,7 @@ unittest {
 // still fires verbatim on the Place branch, just deferred to release.
 // Every other slot in the grid (Move+Edge-Loop, Split, Add Loop, Slide,
 // Remove, the two loop-variant overlays, Smoothing, the 2 undocumented
-// slots) is a named, inert stub for later phases — see `GestureSlot`'s own
+// slots) is a named, inert stub for later phases — see `TopoPenAction`'s own
 // doc comment.
 //
 // LAYERED like the reference editor (owner hard rule #1): the background-
@@ -1277,48 +1233,31 @@ public:
         return -1;
     }
 
-    // --- Phase-1 declarative dispatch (ADDITIVE, INERT — see
-    // `kTopoPenBindings`'s own doc comment above): `bindings()`/
-    // `onInputResetAll()`/`onToolAction()` are scaffolding for the Phase-2
-    // flip. Nothing in this class calls `dispatchInput()` yet — `onMouseButtonDown`/
-    // `onMouseButtonUp` below stay the OLD `GestureSlot`-driven switches, so
-    // these three overrides are unreachable from the real SDL event path
-    // until Phase 2 rewires the two hooks below to call `dispatchInput()`.
+    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // `bindings()`/`onInputResetAll()` are now the LIVE dispatch table/reset
+    // hook — `onMouseButtonDown`/`onMouseButtonUp` below route every press
+    // through the base's `dispatchInput()` state machine instead of the
+    // (now deleted) `GestureSlot`/`resolveGestureSlot` switch.
     override const(InputBinding)[] bindings() const { return kTopoPenBindings; }
 
     // The `ResetScope.AllButtons` hook: identical to what the LEFT-button
     // trio's own top-of-handler `resetAllGestureArms()` call already does —
-    // this is simply that SAME call reachable through the new seam.
+    // this is simply that SAME call reachable through the dispatch seam.
     override void onInputResetAll() { resetAllGestureArms(); }
 
-    // Dispatch entry point: resolve which of the 12 documented slots this
-    // press belongs to (`GestureSlot`, above) and route to the one live
-    // handler (`ShiftLmb` -> the P3 build-arm) or the unchanged P2 handler
-    // (`Lmb`). Every other slot is a named, inert stub — don't consume, so
-    // any other handler (camera, selection) still sees the event, exactly
-    // like the pre-P3 "not handled yet" Ctrl/Shift early-return this
-    // replaces.
+    // Dispatch entry point: `dispatchInput` resolves (button, live modifier
+    // mask) via `kTopoPenBindings`, arms the resolved action on THIS button,
+    // and calls `onToolAction(a, Down, ...)` — which routes to the same
+    // `on*Down` method `resolveGestureSlot`'s old `final switch` used to call
+    // directly. The 2 undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) and every
+    // Alt combo are simply ABSENT from `kTopoPenBindings`, so
+    // `resolveToolAction` answers `PassThrough` and `dispatchInput` returns
+    // `false` without ever calling `onToolAction` — byte-identical to the old
+    // switch's `CtrlRmb`/`ShiftCtrlMmb`/`None` cases.
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
                                     ref VectorStack vts) {
-        final switch (resolveGestureSlot(e.button, SDL_GetModState())) {
-            case GestureSlot.Lmb:      return onPlainLmbDown(e, vts);
-            case GestureSlot.ShiftLmb: return onShiftLmbDown(e, vts);
-            case GestureSlot.CtrlLmb:  return onCtrlLmbDown(e, vts);
-            case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
-            case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
-            case GestureSlot.ShiftCtrlLmb: return onShiftCtrlLmbDown(e, vts);
-            case GestureSlot.Mmb:      return onPlainMmbDown(e, vts);
-            case GestureSlot.Rmb:      return onMoveLoopRmbDown(e, vts);
-            case GestureSlot.ShiftRmb: return onDupLoopShiftRmbDown(e, vts);
-            case GestureSlot.ShiftCtrlRmb: return onSmoothLoopRmbDown(e, vts);
-            case GestureSlot.CtrlRmb:
-            case GestureSlot.ShiftCtrlMmb:
-                // TODO: the 2 undocumented slots — gesture_map.md table A,
-                // slots 8/11. Not implemented yet.
-                return false;
-            case GestureSlot.None:
-                return false;
-        }
+        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+                             InputPhase.Down, e, vts);
     }
 
     // REV1 FIX-1 (opponent objection 1, cross-arm coupling — doc/topopen_p7_slide_plan.md
@@ -2120,61 +2059,15 @@ public:
         return true;
     }
 
-    // Commits whichever gesture is armed at RELEASE, at the release event's
-    // own CONS-snapped hit — P3's drag-build (unchanged), or P4's Move/Place
-    // disambiguation (doc/topopen_p4_plan.md, Design A: both of P4's
-    // outcomes now commit here, never at DOWN). At most one of
-    // `dragArmed_`/`placeArmed_`/`moveArmed_` is ever set at a time (each is
-    // armed by a distinct GestureSlot's down-handler), so these branches are
-    // mutually exclusive in practice; each disarms its own state before
-    // returning so a rejected/no-op release never leaves anything stale for
-    // the next press to inherit.
-    //
-    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
-    // each branch body below now lives in its own private `<mode>Up` helper
-    // (self-guarded on its OWN arm bool, so it is also safely callable from
-    // `onToolAction`'s UP cases once Phase 2 flips the seam) — this method
-    // itself keeps the exact per-button branch/ordering structure it always
-    // had, just delegating each body instead of inlining it.
+    // Dispatch entry point: `dispatchInput` reads back the SAME action id it
+    // armed on THIS button's Down (never re-derived from arm-bool priority)
+    // and calls `onToolAction(a, Up, ...)`, which routes to the matching
+    // `<mode>Up` helper below — the same bodies this method used to call
+    // inline, per-button-branch, before the Phase-2 flip.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
-        // --- P6/P9: MIDDLE-button gestures. REV1 FIX-2 (KILLER-2): per-arm
-        // GUARDED returns, not a single unconditional early-out — Add Loop
-        // and Split are armed by disjoint DOWN slots (Shift+MMB vs plain
-        // MMB) and stay mutually exclusive in practice, so branch order is
-        // immaterial; Add Loop stays first to minimize diff. An unarmed
-        // MIDDLE release doesn't consume, matching every other slot's miss
-        // convention.
-        if (e.button == SDL_BUTTON_MIDDLE) {
-            if (addLoopArmed_) return addLoopUp(e, vts);
-            if (splitArmed_)   return splitUp(e, vts);
-            return false;
-        }
-
-        // --- P10/P11/P12: RIGHT-button gestures. `dupLoopArmed_`/
-        // `moveLoopArmed_`/`smoothLoopArmed_` are armed by three DISJOINT
-        // DOWN slots (Shift+RMB / plain RMB / Shift+Ctrl+RMB) and stay
-        // mutually exclusive under genuine single-press input, so branch
-        // order is immaterial; Dup Loop stays first to minimize diff.
-        if (e.button == SDL_BUTTON_RIGHT) {
-            if (dupLoopArmed_)    return dupLoopUp(e, vts);
-            if (moveLoopArmed_)   return moveLoopUp(e, vts);
-            if (smoothLoopArmed_) return smoothLoopUp(e, vts);
-            return false;
-        }
-
-        if (e.button != SDL_BUTTON_LEFT) return false;
-
-        // --- P8/P7/P3/P4: LEFT-button gestures. `resetAllGestureArms()`
-        // guarantees at most one of `smoothArmed_`/`slideArmed_`/
-        // `dragArmed_`/`placeArmed_`/`moveArmed_` is ever true at once, so
-        // branch order is immaterial; this is the existing order.
-        if (smoothArmed_) return smoothUp(e, vts);
-        if (slideArmed_)  return slideUp(e, vts);
-        if (dragArmed_)   return buildUp(e, vts);
-        if (placeArmed_ || moveArmed_) return lmbPlaceOrMoveUp(e, vts);
-
-        return false;
+        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+                             InputPhase.Up, e, vts);
     }
 
     // --- Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
@@ -2392,20 +2285,23 @@ public:
         return true;
     }
 
-    // --- Phase-1 declarative dispatch (ADDITIVE, INERT — see
-    // `kTopoPenBindings`'s own doc comment above): delivers one resolved
-    // action at one phase, once Phase 2 wires `onMouseButtonDown`/
-    // `onMouseButtonUp` through `dispatchInput()`. DOWN cases delegate to the
-    // existing `on*Down` methods (unchanged); UP cases delegate to the
-    // extracted `<mode>Up` helpers immediately above (the SAME bodies
-    // `onMouseButtonUp` calls today) — each already guards on its own arm
-    // bool, so a Down that resolved-but-declined (the arm-before-decline gap)
-    // safely no-ops here too. `Remove` has no UP body (it commits on DOWN,
-    // D2) and no arm bool, so its UP case returns `false`, unconsumed — never
-    // add a `removeArmed_` bool (see the plan's Risk 3: it would wrongly
-    // suppress the hover indicator during a held Ctrl+MMB). `Move` never
-    // arrives (this tool does not route `onMouseMotion` through
-    // `dispatchInput` — Move-phase routing is deferred, design §5).
+    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // delivers one resolved action at one phase — the LIVE seam
+    // `onMouseButtonDown`/`onMouseButtonUp` above now route through
+    // `dispatchInput()` to reach. DOWN cases delegate to the existing
+    // `on*Down` methods (unchanged); UP cases delegate to the extracted
+    // `<mode>Up` helpers above (the SAME bodies `onMouseButtonUp` used to
+    // call inline pre-flip) — each already guards on its own arm bool, so a
+    // Down that resolved-but-declined (the base arms `armed_[button]` BEFORE
+    // `onToolAction(Down)` can decline — the "arm-before-decline gap") safely
+    // no-ops here too: the bool, not `armed_[]`, is the "really armed" truth.
+    // `Remove` has no UP body (it commits on DOWN, D2) and no arm bool, so
+    // its UP case returns `false`, unconsumed — never add a `removeArmed_`
+    // bool (it would wrongly suppress the hover indicator during a held
+    // Ctrl+MMB). `Move` never arrives — this tool does not route
+    // `onMouseMotion` through `dispatchInput` (Move-phase routing is
+    // deferred, design §5); `onMouseMotion` keeps reading the arm bools
+    // directly, unchanged.
     override bool onToolAction(ToolAction a, InputPhase p,
                                ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         final switch (cast(TopoPenAction) a) {
@@ -3331,6 +3227,15 @@ public:
     // is just that helper's "external history navigation" entry point.
     override void resyncSession() {
         resetAllGestureArms();
+        // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+        // also drop every button's BASE `armed_[]` slot — an external
+        // history navigation must invalidate an in-progress gesture's
+        // dispatch-level arm too, not just this tool's own bools (the two
+        // are otherwise independent: `resetAllGestureArms()` only ever
+        // clears the bools `dispatchInput` doesn't know about). No prior
+        // behavior to preserve here (this call didn't exist pre-migration)
+        // — strictly more hygienic.
+        resetAllArmed();
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 3 item 3): also clear the passive hover-indicator state — an
         // external undo/redo with no subsequent motion event must not leave
@@ -4111,17 +4016,6 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// resolveGestureSlot — Ctrl+MMB dispatch guard (P5, doc/topopen_p5_remove_plan.md
-// D6): a pure Tier-A pin so a bad merge that silently reverted the `CtrlMmb`
-// dispatch case would be caught by `dub test`, not just by best-effort
-// Tier-C (the P3 dispatch had no such guard prior to this phase).
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_CTRL) == GestureSlot.CtrlMmb,
-        "Ctrl+MMB must resolve to the Remove gesture slot");
-}
-
-// ---------------------------------------------------------------------------
 // removeFaceAt — T1 (P5, doc/topopen_p5_remove_plan.md §Testing, DOMINO):
 // removing an INTERIOR/shared-edge face must keep the OTHER face
 // byte-unchanged and every edge/vertex in place — the strongest
@@ -4284,18 +4178,6 @@ unittest {
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "undo must restore the exact pre-removal state, incl. the removed face");
-}
-
-// ---------------------------------------------------------------------------
-// resolveGestureSlot — Shift+MMB dispatch guard (P6,
-// doc/topopen_p6_addloop_plan.md), the same Tier-A pin shape as the P5
-// Ctrl+MMB guard above: a pure, camera-free regression guard so a bad merge
-// that silently reverted the `ShiftMmb` dispatch case would be caught by
-// `dub test`, not just by best-effort Tier-C.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_SHIFT) == GestureSlot.ShiftMmb,
-        "Shift+MMB must resolve to the Add Loop gesture slot");
 }
 
 // ---------------------------------------------------------------------------
@@ -4479,18 +4361,6 @@ unittest {
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "undo must restore the exact pre-cut state");
-}
-
-// ---------------------------------------------------------------------------
-// resolveGestureSlot — Ctrl+LMB dispatch guard (P7, doc/topopen_p7_slide_plan.md
-// "Testing Strategy", Tier-A): the same pure, camera-free regression guard
-// shape as the P5/P6 dispatch pins above — a bad merge that silently
-// reverted the `CtrlLmb` dispatch case would be caught by `dub test`, not
-// just by best-effort Tier-C.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_LEFT, KMOD_CTRL) == GestureSlot.CtrlLmb,
-        "Ctrl+LMB must resolve to the Slide gesture slot");
 }
 
 // ---------------------------------------------------------------------------
@@ -4825,13 +4695,20 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — MIN-DRAG (P7 REV1 FIX-2, doc/topopen_p7_slide_plan.md):
 // a Ctrl+LMB release within `kMinDragPx` of the press pixel is a clean
-// no-op — no vertex write, no undo entry — driven through the REAL
-// `onMouseButtonUp` path (arming state set up directly, mirroring
-// `onCtrlLmbDown`'s post-classification result, rather than driving a full
-// screen-space press) so the min-drag GATE ITSELF is under test, not just
-// `commitSlide`'s own (also-present) eps guard. `gpu_` stays null and the
-// release event carries no `SubjectPacket`, so this never reaches
-// `refreshDisplay` — safe under bare `dub test`.
+// no-op — no vertex write, no undo entry — driven through the extracted
+// `slideUp` release-side helper directly (arming state set up directly,
+// mirroring `onCtrlLmbDown`'s post-classification result, rather than
+// driving a full screen-space press) so the min-drag GATE ITSELF is under
+// test, not just `commitSlide`'s own (also-present) eps guard. Phase-2
+// input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md,
+// Testing Category C): calls `slideUp` directly rather than
+// `onMouseButtonUp` — the flipped `onMouseButtonUp` now routes through
+// `dispatchInput`, which keys on the BASE's private `armed_[button]` (only
+// set by a real Down through `onMouseButtonDown`), not on `slideArmed_` this
+// test sets directly, so driving `onMouseButtonUp` here would no longer
+// reach the min-drag gate at all. `gpu_` stays null and the release event
+// carries no `SubjectPacket`, so this never reaches `refreshDisplay` — safe
+// under bare `dub test`.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -4876,7 +4753,7 @@ unittest {
     e.x = 51;
     e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.onMouseButtonUp(e, vts);
+    bool consumed = t.slideUp(e, vts);
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
@@ -5099,24 +4976,6 @@ unittest {
         format("this rig must actually discriminate the exclusion — the full-ring (regressed) "
              ~ "target must be MEASURABLY different from the open-edge-only one; "
              ~ "distToFullRing=%f", distToFullRing));
-}
-
-// ---------------------------------------------------------------------------
-// resolveGestureSlot — plain-MMB dispatch guard (P9,
-// doc/topopen_p9_split_plan.md), the same Tier-A pin shape as the P5/P6
-// guards above: a pure, camera-free regression guard so a bad merge that
-// silently reverted the `Mmb` (plain, no modifier) dispatch case — or
-// collapsed it into the Ctrl/Shift MMB slots — would be caught by
-// `dub test`, not just by best-effort Tier-C. Also pins that Ctrl/Shift+MMB
-// still resolve to their OWN slots, never Split's.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, cast(SDL_Keymod)0) == GestureSlot.Mmb,
-        "plain MMB (no modifier) must resolve to the Split gesture slot");
-    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_CTRL) == GestureSlot.CtrlMmb,
-        "Ctrl+MMB must still resolve to Remove, not Split");
-    assert(resolveGestureSlot(SDL_BUTTON_MIDDLE, KMOD_SHIFT) == GestureSlot.ShiftMmb,
-        "Shift+MMB must still resolve to Add Loop, not Split");
 }
 
 // ---------------------------------------------------------------------------
@@ -6060,18 +5919,6 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// resolveGestureSlot — plain RMB dispatch guard (P10, doc/topopen_p10_moveloop_plan.md),
-// the same Tier-A pin shape as the P5/P6 dispatch guards above: a pure,
-// camera-free regression guard so a bad merge that silently reverted the
-// `Rmb` dispatch case would be caught by `dub test`, not just by
-// best-effort Tier-C.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, cast(SDL_Keymod)0) == GestureSlot.Rmb,
-        "plain RMB must resolve to the Move Loop gesture slot");
-}
-
-// ---------------------------------------------------------------------------
 // onMoveLoopRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
 // consume/arm (doc/topopen_p10_moveloop_plan.md "RMB-dispatch resolution":
 // a miss must fall through to RMB-lasso unchanged).
@@ -6120,10 +5967,16 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p10_moveloop_plan.md
 // Phase 3): a RMB release within `kMinDragPx` of the press pixel is a clean
-// no-op — no vertex write, no undo entry — driven through the REAL
-// `onMouseButtonUp` path (arming state set up directly, mirroring P7
-// Slide's own MIN-DRAG test) so the min-drag GATE ITSELF is under test, not
-// just `commitMoveLoop`'s own (also-present) eps guard.
+// no-op — no vertex write, no undo entry — driven through the extracted
+// `moveLoopUp` release-side helper directly (arming state set up directly,
+// mirroring P7 Slide's own MIN-DRAG test) so the min-drag GATE ITSELF is
+// under test, not just `commitMoveLoop`'s own (also-present) eps guard.
+// Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md,
+// Testing Category C): calls `moveLoopUp` directly rather than
+// `onMouseButtonUp` — see the Slide MIN-DRAG test's own doc comment above
+// for why (the flipped `onMouseButtonUp` keys on the base's private
+// `armed_[button]`, set only by a real Down, not on `moveLoopArmed_` this
+// test sets directly).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -6153,7 +6006,7 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.onMouseButtonUp(e, vts);
+    bool consumed = t.moveLoopUp(e, vts);
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
@@ -6209,8 +6062,9 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P10, doc/topopen_p10_moveloop_plan.md): drives the REAL RMB gesture
-// end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.Rmb` ->
-// `onMoveLoopRmbDown`), a motion event, and the RIGHT-button release branch
+// end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
+// `TopoPenAction.MoveLoop` -> `onMoveLoopRmbDown`), a motion event, and the
+// RIGHT-button release branch
 // (-> `commitMoveLoop`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
 // so this is a genuine end-to-end proof (not just the mutation, as the
@@ -6818,18 +6672,6 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
 }
 
 // ---------------------------------------------------------------------------
-// resolveGestureSlot — Shift+RMB dispatch guard (P11, doc/topopen_p11_duploop_plan.md),
-// the same Tier-A pin shape as the P5/P6/P10 dispatch guards above: a pure,
-// camera-free regression guard so a bad merge that silently reverted the
-// `ShiftRmb` dispatch case would be caught by `dub test`, not just by
-// best-effort Tier-C.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, KMOD_SHIFT) == GestureSlot.ShiftRmb,
-        "Shift+RMB must resolve to the Dup Loop gesture slot");
-}
-
-// ---------------------------------------------------------------------------
 // onDupLoopShiftRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
 // consume/arm (doc/topopen_p11_duploop_plan.md "Shift+RMB dispatch
 // resolution": a miss must fall through to Shift+RMB-lasso unchanged).
@@ -6878,9 +6720,13 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p11_duploop_plan.md
 // Phase 3): a Shift+RMB release within `kMinDragPx` of the press pixel is a
-// clean no-op — no extrude, no undo entry — driven through the REAL
-// `onMouseButtonUp` path (arming state set up directly, mirroring P10 Move
-// Loop's own MIN-DRAG test) so the min-drag GATE ITSELF is under test.
+// clean no-op — no extrude, no undo entry — driven through the extracted
+// `dupLoopUp` release-side helper directly (arming state set up directly,
+// mirroring P10 Move Loop's own MIN-DRAG test) so the min-drag GATE ITSELF
+// is under test. Phase-2 input-dispatch migration
+// (doc/topopen_input_dispatch_phase2_plan.md, Testing Category C): calls
+// `dupLoopUp` directly rather than `onMouseButtonUp` — see the Slide
+// MIN-DRAG test's own doc comment for why.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -6911,7 +6757,7 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.onMouseButtonUp(e, vts);
+    bool consumed = t.dupLoopUp(e, vts);
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
@@ -6968,7 +6814,8 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P11, doc/topopen_p11_duploop_plan.md): drives the REAL Shift+RMB gesture
-// end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.ShiftRmb` ->
+// end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
+// `TopoPenAction.DupLoop` ->
 // `onDupLoopShiftRmbDown`), a motion event, and the RIGHT-button release
 // branch (-> `commitDupLoop`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
@@ -7296,17 +7143,6 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
 }
 
 // ---------------------------------------------------------------------------
-// resolveGestureSlot — Shift+Ctrl+RMB dispatch guard (P12,
-// doc/topopen_p12_smoothloop_plan.md), the same Tier-A pin shape as the
-// P5/P6/P10/P11 dispatch guards above.
-// ---------------------------------------------------------------------------
-unittest {
-    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, cast(SDL_Keymod)(KMOD_SHIFT | KMOD_CTRL))
-        == GestureSlot.ShiftCtrlRmb,
-        "Shift+Ctrl+RMB must resolve to the Smooth+Loop gesture slot");
-}
-
-// ---------------------------------------------------------------------------
 // onSmoothLoopRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
 // consume/arm (doc/topopen_p12_smoothloop_plan.md "RMB-dispatch resolution":
 // a miss must fall through to Shift+Ctrl+RMB-lasso unchanged).
@@ -7355,9 +7191,13 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — RIGHT-branch, Smooth+Loop is NOT `kMinDragPx`-gated (a
 // stationary click still applies its one pass, mirroring the whole-mesh
-// Smooth gesture's own Risk-5 discipline, P8) — driven through the REAL
-// `onMouseButtonUp` path (arming state set up directly, mirroring P10/P11's
-// own click-vs-drag tests) so the actual RIGHT-branch dispatch is under test.
+// Smooth gesture's own Risk-5 discipline, P8) — driven through the extracted
+// `smoothLoopUp` release-side helper directly (arming state set up
+// directly, mirroring P10/P11's own click-vs-drag tests) so the commit path
+// itself is under test. Phase-2 input-dispatch migration
+// (doc/topopen_input_dispatch_phase2_plan.md, Testing Category C): calls
+// `smoothLoopUp` directly rather than `onMouseButtonUp` — see the Slide
+// MIN-DRAG test's own doc comment for why.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -7393,7 +7233,7 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 50; e.y = 50;   // release exactly at the press pixel -- a stationary click
     VectorStack vts;
-    bool consumed = t.onMouseButtonUp(e, vts);
+    bool consumed = t.smoothLoopUp(e, vts);
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a stationary-click release must still consume the event");
@@ -7460,8 +7300,8 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P12, doc/topopen_p12_smoothloop_plan.md): drives the REAL Shift+Ctrl+RMB
-// gesture end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.
-// ShiftCtrlRmb` -> `onSmoothLoopRmbDown`), a motion event (drag-distance
+// gesture end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
+// `TopoPenAction.SmoothLoop` -> `onSmoothLoopRmbDown`), a motion event (drag-distance
 // accumulation), and the RIGHT-button release branch (->
 // `applySmoothLoopPasses`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
