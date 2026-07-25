@@ -58,8 +58,14 @@ enum ToolAction PassThrough = -1;
 enum InputPhase { Down, Move, Up }
 
 /// Which physical mouse button, engine-neutral (mirrors the SDL left/middle/
-/// right ordering so `toButton` below is a trivial mapping).
-enum InputButton : ubyte { Left, Middle, Right }
+/// right ordering so `toButton` below is a trivial mapping). `None` is the
+/// sentinel for a physical button with NO neutral mapping — a 4th/5th mouse
+/// button (SDL X1/X2) `toButton` cannot classify. It is deliberately the LAST
+/// member so `Left`/`Middle`/`Right` keep indices 0/1/2 (the width of
+/// `Tool.armed_`); `dispatchInput` declines `None` up front and so never
+/// indexes `armed_[]` with it. A `None` press binds to no `InputBinding` row
+/// (no table lists it) and resolves to `PassThrough`.
+enum InputButton : ubyte { Left, Middle, Right, None }
 
 /// A small modifier bitset, deliberately NOT `SDL_Keymod` — keeping it a
 /// plain `ubyte` bitset is what lets `resolveToolAction` and its table be
@@ -158,17 +164,18 @@ import bindbc.sdl : SDL_Keymod, KMOD_SHIFT, KMOD_CTRL, KMOD_ALT,
                      SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT;
 
 /// SDL's raw `button` field (`SDL_BUTTON_LEFT`/`_MIDDLE`/`_RIGHT`) → the
-/// neutral `InputButton`. `LEFT` is matched explicitly so `default` means
-/// strictly "unknown button" (a 4th/5th mouse button) rather than silently
-/// covering LEFT too; it still falls back to `Left` — none of today's tools
-/// bind extra buttons, and `dispatchInput` simply won't match any row for a
-/// button no table lists.
+/// neutral `InputButton`. Any other physical button — a 4th/5th mouse button
+/// (SDL X1/X2) — maps to `InputButton.None`, NOT `Left`: aliasing an unknown
+/// button to `Left` would make it fire whatever a tool bound to plain LEFT
+/// (e.g. a place/move gesture), and would let its `ResetScope` clobber an
+/// in-flight LEFT gesture. `None` binds to no row, so `dispatchInput` declines
+/// it — the pre-dispatch behavior where such buttons were simply ignored.
 InputButton toButton(ubyte sdlButton) {
     switch (sdlButton) {
         case SDL_BUTTON_LEFT:   return InputButton.Left;
         case SDL_BUTTON_MIDDLE: return InputButton.Middle;
         case SDL_BUTTON_RIGHT:  return InputButton.Right;
-        default:                return InputButton.Left;
+        default:                return InputButton.None;
     }
 }
 
@@ -258,6 +265,16 @@ unittest {
     assert(toButton(SDL_BUTTON_LEFT) == InputButton.Left);
     assert(toButton(SDL_BUTTON_MIDDLE) == InputButton.Middle);
     assert(toButton(SDL_BUTTON_RIGHT) == InputButton.Right);
+    // Extra physical buttons (SDL X1=4 / X2=5, and any other unmapped code)
+    // report None, NOT Left — an unknown button must not fire a plain-LEFT
+    // binding. A None press then resolves to PassThrough (no table row lists
+    // it), so dispatchInput declines it exactly as the pre-dispatch code
+    // ignored buttons ≥ 4.
+    assert(toButton(cast(ubyte)4) == InputButton.None);
+    assert(toButton(cast(ubyte)5) == InputButton.None);
+    assert(toButton(cast(ubyte)0) == InputButton.None);
+    assert(resolveToolAction(sampleTable, InputButton.None, InputMod.None) == PassThrough);
+    assert(resolveResetScope(sampleTable, InputButton.None, InputMod.None) == ResetScope.SelfButton);
 
     assert(toMods(cast(SDL_Keymod)0) == InputMod.None);
     assert(toMods(KMOD_SHIFT) == InputMod.Shift);

@@ -222,6 +222,15 @@ class Tool : ParamProvider {
     /// call site); `e`/`vts` pass through untouched to `onToolAction`.
     final bool dispatchInput(InputButton button, ubyte mods, InputPhase phase,
                               ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // A physical button with no neutral mapping — a 4th/5th mouse button
+        // that `toButton()` reports as `InputButton.None` — binds to no row and
+        // must never index `armed_[]` (sized for Left/Middle/Right only; the
+        // Up/Move cases below read `armed_[button]` UNCONDITIONALLY before the
+        // PassThrough check, so an out-of-range index here would be a buffer
+        // overread). Decline it outright: identical to a tool whose table lists
+        // no row for the button, and to the pre-dispatch behavior where such
+        // buttons were ignored.
+        if (button == InputButton.None) return false;
         final switch (phase) {
         case InputPhase.Down: {
             // bindings() scanned ONCE and shared by both resolvers below —
@@ -649,4 +658,32 @@ unittest {
     assert(!t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
     assert(t.log == []);
     assert(t.resetAllCount == 0);
+}
+
+// InputButton.None (an unmapped 4th/5th mouse button from toButton) is declined
+// in EVERY phase and never touches armed_[] — no binding fires, no reset runs,
+// and a LEFT gesture already in flight is left completely undisturbed (the
+// guard runs before armed_[button] is ever indexed, so armed_[None] — which
+// would be an out-of-range read — is never evaluated).
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    // Arm a real LEFT gesture first.
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+    t.resetAllCount = 0;
+
+    // A None press/move/release in the middle of that gesture is a no-op:
+    // declined in all three phases, no onToolAction call, no onInputResetAll.
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Move, e, vts));
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == []);
+    assert(t.resetAllCount == 0);
+
+    // LEFT's armed slot survived untouched: its Up still routes to onToolAction.
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log.length == 1);
 }
