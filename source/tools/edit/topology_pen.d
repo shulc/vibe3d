@@ -3213,10 +3213,14 @@ public:
             // a brand-new `ImVec2[]` per line — a convex face (the common
             // real call-site shape, a mesh polygon) needs only 2 slots per
             // line; a concave n-gon's extra crossings just grow this same
-            // buffer instead of allocating anew.
+            // buffer. `assumeSafeAppend` after the length reset preserves the
+            // append-capacity so `~=` reuses the block instead of reallocating
+            // fresh each sweep line (safe: `hits` is never sliced or escaped —
+            // the sort is in-place and AddLine copies the points).
             ImVec2[] hits;
             for (float c = cMin; c <= cMax; c += step) {
                 hits.length = 0;
+                hits.assumeSafeAppend();
                 immutable size_t n = poly.length;
                 foreach (i; 0 .. n) {
                     ImVec2 A = poly[i];
