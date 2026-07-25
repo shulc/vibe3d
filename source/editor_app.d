@@ -681,6 +681,13 @@ struct EditorApp {
     // (a constrained-edge slide is Position-only, like Move, but must never
     // bake Move's/any other gesture's wire name onto its own undo entries).
     MeshSessionEdit delegate() topoPenSlideEditFactory;
+    // Task 0477 (topology-pen P8, doc/topopen_p8_smooth_plan.md): the
+    // Smooth gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_smooth" — kept distinct from EVERY sibling factory above
+    // (a relax+re-snap pass is Position-only, like Move/Slide, but a
+    // multi-pass smooth gesture must never bake either sibling's wire name
+    // onto its own coalesced undo entry).
+    MeshSessionEdit delegate() topoPenSmoothEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

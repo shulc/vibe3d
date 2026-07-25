@@ -2,6 +2,7 @@ module tools.edit.topology_pen;
 
 import bindbc.sdl;
 import std.json : JSONValue;
+import std.math : hypot;
 
 import tool;
 import mesh                : Mesh, GpuMesh;
@@ -14,7 +15,8 @@ import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
-import constraint           : resolveHoverTarget, kTopoPenSnapPx;
+import constraint           : resolveHoverTarget, kTopoPenSnapPx, closestPointOnMeshes;
+import snap                  : backgroundSourcesSnapshot;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
@@ -88,6 +90,17 @@ alias TopoPenAddLoopFactory = MeshSessionEdit delegate();
 /// `MeshEditScope.Position` at the app.d construction site, mirroring
 /// `topoPenMoveEditFactory`.
 alias TopoPenSlideFactory = MeshSessionEdit delegate();
+
+/// Factory the tool calls ONCE PER SMOOTH GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P8, doc/topopen_p8_smooth_plan.md) — a
+/// SIXTH dedicated factory, distinct from every sibling above: a multi-pass
+/// relax+re-snap gesture is Position-only (like `TopoPenMoveFactory`/
+/// `TopoPenSlideFactory`), but reusing either would bake the wrong
+/// `wireName` ("mesh.topoPen_move"/"mesh.topoPen_slide" on a smooth gesture
+/// — corrupts undo history / event-log replay / macros). Wired with
+/// `wireName="mesh.topoPen_smooth"` and `MeshEditScope.Position` at the
+/// app.d construction site, mirroring `topoPenSlideEditFactory`.
+alias TopoPenSmoothFactory = MeshSessionEdit delegate();
 
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
@@ -422,6 +435,9 @@ private:
     // --- P7 Slide gesture deps (doc/topopen_p7_slide_plan.md, REV1) ---
     TopoPenSlideFactory slideEditFactory_;
 
+    // --- P8 Smooth gesture deps (doc/topopen_p8_smooth_plan.md) ---
+    TopoPenSmoothFactory smoothEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -493,6 +509,35 @@ private:
     int   slideNbrA_ = -1, slideNbrB_ = -1;
     float slideTA_ = 0.0f, slideTB_ = 0.0f;
 
+    // --- P8 Smooth session state (topology_pen.d,
+    // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
+    // (`onShiftCtrlLmbDown`) — NO source-vertex pick (whole-primary-mesh
+    // scope, unlike every other gesture above) and NO mutation on down;
+    // `smoothDragPx_` accumulates cursor travel on every subsequent motion
+    // event (`onMouseMotion`) and is converted to a pass count at release
+    // (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`) — the only
+    // read of `smoothDragPx_` (REV1 MINOR: the plan's original
+    // `smoothPassCount_` field is dropped since it was never assigned;
+    // both `onMouseButtonUp` and `toolStateJson()` recompute `N` from
+    // `smoothDragPx_` directly). Cleared by `onMouseButtonUp` on
+    // commit/no-op and by `resyncSession` on an external history
+    // navigation, exactly like the P3/P4/P6/P7 arm state above.
+    bool  smoothArmed_ = false;
+    int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
+    float smoothDragPx_ = 0.0f;
+
+    // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
+    // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
+    // per-pass relax+re-snap LAW itself is measured): a drag of
+    // `kSmoothPassStridePx` screen pixels adds one more pass beyond the
+    // click's own floor of 1. `MAX_TOPOPEN_SMOOTH_PASSES` is the two-layer
+    // DoS backstop (mirrors `MeshSmooth`'s own `MAX_SMOOTH_ITER`,
+    // `commands/mesh/smooth.d`) — this is a DERIVED count (drag distance),
+    // not a user `Param`, so it needs the kernel cap + floor, not an
+    // `enforceBounds()`.
+    private enum float kSmoothPassStridePx      = 20.0f;
+    private enum int   MAX_TOPOPEN_SMOOTH_PASSES = 256;
+
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
@@ -540,12 +585,21 @@ public:
     // another structurally identical delegate alias, so it goes after
     // `alf`, never inserted between existing params (every positional
     // caller — registration.d — stays byte-unchanged up through `alf`).
+    // P8 (doc/topopen_p8_smooth_plan.md): 8th param `smf` appended LAST
+    // (after `sf`) for the Smooth factory — same rationale as every prior
+    // addition: `TopoPenSmoothFactory` is yet another structurally
+    // identical delegate alias, so inserting it anywhere but the tail would
+    // silently mis-bind a sibling gesture's factory rather than fail to
+    // compile. `bf`/`mf`/`rf`/`alf`/`sf` MUST stay in their existing
+    // positions — every existing positional caller (registration.d) stays
+    // byte-unchanged through `sf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
                         TopoPenRemoveFactory rf = null,
                         TopoPenAddLoopFactory alf = null,
-                        TopoPenSlideFactory sf = null) {
+                        TopoPenSlideFactory sf = null,
+                        TopoPenSmoothFactory smf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -553,6 +607,7 @@ public:
         removeEditFactory_ = rf;
         addLoopEditFactory_ = alf;
         slideEditFactory_   = sf;
+        smoothEditFactory_  = smf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -620,6 +675,20 @@ public:
                 if (slideNbrB_ >= 0 && slideNbrB_ < vlen && slideEndB_ >= 0 && slideEndB_ < vlen)
                     slideTB_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndB_], m.vertices[slideNbrB_]);
             }
+            return true;
+        }
+
+        // P8 (doc/topopen_p8_smooth_plan.md Phase 3): while a Smooth
+        // gesture is armed, accumulate cursor travel — click=1 pass, a
+        // longer drag = more passes (`onMouseButtonUp`'s Smooth branch
+        // derives the pass count from THIS running total). No mid-drag
+        // mutation/preview beyond `draw()`'s cheap affordance (deferred
+        // commit, same rationale as every other armed gesture above).
+        // Consumes, mirroring the Add Loop/Slide branches above.
+        if (smoothArmed_) {
+            smoothDragPx_ += hypot(cast(float)(e.x - smoothLastX_), cast(float)(e.y - smoothLastY_));
+            smoothLastX_ = e.x;
+            smoothLastY_ = e.y;
             return true;
         }
         return false;   // never consumes — placement/build happens on button-up, not motion
@@ -704,17 +773,17 @@ public:
             case GestureSlot.CtrlLmb:  return onCtrlLmbDown(e, vts);
             case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
             case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
+            case GestureSlot.ShiftCtrlLmb: return onShiftCtrlLmbDown(e, vts);
             case GestureSlot.Rmb:
             case GestureSlot.Mmb:
             case GestureSlot.ShiftRmb:
             case GestureSlot.CtrlRmb:
-            case GestureSlot.ShiftCtrlLmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
                 // TODO: Move+Edge-Loop / Split / Duplicate Loop /
-                // the 2 undocumented slots / Smoothing /
-                // Smoothing+Edge-Loop — gesture_map.md table A, slots
-                // 2/3/5/7/8/10/11/12. Not implemented yet.
+                // the 2 undocumented slots / Smoothing+Edge-Loop —
+                // gesture_map.md table A, slots 2/3/5/8/10/11/12. Not
+                // implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -775,6 +844,9 @@ public:
         slideEndA_ = slideEndB_ = -1;
         slideNbrA_ = slideNbrB_ = -1;
         slideTA_ = slideTB_ = 0.0f;
+        // P8 Smooth (doc/topopen_p8_smooth_plan.md)
+        smoothArmed_  = false;
+        smoothDragPx_ = 0.0f;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -1077,6 +1149,29 @@ public:
         return true;
     }
 
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 3), on the Shift+Ctrl+LMB
+    // "Smooth" slot: arms a whole-primary-mesh relax+re-snap gesture — NO
+    // source-vertex/edge pick (unlike every other gesture above, this one
+    // is scope-free: it relaxes the ENTIRE primary mesh, not a
+    // press-selected element) and NO mutation on down. Commit is deferred
+    // to release (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`),
+    // reading the accumulated drag distance to derive the pass count. Full
+    // symmetric close via `resetAllGestureArms()` (same LEFT-button
+    // discipline as `onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown` — see
+    // that helper's own doc comment) before arming, so a stray Move/Build/
+    // Slide arm from an earlier press can never survive into this one.
+    // Always claims the event (Shift+Ctrl+LMB is unambiguously the Smooth
+    // gesture, regardless of what — if anything — is under the cursor).
+    private bool onShiftCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        resetAllGestureArms();
+
+        smoothArmed_  = true;
+        smoothStartX_ = smoothLastX_ = e.x;
+        smoothStartY_ = smoothLastY_ = e.y;
+        smoothDragPx_ = 0.0f;
+        return true;
+    }
+
     // Commits whichever gesture is armed at RELEASE, at the release event's
     // own CONS-snapped hit — P3's drag-build (unchanged), or P4's Move/Place
     // disambiguation (doc/topopen_p4_plan.md, Design A: both of P4's
@@ -1107,6 +1202,24 @@ public:
         }
 
         if (e.button != SDL_BUTTON_LEFT) return false;
+
+        // --- P8 (doc/topopen_p8_smooth_plan.md Phase 3): commits the armed
+        // Smooth gesture — click (zero/near-zero drag) applies exactly ONE
+        // pass, a drag applies N (derived from the accumulated cursor
+        // travel). Risk 5 (plan): UNLIKE every other gesture above, this
+        // one is NOT gated by `kMinDragPx` — a stationary click must still
+        // apply its one pass (`applySmoothPasses` itself carries the
+        // REV1 FIX-2 no-op-undo guard for the case where that one pass
+        // genuinely changes nothing). Checked BEFORE Slide/Build/Place/Move
+        // below since it is armed by its own disjoint modifier chord
+        // (Shift+Ctrl+LMB) and `resetAllGestureArms()` guarantees at most
+        // one of these is ever true at once.
+        if (smoothArmed_) {
+            smoothArmed_ = false;
+            int n = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
+            applySmoothPasses(n);
+            return true;
+        }
 
         // --- P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed
         // Slide gesture at the RELEASE event's own cursor-derived per-rail
@@ -1337,6 +1450,182 @@ public:
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Risks.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md "The pluggable weight"): true when
+    // edge `ei` is OPEN — bordered by AT MOST one face (either a genuine
+    // boundary edge, `facesAroundEdge` yielding exactly one, or a bare/
+    // floating edge with no incident face at all, e.g. an un-closed P3
+    // CASE-EDGE build). Reuses `facesAroundEdge` — the same primitive
+    // `seedRail`/`commitAddLoop` already walk — so this classification
+    // stays consistent with the rest of this tool, and additionally covers
+    // the bare-edge case a `loop.twin`-based test (as `MeshSmooth`'s own
+    // `lockBound`/`lockCorner` use) cannot see on a non-face-bounded patch.
+    private static bool isOpenEdge(Mesh* m, uint ei) {
+        int n = 0;
+        foreach (fi; m.facesAroundEdge(ei)) { ++n; if (n > 1) break; }
+        return n <= 1;
+    }
+
+    // P8: true when vertex `v` is incident to AT LEAST ONE open edge
+    // (`isOpenEdge`) — a boundary vertex, per the measured relax rule in
+    // `smoothedRelaxTarget` below. `adjOff`/`adjNbrs` are the caller's
+    // already-fetched CSR adjacency (avoids re-fetching per vertex).
+    private static bool isOpenVertex(Mesh* m, uint v,
+                                     const(size_t)[] adjOff, const(uint)[] adjNbrs) {
+        foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
+            if (m.edgeIndex(v, nb) != uint.max && isOpenEdge(m, m.edgeIndex(v, nb)))
+                return true;
+        return false;
+    }
+
+    // PLUGGABLE relax target — the pre-re-snap smoothed position of vertex
+    // `v` (P8, doc/topopen_p8_smooth_plan.md "The MEASURED weight"). Reads
+    // `v`'s neighbors from `m.vertexAdjacencyCSR` — the EXACT same CSR
+    // adjacency the shipped Laplacian smooth averages over
+    // (`commands/mesh/smooth.d`) — so this gesture's neighbor SET can never
+    // drift from that command's.
+    //
+    // MEASURED (task 0477 P8 capture, 3 independent boots, 14/16 verts —
+    // 87.5%): INVERSE EDGE-LENGTH weighting — NOT a uniform centroid — a
+    // closer neighbor pulls harder:
+    //   relaxTarget(v) = Σ_i (n_i / len_i) / Σ_i (1 / len_i)
+    // where `len_i = |v − n_i|` at the PRE-PASS ("read") positions — every
+    // vertex in the pass reads from the SAME `readPos` snapshot, mirroring
+    // `MeshSmooth`'s own prev/cur double-buffer (smooth.d:280-297).
+    // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
+    // so a future capture can retune it without touching the weight law.
+    //
+    // Boundary vertices (measured, capture's Smooth_Setup): a vertex on the
+    // open boundary (`isOpenVertex`) relaxes using ONLY its open-edge
+    // -incident neighbors, not its full 1-ring — a neighbor reached only
+    // via a fully-interior (2-face) edge is excluded for such a vertex.
+    //
+    // RESIDUAL (flagged, NOT modeled — do not guess): the reference applies
+    // an additional tangential/shrinkage-correction term this function does
+    // not reproduce, so inverse-edge-length is CLOSE to the reference but
+    // not bit-exact (see this file's T4-equivalent unittest below, a
+    // tolerance-based discriminator, never an exact-value assert).
+    //
+    // A vertex with zero (usable) neighbors — an isolated point, or
+    // (defensively; should not occur — the classifying edge is itself an
+    // open-edge neighbor) a boundary vertex with none — returns `readPos[v]`
+    // UNCHANGED: a true no-op, bit-identical (no arithmetic performed),
+    // which is what lets `applySmoothPasses`'s REV1 FIX-2 guard detect a
+    // genuinely inert gesture.
+    private static Vec3 smoothedRelaxTarget(Mesh* m, uint v, const(Vec3)[] readPos) {
+        const(size_t)[] adjOff;
+        const(uint)[]   adjNbrs;
+        m.vertexAdjacencyCSR(adjOff, adjNbrs);
+        auto nbrs = adjNbrs[adjOff[v] .. adjOff[v + 1]];
+        if (nbrs.length == 0) return readPos[v];
+
+        immutable bool boundary = isOpenVertex(m, v, adjOff, adjNbrs);
+
+        Vec3  weightedSum = Vec3(0, 0, 0);
+        float weightSum   = 0.0f;
+        bool  any         = false;
+        foreach (nb; nbrs) {
+            if (boundary) {
+                uint ei = m.edgeIndex(v, nb);
+                if (ei == uint.max || !isOpenEdge(m, ei)) continue;
+            }
+            float len = (readPos[v] - readPos[nb]).length;
+            float w   = 1.0f / ((len > 1e-6f) ? len : 1e-6f);
+            weightedSum = weightedSum + readPos[nb] * w;
+            weightSum  += w;
+            any = true;
+        }
+        if (!any) return readPos[v];   // defensive; should not occur (see doc comment above)
+
+        Vec3 mean = weightedSum * (1.0f / weightSum);
+        enum float kStrength = 1.0f;   // V1 fixed (full relax)
+        return readPos[v] + (mean - readPos[v]) * kStrength;
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 2/REV1): commit `passCount`
+    // passes of relax+re-snap over the WHOLE primary mesh (V1 scope — no
+    // falloff-radius brushing, see plan §Scope). Click supplies
+    // `passCount==1`; a drag supplies more (`onMouseButtonUp`'s Smooth
+    // branch). Each pass: snapshot the current positions ONCE
+    // (`read = m.vertices.dup`), then for every vertex compute
+    // `smoothedRelaxTarget` (the measured inverse-edge-length weight) and,
+    // when a background source exists, re-snap it onto the NEAREST point
+    // of that background via `closestPointOnMeshes` (constraint.d;
+    // capture-verified crux — a nearest-FOOT query, NOT a camera-ray one —
+    // the same primitive the CONS Point-mode branch already uses).
+    // `sources`/`before` are captured ONCE per commit (not per pass):
+    // `sources` is a point-in-time snapshot of the live background layers,
+    // `before` is the DOWN-time state. Deferring every pass to release
+    // (plan "Undo — COALESCE") means the mesh is never mutated before this
+    // one call, so `mutationVersion` never moves mid-loop — the CSR
+    // adjacency cache (`vertexAdjacencyCSR`, fetched once per vertex per
+    // pass inside `smoothedRelaxTarget`) stays warm across the WHOLE
+    // N-pass loop; only `closestPointOnMeshes`'s brute-force scan carries
+    // the O(V·F_bg) per-pass cost (plan Risk 3). Position-only, zero
+    // topology delta — never resizes/rebuilds `faces[]`/`edges[]`/
+    // `vertices[]`, so unlike P5/P6 this does NOT call `resyncSession()`
+    // (mirrors `commitSlide`'s own reasoning).
+    //
+    // REV1 FIX-2 (PRIORITY, not hedged/unconditional — opponent obj-2): a
+    // Smooth gesture that produces NO net vertex change — 0-neighbor
+    // disconnected verts, no background source, or any other combination
+    // that nets to identity — restores `before` and records NO undo entry
+    // (mirrors `moveVertexTo`/`commitSlide`'s own eps guards). This is
+    // ROUTINE, not a rare edge case (a freshly-placed, still-disconnected
+    // patch with no bg layer is exactly this), so the guard runs on EVERY
+    // commit, never skipped.
+    private void applySmoothPasses(int passCount) {
+        if (meshSrc_ is null || history_ is null || smoothEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+
+        // Two-layer clamp (plan "Passes"): floor at 1 (a click always
+        // applies exactly one pass), cap at MAX_TOPOPEN_SMOOTH_PASSES (the
+        // runaway backstop, mirroring MeshSmooth's own MAX_SMOOTH_ITER).
+        if (passCount < 1) passCount = 1;
+        if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
+
+        auto sources = backgroundSourcesSnapshot();   // point-in-time, fetched ONCE per commit
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        immutable size_t nV = m.vertices.length;
+        foreach (pass; 0 .. passCount) {
+            Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot
+            foreach (vi; 0 .. nV) {
+                Vec3 relaxed = smoothedRelaxTarget(m, cast(uint)vi, read);
+                if (sources.length) {
+                    Vec3  hit, hitN;
+                    int   si, fi;
+                    float d2;
+                    enum bool dblSided = false;   // V1 default — matches CONS Point-mode's own default
+                    if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
+                        relaxed = hit;
+                }
+                m.vertices[vi] = relaxed;
+            }
+        }
+        m.commitChange(MeshEditScope.Position);
+
+        // REV1 FIX-2: unconditional no-op check — a gesture that nets to
+        // ZERO vertex movement (within eps) restores `before` exactly and
+        // records no undo entry at all.
+        enum float kSmoothEps = 1e-4f;   // mirrors moveVertexTo's/commitSlide's own eps guards
+        bool changed = false;
+        foreach (i; 0 .. nV)
+            if ((m.vertices[i] - before.vertices[i]).length > kSmoothEps) { changed = true; break; }
+        if (!changed) { before.restore(*m); return; }   // no mutation worth recording — no GPU churn
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = smoothEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Smooth");
+        history_.record(cmd);
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Undo.
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
@@ -1631,6 +1920,28 @@ public:
             }
         }
 
+        // P8 (doc/topopen_p8_smooth_plan.md Phase 4): a cheap "Smooth
+        // armed" affordance — a colored ring at the CURSOR'S OWN screen
+        // position while `smoothArmed_`. Unlike the P1 hover marker below
+        // (which needs a CONS hit against a background layer) or the Add
+        // Loop/Slide ghosts above (which key off an armed seed edge's
+        // WORLD position), Smooth has neither a source pick nor a
+        // background dependency — it relaxes the WHOLE primary mesh, so
+        // tying its affordance to `lastHit_.point` would make it invisible
+        // in exactly the bg-less scene this preview must still cover.
+        // Drawn in pure screen space (no projectPt/raycast, no mesh
+        // access), so it is unconditionally visible and unconditionally
+        // cheap; placed BEFORE the `lastHit_.hit` early-return immediately
+        // below, mirroring the Add Loop/Slide ghosts' positioning in this
+        // function. No per-pass relaxation preview (deferred/expensive —
+        // consistent with the deferred-commit divergence, plan §Undo).
+        if (smoothArmed_) {
+            enum uint smoothCol = IM_COL32(120, 255, 200, 220);   // smoothing green-blue
+            ImVec2 cur = ImVec2(cast(float)smoothLastX_, cast(float)smoothLastY_);
+            dl.AddCircle(cur, 14.0f, smoothCol, 24, 2.5f);
+            dl.AddCircleFilled(cur, 4.0f, smoothCol, 16);
+        }
+
         if (!lastHit_.hit) return;
 
         // Re-resolve for THIS cell's camera — a multi-viewport draw may
@@ -1797,6 +2108,14 @@ public:
         root["slideSeed"]  = JSONValue(slideSeed_);
         root["slideTA"]    = JSONValue(cast(double)slideTA_);
         root["slideTB"]    = JSONValue(cast(double)slideTB_);
+
+        // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
+        // gesture's state, for Tier-C tests to assert click-vs-drag pass
+        // counts without driving a full release. `smoothPassCount` reports
+        // the SAME `1 + floor(smoothDragPx_ / kSmoothPassStridePx)`
+        // `onMouseButtonUp`'s Smooth branch will apply if released now.
+        root["smoothArmed"]     = JSONValue(smoothArmed_);
+        root["smoothPassCount"] = JSONValue(1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx));
 
         return root;
     }
@@ -2703,4 +3022,103 @@ unittest {
     assert(!t.slideArmed_, "release must disarm Slide regardless of the min-drag gate");
     assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
     assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// smoothedRelaxTarget — T4 (P8, doc/topopen_p8_smooth_plan.md "Testing
+// Strategy"): on an IRREGULAR 1-ring (one very distant neighbor, two close
+// ones — a "hub" of 3 BARE edges, so every incident edge is open and the
+// boundary-filtering branch keeps the full ring, isolating the weight-law
+// question from the boundary-restriction one), the relaxed result must be
+// CLOSER to the MEASURED inverse-edge-length-weighted target than to the
+// uniform (plain) mean — mirroring the capture's own discriminator. This is
+// primarily a TOLERANCE-based assertion (not a bit-exact one against the
+// reference — this file's own doc comment on `smoothedRelaxTarget` flags an
+// unmodeled tangential/shrinkage-correction residual there); the SECOND
+// assertion below (distToWeighted near-zero) IS an exact check, but only
+// against this function's OWN documented formula, independently
+// re-derived here — never a second call into the implementation under
+// test.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+
+    Mesh m;
+    uint v  = m.addVertex(Vec3(0, 0, 0));
+    uint n1 = m.addVertex(Vec3(1, 0, 0));    // close  (len 1)
+    uint n2 = m.addVertex(Vec3(0, 10, 0));   // far    (len 10)
+    uint n3 = m.addVertex(Vec3(0, 0, 1));    // close  (len 1)
+    m.addEdge(v, n1);
+    m.addEdge(v, n2);
+    m.addEdge(v, n3);
+    m.buildLoops();
+
+    Vec3[] readPos = m.vertices.dup;
+    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v, readPos);
+
+    // Independently-computed candidates — never re-deriving the tool's own
+    // implementation by calling back into it.
+    Vec3 uniformMean = (readPos[n1] + readPos[n2] + readPos[n3]) * (1.0f / 3.0f);
+    float w1 = 1.0f / (readPos[v] - readPos[n1]).length;
+    float w2 = 1.0f / (readPos[v] - readPos[n2]).length;
+    float w3 = 1.0f / (readPos[v] - readPos[n3]).length;
+    Vec3 weightedMean = (readPos[n1] * w1 + readPos[n2] * w2 + readPos[n3] * w3)
+                       * (1.0f / (w1 + w2 + w3));
+
+    float distToWeighted = (actual - weightedMean).length;
+    float distToUniform  = (actual - uniformMean).length;
+
+    assert(distToWeighted < distToUniform,
+        format("relax target must be CLOSER to the inverse-edge-length-weighted mean "
+             ~ "than to the uniform mean; distToWeighted=%f distToUniform=%f",
+               distToWeighted, distToUniform));
+    assert(distToWeighted < 1e-4f,
+        "the implementation must match the documented inverse-edge-length formula exactly "
+      ~ "pre-re-snap (the flagged residual is a divergence from the REFERENCE, not from "
+      ~ "this function's own stated law)");
+}
+
+// ---------------------------------------------------------------------------
+// applySmoothPasses — T7 (P8 REV1 FIX-2, doc/topopen_p8_smooth_plan.md): a
+// Smooth gesture over a fully DISCONNECTED patch (every vertex has 0
+// neighbors) with NO background source is the ROUTINE no-op case — the
+// mesh must be byte-identical and record NO undo entry, mirroring
+// `commitSlide`'s own T5c both-fixed no-op test. `gpu_` stays null and this
+// path returns before ever reaching `refreshDisplay` — safe under bare
+// `dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import snap : setBackgroundSnapSources;
+
+    // Defensive (test-isolation, not a production call site): `snap.d`'s
+    // background-source list is a module-level `__gshared` — explicitly
+    // clear it rather than assume no earlier `dub test` unittest left it
+    // populated, so this test's "no background source" premise holds
+    // regardless of run order.
+    setBackgroundSnapSources(null);
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_smooth", "Topology Smooth",
+                                                     MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(5, 0, 0));
+    m.addVertex(Vec3(0, 5, 0));   // 3 isolated points -> 0 neighbors each, no background layer
+
+    auto before = MeshSnapshot.capture(m);
+    t.applySmoothPasses(1);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices,
+        "a disconnected patch with no background source must be a byte-identical no-op");
+    assert(!history.canUndo(),
+        "a disconnected/no-bg Smooth gesture must record NO undo entry");
 }

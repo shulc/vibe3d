@@ -3066,6 +3066,15 @@ void main(string[] args) {
     // corrupting undo history / event-log replay / macros.
     auto topoPenSlideEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
+    // Topology Pen P8's Smooth gesture (task 0477, doc/topopen_p8_smooth_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above — a
+    // relax+re-snap pass never adds/removes geometry (Position-only
+    // editScope, same as `topoPenMoveEditFactory`/`topoPenSlideEditFactory`),
+    // but reusing either would bake the wrong wire name ("mesh.topoPen_move"/
+    // "mesh.topoPen_slide" on a multi-pass smooth), corrupting undo history /
+    // event-log replay / macros.
+    auto topoPenSmoothEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3180,6 +3189,7 @@ void main(string[] args) {
     app.topoPenRemoveEditFactory = topoPenRemoveEditFactory;
     app.topoPenAddLoopEditFactory = topoPenAddLoopEditFactory;
     app.topoPenSlideEditFactory   = topoPenSlideEditFactory;
+    app.topoPenSmoothEditFactory  = topoPenSmoothEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

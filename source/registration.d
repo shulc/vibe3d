@@ -464,14 +464,19 @@ void registerTools(EditorApp app) {
     // (topoPenSlideEditFactory, distinct wire name + Position-only editScope,
     // doc/topopen_p7_slide_plan.md REV1 — a constrained-edge slide must not
     // bake ANY sibling gesture's wire name either, incl. Move's, despite
-    // sharing its Position-only scope).
+    // sharing its Position-only scope). P8 adds the Shift+Ctrl+LMB Smooth
+    // gesture's OWN generic MeshSessionEdit factory (topoPenSmoothEditFactory,
+    // distinct wire name + Position-only editScope, doc/topopen_p8_smooth_plan.md)
+    // — appended LAST (8th param), never inserted mid-list, since every
+    // sibling factory alias is a structurally identical delegate and this
+    // caller stays positional.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
-                         topoPenSlideEditFactory);
+                         topoPenSlideEditFactory, topoPenSmoothEditFactory);
         return cast(Tool)t;
     };
 
