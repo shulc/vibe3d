@@ -702,6 +702,13 @@ struct EditorApp {
     // Smooth, but must never bake any of their wire names onto its own
     // atomic undo entry).
     MeshSessionEdit delegate() topoPenMoveLoopEditFactory;
+    // Task 0477 (topology-pen P11, doc/topopen_p11_duploop_plan.md): the
+    // Dup Loop gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_duploop" — kept distinct from EVERY sibling factory
+    // above (duplicating an edge loop into a new bridge ring IS a topology
+    // change, Geometry|Marks editScope like Add Loop, but must never bake
+    // any sibling's wire name onto its own atomic undo entry).
+    MeshSessionEdit delegate() topoPenDupLoopEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

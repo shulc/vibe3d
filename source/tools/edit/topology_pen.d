@@ -126,6 +126,16 @@ alias TopoPenSplitFactory = MeshSessionEdit delegate();
 /// `topoPenSlideEditFactory`.
 alias TopoPenMoveLoopFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER DUPLICATE-LOOP GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P11, doc/topopen_p11_duploop_plan.md) —
+/// a NINTH dedicated factory, distinct from every sibling above: duplicating
+/// an edge loop into a new bridge ring IS a topology change (wire name
+/// "mesh.topoPen_duploop", editScope Geometry|Marks — the extrude resizes
+/// selection arrays, same scope as `TopoPenAddLoopFactory`), so reusing any
+/// sibling factory would corrupt undo history / event-log replay / macros
+/// with the wrong wire name.
+alias TopoPenDupLoopFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -150,7 +160,7 @@ private enum GestureSlot {
     Rmb,           // none,       RMB — Move + Edge Loop — THIS PHASE (P10)
     Mmb,           // none,       MMB — Split — THIS PHASE (P9)
     ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
-    ShiftRmb,      // Shift,      RMB — Duplicate Loop                 (NOT YET IMPLEMENTED)
+    ShiftRmb,      // Shift,      RMB — Duplicate Loop — THIS PHASE (P11)
     ShiftMmb,      // Shift,      MMB — Add Loop — THIS PHASE (P6)
     CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide — THIS PHASE (P7)
     CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
@@ -468,6 +478,9 @@ private:
     // --- P10 Move Loop gesture deps (doc/topopen_p10_moveloop_plan.md) ---
     TopoPenMoveLoopFactory moveLoopEditFactory_;
 
+    // --- P11 Dup Loop gesture deps (doc/topopen_p11_duploop_plan.md) ---
+    TopoPenDupLoopFactory dupLoopEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -603,6 +616,40 @@ private:
     int   moveLoopCurX_,   moveLoopCurY_;
     uint[] moveLoopVerts_;
     BvhPick[size_t] loopBgBvh_;
+
+    // --- P11 Dup Loop session state (topology_pen.d,
+    // doc/topopen_p11_duploop_plan.md). Armed on a Shift+RMB press that
+    // lands on a primary-layer edge (`onDupLoopShiftRmbDown`, reusing
+    // `findRingSeedEdge` verbatim from P6/P7/P10): `dupLoopEdges_` are the
+    // gathered loop's raw EDGE INDICES (`Mesh.selectLoopEdges(seed)` — REV1
+    // FIX-1 label correction: a BOUNDARY seed is the FULL CLOSED perimeter
+    // — the owner-observed spec case — an INTERIOR seed an OPEN chain, see
+    // `onDupLoopShiftRmbDown`'s own doc comment), captured ONCE at arm time
+    // — the mesh is never mutated between arm and commit, so re-gathering
+    // at release would be redundant, not more correct, and a stale index
+    // after an external undo mid-drag is handled by `resyncSession`
+    // clearing all of this instead. Unlike P10 Move Loop (which stores the
+    // unique VERTEX set), this stores the EDGE list — the commit needs it
+    // to build `Mesh.extendEdgesByMask`'s mask, not just a moving set.
+    // `dupLoopStartX_`/`dupLoopStartY_` is the Shift+RMB-down pixel (the
+    // drag's anchor); `dupLoopCurX_`/`dupLoopCurY_` tracks the LIVE cursor
+    // off every subsequent motion event (`onMouseMotion`) purely for
+    // `draw()`'s ghost preview — the shared screen-delta `commitDupLoop`
+    // actually applies is always computed from the RELEASE event's own
+    // pixel (`onMouseButtonUp`), never from this cached value. The
+    // extrude+drag itself is deferred to ONE atomic release-time commit
+    // (`commitDupLoop`), mirroring P6 Add Loop's/P9 Split's own
+    // defer-to-release discipline for a topology-growing op — never a
+    // mid-drag mutation. Cleared by `onMouseButtonUp` on commit/no-op and
+    // by `resyncSession` on an external history navigation, exactly like
+    // the P3-P10 arm state above; `loopBgBvh_` (shared with P10, above) is
+    // reused verbatim — a gesture-agnostic per-background-mesh cache, no
+    // new field needed.
+    bool  dupLoopArmed_   = false;
+    int   dupLoopSeed_    = -1;
+    int[] dupLoopEdges_;
+    int   dupLoopStartX_, dupLoopStartY_;
+    int   dupLoopCurX_,   dupLoopCurY_;
 
     // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
     // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
@@ -743,6 +790,14 @@ public:
     // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
     // `spf` MUST stay in their existing positions — every existing
     // positional caller (registration.d) stays byte-unchanged through `spf`.
+    // P11 (doc/topopen_p11_duploop_plan.md): 11th positional param `dlf`
+    // appended LAST (after `mlf`) for the Dup Loop factory — same rationale
+    // as every prior addition: `TopoPenDupLoopFactory` is yet another
+    // structurally identical delegate alias, so inserting it anywhere but
+    // the tail would silently mis-bind a sibling gesture's factory rather
+    // than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/`spf`/`mlf` MUST
+    // stay in their existing positions — every existing positional caller
+    // (registration.d) stays byte-unchanged through `mlf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
@@ -751,7 +806,8 @@ public:
                         TopoPenSlideFactory sf = null,
                         TopoPenSmoothFactory smf = null,
                         TopoPenSplitFactory spf = null,
-                        TopoPenMoveLoopFactory mlf = null) {
+                        TopoPenMoveLoopFactory mlf = null,
+                        TopoPenDupLoopFactory dlf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -762,6 +818,7 @@ public:
         smoothEditFactory_  = smf;
         splitEditFactory_   = spf;
         moveLoopEditFactory_ = mlf;
+        dupLoopEditFactory_  = dlf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -902,6 +959,19 @@ public:
         if (moveLoopArmed_) {
             moveLoopCurX_ = e.x;
             moveLoopCurY_ = e.y;
+            return true;
+        }
+
+        // P11 (doc/topopen_p11_duploop_plan.md Phase 3): while a Dup Loop
+        // gesture is armed, just track the live cursor for `draw()`'s ghost
+        // preview — the shared screen-delta itself is always recomputed
+        // from the RELEASE event's own pixel at commit time
+        // (`onMouseButtonUp`/`commitDupLoop`), never from this cached
+        // value, so no extrude/re-snap work happens here. Consumes,
+        // mirroring the Move Loop branch above.
+        if (dupLoopArmed_) {
+            dupLoopCurX_ = e.x;
+            dupLoopCurY_ = e.y;
             return true;
         }
         return false;   // never consumes — placement/build happens on button-up, not motion
@@ -1045,13 +1115,12 @@ public:
             case GestureSlot.ShiftCtrlLmb: return onShiftCtrlLmbDown(e, vts);
             case GestureSlot.Mmb:      return onPlainMmbDown(e, vts);
             case GestureSlot.Rmb:      return onMoveLoopRmbDown(e, vts);
-            case GestureSlot.ShiftRmb:
+            case GestureSlot.ShiftRmb: return onDupLoopShiftRmbDown(e, vts);
             case GestureSlot.CtrlRmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Duplicate Loop / the 2 undocumented slots /
-                // Smoothing+Edge-Loop — gesture_map.md table A, slots
-                // 5/8/10/11/12. Not implemented yet.
+                // TODO: the 2 undocumented slots / Smoothing+Edge-Loop —
+                // gesture_map.md table A, slots 8/10/11. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -1135,6 +1204,16 @@ public:
         moveLoopArmed_ = false;
         moveLoopSeed_  = -1;
         moveLoopVerts_ = null;
+        // P11 Dup Loop (doc/topopen_p11_duploop_plan.md) — cleared here so
+        // the LEFT-button trio's own reset (and `resyncSession()`, below)
+        // close a stray dup-loop arm too; `onDupLoopShiftRmbDown` (the
+        // Shift+RMB handler) does NOT call this helper (same RMB-button
+        // discipline as `onMoveLoopRmbDown` above — a RIGHT-button press
+        // genuinely CAN be a two-button chord while a LEFT gesture is still
+        // held) and uses its own narrow self-reset instead.
+        dupLoopArmed_ = false;
+        dupLoopSeed_  = -1;
+        dupLoopEdges_ = null;
     }
 
     // MINOR-3 (doc/topopen_hover_highlight_plan.md REV1): the single source
@@ -1144,10 +1223,11 @@ public:
     // list of arm FIELDS to clear on a fresh press/history-nav, and this is
     // the authoritative list of arm FIELDS to test for "something is
     // in-progress" (currently gating the Generic Hover-Highlight indicator,
-    // `onMouseMotion`/`draw()` below). As of this writing the list is the 8
+    // `onMouseMotion`/`draw()` below). As of this writing the list is the 9
     // flags: `dragArmed_` (P3 build) / `placeArmed_` + `moveArmed_` (P4
     // Move-Place) / `addLoopArmed_` (P6) / `slideArmed_` (P7) /
-    // `smoothArmed_` (P8) / `splitArmed_` (P9) / `moveLoopArmed_` (P10).
+    // `smoothArmed_` (P8) / `splitArmed_` (P9) / `moveLoopArmed_` (P10) /
+    // `dupLoopArmed_` (P11).
     // MAINTENANCE CONTRACT: every NEW gesture's arm flag MUST be OR'd in
     // HERE too, in addition to being cleared in `resetAllGestureArms()` —
     // a flag added to one list but not the other silently breaks either
@@ -1158,7 +1238,8 @@ public:
     // bad merge silently dropping a flag from this OR.
     private bool anyGestureArmed() const {
         return dragArmed_ || placeArmed_ || moveArmed_ || addLoopArmed_
-            || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_;
+            || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_
+            || dupLoopArmed_;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -1613,6 +1694,68 @@ public:
         return true;   // consume; the loop drag (if any) commits on release
     }
 
+    // P11 (doc/topopen_p11_duploop_plan.md), on the Shift+RMB "Duplicate
+    // Loop" slot: a press picks the nearest primary-layer EDGE
+    // (`findRingSeedEdge`, reused verbatim from P6/P7/P10) and gathers its
+    // edge loop (`Mesh.selectLoopEdges`, the SAME kernel P10's
+    // `uniqueRingVerts` calls) — but unlike P10, this stores the raw EDGE
+    // INDICES (`dupLoopEdges_`), not the unique vertex set: the commit
+    // needs the edge list to build `extendEdgesByMask`'s mask.
+    //
+    // REV1 FIX-1 (label correction): a BOUNDARY seed resolves to
+    // `selectLoopBorderChain` — the FULL CLOSED perimeter (the
+    // owner-observed "весь loop" case: a side/boundary edge duplicates the
+    // WHOLE closed rim) — and is the shipped-faithful, MEASURED case. An
+    // INTERIOR seed resolves to the classic quad-opposite walk — an OPEN
+    // chain that dead-ends at the mesh boundary — which `extendEdgesByMask`
+    // turns non-manifold (each source edge 2→3 adjacent faces, a documented
+    // v1 kernel degrade, mesh.d:5659-5663); the owner did NOT capture this
+    // case, so V1 ships the kernel's existing behavior UNMEASURED/FLAGGED
+    // (plan §Open-item IL) rather than block or invent a split-the-mesh
+    // alternative.
+    //
+    // If no edge is within snap range, or the gathered loop is somehow
+    // empty (defensive — `selectLoopEdges` never returns an empty list for
+    // a valid seed index), this is not a documented gesture — don't
+    // consume, matching every other down-handler's miss convention
+    // (Shift+RMB-lasso proceeds unchanged, Shift being the lasso's own
+    // additive modifier).
+    //
+    // RMB-button discipline (mirrors `onMoveLoopRmbDown`'s own doc
+    // comment): this handler does ONLY its own narrow self-reset (clear
+    // the three dup-loop fields at the top) — `resetAllGestureArms()` is
+    // DELIBERATELY NOT called here, because a RIGHT-button press can
+    // legitimately be a two-button chord while a LEFT-button gesture
+    // (Build/Move/Slide/Smooth) is still held; an unconditional full reset
+    // here would silently cancel that in-progress drag before the user's
+    // eventual LEFT release commits it. A same-slot Shift+RMB re-press is
+    // guarded by this handler's own top-of-function reset, exactly like
+    // Move Loop's/Add Loop's/Split's.
+    private bool onDupLoopShiftRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        dupLoopArmed_ = false;
+        dupLoopSeed_  = -1;
+        dupLoopEdges_ = null;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto edges = m.selectLoopEdges(cast(uint)seed);
+        if (edges.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        dupLoopSeed_    = seed;
+        dupLoopEdges_   = edges;
+        dupLoopStartX_  = e.x;
+        dupLoopStartY_  = e.y;
+        dupLoopCurX_    = e.x;
+        dupLoopCurY_    = e.y;
+        dupLoopArmed_   = true;
+        return true;   // consume; the extrude+drag (if any) commits on release
+    }
+
     // P10 (doc/topopen_p10_moveloop_plan.md, plan §Re-snap): multi-background
     // camera-ray re-snap at an ARBITRARY (shifted) pixel — the SAME
     // primitive P4 Move's re-snap ultimately rests on (`BvhPick.pickSurface`,
@@ -1783,6 +1926,35 @@ public:
         // write, no undo entry, no `perVertexTargets`/re-snap work at all),
         // mirroring P3/P7's own `kMinDragPx` guard.
         if (e.button == SDL_BUTTON_RIGHT) {
+            // --- P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the
+            // armed Dup Loop gesture at the RELEASE event's own screen
+            // delta. Checked BEFORE the Move Loop branch below —
+            // `dupLoopArmed_`/`moveLoopArmed_` are armed by DISJOINT DOWN
+            // slots (Shift+RMB vs plain RMB) and stay mutually exclusive
+            // under genuine single-press input (SDL cannot emit two DOWN
+            // events for the same physical button without an intervening
+            // UP), mirroring the MIDDLE button's own 3-slot precedent (Add
+            // Loop/Split/Remove) — each slot's DOWN handler narrow-resets
+            // only its OWN state, never a sibling slot's. A release back at
+            // (near enough) the press pixel is a click without a real
+            // drag — an explicit, clean no-op (no extrude, no undo entry),
+            // mirroring every other gesture's `kMinDragPx` guard.
+            if (dupLoopArmed_) {
+                auto edges = dupLoopEdges_;
+                int  sx = dupLoopStartX_, sy = dupLoopStartY_;
+                dupLoopArmed_ = false;
+                dupLoopEdges_ = null;
+                dupLoopSeed_  = -1;
+
+                enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
+                int dx = e.x - sx, dy = e.y - sy;
+                if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+                Viewport vp;
+                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+                commitDupLoop(edges, dx, dy, vp);
+                return true;
+            }
             if (moveLoopArmed_) {
                 auto verts = moveLoopVerts_;
                 int  sx = moveLoopStartX_, sy = moveLoopStartY_;
@@ -2552,6 +2724,88 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
+    // P11 (doc/topopen_p11_duploop_plan.md "The flow"): commit the armed
+    // Duplicate Loop gesture — ONE atomic undo entry covering BOTH the
+    // extrude (`Mesh.extendEdgesByMask`, identity TRS ⇒ a coincident
+    // duplicate ring + bridge quads, ZERO new mesh.d code — the brief's
+    // `extrudeEdgesByMask` is REFUTED, plan §Reuse verdict) and the
+    // follow-up per-vertex drag/re-snap of the NEW (tail) verts, reusing
+    // P10's `perVertexTargets` verbatim (the new verts are coincident with
+    // their source loop verts, so projecting the new vert = projecting the
+    // source — no source→new map needed). `loopEdges` are the edge
+    // INDICES gathered at DOWN (`onDupLoopShiftRmbDown`); the mesh is
+    // never mutated between arm and commit, so they stay valid — a
+    // defensive out-of-range check bails before any mutation regardless
+    // (a stale/corrupted arm).
+    //
+    // REV1 FIX-2: `[oldV .. m.vertices.length)` is a lazy `size_t` iota —
+    // materialized + narrowed to a `uint[]` (`.array` + a `uint` map)
+    // before it reaches `perVertexTargets` (`const(uint)[]`).
+    //
+    // REV1 FIX-3: `extendEdgesByMask` already calls
+    // `commitChange(MeshEditScope.Geometry)` internally (the topology
+    // growth); the follow-up MANUAL position write below uses
+    // `commitChange(MeshEditScope.Position)` — mirrors `commitMoveLoop`'s
+    // own manual-write precedent — never a second `Geometry` commit.
+    //
+    // `n == 0` (empty/all-wire mask — every gathered edge has zero
+    // adjacent faces) is a clean no-op: `extendEdgesByMask` guarantees NO
+    // mutation occurred before returning 0 (`mesh.d` "if (exEdges.length ==
+    // 0) return 0;", before any `addVertex`/`faces ~=`), so this bails with
+    // no history entry. Once `n > 0`, topology HAS grown regardless of
+    // where the re-snap lands (UNLIKE `commitMoveLoop`'s Position-only eps
+    // guard, there is no "nothing worth recording" case here — plan Risk 2's
+    // all-rays-miss degenerate-coincident-ring outcome still commits the
+    // one real topology change that already happened).
+    //
+    // Calls `resyncSession()` on success (KILLER-2, mirrors
+    // `removeFaceAt`'s/`commitAddLoop`'s own discipline): `faces[]`/
+    // `edges[]`/`vertices[]` all grew, so any OTHER armed gesture's cached
+    // index would dangle.
+    private void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
+                               const ref Viewport vp) {
+        if (meshSrc_ is null || history_ is null || dupLoopEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null || loopEdges.length == 0) return;
+
+        bool[] mask; mask.length = m.edges.length;
+        foreach (ei; loopEdges) {
+            if (ei < 0 || ei >= cast(int)mask.length) return;   // stale/corrupted arm -- defensive
+            mask[ei] = true;
+        }
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+        size_t oldV = m.vertices.length;
+        size_t n = m.extendEdgesByMask(mask, 0.0f, 0.0f,
+                                       Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        if (n == 0) return;   // nothing extendable (all-wire/empty mask) -- no mutation occurred
+
+        import std.range     : iota;
+        import std.algorithm : map;
+        import std.array     : array;
+        // FIX-2: materialize + narrow the lazy size_t iota to a uint[] --
+        // extendEdgesByMask is pure-add (new verts appended at the tail,
+        // never reindexed), so [oldV .. m.vertices.length) is exactly the
+        // coincident duplicate ring.
+        uint[] newVerts = iota(oldV, m.vertices.length).map!(i => cast(uint)i).array;
+
+        auto targets = perVertexTargets(newVerts, dx, dy, vp);
+        foreach (i, vi; newVerts) m.vertices[vi] = targets[i];
+        // FIX-3: Position-only follow-up write -- extendEdgesByMask already
+        // committed Geometry above.
+        m.commitChange(MeshEditScope.Position);
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+
+        auto cmd = dupLoopEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Duplicate Loop");
+        history_.record(cmd);
+
+        resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
     // Stored drag-arm index/case dangle across an external history
     // navigation mid-drag (a redo/undo elsewhere could delete the source
     // vertex or its incident geometry out from under an armed gesture) — the
@@ -2824,11 +3078,64 @@ public:
             }
         }
 
+        // P11 (doc/topopen_p11_duploop_plan.md Phase 4): the Dup Loop
+        // ghost — preview of the coincident-then-dragged duplicate ring +
+        // bridge quads, recomputed every frame from the LIVE cursor
+        // (`dupLoopCurX_`/`dupLoopCurY_`), mirroring the Move Loop ghost
+        // immediately above (same `resnapToBackground`/`projectPt`
+        // primitives, no mesh mutation, no extrude — pure preview).
+        // Independent of `lastHit_`/CONS, drawn before the same
+        // `!lastHit_.hit` early-return as every other gesture ghost.
+        if (dupLoopArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null) {
+                enum uint dupLoopCol = IM_COL32(60, 220, 140, 220);   // dup-loop ghost green
+                int dx = dupLoopCurX_ - dupLoopStartX_;
+                int dy = dupLoopCurY_ - dupLoopStartY_;
+
+                foreach (ei; dupLoopEdges_) {
+                    if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                    auto edgeE = m.edges[ei];
+                    Vec3 a = m.vertices[edgeE[0]], b = m.vertices[edgeE[1]];
+
+                    Vec3 aP = a, bP = b;   // default: miss (or off-screen) keeps coincident
+                    ImVec2 pa, pb;
+                    if (projectPt(a, vp, pa)) {
+                        Vec3 hitA;
+                        if (resnapToBackground(cast(int)(pa.x + cast(float)dx),
+                                               cast(int)(pa.y + cast(float)dy), vp, hitA)) aP = hitA;
+                    }
+                    if (projectPt(b, vp, pb)) {
+                        Vec3 hitB;
+                        if (resnapToBackground(cast(int)(pb.x + cast(float)dx),
+                                               cast(int)(pb.y + cast(float)dy), vp, hitB)) bP = hitB;
+                    }
+
+                    ImVec2 sa, sb, saP, sbP;
+                    bool ok = projectPt(a, vp, sa) && projectPt(b, vp, sb)
+                           && projectPt(aP, vp, saP) && projectPt(bP, vp, sbP);
+                    if (!ok) continue;
+
+                    // The predicted bridge quad a-b-b'-a' + the new dup-loop
+                    // edge a'-b' (drawn with a heavier stroke), + a dot per
+                    // predicted (dragged) vert.
+                    dl.AddLine(sa, sb,   dupLoopCol, 1.5f);
+                    dl.AddLine(sb, sbP,  dupLoopCol, 1.5f);
+                    dl.AddLine(sbP, saP, dupLoopCol, 2.0f);
+                    dl.AddLine(saP, sa,  dupLoopCol, 1.5f);
+
+                    dl.AddCircleFilled(saP, 4.0f, dupLoopCol, 16);
+                    dl.AddCircleFilled(sbP, 4.0f, dupLoopCol, 16);
+                }
+            }
+        }
+
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 4). MINOR-5: placed AFTER the LAST pre-`!lastHit_.hit`-return
-        // ghost block above (P10 Move Loop) rather than literally "after
-        // smooth" — Split (P9) and Move Loop (P10) both now sit between
-        // Smooth and this early-return too. Independent of `lastHit_`/CONS
+        // ghost block above (P10 Move Loop, P11 Dup Loop) rather than
+        // literally "after smooth" — Split (P9), Move Loop (P10), and Dup
+        // Loop (P11) all now sit between Smooth and this early-return too.
+        // Independent of `lastHit_`/CONS
         // (over the PRIMARY, not the background), like every ghost above,
         // so a primary-only scene still shows it. Gated on
         // `!anyGestureArmed()` (mode ghosts win when armed — Pinned Decision
@@ -3071,6 +3378,13 @@ public:
         root["moveLoopArmed"]     = JSONValue(moveLoopArmed_);
         root["moveLoopSeed"]      = JSONValue(moveLoopSeed_);
         root["moveLoopVertCount"] = JSONValue(cast(int)moveLoopVerts_.length);
+
+        // P11 (doc/topopen_p11_duploop_plan.md Phase 4): the armed Dup Loop
+        // gesture's state, for Tier-C tests to assert the picked seed edge
+        // and gathered loop-edge count without driving a full release.
+        root["dupLoopArmed"]     = JSONValue(dupLoopArmed_);
+        root["dupLoopSeed"]      = JSONValue(dupLoopSeed_);
+        root["dupLoopEdgeCount"] = JSONValue(cast(int)dupLoopEdges_.length);
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 6): a NEW nested object (deliberately NOT the existing `hover{}`
@@ -5667,7 +5981,7 @@ unittest { // U7 (REV1 FIX-2 — the test that would have caught FIX-1): a
 }
 
 unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.md
-           // MINOR-3): every one of the 8 currently-enumerated arm flags
+           // MINOR-3): every one of the 9 currently-enumerated arm flags
            // independently flips the predicate true and none is silently
            // ignored — guards a future merge from dropping a flag from the
            // OR (the hazard `resetAllGestureArms()`'s own doc comment
@@ -5691,6 +6005,482 @@ unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.m
     t.splitArmed_ = false;
     t.moveLoopArmed_ = true; assert(t.anyGestureArmed(), "moveLoopArmed_ must count");
     t.moveLoopArmed_ = false;
+    t.dupLoopArmed_ = true;  assert(t.anyGestureArmed(), "dupLoopArmed_ must count");
+    t.dupLoopArmed_ = false;
 
     assert(!t.anyGestureArmed(), "every flag cleared again -> false");
+}
+
+// ===========================================================================
+// P11 Duplicate Loop (doc/topopen_p11_duploop_plan.md) — Tier-B in-file
+// unittests. The mandatory Phase-0 closed-rim probe (REV1 FIX-1) lives in
+// mesh.d itself (`extendEdgesByMask: CLOSED-RING boundary probe`), since it
+// pins the KERNEL's own behavior, not this tool. Everything below drives
+// `commitDupLoop`/the dispatch handlers directly against hand-built
+// `makeGridPlane(2)` fixtures — no bg needed for the topology-delta/
+// coincident-vert/undo assertions (dx=dy=0 with no background source ⇒
+// every ray misses ⇒ new verts stay exactly coincident, the deterministic
+// no-bg case). The on-surface/resnap assertion is Tier-C
+// (tests/test_topopen_duploop_resnap.d).
+// ===========================================================================
+
+unittest { // commitDupLoop — T1 BOUNDARY (doc/topopen_p11_duploop_plan.md
+           // "Testing strategy", the owner-observed/measured case): a
+           // CLOSED-perimeter loop (REV1 FIX-1 label correction — a
+           // BOUNDARY seed is the FULL closed rim) duplicated with no
+           // background (dx=dy=0 -> every ray misses -> new verts stay
+           // EXACTLY coincident with their source): topology delta =
+           // (+M,+(N+M),+N) computed from the gathered loop itself (not
+           // hard-coded); every new (tail) vert coincident with its source
+           // loop vert; the M original loop verts UNCHANGED; one history
+           // entry; undo restores EXACTLY (removes all new geometry); redo
+           // re-applies.
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);
+    auto loop = m.selectLoopEdges(seed);
+    assert(loop.length == 8, "boundary seed must gather the full closed 8-edge rim");
+
+    uint[] loopVerts;
+    bool[uint] seen;
+    foreach (ei; loop) {
+        auto ep = m.edges[cast(uint)ei];
+        foreach (v; ep) if (v !in seen) { seen[v] = true; loopVerts ~= v; }
+    }
+    size_t N = loop.length, M = loopVerts.length;
+    assert(M == 8, "closed ring: M == N == 8 (one vertex per rim edge)");
+
+    Vec3[] origLoopPos;
+    foreach (vi; loopVerts) origLoopPos ~= m.vertices[vi];
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    Viewport vp;
+    t.commitDupLoop(loop, 0, 0, vp);
+
+    assert(m.vertices.length == vBefore + M,
+        format("expected +%d verts, got +%d", M, m.vertices.length - vBefore));
+    assert(m.faces.length    == fBefore + N,
+        format("expected +%d faces, got +%d", N, m.faces.length - fBefore));
+    assert(m.edges.length    == eBefore + N + M,
+        format("expected +%d edges, got +%d", N + M, m.edges.length - eBefore));
+
+    // Every new (tail) vert is coincident with SOME original loop vertex —
+    // no background -> every ray misses -> perVertexTargets keeps the
+    // coincident post-extrude position verbatim.
+    foreach (i; vBefore .. m.vertices.length) {
+        bool matched = false;
+        foreach (op; origLoopPos) if ((m.vertices[i] - op).length < 1e-5f) { matched = true; break; }
+        assert(matched, format("new tail vertex %d must be coincident with some original loop vertex", i));
+    }
+
+    // The M original loop verts are UNCHANGED.
+    foreach (i, vi; loopVerts)
+        assert((m.vertices[vi] - origLoopPos[i]).length < 1e-6f,
+            "the original loop vertices must never be written by DupLoop");
+
+    assert(history.canUndo(), "a real Dup Loop commit must record one undo entry");
+
+    history.undo();
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "undo must remove every bit of new geometry");
+    foreach (i, vi; loopVerts)
+        assert((m.vertices[vi] - origLoopPos[i]).length < 1e-6f,
+            "undo must leave the original loop verts exactly alone");
+
+    history.redo();
+    assert(m.vertices.length == vBefore + M && m.edges.length == eBefore + N + M
+        && m.faces.length == fBefore + N,
+        "redo must re-apply the exact topology growth");
+}
+
+unittest { // commitDupLoop — T2 INTERIOR, FLAGGED (doc/topopen_p11_duploop_plan.md
+           // "Out of scope (deferred, flagged)" / REV1 FIX-1 §Open-item IL):
+           // an INTERIOR seed resolves to the classic OPEN in-line chain
+           // (REV1 label correction), which `extendEdgesByMask` extends into
+           // a non-manifold (2->3-face) result — UNMEASURED, the owner did
+           // NOT capture this case. This test pins only the well-defined
+           // TOPOLOGY DELTA (open-chain M=N+1); manifoldness is
+           // DELIBERATELY NOT asserted here.
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);   // interior seed -> the middle-row open chain
+    auto loop = m.selectLoopEdges(seed);
+    assert(loop.length == 2, "interior seed must gather the 2-edge open middle-row chain");
+
+    uint[] loopVerts;
+    bool[uint] seen;
+    foreach (ei; loop) {
+        auto ep = m.edges[cast(uint)ei];
+        foreach (v; ep) if (v !in seen) { seen[v] = true; loopVerts ~= v; }
+    }
+    size_t N = loop.length, M = loopVerts.length;
+    assert(M == N + 1, "open chain: M == N+1");
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    Viewport vp;
+    t.commitDupLoop(loop, 0, 0, vp);
+
+    assert(m.vertices.length == vBefore + M,
+        format("expected +%d verts, got +%d", M, m.vertices.length - vBefore));
+    assert(m.faces.length    == fBefore + N,
+        format("expected +%d faces, got +%d", N, m.faces.length - fBefore));
+    assert(m.edges.length    == eBefore + N + M,
+        format("expected +%d edges, got +%d", N + M, m.edges.length - eBefore));
+    assert(history.canUndo(), "a real interior Dup Loop commit must still record one undo entry");
+    // Manifoldness NOT asserted -- Open-item IL, unmeasured against the reference.
+}
+
+unittest { // commitDupLoop — NO-OP GUARD (doc/topopen_p11_duploop_plan.md
+           // "The flow"): a WIRE edge (zero adjacent faces) as the sole
+           // gathered loop -- `extendEdgesByMask` skips it (no orienting
+           // face to bridge against) and returns 0 -- must be a clean
+           // no-op: no mutation, no history entry, `!canUndo`.
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m;
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(1, 0, 0));
+    m.addEdge(v0, v1);   // a bare wire edge -- zero adjacent faces
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(v0, v1);
+    assert(seed != uint.max);
+    auto loop = m.selectLoopEdges(seed);   // a stray/degenerate edge -> [seed] itself
+    assert(loop == [cast(int)seed]);
+
+    Viewport vp;
+    auto before = MeshSnapshot.capture(m);
+    t.commitDupLoop(loop, 5, 5, vp);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && m.faces.length == 0,
+        "a wire-only loop must produce NO mutation");
+    assert(!history.canUndo(), "a wire-only loop must record NO undo entry");
+}
+
+unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploop_plan.md
+           // "Undo factory" KILLER-2): once a real Dup Loop commit lands
+           // (topology GREW -- faces[]/edges[]/vertices[] all resized), any
+           // OTHER gesture armed on a different button must be invalidated
+           // -- its cached index would otherwise dangle against the
+           // resized arrays. Mirrors `removeFaceAt`'s/`commitAddLoop`'s own
+           // resyncSession()-on-success discipline.
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);   // boundary seed -> the full closed perimeter
+    auto loop = m.selectLoopEdges(seed);
+    assert(loop.length == 8);
+
+    // Hand-arm a sibling gesture on a DIFFERENT button, as if it were
+    // mid-drag concurrently.
+    t.moveLoopArmed_ = true;
+    t.moveLoopSeed_  = 3;
+    t.moveLoopVerts_ = [3u, 4u, 5u];
+
+    Viewport vp;
+    t.commitDupLoop(loop, 0, 0, vp);   // no bg -> every new vert stays coincident; still a real commit
+
+    assert(history.canUndo(), "setup: the commit must have actually recorded an undo entry");
+    assert(!t.moveLoopArmed_, "resyncSession() on a successful Dup Loop commit must clear a sibling arm");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — Shift+RMB dispatch guard (P11, doc/topopen_p11_duploop_plan.md),
+// the same Tier-A pin shape as the P5/P6/P10 dispatch guards above: a pure,
+// camera-free regression guard so a bad merge that silently reverted the
+// `ShiftRmb` dispatch case would be caught by `dub test`, not just by
+// best-effort Tier-C.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, KMOD_SHIFT) == GestureSlot.ShiftRmb,
+        "Shift+RMB must resolve to the Dup Loop gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// onDupLoopShiftRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
+// consume/arm (doc/topopen_p11_duploop_plan.md "Shift+RMB dispatch
+// resolution": a miss must fall through to Shift+RMB-lasso unchanged).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 100, 100);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    int mx = cast(int)((p0.x + p1.x) * 0.5f), my = cast(int)((p0.y + p1.y) * 0.5f);
+
+    SDL_MouseButtonEvent eHit;
+    eHit.button = SDL_BUTTON_RIGHT;
+    eHit.x = mx; eHit.y = my;
+    bool consumed = t.onDupLoopShiftRmbDown(eHit, vts);
+    assert(consumed, "a Shift+RMB press on a valid boundary edge midpoint must arm and consume");
+    assert(t.dupLoopArmed_, "must arm the Dup Loop gesture");
+    assert(t.dupLoopEdges_.length == 8,
+        format("armed loop must be the full closed 8-edge rim; got %d edges", t.dupLoopEdges_.length));
+
+    t.dupLoopArmed_ = false;   // reset for the miss probe below
+    SDL_MouseButtonEvent eMiss;
+    eMiss.button = SDL_BUTTON_RIGHT;
+    eMiss.x = -5000; eMiss.y = -5000;   // far from every edge
+    bool missConsumed = t.onDupLoopShiftRmbDown(eMiss, vts);
+    assert(!missConsumed, "a press far from every edge must NOT consume");
+    assert(!t.dupLoopArmed_, "a miss must not arm the gesture");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p11_duploop_plan.md
+// Phase 3): a Shift+RMB release within `kMinDragPx` of the press pixel is a
+// clean no-op — no extrude, no undo entry — driven through the REAL
+// `onMouseButtonUp` path (arming state set up directly, mirroring P10 Move
+// Loop's own MIN-DRAG test) so the min-drag GATE ITSELF is under test.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);
+    auto edges = m.selectLoopEdges(seed);
+    t.dupLoopSeed_    = cast(int)seed;
+    t.dupLoopArmed_   = true;
+    t.dupLoopStartX_  = 50;
+    t.dupLoopStartY_  = 50;
+    t.dupLoopEdges_   = edges;
+
+    auto before = MeshSnapshot.capture(m);
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_RIGHT;
+    e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
+    VectorStack vts;
+    bool consumed = t.onMouseButtonUp(e, vts);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(consumed, "a click-without-drag release must still consume the event");
+    assert(!t.dupLoopArmed_, "release must disarm Dup Loop regardless of the min-drag gate");
+    assert(after.vertices == before.vertices && after.faces.length == before.faces.length,
+        "click-without-drag must not mutate the mesh at all");
+    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// resyncSession — clears a stray Dup Loop arm (doc/topopen_p11_duploop_plan.md
+// "Undo factory"): an external history navigation mid-drag must not leave a
+// dangling seed/edge-list for the eventual (now stale) release to commit
+// against.
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+    t.dupLoopArmed_ = true;
+    t.dupLoopSeed_  = 3;
+    t.dupLoopEdges_ = [3, 4];
+
+    t.resyncSession();
+
+    assert(!t.dupLoopArmed_, "resyncSession must clear the armed Dup Loop gesture");
+    assert(t.dupLoopSeed_ == -1, "resyncSession must reset the seed index");
+    assert(t.dupLoopEdges_.length == 0, "resyncSession must clear the gathered loop-edge list");
+}
+
+// ---------------------------------------------------------------------------
+// toolStateJson — Dup Loop fields (doc/topopen_p11_duploop_plan.md Phase 4):
+// reports the armed seed + gathered loop-edge count, for Tier-C tests to
+// assert the picked seed edge without driving a full release.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json : JSONType;
+
+    auto t = new TopologyPenTool();
+
+    auto s0 = t.toolStateJson();
+    assert(s0["dupLoopArmed"].type == JSONType.false_, "must start with no armed Dup Loop");
+    assert(cast(int)s0["dupLoopSeed"].integer == -1, "must start with seed=-1");
+    assert(cast(int)s0["dupLoopEdgeCount"].integer == 0, "must start with an empty gathered loop");
+
+    t.dupLoopArmed_ = true;
+    t.dupLoopSeed_  = 7;
+    t.dupLoopEdges_ = [1, 2, 3, 4, 5];
+
+    auto s1 = t.toolStateJson();
+    assert(s1["dupLoopArmed"].type == JSONType.true_, "must report the armed state");
+    assert(cast(int)s1["dupLoopSeed"].integer == 7, "must report the picked seed edge");
+    assert(cast(int)s1["dupLoopEdgeCount"].integer == 5, "must report the gathered loop-edge count");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
+// (P11, doc/topopen_p11_duploop_plan.md): drives the REAL Shift+RMB gesture
+// end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.ShiftRmb` ->
+// `onDupLoopShiftRmbDown`), a motion event, and the RIGHT-button release
+// branch (-> `commitDupLoop`) — against a REAL background mesh
+// (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
+// so this is a genuine end-to-end proof (not just the mutation, as the
+// Tier-B `commitDupLoop` cases above already cover, nor just the dispatch
+// wiring, as `onDupLoopShiftRmbDown`'s own test above covers) — all still
+// pure-`dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs;
+    import std.format : format;
+
+    loadSDL();
+    SDL_SetModState(KMOD_SHIFT);
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 200, 200);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+
+    // A flat background plane well BELOW the primary grid, large enough
+    // that every new vertex's shifted ray lands on it regardless of the
+    // exact drag delta chosen below.
+    enum float planeY = -1.5f;
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-20, planeY, -20), Vec3(20, planeY, -20),
+                   Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    int mx = cast(int)((p0.x + p1.x) * 0.5f), my = cast(int)((p0.y + p1.y) * 0.5f);
+
+    SDL_MouseButtonEvent eDown;
+    eDown.button = SDL_BUTTON_RIGHT;
+    eDown.x = mx; eDown.y = my;
+    bool downConsumed = t.onMouseButtonDown(eDown, vts);
+    assert(downConsumed, "Shift+RMB-down on the seed edge must be consumed via the real dispatch");
+    assert(t.dupLoopArmed_, "the real dispatch must have armed Dup Loop");
+    assert(t.dupLoopEdges_.length == 8, "the real dispatch must have gathered the full closed rim");
+
+    SDL_MouseMotionEvent eMove;
+    eMove.x = mx + 12; eMove.y = my - 7;
+    bool moveConsumed = t.onMouseMotion(eMove, vts);
+    assert(moveConsumed, "motion while armed must be consumed");
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_RIGHT;
+    eUp.x = mx + 12; eUp.y = my - 7;
+    bool upConsumed = t.onMouseButtonUp(eUp, vts);
+    assert(upConsumed, "RMB-up must be consumed");
+    assert(!t.dupLoopArmed_, "release must disarm Dup Loop regardless of outcome");
+
+    assert(m.vertices.length == vBefore + 8 && m.edges.length == eBefore + 16
+        && m.faces.length == fBefore + 8,
+        "the real dispatch path must grow topology by the closed-rim delta (+8v/+16e/+8f)");
+    assert(history.canUndo(), "the real dispatch path must record one undo entry");
+
+    foreach (vi; vBefore .. m.vertices.length)
+        assert(abs(m.vertices[vi].y - planeY) < 0.05f,
+            format("new vertex %d must land ON the background plane (y~=%f); got y=%f",
+                   vi, planeY, m.vertices[vi].y));
+
+    // The original 9 grid verts must be exactly unchanged.
+    Vec3[9] gridPos;
+    foreach (i; 0 .. 3) foreach (j; 0 .. 3)
+        gridPos[i * 3 + j] = Vec3(-1.0f + cast(float)j, 0.0f, -1.0f + cast(float)i);
+    foreach (vi; 0 .. 9)
+        assert((m.vertices[vi] - gridPos[vi]).length < 1e-5f,
+            format("original grid vertex %d must be left exactly alone", vi));
+
+    SDL_SetModState(cast(SDL_Keymod)0);
 }

@@ -17026,6 +17026,102 @@ unittest { // extendEdgesByMask: wire-edge / no-op — mask selecting nothing re
     assert(m.mutationVersion == mut0, "no-op: no version bump");
 }
 
+unittest { // extendEdgesByMask: CLOSED-RING boundary probe (task 0477 P11 REV1
+           // FIX-1, doc/topopen_p11_duploop_plan.md "mandatory Phase-0
+           // probe") — a mask selecting the FULL closed perimeter (all 8 rim
+           // edges) of a 3x3 grid (`makeGridPlane(2)`) has never been
+           // exercised through this kernel before: every extendEdgesByMask
+           // unittest above is a partial OPEN run (a single edge, a 2-edge
+           // collinear chain, an L-corner) — never a genuinely CLOSED ring
+           // that wraps back onto itself. Identity TRS (inset=shift=0,
+           // offset=0, rotate=0, scale=1) must produce: coincident tail
+           // verts (one per rim vertex, M=8), a well-formed CLOSED quad band
+           // (one bridge per rim edge, N=8) with every original rim edge
+           // promoted from 1 to EXACTLY 2 incident faces (clean manifold —
+           // no non-manifold triple at the wrap, which is the failure mode
+           // that would fire if the last edge's bridge mis-happened to
+           // double up on an earlier bridge's face), and every new bridge
+           // face a well-formed 4-gon with 4 DISTINCT vertex indices, no two
+           // bridges sharing the same 4-vertex set. A degenerate/duplicate
+           // face here would be a real kernel finding — STOP and report, do
+           // not ship (REV1 FIX-1). (Zero visual AREA in the new bridge
+           // quads is EXPECTED under pure identity TRS — the new verts are
+           // deliberately coincident with their source until a follow-up
+           // drag moves them, per the duplicate-then-drag design — so this
+           // probe checks INDEX/topology well-formedness, not face area.)
+    import mesh : makeGridPlane;
+    import std.algorithm : sort;
+
+    Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges (8 rim + 4 interior)
+
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max, "setup: boundary edge 0-1 must exist");
+    auto loop = m.selectLoopEdges(seed);
+    assert(loop.length == 8, "boundary seed must gather the FULL closed 8-edge rim");
+
+    bool[] mask; mask.length = m.edges.length;
+    foreach (ei; loop) mask[ei] = true;
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    auto n = m.extendEdgesByMask(mask, 0.0f, 0.0f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 8, "every rim edge has exactly one adjacent face -> all 8 must extend");
+
+    // M = 8 new (tail) verts -- the closed-ring weld map (one per unique rim
+    // vertex, not 16 -- no double-counting a shared corner across its two
+    // rim edges).
+    assert(m.vertices.length == vBefore + 8, "closed ring: +8 verts (M=N=8)");
+    assert(m.faces.length    == fBefore + 8, "closed ring: +8 bridge quads (N=8)");
+    // +(N+M) = +16 edges: 8 new outer-ring edges + 8 new spoke edges.
+    assert(m.edges.length    == eBefore + 16, "closed ring: +16 edges (N new ring + M new spokes)");
+
+    // Coincident tail verts: identity TRS -> every new vert lands EXACTLY on
+    // its source rim vertex (no drift, no accumulation error around the
+    // wrap-around).
+    foreach (i; vBefore .. m.vertices.length) {
+        bool matchesSome = false;
+        foreach (vi; [0u, 1u, 2u, 3u, 5u, 6u, 7u, 8u])
+            if (near_(m.vertices[i], m.vertices[vi])) { matchesSome = true; break; }
+        assert(matchesSome,
+            "every new tail vertex must be coincident with SOME original rim vertex");
+    }
+
+    // Manifold promotion: every original rim edge must now have EXACTLY 2
+    // incident faces (its own cell face + the new bridge) -- not a
+    // non-manifold 3-face triple, which is the wrap-around failure mode
+    // this probe exists to catch.
+    foreach (ei; loop) {
+        int cnt = 0;
+        foreach (fi; m.facesAroundEdge(ei)) ++cnt;
+        assert(cnt == 2,
+            "each original rim edge must gain EXACTLY one bridge face (1->2), never a "
+          ~ "non-manifold triple at the wrap-around");
+        assert(!m.isEdgeBorder(ei), "each original rim edge must no longer be a boundary edge");
+    }
+
+    // No degenerate/duplicate face: every one of the 8 new bridge faces is a
+    // well-formed 4-gon with 4 DISTINCT vertex indices, and no two bridges
+    // share the identical 4-vertex set (the wrap-around double-processing
+    // failure mode).
+    uint[][] seenSets;
+    foreach (fi; fBefore .. m.faces.length) {
+        auto f = m.faces[fi];
+        assert(f.length == 4, "every bridge must be a quad");
+        auto ids = f.dup; ids.sort();
+        assert(ids[0] != ids[1] && ids[1] != ids[2] && ids[2] != ids[3],
+            "every bridge quad must have 4 DISTINCT vertex indices (no degenerate wrap face)");
+        foreach (prev; seenSets)
+            assert(prev != ids, "no two bridge quads may share the same 4 vertices (duplicate wrap face)");
+        seenSets ~= ids;
+    }
+
+    // Fully valid, buildLoops-consistent structure (no crash/hang walking
+    // adjacency near the wrap).
+    size_t totalCorners = 0;
+    foreach (ref f; m.faces) totalCorners += f.length;
+    assert(m.loops.length == totalCorners);
+}
+
 unittest { // extendEdgesByMask: consumer smoke — ring-walk + faceted subdivide no-crash
     import std.array : array;
     Mesh m = makeCube();

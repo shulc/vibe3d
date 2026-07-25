@@ -3094,6 +3094,16 @@ void main(string[] args) {
     // replay / macros.
     auto topoPenMoveLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
+    // Topology Pen P11's Dup Loop gesture (task 0477, doc/topopen_p11_duploop_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above —
+    // duplicating an edge loop into a new bridge ring IS a topology change
+    // (wire name "mesh.topoPen_duploop", editScope Geometry|Marks — the
+    // extrude resizes selection arrays, same scope as
+    // `topoPenAddLoopEditFactory`), so reusing any sibling factory would
+    // corrupt undo history / event-log replay / macros with the wrong wire
+    // name.
+    auto topoPenDupLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3211,6 +3221,7 @@ void main(string[] args) {
     app.topoPenSmoothEditFactory  = topoPenSmoothEditFactory;
     app.topoPenSplitEditFactory   = topoPenSplitEditFactory;
     app.topoPenMoveLoopEditFactory = topoPenMoveLoopEditFactory;
+    app.topoPenDupLoopEditFactory  = topoPenDupLoopEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;
