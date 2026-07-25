@@ -25,6 +25,9 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import change_bus            : MeshEditScope;
+import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
+                                InputMod, ResetScope, InputBinding,
+                                resolveToolAction, toButton, toMods;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -207,6 +210,108 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
             return GestureSlot.Mmb;
         default:
             return GestureSlot.None;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TopoPenAction / kTopoPenBindings — the Phase-1 declarative dispatch table
+// (`source/tool_input.d`, doc/topopen_input_dispatch_phase2_plan.md), landed
+// here ADDITIVELY: `GestureSlot`/`resolveGestureSlot` above stay the
+// authoritative DOWN classifier for now (`onMouseButtonDown`'s `final switch`
+// still drives every gesture) — nothing in this tool calls `dispatchInput()`
+// yet, so `bindings()`/`onToolAction()` below are inert scaffolding, exercised
+// only by their own unittest. `kTopoPenBindings` is a 1:1 transcription of
+// `resolveGestureSlot`'s 10 WIRED slots (the 2 undocumented slots — Ctrl+RMB,
+// Shift+Ctrl+MMB — and every Alt combo are simply ABSENT, so
+// `resolveToolAction` answers `PassThrough` for them, matching
+// `resolveGestureSlot`'s own `CtrlRmb`/`ShiftCtrlMmb`/`None` → the dispatch
+// no-ops these slots fall through to today).
+// ---------------------------------------------------------------------------
+private enum TopoPenAction : ToolAction {
+    LmbPlaceOrMove,   // plain LMB       — place-on-empty OR grab-move (resolved at Down)
+    Build,            // Shift+LMB       — drag-build (P3)
+    Slide,            // Ctrl+LMB        — edge slide (P7)
+    Smooth,           // Shift+Ctrl+LMB  — whole-mesh smooth (P8)
+    Split,            // plain MMB       — vertex-to-vertex split (P9)
+    AddLoop,          // Shift+MMB       — add loop cut (P6)
+    Remove,           // Ctrl+MMB        — remove-on-DOWN face delete (P5); Up is a no-op
+    MoveLoop,         // plain RMB       — move edge loop (P10)
+    DupLoop,          // Shift+RMB       — duplicate edge loop (P11)
+    SmoothLoop,       // Shift+Ctrl+RMB  — loop-restricted smooth (P12)
+}
+
+/// LEFT rows are `ResetScope.AllButtons` — reproduces the LEFT-button trio's
+/// own top-of-handler `resetAllGestureArms()` call (`onPlainLmbDown`/
+/// `onShiftLmbDown`/`onCtrlLmbDown`/`onShiftCtrlLmbDown`), now wired through
+/// `dispatchInput`'s `onInputResetAll()` hook instead. MIDDLE/RIGHT rows stay
+/// the default `SelfButton` — each mode's own narrow self-reset (already
+/// inside the kept `on*Down` methods) is what closes a same-slot re-press
+/// hazard for those buttons, exactly as today (see `resetAllGestureArms`'s
+/// own doc comment for why MIDDLE/RIGHT deliberately do NOT get a full reset:
+/// a chord on those buttons can legitimately coexist with a held LEFT drag).
+private immutable InputBinding[] kTopoPenBindings = [
+    InputBinding(InputButton.Left,   InputMod.None,                   TopoPenAction.LmbPlaceOrMove, ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Shift,                  TopoPenAction.Build,          ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Ctrl,                   TopoPenAction.Slide,          ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Shift | InputMod.Ctrl,  TopoPenAction.Smooth,         ResetScope.AllButtons),
+    InputBinding(InputButton.Middle, InputMod.None,                   TopoPenAction.Split),
+    InputBinding(InputButton.Middle, InputMod.Shift,                  TopoPenAction.AddLoop),
+    InputBinding(InputButton.Middle, InputMod.Ctrl,                   TopoPenAction.Remove),
+    InputBinding(InputButton.Right,  InputMod.None,                   TopoPenAction.MoveLoop),
+    InputBinding(InputButton.Right,  InputMod.Shift,                  TopoPenAction.DupLoop),
+    InputBinding(InputButton.Right,  InputMod.Shift | InputMod.Ctrl,  TopoPenAction.SmoothLoop),
+];
+
+// ---------------------------------------------------------------------------
+// kTopoPenBindings — exhaustive resolver-grid pin. A single pure,
+// camera-free regression guard covering EVERY (button, modifier) combo this
+// tool's grid can see — the eventual replacement for the 7 scattered
+// `resolveGestureSlot` guards below (Ctrl+MMB/Shift+MMB/Ctrl+LMB/plain-MMB/
+// plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table so a bad
+// merge that silently drops or misroutes a row is caught here rather than by
+// 7 separate best-effort pins. All 10 bound slots resolve to their
+// documented action; the 2 undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) and
+// every Alt-held combo resolve to `PassThrough` (Alt is hard-blocked by
+// `resolveToolAction` itself, above the table scan — this pin also proves
+// that holds for THIS tool's table).
+// ---------------------------------------------------------------------------
+unittest {
+    // The 10 documented slots.
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.None)
+        == TopoPenAction.LmbPlaceOrMove, "plain LMB must resolve to LmbPlaceOrMove");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift)
+        == TopoPenAction.Build, "Shift+LMB must resolve to Build");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Ctrl)
+        == TopoPenAction.Slide, "Ctrl+LMB must resolve to Slide");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenAction.Smooth, "Shift+Ctrl+LMB must resolve to Smooth");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.None)
+        == TopoPenAction.Split, "plain MMB must resolve to Split");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift)
+        == TopoPenAction.AddLoop, "Shift+MMB must resolve to AddLoop");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Ctrl)
+        == TopoPenAction.Remove, "Ctrl+MMB must resolve to Remove");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.None)
+        == TopoPenAction.MoveLoop, "plain RMB must resolve to MoveLoop");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift)
+        == TopoPenAction.DupLoop, "Shift+RMB must resolve to DupLoop");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenAction.SmoothLoop, "Shift+Ctrl+RMB must resolve to SmoothLoop");
+
+    // The 2 undocumented slots -- absent from the table -> PassThrough.
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl) == PassThrough,
+        "Ctrl+RMB is undocumented -> PassThrough");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift | InputMod.Ctrl) == PassThrough,
+        "Shift+Ctrl+MMB is undocumented -> PassThrough");
+
+    // Every Alt combo -> PassThrough, on every button, with or without other
+    // modifiers held alongside it (Alt is hard-blocked above the table scan,
+    // per `resolveToolAction`'s own contract).
+    foreach (btn; [InputButton.Left, InputButton.Middle, InputButton.Right]) {
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Ctrl) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift | InputMod.Ctrl) == PassThrough);
     }
 }
 
@@ -1172,6 +1277,20 @@ public:
         return -1;
     }
 
+    // --- Phase-1 declarative dispatch (ADDITIVE, INERT — see
+    // `kTopoPenBindings`'s own doc comment above): `bindings()`/
+    // `onInputResetAll()`/`onToolAction()` are scaffolding for the Phase-2
+    // flip. Nothing in this class calls `dispatchInput()` yet — `onMouseButtonDown`/
+    // `onMouseButtonUp` below stay the OLD `GestureSlot`-driven switches, so
+    // these three overrides are unreachable from the real SDL event path
+    // until Phase 2 rewires the two hooks below to call `dispatchInput()`.
+    override const(InputBinding)[] bindings() const { return kTopoPenBindings; }
+
+    // The `ResetScope.AllButtons` hook: identical to what the LEFT-button
+    // trio's own top-of-handler `resetAllGestureArms()` call already does —
+    // this is simply that SAME call reachable through the new seam.
+    override void onInputResetAll() { resetAllGestureArms(); }
+
     // Dispatch entry point: resolve which of the 12 documented slots this
     // press belongs to (`GestureSlot`, above) and route to the one live
     // handler (`ShiftLmb` -> the P3 build-arm) or the unchanged P2 handler
@@ -2010,246 +2129,76 @@ public:
     // mutually exclusive in practice; each disarms its own state before
     // returning so a rejected/no-op release never leaves anything stale for
     // the next press to inherit.
+    //
+    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // each branch body below now lives in its own private `<mode>Up` helper
+    // (self-guarded on its OWN arm bool, so it is also safely callable from
+    // `onToolAction`'s UP cases once Phase 2 flips the seam) — this method
+    // itself keeps the exact per-button branch/ordering structure it always
+    // had, just delegating each body instead of inlining it.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
-        // --- P6/P9 (doc/topopen_p6_addloop_plan.md Phase 3,
-        // doc/topopen_p9_split_plan.md REV1 FIX-2): commits whichever MIDDLE
-        // gesture is armed, at the RELEASE event's own cursor-derived
-        // resolution. REV1 FIX-2 (KILLER-2): per-arm GUARDED returns, not a
-        // single unconditional `if (!addLoopArmed_) return false;` early-out
-        // — that old shape made a `splitArmed_` check placed "after" it
-        // categorically unreachable (Add Loop unarmed -> return false BEFORE
-        // ever testing Split). `addLoopArmed_`/`splitArmed_` are armed by
-        // disjoint DOWN slots (Shift+MMB vs plain MMB) and
-        // `resetAllGestureArms()`/`onPlainMmbDown`'s own narrow reset keep
-        // them mutually exclusive in practice, so branch order is immaterial;
-        // Add Loop stays first to minimize diff. An unarmed MIDDLE release
-        // (no press landed on a valid ring seed / vertex) doesn't consume,
-        // matching every other slot's miss convention.
+        // --- P6/P9: MIDDLE-button gestures. REV1 FIX-2 (KILLER-2): per-arm
+        // GUARDED returns, not a single unconditional early-out — Add Loop
+        // and Split are armed by disjoint DOWN slots (Shift+MMB vs plain
+        // MMB) and stay mutually exclusive in practice, so branch order is
+        // immaterial; Add Loop stays first to minimize diff. An unarmed
+        // MIDDLE release doesn't consume, matching every other slot's miss
+        // convention.
         if (e.button == SDL_BUTTON_MIDDLE) {
-            if (addLoopArmed_) {
-                int seed = addLoopSeed_;
-                addLoopSeed_  = -1;
-                addLoopArmed_ = false;
-                Viewport vp;
-                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-                float r = ratioFromCursor(e.x, e.y, vp);
-                commitAddLoop(cast(uint)seed, r);
-                return true;
-            }
-            if (splitArmed_) {
-                int a = splitSourceVert_;
-                splitArmed_      = false;
-                splitSourceVert_ = -1;
-                Viewport vp;
-                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-                // C is resolved AT THE RELEASE PIXEL — authoritative, never
-                // the last-motion `splitTargetVert_` (a release with no
-                // intervening motion event must still resolve C at its own
-                // pixel). `-1` (no vertex under the cursor) is the deferred
-                // mid-edge-insert case — `commitSplit` treats it as a clean
-                // no-op (V1-SCOPE LINE).
-                int c = findSourceVertex(e.x, e.y, vp);
-                splitTargetVert_ = -1;
-                commitSplit(a, c);
-                return true;
-            }
+            if (addLoopArmed_) return addLoopUp(e, vts);
+            if (splitArmed_)   return splitUp(e, vts);
             return false;
         }
 
-        // --- P10 (doc/topopen_p10_moveloop_plan.md Phase 3): commits the
-        // armed Move Loop gesture at the RELEASE event's own pixel. Isolated
-        // in its OWN RIGHT-button branch — disjoint from every LEFT/MIDDLE
-        // branch above/below, mirroring the MIDDLE branch's own top-level
-        // isolation. A release back at (near enough) the press pixel is a
-        // click without a real drag — an explicit, clean no-op (no vertex
-        // write, no undo entry, no `perVertexTargets`/re-snap work at all),
-        // mirroring P3/P7's own `kMinDragPx` guard.
+        // --- P10/P11/P12: RIGHT-button gestures. `dupLoopArmed_`/
+        // `moveLoopArmed_`/`smoothLoopArmed_` are armed by three DISJOINT
+        // DOWN slots (Shift+RMB / plain RMB / Shift+Ctrl+RMB) and stay
+        // mutually exclusive under genuine single-press input, so branch
+        // order is immaterial; Dup Loop stays first to minimize diff.
         if (e.button == SDL_BUTTON_RIGHT) {
-            // --- P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the
-            // armed Dup Loop gesture at the RELEASE event's own screen
-            // delta. Checked BEFORE the Move Loop/Smooth+Loop branches below
-            // — `dupLoopArmed_`/`moveLoopArmed_`/`smoothLoopArmed_` (P12) are
-            // armed by three DISJOINT DOWN slots (Shift+RMB / plain RMB /
-            // Shift+Ctrl+RMB) and stay mutually exclusive under genuine
-            // single-press input (SDL cannot emit two DOWN events for the
-            // same physical button without an intervening UP), mirroring the
-            // MIDDLE button's own 3-slot precedent (Add Loop/Split/Remove) —
-            // each slot's DOWN handler narrow-resets only its OWN state,
-            // never a sibling slot's. A release back at (near enough) the
-            // press pixel is a click without a real drag — an explicit,
-            // clean no-op (no extrude, no undo entry), mirroring every other
-            // gesture's `kMinDragPx` guard.
-            if (dupLoopArmed_) {
-                auto edges = dupLoopEdges_;
-                int  sx = dupLoopStartX_, sy = dupLoopStartY_;
-                dupLoopArmed_ = false;
-                dupLoopEdges_ = null;
-                dupLoopSeed_  = -1;
-
-                enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
-                int dx = e.x - sx, dy = e.y - sy;
-                if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
-
-                Viewport vp;
-                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-                commitDupLoop(edges, dx, dy, vp);
-                return true;
-            }
-            if (moveLoopArmed_) {
-                auto verts = moveLoopVerts_;
-                int  sx = moveLoopStartX_, sy = moveLoopStartY_;
-                moveLoopArmed_ = false;
-                moveLoopVerts_ = null;
-                moveLoopSeed_  = -1;
-
-                enum int kMinDragPx = 3;   // mirrors P3/P7's own click-vs-drag gate
-                int dx = e.x - sx, dy = e.y - sy;
-                if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
-
-                Viewport vp;
-                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-                commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp));
-                return true;
-            }
-            // --- P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commits
-            // the armed Smooth+Loop gesture — UNLIKE Move Loop/Dup Loop
-            // above, this is NOT gated by `kMinDragPx` (a stationary click
-            // must still apply its one pass, mirroring the whole-mesh
-            // Smooth gesture's own Risk-5 discipline, P8). Checked LAST
-            // among the RIGHT-button arms — `moveLoopArmed_`/`dupLoopArmed_`/
-            // `smoothLoopArmed_` are armed by three DISJOINT DOWN slots
-            // (plain RMB / Shift+RMB / Shift+Ctrl+RMB) and stay mutually
-            // exclusive under genuine single-press input, so branch order is
-            // immaterial. Disarm `smoothLoopArmed_` BEFORE calling
-            // `applySmoothLoopPasses` (REV1 plan "Disarm before commit");
-            // `smoothLoopSeed_`/`smoothLoopVerts_` stay valid for THAT call
-            // (it reads them directly, REV1 FIX-2 — no re-gather) and are
-            // cleared immediately after.
-            if (smoothLoopArmed_) {
-                smoothLoopArmed_ = false;
-                int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
-                applySmoothLoopPasses(n);
-                smoothLoopSeed_   = -1;
-                smoothLoopVerts_  = null;
-                smoothLoopDragPx_ = 0.0f;
-                return true;
-            }
+            if (dupLoopArmed_)    return dupLoopUp(e, vts);
+            if (moveLoopArmed_)   return moveLoopUp(e, vts);
+            if (smoothLoopArmed_) return smoothLoopUp(e, vts);
             return false;
         }
 
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        // --- P8 (doc/topopen_p8_smooth_plan.md Phase 3): commits the armed
-        // Smooth gesture — click (zero/near-zero drag) applies exactly ONE
-        // pass, a drag applies N (derived from the accumulated cursor
-        // travel). Risk 5 (plan): UNLIKE every other gesture above, this
-        // one is NOT gated by `kMinDragPx` — a stationary click must still
-        // apply its one pass (`applySmoothPasses` itself carries the
-        // REV1 FIX-2 no-op-undo guard for the case where that one pass
-        // genuinely changes nothing). Checked BEFORE Slide/Build/Place/Move
-        // below since it is armed by its own disjoint modifier chord
-        // (Shift+Ctrl+LMB) and `resetAllGestureArms()` guarantees at most
-        // one of these is ever true at once.
-        if (smoothArmed_) {
-            smoothArmed_ = false;
-            int n = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
-            applySmoothPasses(n);
-            return true;
-        }
+        // --- P8/P7/P3/P4: LEFT-button gestures. `resetAllGestureArms()`
+        // guarantees at most one of `smoothArmed_`/`slideArmed_`/
+        // `dragArmed_`/`placeArmed_`/`moveArmed_` is ever true at once, so
+        // branch order is immaterial; this is the existing order.
+        if (smoothArmed_) return smoothUp(e, vts);
+        if (slideArmed_)  return slideUp(e, vts);
+        if (dragArmed_)   return buildUp(e, vts);
+        if (placeArmed_ || moveArmed_) return lmbPlaceOrMoveUp(e, vts);
 
-        // --- P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed
-        // Slide gesture at the RELEASE event's own cursor-derived per-rail
-        // fraction. Mutually exclusive with drag-build/Place/Move (at most
-        // one of `dragArmed_`/`placeArmed_`/`moveArmed_`/`slideArmed_` is
-        // ever true at once — `resetAllGestureArms()` enforces this at
-        // every fresh press).
-        if (slideArmed_) {
-            uint seed   = cast(uint)slideSeed_;
-            int  eA     = slideEndA_, eB = slideEndB_;
-            int  nA     = slideNbrA_, nB = slideNbrB_;
-            int  startX = slideStartX_, startY = slideStartY_;
+        return false;
+    }
 
-            slideSeed_  = -1;
-            slideArmed_ = false;
-            slideEndA_ = slideEndB_ = -1;
-            slideNbrA_ = slideNbrB_ = -1;
+    // --- Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // the 9 extracted UP-branch bodies below (Remove has no arm bool and no
+    // UP body — it commits on DOWN) — each is BOTH the body `onMouseButtonUp`
+    // above calls AND the body `onToolAction`'s UP cases will call once
+    // Phase 2 flips the seam, so there is exactly one copy of this logic.
+    // Each guards on its OWN arm bool first (`if (!xArmed_) return false;`) —
+    // this is what makes each helper safely callable directly from
+    // `onToolAction` even on a Down-that-resolved-but-declined (the
+    // arm-before-decline gap the plan's own "Key decision" section documents):
+    // the base's `armed_[button]` may say "armed", but the bool says
+    // otherwise, and the bool is what every helper actually trusts.
 
-            // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at
-            // (near enough) the press pixel is a click without a real drag —
-            // an explicit, clean no-op (no vertex write, no undo entry),
-            // mirroring P3's own `kMinDragPx` guard immediately below. (A
-            // zero-drag slide would already no-op via `commitSlide`'s own
-            // eps guard, since `t≈0` -> `slidePoint` returns the original
-            // position — this gate just keeps the click-vs-drag discipline
-            // uniform across every gesture, and keeps `slideStartX_`/
-            // `slideStartY_` genuinely read.)
-            enum int kMinDragPx = 3;
-            int dx = e.x - startX, dy = e.y - startY;
-            if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
-
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-            auto m = mesh;
-            float tA = 0.0f, tB = 0.0f;
-            if (m !is null) {
-                if (nA >= 0) tA = ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]);
-                if (nB >= 0) tB = ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]);
-            }
-            commitSlide(seed, eA, eB, nA, nB, tA, tB);
-            return true;
-        }
-
-        // --- P3: commits the armed drag-build, if any, at the RELEASE
-        // event's own CONS-snapped hit. A release with no real motion since
-        // press (a stationary click-on-vertex — "revisit = Move/no-op",
-        // capture SESSION 1) builds nothing.
-        if (dragArmed_) {
-            int       a     = sourceVert_;
-            BuildCase casee  = classifiedCase_;
-            int       n      = triN_;
-            int       p      = quadP_;
-            int       q      = quadQ_;
-            int       triFi  = quadTriFi_;
-            int       startX = dragStartX_, startY = dragStartY_;
-
-            sourceVert_     = -1;
-            dragArmed_      = false;
-            classifiedCase_ = BuildCase.None;
-            triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
-
-            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
-
-            // A release back at (near enough) the press pixel is a stationary
-            // click on the source vertex, not a drag — capture-confirmed no-op
-            // (a near-zero-displacement Move), never a build.
-            enum int kMinDragPx = 3;
-            int dx = e.x - startX, dy = e.y - startY;
-            if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
-
-            if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
-            if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
-
-            buildFromSource(a, casee, n, p, q, triFi, lastHit_.point);
-            return true;
-        }
-
-        // --- P4 Place: the deferred P2 placement (doc/topopen_p4_plan.md
-        // step 1) — commit the SAME `placeVertexAt` path P2 always used,
-        // just at release instead of press. A stationary click's DOWN+UP
-        // pair still yields exactly one placement (or none, on a bg miss),
-        // matching the pre-P4 DOWN-commit behavior bit-for-bit.
+    // P4 Place/Move (doc/topopen_p4_plan.md, Design A): both outcomes of a
+    // plain-LMB press commit HERE, never at DOWN — see `onPlainLmbDown`'s own
+    // doc comment for the disambiguation.
+    private bool lmbPlaceOrMoveUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (placeArmed_) {
             placeArmed_ = false;
             readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
             if (lastHit_.hit) placeVertexAt(lastHit_.point, vts);
             return true;
         }
-
-        // --- P4 Move: re-snap the grabbed vertex to the release event's own
-        // CONS-snapped hit (doc/topopen_p4_plan.md "The MEASURED mechanism").
-        // `moveVertexTo` itself applies the eps no-op guard (stationary grab
-        // / all-on-surface no-move -> clean no-op, no undo entry).
         if (moveArmed_) {
             int vi = grabbedVert_;
             moveArmed_   = false;
@@ -2258,8 +2207,248 @@ public:
             if (lastHit_.hit) moveVertexTo(vi, lastHit_.point);
             return true;
         }
-
         return false;
+    }
+
+    // P3: commits the armed drag-build, if any, at the RELEASE event's own
+    // CONS-snapped hit. A release with no real motion since press (a
+    // stationary click-on-vertex — "revisit = Move/no-op", capture SESSION 1)
+    // builds nothing.
+    private bool buildUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!dragArmed_) return false;
+        int       a     = sourceVert_;
+        BuildCase casee  = classifiedCase_;
+        int       n      = triN_;
+        int       p      = quadP_;
+        int       q      = quadQ_;
+        int       triFi  = quadTriFi_;
+        int       startX = dragStartX_, startY = dragStartY_;
+
+        sourceVert_     = -1;
+        dragArmed_      = false;
+        classifiedCase_ = BuildCase.None;
+        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+
+        readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+
+        // A release back at (near enough) the press pixel is a stationary
+        // click on the source vertex, not a drag — capture-confirmed no-op
+        // (a near-zero-displacement Move), never a build.
+        enum int kMinDragPx = 3;
+        int dx = e.x - startX, dy = e.y - startY;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+        if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
+        if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
+
+        buildFromSource(a, casee, n, p, q, triFi, lastHit_.point);
+        return true;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed Slide
+    // gesture at the RELEASE event's own cursor-derived per-rail fraction.
+    private bool slideUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!slideArmed_) return false;
+        uint seed   = cast(uint)slideSeed_;
+        int  eA     = slideEndA_, eB = slideEndB_;
+        int  nA     = slideNbrA_, nB = slideNbrB_;
+        int  startX = slideStartX_, startY = slideStartY_;
+
+        slideSeed_  = -1;
+        slideArmed_ = false;
+        slideEndA_ = slideEndB_ = -1;
+        slideNbrA_ = slideNbrB_ = -1;
+
+        // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at (near
+        // enough) the press pixel is a click without a real drag — an
+        // explicit, clean no-op (no vertex write, no undo entry), mirroring
+        // P3's own `kMinDragPx` guard.
+        enum int kMinDragPx = 3;
+        int dx = e.x - startX, dy = e.y - startY;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        auto m = mesh;
+        float tA = 0.0f, tB = 0.0f;
+        if (m !is null) {
+            if (nA >= 0) tA = ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]);
+            if (nB >= 0) tB = ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]);
+        }
+        commitSlide(seed, eA, eB, nA, nB, tA, tB);
+        return true;
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 3): commits the armed Smooth
+    // gesture — click (zero/near-zero drag) applies exactly ONE pass, a drag
+    // applies N (derived from the accumulated cursor travel). Risk 5 (plan):
+    // UNLIKE every other gesture, this one is NOT gated by `kMinDragPx` — a
+    // stationary click must still apply its one pass (`applySmoothPasses`
+    // itself carries the REV1 FIX-2 no-op-undo guard for the case where that
+    // one pass genuinely changes nothing).
+    private bool smoothUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!smoothArmed_) return false;
+        smoothArmed_ = false;
+        int n = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
+        applySmoothPasses(n);
+        return true;
+    }
+
+    // P9 (doc/topopen_p9_split_plan.md REV1 FIX-2): commits the armed Split
+    // gesture. C is resolved AT THE RELEASE PIXEL — authoritative, never the
+    // last-motion `splitTargetVert_` (a release with no intervening motion
+    // event must still resolve C at its own pixel). `-1` (no vertex under
+    // the cursor) is the deferred mid-edge-insert case — `commitSplit`
+    // treats it as a clean no-op (V1-SCOPE LINE).
+    private bool splitUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!splitArmed_) return false;
+        int a = splitSourceVert_;
+        splitArmed_      = false;
+        splitSourceVert_ = -1;
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int c = findSourceVertex(e.x, e.y, vp);
+        splitTargetVert_ = -1;
+        commitSplit(a, c);
+        return true;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 3): commits the armed Add Loop
+    // gesture, at the RELEASE event's own cursor-derived ratio.
+    private bool addLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!addLoopArmed_) return false;
+        int seed = addLoopSeed_;
+        addLoopSeed_  = -1;
+        addLoopArmed_ = false;
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        float r = ratioFromCursor(e.x, e.y, vp);
+        commitAddLoop(cast(uint)seed, r);
+        return true;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md Phase 3): commits the armed Move
+    // Loop gesture at the RELEASE event's own pixel. A release back at (near
+    // enough) the press pixel is a click without a real drag — an explicit,
+    // clean no-op (no vertex write, no undo entry, no `perVertexTargets`/
+    // re-snap work at all), mirroring P3/P7's own `kMinDragPx` guard.
+    private bool moveLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!moveLoopArmed_) return false;
+        auto verts = moveLoopVerts_;
+        int  sx = moveLoopStartX_, sy = moveLoopStartY_;
+        moveLoopArmed_ = false;
+        moveLoopVerts_ = null;
+        moveLoopSeed_  = -1;
+
+        enum int kMinDragPx = 3;   // mirrors P3/P7's own click-vs-drag gate
+        int dx = e.x - sx, dy = e.y - sy;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp));
+        return true;
+    }
+
+    // P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the armed Dup
+    // Loop gesture at the RELEASE event's own screen delta. A release back
+    // at (near enough) the press pixel is a click without a real drag — an
+    // explicit, clean no-op (no extrude, no undo entry), mirroring every
+    // other gesture's `kMinDragPx` guard.
+    private bool dupLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!dupLoopArmed_) return false;
+        auto edges = dupLoopEdges_;
+        int  sx = dupLoopStartX_, sy = dupLoopStartY_;
+        dupLoopArmed_ = false;
+        dupLoopEdges_ = null;
+        dupLoopSeed_  = -1;
+
+        enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
+        int dx = e.x - sx, dy = e.y - sy;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        commitDupLoop(edges, dx, dy, vp);
+        return true;
+    }
+
+    // P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commits the armed
+    // Smooth+Loop gesture — UNLIKE Move Loop/Dup Loop, this is NOT gated by
+    // `kMinDragPx` (a stationary click must still apply its one pass,
+    // mirroring the whole-mesh Smooth gesture's own Risk-5 discipline, P8).
+    // Disarms BEFORE calling `applySmoothLoopPasses` (REV1 plan "Disarm
+    // before commit"); `smoothLoopSeed_`/`smoothLoopVerts_` stay valid for
+    // THAT call (it reads them directly, REV1 FIX-2 — no re-gather) and are
+    // cleared immediately after.
+    private bool smoothLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!smoothLoopArmed_) return false;
+        smoothLoopArmed_ = false;
+        int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
+        applySmoothLoopPasses(n);
+        smoothLoopSeed_   = -1;
+        smoothLoopVerts_  = null;
+        smoothLoopDragPx_ = 0.0f;
+        return true;
+    }
+
+    // --- Phase-1 declarative dispatch (ADDITIVE, INERT — see
+    // `kTopoPenBindings`'s own doc comment above): delivers one resolved
+    // action at one phase, once Phase 2 wires `onMouseButtonDown`/
+    // `onMouseButtonUp` through `dispatchInput()`. DOWN cases delegate to the
+    // existing `on*Down` methods (unchanged); UP cases delegate to the
+    // extracted `<mode>Up` helpers immediately above (the SAME bodies
+    // `onMouseButtonUp` calls today) — each already guards on its own arm
+    // bool, so a Down that resolved-but-declined (the arm-before-decline gap)
+    // safely no-ops here too. `Remove` has no UP body (it commits on DOWN,
+    // D2) and no arm bool, so its UP case returns `false`, unconsumed — never
+    // add a `removeArmed_` bool (see the plan's Risk 3: it would wrongly
+    // suppress the hover indicator during a held Ctrl+MMB). `Move` never
+    // arrives (this tool does not route `onMouseMotion` through
+    // `dispatchInput` — Move-phase routing is deferred, design §5).
+    override bool onToolAction(ToolAction a, InputPhase p,
+                               ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        final switch (cast(TopoPenAction) a) {
+        case TopoPenAction.LmbPlaceOrMove:
+            if (p == InputPhase.Down) return onPlainLmbDown(e, vts);
+            if (p == InputPhase.Up)   return lmbPlaceOrMoveUp(e, vts);
+            return false;
+        case TopoPenAction.Build:
+            if (p == InputPhase.Down) return onShiftLmbDown(e, vts);
+            if (p == InputPhase.Up)   return buildUp(e, vts);
+            return false;
+        case TopoPenAction.Slide:
+            if (p == InputPhase.Down) return onCtrlLmbDown(e, vts);
+            if (p == InputPhase.Up)   return slideUp(e, vts);
+            return false;
+        case TopoPenAction.Smooth:
+            if (p == InputPhase.Down) return onShiftCtrlLmbDown(e, vts);
+            if (p == InputPhase.Up)   return smoothUp(e, vts);
+            return false;
+        case TopoPenAction.Split:
+            if (p == InputPhase.Down) return onPlainMmbDown(e, vts);
+            if (p == InputPhase.Up)   return splitUp(e, vts);
+            return false;
+        case TopoPenAction.AddLoop:
+            if (p == InputPhase.Down) return onShiftMmbDown(e, vts);
+            if (p == InputPhase.Up)   return addLoopUp(e, vts);
+            return false;
+        case TopoPenAction.Remove:
+            if (p == InputPhase.Down) return onCtrlMmbDown(e, vts);
+            return false;   // Up is a no-op — Remove commits on Down (D2)
+        case TopoPenAction.MoveLoop:
+            if (p == InputPhase.Down) return onMoveLoopRmbDown(e, vts);
+            if (p == InputPhase.Up)   return moveLoopUp(e, vts);
+            return false;
+        case TopoPenAction.DupLoop:
+            if (p == InputPhase.Down) return onDupLoopShiftRmbDown(e, vts);
+            if (p == InputPhase.Up)   return dupLoopUp(e, vts);
+            return false;
+        case TopoPenAction.SmoothLoop:
+            if (p == InputPhase.Down) return onSmoothLoopRmbDown(e, vts);
+            if (p == InputPhase.Up)   return smoothLoopUp(e, vts);
+            return false;
+        }
     }
 
     // Create one isolated vertex at `point` in the PRIMARY layer via the
