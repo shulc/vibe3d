@@ -1499,7 +1499,7 @@ public:
     // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
     // so a future capture can retune it without touching the weight law.
     //
-    // Boundary vertices (measured, capture's Smooth_Setup): a vertex on the
+    // Boundary vertices (measured — the reference's boundary-restriction rule): a vertex on the
     // open boundary (`isOpenVertex`) relaxes using ONLY its open-edge
     // -incident neighbors, not its full 1-ring — a neighbor reached only
     // via a fully-interior (2-face) edge is excluded for such a vertex.
