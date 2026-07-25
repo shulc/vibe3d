@@ -3058,6 +3058,14 @@ void main(string[] args) {
     // wrong wire name.
     auto topoPenAddLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
+    // Topology Pen P7's Slide gesture (task 0477, doc/topopen_p7_slide_plan.md,
+    // REV1): its OWN typed edit factory, distinct from EVERY sibling above —
+    // a constrained-edge slide never adds/removes geometry (Position-only
+    // editScope, same as `topoPenMoveEditFactory`), but reusing that factory
+    // would bake the wrong wire name ("mesh.topoPen_move" on a slide),
+    // corrupting undo history / event-log replay / macros.
+    auto topoPenSlideEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3171,6 +3179,7 @@ void main(string[] args) {
     app.topoPenMoveEditFactory   = topoPenMoveEditFactory;
     app.topoPenRemoveEditFactory = topoPenRemoveEditFactory;
     app.topoPenAddLoopEditFactory = topoPenAddLoopEditFactory;
+    app.topoPenSlideEditFactory   = topoPenSlideEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

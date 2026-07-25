@@ -459,13 +459,19 @@ void registerTools(EditorApp app) {
     // gesture's OWN generic MeshSessionEdit factory
     // (topoPenAddLoopEditFactory, distinct wire name + Geometry|Marks
     // editScope, doc/topopen_p6_addloop_plan.md REV1 — a loop cut must not
-    // bake ANY sibling gesture's wire name either).
+    // bake ANY sibling gesture's wire name either). P7 adds the Ctrl+LMB
+    // Slide gesture's OWN generic MeshSessionEdit factory
+    // (topoPenSlideEditFactory, distinct wire name + Position-only editScope,
+    // doc/topopen_p7_slide_plan.md REV1 — a constrained-edge slide must not
+    // bake ANY sibling gesture's wire name either, incl. Move's, despite
+    // sharing its Position-only scope).
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
-                         topoPenRemoveEditFactory, topoPenAddLoopEditFactory);
+                         topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
+                         topoPenSlideEditFactory);
         return cast(Tool)t;
     };
 

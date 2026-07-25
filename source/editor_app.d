@@ -675,6 +675,12 @@ struct EditorApp {
     // sibling factory above (a loop cut is its own topology op, not a
     // build/move/remove).
     MeshSessionEdit delegate() topoPenAddLoopEditFactory;
+    // Task 0477 (topology-pen P7, doc/topopen_p7_slide_plan.md, REV1): the
+    // Slide gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_slide" — kept distinct from EVERY sibling factory above
+    // (a constrained-edge slide is Position-only, like Move, but must never
+    // bake Move's/any other gesture's wire name onto its own undo entries).
+    MeshSessionEdit delegate() topoPenSlideEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

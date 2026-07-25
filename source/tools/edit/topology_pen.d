@@ -78,6 +78,17 @@ alias TopoPenRemoveFactory = MeshSessionEdit delegate();
 /// the app.d construction site, mirroring `topoPenRemoveEditFactory`.
 alias TopoPenAddLoopFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER SLIDE GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P7, doc/topopen_p7_slide_plan.md) — a
+/// FIFTH dedicated factory, distinct from every sibling above: a
+/// constrained-edge slide is Position-only (like `TopoPenMoveFactory`), but
+/// reusing `moveEditFactory_` would bake the wrong `wireName`
+/// ("mesh.topoPen_move" on a slide — corrupts undo history / event-log
+/// replay / macros). Wired with `wireName="mesh.topoPen_slide"` and
+/// `MeshEditScope.Position` at the app.d construction site, mirroring
+/// `topoPenMoveEditFactory`.
+alias TopoPenSlideFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -104,7 +115,7 @@ private enum GestureSlot {
     ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
     ShiftRmb,      // Shift,      RMB — Duplicate Loop                 (NOT YET IMPLEMENTED)
     ShiftMmb,      // Shift,      MMB — Add Loop — THIS PHASE (P6)
-    CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide             (NOT YET IMPLEMENTED)
+    CtrlLmb,       // Ctrl,       LMB — Slide / Edge Slide — THIS PHASE (P7)
     CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
     CtrlMmb,       // Ctrl,       MMB — Remove — THIS PHASE (P5)
     ShiftCtrlLmb,  // Shift+Ctrl, LMB — Smoothing                      (NOT YET IMPLEMENTED)
@@ -142,11 +153,63 @@ private GestureSlot resolveGestureSlot(ubyte button, SDL_Keymod mods) {
 }
 
 // ---------------------------------------------------------------------------
-// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 + P6 of the
+// TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 of the
 // topology-pen port (factory id `mesh.topoPen`, doc/topopen_p0_plan.md,
 // doc/topopen_p1_plan.md, doc/topopen_p2_plan.md, doc/topopen_p3_plan.md,
 // doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md,
-// doc/topopen_p6_addloop_plan.md).
+// doc/topopen_p6_addloop_plan.md, doc/topopen_p7_slide_plan.md).
+//
+// P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`GestureSlot.CtrlLmb`,
+// doc/topopen_p7_slide_plan.md, V1-scope Option B — EDGE grab): a press
+// picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused verbatim
+// from P6) and arms a constrained slide for each grabbed endpoint that has
+// EXACTLY ONE remaining incident edge (`continuationNeighbor`, over the raw
+// `edgeNeighbors` scan — P3 KILLER-1) — that endpoint slides COLINEARLY
+// along its own remaining edge, `[0,1]`-clamped at the neighbor
+// (`slidePoint`, a pure clamped lerp; `t=1` lands EXACTLY on the neighbor's
+// pre-slide position). An endpoint with zero or 2+ remaining incident edges
+// is HELD FIXED — the reference's `CrossEdges` direction-discriminator never
+// fired in the capture (plan §5); rather than guess which of ≥2 colinear/
+// non-colinear neighbors it would pick, V1 conservatively holds such an
+// endpoint fixed (an under-approximation, never a wrong direction) and
+// defers the extension to a follow-up capture (plan §Follow-up capture).
+// Commit is deferred to release (`onMouseButtonUp`, `commitSlide`) — a
+// direct Position-only kernel write (`m.vertices[i]=pos` +
+// `commitChange(Position)`, mirroring `moveVertexTo`, extended to up to 2
+// vertices), one atomic undo via its OWN dedicated `slideEditFactory_`
+// (wireName "mesh.topoPen_slide" — never `moveEditFactory_`, despite
+// sharing its Position-only scope, or the undo history / event-log replay /
+// macro dispatch would misname this op). Zero topology change, so — unlike
+// P5/P6 — `commitSlide` does NOT call `resyncSession()` (no `faces[]`/
+// `edges[]`/`vertices[]` resize/rebuild for a sibling's cached index to
+// dangle against). REV1 FIX-1 (cross-arm coupling): a private
+// `resetAllGestureArms()` helper now clears EVERY arm group (P3 build, P4
+// Move/Place, P6 Add Loop, P7 Slide) and is called at the TOP of every
+// LEFT-button gesture-DOWN handler (`onPlainLmbDown`/`onShiftLmbDown`/
+// `onCtrlLmbDown`) BEFORE that press (maybe) re-arms exactly one of them —
+// superseding the old per-handler partial resets, which left OTHER arm
+// groups stranded true across a replayed/malformed DOWN-DOWN-UP sequence (a
+// later release would then fire the WRONG committer against stale
+// indices). `resyncSession()` itself is now a one-line call to the same
+// helper. `onCtrlMmbDown`/`onShiftMmbDown` (the MIDDLE-button handlers)
+// deliberately do NOT get this call: unlike the same-physical-button
+// DOWN-DOWN-without-UP hazard the LEFT-button trio can only suffer from a
+// malformed replay, a DIFFERENT button (MIDDLE) genuinely CAN be pressed
+// while LEFT is still legitimately held (a real two-button chord) — an
+// unconditional reset there would cancel an in-progress Move/Build/Slide
+// drag the user still expects to commit on their eventual LEFT release.
+// Their own hazards are already closed by existing mechanisms instead: a
+// same-slot MIDDLE re-press is guarded by Add Loop's own top-of-handler
+// reset, and a cross-arm hazard from a SUCCESSFUL Remove/Add-Loop mutation
+// (which DOES invalidate sibling indices) already goes through
+// `resyncSession()` via their own commit paths. REV1 FIX-2 (min-drag gate):
+// `onMouseButtonUp`'s Slide branch gates on `kMinDragPx` (mirroring P3
+// `:875-877`) using `slideStartX_`/`slideStartY_`, so a Ctrl+LMB
+// click-without-drag is an explicit, no-mutation, no-undo-entry no-op —
+// consistent with every other gesture's click-vs-drag discipline (a
+// stationary slide would already no-op via `commitSlide`'s own eps guard,
+// but the explicit gate keeps the discipline uniform and keeps
+// `slideStartX_`/`slideStartY_` genuinely read).
 //
 // P6 adds ADD LOOP on the **Shift+MMB** overlay slot
 // (`GestureSlot.ShiftMmb`, doc/topopen_p6_addloop_plan.md): a press picks
@@ -356,6 +419,9 @@ private:
     // opponent obj-1) ---
     TopoPenAddLoopFactory addLoopEditFactory_;
 
+    // --- P7 Slide gesture deps (doc/topopen_p7_slide_plan.md, REV1) ---
+    TopoPenSlideFactory slideEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -406,6 +472,27 @@ private:
     Vec3 seedRailA_, seedRailB_;
     float addLoopRatio_ = 0.5f;
 
+    // --- P7 Slide session state (topology_pen.d,
+    // doc/topopen_p7_slide_plan.md, V1-scope Option B). Armed on a Ctrl+LMB
+    // press that lands on a primary-layer edge with at least one slidable
+    // endpoint (`onCtrlLmbDown`); `slideEndA_`/`slideEndB_` are the grabbed
+    // edge's two endpoint vertex indices, `slideNbrA_`/`slideNbrB_` are each
+    // endpoint's OWN unique remaining incident-edge neighbor (`-1` when that
+    // endpoint is held fixed — zero or 2+ remaining neighbors,
+    // `continuationNeighbor`), and `slideTA_`/`slideTB_` are the `[0,1]`
+    // fractions each slidable endpoint tracks along ITS OWN rail
+    // (`x -> neighbor`), recomputed on every subsequent motion event
+    // (`onMouseMotion`) and again at release (`onMouseButtonUp`'s Slide
+    // branch, `commitSlide`). Cleared by `onMouseButtonUp` on commit/no-op
+    // and by `resyncSession` on an external history navigation, exactly
+    // like the P3/P4/P6 arm state above.
+    int   slideSeed_  = -1;
+    bool  slideArmed_ = false;
+    int   slideStartX_, slideStartY_;
+    int   slideEndA_ = -1, slideEndB_ = -1;
+    int   slideNbrA_ = -1, slideNbrB_ = -1;
+    float slideTA_ = 0.0f, slideTB_ = 0.0f;
+
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
@@ -448,17 +535,24 @@ public:
     // `TopoPenRemoveFactory` are structurally identical delegate aliases,
     // so dropping either here would SILENTLY mis-bind that sibling
     // gesture's factory rather than fail to compile.
+    // P7 (doc/topopen_p7_slide_plan.md): 7th param `sf` appended LAST for
+    // the Slide factory, same rationale — `TopoPenSlideFactory` is yet
+    // another structurally identical delegate alias, so it goes after
+    // `alf`, never inserted between existing params (every positional
+    // caller — registration.d — stays byte-unchanged up through `alf`).
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
                         TopoPenRemoveFactory rf = null,
-                        TopoPenAddLoopFactory alf = null) {
+                        TopoPenAddLoopFactory alf = null,
+                        TopoPenSlideFactory sf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
         moveEditFactory_   = mf;
         removeEditFactory_ = rf;
         addLoopEditFactory_ = alf;
+        slideEditFactory_   = sf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -504,6 +598,27 @@ public:
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
             addLoopRatio_ = ratioFromCursor(e.x, e.y, vp);
+            return true;
+        }
+
+        // P7 (doc/topopen_p7_slide_plan.md Phase 2): while a Slide gesture
+        // is armed, recompute each SLIDABLE endpoint's `[0,1]` fraction off
+        // THIS motion event's cursor, per its OWN incident-edge rail — the
+        // only mid-drag feedback, since commit is deferred to release.
+        // Consumes, mirroring the Add Loop branch above. A held-fixed
+        // endpoint (`slideNbrA_`/`slideNbrB_ < 0`) has no rail to project
+        // onto, so its fraction is simply left at 0 (never read by
+        // `commitSlide`/the draw ghost either way).
+        if (slideArmed_) {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            auto m = mesh;
+            if (m !is null) {
+                if (slideNbrA_ >= 0)
+                    slideTA_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndA_], m.vertices[slideNbrA_]);
+                if (slideNbrB_ >= 0)
+                    slideTB_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndB_], m.vertices[slideNbrB_]);
+            }
             return true;
         }
         return false;   // never consumes — placement/build happens on button-up, not motion
@@ -585,17 +700,17 @@ public:
         final switch (resolveGestureSlot(e.button, SDL_GetModState())) {
             case GestureSlot.Lmb:      return onPlainLmbDown(e, vts);
             case GestureSlot.ShiftLmb: return onShiftLmbDown(e, vts);
+            case GestureSlot.CtrlLmb:  return onCtrlLmbDown(e, vts);
             case GestureSlot.CtrlMmb:  return onCtrlMmbDown(e, vts);
             case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
             case GestureSlot.Rmb:
             case GestureSlot.Mmb:
             case GestureSlot.ShiftRmb:
-            case GestureSlot.CtrlLmb:
             case GestureSlot.CtrlRmb:
             case GestureSlot.ShiftCtrlLmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Move+Edge-Loop / Split / Duplicate Loop / Slide /
+                // TODO: Move+Edge-Loop / Split / Duplicate Loop /
                 // the 2 undocumented slots / Smoothing /
                 // Smoothing+Edge-Loop — gesture_map.md table A, slots
                 // 2/3/5/7/8/10/11/12. Not implemented yet.
@@ -603,6 +718,62 @@ public:
             case GestureSlot.None:
                 return false;
         }
+    }
+
+    // REV1 FIX-1 (opponent objection 1, cross-arm coupling — doc/topopen_p7_slide_plan.md
+    // "REV1"): the single source of truth for "clear every gesture's armed
+    // state", called at the TOP of every LEFT-button gesture-DOWN handler
+    // (`onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`) BEFORE that press
+    // (maybe) re-arms exactly one of P3 build / P4 Move-Place / P7 Slide —
+    // and by `resyncSession()` (an external history navigation). The former
+    // per-handler partial resets (the old NIT-2 pattern: each handler only
+    // cleared ITS OWN fields) left every OTHER arm group untouched, so a
+    // replayed/malformed DOWN-DOWN-UP sequence for the LEFT button (two
+    // presses under different modifier states, no intervening UP) could
+    // strand two arm groups simultaneously true; the eventual release would
+    // then fire the FIRST-checked committer (`onMouseButtonUp`'s
+    // `dragArmed_`-before-`placeArmed_`/`moveArmed_`-before-`slideArmed_`
+    // order) against indices captured at a STALE press — a silent
+    // wrong-vertex mutation recorded as a legitimate undo entry. Pure safety
+    // hardening: a real press/hold/release cycle only ever has ONE arm group
+    // true at a time already (gesture identity is pinned at DOWN), so
+    // clearing all of them before re-arming exactly one changes nothing for
+    // legitimate input.
+    //
+    // `onCtrlMmbDown`/`onShiftMmbDown` (the MIDDLE-button handlers)
+    // deliberately do NOT call this: unlike the LEFT-button trio's hazard —
+    // which can only arise from a malformed replay, since real hardware
+    // cannot emit two DOWN events for the SAME physical button without an
+    // intervening UP — a DIFFERENT button (MIDDLE) genuinely CAN be pressed
+    // while LEFT is still legitimately held (a real two-button chord); an
+    // unconditional reset there would silently cancel an in-progress
+    // Move/Build/Slide drag the user still expects to commit on their
+    // eventual LEFT release. Their own hazards are already closed by
+    // existing, narrower mechanisms: a same-slot MIDDLE re-press is guarded
+    // by Add Loop's own top-of-handler reset (`onShiftMmbDown`, below), and
+    // a cross-arm hazard from a SUCCESSFUL Remove/Add-Loop mutation (which
+    // DOES invalidate sibling cached indices, unlike a mere re-press)
+    // already goes through `resyncSession()` via `removeFaceAt`/
+    // `commitAddLoop`'s own commit paths.
+    private void resetAllGestureArms() {
+        // P3 build (doc/topopen_p3_plan.md)
+        sourceVert_     = -1;
+        dragArmed_      = false;
+        classifiedCase_ = BuildCase.None;
+        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        // P4 Move/Place (doc/topopen_p4_plan.md)
+        placeArmed_     = false;
+        moveArmed_      = false;
+        grabbedVert_    = -1;
+        // P6 Add Loop (doc/topopen_p6_addloop_plan.md)
+        addLoopSeed_    = -1;
+        addLoopArmed_   = false;
+        // P7 Slide (doc/topopen_p7_slide_plan.md)
+        slideSeed_   = -1;
+        slideArmed_  = false;
+        slideEndA_ = slideEndB_ = -1;
+        slideNbrA_ = slideNbrB_ = -1;
+        slideTA_ = slideTB_ = 0.0f;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -618,16 +789,14 @@ public:
     // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
     // 1). Always claims the event either way.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Replay-hardening (review NIT-2): a DOWN-DOWN-UP sequence injected by
-        // an event log could otherwise arm BOTH `placeArmed_` (first DOWN)
-        // and `moveArmed_` (second DOWN); since `onMouseButtonUp` checks
-        // Place before Move, a genuine move would then commit as a Place and
-        // strand `moveArmed_`/`grabbedVert_` armed (a spurious ghost on the
-        // next frame). Reset defensively at every fresh press, BEFORE the
-        // disambiguation below re-arms exactly one of them.
-        placeArmed_  = false;
-        moveArmed_   = false;
-        grabbedVert_ = -1;
+        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md): full symmetric close —
+        // clear EVERY arm group (not just this handler's own
+        // `placeArmed_`/`moveArmed_`/`grabbedVert_`, the old NIT-2 partial
+        // reset) before the disambiguation below re-arms exactly one.
+        // Supersedes the old per-handler partial resets; see
+        // `resetAllGestureArms`'s own doc comment for the full hazard this
+        // closes.
+        resetAllGestureArms();
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -653,16 +822,12 @@ public:
     // documented gesture (Duplicate always starts on a pre-highlighted
     // element) — don't consume, matching the dispatch default.
     private bool onShiftLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Replay-hardening (review NIT-2, same latent shape flagged on
-        // `onPlainLmbDown` above): a replayed DOWN-DOWN-UP could otherwise
-        // leave a stale build-arm (`dragArmed_` + its classify-scratch)
-        // stranded across a second press. Reset the build-arm state
-        // defensively at every fresh press, BEFORE it is (maybe) re-armed
-        // below.
-        dragArmed_      = false;
-        sourceVert_     = -1;
-        classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md, same rationale as
+        // `onPlainLmbDown` above): full symmetric close, superseding the old
+        // per-handler partial reset (which only cleared THIS handler's own
+        // `dragArmed_` + classify-scratch, leaving Move/Place/Slide's arm
+        // state untouched).
+        resetAllGestureArms();
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -764,25 +929,115 @@ public:
         b = m.vertices[vb];
     }
 
-    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): re-project the cursor
-    // onto the armed seed rail and recover the scalar `t` the kernel wants
-    // — copied verbatim from `loop_slice_tool.onMouseMotion`'s scrub math
-    // (`screenPointToRay` -> `closestPointOnSegmentToRay` -> re-project onto
-    // the UNCLAMPED `ab` direction), then clamp to `[0,1]` (REV1 point (c):
-    // `closestPointOnSegmentToRay` already clamps its returned POINT to the
-    // segment, so this clamp is a defensive backstop, not the primary
-    // mechanism). Falls back to 0.5 on a degenerate (zero-length) rail.
-    private float ratioFromCursor(int mx, int my, const ref Viewport vp) {
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2), generalized by P7
+    // (doc/topopen_p7_slide_plan.md Phase 2 item 2): re-project the cursor
+    // onto an arbitrary segment `[a,b]` and recover the scalar `t` the
+    // caller wants — copied verbatim from `loop_slice_tool.onMouseMotion`'s
+    // scrub math (`screenPointToRay` -> `closestPointOnSegmentToRay` ->
+    // re-project onto the UNCLAMPED `ab` direction), then clamp to `[0,1]`
+    // (REV1 point (c): `closestPointOnSegmentToRay` already clamps its
+    // returned POINT to the segment, so this clamp is a defensive backstop,
+    // not the primary mechanism). Falls back to 0.5 on a degenerate
+    // (zero-length) segment. The segment used to be hardwired to the armed
+    // Add Loop rail (`seedRailA_`/`seedRailB_`); P7's Slide gesture needs the
+    // SAME projection against each grabbed endpoint's OWN incident-edge
+    // rail, so the segment is now a parameter — `ratioFromCursor` below is
+    // the Add Loop caller's unchanged convenience wrapper.
+    private float ratioOnSegment(int mx, int my, const ref Viewport vp, Vec3 a, Vec3 b) {
         Vec3 origin, dir;
         screenPointToRay(cast(float)mx, cast(float)my, vp, origin, dir);
-        Vec3 hit = closestPointOnSegmentToRay(seedRailA_, seedRailB_, origin, dir);
-        Vec3  ab    = seedRailB_ - seedRailA_;
+        Vec3 hit = closestPointOnSegmentToRay(a, b, origin, dir);
+        Vec3  ab    = b - a;
         float denom = dot(ab, ab);
         if (denom <= 1e-12f) return 0.5f;
-        float t = dot(hit - seedRailA_, ab) / denom;
+        float t = dot(hit - a, ab) / denom;
         if (t < 0.0f) t = 0.0f;
         if (t > 1.0f) t = 1.0f;
         return t;
+    }
+
+    private float ratioFromCursor(int mx, int my, const ref Viewport vp) {
+        return ratioOnSegment(mx, my, vp, seedRailA_, seedRailB_);
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md, kernel-reuse verdict): pure
+    // clamped-lerp helper for the Slide gesture — colinear by construction
+    // (the result always lies on the segment `x -> neighbor`, which IS the
+    // incident-edge line), `t=1` lands EXACTLY on the neighbor's (pre-slide)
+    // position (the measured overshoot clamp), `t=0` leaves `x` untouched.
+    // static + pure so it's directly unit-testable without an app-wired
+    // instance, mirroring `findRingSeedEdge`/`seedRail`'s own
+    // self-contained-helper convention.
+    private static Vec3 slidePoint(Vec3 x, Vec3 neighbor, float t) {
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        return x + (neighbor - x) * t;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md, V1-scope Option B): the endpoint
+    // `x`'s UNIQUE remaining incident edge, once the grabbed edge's OTHER
+    // endpoint `other` is excluded — via the raw `edgeNeighbors` scan (P3
+    // KILLER-1, the only adjacency that sees bare/diagonal edges a
+    // loop-fan helper would miss). Returns `-1` when `x` has zero
+    // (grabbed-edge-only, valence-1) or 2+ (valence>2, the UNMEASURED
+    // `CrossEdges` direction-discriminator — deliberately unhandled, never
+    // guessed, plan §Follow-up capture) remaining neighbors: either way the
+    // endpoint is held FIXED, not slid.
+    private static int continuationNeighbor(Mesh* m, uint x, uint other) {
+        int found = -1, count = 0;
+        foreach (v; m.edgeNeighbors(x)) {
+            if (v == other) continue;
+            ++count;
+            found = cast(int)v;
+        }
+        return (count == 1) ? found : -1;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md), on the Ctrl+LMB "Slide" slot
+    // (V1-scope Option B — EDGE grab, capture-verified §1/§3/§4): a press
+    // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused
+    // verbatim from P6); each endpoint that has EXACTLY ONE remaining
+    // incident edge (after excluding the grabbed edge itself) is slidable
+    // along that edge (`continuationNeighbor`); an endpoint with zero or 2+
+    // remaining incident edges is HELD FIXED (the UNMEASURED `CrossEdges`
+    // direction-discriminator — never guessed, plan §Follow-up capture). If
+    // NEITHER endpoint is slidable, nothing is armed (no documented gesture
+    // to perform) — don't consume, matching every other down-handler's miss
+    // convention. The commit itself is deferred to release
+    // (`onMouseButtonUp`); this only arms + seeds the initial `t` via THIS
+    // press's own cursor, so a stationary click still has a sane (harmless,
+    // near-zero) fraction at commit.
+    private bool onCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // REV1 FIX-1 (doc/topopen_p7_slide_plan.md): full symmetric close —
+        // clear EVERY arm group before (maybe) re-arming Slide, superseding
+        // the old per-handler partial resets. See `resetAllGestureArms`'s
+        // own doc comment for the full hazard this closes.
+        resetAllGestureArms();
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto edgePair = m.edges[seed];
+        int eA = cast(int)edgePair[0], eB = cast(int)edgePair[1];
+        int nA = continuationNeighbor(m, cast(uint)eA, cast(uint)eB);
+        int nB = continuationNeighbor(m, cast(uint)eB, cast(uint)eA);
+        if (nA < 0 && nB < 0) return false;   // neither endpoint slidable -> nothing to do
+
+        slideSeed_   = seed;
+        slideArmed_  = true;
+        slideStartX_ = e.x;
+        slideStartY_ = e.y;
+        slideEndA_   = eA;
+        slideEndB_   = eB;
+        slideNbrA_   = nA;
+        slideNbrB_   = nB;
+        slideTA_ = (nA >= 0) ? ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]) : 0.0f;
+        slideTB_ = (nB >= 0) ? ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]) : 0.0f;
+        return true;
     }
 
     // P6 (doc/topopen_p6_addloop_plan.md Phase 3), on the Shift+MMB "Add
@@ -848,6 +1103,48 @@ public:
         }
 
         if (e.button != SDL_BUTTON_LEFT) return false;
+
+        // --- P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed
+        // Slide gesture at the RELEASE event's own cursor-derived per-rail
+        // fraction. Mutually exclusive with drag-build/Place/Move (at most
+        // one of `dragArmed_`/`placeArmed_`/`moveArmed_`/`slideArmed_` is
+        // ever true at once — `resetAllGestureArms()` enforces this at
+        // every fresh press).
+        if (slideArmed_) {
+            uint seed   = cast(uint)slideSeed_;
+            int  eA     = slideEndA_, eB = slideEndB_;
+            int  nA     = slideNbrA_, nB = slideNbrB_;
+            int  startX = slideStartX_, startY = slideStartY_;
+
+            slideSeed_  = -1;
+            slideArmed_ = false;
+            slideEndA_ = slideEndB_ = -1;
+            slideNbrA_ = slideNbrB_ = -1;
+
+            // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at
+            // (near enough) the press pixel is a click without a real drag —
+            // an explicit, clean no-op (no vertex write, no undo entry),
+            // mirroring P3's own `kMinDragPx` guard immediately below. (A
+            // zero-drag slide would already no-op via `commitSlide`'s own
+            // eps guard, since `t≈0` -> `slidePoint` returns the original
+            // position — this gate just keeps the click-vs-drag discipline
+            // uniform across every gesture, and keeps `slideStartX_`/
+            // `slideStartY_` genuinely read.)
+            enum int kMinDragPx = 3;
+            int dx = e.x - startX, dy = e.y - startY;
+            if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            auto m = mesh;
+            float tA = 0.0f, tB = 0.0f;
+            if (m !is null) {
+                if (nA >= 0) tA = ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]);
+                if (nB >= 0) tB = ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]);
+            }
+            commitSlide(seed, eA, eB, nA, nB, tA, tB);
+            return true;
+        }
 
         // --- P3: commits the armed drag-build, if any, at the RELEASE
         // event's own CONS-snapped hit. A release with no real motion since
@@ -985,6 +1282,60 @@ public:
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
         refreshDisplay(m, gpu_, vc_, ec_, fc_);
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
+    // gesture — writes AT MOST 2 vertex positions (the grabbed edge's own
+    // endpoints; a HELD-FIXED endpoint, `nA`/`nB == -1`, keeps its CURRENT
+    // position). Position-only, direct kernel mutation
+    // (`m.vertices[i] = pos` + `commitChange(Position)`), bracketed in ONE
+    // before/after `MeshSnapshot` pair recorded through the DEDICATED
+    // `slideEditFactory_` (wireName "mesh.topoPen_slide") — mirrors
+    // `moveVertexTo`'s shape, extended to up to 2 vertices. `seed` is a
+    // defensive cross-check (the grabbed edge must still connect `eA`/`eB`
+    // — guards against a stale/corrupted arm rather than trusting the
+    // caller's indices blindly); the eps no-op guard mirrors
+    // `moveVertexTo`'s. Zero topology change — never resizes/rebuilds
+    // `faces[]`/`edges[]`/`vertices[]` (no `buildLoops`, no
+    // `deleteFacesByMask`, no `insertEdgeLoops`) — so unlike P5/P6 this does
+    // NOT call `resyncSession()` (plan §Risks: no sibling gesture's cached
+    // INDEX can dangle from a pure position write).
+    private void commitSlide(uint seed, int eA, int eB, int nA, int nB, float tA, float tB) {
+        if (meshSrc_ is null || history_ is null || slideEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+        if (eA < 0 || eA >= cast(int)m.vertices.length) return;
+        if (eB < 0 || eB >= cast(int)m.vertices.length) return;
+        if (nA >= cast(int)m.vertices.length) return;
+        if (nB >= cast(int)m.vertices.length) return;
+        if (seed >= m.edges.length) return;
+        auto ep = m.edges[seed];
+        bool edgeMatches = (ep[0] == eA && ep[1] == eB) || (ep[0] == eB && ep[1] == eA);
+        if (!edgeMatches) return;   // stale/corrupted arm — defensive, should not happen
+
+        Vec3 origA = m.vertices[eA];
+        Vec3 origB = m.vertices[eB];
+        Vec3 pA = (nA >= 0) ? slidePoint(origA, m.vertices[nA], tA) : origA;
+        Vec3 pB = (nB >= 0) ? slidePoint(origB, m.vertices[nB], tB) : origB;
+
+        enum float kSlideEps = 1e-4f;   // mirrors moveVertexTo's stationary-grab guard
+        if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+        m.vertices[eA] = pA;
+        m.vertices[eB] = pB;
+        m.commitChange(MeshEditScope.Position);
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+
+        auto cmd = slideEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Slide");
+        history_.record(cmd);
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Risks.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
     // P3 (doc/topopen_p3_plan.md): fire the classified build (EDGE/TRI/QUAD)
@@ -1193,17 +1544,14 @@ public:
     // could equally delete a grabbed vertex out from under an armed Move.
     // P6 (doc/topopen_p6_addloop_plan.md Risk "stale armed state"): also
     // clears the Add Loop arm — a history nav between MMB-down and MMB-up
-    // could otherwise commit against a dangling seed edge index.
+    // could otherwise commit against a dangling seed edge index. P7
+    // (doc/topopen_p7_slide_plan.md Phase 3 item 3): also clears the Slide
+    // arm, same rationale. REV1 FIX-1: the actual clearing logic now lives
+    // in `resetAllGestureArms()` — the single source of truth ALSO called
+    // at the top of every LEFT-button gesture-DOWN handler — so this method
+    // is just that helper's "external history navigation" entry point.
     override void resyncSession() {
-        sourceVert_     = -1;
-        dragArmed_      = false;
-        classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
-        placeArmed_     = false;
-        moveArmed_      = false;
-        grabbedVert_    = -1;
-        addLoopSeed_    = -1;
-        addLoopArmed_   = false;
+        resetAllGestureArms();
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp,
@@ -1234,6 +1582,48 @@ public:
                 ImVec2 mk;
                 if (projectPt(markerPos, vp, mk))
                     dl.AddCircleFilled(mk, 5.0f, loopCol, 16);
+            }
+        }
+
+        // P7 (doc/topopen_p7_slide_plan.md Phase 4): the Slide ghost is
+        // likewise independent of `lastHit_`/CONS (Slide never touches the
+        // background constraint — pure current-layer edge-line constrained
+        // move), so it too is drawn BEFORE the `lastHit_.hit` early-return,
+        // mirroring the Add Loop ghost above. Purely re-reads already-armed
+        // state (`slideEndA_`/`slideEndB_`/`slideNbrA_`/`slideNbrB_`/
+        // `slideTA_`/`slideTB_`) — no mesh mutation, no raycast. A
+        // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) draws at its
+        // CURRENT (unmoved) position, same as `commitSlide` would leave it.
+        if (slideArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null
+             && slideEndA_ >= 0 && slideEndA_ < cast(int)m.vertices.length
+             && slideEndB_ >= 0 && slideEndB_ < cast(int)m.vertices.length) {
+                enum uint slideCol     = IM_COL32(120, 200, 255, 220);   // slide cyan-blue
+                enum uint slideRailCol = IM_COL32(120, 200, 255, 90);    // faint rail
+
+                Vec3 pA = (slideNbrA_ >= 0 && slideNbrA_ < cast(int)m.vertices.length)
+                    ? slidePoint(m.vertices[slideEndA_], m.vertices[slideNbrA_], slideTA_)
+                    : m.vertices[slideEndA_];
+                Vec3 pB = (slideNbrB_ >= 0 && slideNbrB_ < cast(int)m.vertices.length)
+                    ? slidePoint(m.vertices[slideEndB_], m.vertices[slideNbrB_], slideTB_)
+                    : m.vertices[slideEndB_];
+
+                ImVec2 pa, pb;
+                if (projectPt(pA, vp, pa) && projectPt(pB, vp, pb)) {
+                    dl.AddLine(pa, pb, slideCol, 2.5f);
+                    dl.AddCircleFilled(pa, 4.0f, slideCol, 16);
+                    dl.AddCircleFilled(pb, 4.0f, slideCol, 16);
+                }
+
+                void faintRail(int end, int nbr) {
+                    if (nbr < 0 || nbr >= cast(int)m.vertices.length) return;
+                    ImVec2 ra, rb;
+                    if (projectPt(m.vertices[end], vp, ra) && projectPt(m.vertices[nbr], vp, rb))
+                        dl.AddLine(ra, rb, slideRailCol, 1.0f);
+                }
+                faintRail(slideEndA_, slideNbrA_);
+                faintRail(slideEndB_, slideNbrB_);
             }
         }
 
@@ -1395,6 +1785,14 @@ public:
         root["addLoopArmed"] = JSONValue(addLoopArmed_);
         root["addLoopSeed"]  = JSONValue(addLoopSeed_);
         root["addLoopRatio"] = JSONValue(cast(double)addLoopRatio_);
+
+        // P7 (doc/topopen_p7_slide_plan.md Phase 4): the armed Slide
+        // gesture's state, for Tier-C tests to assert the picked seed edge
+        // and tracked per-endpoint fractions without driving a full release.
+        root["slideArmed"] = JSONValue(slideArmed_);
+        root["slideSeed"]  = JSONValue(slideSeed_);
+        root["slideTA"]    = JSONValue(cast(double)slideTA_);
+        root["slideTB"]    = JSONValue(cast(double)slideTB_);
 
         return root;
     }
@@ -1897,4 +2295,408 @@ unittest {
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "undo must restore the exact pre-cut state");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — Ctrl+LMB dispatch guard (P7, doc/topopen_p7_slide_plan.md
+// "Testing Strategy", Tier-A): the same pure, camera-free regression guard
+// shape as the P5/P6 dispatch pins above — a bad merge that silently
+// reverted the `CtrlLmb` dispatch case would be caught by `dub test`, not
+// just by best-effort Tier-C.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_LEFT, KMOD_CTRL) == GestureSlot.CtrlLmb,
+        "Ctrl+LMB must resolve to the Slide gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// continuationNeighbor — T6 (P7, doc/topopen_p7_slide_plan.md §Testing):
+// pure adjacency-counting tests, independent of `commitSlide`/the down
+// -handler. Valence-2 (one remaining edge) -> the unique neighbor;
+// valence-1 (grabbed-edge-only) -> -1; valence-3 (two remaining edges,
+// regardless of whether they happen to be colinear — `continuationNeighbor`
+// only COUNTS, it never inspects direction) -> -1, the deferred/held-fixed
+// case (plan §Follow-up capture — never guessed).
+// ---------------------------------------------------------------------------
+unittest {
+    // Chain D-A-B: A's remaining neighbor (excluding B) is D.
+    {
+        Mesh m;
+        uint d = m.addVertex(Vec3(-2, 0, 0));
+        uint a = m.addVertex(Vec3(0, 0, 0));
+        uint b = m.addVertex(Vec3(2, 0, 0));
+        m.addEdge(d, a);
+        m.addEdge(a, b);
+        assert(TopologyPenTool.continuationNeighbor(&m, a, b) == cast(int)d,
+            "valence-2 endpoint must report its unique remaining neighbor");
+    }
+    // Bare edge A-B only: A has NO remaining edge once B is excluded.
+    {
+        Mesh m;
+        uint a = m.addVertex(Vec3(0, 0, 0));
+        uint b = m.addVertex(Vec3(2, 0, 0));
+        m.addEdge(a, b);
+        assert(TopologyPenTool.continuationNeighbor(&m, a, b) == -1,
+            "valence-1 (grabbed-edge-only) endpoint must report -1 (held fixed)");
+    }
+    // A connects to B (grabbed), plus TWO others (E, F): 2 remaining edges.
+    {
+        Mesh m;
+        uint a = m.addVertex(Vec3(0, 0, 0));
+        uint b = m.addVertex(Vec3(2, 0, 0));
+        uint e = m.addVertex(Vec3(0, 2, 0));
+        uint f = m.addVertex(Vec3(0, 0, 2));
+        m.addEdge(a, b);
+        m.addEdge(a, e);
+        m.addEdge(a, f);
+        assert(TopologyPenTool.continuationNeighbor(&m, a, b) == -1,
+            "valence>2 (2+ remaining edges) endpoint must report -1 (deferred, held fixed — "
+          ~ "never guessed among ambiguous candidates)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T1 (P7, doc/topopen_p7_slide_plan.md §Testing, "colinear @
+// fraction (two-sided)"): a rig where the grabbed edge A-B has A also on
+// edge A-D and B also on edge B-E (both valence-2, DIFFERENT rail
+// directions) — each endpoint must land at its OWN independently-computed
+// clamped-lerp position along ITS OWN incident edge, regardless of the
+// other endpoint's rail. Driven directly (private, same-module access);
+// `gpu_` stays null so the guarded display tail never runs under bare
+// `dub test`, mirroring every other Tier-B unittest in this file.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    Vec3 a0 = Vec3(0, 0, 0),  d0 = Vec3(-2, 0, 0);
+    Vec3 b0 = Vec3(2, 0, 0),  e0 = Vec3(5, 3, 0);
+    uint a = m.addVertex(a0);
+    uint d = m.addVertex(d0);
+    uint b = m.addVertex(b0);
+    uint e = m.addVertex(e0);
+    m.addEdge(a, d);
+    m.addEdge(a, b);
+    m.addEdge(b, e);
+    uint seed = m.edgeIndex(a, b);
+    assert(seed != uint.max, "setup: the grabbed edge A-B must exist");
+
+    assert(TopologyPenTool.continuationNeighbor(&m, a, b) == cast(int)d);
+    assert(TopologyPenTool.continuationNeighbor(&m, b, a) == cast(int)e);
+
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, cast(int)e, 0.4f, 0.7f);
+
+    Vec3 expectedA = a0 + (d0 - a0) * 0.4f;
+    Vec3 expectedB = b0 + (e0 - b0) * 0.7f;
+    assert((m.vertices[a] - expectedA).length < 1e-5f,
+        "A must slide EXACTLY 0.4 of the way toward D along A's own incident edge");
+    assert((m.vertices[b] - expectedB).length < 1e-5f,
+        "B must slide EXACTLY 0.7 of the way toward E along B's own incident edge, "
+      ~ "independent of A's own rail/fraction");
+    assert(history.canUndo(), "a real slide must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T2 (P7, doc/topopen_p7_slide_plan.md §Testing,
+// "clamp-at-neighbor"): an overshoot fraction (t > 1, already clamped to 1.0
+// by `slidePoint`) must land the endpoint EXACTLY at the neighbor's
+// pre-slide position — the captured overshoot clamp (plan §1/§3).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    Vec3 a0 = Vec3(0, 0, 0), d0 = Vec3(-3, 1, 0);
+    uint a = m.addVertex(a0);
+    uint d = m.addVertex(d0);
+    uint b = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(a, d);
+    m.addEdge(a, b);
+    uint seed = m.edgeIndex(a, b);
+
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 5.0f, 0.0f);
+
+    assert((m.vertices[a] - d0).length < 1e-5f,
+        "an overshoot fraction must clamp EXACTLY to the neighbor's pre-slide position");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T3 (P7, doc/topopen_p7_slide_plan.md §Testing, "topology
+// delta = 0"): a real slide must never change vertex/edge/face COUNTS —
+// position-only, zero topology mutation.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(0, 0, 0));
+    uint d = m.addVertex(Vec3(-2, 0, 0));
+    uint b = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(a, d);
+    m.addEdge(a, b);
+    uint seed = m.edgeIndex(a, b);
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.0f);
+
+    assert(m.vertices.length == vBefore, "Slide must never add/remove vertices");
+    assert(m.edges.length == eBefore, "Slide must never add/remove edges");
+    assert(m.faces.length == fBefore, "Slide must never add/remove faces");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T4 (P7, doc/topopen_p7_slide_plan.md §Testing,
+// "slide-then-undo"): a real slide must undo back to the exact pre-slide
+// state.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(0, 0, 0));
+    uint d = m.addVertex(Vec3(-2, 0, 0));
+    uint b = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(a, d);
+    m.addEdge(a, b);
+    uint seed = m.edgeIndex(a, b);
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.0f);
+    assert(history.canUndo(), "a real slide must be undoable");
+    history.undo();
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "undo must restore the exact pre-slide state");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T5a (P7, doc/topopen_p7_slide_plan.md §Testing, "held-fixed
+// endpoint"): B is valence-1 (only the grabbed edge A-B) -> nB=-1 -> B must
+// stay UNTOUCHED while A (valence-2, via A-D) slides normally.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    Vec3 a0 = Vec3(0, 0, 0), d0 = Vec3(-2, 0, 0), b0 = Vec3(2, 0, 0);
+    uint a = m.addVertex(a0);
+    uint d = m.addVertex(d0);
+    uint b = m.addVertex(b0);
+    m.addEdge(a, d);
+    m.addEdge(a, b);   // B's ONLY edge -> valence-1 once A-B itself is grabbed
+    uint seed = m.edgeIndex(a, b);
+
+    assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1,
+        "setup: B must have no remaining incident edge once A-B is excluded");
+
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.5f);
+
+    Vec3 expectedA = a0 + (d0 - a0) * 0.5f;
+    assert((m.vertices[a] - expectedA).length < 1e-5f, "A (slidable) must slide normally");
+    assert((m.vertices[b] - b0).length < 1e-6f,
+        "B (valence-1, held fixed) must NOT move, regardless of the tB argument");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T5b MIXED VALENCE (P7, doc/topopen_p7_slide_plan.md
+// §Testing "held-fixed endpoint" + the mixed-valence requirement): B has
+// TWO remaining incident edges after excluding the grabbed edge A-B
+// (valence-3 overall) -> nB=-1 -> HELD FIXED, while A (valence-2) slides
+// normally in the SAME gesture. Distinct from T5a (which uses a valence-1
+// B) — this is the genuinely ambiguous ≥2-remaining case the plan's V1
+// scope defers rather than guesses (plan §Follow-up capture).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    Vec3 a0 = Vec3(0, 0, 0), d0 = Vec3(-2, 0, 0), b0 = Vec3(2, 0, 0);
+    uint a = m.addVertex(a0);
+    uint d = m.addVertex(d0);
+    uint b = m.addVertex(b0);
+    uint g = m.addVertex(Vec3(2, 2, 0));   // B's 2nd extra neighbor
+    uint h = m.addVertex(Vec3(2, 0, 2));   // B's 3rd extra neighbor
+    m.addEdge(a, d);
+    m.addEdge(a, b);   // the edge to be grabbed
+    m.addEdge(b, g);
+    m.addEdge(b, h);   // B now has 3 total incident edges (valence-3)
+    uint seed = m.edgeIndex(a, b);
+
+    assert(TopologyPenTool.continuationNeighbor(&m, a, b) == cast(int)d,
+        "setup: A must remain the unambiguous valence-2 endpoint");
+    assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1,
+        "setup: B must have 2 remaining incident edges (valence>2) -> deferred/held-fixed");
+
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.6f, 0.9f);
+
+    Vec3 expectedA = a0 + (d0 - a0) * 0.6f;
+    assert((m.vertices[a] - expectedA).length < 1e-5f,
+        "the valence-2 endpoint (A) must slide normally");
+    assert((m.vertices[b] - b0).length < 1e-6f,
+        "the valence>2 endpoint (B) must be HELD FIXED — never guessed among its "
+      ~ "2 remaining incident edges");
+    assert(history.canUndo(), "a mixed-valence slide (one endpoint moves) must still be undoable");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — T5c (P7, doc/topopen_p7_slide_plan.md §Testing): BOTH
+// endpoints held fixed (an isolated grabbed edge, neither end has any other
+// incident edge) must be a byte-identical no-op — no mutation, no undo
+// entry.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(0, 0, 0));
+    uint b = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(a, b);   // isolated bare edge -> both endpoints valence-1
+    uint seed = m.edgeIndex(a, b);
+
+    assert(TopologyPenTool.continuationNeighbor(&m, a, b) == -1);
+    assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1);
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitSlide(seed, cast(int)a, cast(int)b, -1, -1, 0.5f, 0.5f);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices, "both-fixed slide must not move any vertex");
+    assert(!history.canUndo(), "both-fixed slide must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonUp — MIN-DRAG (P7 REV1 FIX-2, doc/topopen_p7_slide_plan.md):
+// a Ctrl+LMB release within `kMinDragPx` of the press pixel is a clean
+// no-op — no vertex write, no undo entry — driven through the REAL
+// `onMouseButtonUp` path (arming state set up directly, mirroring
+// `onCtrlLmbDown`'s post-classification result, rather than driving a full
+// screen-space press) so the min-drag GATE ITSELF is under test, not just
+// `commitSlide`'s own (also-present) eps guard. `gpu_` stays null and the
+// release event carries no `SubjectPacket`, so this never reaches
+// `refreshDisplay` — safe under bare `dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import operator : VectorStack;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(0, 0, 0));
+    uint d = m.addVertex(Vec3(-2, 0, 0));
+    uint b = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(a, d);
+    m.addEdge(a, b);
+    uint seed = m.edgeIndex(a, b);
+
+    // Arm directly — mirrors `onCtrlLmbDown`'s post-classification state —
+    // rather than driving the full down-handler (which needs a live
+    // screen-space `findRingSeedEdge` pick); this test targets the
+    // RELEASE-side min-drag gate specifically.
+    t.slideSeed_   = cast(int)seed;
+    t.slideArmed_  = true;
+    t.slideStartX_ = 50;
+    t.slideStartY_ = 50;
+    t.slideEndA_   = cast(int)a;
+    t.slideEndB_   = cast(int)b;
+    t.slideNbrA_   = cast(int)d;
+    t.slideNbrB_   = -1;
+    t.slideTA_     = 0.5f;
+    t.slideTB_     = 0.0f;
+
+    auto before = MeshSnapshot.capture(m);
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+    e.x = 51;
+    e.y = 50;   // 1px away — well inside kMinDragPx
+    VectorStack vts;
+    bool consumed = t.onMouseButtonUp(e, vts);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(consumed, "a click-without-drag release must still consume the event");
+    assert(!t.slideArmed_, "release must disarm Slide regardless of the min-drag gate");
+    assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
+    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
 }
