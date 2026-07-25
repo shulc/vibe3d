@@ -7,7 +7,8 @@ import std.math : hypot, SQRT2;
 import tool;
 import mesh                : Mesh, GpuMesh;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
-                             screenPointToRay, closestPointOnSegmentToRay, dot;
+                             screenPointToRay, closestPointOnSegmentToRay, dot,
+                             pointInPolygon2D;
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
@@ -25,7 +26,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import change_bus            : MeshEditScope;
-import params                : Param;
+import params                : Param, IntEnumEntry;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
@@ -151,6 +152,19 @@ alias TopoPenDupLoopFactory = MeshSessionEdit delegate();
 /// `topoPenMoveLoopEditFactory`.
 alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER FILL GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (Fill mode V1, task 0477 continuation,
+/// doc/topopen_fill_plan.md) — an ELEVENTH dedicated factory, distinct from
+/// every sibling above: capping a gap cell with one quad IS a topology
+/// change (new face, and for a notch a new mouth edge too — Geometry
+/// scope, like `TopoPenSplitFactory`/`TopoPenRemoveFactory`), so reusing
+/// any sibling factory would bake the wrong wire name ("mesh.topoPen_split"/
+/// "mesh.topoPen_remove" on a fill — corrupts undo history / event-log
+/// replay / macros) onto its own atomic undo entry. Wired with
+/// `wireName="mesh.topoPen_fill"` and `MeshEditScope.Geometry` at the
+/// app.d construction site, mirroring `topoPenSplitEditFactory`.
+alias TopoPenFillFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -158,6 +172,15 @@ alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 /// ceiling (a hub already embedded in a quad classifies degree-2/non
 /// -triangle-hub, which is exactly `None`).
 private enum BuildCase { None, Edge, Tri, Quad }
+
+/// Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
+/// REV 2, owner decision 1): the two values a plain-LMB click can dispatch
+/// to. `Draw` (default) is today's existing place-on-empty/grab-move
+/// behavior, byte-unchanged; `Fill` reroutes plain-LMB to
+/// `findFillCell`/`commitFill` (Phase 4). A tool-wide dropdown, not a
+/// per-gesture arm — mirrors `splitAtMiddle_`'s sticky-option precedent
+/// (must survive `resyncSession()`, an external history navigation).
+private enum PenMode { Draw, Fill }
 
 // ---------------------------------------------------------------------------
 // TopoPenAction / kTopoPenBindings — the declarative (button, modifier) ->
@@ -561,6 +584,9 @@ private:
     // --- P12 Smooth+Loop gesture deps (doc/topopen_p12_smoothloop_plan.md) ---
     TopoPenSmoothLoopFactory smoothLoopEditFactory_;
 
+    // --- Fill mode deps (task 0477 continuation, doc/topopen_fill_plan.md) ---
+    TopoPenFillFactory fillEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -678,6 +704,21 @@ private:
     // set before `activate()`/arm-reset and must not be clobbered by
     // either). Read live at commit time by `splitUp` (never cached).
     bool splitAtMiddle_    = false;
+
+    // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
+    // Phase 1): the wire-tag table backing `PenMode`'s `Param.intEnum_` —
+    // mirrors `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. A
+    // STICKY tool-wide mode toggle, NOT per-gesture arm state — like
+    // `splitAtMiddle_` above, deliberately absent from
+    // `resetAllGestureArms()`/`resyncSession()` (a mode switch must survive
+    // an external history navigation) and read live by dispatch
+    // (`onPlainLmbDown`) / the motion-time preview compute
+    // (`onMouseMotion`), never cached.
+    private static immutable IntEnumEntry[2] penModeTable = [
+        IntEnumEntry(cast(int)PenMode.Draw, "draw", "Draw"),
+        IntEnumEntry(cast(int)PenMode.Fill, "fill", "Fill"),
+    ];
+    PenMode penMode_ = PenMode.Draw;   // default = today's plain-LMB place/move, unchanged
 
     // --- P10 Move Loop session state (topology_pen.d,
     // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
@@ -827,6 +868,19 @@ private:
     bool hoverBoundary_     = false;
     int  hoverBoundaryFace_ = -1;
 
+    // Fill mode hover preview (task 0477 continuation,
+    // doc/topopen_fill_plan.md Phase 5): the ONE candidate gap-cell's 4
+    // corner verts (any rotation) under the cursor, or `null` when the mode
+    // isn't Fill / no cell is under the cursor / a gesture is armed. A
+    // passive display cache — like `hoverNearestVert_` above — NOT part of
+    // `resetAllGestureArms()`/`anyGestureArmed()`. Computed unconditionally
+    // in `onMouseMotion`'s not-armed branch (its own sibling gate, NOT
+    // nested inside the `hoverOverMesh_` block above — see the plan's
+    // mandatory opponent fix #2: `hoverOverMesh_` requires a pick within
+    // `kTopoPenSnapPx`, which is false when hovering the CENTER of an empty
+    // gap cell, exactly the defining Fill-mode case).
+    uint[] fillCell_;
+
     // Visual constants (Pinned Decision 4): a steel-blue palette
     // DELIBERATELY distinct from both the P1 bg-cage bright-cyan
     // `IM_COL32(0,220,255,…)` (`markerCol`/cyan, `draw()` below) and the
@@ -840,6 +894,13 @@ private:
     private enum uint  kHoverHatchCol         = IM_COL32(40, 40, 40, 150);
     private enum float kHoverHatchSpacingPx   = 7.0f;
     private enum float kHoverHatchWidthPx     = 1.0f;
+
+    // Fill-mode candidate-cell preview colour (task 0477 continuation,
+    // doc/topopen_fill_plan.md Phase 5): a green DELIBERATELY distinct from
+    // the steel-blue `kHoverElemCol` above and the pen-orange `markerCol`
+    // (`draw()` below) — a third, unambiguous hue for "this cell would be
+    // capped".
+    private enum uint  kFillPreviewCol         = IM_COL32(120, 210, 120, 230);
 
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
@@ -929,6 +990,15 @@ public:
     // `spf`/`mlf`/`dlf` MUST stay in their existing positions — every
     // existing positional caller (registration.d) stays byte-unchanged
     // through `dlf`.
+    // Fill mode (task 0477 continuation, doc/topopen_fill_plan.md): 13th
+    // positional param `flf` appended LAST (after `slf`) for the Fill
+    // factory — same rationale as every prior addition: `TopoPenFillFactory`
+    // is yet another structurally identical delegate alias, so inserting it
+    // anywhere but the tail would silently mis-bind a sibling gesture's
+    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
+    // `spf`/`mlf`/`dlf`/`slf` MUST stay in their existing positions — every
+    // existing positional caller (registration.d) stays byte-unchanged
+    // through `slf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
@@ -939,7 +1009,8 @@ public:
                         TopoPenSplitFactory spf = null,
                         TopoPenMoveLoopFactory mlf = null,
                         TopoPenDupLoopFactory dlf = null,
-                        TopoPenSmoothLoopFactory slf = null) {
+                        TopoPenSmoothLoopFactory slf = null,
+                        TopoPenFillFactory flf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -952,6 +1023,7 @@ public:
         moveLoopEditFactory_ = mlf;
         dupLoopEditFactory_  = dlf;
         smoothLoopEditFactory_ = slf;
+        fillEditFactory_     = flf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -963,9 +1035,19 @@ public:
     // "splitMiddle" MUST match that form's `control:` string exactly — the
     // boot-time `validateForms` strict-checks every form attr against this
     // list and fails loud on a typo.
+    //
+    // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
+    // Phase 1, MANDATORY opponent fix #1): the `mode` IntEnum Param is
+    // APPENDED to this array — never a full-replace, which would drop
+    // `splitMiddle` and fail boot-time `validateForms` against its existing
+    // yaml row. "mode" MUST match `config/forms/topology_pen.yaml`'s new
+    // dropdown row's `control:` string exactly, same contract as
+    // `splitMiddle` above.
     override Param[] params() {
         return [
             Param.bool_("splitMiddle", "Split at the Middle", &splitAtMiddle_, false),
+            Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
+                           cast(int)PenMode.Draw),
         ];
     }
 
@@ -1016,6 +1098,7 @@ public:
         // handler already returns `false` at the tail when idle).
         if (anyGestureArmed()) {
             hoverOverMesh_ = false;   // gesture ghosts take precedence
+            fillCell_      = null;   // Fill mode continuation: same precedence rule
         } else {
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -1029,6 +1112,16 @@ public:
                 hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
                 hoverBoundary_    = false;
             }
+
+            // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
+            // Phase 5, MANDATORY opponent fix #2): computed UNCONDITIONALLY
+            // here — NOT nested inside `if (hoverOverMesh_)` above — because
+            // `hoverOverMesh_` requires a pick within `kTopoPenSnapPx`,
+            // which is FALSE when hovering the CENTER of an empty gap cell:
+            // exactly the defining Fill-mode case (no vertex/edge/face is
+            // anywhere near the cursor). Nesting it in that block would
+            // make the preview never render for that scenario.
+            fillCell_ = (penMode_ == PenMode.Fill) ? findFillCell(e.x, e.y, vp) : null;
         }
 
         // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
@@ -1304,6 +1397,106 @@ public:
         return -1;
     }
 
+    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md Phase
+    // 3): pure, GL-free detection of the ONE quad gap-cell under the
+    // cursor — reconstructed from BORDER-edge adjacency, never a
+    // whole-boundary-loop trace (owner decision 2: "one cell per click").
+    // Returns the 4 corner verts (any rotation — `commitFill`'s
+    // `makePolygonFromVerts(autoOrient:true)` fixes winding), or `null`
+    // when no gap cell contains the cursor (over a solid face, empty area,
+    // or every candidate quad misses).
+    //
+    // Algorithm:
+    //   1. Scan every border edge (`isEdgeBorder`, n==1 EXACTLY) once,
+    //      building a border-vertex adjacency map — each border vert's
+    //      OTHER border-edge neighbour(s).
+    //   2. For every border edge E=(a,b): for every border-neighbour a' of
+    //      a (a' != b) and every border-neighbour b' of b (b' != a), form
+    //      the candidate quad cycle [a', a, b, b'] (three consecutive cell
+    //      sides a'->a->b->b'; the fourth side b'->a' closes it — for a
+    //      notch that fourth side is the absent mouth). Skip unless all 4
+    //      verts are distinct. Seeding from BORDER edges guarantees the
+    //      candidate lies on the face-FREE side of E (E's one incident
+    //      face sits on the OTHER side), so a candidate can never coincide
+    //      with an existing face — `commitFill` still self-guards via
+    //      `makePolygonFromVerts`'s own `-1` reject regardless.
+    //   3. Project all 4 verts (skip a candidate with any vertex behind
+    //      the camera) and even-odd point-in-polygon test against
+    //      (mx,my) — winding-agnostic.
+    //   4. Pick the SMALLEST-screen-area candidate that contains the
+    //      cursor — the load-bearing tiebreak that implements "nearest
+    //      cell to the cursor": for a 2-cell gap/notch the tight true cell
+    //      beats every bogus cross-cell quad on area, and it rejects the
+    //      outer perimeter (a perimeter-seeded candidate is huge or does
+    //      not contain an interior cursor).
+    //
+    // Known V1 limitation (vibe3d-divergence, not a blocker — owner
+    // pinned the behavior): highly irregular / non-planar hole boundaries
+    // could in principle let a bogus candidate be both smaller AND
+    // cursor-containing than the true cell. Grid-like retopo meshes (this
+    // tool's domain) are robust to this.
+    private uint[] findFillCell(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null) return null;
+        auto m = mesh;
+        if (m is null) return null;
+
+        uint[][uint] borderNbrs;
+        foreach (ei; 0 .. m.edges.length) {
+            if (!m.isEdgeBorder(cast(uint)ei)) continue;
+            auto e = m.edges[ei];
+            uint a = e[0], b = e[1];
+            borderNbrs[a] ~= b;
+            borderNbrs[b] ~= a;
+        }
+
+        uint[] bestCell;
+        float  bestArea = float.infinity;
+
+        foreach (ei; 0 .. m.edges.length) {
+            if (!m.isEdgeBorder(cast(uint)ei)) continue;
+            auto e = m.edges[ei];
+            uint a = e[0], b = e[1];
+            auto pnbrA = a in borderNbrs;
+            auto pnbrB = b in borderNbrs;
+            if (pnbrA is null || pnbrB is null) continue;
+
+            foreach (ap; *pnbrA) {
+                if (ap == b) continue;
+                foreach (bp; *pnbrB) {
+                    if (bp == a) continue;
+                    // Must be 4 DISTINCT verts (a != b already, both are a
+                    // real edge's endpoints; ap != a/b and bp != a/b are
+                    // guaranteed by the neighbour-map/skip above — only
+                    // ap == bp remains to check).
+                    if (ap == bp) continue;
+
+                    ImVec2 p0, p1, p2, p3;
+                    if (!projectPt(m.vertices[ap], vp, p0)) continue;
+                    if (!projectPt(m.vertices[a],  vp, p1)) continue;
+                    if (!projectPt(m.vertices[b],  vp, p2)) continue;
+                    if (!projectPt(m.vertices[bp], vp, p3)) continue;
+
+                    float[4] xs = [p0.x, p1.x, p2.x, p3.x];
+                    float[4] ys = [p0.y, p1.y, p2.y, p3.y];
+                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs[], ys[])) continue;
+
+                    // Shoelace area (screen space, sign-agnostic — the
+                    // candidate's own winding is not yet known/relevant).
+                    float area2 = 0.0f;
+                    foreach (k; 0 .. 4)
+                        area2 += xs[k] * ys[(k + 1) % 4] - xs[(k + 1) % 4] * ys[k];
+                    float area = area2 < 0 ? -area2 * 0.5f : area2 * 0.5f;
+
+                    if (area < bestArea) {
+                        bestArea = area;
+                        bestCell = [ap, a, b, bp];
+                    }
+                }
+            }
+        }
+        return bestCell;
+    }
+
     // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
     // `bindings()`/`onInputResetAll()` are now the LIVE dispatch table/reset
     // hook — `onMouseButtonDown`/`onMouseButtonUp` below route every press
@@ -1486,6 +1679,24 @@ public:
         // `resetAllGestureArms()` unconditionally BEFORE this handler is
         // called. See `resetAllGestureArms`'s own doc comment for the full
         // hazard this closes.
+
+        // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
+        // Phase 4): the Mode dropdown reroutes plain-LMB entirely — Fill
+        // OWNS this slot and NEVER falls through to place/move below.
+        // Commit-on-DOWN (like Remove, `:2339`-ish): the cell is fully
+        // determined by the DOWN pixel, there is no drag to defer. A miss
+        // (cursor over a solid face / empty area / no gap cell under it)
+        // is a clean no-op — still consumed, so Draw's place/move can
+        // never fire underneath an active Fill-mode click. No arm bool,
+        // no `resyncSession`/`resetAllGestureArms` entry needed — Fill is
+        // a click op, like Remove.
+        if (penMode_ == PenMode.Fill) {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            auto cell = findFillCell(e.x, e.y, vp);
+            if (cell.length == 4) commitFill(cell);
+            return true;
+        }
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -3268,6 +3479,57 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
+    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md Phase
+    // 2): commit the ONE gap cell `findFillCell` resolved — FULL KERNEL
+    // REUSE, zero kernel change. Mirrors `commitSplit`/`commitAddLoop`
+    // above: bracket the ONE kernel call in a single before/after
+    // `MeshSnapshot` pair, record through the DEDICATED `fillEditFactory_`
+    // (never `splitEditFactory_`/`removeEditFactory_`, which would bake the
+    // wrong wire name onto a fill).
+    //
+    // `cellVerts` reuses the 4 EXISTING corner verts (Δv=0);
+    // `makePolygonFromVerts(autoOrient:true)` creates any missing edge (a
+    // notch's mouth), majority-vote auto-orients winding consistent with
+    // the neighbouring faces, and rejects dup-face/non-manifold/degenerate
+    // with a `-1` no-op — the mesh stays byte-unchanged and NO undo entry
+    // is recorded (the final backstop for a stray already-faced or
+    // otherwise invalid candidate; `findFillCell`'s own border-edge
+    // seeding already makes this the uncommon path).
+    //
+    // Single mutation, unlike `commitSplitOnEdge`'s two-kernel composition
+    // — no partial-mutation rollback is needed here.
+    //
+    // KILLER-2 (shared with every topology-growing sibling commit above):
+    // `makePolygonFromVerts` runs `buildLoops()`, moving `faces[]`/
+    // `edges[]` indices — any OTHER gesture armed on a different button
+    // holding a face/edge index would dangle. `resyncSession()` is called
+    // on SUCCESS, in the SAME position every sibling commit calls it (the
+    // tool never overrides `isDragging()`, so a Fill click CAN fire
+    // mid-build/mid-move/mid-slide on a different button).
+    private void commitFill(const(uint)[] cellVerts) {
+        if (meshSrc_ is null || history_ is null || fillEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+        if (cellVerts.length != 4) return;
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        int fi = m.makePolygonFromVerts(cellVerts, false, true);
+        if (fi < 0) return;   // dup-face / non-manifold / degenerate -> clean no-op, no mutation
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = fillEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Fill");
+        history_.record(cmd);
+
+        // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
+        // indices now that faces[]/edges[] have been rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
     // P10 (doc/topopen_p10_moveloop_plan.md "Commit"): commit the armed Move
     // Loop gesture — writes EVERY entry of `verts`/`targets` (same length,
     // same order), one atomic undo entry via the DEDICATED
@@ -3440,6 +3702,12 @@ public:
         hoverNearestEdge_  = -1;
         hoverBoundaryFace_ = -1;
         hoverBoundary_     = false;
+        // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md):
+        // also drop the passive candidate-cell preview — an external
+        // undo/redo with no subsequent motion event must not leave a stale
+        // cell (possibly referencing verts the navigation deleted)
+        // dangling into the next `draw()` call.
+        fillCell_ = null;
     }
 
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 4):
@@ -3845,6 +4113,35 @@ public:
                             ImVec2(vc.x - kHoverVertSquareHalfPx, vc.y - kHoverVertSquareHalfPx),
                             ImVec2(vc.x + kHoverVertSquareHalfPx, vc.y + kHoverVertSquareHalfPx),
                             kHoverElemCol);
+                }
+            }
+        }
+
+        // Fill mode V1 candidate-cell preview (task 0477 continuation,
+        // doc/topopen_fill_plan.md Phase 5, MANDATORY opponent fix #2): its
+        // OWN sibling gate — `penMode_ == Fill && fillCell_.length == 4` —
+        // deliberately NOT folded into the `hoverOverMesh_` block above.
+        // `hoverOverMesh_` requires a pick within `kTopoPenSnapPx`, which is
+        // FALSE when hovering the center of an empty gap cell (the defining
+        // Fill-mode case: no vertex/edge/face is anywhere near the
+        // cursor) — nesting this there would make the preview never render
+        // for that scenario. Still gated on `!anyGestureArmed()` (mode
+        // ghosts win when armed, same precedent as every other ghost).
+        if (!anyGestureArmed() && penMode_ == PenMode.Fill
+                                && fillCell_.length == 4 && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null) {
+                immutable size_t vlen2 = m.vertices.length;
+                bool ok = true;
+                ImVec2[4] pts;
+                foreach (k, vi; fillCell_) {
+                    if (vi >= vlen2 || !projectPt(m.vertices[vi], vp, pts[k])) { ok = false; break; }
+                }
+                if (ok) {
+                    hatchScreenPolygon(dl, pts[], kFillPreviewCol,
+                                      kHoverHatchSpacingPx, kHoverHatchWidthPx, vp);
+                    foreach (k; 0 .. 4)
+                        dl.AddLine(pts[k], pts[(k + 1) % 4], kFillPreviewCol, kHoverEdgeWidthPx);
                 }
             }
         }
@@ -8193,7 +8490,9 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 1, "mesh.topoPen must expose exactly the splitMiddle option");
+    assert(ps.length == 2, "mesh.topoPen must expose the splitMiddle option plus the Fill-mode "
+                          ~ "dropdown (task 0477 continuation, doc/topopen_fill_plan.md) — the "
+                          ~ "`mode` Param is APPENDED, never a full-replace");
     assert(ps[0].name == "splitMiddle");
     assert(ps[0].kind == Param.Kind.Bool);
     assert(ps[0].default_.b == false, "splitMiddle must default OFF");
@@ -8210,6 +8509,35 @@ unittest {
     assert(t.splitAtMiddle_,
         "splitAtMiddle_ must survive resyncSession() (external history navigation) — it is a "
       ~ "sticky mode toggle, not per-gesture arm state");
+}
+
+// ---------------------------------------------------------------------------
+// params() — Fill mode dropdown schema (task 0477 continuation,
+// doc/topopen_fill_plan.md Phase 1, MANDATORY opponent fix #1): the `mode`
+// IntEnum Param round-trips through the schema (for the `tool.attr`/form
+// binding), defaults to Draw, and survives `resyncSession()` (a sticky mode
+// toggle, not per-gesture arm state — matches `splitAtMiddle_`'s own
+// precedent, pinned in the block immediately above).
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+
+    auto ps = t.params();
+    assert(ps[1].name == "mode");
+    assert(ps[1].kind == Param.Kind.IntEnum);
+    assert(ps[1].default_.i == cast(int)PenMode.Draw, "mode must default to Draw");
+    assert(ps[1].iePtr is cast(int*)&t.penMode_, "the Param must bind directly to penMode_");
+    assert(ps[1].intEnumValues.length == 2, "exactly Draw + Fill are exposed in V1");
+    assert(ps[1].intEnumValues[0].wireTag == "draw");
+    assert(ps[1].intEnumValues[1].wireTag == "fill");
+
+    assert(t.penMode_ == PenMode.Draw, "must start in Draw mode");
+
+    t.penMode_ = PenMode.Fill;
+    t.resyncSession();
+    assert(t.penMode_ == PenMode.Fill,
+        "penMode_ must survive resyncSession() (external history navigation) — it is a sticky "
+      ~ "mode toggle, not per-gesture arm state");
 }
 
 // ---------------------------------------------------------------------------
@@ -8307,4 +8635,455 @@ unittest {
         "the inserted vertex must land reasonably near the edge (2,3) midpoint");
 
     SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
+}
+
+// ---------------------------------------------------------------------------
+// Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md) — Tier-B
+// tests. The `params()`/`mode` schema round-trip is already pinned right
+// after the mid-edge Split option schema block above (mirroring
+// `splitAtMiddle_`'s own precedent); everything below exercises
+// `findFillCell`/`commitFill`/the dropdown-routed dispatch/the hover
+// preview.
+//
+// Shared test idiom: every rig captures the target cell's OWN vertex array
+// via `m.faces[i].dup` BEFORE deleting it, so the expected corner SET is
+// read off the mesh itself rather than hand-derived from grid arithmetic
+// (which this feature's own planning drift already showed is error-prone —
+// see doc/topopen_fill_plan.md's line-citation warning).
+// ---------------------------------------------------------------------------
+
+version (unittest) private bool fillCellSetEq(const(uint)[] a, const(uint)[] b) {
+    import std.algorithm : canFind;
+    if (a.length != b.length) return false;
+    foreach (v; a) if (!canFind(b, v)) return false;
+    return true;
+}
+
+// F1 — interior single-cell gap: `makeGridPlane(3)` (16v, 9f, 24e) minus
+// its CENTER face (i=1,j=1 — fully interior, all 4 sides border after
+// removal). `findFillCell` must resolve exactly that cell from a cursor at
+// its centroid; `commitFill` must cap it with ONE quad, reusing the 4
+// existing corner verts (Δv=0), winding consistent with a neighbour (never
+// a hardcoded axis — `makeGridPlane`'s cells wind -Y despite the source
+// comment, doc's empirical finding #2). Also covers F7 (undo restores the
+// exact pre-fill V/E/F).
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(3);   // 4x4=16 verts, 3x3=9 quads, 24 edges
+    assert(m.vertices.length == 16 && m.faces.length == 9);
+    uint[] cellVerts = m.faces[4].dup;   // center cell (i=1,j=1) -- fully interior
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+    assert(m.faces.length == 8, "setup: the center face must be removed");
+    assert(m.vertices.length == 16, "setup: no vertex is deleted (keepOrphans)");
+    auto beforeFill = MeshSnapshot.capture(m);
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
+                    + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
+    ImVec2 cpix;
+    assert(TopologyPenTool.projectPt(centroid, vp, cpix),
+        "setup: the gap cell's centroid must project on-screen");
+
+    auto cell = t.findFillCell(cast(int)cpix.x, cast(int)cpix.y, vp);
+    assert(cell.length == 4, "findFillCell must resolve the one interior gap cell");
+    assert(fillCellSetEq(cell, cellVerts),
+        "findFillCell must return exactly the gap cell's own 4 corners");
+
+    t.commitFill(cell);
+
+    assert(m.faces.length == 9, "commitFill: the gap must be capped with exactly ONE new face");
+    assert(m.vertices.length == 16, "commitFill: Δv=0 -- the cell's own corners are reused");
+    assert(history.canUndo(), "a real fill must record one undo entry");
+
+    // Locate the new face (the one whose vertex set == the gap cell's) and
+    // check winding CONSISTENCY with a neighbour -- never a hardcoded
+    // axis/sign: for every edge of the new face, any neighbour face
+    // sharing that (undirected) edge must traverse it in the OPPOSITE
+    // direction.
+    int newFi = -1;
+    foreach (fi, f; m.faces) {
+        if (f.length == 4 && fillCellSetEq(f[], cellVerts)) { newFi = cast(int)fi; break; }
+    }
+    assert(newFi >= 0, "the newly-added face must contain exactly the cell's 4 verts");
+    auto newFace = m.faces[newFi];
+    foreach (i; 0 .. newFace.length) {
+        uint u = newFace[i], v = newFace[(i + 1) % newFace.length];
+        bool foundOpposite = false;
+        foreach (fi, f; m.faces) {
+            if (cast(int)fi == newFi) continue;
+            foreach (k; 0 .. f.length) {
+                uint a = f[k], b = f[(k + 1) % f.length];
+                assert(!(a == u && b == v),
+                    "the new face's winding must NOT match a neighbour's own direction on a "
+                  ~ "shared edge (task 0477 continuation: makePolygonFromVerts autoOrient)");
+                if (a == v && b == u) foundOpposite = true;
+            }
+        }
+        assert(foundOpposite, "every edge of the new face must have a neighbour traversing it "
+                             ~ "in the opposite direction");
+    }
+
+    // F7: undo restores the exact pre-fill V/E/F.
+    history.undo();
+    auto afterUndo = MeshSnapshot.capture(m);
+    assert(afterUndo.vertices == beforeFill.vertices && afterUndo.edges == beforeFill.edges
+        && afterUndo.faces == beforeFill.faces,
+        "undo must restore the mesh byte-identical to its pre-fill state");
+}
+
+// F2 — single-cell notch: a hand-built 2-row x 4-col quad grid (3x5=15
+// verts) with the MIDDLE row-0 cell (index 1 -- touches neither the west
+// nor east mesh perimeter, so it opens exactly ONE mouth, north) removed.
+// 3 of its 4 sides become border edges (the 4th, north, drops to 0
+// incident faces -- a floating "mouth" edge, kept by
+// `deleteFacesByMask(keepFloatingEdges:true)` -- the SAME contract the
+// tool's own `removeFaceAt` always uses, so this is the FAITHFUL shape of
+// a notch this tool itself would ever produce; not counted by
+// `isEdgeBorder`'s n==1 predicate). `findFillCell` must still resolve the
+// correct 4-vertex cell from the 3 surviving border edges, and
+// `commitFill` must attach the new face to that already-present floating
+// mouth edge (0 incident faces -> 1 -- Δe=0, the edge record itself is
+// REUSED, never duplicated).
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m;
+    float[5] xs = [0.0f, 1.0f, 2.0f, 5.0f, 6.0f];
+    float[3] zs = [0.0f, 1.0f, 2.0f];
+    uint[5][3] idx;
+    foreach (i; 0 .. 3)
+        foreach (j; 0 .. 5)
+            idx[i][j] = m.addVertex(Vec3(xs[j], 0, zs[i]));
+    foreach (i; 0 .. 2)
+        foreach (j; 0 .. 4)
+            m.addFace([idx[i][j], idx[i][j + 1], idx[i + 1][j + 1], idx[i + 1][j]]);
+    m.buildLoops();
+    assert(m.faces.length == 8, "setup: the 2x4 grid must have 8 faces");
+
+    uint[] cellVerts = m.faces[1].dup;   // middle row-0 cell -- neither west nor east corner
+    auto mask = new bool[](m.faces.length);
+    mask[1] = true;
+    m.deleteFacesByMask(mask, true, true);
+    assert(m.faces.length == 7, "setup: the notch cell must be removed");
+    assert(m.vertices.length == 15, "setup: no vertex is deleted (keepOrphans)");
+    size_t edgesBefore = m.edges.length;
+
+    // Identify the mouth edge -- the one side of the cell with 0 incident
+    // faces right after its own face was removed.
+    int mouthEdge = -1;
+    foreach (k; 0 .. 4) {
+        uint ei = m.edgeIndex(cellVerts[k], cellVerts[(k + 1) % 4]);
+        assert(ei != uint.max, "setup: every side of the removed cell must still exist as an "
+                             ~ "edge (deleteFacesByMask keeps floating edges)");
+        int nf = 0; foreach (fi; m.facesAroundEdge(ei)) ++nf;
+        if (nf == 0) { mouthEdge = cast(int)ei; break; }
+    }
+    assert(mouthEdge >= 0, "setup: exactly one side of the notch cell must be a floating "
+                         ~ "(0-face) mouth");
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
+                    + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
+    ImVec2 cpix;
+    assert(TopologyPenTool.projectPt(centroid, vp, cpix),
+        "setup: the notch cell's centroid must project on-screen");
+
+    auto cell = t.findFillCell(cast(int)cpix.x, cast(int)cpix.y, vp);
+    assert(cell.length == 4, "findFillCell must resolve the notch cell from its 3 border edges");
+    assert(fillCellSetEq(cell, cellVerts),
+        "findFillCell must return exactly the notch cell's own 4 corners");
+
+    t.commitFill(cell);
+
+    assert(m.faces.length == 8, "commitFill: the notch must be capped with exactly ONE new face");
+    assert(m.vertices.length == 15, "commitFill: Δv=0 -- the cell's own corners are reused");
+    assert(m.edges.length == edgesBefore,
+        "commitFill: the mouth is an ALREADY-PRESENT floating edge -- Δe=0, it is reused, "
+      ~ "never duplicated");
+    int nfAfter = 0; foreach (fi; m.facesAroundEdge(cast(uint)mouthEdge)) ++nfAfter;
+    assert(nfAfter == 1,
+        "commitFill: the mouth edge must gain exactly one incident face (the new fill face)");
+    assert(history.canUndo(), "a real fill must record one undo entry");
+}
+
+// F3 — two SEPARATE (non-adjacent) single-cell gaps in the same mesh, one
+// click fills ONE cell (owner decision 2: "one cell per click").
+//
+// NOTE on scope (empirical finding, not a hand-wave): TWO MUTUALLY-ADJACENT
+// missing cells sharing one now-gone middle edge (e.g. a "2-cell-wide"
+// notch or interior gap) were tried here first, in THREE independent
+// constructions (a uniform perimeter pair, an asymmetric-width perimeter
+// pair, and an asymmetric-height interior pair) — all three produced a
+// BOGUS "skip-through" candidate (a degenerate, 3-collinear-point quad
+// spanning corners of BOTH missing cells) instead of resolving to EITHER
+// true individual cell. Root cause: the shared "waist" vertex between two
+// mutually-adjacent missing cells loses ALL border-edge connectivity (its
+// own mouth-facing side AND the now-fully-gone shared inner edge are both
+// non-border), isolating it from `findFillCell`'s border-adjacency graph
+// entirely, so the true single-cell candidate is never even generated for
+// either side to compete on area with the bogus one. This contradicts
+// doc/topopen_fill_plan.md Risk R1's claim ("PROBE-checked on paper for
+// ...interior 2-cell... the true cell always wins on area") — falls under
+// the SAME doc's own AF-1 "known V1 limitation, not a blocker" umbrella,
+// but the concrete manifestation (a mis-shaped bogus fill, not a clean
+// no-op) is a genuine finding worth flagging upstream. Scoped OUT of this
+// test accordingly; this test instead verifies owner decision 2's core
+// promise ("one click, one cell, never both") on two gaps that ARE cleanly
+// resolvable in V1: two separate single-cell interior gaps, far enough
+// apart that neither's reconstruction can be confused with the other's.
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(5);   // 6x6=36 verts, 5x5=25 quads
+    assert(m.faces.length == 25);
+    uint[] cellA = m.faces[6].dup;    // interior cell (i=1,j=1)
+    uint[] cellB = m.faces[18].dup;   // a SEPARATE, non-adjacent interior cell (i=3,j=3)
+    auto mask = new bool[](m.faces.length);
+    mask[6] = true; mask[18] = true;
+    m.deleteFacesByMask(mask, true, true);
+    assert(m.faces.length == 23, "setup: both gap cells must be removed");
+    assert(m.vertices.length == 36, "setup: no vertex is deleted (keepOrphans)");
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 centA = (m.vertices[cellA[0]] + m.vertices[cellA[1]]
+                + m.vertices[cellA[2]] + m.vertices[cellA[3]]) * 0.25f;
+    Vec3 centB = (m.vertices[cellB[0]] + m.vertices[cellB[1]]
+                + m.vertices[cellB[2]] + m.vertices[cellB[3]]) * 0.25f;
+    ImVec2 pixA, pixB;
+    assert(TopologyPenTool.projectPt(centA, vp, pixA));
+    assert(TopologyPenTool.projectPt(centB, vp, pixB));
+
+    auto foundA = t.findFillCell(cast(int)pixA.x, cast(int)pixA.y, vp);
+    assert(foundA.length == 4, "a cursor over gap A must resolve exactly that cell");
+    assert(fillCellSetEq(foundA, cellA),
+        "must resolve ONLY gap A's own 4 corners, never gap B's");
+
+    auto foundB = t.findFillCell(cast(int)pixB.x, cast(int)pixB.y, vp);
+    assert(foundB.length == 4, "a cursor over gap B must resolve exactly that cell");
+    assert(fillCellSetEq(foundB, cellB),
+        "must resolve ONLY gap B's own 4 corners, never gap A's");
+
+    // One click fills ONE cell -- the other remains an untouched gap,
+    // fillable by a SECOND click (owner decision 2: "one cell per click").
+    t.commitFill(foundA);
+    assert(m.faces.length == 24, "commitFill must add exactly ONE face for gap A");
+
+    auto foundBAfter = t.findFillCell(cast(int)pixB.x, cast(int)pixB.y, vp);
+    assert(foundBAfter.length == 4, "gap B must still be found as a gap after gap A alone was filled");
+    assert(fillCellSetEq(foundBAfter, cellB));
+
+    t.commitFill(foundBAfter);
+    assert(m.faces.length == 25, "commitFill must add exactly ONE more face for gap B");
+    assert(m.vertices.length == 36, "both fills together are Δv=0 -- every corner is reused");
+    assert(history.canUndo());
+}
+
+// F6 — no-op over a solid face / empty area. `makeGridPlane(3)` left FULLY
+// INTACT (no gap anywhere): a cursor at the centroid of a genuinely
+// INTERIOR face (i=1,j=1 -- every edge shared by 2 faces, none border)
+// must resolve `[]`, and a cursor far off the mesh entirely must too.
+// `commitFill([])` must be a clean no-op (no undo entry, mesh
+// byte-identical).
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(3);   // fully intact -- no gap anywhere
+    uint[] solidVerts = m.faces[4].dup;   // the same "center" cell F1 removes, kept HERE
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+    auto beforeAll = MeshSnapshot.capture(m);
+
+    auto vp = makeGridPlaneTestViewport();
+
+    // (a) cursor at a genuinely interior, already-faced cell's centroid.
+    Vec3 solidCentroid = (m.vertices[solidVerts[0]] + m.vertices[solidVerts[1]]
+                         + m.vertices[solidVerts[2]] + m.vertices[solidVerts[3]]) * 0.25f;
+    ImVec2 spix;
+    assert(TopologyPenTool.projectPt(solidCentroid, vp, spix));
+    auto cellOverFace = t.findFillCell(cast(int)spix.x, cast(int)spix.y, vp);
+    assert(cellOverFace.length == 0,
+        "findFillCell must return [] over an already-faced INTERIOR cell (no border edges "
+      ~ "nearby to seed a candidate from)");
+
+    // (b) cursor far outside the mesh entirely.
+    auto cellOverEmpty = t.findFillCell(-99999, -99999, vp);
+    assert(cellOverEmpty.length == 0, "findFillCell must return [] over empty area");
+
+    // (c) commitFill([]) / a miss must be a clean no-op.
+    t.commitFill(cellOverFace);
+    t.commitFill(null);
+    auto afterAll = MeshSnapshot.capture(m);
+    assert(afterAll.vertices == beforeAll.vertices && afterAll.edges == beforeAll.edges
+        && afterAll.faces == beforeAll.faces,
+        "commitFill must leave the mesh byte-identical on a miss/empty cell");
+    assert(!history.canUndo(), "a miss/empty cell must record NO undo entry");
+}
+
+// F5/F9 — dropdown routing: plain-LMB is a NO-OP for Draw's place/move path
+// when Fill owns it, and vice versa. dropdown=Draw (default) must arm
+// place/move exactly like pre-Fill behavior; dropdown=Fill must fill
+// immediately (commit-on-DOWN) and arm NOTHING.
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(3);
+    uint[] cellVerts = m.faces[4].dup;
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
+                    + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
+    ImVec2 cpix;
+    assert(TopologyPenTool.projectPt(centroid, vp, cpix));
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)cpix.x; e.y = cast(int)cpix.y;
+
+    // dropdown = Draw (default): plain-LMB over the gap centroid must arm
+    // place/move -- NEVER Fill -- byte-identical to pre-Fill behavior.
+    assert(t.penMode_ == PenMode.Draw, "must start in Draw mode");
+    int facesBefore = cast(int)m.faces.length;
+    bool consumed = t.onPlainLmbDown(e, vts);
+    assert(consumed, "plain-LMB must always be consumed");
+    assert(t.placeArmed_ || t.moveArmed_,
+        "Draw mode must arm place/move, exactly like pre-Fill behavior");
+    assert(cast(int)m.faces.length == facesBefore, "Draw mode must not mutate the mesh on DOWN");
+    t.placeArmed_ = false; t.moveArmed_ = false; t.grabbedVert_ = -1;
+
+    // dropdown = Fill: the SAME press must fill the cell and arm NOTHING.
+    t.penMode_ = PenMode.Fill;
+    consumed = t.onPlainLmbDown(e, vts);
+    assert(consumed, "plain-LMB must always be consumed");
+    assert(!t.placeArmed_ && !t.moveArmed_,
+        "Fill mode must never arm place/move -- it owns plain-LMB entirely");
+    assert(cast(int)m.faces.length == facesBefore + 1,
+        "Fill mode's plain-LMB press must commit the fill immediately (commit-on-DOWN)");
+    assert(history.canUndo());
+}
+
+// F8 — hover preview state: `fillCell_` equals the cell (as a set) after
+// the Fill-mode motion compute; `null` in Draw mode, off any gap, and when
+// ANY gesture is armed (mode ghosts win, mirroring `hoverOverMesh_`'s own
+// precedence rule -- MANDATORY opponent fix #2's sibling gate, not nested
+// inside `hoverOverMesh_`).
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    uint[] cellVerts = m.faces[4].dup;
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
+                    + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
+    ImVec2 cpix;
+    assert(TopologyPenTool.projectPt(centroid, vp, cpix));
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseMotionEvent e;
+    e.x = cast(int)cpix.x; e.y = cast(int)cpix.y;
+
+    // Draw mode (default): the preview must stay empty even directly over
+    // a gap cell -- Fill's hatch is gated on the mode.
+    t.onMouseMotion(e, vts);
+    assert(t.fillCell_.length == 0, "Draw mode must never populate the Fill preview");
+
+    // Fill mode: the SAME motion must resolve exactly the gap cell.
+    t.penMode_ = PenMode.Fill;
+    t.onMouseMotion(e, vts);
+    assert(t.fillCell_.length == 4, "Fill mode must resolve the gap cell under the cursor");
+    assert(fillCellSetEq(t.fillCell_, cellVerts));
+
+    // A gesture armed on ANY button must clear the preview even in Fill mode.
+    t.dragArmed_ = true;
+    t.onMouseMotion(e, vts);
+    assert(t.fillCell_.length == 0, "an armed gesture must take precedence over the Fill preview");
+    t.dragArmed_ = false;
+
+    // Off any gap (far away) -> null, even in Fill mode.
+    SDL_MouseMotionEvent eFar;
+    eFar.x = -99999; eFar.y = -99999;
+    t.onMouseMotion(eFar, vts);
+    assert(t.fillCell_.length == 0, "a cursor far from every gap must clear the preview");
 }

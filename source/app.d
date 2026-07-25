@@ -3114,6 +3114,15 @@ void main(string[] args) {
     // undo history / event-log replay / macros.
     auto topoPenSmoothLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
+    // Topology Pen Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above —
+    // capping a gap cell with one quad IS a topology change (wire name
+    // "mesh.topoPen_fill", editScope Geometry, same scope as
+    // `topoPenSplitEditFactory`), so reusing any sibling factory would
+    // corrupt undo history / event-log replay / macros with the wrong wire
+    // name.
+    auto topoPenFillEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3233,6 +3242,7 @@ void main(string[] args) {
     app.topoPenMoveLoopEditFactory = topoPenMoveLoopEditFactory;
     app.topoPenDupLoopEditFactory  = topoPenDupLoopEditFactory;
     app.topoPenSmoothLoopEditFactory = topoPenSmoothLoopEditFactory;
+    app.topoPenFillEditFactory       = topoPenFillEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

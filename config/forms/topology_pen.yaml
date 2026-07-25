@@ -11,12 +11,23 @@
 # tool), so this form carries the tool's full visible parameter set (which,
 # as of the mid-edge Split extension, is exactly this one checkbox).
 #
-# `splitMiddle` is the ONLY attr in mesh.topoPen.params() (grep params() in
-# source/tools/edit/topology_pen.d for the authoritative name/type) — the
-# "Split at the Middle" option (doc/topopen_midedge_split_plan.md
-# Deliverable #4). It forces the mid-edge Split gesture's insert fraction to
-# exactly 0.5 (the edge midpoint) instead of the release click's own
-# position along the edge. Default OFF, sticky across gestures.
+# `splitMiddle` + `mode` are the two attrs in mesh.topoPen.params() (grep
+# params() in source/tools/edit/topology_pen.d for the authoritative
+# name/type list — a mismatch here fails loud at boot, `validateForms`).
+#
+# `splitMiddle` — the "Split at the Middle" option
+# (doc/topopen_midedge_split_plan.md Deliverable #4). It forces the
+# mid-edge Split gesture's insert fraction to exactly 0.5 (the edge
+# midpoint) instead of the release click's own position along the edge.
+# Default OFF, sticky across gestures.
+#
+# `mode` — the Fill-mode Dropdown (task 0477 continuation,
+# doc/topopen_fill_plan.md REV 2). Draw (default) is today's existing
+# plain-LMB place-on-empty/grab-move behavior, unchanged; Fill reroutes
+# plain-LMB to cap the one gap cell under the cursor with a quad. An
+# IntEnum Param — this row renders as a dropdown, with choices/labels
+# sourced from the Param's own `IntEnumEntry` table (like `actioncenter.yaml`);
+# the form does not enumerate modes itself.
 
 forms:
   - id: topopen.main
@@ -27,4 +38,5 @@ forms:
     category: toolprops/main
     ordinal: 150.50
     rows:
+      - { control: "tool.attr mesh.topoPen mode ?",        label: Mode }
       - { control: "tool.attr mesh.topoPen splitMiddle ?", label: "Split at the Middle" }

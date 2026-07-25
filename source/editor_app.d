@@ -716,6 +716,13 @@ struct EditorApp {
     // Move/Slide/Smooth/Move Loop, but must never bake any of their wire
     // names onto its own coalesced undo entry).
     MeshSessionEdit delegate() topoPenSmoothLoopEditFactory;
+    // Task 0477 continuation (Fill mode V1, doc/topopen_fill_plan.md): the
+    // Fill gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_fill" — kept distinct from EVERY sibling factory above
+    // (capping a gap cell with one quad IS a topology change, Geometry
+    // editScope like Split/Remove, but must never bake any sibling's wire
+    // name onto its own atomic undo entry).
+    MeshSessionEdit delegate() topoPenFillEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

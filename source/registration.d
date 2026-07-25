@@ -485,6 +485,11 @@ void registerTools(EditorApp app) {
     // factory (topoPenSmoothLoopEditFactory, distinct wire name +
     // Position-only editScope, doc/topopen_p12_smoothloop_plan.md) —
     // appended LAST (12th param), never inserted mid-list, same rationale.
+    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md) adds
+    // the Fill-mode dropdown-routed plain-LMB gesture's OWN generic
+    // MeshSessionEdit factory (topoPenFillEditFactory, distinct wire name +
+    // Geometry editScope) — appended LAST (13th param), never inserted
+    // mid-list, same rationale.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
@@ -493,7 +498,8 @@ void registerTools(EditorApp app) {
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
                          topoPenSlideEditFactory, topoPenSmoothEditFactory,
                          topoPenSplitEditFactory, topoPenMoveLoopEditFactory,
-                         topoPenDupLoopEditFactory, topoPenSmoothLoopEditFactory);
+                         topoPenDupLoopEditFactory, topoPenSmoothLoopEditFactory,
+                         topoPenFillEditFactory);
         return cast(Tool)t;
     };
 
