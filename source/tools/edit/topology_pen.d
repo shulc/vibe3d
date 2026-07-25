@@ -1413,28 +1413,50 @@ public:
     //   2. For every border edge E=(a,b): for every border-neighbour a' of
     //      a (a' != b) and every border-neighbour b' of b (b' != a), form
     //      the candidate quad cycle [a', a, b, b'] (three consecutive cell
-    //      sides a'->a->b->b'; the fourth side b'->a' closes it — for a
-    //      notch that fourth side is the absent mouth). Skip unless all 4
-    //      verts are distinct. Seeding from BORDER edges guarantees the
-    //      candidate lies on the face-FREE side of E (E's one incident
-    //      face sits on the OTHER side), so a candidate can never coincide
-    //      with an existing face — `commitFill` still self-guards via
-    //      `makePolygonFromVerts`'s own `-1` reject regardless.
-    //   3. Project all 4 verts (skip a candidate with any vertex behind
+    //      sides a'->a->b->b'). Skip unless all 4 verts are distinct.
+    //      Seeding from BORDER edges guarantees the candidate lies on the
+    //      face-FREE side of E (E's one incident face sits on the OTHER
+    //      side), so a candidate can never coincide with an existing face
+    //      — `commitFill` still self-guards via `makePolygonFromVerts`'s
+    //      own `-1` reject regardless.
+    //   3. MANDATORY guard (post-e6ca77a review): the fourth side, closing
+    //      b'->a', must itself be a REAL mesh edge (`m.edgeIndex(b',a') !=
+    //      ~0u`) — reject otherwise. Every GENUINE single cell has all 4
+    //      sides as existing edges: an interior gap has 4 border edges; a
+    //      tool-made notch has 3 border edges + the mouth, which is a KEPT
+    //      floating (0-face) edge, never truly absent (`deleteFacesByMask`'s
+    //      `keepFloatingEdges` contract — see `commitFill`'s own doc). Only
+    //      a cross-gap "skip-through" candidate spanning two MUTUALLY
+    //      ADJACENT missing cells closes on a diagonal that is not a real
+    //      edge at all; `makePolygonFromVerts` would otherwise happily
+    //      accept that bogus cycle (it creates any missing edge
+    //      unconditionally), silently filling the WRONG shape rather than
+    //      declining. This guard is what makes an adjacent-2-cell gap a
+    //      clean `[]` no-op instead of a wrong fill (and incidentally kills
+    //      the latent area-TIE this shape is prone to, by removing the
+    //      bogus competitor outright rather than relying on area to
+    //      discriminate it away).
+    //   4. Project all 4 verts (skip a candidate with any vertex behind
     //      the camera) and even-odd point-in-polygon test against
     //      (mx,my) — winding-agnostic.
-    //   4. Pick the SMALLEST-screen-area candidate that contains the
+    //   5. Pick the SMALLEST-screen-area candidate that contains the
     //      cursor — the load-bearing tiebreak that implements "nearest
-    //      cell to the cursor": for a 2-cell gap/notch the tight true cell
-    //      beats every bogus cross-cell quad on area, and it rejects the
-    //      outer perimeter (a perimeter-seeded candidate is huge or does
-    //      not contain an interior cursor).
+    //      cell to the cursor" among any remaining (real-edge-closed)
+    //      candidates, and rejects the outer perimeter (a
+    //      perimeter-seeded candidate is huge or does not contain an
+    //      interior cursor).
     //
     // Known V1 limitation (vibe3d-divergence, not a blocker — owner
     // pinned the behavior): highly irregular / non-planar hole boundaries
-    // could in principle let a bogus candidate be both smaller AND
-    // cursor-containing than the true cell. Grid-like retopo meshes (this
-    // tool's domain) are robust to this.
+    // could in principle let a bogus (but real-edge-closed) candidate be
+    // both smaller AND cursor-containing than the true cell. Grid-like
+    // retopo meshes (this tool's domain) are robust to this. Two MUTUALLY
+    // ADJACENT missing cells sharing a now-fully-gone middle edge (a
+    // perimeter notch 2+ cells wide) still resolve to `[]` rather than
+    // either individual true cell — step 3's guard makes this a safe
+    // no-op (never a wrong fill), but does not make the true cell
+    // discoverable there; that would need a genuinely different
+    // reconstruction strategy, out of scope for V1.
     private uint[] findFillCell(int mx, int my, const ref Viewport vp) {
         if (meshSrc_ is null) return null;
         auto m = mesh;
@@ -1469,6 +1491,30 @@ public:
                     // guaranteed by the neighbour-map/skip above — only
                     // ap == bp remains to check).
                     if (ap == bp) continue;
+
+                    // MANDATORY review fix (post-e6ca77a): the candidate's
+                    // 4th side — closing bp back to ap — is the ONE side
+                    // this construction never verifies against the mesh
+                    // (ap-a and b-bp are real by construction, being border
+                    // neighbours; a-b is the seed border edge itself). Every
+                    // GENUINE single cell has all 4 sides as EXISTING mesh
+                    // edges: an interior gap has 4 border edges; a
+                    // tool-made notch has 3 border edges + the KEPT
+                    // floating mouth edge (`deleteFacesByMask`'s
+                    // `keepFloatingEdges` contract — see `commitFill`'s own
+                    // doc). A cross-gap "skip-through" bogus candidate
+                    // (spanning two mutually-adjacent missing cells) closes
+                    // on a diagonal that is NOT a real edge at all —
+                    // `makePolygonFromVerts` would happily accept it anyway
+                    // (it creates any missing edge unconditionally), so this
+                    // guard is the ONLY thing standing between "the wrong
+                    // cell" and "no cell". Also kills the latent
+                    // area-tie this construction is prone to (every
+                    // cursor-containing candidate tends to land at the same
+                    // screen area on a regular grid) by removing the bogus
+                    // competitor outright, rather than relying on area
+                    // comparison to discriminate it away.
+                    if (m.edgeIndex(bp, ap) == ~0u) continue;
 
                     ImVec2 p0, p1, p2, p3;
                     if (!projectPt(m.vertices[ap], vp, p0)) continue;
@@ -8837,28 +8883,39 @@ unittest {
 // F3 — two SEPARATE (non-adjacent) single-cell gaps in the same mesh, one
 // click fills ONE cell (owner decision 2: "one cell per click").
 //
-// NOTE on scope (empirical finding, not a hand-wave): TWO MUTUALLY-ADJACENT
-// missing cells sharing one now-gone middle edge (e.g. a "2-cell-wide"
-// notch or interior gap) were tried here first, in THREE independent
-// constructions (a uniform perimeter pair, an asymmetric-width perimeter
-// pair, and an asymmetric-height interior pair) — all three produced a
-// BOGUS "skip-through" candidate (a degenerate, 3-collinear-point quad
-// spanning corners of BOTH missing cells) instead of resolving to EITHER
-// true individual cell. Root cause: the shared "waist" vertex between two
-// mutually-adjacent missing cells loses ALL border-edge connectivity (its
-// own mouth-facing side AND the now-fully-gone shared inner edge are both
-// non-border), isolating it from `findFillCell`'s border-adjacency graph
-// entirely, so the true single-cell candidate is never even generated for
-// either side to compete on area with the bogus one. This contradicts
-// doc/topopen_fill_plan.md Risk R1's claim ("PROBE-checked on paper for
-// ...interior 2-cell... the true cell always wins on area") — falls under
-// the SAME doc's own AF-1 "known V1 limitation, not a blocker" umbrella,
-// but the concrete manifestation (a mis-shaped bogus fill, not a clean
-// no-op) is a genuine finding worth flagging upstream. Scoped OUT of this
-// test accordingly; this test instead verifies owner decision 2's core
-// promise ("one click, one cell, never both") on two gaps that ARE cleanly
-// resolvable in V1: two separate single-cell interior gaps, far enough
-// apart that neither's reconstruction can be confused with the other's.
+// NOTE on scope (revised after a post-e6ca77a review fix): TWO
+// MUTUALLY-ADJACENT missing cells (sharing one now-gone middle edge) were
+// investigated in detail; the outcome DEPENDS on whether the pair touches
+// the mesh's own outer perimeter:
+//   - INTERIOR adjacent pair (neither cell touches the mesh perimeter): now
+//     resolves CORRECTLY, one true cell per click — see the dedicated
+//     interior-adjacent-2-cell unittest right after this one. (An earlier
+//     draft of THIS comment claimed the interior case also failed; that
+//     was an incomplete-enumeration mistake in hand analysis, not a real
+//     limitation — a full seed-edge enumeration finds a valid seed for
+//     EACH true cell, and `findFillCell`'s closing-edge guard
+//     — `m.edgeIndex(bp,ap) != ~0u` — is exactly what lets each true cell's
+//     candidate win: the true cell closes on the shared middle edge, which
+//     still EXISTS as a floating (0-face) edge, while the bogus
+//     "skip-through" candidate's closing side is a non-edge diagonal and
+//     is rejected outright.)
+//   - PERIMETER adjacent pair (both cells touch the SAME outer mesh side,
+//     e.g. a "2-cell-wide" notch along one edge of the mesh): still
+//     resolves to `[]` — see the dedicated perimeter-adjacent-2-cell
+//     unittest right after this one. Root cause: the shared "waist" vertex
+//     between the two missing cells has ZERO border-edge incidences at all
+//     (both its own mouth-facing side and the shared middle edge are
+//     non-border), so it never even enters `findFillCell`'s
+//     border-adjacency graph — no candidate mentioning it is EVER
+//     generated, closing-edge guard or not. This is a real, acceptable V1
+//     gap (falls under doc/topopen_fill_plan.md's own AF-1 "known
+//     limitation" umbrella) — but is now at least a SAFE no-op rather than
+//     the wrong bogus fill the guard was added to prevent.
+//
+// This test itself verifies owner decision 2's core promise ("one click,
+// one cell, never both") on two gaps that are trivially, unambiguously
+// resolvable: two separate single-cell interior gaps, far enough apart
+// that neither's reconstruction can be confused with the other's.
 unittest {
     import mesh : makeGridPlane;
     import view : View;
@@ -8916,6 +8973,142 @@ unittest {
     t.commitFill(foundBAfter);
     assert(m.faces.length == 25, "commitFill must add exactly ONE more face for gap B");
     assert(m.vertices.length == 36, "both fills together are Δv=0 -- every corner is reused");
+    assert(history.canUndo());
+}
+
+// F3-PERIMETER — the case that used to WRONG-FILL before the post-e6ca77a
+// review fix: two MUTUALLY-ADJACENT cells removed from the SAME mesh
+// perimeter side (a 2-row x 4-col grid, middle row-0 cells at indices 1
+// and 2, asymmetric widths 1 / 3 -- same rig the review's diagnosis was
+// built on). Before the `m.edgeIndex(bp,ap) != ~0u` closing-edge guard,
+// `findFillCell` returned a bogus "skip-through" candidate spanning BOTH
+// missing cells (verified: `[8,7,6,1]`, a real quad `makePolygonFromVerts`
+// would have happily accepted) instead of declining. The shared "waist"
+// vertex between the two cells has ZERO border-edge incidences at all
+// (its own mouth-facing side AND the shared middle edge are both
+// non-border), so no candidate mentioning it is ever generated in the
+// first place -- this is a real, accepted V1 gap (AF-1) -- but with the
+// guard, EVERY candidate the border-edge scan does produce here fails to
+// close on a real edge and is rejected, so the net result is now a SAFE
+// no-op, never a wrong fill.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m;
+    float[5] xs = [0.0f, 1.0f, 2.0f, 5.0f, 6.0f];
+    float[3] zs = [0.0f, 1.0f, 2.0f];
+    uint[5][3] idx;
+    foreach (i; 0 .. 3)
+        foreach (j; 0 .. 5)
+            idx[i][j] = m.addVertex(Vec3(xs[j], 0, zs[i]));
+    foreach (i; 0 .. 2)
+        foreach (j; 0 .. 4)
+            m.addFace([idx[i][j], idx[i][j + 1], idx[i + 1][j + 1], idx[i + 1][j]]);
+    m.buildLoops();
+    assert(m.faces.length == 8, "setup: the 2x4 grid must have 8 faces");
+
+    uint[] leftVerts = m.faces[1].dup;   // width 1 -- retained only for the centroid pixel
+    auto mask = new bool[](m.faces.length);
+    mask[1] = true; mask[2] = true;
+    m.deleteFacesByMask(mask, true, true);
+    assert(m.faces.length == 6, "setup: both perimeter cells must be removed");
+    auto before = MeshSnapshot.capture(m);
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 leftC = (m.vertices[leftVerts[0]] + m.vertices[leftVerts[1]]
+                + m.vertices[leftVerts[2]] + m.vertices[leftVerts[3]]) * 0.25f;
+    ImVec2 leftPix;
+    assert(TopologyPenTool.projectPt(leftC, vp, leftPix));
+
+    auto cell = t.findFillCell(cast(int)leftPix.x, cast(int)leftPix.y, vp);
+    assert(cell.length == 0,
+        "a perimeter 2-cell-wide gap must resolve to [] -- the shared waist vertex has zero "
+      ~ "border-edge incidences, so no candidate (bogus OR true) is ever generated there");
+
+    t.commitFill(cell);
+    auto after = MeshSnapshot.capture(m);
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "commitFill on the [] result must leave the mesh byte-identical");
+    assert(!history.canUndo(), "a perimeter 2-cell gap must record NO undo entry -- a safe "
+                              ~ "no-op, never the wrong bogus fill");
+}
+
+// F3-INTERIOR — the companion case: two MUTUALLY-ADJACENT cells removed
+// from the MIDDLE of a bigger grid (neither touches the mesh perimeter).
+// Here the closing-edge guard does the opposite job: it REJECTS the bogus
+// cross-cell candidates (their closing side is a non-edge diagonal) while
+// LETTING THROUGH each true single cell's own candidate (its closing side
+// is the shared middle edge, which still EXISTS as a floating/0-face edge
+// -- `deleteFacesByMask`'s `keepFloatingEdges` contract). A cursor over
+// EITHER cell must resolve to exactly that ONE cell, never a span of both.
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(4);   // 5x5=25 verts, 4x4=16 quads
+    assert(m.faces.length == 16);
+    uint[] leftVerts  = m.faces[5].dup;   // interior cell (i=1,j=1)
+    uint[] rightVerts = m.faces[6].dup;   // adjacent interior cell (i=1,j=2) -- shares an edge
+    auto mask = new bool[](m.faces.length);
+    mask[5] = true; mask[6] = true;
+    m.deleteFacesByMask(mask, true, true);
+    assert(m.faces.length == 14, "setup: both interior cells must be removed");
+    assert(m.vertices.length == 25, "setup: no vertex is deleted (keepOrphans)");
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    Vec3 leftC  = (m.vertices[leftVerts[0]]  + m.vertices[leftVerts[1]]
+                 + m.vertices[leftVerts[2]]  + m.vertices[leftVerts[3]])  * 0.25f;
+    Vec3 rightC = (m.vertices[rightVerts[0]] + m.vertices[rightVerts[1]]
+                 + m.vertices[rightVerts[2]] + m.vertices[rightVerts[3]]) * 0.25f;
+    ImVec2 leftPix, rightPix;
+    assert(TopologyPenTool.projectPt(leftC,  vp, leftPix));
+    assert(TopologyPenTool.projectPt(rightC, vp, rightPix));
+
+    auto leftCell = t.findFillCell(cast(int)leftPix.x, cast(int)leftPix.y, vp);
+    assert(leftCell.length == 4,
+        "an interior adjacent-2-cell gap must still resolve the LEFT cell (the closing-edge "
+      ~ "guard rejects the bogus span, but the true cell's own candidate survives)");
+    assert(fillCellSetEq(leftCell, leftVerts),
+        "must resolve ONLY the left cell's own 4 corners, never a span of both cells");
+
+    auto rightCell = t.findFillCell(cast(int)rightPix.x, cast(int)rightPix.y, vp);
+    assert(rightCell.length == 4, "must likewise resolve the RIGHT cell under its own cursor");
+    assert(fillCellSetEq(rightCell, rightVerts),
+        "must resolve ONLY the right cell's own 4 corners, never a span of both cells");
+
+    t.commitFill(leftCell);
+    assert(m.faces.length == 15, "commitFill must add exactly ONE face for the left cell");
+    auto rightCellAfter = t.findFillCell(cast(int)rightPix.x, cast(int)rightPix.y, vp);
+    assert(rightCellAfter.length == 4 && fillCellSetEq(rightCellAfter, rightVerts),
+        "the right cell must still resolve correctly after the left cell alone was filled");
+    t.commitFill(rightCellAfter);
+    assert(m.faces.length == 16, "commitFill must add exactly ONE more face for the right cell");
+    assert(m.vertices.length == 25, "both fills together are Δv=0 -- every corner is reused");
     assert(history.canUndo());
 }
 
