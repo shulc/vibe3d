@@ -709,6 +709,13 @@ struct EditorApp {
     // change, Geometry|Marks editScope like Add Loop, but must never bake
     // any sibling's wire name onto its own atomic undo entry).
     MeshSessionEdit delegate() topoPenDupLoopEditFactory;
+    // Task 0477 (topology-pen P12, doc/topopen_p12_smoothloop_plan.md): the
+    // Smooth+Loop gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_smoothloop" — kept distinct from EVERY sibling factory
+    // above (a 1-D loop-restricted relax+re-snap is Position-only, like
+    // Move/Slide/Smooth/Move Loop, but must never bake any of their wire
+    // names onto its own coalesced undo entry).
+    MeshSessionEdit delegate() topoPenSmoothLoopEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

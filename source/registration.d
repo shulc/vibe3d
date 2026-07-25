@@ -480,7 +480,11 @@ void registerTools(EditorApp app) {
     // the Shift+RMB Dup Loop gesture's OWN generic MeshSessionEdit factory
     // (topoPenDupLoopEditFactory, distinct wire name + Geometry|Marks
     // editScope, doc/topopen_p11_duploop_plan.md) — appended LAST (11th
-    // param), never inserted mid-list, same rationale.
+    // param), never inserted mid-list, same rationale. P12 adds the
+    // Shift+Ctrl+RMB Smooth+Loop gesture's OWN generic MeshSessionEdit
+    // factory (topoPenSmoothLoopEditFactory, distinct wire name +
+    // Position-only editScope, doc/topopen_p12_smoothloop_plan.md) —
+    // appended LAST (12th param), never inserted mid-list, same rationale.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
@@ -489,7 +493,7 @@ void registerTools(EditorApp app) {
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
                          topoPenSlideEditFactory, topoPenSmoothEditFactory,
                          topoPenSplitEditFactory, topoPenMoveLoopEditFactory,
-                         topoPenDupLoopEditFactory);
+                         topoPenDupLoopEditFactory, topoPenSmoothLoopEditFactory);
         return cast(Tool)t;
     };
 

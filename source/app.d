@@ -3104,6 +3104,16 @@ void main(string[] args) {
     // name.
     auto topoPenDupLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
+    // Topology Pen P12's Smooth+Loop gesture (task 0477, doc/topopen_p12_smoothloop_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above — a 1-D
+    // loop-restricted relax+re-snap never adds/removes geometry (wire name
+    // "mesh.topoPen_smoothloop", editScope Position-only, same scope as
+    // `topoPenMoveLoopEditFactory`/`topoPenMoveEditFactory`/
+    // `topoPenSlideEditFactory`/`topoPenSmoothEditFactory`), but reusing any
+    // of them would bake the wrong wire name on a loop smooth, corrupting
+    // undo history / event-log replay / macros.
+    auto topoPenSmoothLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3222,6 +3232,7 @@ void main(string[] args) {
     app.topoPenSplitEditFactory   = topoPenSplitEditFactory;
     app.topoPenMoveLoopEditFactory = topoPenMoveLoopEditFactory;
     app.topoPenDupLoopEditFactory  = topoPenDupLoopEditFactory;
+    app.topoPenSmoothLoopEditFactory = topoPenSmoothLoopEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

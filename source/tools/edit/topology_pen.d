@@ -136,6 +136,17 @@ alias TopoPenMoveLoopFactory = MeshSessionEdit delegate();
 /// with the wrong wire name.
 alias TopoPenDupLoopFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER SMOOTH+LOOP GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P12, doc/topopen_p12_smoothloop_plan.md) —
+/// a TENTH dedicated factory, distinct from every sibling above: a 1-D
+/// loop-restricted relax+re-snap gesture is Position-only (like
+/// `TopoPenMoveLoopFactory`), but reusing it would bake the wrong wire name
+/// ("mesh.topoPen_moveloop" on a smooth — corrupts undo history / event-log
+/// replay / macros). Wired with `wireName="mesh.topoPen_smoothloop"` and
+/// `MeshEditScope.Position` at the app.d construction site, mirroring
+/// `topoPenMoveLoopEditFactory`.
+alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -166,7 +177,7 @@ private enum GestureSlot {
     CtrlRmb,       // Ctrl,       RMB — undocumented slot               (NOT YET IMPLEMENTED)
     CtrlMmb,       // Ctrl,       MMB — Remove — THIS PHASE (P5)
     ShiftCtrlLmb,  // Shift+Ctrl, LMB — Smoothing                      (NOT YET IMPLEMENTED)
-    ShiftCtrlRmb,  // Shift+Ctrl, RMB — Smoothing + Edge Loop           (NOT YET IMPLEMENTED)
+    ShiftCtrlRmb,  // Shift+Ctrl, RMB — Smoothing + Edge Loop — THIS PHASE (P12)
     ShiftCtrlMmb,  // Shift+Ctrl, MMB — undocumented slot               (NOT YET IMPLEMENTED)
     None,          // Alt held (camera), or a button this grid doesn't cover
 }
@@ -481,6 +492,9 @@ private:
     // --- P11 Dup Loop gesture deps (doc/topopen_p11_duploop_plan.md) ---
     TopoPenDupLoopFactory dupLoopEditFactory_;
 
+    // --- P12 Smooth+Loop gesture deps (doc/topopen_p12_smoothloop_plan.md) ---
+    TopoPenSmoothLoopFactory smoothLoopEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -651,6 +665,35 @@ private:
     int   dupLoopStartX_, dupLoopStartY_;
     int   dupLoopCurX_,   dupLoopCurY_;
 
+    // --- P12 Smooth+Loop session state (topology_pen.d,
+    // doc/topopen_p12_smoothloop_plan.md). Armed on a Shift+Ctrl+RMB press
+    // that lands on a primary-layer edge (`onSmoothLoopRmbDown`, reusing
+    // `findRingSeedEdge` verbatim from P6/P7/P10/P11); the moving set is the
+    // SAME sorted-unique endpoint-vertex gather P10 uses (`uniqueRingVerts`),
+    // captured ONCE at arm time into `smoothLoopVerts_` — the mesh is never
+    // mutated between arm and commit, so re-gathering at release would be
+    // redundant, not more correct (REV1 FIX-2: the commit REUSES this cache
+    // verbatim rather than re-running `uniqueRingVerts`) — and a stale index
+    // after an external undo mid-drag is handled by `resyncSession` clearing
+    // all of this instead. `smoothLoopStartX_`/`_Y_` is the press pixel;
+    // `smoothLoopCurX_`/`_Y_` doubles as BOTH the running "last motion
+    // position" the drag-distance accumulator measures against (mirroring
+    // the whole-mesh Smooth gesture's own `smoothLastX_`/`_Y_`) AND the live
+    // cursor `draw()`'s ghost ring previews at (mirroring Move Loop's
+    // `moveLoopCurX_`/`_Y_`) — one field serves both roles since after every
+    // motion event it IS the live cursor. `smoothLoopDragPx_` accumulates
+    // cursor travel exactly like the whole-mesh Smooth gesture's
+    // `smoothDragPx_` — the only read of it is at release, to derive the
+    // pass count (`onMouseButtonUp`'s Smooth+Loop branch). Cleared by
+    // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3-P11 arm state above.
+    bool   smoothLoopArmed_   = false;
+    int    smoothLoopSeed_    = -1;
+    uint[] smoothLoopVerts_;
+    int    smoothLoopStartX_, smoothLoopStartY_;
+    int    smoothLoopCurX_,   smoothLoopCurY_;
+    float  smoothLoopDragPx_ = 0.0f;
+
     // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
     // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
     // per-pass relax+re-snap LAW itself is measured): a drag of
@@ -798,6 +841,15 @@ public:
     // than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/`spf`/`mlf` MUST
     // stay in their existing positions — every existing positional caller
     // (registration.d) stays byte-unchanged through `mlf`.
+    // P12 (doc/topopen_p12_smoothloop_plan.md, REV1 FIX-1): 12th positional
+    // param `slf` appended LAST (after `dlf`) for the Smooth+Loop factory —
+    // same rationale as every prior addition: `TopoPenSmoothLoopFactory` is
+    // yet another structurally identical delegate alias, so inserting it
+    // anywhere but the tail would silently mis-bind a sibling gesture's
+    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
+    // `spf`/`mlf`/`dlf` MUST stay in their existing positions — every
+    // existing positional caller (registration.d) stays byte-unchanged
+    // through `dlf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
@@ -807,7 +859,8 @@ public:
                         TopoPenSmoothFactory smf = null,
                         TopoPenSplitFactory spf = null,
                         TopoPenMoveLoopFactory mlf = null,
-                        TopoPenDupLoopFactory dlf = null) {
+                        TopoPenDupLoopFactory dlf = null,
+                        TopoPenSmoothLoopFactory slf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -819,6 +872,7 @@ public:
         splitEditFactory_   = spf;
         moveLoopEditFactory_ = mlf;
         dupLoopEditFactory_  = dlf;
+        smoothLoopEditFactory_ = slf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -974,6 +1028,27 @@ public:
             dupLoopCurY_ = e.y;
             return true;
         }
+
+        // P12 (doc/topopen_p12_smoothloop_plan.md Phase 2): while a
+        // Smooth+Loop gesture is armed, accumulate cursor travel off the
+        // RUNNING last position (mirrors the whole-mesh Smooth branch's
+        // `smoothDragPx_` accumulation, P8) — click=1 pass, a longer drag =
+        // more passes (`onMouseButtonUp`'s Smooth+Loop branch derives the
+        // pass count from THIS running total) — and update
+        // `smoothLoopCurX_`/`_Y_` to the SAME running position for
+        // `draw()`'s cursor-ring ghost (Move Loop's `moveLoopCurX_` role):
+        // no separate "last" field needed, since the running position IS
+        // the live cursor after each motion event. No mid-drag
+        // mutation/preview beyond `draw()`'s cheap affordance (deferred
+        // commit, mirroring P8). Consumes, mirroring every other
+        // armed-gesture branch above.
+        if (smoothLoopArmed_) {
+            smoothLoopDragPx_ += hypot(cast(float)(e.x - smoothLoopCurX_),
+                                      cast(float)(e.y - smoothLoopCurY_));
+            smoothLoopCurX_ = e.x;
+            smoothLoopCurY_ = e.y;
+            return true;
+        }
         return false;   // never consumes — placement/build happens on button-up, not motion
     }
 
@@ -1116,11 +1191,11 @@ public:
             case GestureSlot.Mmb:      return onPlainMmbDown(e, vts);
             case GestureSlot.Rmb:      return onMoveLoopRmbDown(e, vts);
             case GestureSlot.ShiftRmb: return onDupLoopShiftRmbDown(e, vts);
+            case GestureSlot.ShiftCtrlRmb: return onSmoothLoopRmbDown(e, vts);
             case GestureSlot.CtrlRmb:
-            case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: the 2 undocumented slots / Smoothing+Edge-Loop —
-                // gesture_map.md table A, slots 8/10/11. Not implemented yet.
+                // TODO: the 2 undocumented slots — gesture_map.md table A,
+                // slots 8/11. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -1214,6 +1289,17 @@ public:
         dupLoopArmed_ = false;
         dupLoopSeed_  = -1;
         dupLoopEdges_ = null;
+        // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
+        // here so the LEFT-button trio's own reset (and `resyncSession()`,
+        // below) close a stray smooth-loop arm too; `onSmoothLoopRmbDown`
+        // (the Shift+Ctrl+RMB handler) does NOT call this helper (same
+        // RMB-button discipline as `onMoveLoopRmbDown`/
+        // `onDupLoopShiftRmbDown` above) and uses its own narrow self-reset
+        // instead.
+        smoothLoopArmed_  = false;
+        smoothLoopSeed_   = -1;
+        smoothLoopVerts_  = null;
+        smoothLoopDragPx_ = 0.0f;
     }
 
     // MINOR-3 (doc/topopen_hover_highlight_plan.md REV1): the single source
@@ -1235,11 +1321,16 @@ public:
     // gesture stay "invisible" to this predicate (e.g. the hover indicator
     // would then incorrectly draw ON TOP OF that gesture's own ghost). The
     // Tier-A pin immediately below this method's unittest guards against a
-    // bad merge silently dropping a flag from this OR.
+    // bad merge silently dropping a flag from this OR. As of P12
+    // (doc/topopen_p12_smoothloop_plan.md) the list is the 10 flags:
+    // `dragArmed_` (P3 build) / `placeArmed_` + `moveArmed_` (P4 Move-Place)
+    // / `addLoopArmed_` (P6) / `slideArmed_` (P7) / `smoothArmed_` (P8) /
+    // `splitArmed_` (P9) / `moveLoopArmed_` (P10) / `dupLoopArmed_` (P11) /
+    // `smoothLoopArmed_` (P12).
     private bool anyGestureArmed() const {
         return dragArmed_ || placeArmed_ || moveArmed_ || addLoopArmed_
             || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_
-            || dupLoopArmed_;
+            || dupLoopArmed_ || smoothLoopArmed_;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -1756,6 +1847,55 @@ public:
         return true;   // consume; the extrude+drag (if any) commits on release
     }
 
+    // P12 (doc/topopen_p12_smoothloop_plan.md), on the Shift+Ctrl+RMB
+    // "Smoothing + Edge Loop" slot: a press picks the nearest primary-layer
+    // EDGE (`findRingSeedEdge`, reused verbatim from P6/P7/P10/P11) and
+    // gathers its in-line edge loop (`uniqueRingVerts`, the SAME
+    // sorted-unique moving-set gather P10 Move Loop uses) into
+    // `smoothLoopVerts_` — REV1 FIX-2: this DOWN-time cache is reused
+    // VERBATIM at commit (`applySmoothLoopPasses`), never re-gathered, since
+    // the mesh is never mutated between arm and commit. If no edge is within
+    // snap range, or the gathered moving-set is somehow empty (defensive —
+    // `selectLoopEdges` never returns an empty list for a valid seed index),
+    // this is not a documented gesture — don't consume, matching every other
+    // down-handler's miss convention (Shift+Ctrl+RMB-lasso then proceeds
+    // unchanged).
+    //
+    // RMB-button discipline (mirrors `onMoveLoopRmbDown`'s/
+    // `onDupLoopShiftRmbDown`'s own doc comment): this handler does ONLY its
+    // own narrow self-reset — `resetAllGestureArms()` is DELIBERATELY NOT
+    // called here — because a RIGHT-button press can legitimately be a
+    // two-button chord while a LEFT-button gesture (Build/Move/Slide/Smooth)
+    // is still held; an unconditional full reset here would silently cancel
+    // that in-progress drag before the user's eventual LEFT release commits
+    // it. A same-slot Shift+Ctrl+RMB re-press is guarded by this handler's
+    // own top-of-function reset, exactly like Move Loop's/Dup Loop's.
+    private bool onSmoothLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        smoothLoopArmed_ = false;
+        smoothLoopSeed_  = -1;
+        smoothLoopVerts_ = null;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto verts = uniqueRingVerts(m, cast(uint)seed);
+        if (verts.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        smoothLoopSeed_   = seed;
+        smoothLoopVerts_  = verts;
+        smoothLoopStartX_ = e.x;
+        smoothLoopStartY_ = e.y;
+        smoothLoopCurX_   = e.x;
+        smoothLoopCurY_   = e.y;
+        smoothLoopDragPx_ = 0.0f;
+        smoothLoopArmed_  = true;
+        return true;   // consume; the relax+re-snap (if any) commits on release
+    }
+
     // P10 (doc/topopen_p10_moveloop_plan.md, plan §Re-snap): multi-background
     // camera-ray re-snap at an ARBITRARY (shifted) pixel — the SAME
     // primitive P4 Move's re-snap ultimately rests on (`BvhPick.pickSurface`,
@@ -1928,17 +2068,18 @@ public:
         if (e.button == SDL_BUTTON_RIGHT) {
             // --- P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the
             // armed Dup Loop gesture at the RELEASE event's own screen
-            // delta. Checked BEFORE the Move Loop branch below —
-            // `dupLoopArmed_`/`moveLoopArmed_` are armed by DISJOINT DOWN
-            // slots (Shift+RMB vs plain RMB) and stay mutually exclusive
-            // under genuine single-press input (SDL cannot emit two DOWN
-            // events for the same physical button without an intervening
-            // UP), mirroring the MIDDLE button's own 3-slot precedent (Add
-            // Loop/Split/Remove) — each slot's DOWN handler narrow-resets
-            // only its OWN state, never a sibling slot's. A release back at
-            // (near enough) the press pixel is a click without a real
-            // drag — an explicit, clean no-op (no extrude, no undo entry),
-            // mirroring every other gesture's `kMinDragPx` guard.
+            // delta. Checked BEFORE the Move Loop/Smooth+Loop branches below
+            // — `dupLoopArmed_`/`moveLoopArmed_`/`smoothLoopArmed_` (P12) are
+            // armed by three DISJOINT DOWN slots (Shift+RMB / plain RMB /
+            // Shift+Ctrl+RMB) and stay mutually exclusive under genuine
+            // single-press input (SDL cannot emit two DOWN events for the
+            // same physical button without an intervening UP), mirroring the
+            // MIDDLE button's own 3-slot precedent (Add Loop/Split/Remove) —
+            // each slot's DOWN handler narrow-resets only its OWN state,
+            // never a sibling slot's. A release back at (near enough) the
+            // press pixel is a click without a real drag — an explicit,
+            // clean no-op (no extrude, no undo entry), mirroring every other
+            // gesture's `kMinDragPx` guard.
             if (dupLoopArmed_) {
                 auto edges = dupLoopEdges_;
                 int  sx = dupLoopStartX_, sy = dupLoopStartY_;
@@ -1969,6 +2110,29 @@ public:
                 Viewport vp;
                 if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
                 commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp));
+                return true;
+            }
+            // --- P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commits
+            // the armed Smooth+Loop gesture — UNLIKE Move Loop/Dup Loop
+            // above, this is NOT gated by `kMinDragPx` (a stationary click
+            // must still apply its one pass, mirroring the whole-mesh
+            // Smooth gesture's own Risk-5 discipline, P8). Checked LAST
+            // among the RIGHT-button arms — `moveLoopArmed_`/`dupLoopArmed_`/
+            // `smoothLoopArmed_` are armed by three DISJOINT DOWN slots
+            // (plain RMB / Shift+RMB / Shift+Ctrl+RMB) and stay mutually
+            // exclusive under genuine single-press input, so branch order is
+            // immaterial. Disarm `smoothLoopArmed_` BEFORE calling
+            // `applySmoothLoopPasses` (REV1 plan "Disarm before commit");
+            // `smoothLoopSeed_`/`smoothLoopVerts_` stay valid for THAT call
+            // (it reads them directly, REV1 FIX-2 — no re-gather) and are
+            // cleared immediately after.
+            if (smoothLoopArmed_) {
+                smoothLoopArmed_ = false;
+                int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
+                applySmoothLoopPasses(n);
+                smoothLoopSeed_   = -1;
+                smoothLoopVerts_  = null;
+                smoothLoopDragPx_ = 0.0f;
                 return true;
             }
             return false;
@@ -2255,6 +2419,46 @@ public:
         return false;
     }
 
+    // MEASURED inverse-edge-length relax KERNEL (P12,
+    // doc/topopen_p12_smoothloop_plan.md Phase 1 — extracted from P8's
+    // `smoothedRelaxTarget`, below, so BOTH the whole-mesh Smooth gesture
+    // and the 1-D Smooth+Loop gesture share the IDENTICAL measured law over
+    // whatever neighbor SET the caller hands it): a closer neighbor pulls
+    // harder —
+    //   relaxTarget(v) = Σ_i (n_i / len_i) / Σ_i (1 / len_i)
+    // where `len_i = |v − n_i|` at the caller-supplied `readPos` snapshot
+    // (every vertex in a pass reads from the SAME snapshot, mirroring
+    // `MeshSmooth`'s own prev/cur double-buffer, smooth.d:280-297) and
+    // `nbrs` is whatever neighbor set the caller has already resolved
+    // (`smoothedRelaxTarget`'s boundary-restricted full 1-ring, or
+    // `applySmoothLoopPasses`'s 1-D loop-neighbor pair) — this function
+    // itself has NO topology awareness beyond the list it's handed.
+    // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
+    // so a future capture can retune it without touching the weight law.
+    // An empty `nbrs` returns `readPos[v]` UNCHANGED — a true no-op,
+    // bit-identical (no arithmetic performed), `hadNeighbors` left at its
+    // `out`-default `false`. Preserves the ORIGINAL `1e-6` div-by-zero
+    // floor and float summation order (iterating `nbrs` in the caller's
+    // given order) bit-for-bit — a pure extraction, not a rewrite.
+    private static Vec3 inverseEdgeLenRelax(const(Vec3)[] readPos, uint v,
+                                            const(uint)[] nbrs, out bool hadNeighbors) {
+        if (nbrs.length == 0) return readPos[v];
+
+        Vec3  weightedSum = Vec3(0, 0, 0);
+        float weightSum   = 0.0f;
+        foreach (nb; nbrs) {
+            float len = (readPos[v] - readPos[nb]).length;
+            float w   = 1.0f / ((len > 1e-6f) ? len : 1e-6f);
+            weightedSum = weightedSum + readPos[nb] * w;
+            weightSum  += w;
+        }
+
+        hadNeighbors = true;
+        Vec3 mean = weightedSum * (1.0f / weightSum);
+        enum float kStrength = 1.0f;   // V1 fixed (full relax)
+        return readPos[v] + (mean - readPos[v]) * kStrength;
+    }
+
     // PLUGGABLE relax target — the pre-re-snap smoothed position of vertex
     // `v` (P8, doc/topopen_p8_smooth_plan.md "The MEASURED weight"). Reads
     // `v`'s neighbors from `m.vertexAdjacencyCSR` — the EXACT same CSR
@@ -2263,14 +2467,9 @@ public:
     // drift from that command's.
     //
     // MEASURED (task 0477 P8 capture, 3 independent boots, 14/16 verts —
-    // 87.5%): INVERSE EDGE-LENGTH weighting — NOT a uniform centroid — a
-    // closer neighbor pulls harder:
-    //   relaxTarget(v) = Σ_i (n_i / len_i) / Σ_i (1 / len_i)
-    // where `len_i = |v − n_i|` at the PRE-PASS ("read") positions — every
-    // vertex in the pass reads from the SAME `readPos` snapshot, mirroring
-    // `MeshSmooth`'s own prev/cur double-buffer (smooth.d:280-297).
-    // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
-    // so a future capture can retune it without touching the weight law.
+    // 87.5%): INVERSE EDGE-LENGTH weighting — NOT a uniform centroid (the
+    // shared law lives in `inverseEdgeLenRelax` above, P12 extraction);
+    // this function's OWN job is resolving WHICH neighbors feed it —
     //
     // Boundary vertices (measured — the reference's boundary-restriction rule): a vertex on the
     // open boundary (`isOpenVertex`) relaxes using ONLY its open-edge
@@ -2304,26 +2503,45 @@ public:
 
         immutable bool boundary = isOpenVertex(m, v, adjOff, adjNbrs);
 
-        Vec3  weightedSum = Vec3(0, 0, 0);
-        float weightSum   = 0.0f;
-        bool  any         = false;
-        foreach (nb; nbrs) {
-            if (boundary) {
+        // P12 (Phase 1 extraction): build the boundary-restricted 1-ring
+        // list when needed, then delegate the actual weighting to the
+        // shared kernel — the SAME one `applySmoothLoopPasses`'s 1-D loop
+        // relax calls with a different (loop-neighbor) list.
+        const(uint)[] relaxNbrs = nbrs;
+        uint[] restricted;
+        if (boundary) {
+            foreach (nb; nbrs) {
                 uint ei = m.edgeIndex(v, nb);
-                if (ei == uint.max || !isOpenEdge(m, ei)) continue;
+                if (ei != uint.max && isOpenEdge(m, ei)) restricted ~= nb;
             }
-            float len = (readPos[v] - readPos[nb]).length;
-            float w   = 1.0f / ((len > 1e-6f) ? len : 1e-6f);
-            weightedSum = weightedSum + readPos[nb] * w;
-            weightSum  += w;
-            any = true;
+            relaxNbrs = restricted;
         }
-        if (!any) return readPos[v];   // defensive; should not occur (see doc comment above)
+        if (relaxNbrs.length == 0) return readPos[v];   // defensive; should not occur (see doc comment above)
 
-        hadNeighbors = true;
-        Vec3 mean = weightedSum * (1.0f / weightSum);
-        enum float kStrength = 1.0f;   // V1 fixed (full relax)
-        return readPos[v] + (mean - readPos[v]) * kStrength;
+        return inverseEdgeLenRelax(readPos, v, relaxNbrs, hadNeighbors);
+    }
+
+    // 1-D LOOP-neighbor connectivity (P12,
+    // doc/topopen_p12_smoothloop_plan.md Phase 1): each vertex touched by
+    // `m.selectLoopEdges(seed)` maps to its ≤2 IN-LOOP neighbors (built
+    // purely from the loop's OWN edge list — no CSR / full 1-ring is read
+    // anywhere here), which is exactly what enforces the "1-D along the
+    // loop, not the full 2-D 1-ring" contract: for each loop edge `[a,b]`,
+    // `b` is appended to `a`'s list and `a` to `b`'s. A closed interior loop
+    // vertex ends up with 2 neighbors; an open-chain END vertex, 1 (F1,
+    // held fixed at the caller — see `applySmoothLoopPasses`'s own doc
+    // comment for the `!= 2` guard, REV1 FIX-3). `ei` bounds are guarded
+    // exactly like `uniqueRingVerts` above (defensive — a valid seed should
+    // never yield an out-of-range edge index).
+    private static uint[][uint] loopNeighborsOf(Mesh* m, uint seed) {
+        uint[][uint] nbrs;
+        foreach (ei; m.selectLoopEdges(seed)) {
+            if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
+            auto ep = m.edges[cast(uint)ei];
+            nbrs[ep[0]] ~= ep[1];
+            nbrs[ep[1]] ~= ep[0];
+        }
+        return nbrs;
     }
 
     // P8 (doc/topopen_p8_smooth_plan.md Phase 2/REV1): commit `passCount`
@@ -2419,6 +2637,107 @@ public:
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Undo.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
+    // P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commit `passCount`
+    // passes of 1-D LOOP relax + re-snap over ONLY the armed loop's
+    // vertices — modeled on `applySmoothPasses` above (same clamp/Jacobi/
+    // sources-once/eps-guard/undo shape), two differences:
+    //
+    // (1) REV1 FIX-2 (drop redundant re-gather): the moving set is
+    // `smoothLoopVerts_`, the DOWN-time cache from `onSmoothLoopRmbDown`
+    // (`uniqueRingVerts`), reused VERBATIM — the mesh is never mutated
+    // between arm and commit, so re-running `uniqueRingVerts` here would be
+    // redundant, not more correct (mirrors `commitMoveLoop`'s own
+    // no-re-gather discipline, P10). `loopNeighborsOf(m, smoothLoopSeed_)`
+    // IS new commit-time work (never computed at arm time) — the 1-D
+    // loop-neighbor connectivity each loop vertex relaxes along.
+    //
+    // (2) F1 (owner-observed, "концы стоят на месте" — REV1 F1 RESOLVED):
+    // a loop vertex with EXACTLY 2 loop-neighbors relaxes toward the
+    // shared `inverseEdgeLenRelax` kernel's inverse-edge-length-weighted
+    // point between them and re-snaps via `closestPointOnMeshes` — P8's
+    // nearest-FOOT query, NOT Move-Loop's camera-ray `resnapToBackground`:
+    // a relaxed point has no natural screen pixel to ray through, so the
+    // nearest-foot primitive is the correct reuse here (plan §Reuse
+    // verdict item 4). A loop vertex with `!= 2` loop-neighbors — an
+    // open-loop END (1 neighbor), or a defensive/degenerate 0 or 3+ (REV1
+    // FIX-3 tightens the plan's original "< 2" to "!= 2") — is HELD FIXED:
+    // skipped entirely, no relax, no re-snap, stays byte-unchanged across
+    // every pass (the vertex is simply never written to `m.vertices`).
+    // Non-loop vertices are NEVER touched either — the outer loop below
+    // iterates `verts` alone, so "only loop vertices move" holds by
+    // construction, not by a separate guard.
+    //
+    // Position-only, zero topology delta — no `resyncSession()` (mirrors
+    // `commitMoveLoop`'s/`applySmoothPasses`'s own reasoning: a pure
+    // position write can never dangle a sibling gesture's cached INDEX).
+    private void applySmoothLoopPasses(int passCount) {
+        if (meshSrc_ is null || history_ is null || smoothLoopEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+        auto verts = smoothLoopVerts_;   // REV1 FIX-2: the DOWN-time cache, reused verbatim
+        if (verts.length == 0) return;
+        foreach (vi; verts)
+            if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
+
+        auto loopNbrs = loopNeighborsOf(m, cast(uint)smoothLoopSeed_);   // new commit-time work
+
+        // Two-layer clamp (mirrors applySmoothPasses's own): floor at 1 (a
+        // click always applies exactly one pass), cap at
+        // MAX_TOPOPEN_SMOOTH_PASSES (the shared runaway backstop).
+        if (passCount < 1) passCount = 1;
+        if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
+
+        auto sources = backgroundSourcesSnapshot();   // point-in-time, fetched ONCE per commit
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        foreach (pass; 0 .. passCount) {
+            Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot (Jacobi)
+            foreach (vi; verts) {
+                auto pNbrs = vi in loopNbrs;
+                // F1/REV1 FIX-3: `!= 2` (not `< 2`) — an open-loop end (1
+                // neighbor) OR a degenerate/self-touching >2 case is held
+                // fixed identically; a missing AA entry (defensive) is the
+                // same as 0 neighbors.
+                if (pNbrs is null || (*pNbrs).length != 2) continue;
+
+                bool hadNeighbors;
+                Vec3 relaxed = inverseEdgeLenRelax(read, vi, *pNbrs, hadNeighbors);
+                if (!hadNeighbors) continue;
+                if (sources.length) {
+                    Vec3  hit, hitN;
+                    int   si, fi;
+                    float d2;
+                    enum bool dblSided = false;   // V1 default -- matches P8/CONS Point-mode's own default
+                    if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
+                        relaxed = hit;
+                }
+                m.vertices[vi] = relaxed;
+            }
+        }
+
+        // Unconditional eps no-op guard, restricted to the LOOP verts —
+        // the only ones this gesture could possibly have touched (mirrors
+        // `applySmoothPasses`'s own whole-mesh guard, narrowed to this
+        // gesture's actual write set).
+        enum float kSmoothLoopEps = 1e-4f;   // mirrors applySmoothPasses's own eps guard
+        bool changed = false;
+        foreach (vi; verts)
+            if ((m.vertices[vi] - before.vertices[vi]).length > kSmoothLoopEps) { changed = true; break; }
+        if (!changed) { before.restore(*m); return; }   // no mutation worth recording -- no GPU churn
+
+        m.commitChange(MeshEditScope.Position);
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = smoothLoopEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Smooth Loop");
+        history_.record(cmd);
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment above.
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
@@ -2847,7 +3166,8 @@ public:
     // `poly` must be a simple (non-self-intersecting) closed loop, in
     // either winding order — the algorithm is winding-independent.
     private static void hatchScreenPolygon(ImGui.ImDrawList* dl, const ImVec2[] poly, uint col,
-                                           float spacingPx, float widthPx) {
+                                           float spacingPx, float widthPx,
+                                           const ref Viewport vp) {
         if (poly.length < 3) return;
 
         float minX = poly[0].x, maxX = poly[0].x;
@@ -2856,6 +3176,23 @@ public:
             if (p.x < minX) minX = p.x; else if (p.x > maxX) maxX = p.x;
             if (p.y < minY) minY = p.y; else if (p.y > maxY) maxY = p.y;
         }
+
+        // Bundled review SHOULD-FIX (#27 review /
+        // doc/topopen_p12_smoothloop_plan.md "hover-highlight SHOULD-FIX"):
+        // clamp the AABB to the VIEWPORT rect BEFORE computing the sweep
+        // range below — an off-frustum boundary-face vertex (e.g. a large
+        // polygon whose silhouette partly leaves the visible viewport)
+        // would otherwise make `cMin..cMax` sweep thousands of lines for
+        // hatch that is never visible anyway (a render hitch, not just
+        // wasted work). Off-viewport hatch isn't visible, so clamping is
+        // lossless for what actually gets drawn.
+        immutable float vpMinX = cast(float)vp.x,              vpMaxX = cast(float)(vp.x + vp.width);
+        immutable float vpMinY = cast(float)vp.y,              vpMaxY = cast(float)(vp.y + vp.height);
+        if (minX < vpMinX) minX = vpMinX;
+        if (maxX > vpMaxX) maxX = vpMaxX;
+        if (minY < vpMinY) minY = vpMinY;
+        if (maxY > vpMaxY) maxY = vpMaxY;
+        if (minX > maxX || minY > maxY) return;   // polygon's AABB is entirely off-viewport
 
         // `mainDiag==true` sweeps the (+1,+1) family (lines of constant
         // x - y); `false` sweeps the (+1,-1) family (lines of constant
@@ -2869,8 +3206,17 @@ public:
             immutable float cMin = mainDiag ? (minX - maxY) : (minX + minY);
             immutable float cMax = mainDiag ? (maxX - minY) : (maxX + maxY);
 
+            // Bundled review SHOULD-FIX: ONE scratch buffer reused across
+            // every sweep line in this family (`.length = 0` keeps the
+            // underlying GC allocation's capacity, so the `~=` below grows
+            // it in place instead of allocating fresh per line) rather than
+            // a brand-new `ImVec2[]` per line — a convex face (the common
+            // real call-site shape, a mesh polygon) needs only 2 slots per
+            // line; a concave n-gon's extra crossings just grow this same
+            // buffer instead of allocating anew.
+            ImVec2[] hits;
             for (float c = cMin; c <= cMax; c += step) {
-                ImVec2[] hits;
+                hits.length = 0;
                 immutable size_t n = poly.length;
                 foreach (i; 0 .. n) {
                     ImVec2 A = poly[i];
@@ -3130,12 +3476,39 @@ public:
             }
         }
 
+        // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the Smooth+Loop
+        // ghost — highlights the ARMED loop at its CURRENT (pre-relax)
+        // vertex positions (no per-pass relaxation preview — deferred/
+        // expensive, consistent with the whole-mesh Smooth ghost's own
+        // restraint above), plus a P8-style cursor ring at the live drag
+        // position (`smoothLoopCurX_`/`_Y_`). Independent of `lastHit_`/
+        // CONS, drawn before the same `!lastHit_.hit` early-return as every
+        // other gesture ghost above.
+        if (smoothLoopArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null && smoothLoopSeed_ >= 0 && smoothLoopSeed_ < cast(int)m.edges.length) {
+                enum uint smoothLoopCol = IM_COL32(120, 255, 200, 220);   // smoothing green-blue (P8's own hue)
+                foreach (ei; m.selectLoopEdges(cast(uint)smoothLoopSeed_)) {
+                    if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                    auto ringE = m.edges[ei];
+                    ImVec2 ra, rb;
+                    if (projectPt(m.vertices[ringE[0]], vp, ra)
+                     && projectPt(m.vertices[ringE[1]], vp, rb))
+                        dl.AddLine(ra, rb, smoothLoopCol, 2.5f);
+                }
+                ImVec2 cur = ImVec2(cast(float)smoothLoopCurX_, cast(float)smoothLoopCurY_);
+                dl.AddCircle(cur, 14.0f, smoothLoopCol, 24, 2.5f);
+                dl.AddCircleFilled(cur, 4.0f, smoothLoopCol, 16);
+            }
+        }
+
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 4). MINOR-5: placed AFTER the LAST pre-`!lastHit_.hit`-return
-        // ghost block above (P10 Move Loop, P11 Dup Loop) rather than
-        // literally "after smooth" — Split (P9), Move Loop (P10), and Dup
-        // Loop (P11) all now sit between Smooth and this early-return too.
-        // Independent of `lastHit_`/CONS
+        // ghost block above (P10 Move Loop, P11 Dup Loop, P12 Smooth+Loop)
+        // rather than literally "after smooth" — Split (P9), Move Loop
+        // (P10), Dup Loop (P11), and Smooth+Loop (P12) all now sit between
+        // the whole-mesh Smooth ghost and this early-return too. Independent
+        // of `lastHit_`/CONS
         // (over the PRIMARY, not the background), like every ghost above,
         // so a primary-only scene still shows it. Gated on
         // `!anyGestureArmed()` (mode ghosts win when armed — Pinned Decision
@@ -3169,7 +3542,7 @@ public:
                     }
                     if (ok && pts.length >= 3)
                         hatchScreenPolygon(dl, pts, kHoverHatchCol,
-                                          kHoverHatchSpacingPx, kHoverHatchWidthPx);
+                                          kHoverHatchSpacingPx, kHoverHatchWidthPx, vp);
                 }
 
                 // (c) nearest-VERTEX filled SQUARE — on top.
@@ -3385,6 +3758,20 @@ public:
         root["dupLoopArmed"]     = JSONValue(dupLoopArmed_);
         root["dupLoopSeed"]      = JSONValue(dupLoopSeed_);
         root["dupLoopEdgeCount"] = JSONValue(cast(int)dupLoopEdges_.length);
+
+        // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the armed
+        // Smooth+Loop gesture's state, for Tier-C tests to assert the
+        // picked seed edge and gathered moving-set size without driving a
+        // full release. `smoothLoopPassCount` mirrors the whole-mesh
+        // Smooth's own `smoothPassCount` derivation exactly (NIT-3 parity:
+        // reports the CLAMPED value `onMouseButtonUp`'s Smooth+Loop branch
+        // will actually apply if released now).
+        root["smoothLoopArmed"]     = JSONValue(smoothLoopArmed_);
+        root["smoothLoopSeed"]      = JSONValue(smoothLoopSeed_);
+        root["smoothLoopVertCount"] = JSONValue(cast(int)smoothLoopVerts_.length);
+        int smoothLoopPassCount = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
+        if (smoothLoopPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothLoopPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
+        root["smoothLoopPassCount"] = JSONValue(smoothLoopPassCount);
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 6): a NEW nested object (deliberately NOT the existing `hover{}`
@@ -5981,7 +6368,8 @@ unittest { // U7 (REV1 FIX-2 — the test that would have caught FIX-1): a
 }
 
 unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.md
-           // MINOR-3): every one of the 9 currently-enumerated arm flags
+           // MINOR-3, extended by P12 doc/topopen_p12_smoothloop_plan.md):
+           // every one of the 10 currently-enumerated arm flags
            // independently flips the predicate true and none is silently
            // ignored — guards a future merge from dropping a flag from the
            // OR (the hazard `resetAllGestureArms()`'s own doc comment
@@ -6007,6 +6395,8 @@ unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.m
     t.moveLoopArmed_ = false;
     t.dupLoopArmed_ = true;  assert(t.anyGestureArmed(), "dupLoopArmed_ must count");
     t.dupLoopArmed_ = false;
+    t.smoothLoopArmed_ = true; assert(t.anyGestureArmed(), "smoothLoopArmed_ must count");
+    t.smoothLoopArmed_ = false;
 
     assert(!t.anyGestureArmed(), "every flag cleared again -> false");
 }
@@ -6482,4 +6872,496 @@ unittest {
     foreach (vi; 0 .. 9)
         assert((m.vertices[vi] - gridPos[vi]).length < 1e-5f,
             format("original grid vertex %d must be left exactly alone", vi));
+}
+
+// ===========================================================================
+// P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — Tier-B in-file
+// unittests. The relax LAW is the P8-shared kernel extracted above
+// (`inverseEdgeLenRelax`); P8's OWN `smoothedRelaxTarget` T4/boundary
+// unittests (earlier in this file) already pin the wrapper's behavior and
+// stay green unchanged — same direct-call signature, a pure extraction
+// (REV1 core-plan approval). This section pins the NEW P12-only surface:
+// the extracted kernel called with a RESTRICTED (loop) neighbor set, the
+// 1-D loop-neighbor connectivity helper, the commit-level "only loop
+// vertices move" + F1 endpoints-held-fixed contracts, dispatch, and undo.
+// ===========================================================================
+
+unittest { // inverseEdgeLenRelax — 2-neighbor exact match against an
+           // INDEPENDENTLY-computed inverse-edge-length midpoint (mirrors
+           // P8's own T4 discriminator, applied here directly to the
+           // EXTRACTED kernel rather than through `smoothedRelaxTarget`'s
+           // full-1-ring wrapper).
+    import std.format : format;
+
+    Vec3[] readPos = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 4, 0)];   // v=0; n1=1 (len 1), n2=2 (len 4)
+    bool hadNeighbors;
+    Vec3 actual = TopologyPenTool.inverseEdgeLenRelax(readPos, 0, [1u, 2u], hadNeighbors);
+    assert(hadNeighbors, "a 2-neighbor set must report usable relax neighbors");
+
+    float w1 = 1.0f / (readPos[0] - readPos[1]).length;
+    float w2 = 1.0f / (readPos[0] - readPos[2]).length;
+    Vec3 expected = (readPos[1] * w1 + readPos[2] * w2) * (1.0f / (w1 + w2));
+
+    assert((actual - expected).length < 1e-5f,
+        format("expected the inverse-edge-length midpoint %s; got %s", expected, actual));
+}
+
+unittest { // inverseEdgeLenRelax — a 1-neighbor set relaxes FULLY onto that
+           // single neighbor (kStrength=1 -> weightedSum/weightSum reduces to
+           // the one neighbor's own position exactly) — a pure property of
+           // the shared weighting law over WHATEVER list it's handed;
+           // F1's "held fixed" policy for a real open-loop end lives at the
+           // `applySmoothLoopPasses` call site's `!= 2` guard below, never
+           // inside this topology-agnostic kernel.
+    Vec3[] readPos = [Vec3(0, 0, 0), Vec3(5, 2, -3)];
+    bool hadNeighbors;
+    Vec3 actual = TopologyPenTool.inverseEdgeLenRelax(readPos, 0, [1u], hadNeighbors);
+    assert(hadNeighbors, "a 1-neighbor set must report usable relax neighbors");
+    assert((actual - readPos[1]).length < 1e-5f,
+        "a single-neighbor relax must land exactly on that neighbor");
+}
+
+unittest { // inverseEdgeLenRelax — a 0-neighbor set is a true no-op:
+           // `readPos[v]` byte-unchanged, `hadNeighbors` stays false.
+    Vec3[] readPos = [Vec3(1, 2, 3)];
+    bool hadNeighbors;
+    const(uint)[] noNbrs;
+    Vec3 actual = TopologyPenTool.inverseEdgeLenRelax(readPos, 0, noNbrs, hadNeighbors);
+    assert(!hadNeighbors, "an empty neighbor set must report NO usable neighbors");
+    assert(actual == readPos[0], "an empty neighbor set must be a byte-identical no-op");
+}
+
+unittest { // loopNeighborsOf — an interior loop vertex gets exactly its 2
+           // loop-neighbors; an open-chain END gets exactly 1
+           // (doc/topopen_p12_smoothloop_plan.md Phase 1 — mirrors
+           // `uniqueRingVerts`'s own REV1 FIX-1 grid rig: `makeGridPlane(2)`,
+           // a 3x3 vertex grid, `index(i,j) = i*3+j`).
+    import mesh : makeGridPlane;
+    import std.algorithm : sort;
+
+    Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
+
+    uint seedRow = m.edgeIndex(3, 4);
+    assert(seedRow != uint.max, "setup: middle-row edge 3-4 must exist");
+    auto rowNbrs = TopologyPenTool.loopNeighborsOf(&m, seedRow);
+    assert(rowNbrs[3] == [4u], "open-chain END (3) must have exactly 1 loop-neighbor");
+    assert(rowNbrs[5] == [4u], "open-chain END (5) must have exactly 1 loop-neighbor");
+    auto n4 = rowNbrs[4].dup;
+    sort(n4);
+    assert(n4 == [3u, 5u], "interior loop vertex (4) must have exactly its 2 loop-neighbors");
+
+    uint seedBoundary = m.edgeIndex(0, 1);
+    assert(seedBoundary != uint.max, "setup: top-row boundary edge 0-1 must exist");
+    auto boundaryNbrs = TopologyPenTool.loopNeighborsOf(&m, seedBoundary);
+    foreach (vi; [0u, 1u, 2u, 3u, 5u, 6u, 7u, 8u])
+        assert(boundaryNbrs[vi].length == 2,
+            "every vertex of a CLOSED perimeter loop must have exactly 2 loop-neighbors");
+}
+
+unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
+           // non-loop verts UNCHANGED, F1 open-chain ENDPOINTS byte-unchanged,
+           // δ=0, undo restores exactly (doc/topopen_p12_smoothloop_plan.md
+           // §Testing Strategy + ⚠️ F1 RESOLVED's own added test). Uses the
+           // SAME interior seed (edge 3-4) as `uniqueRingVerts`'s/
+           // `loopNeighborsOf`'s own grid rig above — the gathered chain
+           // [3,4,5] is EXACTLY the owner-observed "3x3 side edge" shape: 3
+           // and 5 are the open-chain ENDS (1 loop-neighbor each), 4 is the
+           // sole interior vertex (2 loop-neighbors). Vertex 4 is perturbed
+           // off the flat grid's own colinear midpoint (else the relax would
+           // be a no-op on this perfectly uniform grid) so the test can
+           // discriminate "actually relaxed" from "left alone".
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_               = history;
+    t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                         "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                         MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    // Perturb vertex 4 off the flat grid's own colinear midpoint between 3
+    // and 5 — on the UN-perturbed grid, 3/4/5 are exactly colinear and
+    // evenly spaced, so the inverse-edge-length mean IS vertex 4's own
+    // current position (a coincidental no-op unrelated to this gesture's
+    // own no-op guard).
+    m.vertices[4] = Vec3(0.3f, 2.0f, 0.0f);
+
+    // A large flat background plane well below the perturbed grid.
+    enum float planeY = -0.5f;
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-20, planeY, -20), Vec3(20, planeY, -20),
+                   Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    uint seed = m.edgeIndex(3, 4);
+    assert(seed != uint.max);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);
+    assert(verts == [3u, 4u, 5u]);
+
+    t.smoothLoopSeed_  = cast(int)seed;
+    t.smoothLoopVerts_ = verts;
+
+    Vec3 orig3 = m.vertices[3], orig4 = m.vertices[4], orig5 = m.vertices[5];
+    // Independently-computed inverse-edge-length target for vertex 4, off
+    // the SAME pre-pass positions `applySmoothLoopPasses` will read.
+    float w3 = 1.0f / (orig4 - orig3).length;
+    float w5 = 1.0f / (orig4 - orig5).length;
+    Vec3 expectedMean = (orig3 * w3 + orig5 * w5) * (1.0f / (w3 + w5));
+
+    Vec3[] beforeAll = m.vertices.dup;
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+
+    t.applySmoothLoopPasses(1);
+
+    // (1) Interior vertex 4 relaxed to the independently-computed
+    // inverse-edge-length midpoint (X/Z) AND lies ON the background plane
+    // (perp distance to the surface ~0 — nearest-FOOT re-snap, not a
+    // camera-ray one).
+    assert(abs(m.vertices[4].x - expectedMean.x) < 1e-4f
+        && abs(m.vertices[4].z - expectedMean.z) < 1e-4f,
+        format("interior vertex 4 must relax to the inverse-edge-length midpoint's X/Z; "
+             ~ "expected (%f,_,%f), got %s", expectedMean.x, expectedMean.z, m.vertices[4]));
+    assert(abs(m.vertices[4].y - planeY) < 1e-3f,
+        format("interior vertex 4 must land ON the background plane (y~=%f); got y=%f",
+               planeY, m.vertices[4].y));
+
+    // (2) F1 (⚠️ F1 RESOLVED, "концы стоят на месте"): BOTH open-chain
+    // endpoints (3, 5) are byte-unchanged — held fixed, no relax, no re-snap.
+    assert(m.vertices[3] == orig3, "F1: open-chain endpoint 3 must be byte-unchanged");
+    assert(m.vertices[5] == orig5, "F1: open-chain endpoint 5 must be byte-unchanged");
+
+    // (3) Non-loop vertices (everything except 3,4,5) are byte-unchanged —
+    // the "only loop vertices move" contract, dedicated assertion over
+    // every index NOT in the gathered moving-set.
+    foreach (vi; 0 .. m.vertices.length) {
+        bool inLoop = (vi == 3 || vi == 4 || vi == 5);
+        if (inLoop) continue;
+        assert(m.vertices[vi] == beforeAll[vi],
+            format("non-loop vertex %d must be byte-unchanged", vi));
+    }
+
+    // (4) δ=0: topology counts unchanged.
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "Smooth+Loop must never change topology (δ=0)");
+    assert(history.canUndo(), "a real Smooth+Loop commit must record one undo entry");
+
+    // (5) Undo restores exactly.
+    history.undo();
+    assert((m.vertices[3] - orig3).length < 1e-6f
+        && (m.vertices[4] - orig4).length < 1e-6f
+        && (m.vertices[5] - orig5).length < 1e-6f,
+        "undo must restore every loop vertex's exact pre-relax position");
+}
+
+unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
+           // (the flat, un-perturbed grid: 3/4/5 are exactly colinear and
+           // evenly spaced, so vertex 4's inverse-edge-length mean IS its own
+           // current position, and no background source exists to re-snap
+           // anything) is the ROUTINE no-op case — byte-identical mesh, NO
+           // undo entry (mirrors `applySmoothPasses`'s own T7 no-op test).
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+
+    setBackgroundSnapSources(null);   // test-isolation, not a production call site
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_               = history;
+    t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                         "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                         MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    t.smoothLoopSeed_  = cast(int)seed;
+    t.smoothLoopVerts_ = TopologyPenTool.uniqueRingVerts(&m, seed);
+
+    auto before = MeshSnapshot.capture(m);
+    t.applySmoothLoopPasses(1);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices,
+        "a flat/uniform grid with no background must be a byte-identical no-op");
+    assert(!history.canUndo(), "a no-op Smooth+Loop gesture must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — Shift+Ctrl+RMB dispatch guard (P12,
+// doc/topopen_p12_smoothloop_plan.md), the same Tier-A pin shape as the
+// P5/P6/P10/P11 dispatch guards above.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, cast(SDL_Keymod)(KMOD_SHIFT | KMOD_CTRL))
+        == GestureSlot.ShiftCtrlRmb,
+        "Shift+Ctrl+RMB must resolve to the Smooth+Loop gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// onSmoothLoopRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
+// consume/arm (doc/topopen_p12_smoothloop_plan.md "RMB-dispatch resolution":
+// a miss must fall through to Shift+Ctrl+RMB-lasso unchanged).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 100, 100);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p3, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
+
+    SDL_MouseButtonEvent eHit;
+    eHit.button = SDL_BUTTON_RIGHT;
+    eHit.x = mx; eHit.y = my;
+    bool consumed = t.onSmoothLoopRmbDown(eHit, vts);
+    assert(consumed, "a press on a valid edge midpoint must arm and consume");
+    assert(t.smoothLoopArmed_, "must arm the Smooth+Loop gesture");
+    assert(t.smoothLoopVerts_ == [3u, 4u, 5u],
+        format("armed moving-set must be the in-line row chain; got %s", t.smoothLoopVerts_));
+
+    t.smoothLoopArmed_ = false;   // reset for the miss probe below
+    SDL_MouseButtonEvent eMiss;
+    eMiss.button = SDL_BUTTON_RIGHT;
+    eMiss.x = -5000; eMiss.y = -5000;   // far from every edge
+    bool missConsumed = t.onSmoothLoopRmbDown(eMiss, vts);
+    assert(!missConsumed, "a press far from every edge must NOT consume");
+    assert(!t.smoothLoopArmed_, "a miss must not arm the gesture");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonUp — RIGHT-branch, Smooth+Loop is NOT `kMinDragPx`-gated (a
+// stationary click still applies its one pass, mirroring the whole-mesh
+// Smooth gesture's own Risk-5 discipline, P8) — driven through the REAL
+// `onMouseButtonUp` path (arming state set up directly, mirroring P10/P11's
+// own click-vs-drag tests) so the actual RIGHT-branch dispatch is under test.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+
+    setBackgroundSnapSources(null);   // test-isolation: force the deterministic no-bg no-op path
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_               = history;
+    t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                         "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                         MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    t.smoothLoopSeed_    = cast(int)seed;
+    t.smoothLoopArmed_   = true;
+    t.smoothLoopStartX_  = 50;
+    t.smoothLoopStartY_  = 50;
+    t.smoothLoopCurX_    = 50;
+    t.smoothLoopCurY_    = 50;
+    t.smoothLoopDragPx_  = 0.0f;
+    t.smoothLoopVerts_   = TopologyPenTool.uniqueRingVerts(&m, seed);
+
+    auto before = MeshSnapshot.capture(m);
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_RIGHT;
+    e.x = 50; e.y = 50;   // release exactly at the press pixel -- a stationary click
+    VectorStack vts;
+    bool consumed = t.onMouseButtonUp(e, vts);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(consumed, "a stationary-click release must still consume the event");
+    assert(!t.smoothLoopArmed_, "release must disarm Smooth+Loop regardless of outcome");
+    // The flat/uniform grid + no background is a byte-identical no-op (the
+    // SAME rig as `applySmoothLoopPasses`'s own no-op unittest above) -- this
+    // additionally proves the RIGHT-branch dispatch applies exactly ONE pass
+    // for a click, with no `kMinDragPx` gate suppressing it.
+    assert(after.vertices == before.vertices,
+        "a stationary click on a no-op rig must leave the mesh byte-identical");
+    assert(!history.canUndo(), "a no-op click must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// resyncSession — clears a stray Smooth+Loop arm
+// (doc/topopen_p12_smoothloop_plan.md "Undo factory"): an external history
+// navigation mid-drag must not leave a dangling seed/moving-set for the
+// eventual (now stale) release to commit against.
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+    t.smoothLoopArmed_   = true;
+    t.smoothLoopSeed_    = 3;
+    t.smoothLoopVerts_   = [3u, 4u, 5u];
+    t.smoothLoopDragPx_  = 42.0f;
+
+    t.resyncSession();
+
+    assert(!t.smoothLoopArmed_, "resyncSession must clear the armed Smooth+Loop gesture");
+    assert(t.smoothLoopSeed_ == -1, "resyncSession must reset the seed index");
+    assert(t.smoothLoopVerts_.length == 0, "resyncSession must clear the moving-set");
+    assert(t.smoothLoopDragPx_ == 0.0f, "resyncSession must reset the drag-distance accumulator");
+}
+
+// ---------------------------------------------------------------------------
+// toolStateJson — Smooth+Loop fields (doc/topopen_p12_smoothloop_plan.md
+// Phase 4): reports the armed seed + moving-set size + derived pass count,
+// for Tier-C tests to assert without driving a full release.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json : JSONType;
+
+    auto t = new TopologyPenTool();
+
+    auto s0 = t.toolStateJson();
+    assert(s0["smoothLoopArmed"].type == JSONType.false_, "must start with no armed Smooth+Loop");
+    assert(cast(int)s0["smoothLoopSeed"].integer == -1, "must start with seed=-1");
+    assert(cast(int)s0["smoothLoopVertCount"].integer == 0, "must start with an empty moving-set");
+    assert(cast(int)s0["smoothLoopPassCount"].integer == 1, "a fresh (unarmed) tool reports pass count 1");
+
+    t.smoothLoopArmed_  = true;
+    t.smoothLoopSeed_   = 7;
+    t.smoothLoopVerts_  = [1u, 2u, 3u, 4u];
+    t.smoothLoopDragPx_ = 45.0f;   // 1 + floor(45/20) = 3 passes
+
+    auto s1 = t.toolStateJson();
+    assert(s1["smoothLoopArmed"].type == JSONType.true_, "must report the armed state");
+    assert(cast(int)s1["smoothLoopSeed"].integer == 7, "must report the picked seed edge");
+    assert(cast(int)s1["smoothLoopVertCount"].integer == 4, "must report the gathered moving-set size");
+    assert(cast(int)s1["smoothLoopPassCount"].integer == 3,
+        "must report the SAME pass-count derivation onMouseButtonUp will apply");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
+// (P12, doc/topopen_p12_smoothloop_plan.md): drives the REAL Shift+Ctrl+RMB
+// gesture end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.
+// ShiftCtrlRmb` -> `onSmoothLoopRmbDown`), a motion event (drag-distance
+// accumulation), and the RIGHT-button release branch (->
+// `applySmoothLoopPasses`) — against a REAL background mesh
+// (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
+// so this is a genuine end-to-end proof (not just the mutation, as the
+// Tier-B `applySmoothLoopPasses` cases above already cover, nor just the
+// dispatch wiring, as `onSmoothLoopRmbDown`'s own test above covers) — all
+// still pure-`dub test`. Reuses the SAME perturbed-vertex-4 rig as the
+// Tier-B relax test above, so the real dispatch path is proven to reach the
+// identical relax+re-snap outcome.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs;
+    import std.format : format;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)(KMOD_SHIFT | KMOD_CTRL));
+    scope(exit) SDL_SetModState(cast(SDL_Keymod)0);   // don't leak into later dub-test unittests
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 200, 200);
+    auto history = new CommandHistory();
+    t.history_               = history;
+    t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                         "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                         MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+    m.vertices[4] = Vec3(0.3f, 2.0f, 0.0f);   // off the flat grid's own colinear midpoint
+
+    Viewport vp = view.viewport();
+
+    enum float planeY = -0.5f;
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-20, planeY, -20), Vec3(20, planeY, -20),
+                   Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p3, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
+
+    Vec3 orig3 = m.vertices[3], orig5 = m.vertices[5];
+
+    SDL_MouseButtonEvent eDown;
+    eDown.button = SDL_BUTTON_RIGHT;
+    eDown.x = mx; eDown.y = my;
+    bool downConsumed = t.onMouseButtonDown(eDown, vts);
+    assert(downConsumed, "Shift+Ctrl+RMB-down on the seed edge must be consumed via the real dispatch");
+    assert(t.smoothLoopArmed_, "the real dispatch must have armed Smooth+Loop");
+    assert(t.smoothLoopVerts_ == [3u, 4u, 5u], "the real dispatch must have gathered the row chain");
+
+    SDL_MouseMotionEvent eMove;
+    eMove.x = mx + 8; eMove.y = my - 5;
+    bool moveConsumed = t.onMouseMotion(eMove, vts);
+    assert(moveConsumed, "motion while armed must be consumed");
+    assert(t.smoothLoopDragPx_ > 0.0f, "motion must accumulate drag distance");
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_RIGHT;
+    eUp.x = mx + 8; eUp.y = my - 5;
+    bool upConsumed = t.onMouseButtonUp(eUp, vts);
+    assert(upConsumed, "RMB-up must be consumed");
+    assert(!t.smoothLoopArmed_, "release must disarm Smooth+Loop regardless of outcome");
+
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "Smooth+Loop must never change topology (δ=0)");
+    assert(history.canUndo(), "the real dispatch path must record one undo entry");
+
+    // F1: both open-chain endpoints stay exactly put; only the interior
+    // vertex (4) moved and landed on the background plane.
+    assert(m.vertices[3] == orig3, "F1: endpoint 3 must be byte-unchanged via the real dispatch");
+    assert(m.vertices[5] == orig5, "F1: endpoint 5 must be byte-unchanged via the real dispatch");
+    assert(abs(m.vertices[4].y - planeY) < 0.05f,
+        format("interior vertex 4 must land ON the background plane (y~=%f); got y=%f",
+               planeY, m.vertices[4].y));
+
+    SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }
