@@ -695,6 +695,13 @@ struct EditorApp {
     // editScope, like Remove — never Move's/Slide's/Smooth's Position-only
     // scope or Remove's/Add Loop's own wire name).
     MeshSessionEdit delegate() topoPenSplitEditFactory;
+    // Task 0477 (topology-pen P10, doc/topopen_p10_moveloop_plan.md): the
+    // Move Loop gesture's own generic session-edit factory, wireName
+    // "mesh.topoPen_moveloop" — kept distinct from EVERY sibling factory
+    // above (a per-vertex loop re-snap is Position-only, like Move/Slide/
+    // Smooth, but must never bake any of their wire names onto its own
+    // atomic undo entry).
+    MeshSessionEdit delegate() topoPenMoveLoopEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

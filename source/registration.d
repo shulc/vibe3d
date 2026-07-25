@@ -473,6 +473,10 @@ void registerTools(EditorApp app) {
     // generic MeshSessionEdit factory (topoPenSplitEditFactory, distinct
     // wire name + Geometry editScope, doc/topopen_p9_split_plan.md) —
     // appended LAST (9th param), never inserted mid-list, same rationale.
+    // P10 adds the plain-RMB Move Loop gesture's OWN generic MeshSessionEdit
+    // factory (topoPenMoveLoopEditFactory, distinct wire name +
+    // Position-only editScope, doc/topopen_p10_moveloop_plan.md) — appended
+    // LAST (10th param), never inserted mid-list, same rationale.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
@@ -480,7 +484,7 @@ void registerTools(EditorApp app) {
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
                          topoPenSlideEditFactory, topoPenSmoothEditFactory,
-                         topoPenSplitEditFactory);
+                         topoPenSplitEditFactory, topoPenMoveLoopEditFactory);
         return cast(Tool)t;
     };
 

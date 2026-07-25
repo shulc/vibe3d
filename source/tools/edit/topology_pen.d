@@ -18,7 +18,7 @@ import toolpipe.stages.constrain : ConstrainStage;
 import constraint           : resolveHoverTarget, kTopoPenSnapPx, closestPointOnMeshes;
 import snap                  : backgroundSourcesSnapshot;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
-import bvh_pick              : BvhPick;
+import bvh_pick              : BvhPick, SurfaceHit;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -114,6 +114,18 @@ alias TopoPenSmoothFactory = MeshSessionEdit delegate();
 /// `topoPenRemoveEditFactory`.
 alias TopoPenSplitFactory = MeshSessionEdit delegate();
 
+/// Factory the tool calls ONCE PER MOVE-LOOP GESTURE to obtain a fresh,
+/// primary-bound `MeshSessionEdit` (P10, doc/topopen_p10_moveloop_plan.md) —
+/// an EIGHTH dedicated factory, distinct from every sibling above: a
+/// per-vertex loop re-snap is Position-only (like `TopoPenMoveFactory`/
+/// `TopoPenSlideFactory`/`TopoPenSmoothFactory`), but reusing any of them
+/// would bake the wrong `wireName` ("mesh.topoPen_move"/"mesh.topoPen_slide"/
+/// "mesh.topoPen_smooth" on a loop drag — corrupts undo history / event-log
+/// replay / macros). Wired with `wireName="mesh.topoPen_moveloop"` and
+/// `MeshEditScope.Position` at the app.d construction site, mirroring
+/// `topoPenSlideEditFactory`.
+alias TopoPenMoveLoopFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -135,8 +147,8 @@ private enum BuildCase { None, Edge, Tri, Quad }
 // Edge Loop, Smoothing, ...) to plug into without re-deriving the grid.
 private enum GestureSlot {
     Lmb,           // none,       LMB — Move — THIS PHASE (P4)
-    Rmb,           // none,       RMB — Move + Edge Loop               (NOT YET IMPLEMENTED)
-    Mmb,           // none,       MMB — Split                          (NOT YET IMPLEMENTED)
+    Rmb,           // none,       RMB — Move + Edge Loop — THIS PHASE (P10)
+    Mmb,           // none,       MMB — Split — THIS PHASE (P9)
     ShiftLmb,      // Shift,      LMB — Duplicate/build — THIS PHASE (P3)
     ShiftRmb,      // Shift,      RMB — Duplicate Loop                 (NOT YET IMPLEMENTED)
     ShiftMmb,      // Shift,      MMB — Add Loop — THIS PHASE (P6)
@@ -453,6 +465,9 @@ private:
     // --- P9 Split gesture deps (doc/topopen_p9_split_plan.md) ---
     TopoPenSplitFactory splitEditFactory_;
 
+    // --- P10 Move Loop gesture deps (doc/topopen_p10_moveloop_plan.md) ---
+    TopoPenMoveLoopFactory moveLoopEditFactory_;
+
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
@@ -558,6 +573,37 @@ private:
     int  splitSourceVert_  = -1;
     int  splitTargetVert_  = -1;
 
+    // --- P10 Move Loop session state (topology_pen.d,
+    // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
+    // a primary-layer edge (`onMoveLoopRmbDown`, reusing `findRingSeedEdge`
+    // verbatim from P6/P7): the moving set is the SORTED-UNIQUE endpoint
+    // vertices of `Mesh.selectLoopEdges(seed)` (REV1 FIX-1 — the classic
+    // in-line edge-loop CHAIN, not `loopSliceRingEdges`'s perpendicular
+    // ring), captured ONCE at arm time (the mesh is never mutated between
+    // arm and commit, so re-gathering at release would be redundant, not
+    // more correct — and a stale index after an external undo mid-drag is
+    // handled by `resyncSession` clearing all of this instead).
+    // `moveLoopStartX_`/`moveLoopStartY_` is the RMB-down pixel (the drag's
+    // anchor); `moveLoopCurX_`/`moveLoopCurY_` tracks the LIVE cursor off
+    // every subsequent motion event (`onMouseMotion`) purely for `draw()`'s
+    // ghost preview — the shared screen-delta `commitMoveLoop` actually
+    // applies is always computed from the RELEASE event's own pixel
+    // (`onMouseButtonUp`), never from this cached value. `loopBgBvh_` is
+    // this tool's OWN per-background-mesh `BvhPick` cache (mirrors P5's
+    // `removePick_`/CONS's own `_bgBvh`, `constrain.d:82`) — driven ONLY
+    // from the main thread (motion/up/draw), so no `cursorValid` gate is
+    // needed (plan Risk 3). Cleared by `onMouseButtonUp` on commit/no-op
+    // and by `resyncSession` on an external history navigation, exactly
+    // like the P3/P4/P6/P7/P9 arm state above; `loopBgBvh_` itself is a
+    // CACHE, not arm state, so it survives a reset (mirrors `removePick_`'s
+    // own lifetime).
+    bool  moveLoopArmed_  = false;
+    int   moveLoopSeed_   = -1;
+    int   moveLoopStartX_, moveLoopStartY_;
+    int   moveLoopCurX_,   moveLoopCurY_;
+    uint[] moveLoopVerts_;
+    BvhPick[size_t] loopBgBvh_;
+
     // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
     // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
     // per-pass relax+re-snap LAW itself is measured): a drag of
@@ -633,6 +679,14 @@ public:
     // compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf` MUST stay in their existing
     // positions — every existing positional caller (registration.d) stays
     // byte-unchanged through `smf`.
+    // P10 (doc/topopen_p10_moveloop_plan.md): 10th positional param `mlf`
+    // appended LAST (after `spf`) for the Move Loop factory — same
+    // rationale as every prior addition: `TopoPenMoveLoopFactory` is yet
+    // another structurally identical delegate alias, so inserting it
+    // anywhere but the tail would silently mis-bind a sibling gesture's
+    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
+    // `spf` MUST stay in their existing positions — every existing
+    // positional caller (registration.d) stays byte-unchanged through `spf`.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
@@ -640,7 +694,8 @@ public:
                         TopoPenAddLoopFactory alf = null,
                         TopoPenSlideFactory sf = null,
                         TopoPenSmoothFactory smf = null,
-                        TopoPenSplitFactory spf = null) {
+                        TopoPenSplitFactory spf = null,
+                        TopoPenMoveLoopFactory mlf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -650,6 +705,7 @@ public:
         slideEditFactory_   = sf;
         smoothEditFactory_  = smf;
         splitEditFactory_   = spf;
+        moveLoopEditFactory_ = mlf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -746,6 +802,19 @@ public:
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
             splitTargetVert_ = findSourceVertex(e.x, e.y, vp);
+            return true;
+        }
+
+        // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): while a Move Loop
+        // gesture is armed, just track the live cursor for `draw()`'s ghost
+        // preview — the shared screen-delta itself is always recomputed from
+        // the RELEASE event's own pixel at commit time
+        // (`onMouseButtonUp`/`perVertexTargets`), never from this cached
+        // value, so no re-snap work happens here. Consumes, mirroring the
+        // Add Loop/Slide/Smooth/Split branches above.
+        if (moveLoopArmed_) {
+            moveLoopCurX_ = e.x;
+            moveLoopCurY_ = e.y;
             return true;
         }
         return false;   // never consumes — placement/build happens on button-up, not motion
@@ -878,14 +947,14 @@ public:
             case GestureSlot.ShiftMmb: return onShiftMmbDown(e, vts);
             case GestureSlot.ShiftCtrlLmb: return onShiftCtrlLmbDown(e, vts);
             case GestureSlot.Mmb:      return onPlainMmbDown(e, vts);
-            case GestureSlot.Rmb:
+            case GestureSlot.Rmb:      return onMoveLoopRmbDown(e, vts);
             case GestureSlot.ShiftRmb:
             case GestureSlot.CtrlRmb:
             case GestureSlot.ShiftCtrlRmb:
             case GestureSlot.ShiftCtrlMmb:
-                // TODO: Move+Edge-Loop / Duplicate Loop / the 2 undocumented
-                // slots / Smoothing+Edge-Loop — gesture_map.md table A,
-                // slots 2/5/8/10/11/12. Not implemented yet.
+                // TODO: Duplicate Loop / the 2 undocumented slots /
+                // Smoothing+Edge-Loop — gesture_map.md table A, slots
+                // 5/8/10/11/12. Not implemented yet.
                 return false;
             case GestureSlot.None:
                 return false;
@@ -958,6 +1027,17 @@ public:
         splitArmed_      = false;
         splitSourceVert_ = -1;
         splitTargetVert_ = -1;
+        // P10 Move Loop (doc/topopen_p10_moveloop_plan.md) — cleared here so
+        // the LEFT-button trio's own reset (and `resyncSession`, below) close
+        // a stray move-loop arm too; `onMoveLoopRmbDown` (the RIGHT-button
+        // handler) does NOT call this helper (same RMB/MMB-button discipline
+        // as `onShiftMmbDown`/`onPlainMmbDown` above — a RIGHT-button press
+        // genuinely CAN be a two-button chord while a LEFT gesture is still
+        // held) and uses its own narrow self-reset instead. `loopBgBvh_` is a
+        // CACHE, not arm state, so it is deliberately left intact here.
+        moveLoopArmed_ = false;
+        moveLoopSeed_  = -1;
+        moveLoopVerts_ = null;
     }
 
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
@@ -1295,6 +1375,166 @@ public:
         return true;
     }
 
+    // P10 (doc/topopen_p10_moveloop_plan.md, REV1 FIX-1 — the KILLER fix):
+    // the moving-set for a Move Loop gesture is the SORTED-UNIQUE union of
+    // endpoint vertices of `Mesh.selectLoopEdges(seedEdge)` — the classic
+    // IN-LINE edge-loop CHAIN (mesh.d:13857, ported bit-exact against 11
+    // reference `select.loop` cases) — NOT `loopSliceRingEdges`/
+    // `collectEdgeRing` (the PERPENDICULAR ring a stack of parallel edges,
+    // used by Add Loop/Slide above for an unrelated purpose: seeding a
+    // loop-CUT ring, not gathering a loop to DRAG). Handles both an interior
+    // seed (closed OR open in-line chain, depending on where it dead-ends)
+    // and a boundary seed (`selectLoopBorderChain` — chains along the open
+    // perimeter, closing if the boundary loop itself closes) — both branches
+    // already live inside `selectLoopEdges` itself; this helper only turns
+    // the returned edge-index list into a deduplicated, order-independent
+    // vertex set. `sort` gives a deterministic, reproducible ordering for
+    // tests (not a topological requirement — `commitMoveLoop` writes every
+    // entry regardless of order).
+    private static uint[] uniqueRingVerts(Mesh* m, uint seedEdge) {
+        import std.algorithm : sort;
+
+        bool[uint] seen;
+        uint[] verts;
+        foreach (ei; m.selectLoopEdges(seedEdge)) {
+            if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
+            auto ep = m.edges[cast(uint)ei];
+            foreach (v; ep) {
+                if (v in seen) continue;
+                seen[v] = true;
+                verts ~= v;
+            }
+        }
+        sort(verts);
+        return verts;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md), on the plain RMB "Move Loop"
+    // slot: a press picks the nearest primary-layer EDGE
+    // (`findRingSeedEdge`, reused verbatim from P6/P7) and gathers its
+    // in-line edge loop (`uniqueRingVerts`, REV1 FIX-1); if no edge is
+    // within snap range, or the gathered moving-set is somehow empty
+    // (defensive — `selectLoopEdges` never returns an empty list for a
+    // valid seed index), this is not a documented gesture — don't consume,
+    // matching every other down-handler's miss convention (RMB-lasso then
+    // proceeds unchanged, task-0288 "tool first crack at RMB" precedent).
+    //
+    // REV1 FIX-1 discipline (RMB/MMB-button symmetry, see
+    // `resetAllGestureArms`'s own doc comment): this handler does ONLY its
+    // own narrow self-reset — `resetAllGestureArms()` is DELIBERATELY NOT
+    // called here — because a RIGHT-button press can legitimately be a
+    // two-button chord while a LEFT-button gesture (Build/Move/Slide/
+    // Smooth) is still held; an unconditional full reset here would
+    // silently cancel that in-progress drag before the user's eventual LEFT
+    // release commits it. A same-button RMB re-press is guarded by this
+    // handler's own top-of-function reset, exactly like Add Loop's/Split's.
+    private bool onMoveLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        moveLoopArmed_ = false;
+        moveLoopSeed_  = -1;
+        moveLoopVerts_ = null;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto verts = uniqueRingVerts(m, cast(uint)seed);
+        if (verts.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        moveLoopSeed_   = seed;
+        moveLoopVerts_  = verts;
+        moveLoopStartX_ = e.x;
+        moveLoopStartY_ = e.y;
+        moveLoopCurX_   = e.x;
+        moveLoopCurY_   = e.y;
+        moveLoopArmed_  = true;
+        return true;   // consume; the loop drag (if any) commits on release
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md, plan §Re-snap): multi-background
+    // camera-ray re-snap at an ARBITRARY (shifted) pixel — the SAME
+    // primitive P4 Move's re-snap ultimately rests on (`BvhPick.pickSurface`,
+    // `bvh_pick.d:196`), scanned over every live background source and kept
+    // at the globally-nearest hit, mirroring CONS's own `bgSurfaceRayHit`
+    // scan (`constrain.d:159-192`) — a low-touch, TOOL-LOCAL port (plan
+    // §Phase 2 alternative (2)) rather than extracting a shared
+    // `constraint.d` helper, since MOVE-LOOP is the only caller that needs
+    // the scan at a pixel other than the live cursor (CONS's own Point/
+    // Screen-mode call sites are left untouched). `loopBgBvh_` is this
+    // tool's OWN per-background-mesh cache (mirrors P5's `removePick_`),
+    // pruned here exactly like CONS prunes `_bgBvh` so a removed/hidden
+    // background layer's BVH is freed. Driven ONLY from the main thread
+    // (onMouseMotion/onMouseButtonUp/draw), so no `cursorValid` gate is
+    // needed (plan Risk 3). Returns false (leaving `outPoint` untouched)
+    // when the ray misses every background source, or none exists.
+    private bool resnapToBackground(int px, int py, const ref Viewport vp, out Vec3 outPoint) {
+        auto sources = backgroundSourcesSnapshot();
+        if (sources.length == 0) return false;
+
+        bool[size_t] live;
+        foreach (src; sources)
+            if (src !is null) live[cast(size_t)src] = true;
+        size_t[] stale;
+        foreach (addr, bp; loopBgBvh_)
+            if ((addr in live) is null) stale ~= addr;
+        foreach (addr; stale) loopBgBvh_.remove(addr);
+
+        float bestT = float.infinity;
+        bool  found = false;
+        Vec3  bestPt;
+        foreach (src; sources) {
+            if (src is null) continue;
+            size_t addr = cast(size_t)src;
+            auto pp = addr in loopBgBvh_;
+            BvhPick bp;
+            if (pp is null) { bp = new BvhPick(); loopBgBvh_[addr] = bp; }
+            else bp = *pp;
+            SurfaceHit sh;
+            if (!bp.pickSurface(px, py, vp, *src, sh)) continue;
+            if (sh.t >= bestT) continue;
+            bestT  = sh.t;
+            bestPt = sh.point;
+            found  = true;
+        }
+        if (found) outPoint = bestPt;
+        return found;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md "The pinned drag-mapping"): the
+    // per-vertex re-snap targets for a shared SCREEN-space drag delta
+    // `(dx, dy)` — project each moving vertex's CURRENT (pre-commit)
+    // position, shift by the shared delta, and re-snap
+    // (`resnapToBackground`). A vertex that projects behind the camera, or
+    // whose shifted pixel misses every background surface, KEEPS its
+    // original position (the safe, no-fling miss policy — plan
+    // "Miss policy"; also the contract FIX-2's partial-miss test pins at
+    // the `commitMoveLoop` layer). Returns one target per entry of `verts`,
+    // same order — `verts.length == 0`/`m is null` yields an empty array
+    // (defensive; callers already guard this).
+    private Vec3[] perVertexTargets(const(uint)[] verts, int dx, int dy,
+                                    const ref Viewport vp) {
+        Vec3[] targets;
+        auto m = mesh;
+        if (m is null) return targets;
+        targets.length = verts.length;
+        foreach (i, vi; verts) {
+            Vec3 orig = (vi < m.vertices.length) ? m.vertices[vi] : Vec3(0, 0, 0);
+            targets[i] = orig;   // default: miss (or out-of-range) keeps the original
+            if (vi >= m.vertices.length) continue;
+
+            ImVec2 pt;
+            if (!projectPt(orig, vp, pt)) continue;   // behind camera -> keep original
+
+            int px = cast(int)(pt.x + cast(float)dx);
+            int py = cast(int)(pt.y + cast(float)dy);
+            Vec3 hitPt;
+            if (resnapToBackground(px, py, vp, hitPt)) targets[i] = hitPt;
+        }
+        return targets;
+    }
+
     // P8 (doc/topopen_p8_smooth_plan.md Phase 3), on the Shift+Ctrl+LMB
     // "Smooth" slot: arms a whole-primary-mesh relax+re-snap gesture — NO
     // source-vertex/edge pick (unlike every other gesture above, this one
@@ -1369,6 +1609,34 @@ public:
                 int c = findSourceVertex(e.x, e.y, vp);
                 splitTargetVert_ = -1;
                 commitSplit(a, c);
+                return true;
+            }
+            return false;
+        }
+
+        // --- P10 (doc/topopen_p10_moveloop_plan.md Phase 3): commits the
+        // armed Move Loop gesture at the RELEASE event's own pixel. Isolated
+        // in its OWN RIGHT-button branch — disjoint from every LEFT/MIDDLE
+        // branch above/below, mirroring the MIDDLE branch's own top-level
+        // isolation. A release back at (near enough) the press pixel is a
+        // click without a real drag — an explicit, clean no-op (no vertex
+        // write, no undo entry, no `perVertexTargets`/re-snap work at all),
+        // mirroring P3/P7's own `kMinDragPx` guard.
+        if (e.button == SDL_BUTTON_RIGHT) {
+            if (moveLoopArmed_) {
+                auto verts = moveLoopVerts_;
+                int  sx = moveLoopStartX_, sy = moveLoopStartY_;
+                moveLoopArmed_ = false;
+                moveLoopVerts_ = null;
+                moveLoopSeed_  = -1;
+
+                enum int kMinDragPx = 3;   // mirrors P3/P7's own click-vs-drag gate
+                int dx = e.x - sx, dy = e.y - sy;
+                if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+
+                Viewport vp;
+                if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+                commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp));
                 return true;
             }
             return false;
@@ -2070,6 +2338,60 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
+    // P10 (doc/topopen_p10_moveloop_plan.md "Commit"): commit the armed Move
+    // Loop gesture — writes EVERY entry of `verts`/`targets` (same length,
+    // same order), one atomic undo entry via the DEDICATED
+    // `moveLoopEditFactory_` (wireName "mesh.topoPen_moveloop") — mirrors
+    // `commitSlide`'s N-vertex shape (`commitSlide` is the 2-vertex
+    // template; this is the general N-vertex form). `targets` is a PARAM,
+    // not resolved inside this function — the unmeasured re-snap
+    // (`perVertexTargets`) is isolated from the testable commit, exactly how
+    // `commitSlide` takes `tA`/`tB` rather than re-deriving them; a
+    // per-vertex MISS is already baked into `targets[i] == orig[i]` by the
+    // caller (`perVertexTargets`'s "keep original" policy), so this function
+    // has no separate miss-handling of its own — it simply writes whatever
+    // it is given (REV1 FIX-2's contract: a partial-miss commits atomically,
+    // no per-vertex special-casing here).
+    //
+    // Position-only, zero topology delta — never resizes/rebuilds
+    // `faces[]`/`edges[]`/`vertices[]` — so unlike P5/P6/P9 this does NOT
+    // call `resyncSession()` (mirrors `commitSlide`'s/`applySmoothPasses`'s
+    // own reasoning: no sibling gesture's cached INDEX can dangle from a
+    // pure position write). Eps no-op guard (mirrors `moveVertexTo`/
+    // `commitSlide`): a gesture that nets to ZERO vertex movement (every
+    // target within eps of its own original position — e.g. every ray
+    // missed, or a whole-loop click-without-drag that slipped past the
+    // release-side `kMinDragPx` gate) records no mutation and no undo entry.
+    private void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets) {
+        if (meshSrc_ is null || history_ is null || moveLoopEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null) return;
+        if (verts.length == 0 || verts.length != targets.length) return;
+        foreach (vi; verts)
+            if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
+
+        enum float kMoveLoopEps = 1e-4f;   // mirrors moveVertexTo's/commitSlide's own eps guards
+        bool changed = false;
+        foreach (i, vi; verts)
+            if ((targets[i] - m.vertices[vi]).length > kMoveLoopEps) { changed = true; break; }
+        if (!changed) return;   // no mutation worth recording — no GPU churn
+
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+        foreach (i, vi; verts) m.vertices[vi] = targets[i];
+        m.commitChange(MeshEditScope.Position);
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+
+        auto cmd = moveLoopEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Move Loop");
+        history_.record(cmd);
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Undo.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
     // Stored drag-arm index/case dangle across an external history
     // navigation mid-drag (a redo/undo elsewhere could delete the source
     // vertex or its incident geometry out from under an armed gesture) — the
@@ -2206,6 +2528,59 @@ public:
                         dl.AddLine(aPt, cPt, splitCol, 2.0f);
                         dl.AddCircleFilled(cPt, 5.0f, splitCol, 16);
                     }
+                }
+            }
+        }
+
+        // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): the Move Loop
+        // ghost is likewise independent of `lastHit_`/CONS's OWN hit
+        // (unlike P4 Move's ghost below, which reuses `lastHit_.point` —
+        // MOVE-LOOP resolves its OWN N per-vertex re-snap targets via
+        // `resnapToBackground`, not the single CONS-published hit), so it
+        // too is drawn BEFORE the `lastHit_.hit` early-return, mirroring
+        // every other armed-gesture ghost above: a primary-only scene with
+        // no background layer must still preview the armed loop (every
+        // vertex simply staying at its own original position, per the miss
+        // policy). Purely re-reads already-armed state
+        // (`moveLoopSeed_`/`moveLoopVerts_`/`moveLoopStartX_`/`_Y_`/
+        // `moveLoopCurX_`/`_Y_`) plus the live cursor delta — no mesh
+        // mutation.
+        if (moveLoopArmed_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null && moveLoopSeed_ >= 0 && moveLoopSeed_ < cast(int)m.edges.length) {
+                enum uint moveLoopCol = IM_COL32(255, 140, 60, 220);   // move-loop ghost orange
+                int dx = moveLoopCurX_ - moveLoopStartX_;
+                int dy = moveLoopCurY_ - moveLoopStartY_;
+
+                Vec3[uint] ghostPos;
+                foreach (vi; moveLoopVerts_) {
+                    if (vi >= m.vertices.length) continue;
+                    Vec3 orig = m.vertices[vi];
+                    Vec3 g    = orig;   // default: miss (or off-screen) keeps the original
+                    ImVec2 pt;
+                    if (projectPt(orig, vp, pt)) {
+                        int px = cast(int)(pt.x + cast(float)dx);
+                        int py = cast(int)(pt.y + cast(float)dy);
+                        Vec3 hitPt2;
+                        if (resnapToBackground(px, py, vp, hitPt2)) g = hitPt2;
+                    }
+                    ghostPos[vi] = g;
+                }
+
+                foreach (ei; m.selectLoopEdges(cast(uint)moveLoopSeed_)) {
+                    if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                    auto ringE = m.edges[ei];
+                    auto ga = ringE[0] in ghostPos;
+                    auto gb = ringE[1] in ghostPos;
+                    if (ga is null || gb is null) continue;
+                    ImVec2 pa, pb;
+                    if (projectPt(*ga, vp, pa) && projectPt(*gb, vp, pb))
+                        dl.AddLine(pa, pb, moveLoopCol, 2.0f);
+                }
+                foreach (vi, pos; ghostPos) {
+                    ImVec2 gp;
+                    if (projectPt(pos, vp, gp))
+                        dl.AddCircleFilled(gp, 4.0f, moveLoopCol, 16);
                 }
             }
         }
@@ -2397,6 +2772,13 @@ public:
         root["splitArmed"]      = JSONValue(splitArmed_);
         root["splitSourceVert"] = JSONValue(splitSourceVert_);
         root["splitTargetVert"] = JSONValue(splitTargetVert_);
+
+        // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): the armed Move
+        // Loop gesture's state, for Tier-C tests to assert the picked seed
+        // edge and gathered moving-set size without driving a full release.
+        root["moveLoopArmed"]     = JSONValue(moveLoopArmed_);
+        root["moveLoopSeed"]      = JSONValue(moveLoopSeed_);
+        root["moveLoopVertCount"] = JSONValue(cast(int)moveLoopVerts_.length);
 
         return root;
     }
@@ -4067,6 +4449,659 @@ unittest {
     assert(m.faces.length == 2, "the real dispatch path must have split the quad into 2 faces");
     assert(m.edges.length == 5, "the real dispatch path must have added the diagonal chord edge");
     assert(history.canUndo(), "the real dispatch path must record one undo entry");
+
+    SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
+}
+
+// ---------------------------------------------------------------------------
+// uniqueRingVerts — REV1 FIX-1 (doc/topopen_p10_moveloop_plan.md): the
+// moving-set on a small grid must be the classic IN-LINE edge-loop chain
+// (`Mesh.selectLoopEdges`), NOT the perpendicular ring
+// (`loopSliceRingEdges`/`collectEdgeRing`). Both cases below are HAND-
+// COMPUTED against the grid's own known layout (`makeGridPlane(2)`: a 3x3
+// vertex grid, `index(i,j) = i*3+j`), independently of any prior probe of
+// `selectLoopEdges` itself:
+//   * INTERIOR seed (edge 3-4, the middle row's own row-boundary edge)
+//     walks the classic in-line chain STRAIGHT ACROSS the whole middle row
+//     (i=1, j=0..2) — vertices {3,4,5} — dead-ending at the left/right
+//     grid boundary on each side (an OPEN chain on a non-toroidal grid).
+//   * BOUNDARY seed (edge 0-1, a genuine top-row perimeter edge) chains
+//     along the grid's own closed perimeter (`selectLoopBorderChain`) —
+//     every perimeter vertex EXCEPT the untouched center (4) — a CLOSED
+//     loop.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
+
+    uint seedRow = m.edgeIndex(3, 4);
+    assert(seedRow != uint.max, "setup: middle-row edge 3-4 must exist");
+    auto rowVerts = TopologyPenTool.uniqueRingVerts(&m, seedRow);
+    assert(rowVerts == [3u, 4u, 5u],
+        format("interior seed must gather the in-line row chain {3,4,5}; got %s", rowVerts));
+
+    uint seedBoundary = m.edgeIndex(0, 1);
+    assert(seedBoundary != uint.max, "setup: top-row boundary edge 0-1 must exist");
+    auto boundaryVerts = TopologyPenTool.uniqueRingVerts(&m, seedBoundary);
+    assert(boundaryVerts == [0u, 1u, 2u, 3u, 5u, 6u, 7u, 8u],
+        format("boundary seed must gather the full closed perimeter (every vertex but the "
+             ~ "untouched center, 4); got %s", boundaryVerts));
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — T1 INTERIOR (doc/topopen_p10_moveloop_plan.md §Testing):
+// a hand-built target set (each loop vertex offset by a fixed vector) must
+// land EXACTLY at its target, topology (v/e/f counts) must stay unchanged
+// (δ=0), the gesture is one atomic undo entry, and undo/redo restore the
+// exact pre-/post-move positions.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_             = history;
+    t.moveLoopEditFactory_  = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                        MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);
+    assert(verts == [3u, 4u, 5u]);
+
+    Vec3[] orig;
+    foreach (vi; verts) orig ~= m.vertices[vi];
+
+    enum Vec3 offset = Vec3(0.2f, 1.5f, -0.4f);
+    Vec3[] targets;
+    foreach (o; orig) targets ~= o + offset;
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    t.commitMoveLoop(verts, targets);
+
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - targets[i]).length < 1e-5f,
+            format("loop vertex %d must land exactly at its target", vi));
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "Move Loop must never change topology (δ=0)");
+    assert(history.canUndo(), "a real loop move must record one undo entry");
+
+    history.undo();
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - orig[i]).length < 1e-5f,
+            "undo must restore every loop vertex's exact pre-move position");
+
+    history.redo();
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - targets[i]).length < 1e-5f,
+            "redo must restore every loop vertex's exact moved position");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — T2 BOUNDARY (doc/topopen_p10_moveloop_plan.md §Testing):
+// the same commit contract over the full closed-perimeter moving-set (8
+// vertices) — every entry lands at its target, δ=0.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);
+    assert(verts == [0u, 1u, 2u, 3u, 5u, 6u, 7u, 8u]);
+
+    Vec3[] targets;
+    foreach (vi; verts) targets ~= m.vertices[vi] + Vec3(0, 0.75f, 0);
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    t.commitMoveLoop(verts, targets);
+
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - targets[i]).length < 1e-5f,
+            format("perimeter vertex %d must land exactly at its target", vi));
+    // The untouched center (4) must be left exactly alone.
+    assert((m.vertices[4] - Vec3(0, 0, 0)).length < 1e-6f,
+        "the center vertex (outside the boundary loop) must not move");
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "Move Loop must never change topology (δ=0)");
+    assert(history.canUndo(), "a real perimeter loop move must record one undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — T3 NO-OP GUARD (doc/topopen_p10_moveloop_plan.md
+// §Undo): targets identical (within eps) to the current positions must be a
+// byte-identical no-op — no mutation, no undo entry.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);
+
+    Vec3[] targets;
+    foreach (vi; verts) targets ~= m.vertices[vi];   // exactly the current positions
+
+    auto before = MeshSnapshot.capture(m);
+    t.commitMoveLoop(verts, targets);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(after.vertices == before.vertices, "an all-stationary target set must not move any vertex");
+    assert(!history.canUndo(), "an all-stationary commit must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — T4 PARTIAL-MISS (REV1 FIX-2, doc/topopen_p10_moveloop_plan.md
+// "The pinned drag-mapping" / REV1): simulates a per-vertex background-ray
+// MISS by feeding `commitMoveLoop` a `targets[]` where SOME entries equal
+// `orig[i]` exactly (the "keep original" policy `perVertexTargets` applies
+// on a miss) while others carry a real offset. The specific held vertex
+// must stay EXACTLY put while the others move — locking the "miss -> keep
+// original per-vertex" contract at the commit layer (there is no
+// Escape-cancel in this tool family, so a partial-miss commits atomically,
+// as one single undo entry covering the whole gesture).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);   // [3, 4, 5]
+    assert(verts == [3u, 4u, 5u]);
+
+    Vec3[] orig;
+    foreach (vi; verts) orig ~= m.vertices[vi];
+
+    // verts[0]=3 and verts[2]=5 get a real offset ("hit"); verts[1]=4's
+    // target is set to its OWN original position, simulating a per-vertex
+    // ray MISS for the middle loop vertex.
+    Vec3[] targets = [orig[0] + Vec3(0, 1.0f, 0), orig[1], orig[2] + Vec3(0, 1.0f, 0)];
+
+    t.commitMoveLoop(verts, targets);
+
+    assert((m.vertices[3] - targets[0]).length < 1e-5f, "the HIT vertex (3) must move to its target");
+    assert((m.vertices[4] - orig[1]).length < 1e-6f,
+        format("the MISS vertex (4) must stay EXACTLY at its original position; got %s", m.vertices[4]));
+    assert((m.vertices[5] - targets[2]).length < 1e-5f, "the HIT vertex (5) must move to its target");
+    assert(history.canUndo(),
+        "a partial-miss gesture (some verts moved) must still record ONE atomic undo entry");
+
+    history.undo();
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - orig[i]).length < 1e-5f,
+            "undo must restore every loop vertex — including the ones that never moved — exactly");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — T5 SPACING PRESERVED / ON-SURFACE (doc/topopen_p10_moveloop_plan.md
+// §Testing "spacing / no-collapse"): targets computed from an INJECTED
+// analytic curved surface (a parabola `y = 0.3*x^2` over the loop's own
+// x-line, evaluated HERE in-test — no Document background needed) must
+// each lie exactly ON that surface (re-derived independently, never by
+// re-reading the target array's own construction) and consecutive
+// loop-vertex distances must stay within a band of the PRE-drag spacing —
+// proving the commit does not collapse the loop toward a point, unlike a
+// hypothetical implementation that averaged/interpolated instead of writing
+// every target verbatim.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.math   : abs;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);   // [3, 4, 5] at x=-1,0,1 (z=0)
+
+    static float heightAt(float x) { return 0.3f * x * x; }
+
+    Vec3[] orig;
+    foreach (vi; verts) orig ~= m.vertices[vi];
+    Vec3[] targets;
+    foreach (o; orig) targets ~= Vec3(o.x, heightAt(o.x), o.z);
+
+    // Pre-drag consecutive spacing (all exactly 1.0 on the flat grid).
+    float preD01 = (orig[1] - orig[0]).length;
+    float preD12 = (orig[2] - orig[1]).length;
+
+    t.commitMoveLoop(verts, targets);
+
+    // On-surface: re-derive the expected height independently per vertex
+    // (never reusing the `targets` array's own values).
+    foreach (i, vi; verts) {
+        float expectedY = heightAt(m.vertices[vi].x);
+        assert(abs(m.vertices[vi].y - expectedY) < 1e-5f,
+            format("loop vertex %d must lie exactly on the injected surface y=0.3x^2; "
+                 ~ "got y=%f expected %f", vi, m.vertices[vi].y, expectedY));
+    }
+
+    float postD01 = (m.vertices[verts[1]] - m.vertices[verts[0]]).length;
+    float postD12 = (m.vertices[verts[2]] - m.vertices[verts[1]]).length;
+    assert(postD01 > preD01 * 0.5f && postD01 < preD01 * 2.0f,
+        format("consecutive spacing (0-1) must stay within a band of pre-drag; pre=%f post=%f",
+               preD01, postD01));
+    assert(postD12 > preD12 * 0.5f && postD12 < preD12 * 2.0f,
+        format("consecutive spacing (1-2) must stay within a band of pre-drag; pre=%f post=%f",
+               preD12, postD12));
+}
+
+// ---------------------------------------------------------------------------
+// resnapToBackground — HIT + MISS (doc/topopen_p10_moveloop_plan.md
+// §Re-snap): a camera-ray cast through an arbitrary pixel against a flat
+// background plane must match an INDEPENDENTLY-computed ray-plane
+// intersection (`screenPointToRay` — the same primitive `pickSurface`
+// itself calls — combined with a hand-derived `y = planeY` solve, never a
+// second call into `resnapToBackground`/`pickSurface`); a pixel whose ray
+// misses the (finite) background mesh entirely must return false.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import math : screenPointToRay;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs;
+    import std.format : format;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 200, 200);
+    Viewport vp = view.viewport();
+
+    enum float planeY = -1.5f;
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-10, planeY, -10), Vec3(10, planeY, -10),
+                   Vec3(10, planeY, 10),   Vec3(-10, planeY, 10)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    int px = 100, py = 100;   // viewport center
+    Vec3 org, dir;
+    screenPointToRay(cast(float)px + 0.5f, cast(float)py + 0.5f, vp, org, dir);
+    assert(abs(dir.y) > 1e-6f, "setup: the ray must not be parallel to the bg plane");
+    float ty = (planeY - org.y) / dir.y;
+    assert(ty > 0, "setup: the bg plane must be in FRONT of the camera at this pixel");
+    Vec3 expected = org + dir * ty;
+
+    Vec3 got;
+    bool hit = t.resnapToBackground(px, py, vp, got);
+    assert(hit, "resnapToBackground must hit the (large, in-front) background plane");
+    assert((got - expected).length < 1e-3f,
+        format("resnapToBackground must match the independently-computed ray-plane hit; "
+             ~ "got %s expected %s", got, expected));
+
+    // No background at all -> must miss cleanly.
+    setBackgroundSnapSources(null);
+    Vec3 gotNone;
+    bool hitNone = t.resnapToBackground(px, py, vp, gotNone);
+    assert(!hitNone, "resnapToBackground must return false with no background source at all");
+}
+
+// ---------------------------------------------------------------------------
+// perVertexTargets — SHIFT + PER-VERTEX MISS POLICY
+// (doc/topopen_p10_moveloop_plan.md "The pinned drag-mapping"): a shared
+// screen-delta is applied to EACH vertex's own screen projection before
+// re-snapping; a vertex whose shifted pixel hits the background lands
+// (approximately) ON it, while a vertex whose shifted pixel misses (here,
+// simply because it is far from the small background's footprint) keeps
+// its EXACT original position — the miss policy this function is
+// responsible for (REV1 FIX-2's contract is pinned at the commit layer
+// above; this pins the same contract one layer up, where the miss is
+// actually decided).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import math  : screenPointToRay;
+    import snap  : setBackgroundSnapSources;
+    import std.math : abs;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 200, 200);
+    Viewport vp = view.viewport();
+
+    Vec3 vA = Vec3(0, 0, 0);
+    Vec3 vB = Vec3(8, 0, 8);   // far away -> its shifted ray will land far from a small bg patch
+
+    Mesh m;
+    m.addVertex(vA);
+    m.addVertex(vB);
+    t.meshSrc_ = () => &m;
+
+    int dx = 10, dy = -6;
+
+    // Determine (via the SAME pixel-rounding perVertexTargets itself uses)
+    // exactly where vA's shifted ray lands on the y=-1.5 plane, so the small
+    // background patch below can be centered there — SETUP ONLY, not the
+    // assertion itself (the assertion below re-derives the same value from
+    // scratch via `screenPointToRay`, never by reading this back).
+    ImVec2 ptA;
+    assert(TopologyPenTool.projectPt(vA, vp, ptA), "setup: vA must project on-screen");
+    int pxA = cast(int)(ptA.x + cast(float)dx);
+    int pyA = cast(int)(ptA.y + cast(float)dy);
+    Vec3 orgA, dirA;
+    screenPointToRay(cast(float)pxA + 0.5f, cast(float)pyA + 0.5f, vp, orgA, dirA);
+    enum float planeY = -1.5f;
+    assert(abs(dirA.y) > 1e-6f);
+    float tyA = (planeY - orgA.y) / dirA.y;
+    assert(tyA > 0, "setup: vA's shifted ray must hit the plane in front of the camera");
+    Vec3 hitA = orgA + dirA * tyA;
+
+    auto bg = new Mesh();
+    enum float half = 0.6f;
+    bg.vertices = [Vec3(hitA.x - half, planeY, hitA.z - half), Vec3(hitA.x + half, planeY, hitA.z - half),
+                   Vec3(hitA.x + half, planeY, hitA.z + half), Vec3(hitA.x - half, planeY, hitA.z + half)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    auto targets = t.perVertexTargets([0u, 1u], dx, dy, vp);
+    assert(targets.length == 2);
+    assert((targets[0] - hitA).length < 1e-3f,
+        "vA's shifted-and-resnapped target must match the small bg patch's own ray-plane hit");
+    assert((targets[1] - vB).length < 1e-6f,
+        "vB (far outside the small bg patch's footprint) must keep its EXACT original position");
+}
+
+// ---------------------------------------------------------------------------
+// resolveGestureSlot — plain RMB dispatch guard (P10, doc/topopen_p10_moveloop_plan.md),
+// the same Tier-A pin shape as the P5/P6 dispatch guards above: a pure,
+// camera-free regression guard so a bad merge that silently reverted the
+// `Rmb` dispatch case would be caught by `dub test`, not just by
+// best-effort Tier-C.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(resolveGestureSlot(SDL_BUTTON_RIGHT, cast(SDL_Keymod)0) == GestureSlot.Rmb,
+        "plain RMB must resolve to the Move Loop gesture slot");
+}
+
+// ---------------------------------------------------------------------------
+// onMoveLoopRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
+// consume/arm (doc/topopen_p10_moveloop_plan.md "RMB-dispatch resolution":
+// a miss must fall through to RMB-lasso unchanged).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 100, 100);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p3, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
+
+    SDL_MouseButtonEvent eHit;
+    eHit.button = SDL_BUTTON_RIGHT;
+    eHit.x = mx; eHit.y = my;
+    bool consumed = t.onMoveLoopRmbDown(eHit, vts);
+    assert(consumed, "a press on a valid edge midpoint must arm and consume");
+    assert(t.moveLoopArmed_, "must arm the Move Loop gesture");
+    assert(t.moveLoopVerts_ == [3u, 4u, 5u],
+        format("armed moving-set must be the in-line row chain; got %s", t.moveLoopVerts_));
+
+    t.moveLoopArmed_ = false;   // reset for the miss probe below
+    SDL_MouseButtonEvent eMiss;
+    eMiss.button = SDL_BUTTON_RIGHT;
+    eMiss.x = -5000; eMiss.y = -5000;   // far from every edge
+    bool missConsumed = t.onMoveLoopRmbDown(eMiss, vts);
+    assert(!missConsumed, "a press far from every edge must NOT consume");
+    assert(!t.moveLoopArmed_, "a miss must not arm the gesture");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p10_moveloop_plan.md
+// Phase 3): a RMB release within `kMinDragPx` of the press pixel is a clean
+// no-op — no vertex write, no undo entry — driven through the REAL
+// `onMouseButtonUp` path (arming state set up directly, mirroring P7
+// Slide's own MIN-DRAG test) so the min-drag GATE ITSELF is under test, not
+// just `commitMoveLoop`'s own (also-present) eps guard.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(3, 4);
+    t.moveLoopSeed_   = cast(int)seed;
+    t.moveLoopArmed_  = true;
+    t.moveLoopStartX_ = 50;
+    t.moveLoopStartY_ = 50;
+    t.moveLoopVerts_  = [3u, 4u, 5u];
+
+    auto before = MeshSnapshot.capture(m);
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_RIGHT;
+    e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
+    VectorStack vts;
+    bool consumed = t.onMouseButtonUp(e, vts);
+    auto after = MeshSnapshot.capture(m);
+
+    assert(consumed, "a click-without-drag release must still consume the event");
+    assert(!t.moveLoopArmed_, "release must disarm Move Loop regardless of the min-drag gate");
+    assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
+    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// resyncSession — clears a stray Move Loop arm (doc/topopen_p10_moveloop_plan.md
+// "Undo factory"): an external history navigation mid-drag must not leave a
+// dangling seed/moving-set for the eventual (now stale) release to commit
+// against.
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+    t.moveLoopArmed_ = true;
+    t.moveLoopSeed_  = 3;
+    t.moveLoopVerts_ = [3u, 4u, 5u];
+
+    t.resyncSession();
+
+    assert(!t.moveLoopArmed_, "resyncSession must clear the armed Move Loop gesture");
+    assert(t.moveLoopSeed_ == -1, "resyncSession must reset the seed index");
+    assert(t.moveLoopVerts_.length == 0, "resyncSession must clear the moving-set");
+}
+
+// ---------------------------------------------------------------------------
+// toolStateJson — Move Loop fields (doc/topopen_p10_moveloop_plan.md
+// Phase 4): reports the armed seed + moving-set size, for Tier-C tests to
+// assert the picked seed edge without driving a full release.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json : JSONType;
+
+    auto t = new TopologyPenTool();
+
+    auto s0 = t.toolStateJson();
+    assert(s0["moveLoopArmed"].type == JSONType.false_, "must start with no armed Move Loop");
+    assert(cast(int)s0["moveLoopSeed"].integer == -1, "must start with seed=-1");
+    assert(cast(int)s0["moveLoopVertCount"].integer == 0, "must start with an empty moving-set");
+
+    t.moveLoopArmed_ = true;
+    t.moveLoopSeed_  = 7;
+    t.moveLoopVerts_ = [1u, 2u, 3u, 4u];
+
+    auto s1 = t.toolStateJson();
+    assert(s1["moveLoopArmed"].type == JSONType.true_, "must report the armed state");
+    assert(cast(int)s1["moveLoopSeed"].integer == 7, "must report the picked seed edge");
+    assert(cast(int)s1["moveLoopVertCount"].integer == 4, "must report the gathered moving-set size");
+}
+
+// ---------------------------------------------------------------------------
+// onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
+// (P10, doc/topopen_p10_moveloop_plan.md): drives the REAL RMB gesture
+// end-to-end — dispatch (`onMouseButtonDown` -> `GestureSlot.Rmb` ->
+// `onMoveLoopRmbDown`), a motion event, and the RIGHT-button release branch
+// (-> `commitMoveLoop`) — against a REAL background mesh
+// (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
+// so this is a genuine end-to-end proof (not just the mutation, as the
+// Tier-B `commitMoveLoop` cases above already cover, nor just the dispatch
+// wiring, as `onMoveLoopRmbDown`'s own test above covers) — all still
+// pure-`dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs;
+    import std.format : format;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 200, 200);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+
+    // A flat background plane well BELOW the primary grid, large enough
+    // that every loop vertex's shifted ray lands on it regardless of the
+    // exact drag delta chosen below.
+    enum float planeY = -1.5f;
+    auto bg = new Mesh();
+    bg.vertices = [Vec3(-20, planeY, -20), Vec3(20, planeY, -20),
+                   Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
+    bg.faces    = [[0u, 1u, 2u, 3u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+    setBackgroundSnapSources(srcs);
+    scope(exit) setBackgroundSnapSources(null);
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p3, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
+
+    SDL_MouseButtonEvent eDown;
+    eDown.button = SDL_BUTTON_RIGHT;
+    eDown.x = mx; eDown.y = my;
+    bool downConsumed = t.onMouseButtonDown(eDown, vts);
+    assert(downConsumed, "RMB-down on the seed edge must be consumed via the real dispatch");
+    assert(t.moveLoopArmed_, "the real dispatch must have armed Move Loop");
+
+    SDL_MouseMotionEvent eMove;
+    eMove.x = mx + 12; eMove.y = my - 7;
+    bool moveConsumed = t.onMouseMotion(eMove, vts);
+    assert(moveConsumed, "motion while armed must be consumed");
+
+    size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
+    Vec3[] origPos;
+    foreach (vi; [3u, 4u, 5u]) origPos ~= m.vertices[vi];
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_RIGHT;
+    eUp.x = mx + 12; eUp.y = my - 7;
+    bool upConsumed = t.onMouseButtonUp(eUp, vts);
+    assert(upConsumed, "RMB-up must be consumed");
+    assert(!t.moveLoopArmed_, "release must disarm Move Loop regardless of outcome");
+
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
+        "Move Loop must never change topology (δ=0)");
+    assert(history.canUndo(), "the real dispatch path must record one undo entry");
+
+    foreach (i, vi; [3u, 4u, 5u]) {
+        assert((m.vertices[vi] - origPos[i]).length > 1e-3f,
+            format("loop vertex %d must have actually moved", vi));
+        assert(abs(m.vertices[vi].y - planeY) < 0.05f,
+            format("loop vertex %d must land ON the background plane (y~=%f); got y=%f",
+                   vi, planeY, m.vertices[vi].y));
+    }
 
     SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }

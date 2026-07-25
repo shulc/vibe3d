@@ -3084,6 +3084,16 @@ void main(string[] args) {
     // name.
     auto topoPenSplitEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
+    // Topology Pen P10's Move Loop gesture (task 0477, doc/topopen_p10_moveloop_plan.md):
+    // its OWN typed edit factory, distinct from EVERY sibling above — a
+    // per-vertex loop re-snap never adds/removes geometry (wire name
+    // "mesh.topoPen_moveloop", editScope Position-only, same scope as
+    // `topoPenMoveEditFactory`/`topoPenSlideEditFactory`/
+    // `topoPenSmoothEditFactory`), but reusing any of them would bake the
+    // wrong wire name on a loop drag, corrupting undo history / event-log
+    // replay / macros.
+    auto topoPenMoveLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3200,6 +3210,7 @@ void main(string[] args) {
     app.topoPenSlideEditFactory   = topoPenSlideEditFactory;
     app.topoPenSmoothEditFactory  = topoPenSmoothEditFactory;
     app.topoPenSplitEditFactory   = topoPenSplitEditFactory;
+    app.topoPenMoveLoopEditFactory = topoPenMoveLoopEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;
