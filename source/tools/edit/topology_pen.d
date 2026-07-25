@@ -2,7 +2,7 @@ module tools.edit.topology_pen;
 
 import bindbc.sdl;
 import std.json : JSONValue;
-import std.math : hypot;
+import std.math : hypot, SQRT2;
 
 import tool;
 import mesh                : Mesh, GpuMesh;
@@ -616,6 +616,62 @@ private:
     private enum float kSmoothPassStridePx      = 20.0f;
     private enum int   MAX_TOPOPEN_SMOOTH_PASSES = 256;
 
+    // --- Generic Hover-Highlight indicator (doc/topopen_hover_highlight_plan.md,
+    // REV1). An always-on, mode-INDEPENDENT "what's under the cursor"
+    // affordance over the PRIMARY mesh, orthogonal to every armed gesture
+    // above: resolved every motion event (`onMouseMotion`, below) via
+    // `computeHoverIndicator` and rendered in `draw()` UNDER the per-mode
+    // gesture ghosts (Build/Move/AddLoop/Slide/Smooth/Split/MoveLoop) —
+    // those take precedence whenever `anyGestureArmed()` is true. Pure
+    // render: no mesh mutation, no undo. Distinct from the P0/P1 CONS
+    // `lastHit_`/`lastTarget_` (background-cage) hover path below, which is
+    // left intact — that one resolves over the BACKGROUND and picks ONE of
+    // vertex/edge/face; this one is over the PRIMARY and shows the nearest
+    // vertex AND edge simultaneously.
+    //
+    // `hoverNearestVert_`/`hoverNearestEdge_` are the screen-nearest PRIMARY
+    // vertex/edge (via `findSourceVertex`/`findRingSeedEdge`'s `∞`-threshold
+    // RESOLUTION pass). REV1 FIX-1 (KILLER): `hoverOverMesh_` — the over-
+    // mesh GATE — is NOT driven solely by `pickPrimaryFace >= 0` (a
+    // face-BVH raycast that returns -1 whenever the primary has zero/sparse
+    // faces — this tool's own from-scratch retopo founding state, bare
+    // vertices/edges laid down before the first face closes; `classifySource`
+    // explicitly treats `BuildCase.Edge`/`Tri` as normal ongoing states, not
+    // error cases). Instead the gate is the OR of the face pick AND a
+    // SEPARATE, FINITE-threshold proximity pass of the SAME two functions
+    // (computed in `onMouseMotion`, never reused across the two purposes),
+    // so a faceless/bare-edge scene still lights up while a cursor genuinely
+    // far from all geometry does not.
+    //
+    // `hoverBoundary_` is `isEdgeBorder(hoverNearestEdge_)` (n == 1 EXACTLY —
+    // MINOR-4: NOT "<=1"; a 0-face bare edge is not a boundary, it simply has
+    // nothing to hatch) and `hoverBoundaryFace_` is that single incident
+    // face (via `facesAroundEdge`), for the cross-hatch in `draw()`. Cleared
+    // by `resyncSession` on an external history navigation (no motion event
+    // may follow it), mirroring every other session-state block above —
+    // but unlike the P3-P10 arm flags, this is NOT part of
+    // `resetAllGestureArms()`/`anyGestureArmed()`: it is not a gesture arm,
+    // just a passive display cache with no commit path of its own.
+    bool hoverOverMesh_     = false;
+    int  hoverNearestVert_  = -1;
+    int  hoverNearestEdge_  = -1;
+    bool hoverBoundary_     = false;
+    int  hoverBoundaryFace_ = -1;
+
+    // Visual constants (Pinned Decision 4): a steel-blue palette
+    // DELIBERATELY distinct from both the P1 bg-cage bright-cyan
+    // `IM_COL32(0,220,255,…)` (`markerCol`/cyan, `draw()` below) and the
+    // pen-orange `markerCol` (`draw()` below) — different hues, not a
+    // near-miss. MINOR-6: flagged as an owner watch-item (the
+    // retopo-over-background use case can place the two markers at nearly
+    // the same pixel) — V1 does not gate on resolving it.
+    private enum uint  kHoverElemCol          = IM_COL32(128, 170, 187, 255);
+    private enum float kHoverVertSquareHalfPx = 6.0f;   // -> 12x12px filled square
+    private enum float kHoverEdgeWidthPx      = 2.0f;
+    private enum uint  kHoverHatchCol         = IM_COL32(40, 40, 40, 150);
+    private enum float kHoverHatchSpacingPx   = 7.0f;
+    private enum float kHoverHatchWidthPx     = 1.0f;
+
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
@@ -741,6 +797,37 @@ public:
         // (draw(), below) — no other state changes during the drag; the
         // build itself only fires on release.
 
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 3): resolve the always-on indicator state BEFORE the armed-gesture
+        // branches below — a gesture ghost (once armed) takes precedence
+        // over the generic indicator (`draw()`'s own `!anyGestureArmed()`
+        // gate mirrors this). REV1 FIX-1 (KILLER): the over-mesh gate is the
+        // OR of `pickPrimaryFace` (front-most face pick — the "hovering the
+        // middle of a big face" case, Pinned Decision 2) with a FINITE-
+        // threshold proximity hit on either `findSourceVertex` or
+        // `findRingSeedEdge` (the faceless/bare-edge founding-state case) —
+        // a SEPARATE pass from `computeHoverIndicator`'s own `∞`-threshold
+        // RESOLUTION scan below, never the same call reused for both
+        // purposes. Never `return true` — the hover must not consume the
+        // motion (place/build/etc. still happen on button-up; the existing
+        // handler already returns `false` at the tail when idle).
+        if (anyGestureArmed()) {
+            hoverOverMesh_ = false;   // gesture ghosts take precedence
+        } else {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            int hf       = pickPrimaryFace(e.x, e.y, vp);
+            int gateVert = findSourceVertex(e.x, e.y, vp, kTopoPenSnapPx);
+            int gateEdge = findRingSeedEdge(e.x, e.y, vp, kTopoPenSnapPx);
+            hoverOverMesh_ = (hf >= 0) || (gateVert >= 0) || (gateEdge >= 0);
+            if (hoverOverMesh_) {
+                computeHoverIndicator(e.x, e.y, vp);
+            } else {
+                hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
+                hoverBoundary_    = false;
+            }
+        }
+
         // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
         // gesture is armed, track the ratio off THIS motion event's cursor
         // — the only mid-drag feedback, since commit is deferred to
@@ -828,7 +915,17 @@ public:
     // layer's mesh and return the nearest within `kTopoPenSnapPx`, or -1.
     // O(V) per press — self-contained (no CONS, no new module), mirroring
     // `projectPt`'s own screen-space-only contract.
-    private int findSourceVertex(int mx, int my, const ref Viewport vp) {
+    //
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
+    // item 4): `thresholdPx` defaults to `kTopoPenSnapPx`, so every existing
+    // gesture caller (`onPlainLmbDown`, `onShiftLmbDown`, `onCtrlLmbDown`,
+    // the Split motion handler, etc. — none of which pass a 3rd argument)
+    // stays BYTE-IDENTICAL. The hover-resolve path (`onMouseMotion`, below)
+    // passes `float.infinity` for the unconditional nearest (RESOLUTION),
+    // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
+    // distinct calls, never conflated.
+    private int findSourceVertex(int mx, int my, const ref Viewport vp,
+                                 float thresholdPx = kTopoPenSnapPx) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -841,7 +938,7 @@ public:
             float d2 = dx * dx + dy * dy;
             if (d2 < bestD2) { bestD2 = d2; best = cast(int)vi; }
         }
-        if (best >= 0 && bestD2 <= kTopoPenSnapPx * kTopoPenSnapPx) return best;
+        if (best >= 0 && bestD2 <= thresholdPx * thresholdPx) return best;
         return -1;
     }
 
@@ -1040,6 +1137,30 @@ public:
         moveLoopVerts_ = null;
     }
 
+    // MINOR-3 (doc/topopen_hover_highlight_plan.md REV1): the single source
+    // of truth for "is ANY gesture currently armed" — the OR of every arm
+    // flag `resetAllGestureArms()` (immediately above) clears. The two
+    // helpers travel together: `resetAllGestureArms()` is the authoritative
+    // list of arm FIELDS to clear on a fresh press/history-nav, and this is
+    // the authoritative list of arm FIELDS to test for "something is
+    // in-progress" (currently gating the Generic Hover-Highlight indicator,
+    // `onMouseMotion`/`draw()` below). As of this writing the list is the 8
+    // flags: `dragArmed_` (P3 build) / `placeArmed_` + `moveArmed_` (P4
+    // Move-Place) / `addLoopArmed_` (P6) / `slideArmed_` (P7) /
+    // `smoothArmed_` (P8) / `splitArmed_` (P9) / `moveLoopArmed_` (P10).
+    // MAINTENANCE CONTRACT: every NEW gesture's arm flag MUST be OR'd in
+    // HERE too, in addition to being cleared in `resetAllGestureArms()` —
+    // a flag added to one list but not the other silently breaks either
+    // the reset hazard that helper closes, or (if omitted here) lets a
+    // gesture stay "invisible" to this predicate (e.g. the hover indicator
+    // would then incorrectly draw ON TOP OF that gesture's own ghost). The
+    // Tier-A pin immediately below this method's unittest guards against a
+    // bad merge silently dropping a flag from this OR.
+    private bool anyGestureArmed() const {
+        return dragArmed_ || placeArmed_ || moveArmed_ || addLoopArmed_
+            || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_;
+    }
+
     // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
     // plain (unmodified) LEFT press disambiguates HERE, at press time,
     // between grabbing an existing primary-layer vertex (Move) and placing
@@ -1150,7 +1271,13 @@ public:
     // camera) and the cursor's distance to the screen-space SEGMENT (not
     // just the endpoints) is measured via `closestOnSegment2D`. O(E) per
     // press.
-    private int findRingSeedEdge(int mx, int my, const ref Viewport vp) {
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
+    // item 4): `thresholdPx` defaults to `kTopoPenSnapPx`, same rationale as
+    // `findSourceVertex` above — every existing gesture caller stays
+    // byte-identical (none pass a 3rd argument); the hover path passes
+    // `float.infinity` for RESOLUTION and a finite value for the GATE.
+    private int findRingSeedEdge(int mx, int my, const ref Viewport vp,
+                                 float thresholdPx = kTopoPenSnapPx) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -1165,8 +1292,41 @@ public:
                                         pa.x, pa.y, pb.x, pb.y, t);
             if (d < bestD) { bestD = d; best = cast(int)ei; }
         }
-        if (best >= 0 && bestD <= kTopoPenSnapPx) return best;
+        if (best >= 0 && bestD <= thresholdPx) return best;
         return -1;
+    }
+
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 2):
+    // the pure, GL-free resolution of the always-on "what's under the
+    // cursor" indicator — resolves the nearest primary VERTEX and nearest
+    // primary EDGE simultaneously (Pinned Decision 2: the spec draws both a
+    // vertex marker AND an edge line at once, never one-or-the-other), plus
+    // the boundary-edge/hatch-face state. Deliberately separate from the
+    // over-mesh GATE (`onMouseMotion`, below) — this method resolves
+    // ELEMENTS only (projection math, no BVH/GL), so it stays pure and
+    // fully unit-testable (U1-U7). `∞` threshold on both scans: "under the
+    // cursor" here means "screen-nearest", not "within N px" — the gate
+    // decides WHETHER to show it, this method decides WHAT to show.
+    private void computeHoverIndicator(int mx, int my, const ref Viewport vp) {
+        hoverNearestVert_  = findSourceVertex(mx, my, vp, float.infinity);
+        hoverNearestEdge_  = findRingSeedEdge(mx, my, vp, float.infinity);
+        hoverBoundary_     = false;
+        hoverBoundaryFace_ = -1;
+        if (hoverNearestEdge_ >= 0) {
+            auto m = mesh;
+            if (m !is null && hoverNearestEdge_ < cast(int)m.edges.length) {
+                // MINOR-4: `isEdgeBorder` is `n == 1` EXACTLY (one incident
+                // face) — a 0-face bare edge returns false (nothing to
+                // hatch there, correctly).
+                if (m.isEdgeBorder(cast(uint)hoverNearestEdge_)) {
+                    hoverBoundary_ = true;
+                    foreach (fi; m.facesAroundEdge(cast(uint)hoverNearestEdge_)) {
+                        hoverBoundaryFace_ = cast(int)fi;
+                        break;   // exactly one incident face by definition
+                    }
+                }
+            }
+        }
     }
 
     // P6 (doc/topopen_p6_addloop_plan.md Phase 2): the directed world-space
@@ -2409,6 +2569,85 @@ public:
     // is just that helper's "external history navigation" entry point.
     override void resyncSession() {
         resetAllGestureArms();
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 3 item 3): also clear the passive hover-indicator state — an
+        // external undo/redo with no subsequent motion event must not leave
+        // a stale nearest-vert/edge index (possibly deleted by the
+        // navigation) dangling into the next `draw()` call.
+        hoverOverMesh_     = false;
+        hoverNearestVert_  = -1;
+        hoverNearestEdge_  = -1;
+        hoverBoundaryFace_ = -1;
+        hoverBoundary_     = false;
+    }
+
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 4):
+    // an even-odd, rotated-axis scanline fill — draws a dark diagonal
+    // CROSS-HATCH (two 45°/135° families) over an arbitrary screen-space
+    // polygon. Correct for convex AND concave n-gons: for each family,
+    // sweep parallel diagonal lines across the polygon's own AABB, collect
+    // each line's intersection parameters with every polygon edge, sort
+    // them along the sweep direction, and draw between consecutive (even,
+    // odd) pairs — the classic even-odd interior test, no clip-rect spill
+    // (the intersections are already bounded to the polygon itself).
+    // `poly` must be a simple (non-self-intersecting) closed loop, in
+    // either winding order — the algorithm is winding-independent.
+    private static void hatchScreenPolygon(ImGui.ImDrawList* dl, const ImVec2[] poly, uint col,
+                                           float spacingPx, float widthPx) {
+        if (poly.length < 3) return;
+
+        float minX = poly[0].x, maxX = poly[0].x;
+        float minY = poly[0].y, maxY = poly[0].y;
+        foreach (p; poly) {
+            if (p.x < minX) minX = p.x; else if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y; else if (p.y > maxY) maxY = p.y;
+        }
+
+        // `mainDiag==true` sweeps the (+1,+1) family (lines of constant
+        // x - y); `false` sweeps the (+1,-1) family (lines of constant
+        // x + y). Adjacent lines within a family are `spacingPx` apart in
+        // the PERPENDICULAR direction; since both invariants change by
+        // `sqrt(2)` per unit of perpendicular travel along a 45° line, the
+        // invariant step is `spacingPx * SQRT2`.
+        void sweepFamily(bool mainDiag) {
+            immutable float step = spacingPx * SQRT2;
+            if (step <= 0.0f) return;   // defensive: no infinite loop below
+            immutable float cMin = mainDiag ? (minX - maxY) : (minX + minY);
+            immutable float cMax = mainDiag ? (maxX - minY) : (maxX + maxY);
+
+            for (float c = cMin; c <= cMax; c += step) {
+                ImVec2[] hits;
+                immutable size_t n = poly.length;
+                foreach (i; 0 .. n) {
+                    ImVec2 A = poly[i];
+                    ImVec2 B = poly[(i + 1) % n];
+                    float fA = mainDiag ? (A.x - A.y - c) : (A.x + A.y - c);
+                    float fB = mainDiag ? (B.x - B.y - c) : (B.x + B.y - c);
+                    if (fA == 0.0f && fB == 0.0f) continue;   // whole edge on the line: ill-defined
+                    if ((fA > 0.0f && fB > 0.0f) || (fA < 0.0f && fB < 0.0f)) continue;   // same side
+                    if (fA == fB) continue;   // defensive: avoid div-by-zero below
+                    float s = fA / (fA - fB);
+                    if (s < 0.0f || s > 1.0f) continue;   // defensive clamp
+                    hits ~= ImVec2(A.x + s * (B.x - A.x), A.y + s * (B.y - A.y));
+                }
+                if (hits.length < 2) continue;   // guard: need a pair to draw a segment
+
+                import std.algorithm : sort;
+                // Both 45°-family directions are monotonic in x along the
+                // sweep line, so sorting by x alone orders the crossings
+                // correctly for either family.
+                sort!((a, b) => a.x < b.x)(hits);
+
+                size_t i = 0;
+                while (i + 1 < hits.length) {
+                    dl.AddLine(hits[i], hits[i + 1], col, widthPx);
+                    i += 2;
+                }
+            }
+        }
+
+        sweepFamily(true);
+        sweepFamily(false);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp,
@@ -2581,6 +2820,59 @@ public:
                     ImVec2 gp;
                     if (projectPt(pos, vp, gp))
                         dl.AddCircleFilled(gp, 4.0f, moveLoopCol, 16);
+                }
+            }
+        }
+
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 4). MINOR-5: placed AFTER the LAST pre-`!lastHit_.hit`-return
+        // ghost block above (P10 Move Loop) rather than literally "after
+        // smooth" — Split (P9) and Move Loop (P10) both now sit between
+        // Smooth and this early-return too. Independent of `lastHit_`/CONS
+        // (over the PRIMARY, not the background), like every ghost above,
+        // so a primary-only scene still shows it. Gated on
+        // `!anyGestureArmed()` (mode ghosts win when armed — Pinned Decision
+        // 5) AND `hoverOverMesh_` (the REV1 FIX-1 gate resolved in
+        // `onMouseMotion`). Draw order — edge, then hatch, then square — so
+        // the square reads on top and the hatch sits under the edge line.
+        if (!anyGestureArmed() && hoverOverMesh_ && meshSrc_ !is null) {
+            auto m = mesh;
+            if (m !is null) {
+                immutable vlen = cast(int)m.vertices.length;
+                immutable elen = cast(int)m.edges.length;
+
+                // (a) nearest-EDGE line (full length) — under the square.
+                if (hoverNearestEdge_ >= 0 && hoverNearestEdge_ < elen) {
+                    auto he = m.edges[hoverNearestEdge_];
+                    ImVec2 ea, eb;
+                    if (projectPt(m.vertices[he[0]], vp, ea)
+                     && projectPt(m.vertices[he[1]], vp, eb))
+                        dl.AddLine(ea, eb, kHoverElemCol, kHoverEdgeWidthPx);
+                }
+
+                // (b) boundary-edge face CROSS-HATCH.
+                if (hoverBoundary_ && hoverBoundaryFace_ >= 0
+                                   && hoverBoundaryFace_ < cast(int)m.faces.length) {
+                    ImVec2[] pts;
+                    bool ok = true;
+                    foreach (fvi; m.faces[hoverBoundaryFace_]) {
+                        ImVec2 p;
+                        if (!projectPt(m.vertices[fvi], vp, p)) { ok = false; break; }
+                        pts ~= p;
+                    }
+                    if (ok && pts.length >= 3)
+                        hatchScreenPolygon(dl, pts, kHoverHatchCol,
+                                          kHoverHatchSpacingPx, kHoverHatchWidthPx);
+                }
+
+                // (c) nearest-VERTEX filled SQUARE — on top.
+                if (hoverNearestVert_ >= 0 && hoverNearestVert_ < vlen) {
+                    ImVec2 vc;
+                    if (projectPt(m.vertices[hoverNearestVert_], vp, vc))
+                        dl.AddRectFilled(
+                            ImVec2(vc.x - kHoverVertSquareHalfPx, vc.y - kHoverVertSquareHalfPx),
+                            ImVec2(vc.x + kHoverVertSquareHalfPx, vc.y + kHoverVertSquareHalfPx),
+                            kHoverElemCol);
                 }
             }
         }
@@ -2779,6 +3071,18 @@ public:
         root["moveLoopArmed"]     = JSONValue(moveLoopArmed_);
         root["moveLoopSeed"]      = JSONValue(moveLoopSeed_);
         root["moveLoopVertCount"] = JSONValue(cast(int)moveLoopVerts_.length);
+
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 6): a NEW nested object (deliberately NOT the existing `hover{}`
+        // object above, which carries the P0/P1 CONS/background fields) so
+        // Tier-C tests for that path stay intact.
+        auto hi = JSONValue.emptyObject;
+        hi["overMesh"]     = JSONValue(hoverOverMesh_);
+        hi["nearestVert"]  = JSONValue(hoverNearestVert_);
+        hi["nearestEdge"]  = JSONValue(hoverNearestEdge_);
+        hi["isBoundary"]   = JSONValue(hoverBoundary_);
+        hi["boundaryFace"] = JSONValue(hoverBoundaryFace_);
+        root["hoverIndicator"] = hi;
 
         return root;
     }
@@ -5104,4 +5408,289 @@ unittest {
     }
 
     SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
+}
+
+// ---------------------------------------------------------------------------
+// Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md) — Phase 5
+// pure, GL-free unittests (U1-U7) + the `anyGestureArmed()` Tier-A pin.
+//
+// Two hand-derived test cameras (mirroring `math.d`'s own `makeTestViewport`/
+// `constraint.d`'s `makeHoverTestViewport` convention — a `version(unittest)`
+// private Viewport builder local to this module): `makeHoverIndicatorTestViewport`
+// looks down -Z at the XY plane (for hand-built vertex/edge fixtures, U1/U2/
+// U5/U6/U7); `makeGridPlaneTestViewport` looks down -Y at the XZ plane (for
+// `makeGridPlane`'s own ground-plane layout, U3/U4). Every test derives its
+// cursor pixel via `TopologyPenTool.projectPt` on the mesh's OWN vertices
+// (the same technique the P10 dispatch test above uses,
+// `(p3.x+p4.x)*0.5f` etc.) rather than hand-computed screen math — exact
+// regardless of perspective distortion, and robust to either camera choice.
+// ---------------------------------------------------------------------------
+
+version (unittest) private Viewport makeHoverIndicatorTestViewport() {
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    vp.x = 0;
+    vp.y = 0;
+    return vp;
+}
+
+version (unittest) private Viewport makeGridPlaneTestViewport() {
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+    Viewport vp;
+    vp.eye    = Vec3(0, 5, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    vp.x = 0;
+    vp.y = 0;
+    return vp;
+}
+
+unittest { // U1 — nearest-vertex resolution: a cursor at vertex 0's own
+           // projected pixel must resolve `hoverNearestVert_ == 0`,
+           // independent of any farther vertex.
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(2, 0, 0));
+    uint v2 = m.addVertex(Vec3(0, 2, 0));
+    m.addEdge(v0, v1);
+
+    auto vp = makeHoverIndicatorTestViewport();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0), "setup: v0 must project on-screen");
+
+    t.computeHoverIndicator(cast(int)p0.x, cast(int)p0.y, vp);
+    assert(t.hoverNearestVert_ == cast(int)v0,
+        "cursor at v0's own projected pixel must resolve v0 as nearest");
+}
+
+unittest { // U2 — nearest-edge resolution: a cursor at an edge's screen
+           // midpoint (far from every vertex) must resolve
+           // `hoverNearestEdge_` to that edge; `hoverNearestVert_` must
+           // ALSO resolve simultaneously (both present, never
+           // one-or-the-other).
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(2, 0, 0));
+    uint v2 = m.addVertex(Vec3(0, 5, 0));   // far away: keeps v0/v1 the two nearest verts
+    m.addEdge(v0, v1);
+    m.addEdge(v1, v2);   // a second, much farther edge — the pick must not be trivial
+
+    auto vp = makeHoverIndicatorTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
+    assert(TopologyPenTool.projectPt(m.vertices[v1], vp, p1));
+    int mx = cast(int)((p0.x + p1.x) * 0.5f);
+    int my = cast(int)((p0.y + p1.y) * 0.5f);
+
+    uint expectEdge = m.edgeIndex(v0, v1);
+    assert(expectEdge != uint.max, "setup: edge v0-v1 must exist");
+
+    t.computeHoverIndicator(mx, my, vp);
+    assert(t.hoverNearestEdge_ == cast(int)expectEdge,
+        "cursor at the v0-v1 midpoint must resolve that edge as nearest");
+    assert(t.hoverNearestVert_ >= 0,
+        "the nearest vertex must ALSO resolve simultaneously");
+}
+
+unittest { // U3 — boundary detection: `makeGridPlane(2)`'s edge 0-1 (a
+           // genuine top-row perimeter edge, exactly one incident face) must
+           // resolve `hoverBoundary_==true` and `hoverBoundaryFace_==` that
+           // single incident face — cross-checked independently via
+           // `isEdgeBorder`/`facesAroundEdge` (not via the code under test).
+    import mesh : makeGridPlane;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
+    t.meshSrc_ = () => &m;
+
+    uint e01 = m.edgeIndex(0, 1);
+    assert(e01 != uint.max, "setup: boundary edge 0-1 must exist");
+    assert(m.isEdgeBorder(e01), "setup: edge 0-1 must be a genuine boundary edge");
+    int expectFace = -1;
+    foreach (fi; m.facesAroundEdge(e01)) { expectFace = cast(int)fi; break; }
+    assert(expectFace >= 0, "setup: a boundary edge must have exactly one incident face");
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    int mx = cast(int)((p0.x + p1.x) * 0.5f);
+    int my = cast(int)((p0.y + p1.y) * 0.5f);
+
+    t.computeHoverIndicator(mx, my, vp);
+    assert(t.hoverNearestEdge_ == cast(int)e01,
+        "cursor at the edge-0-1 midpoint must resolve edge 0-1 as nearest");
+    assert(t.hoverBoundary_, "edge 0-1 must be classified as a boundary edge");
+    assert(t.hoverBoundaryFace_ == expectFace,
+        "the hatch face must be the edge's own single incident face");
+}
+
+unittest { // U4 — interior (non-boundary) edge: `makeGridPlane(2)`'s edge
+           // 3-4 is shared by two cells, so `hoverBoundary_` must resolve
+           // false and there is no hatch face.
+    import mesh : makeGridPlane;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
+    t.meshSrc_ = () => &m;
+
+    uint e34 = m.edgeIndex(3, 4);
+    assert(e34 != uint.max, "setup: interior edge 3-4 must exist");
+    assert(!m.isEdgeBorder(e34), "setup: edge 3-4 must be a genuine interior (shared) edge");
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p3, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    int mx = cast(int)((p3.x + p4.x) * 0.5f);
+    int my = cast(int)((p3.y + p4.y) * 0.5f);
+
+    t.computeHoverIndicator(mx, my, vp);
+    assert(t.hoverNearestEdge_ == cast(int)e34,
+        "cursor at the edge-3-4 midpoint must resolve edge 3-4 as nearest");
+    assert(!t.hoverBoundary_, "an interior (2-face) edge must never be classified as a boundary");
+    assert(t.hoverBoundaryFace_ == -1, "no hatch face for a non-boundary edge");
+}
+
+unittest { // U5 — empty mesh / no `meshSrc_`: must resolve to the all-clear
+           // state with no crash, whether the delegate itself is unset or
+           // wired to a genuinely empty mesh.
+    auto vp = makeHoverIndicatorTestViewport();
+
+    auto t1 = new TopologyPenTool();   // fresh tool: meshSrc_ unset (null delegate)
+    t1.computeHoverIndicator(400, 400, vp);
+    assert(t1.hoverNearestVert_ == -1 && t1.hoverNearestEdge_ == -1 && !t1.hoverBoundary_,
+        "no meshSrc_ at all must resolve to the all-clear state");
+
+    auto t2 = new TopologyPenTool();
+    Mesh m2;                            // meshSrc_ wired, but the mesh itself is empty
+    t2.meshSrc_ = () => &m2;
+    t2.computeHoverIndicator(400, 400, vp);
+    assert(t2.hoverNearestVert_ == -1 && t2.hoverNearestEdge_ == -1 && !t2.hoverBoundary_,
+        "an empty mesh must also resolve to the all-clear state");
+}
+
+unittest { // U6 — both-simultaneous ("not one-or-the-other" guard): the
+           // nearest vertex and nearest edge resolve INDEPENDENTLY, each to
+           // its own pre-known expected index, even when they name entirely
+           // unrelated elements — the cursor sits at v0, while the mesh's
+           // only edge (v1-v2) is far away and shares no endpoint with v0.
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    uint v0 = m.addVertex(Vec3(0, 0, 0));      // the cursor's target: nearest VERTEX
+    uint v1 = m.addVertex(Vec3(10, 10, 0));    // far away, forms the mesh's ONLY edge
+    uint v2 = m.addVertex(Vec3(10, 10.3f, 0));
+    m.addEdge(v1, v2);
+    uint expectEdge = m.edgeIndex(v1, v2);
+    assert(expectEdge != uint.max, "setup: edge v1-v2 must exist");
+
+    auto vp = makeHoverIndicatorTestViewport();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
+
+    t.computeHoverIndicator(cast(int)p0.x, cast(int)p0.y, vp);
+    assert(t.hoverNearestVert_ == cast(int)v0,
+        "nearest vertex must resolve to v0, right under the cursor");
+    assert(t.hoverNearestEdge_ == cast(int)expectEdge,
+        "nearest edge must ALSO resolve — to the mesh's only edge, v1-v2 — "
+      ~ "even though it shares no endpoint with the nearest vertex");
+}
+
+unittest { // U7 (REV1 FIX-2 — the test that would have caught FIX-1): a
+           // non-null primary with vertices + bare EDGES + ZERO faces (the
+           // tool's own from-scratch retopo founding state) must still
+           // light up the hover indicator through the REAL `onMouseMotion`
+           // gate. `gpu_` stays null (default) so `pickPrimaryFace`
+           // short-circuits to -1 unconditionally — exactly mirroring a
+           // genuinely faceless mesh's own BVH (zero triangles -> every ray
+           // misses), so this proves the gate is NOT driven solely by
+           // `pickPrimaryFace >= 0`.
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(2, 0, 0));
+    m.addEdge(v0, v1);
+    assert(m.faces.length == 0, "setup: this fixture must have ZERO faces");
+
+    auto vp = makeHoverIndicatorTestViewport();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseMotionEvent eOn;
+    eOn.x = cast(int)p0.x;
+    eOn.y = cast(int)p0.y;
+    bool consumed = t.onMouseMotion(eOn, vts);
+    assert(!consumed, "hover resolution must never consume motion");
+    assert(t.hoverOverMesh_,
+        "REV1 FIX-1: a faceless/bare-edge primary must still gate 'over the mesh' "
+      ~ "via the finite-threshold vertex/edge proximity OR, even though "
+      ~ "pickPrimaryFace is unconditionally -1 here");
+    assert(t.hoverNearestVert_ == cast(int)v0,
+        "the nearest vertex must resolve correctly even in the faceless state");
+    assert(t.hoverNearestEdge_ >= 0,
+        "the nearest edge must ALSO resolve in the faceless state");
+
+    // A second motion far from all geometry must clear the gate again —
+    // proving the gate is a genuine proximity test, not a sticky latch.
+    SDL_MouseMotionEvent eOff;
+    eOff.x = cast(int)p0.x + 5000;
+    eOff.y = cast(int)p0.y + 5000;
+    t.onMouseMotion(eOff, vts);
+    assert(!t.hoverOverMesh_, "a cursor far from all geometry must clear the over-mesh gate");
+    assert(t.hoverNearestVert_ == -1 && t.hoverNearestEdge_ == -1,
+        "off-mesh must also clear the resolved nearest indices");
+}
+
+unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.md
+           // MINOR-3): every one of the 8 currently-enumerated arm flags
+           // independently flips the predicate true and none is silently
+           // ignored — guards a future merge from dropping a flag from the
+           // OR (the hazard `resetAllGestureArms()`'s own doc comment
+           // enumerates for its sibling list).
+    auto t = new TopologyPenTool();
+    assert(!t.anyGestureArmed(), "no arm flag set -> false");
+
+    t.dragArmed_ = true;     assert(t.anyGestureArmed(), "dragArmed_ must count");
+    t.dragArmed_ = false;
+    t.placeArmed_ = true;    assert(t.anyGestureArmed(), "placeArmed_ must count");
+    t.placeArmed_ = false;
+    t.moveArmed_ = true;     assert(t.anyGestureArmed(), "moveArmed_ must count");
+    t.moveArmed_ = false;
+    t.addLoopArmed_ = true;  assert(t.anyGestureArmed(), "addLoopArmed_ must count");
+    t.addLoopArmed_ = false;
+    t.slideArmed_ = true;    assert(t.anyGestureArmed(), "slideArmed_ must count");
+    t.slideArmed_ = false;
+    t.smoothArmed_ = true;   assert(t.anyGestureArmed(), "smoothArmed_ must count");
+    t.smoothArmed_ = false;
+    t.splitArmed_ = true;    assert(t.anyGestureArmed(), "splitArmed_ must count");
+    t.splitArmed_ = false;
+    t.moveLoopArmed_ = true; assert(t.anyGestureArmed(), "moveLoopArmed_ must count");
+    t.moveLoopArmed_ = false;
+
+    assert(!t.anyGestureArmed(), "every flag cleared again -> false");
 }
