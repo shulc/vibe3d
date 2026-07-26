@@ -180,7 +180,7 @@ private enum BuildCase { None, Edge, Tri, Quad }
 /// to. `Draw` (default) is today's existing place-on-empty/grab-move
 /// behavior, byte-unchanged; `Fill` reroutes plain-LMB to
 /// `findFillCell`/`commitFill` (Phase 4). A tool-wide dropdown, not a
-/// per-gesture arm — mirrors `splitAtMiddle_`'s sticky-option precedent
+/// per-gesture arm — mirrors `addLoopMiddle_`'s sticky-option precedent
 /// (must survive `resyncSession()`, an external history navigation).
 private enum PenMode { Draw, Fill }
 
@@ -651,6 +651,22 @@ private:
     Vec3 seedRailA_, seedRailB_;
     float addLoopRatio_ = 0.5f;
 
+    // Add Loop "at the Middle" option (reference parity,
+    // doc/tasks/work/0480-topopen-addloop-middle.md): forces the loop cut to
+    // the exact 50% of every crossed edge instead of the click-derived
+    // ratio. A STICKY tool-wide toggle, NOT per-gesture arm state — read
+    // live at commit time by `addLoopFrac` (never cached) and deliberately
+    // absent from `resetAllGestureArms()`/`resyncSession()`, which clear the
+    // per-gesture arm bools on every fresh press / external history
+    // navigation (matches the `tool_activate_sticky_clobber` precedent:
+    // sticky options are set before `activate()`/arm-reset and must not be
+    // clobbered by either). Default OFF, so the shipped click-derived
+    // behaviour remains the default. The reference pairs this option with a
+    // numeric "position" attribute and greys THAT out while this is on; our
+    // "position" is the live cursor ratio (`addLoopRatio_`), so the same
+    // pairing shows up here as `addLoopFrac` ignoring the cursor entirely.
+    bool addLoopMiddle_ = false;
+
     // --- P7 Slide session state (topology_pen.d,
     // doc/topopen_p7_slide_plan.md, V1-scope Option B). Armed on a Ctrl+LMB
     // press that lands on a primary-layer edge with at least one slidable
@@ -699,7 +715,9 @@ private:
     // — the release event's own resolution is authoritative, never the
     // last-motion value (a mouse-up with no intervening motion event must
     // still resolve C at ITS OWN pixel). `-1` means "no vertex under the
-    // cursor" (the deferred mid-edge-insert case stays a clean no-op in V1).
+    // cursor" — a clean no-op, since Split is a vertex->vertex chord split
+    // and never inserts a vertex partway along an edge (that is Add Loop's
+    // job, doc/tasks/work/0480-topopen-addloop-middle.md).
     // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
     // an external history navigation, exactly like the P3/P4/P6/P7/P8 arm
     // state above.
@@ -707,24 +725,11 @@ private:
     int  splitSourceVert_  = -1;
     int  splitTargetVert_  = -1;
 
-    // Mid-edge Split option (doc/topopen_midedge_split_plan.md Deliverable
-    // #4): "Split at the Middle" — a STICKY tool-wide mode toggle, NOT
-    // per-gesture arm state. Forces the mid-edge insert fraction `f` to
-    // exactly 0.5 regardless of the release click's position along the
-    // edge. Default OFF (owner-observed: Split lands at the click point by
-    // default). Deliberately absent from `resetAllGestureArms()`/
-    // `resyncSession()` — those clear per-gesture arm bools on every fresh
-    // press / external history navigation; this option must survive both
-    // (matches `tool_activate_sticky_clobber` precedent: sticky options are
-    // set before `activate()`/arm-reset and must not be clobbered by
-    // either). Read live at commit time by `splitUp` (never cached).
-    bool splitAtMiddle_    = false;
-
     // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
     // Phase 1): the wire-tag table backing `PenMode`'s `Param.intEnum_` —
     // mirrors `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. A
     // STICKY tool-wide mode toggle, NOT per-gesture arm state — like
-    // `splitAtMiddle_` above, deliberately absent from
+    // `addLoopMiddle_` above, deliberately absent from
     // `resetAllGestureArms()`/`resyncSession()` (a mode switch must survive
     // an external history navigation) and read live by dispatch
     // (`onPlainLmbDown`) / the motion-time preview compute
@@ -1107,21 +1112,22 @@ public:
 
     override string name() const { return "Topology Pen"; }
 
-    // Mid-edge Split option schema (doc/topopen_midedge_split_plan.md
-    // Deliverable #4) — the FIRST `params()` override on this tool. Backs
-    // both the `tool.attr mesh.topoPen splitMiddle ?` HTTP path and the
+    // Add Loop "at the Middle" option schema
+    // (doc/tasks/work/0480-topopen-addloop-middle.md) — the FIRST `params()`
+    // override on this tool. Backs both the
+    // `tool.attr mesh.topoPen middle ?` HTTP path and the
     // `config/forms/topology_pen.yaml` checkbox row; the attr name
-    // "splitMiddle" MUST match that form's `control:` string exactly — the
+    // "middle" MUST match that form's `control:` string exactly — the
     // boot-time `validateForms` strict-checks every form attr against this
     // list and fails loud on a typo.
     //
     // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
     // Phase 1, MANDATORY opponent fix #1): the `mode` IntEnum Param is
     // APPENDED to this array — never a full-replace, which would drop
-    // `splitMiddle` and fail boot-time `validateForms` against its existing
+    // `middle` and fail boot-time `validateForms` against its existing
     // yaml row. "mode" MUST match `config/forms/topology_pen.yaml`'s new
     // dropdown row's `control:` string exactly, same contract as
-    // `splitMiddle` above.
+    // `middle` above.
     //
     // Smooth strength (reference parity, `doc/tasks/work/0478-topopen-smooth-kernel.md`):
     // APPENDED for the same reason — never a full-replace. Scales the Smooth
@@ -1136,7 +1142,7 @@ public:
     // factor that `.enforceBounds()` cannot clamp.
     override Param[] params() {
         return [
-            Param.bool_("splitMiddle", "Split at the Middle", &splitAtMiddle_, false),
+            Param.bool_("middle", "Split at the Middle", &addLoopMiddle_, false),
             Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
                            cast(int)PenMode.Draw),
             Param.float_("smoothStrength", "Smooth Strength", &smoothStrength_,
@@ -1472,46 +1478,6 @@ public:
             if (adjacent) continue;   // chord would be an existing edge here
 
             return cast(int)fi;
-        }
-        return -1;
-    }
-
-    // Mid-edge Split (doc/topopen_midedge_split_plan.md Deliverable #3): the
-    // pre-mutation VIABILITY GATE for the release-on-edge case — the ONLY
-    // new mesh-adjacent logic this extension adds. Resolves which face
-    // (incident to edge `edgeIdx`) also contains the source vertex `a`, so
-    // the eventual chord A-M (M = the not-yet-inserted mid-edge vertex)
-    // has somewhere to land. Returns -1 for every no-op condition: m/a/
-    // edgeIdx invalid or out of bounds, or A being one of edge `edgeIdx`'s
-    // own two endpoints (the chord would be degenerate — A already IS a
-    // corner of any face incident to E, so splitting "at A" is meaningless).
-    //
-    // MUST be called BEFORE any mutation (`addEdgePoint`/snapshot) — a
-    // gesture that fails this gate stays a byte-identical no-op, no undo
-    // entry recorded (mirrors `findCommonSplitFace`'s own contract for the
-    // vertex-target case).
-    //
-    // Once this returns a real face fi: M will be spliced between E's two
-    // endpoints in fi's winding (by `addEdgePoint`, unconditionally, for
-    // every face incident to E) — since A is neither of E's endpoints, A
-    // and M are always non-adjacent in fi's post-insert winding, so the
-    // later `splitFaceByVertices(fi, a, M)` call is GUARANTEED to succeed
-    // (each half keeps >=3 sides). `facesAroundEdge` is safe here (E is a
-    // real mesh edge with at least fi incident) — the bare/floating-edge
-    // caveat `classifySource`'s KILLER-1 comment warns about does not apply
-    // to an edge that is already part of a face.
-    private int findEdgeSplitFace(Mesh* m, int a, int edgeIdx) {
-        if (m is null || a < 0 || edgeIdx < 0) return -1;
-        if (a >= cast(int)m.vertices.length) return -1;
-        if (edgeIdx >= cast(int)m.edges.length) return -1;
-
-        uint e0 = m.edges[edgeIdx][0], e1 = m.edges[edgeIdx][1];
-        if (cast(uint)a == e0 || cast(uint)a == e1) return -1;   // A on E -> degenerate chord
-
-        foreach (fi; m.facesAroundEdge(cast(uint)edgeIdx)) {
-            foreach (vv; m.faces[fi]) {
-                if (vv == cast(uint)a) return cast(int)fi;
-            }
         }
         return -1;
     }
@@ -2736,27 +2702,18 @@ public:
         return true;
     }
 
-    // P9 (doc/topopen_p9_split_plan.md REV1 FIX-2) + Mid-edge Split
-    // (doc/topopen_midedge_split_plan.md Phase 3): commits the armed Split
+    // P9 (doc/topopen_p9_split_plan.md REV1 FIX-2): commits the armed Split
     // gesture. C is resolved AT THE RELEASE PIXEL — authoritative, never the
     // last-motion `splitTargetVert_` (a release with no intervening motion
     // event must still resolve C at its own pixel).
     //
-    // `c < 0` (no vertex under the cursor, within `kTopoPenSnapPx`) is now
-    // resolved a SECOND way before falling back to a no-op: the nearest
-    // primary-layer EDGE under the release pixel (`findRingSeedEdge`, same
-    // threshold). Vertex-first precedence is free and correct here — a
-    // release NEAR a corner already resolved to that vertex above (the
-    // vertex↔vertex path, UNCHANGED), so only a genuinely mid-span release
-    // reaches the edge branch. On an edge hit, the insert fraction `f` is
-    // either the sticky `splitAtMiddle_` option's fixed 0.5, or the click's
-    // own `ratioOnSegment` projection against `edges[E][0]->[1]` (MUST stay
-    // in that direction — `addEdgePoint`'s own `t` convention measures from
-    // `edges[ei][0]` toward `[1]`; swapping the endpoints here would land
-    // the inserted vertex near the WRONG end of the edge, the same
-    // direction hazard `seedRail`'s own doc comment warns about for Add
-    // Loop). A release on neither a vertex nor an edge (empty space) stays
-    // the original clean no-op.
+    // Split is a VERTEX -> VERTEX chord split, and nothing else
+    // (doc/tasks/work/0480-topopen-addloop-middle.md): a release that does
+    // NOT land on an existing vertex within `kTopoPenSnapPx` — mid-span over
+    // an edge, or on empty space — is a clean no-op. Inserting a new vertex
+    // partway along a crossed edge belongs to the Add Loop gesture
+    // (`addLoopUp`/`addLoopFrac`), which owns both the fraction and the
+    // "at the Middle" option; this path never creates a vertex.
     private bool splitUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!splitArmed_) return false;
         int a = splitSourceVert_;
@@ -2766,26 +2723,39 @@ public:
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int c = findSourceVertex(e.x, e.y, vp);
         splitTargetVert_ = -1;
-        if (c >= 0) {
-            commitSplit(a, c);
-        } else {
-            int E = findRingSeedEdge(e.x, e.y, vp);
-            if (E >= 0) {
-                auto m = mesh;
-                if (m !is null && E < cast(int)m.edges.length) {
-                    float f = splitAtMiddle_ ? 0.5f
-                            : ratioOnSegment(e.x, e.y, vp,
-                                m.vertices[m.edges[E][0]], m.vertices[m.edges[E][1]]);
-                    commitSplitOnEdge(a, E, f);
-                }
-            }
-            // else: release on empty space -> clean no-op, unchanged.
-        }
+        if (c >= 0) commitSplit(a, c);
+        // else: release on an edge / empty space -> clean no-op.
         return true;
     }
 
+    // The Add Loop insert-fraction law (reference parity,
+    // doc/tasks/work/0480-topopen-addloop-middle.md):
+    //
+    //     frac = middle ? 0.5 : clamp(cursorRatio, 0, 1)
+    //
+    // ONE uniform scalar for the WHOLE ring — the returned value is handed
+    // to `insertEdgeLoops` once and applied at the same fraction on every
+    // crossed edge; it is never re-derived per crossed edge from that edge's
+    // own screen projection. (Measured on the reference: the cut fractions
+    // across the crossed edges of one gesture had a spread of exactly 0.)
+    //
+    // `middle` bypasses the cursor entirely, so it also bypasses the clamp —
+    // there is no cursor value that can perturb the forced 0.5. With the
+    // option OFF the clamp is nominally redundant (`ratioOnSegment` already
+    // clamps to `[0,1]`), but it is stated here because the clamp is part of
+    // the law, not an artefact of the current cursor plumbing: it must hold
+    // for ANY future producer of the ratio.
+    private float addLoopFrac(float cursorRatio) const {
+        if (addLoopMiddle_) return 0.5f;
+        if (!(cursorRatio > 0.0f)) return 0.0f;   // also rejects NaN
+        if (cursorRatio > 1.0f)    return 1.0f;
+        return cursorRatio;
+    }
+
     // P6 (doc/topopen_p6_addloop_plan.md Phase 3): commits the armed Add Loop
-    // gesture, at the RELEASE event's own cursor-derived ratio.
+    // gesture, at the RELEASE event's own cursor-derived ratio — passed
+    // through `addLoopFrac`, so the sticky "at the Middle" option overrides
+    // it with a flat 0.5 for every crossed edge.
     private bool addLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!addLoopArmed_) return false;
         int seed = addLoopSeed_;
@@ -2793,7 +2763,7 @@ public:
         addLoopArmed_ = false;
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-        float r = ratioFromCursor(e.x, e.y, vp);
+        float r = addLoopFrac(ratioFromCursor(e.x, e.y, vp));
         commitAddLoop(cast(uint)seed, r);
         return true;
     }
@@ -3677,9 +3647,13 @@ public:
         auto m = mesh;
         if (m is null) return;
 
-        // Verbatim MeshAddLoop.evaluate's open-interval guard: a ratio
-        // landing exactly on a vertex (r<=0 or r>=1) inserts nothing.
-        if (r <= 0.0f || r >= 1.0f) return;
+        // MeshAddLoop.evaluate's open-interval guard: a ratio landing
+        // exactly on a vertex (r<=0 or r>=1) inserts nothing. Written as a
+        // NEGATED in-range test rather than that command's literal
+        // `r <= 0 || r >= 1` so a non-finite `r` — which compares false
+        // against everything and would slip through the literal form into
+        // `insertEdgeLoops` — is rejected here too.
+        if (!(r > 0.0f && r < 1.0f)) return;
 
         bool closed;
         if (m.collectEdgeRing(seedEdge, closed).length == 0) return;
@@ -3705,7 +3679,7 @@ public:
     // P9 (doc/topopen_p9_split_plan.md Phase 2): commit the armed Split
     // gesture — FULL KERNEL REUSE, zero kernel change. Mirrors `removeFaceAt`
     // above exactly: resolve the shared face (`findCommonSplitFace` — every
-    // no-op condition, incl. C==-1/the deferred mid-edge case, C==A, and
+    // no-op condition, incl. C==-1 (release on an edge or empty space), C==A, and
     // cross-polygon/adjacent A-C, funnels through its -1 return with NO
     // snapshot and NO undo entry), bracket the ONE kernel call in a single
     // before/after `MeshSnapshot` pair, record through the DEDICATED
@@ -3745,98 +3719,6 @@ public:
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
-        resyncSession();
-
-        m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
-    }
-
-    // Mid-edge Split (doc/topopen_midedge_split_plan.md Deliverable #3):
-    // commit the deferred RELEASE-ON-EDGE case — the release lands on edge
-    // `edgeIdx` (not a vertex) at fraction `f` (world-proj `ratioOnSegment`,
-    // ALREADY resolved by the caller in `edges[edgeIdx][0]->[1]` order to
-    // match `addEdgePoint`'s own convention). ZERO kernel change: composes
-    // `addEdgePoint` (insert M on the edge, splicing it into every incident
-    // face's winding) with the EXISTING `splitFaceByVertices` (chord-split
-    // the target face A-M) — the only new logic is the pre-mutation
-    // viability gate (`findEdgeSplitFace`) and the atomicity guard below.
-    //
-    // MANDATORY ATOMICITY FIX (plan-opponent REVISE, folded into the
-    // shipped implementation — NOT an optional hardening pass):
-    // `addEdgePoint` mutates the LIVE mesh (splices M into every face
-    // incident to `edgeIdx`, rebuilds edges[]/loops) BEFORE
-    // `splitFaceByVertices` ever runs. A naive composition that skipped the
-    // return-value check, or that re-derived the split face via
-    // `findCommonSplitFace(m, a, mIdx)` AFTER that splice, could record a
-    // PARTIAL split (M inserted, chord never cut) with no undo entry, or
-    // mis-resolve which face to split for a bowtie/non-manifold `a` (a
-    // vertex appearing more than once in one face's winding — the two
-    // "wings" pinched together at `a` — so the same physical face can carry
-    // more than the expected 2 cut-vertex hits post-splice, and
-    // `splitFaceByVertices` legitimately declines). This implementation:
-    //   1. Captures `before` BEFORE `addEdgePoint` runs, so a rollback is
-    //      always possible once mutation starts.
-    //   2. Uses `P` — the face `findEdgeSplitFace` resolved BEFORE any
-    //      mutation — DIRECTLY as `splitFaceByVertices`'s `faceIdx`. `P`'s
-    //      index stays valid across `addEdgePoint` (it splices windings in
-    //      place; `rebuildEdges`/`buildLoops` never reorder `faces[]`), so
-    //      no post-mutation re-derivation is needed or attempted.
-    //   3. Guards the kernel's return value: `n == 0` means the chord-split
-    //      step failed AFTER `addEdgePoint` already mutated the mesh, so the
-    //      pre-`addEdgePoint` `before` snapshot is RESTORED — the mesh ends
-    //      up byte-identical to its state before this function ran, and NO
-    //      undo entry is recorded for the partial mutation.
-    //   4. Only on success (`n > 0`) is `after` captured and the ONE atomic
-    //      undo entry recorded — the whole gesture (insert + chord-split) is
-    //      a single undo step, exactly like `commitSplit`'s vertex-target
-    //      sibling above.
-    //
-    // Pre-mutation viability gate: `findEdgeSplitFace` runs FIRST (no
-    // snapshot, no mutation, clean no-op on -1 — covers A-on-E and
-    // no-shared-face). The `f` range gate runs SECOND, also before any
-    // mutation: `ratioOnSegment` clamps to `[0,1]`, so `f<=0`/`f>=1` means
-    // the release projected onto (or past) one of E's own endpoints — that
-    // release belongs to the vertex-target path (which the caller's
-    // vertex-first `findSourceVertex` snap already owns within
-    // `kTopoPenSnapPx`), not this mid-edge insert; treated as a clean no-op
-    // here rather than inserting a vertex on top of an existing corner.
-    private void commitSplitOnEdge(int a, int edgeIdx, float f) {
-        if (meshSrc_ is null || history_ is null || splitEditFactory_ is null) return;
-        auto m = mesh;
-        if (m is null) return;
-
-        int P = findEdgeSplitFace(m, a, edgeIdx);
-        if (P < 0) return;   // A on E, or no face shared by A and E -> clean no-op
-
-        if (f <= 0.0f || f >= 1.0f) return;   // near-endpoint -> vertex path owns this release
-
-        MeshSnapshot before = MeshSnapshot.capture(*m);
-
-        uint mIdx = m.addEdgePoint(cast(uint)edgeIdx, f);
-        if (mIdx == uint.max) return;   // defensive; addEdgePoint's own guard fails
-                                         // BEFORE any mutation, so `before` is
-                                         // safely discarded (unused) here
-
-        // ATOMICITY: `P` is used DIRECTLY — never re-derived post-mutation.
-        size_t n = m.splitFaceByVertices(cast(uint)P, cast(uint)a, mIdx);
-        if (n == 0) {
-            // `addEdgePoint` already spliced M into the live mesh above —
-            // roll back to the EXACT pre-mutation snapshot (the same
-            // restore path `MeshSessionEdit.revert()` uses) so the gesture
-            // leaves no partial trace and records no undo entry.
-            before.restore(*m);
-            return;
-        }
-
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = splitEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Split");
-        history_.record(cmd);
-
-        // KILLER-2 (shared with commitSplit above): invalidate any OTHER
-        // armed gesture's cached face/edge indices now that faces[]/edges[]
-        // have been rebuilt (twice: once by addEdgePoint, once by
-        // splitFaceByVertices).
         resyncSession();
 
         m.syncSelection();
@@ -4203,7 +4085,12 @@ public:
                      && projectPt(m.vertices[ringE[1]], vp, rb))
                         dl.AddLine(ra, rb, loopCol, 2.0f);
                 }
-                Vec3 markerPos = seedRailA_ + (seedRailB_ - seedRailA_) * addLoopRatio_;
+                // The ghost marker previews what a release WOULD commit, so
+                // it reads the same `addLoopFrac` law `addLoopUp` does — with
+                // the "at the Middle" option on, the marker pins to 50% of
+                // the rail and stops following the cursor.
+                Vec3 markerPos = seedRailA_
+                               + (seedRailB_ - seedRailA_) * addLoopFrac(addLoopRatio_);
                 ImVec2 mk;
                 if (projectPt(markerPos, vp, mk))
                     dl.AddCircleFilled(mk, 5.0f, loopCol, 16);
@@ -4280,7 +4167,8 @@ public:
         // is drawn BEFORE the `lastHit_.hit` early-return, mirroring the Add
         // Loop/Slide ghosts above. A line from the armed source A to the
         // current snap target C (drawn only once C resolves to a real
-        // vertex — the deferred mid-edge case has no line to preview),
+        // vertex — a release that resolves no vertex is a no-op, so there
+        // is nothing to preview),
         // plus a small filled circle at C as the snap affordance. Purely
         // re-reads already-armed state (`splitSourceVert_`/
         // `splitTargetVert_`) — no mesh mutation, no raycast.
@@ -4698,6 +4586,14 @@ public:
         root["addLoopArmed"] = JSONValue(addLoopArmed_);
         root["addLoopSeed"]  = JSONValue(addLoopSeed_);
         root["addLoopRatio"] = JSONValue(cast(double)addLoopRatio_);
+        // "at the Middle" (doc/tasks/work/0480-topopen-addloop-middle.md):
+        // the sticky option itself plus the EFFECTIVE fraction a release
+        // would commit right now (`addLoopFrac(addLoopRatio_)`), so a Tier-C
+        // test can observe the override without driving a full release.
+        // `addLoopRatio` above stays the RAW cursor ratio — the two differ
+        // exactly when the option is on.
+        root["addLoopMiddle"] = JSONValue(addLoopMiddle_);
+        root["addLoopFrac"]   = JSONValue(cast(double)addLoopFrac(addLoopRatio_));
 
         // P7 (doc/topopen_p7_slide_plan.md Phase 4): the armed Slide
         // gesture's state, for Tier-C tests to assert the picked seed edge
@@ -4727,10 +4623,6 @@ public:
         root["splitArmed"]      = JSONValue(splitArmed_);
         root["splitSourceVert"] = JSONValue(splitSourceVert_);
         root["splitTargetVert"] = JSONValue(splitTargetVert_);
-        // Mid-edge Split (doc/topopen_midedge_split_plan.md Deliverable #4):
-        // the sticky "Split at the Middle" option, for Tier-C tests to
-        // assert the param wiring end-to-end without driving a full release.
-        root["splitAtMiddle"]   = JSONValue(splitAtMiddle_);
 
         // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): the armed Move
         // Loop gesture's state, for Tier-C tests to assert the picked seed
@@ -5250,6 +5142,146 @@ unittest {
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "undo must restore the exact pre-cut state");
+}
+
+// ---------------------------------------------------------------------------
+// Add Loop — T5: ONE UNIFORM SCALAR across every crossed edge
+// (doc/tasks/work/0480-topopen-addloop-middle.md). The reference was measured
+// applying a single fraction to the whole ring — the cut fractions across the
+// crossed edges of one gesture had a spread of exactly 0 — rather than
+// re-deriving a fraction per crossed edge from that edge's own projection.
+//
+// On the cube belt around edge 0-1 all four crossed edges run along X, so a
+// uniform scalar puts all four new vertices at the SAME x (a planar loop);
+// a per-edge recomputation would let them scatter. Asserting the SPREAD is
+// the direct form of the measured claim, and it is immune to the global
+// orientation sign-flip T2 documents (which flips all four together).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import std.algorithm : max, min;
+    import std.math : abs;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max);
+
+    // Deliberately OFF-CENTER: at r=0.5 a per-edge recomputation would
+    // coincide with the uniform answer and the test would prove nothing.
+    t.commitAddLoop(seed, 0.25f);
+    assert(m.vertices.length == 12, "setup: the belt cut must add exactly 4 vertices");
+
+    float xLo = float.max, xHi = -float.max;
+    foreach (i; 8 .. 12) {
+        xLo = min(xLo, m.vertices[i].x);
+        xHi = max(xHi, m.vertices[i].x);
+    }
+    assert(xHi - xLo < 1e-6f,
+        "every crossed edge must be cut at the SAME scalar fraction — the four new belt "
+      ~ "vertices must be coplanar in x (measured spread on the reference: 0)");
+
+    // ...and that shared fraction must be the requested one (0.25 of the
+    // 1.0-wide cube edge => |x| == 0.25), not some averaged or defaulted value.
+    assert(abs(abs(xLo) - 0.25f) < 1e-5f,
+        "the shared fraction must be the requested 0.25 (|x| = 0.25 on a unit cube), "
+      ~ "up to the ring's global orientation sign-flip");
+}
+
+// ---------------------------------------------------------------------------
+// addLoopUp — T6: the "at the Middle" option, driven through the REAL release
+// handler (doc/tasks/work/0480-topopen-addloop-middle.md). Armed manually
+// (mirroring the sibling direct-call convention), released at a pixel biased
+// well off the seed edge's midpoint: with the option ON the cut must land at
+// exactly 0.5 of EVERY crossed edge, ignoring the cursor entirely.
+//
+// This replaces the equivalent pin that used to sit on Split's release
+// handler — the option moved modes, the law did not.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import toolpipe.packets : SubjectPacket;
+    import std.algorithm : max, min;
+    import std.math : abs;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 200, 200);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m = makeCube();
+    t.meshSrc_ = () => &m;
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max);
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // Arm on the seed edge, with the rail in edges[seed][0] -> [1] order (the
+    // same order `seedRail` establishes on a real press).
+    t.addLoopArmed_ = true;
+    t.addLoopSeed_  = cast(int)seed;
+    t.seedRailA_    = m.vertices[m.edges[seed][0]];
+    t.seedRailB_    = m.vertices[m.edges[seed][1]];
+    t.addLoopMiddle_ = true;
+
+    // Release pixel = 0.8 along the rail — nowhere near the midpoint, so an
+    // ignored option would resolve ~0.8 (|x| = 0.3) instead of 0.5 (x = 0).
+    Vec3 releasePos = t.seedRailA_ + (t.seedRailB_ - t.seedRailA_) * 0.8f;
+    ImVec2 rp;
+    assert(TopologyPenTool.projectPt(releasePos, vp, rp), "setup: releasePos must project");
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_MIDDLE;
+    eUp.x = cast(int)rp.x; eUp.y = cast(int)rp.y;
+    assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the release");
+
+    assert(m.vertices.length == 12, "the option must still cut the full belt (Δv=+4)");
+    float xLo = float.max, xHi = -float.max;
+    foreach (i; 8 .. 12) {
+        xLo = min(xLo, m.vertices[i].x);
+        xHi = max(xHi, m.vertices[i].x);
+    }
+    assert(xHi - xLo < 1e-6f, "`middle` must be the same uniform scalar on every crossed edge");
+    assert(abs(xLo) < 1e-5f,
+        "`middle` must force the EXACT midpoint (x = 0 on a unit cube belt), ignoring the "
+      ~ "release's own 0.8 fraction");
+    assert(history.canUndo(), "a real Add Loop cut must record one undo entry");
+
+    // ...and with the option OFF the SAME release follows the cursor again.
+    history.undo();
+    t.addLoopMiddle_ = false;
+    t.addLoopArmed_  = true;
+    t.addLoopSeed_   = cast(int)seed;
+    assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the second release");
+    assert(m.vertices.length == 12, "the OFF path must still cut the full belt");
+    float xLo2 = float.max, xHi2 = -float.max;
+    foreach (i; 8 .. 12) {
+        xLo2 = min(xLo2, m.vertices[i].x);
+        xHi2 = max(xHi2, m.vertices[i].x);
+    }
+    assert(xHi2 - xLo2 < 1e-6f, "the OFF path is uniform across crossed edges too");
+    assert(abs(xLo2) > 0.05f,
+        "with the option OFF the cut must follow the release cursor, NOT snap to the midpoint");
 }
 
 // ---------------------------------------------------------------------------
@@ -6447,9 +6479,8 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// commitSplit — T5 (P9, doc/topopen_p9_split_plan.md §Testing, V1-SCOPE
-// LINE): a release that does not land on a vertex (C == -1, the deferred
-// mid-edge-insert case) must be a byte-identical no-op.
+// commitSplit — T5 (P9, doc/topopen_p9_split_plan.md §Testing): a release
+// that does not land on a vertex (C == -1) must be a byte-identical no-op.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -8707,196 +8738,8 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Mid-edge Split (doc/topopen_midedge_split_plan.md) — Tier-B unittests + the
-// MANDATORY dispatch e2e.
-//
-// `facesMatchCyclic` is a `version(unittest)` test-only helper (mirrors
-// `makeHoverIndicatorTestViewport`'s own module-local convention above):
-// unlike the existing `splitFaceByVertices`/`commitSplit` unittests (which
-// pin one FIXED winding via literal `f[] == [...]`, since the kernel's scan
-// order happens to match a hand-derived array for THEIR specific rigs), this
-// extension's composed kernel call (`addEdgePoint` then
-// `splitFaceByVertices`) produces a face that is only correct up to CYCLIC
-// ROTATION — verified directly against the real kernels: a quad
-// `[0,1,2,3]` split on edge `(2,3)` at the newly-inserted vertex `4` yields
-// one half literally as `[4,3,0]`, a rotation of the intuitive `[0,4,3]`
-// (never a reflection — the chord split never reverses winding direction).
-// ---------------------------------------------------------------------------
-version (unittest) private bool facesMatchCyclic(const(uint)[] actual, const(uint)[] expected) {
-    if (actual.length != expected.length) return false;
-    size_t n = actual.length;
-    if (n == 0) return true;
-    foreach (start; 0 .. n) {
-        bool ok = true;
-        foreach (k; 0 .. n) {
-            if (actual[(start + k) % n] != expected[k]) { ok = false; break; }
-        }
-        if (ok) return true;
-    }
-    return false;
-}
-
-// ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #1 (quad edge-target at the click's OWN
-// fraction, f=0.3 — NOT the midpoint): proves the composition inserts M at
-// the requested fraction (in `edges[E][0]->[1]` direction) and chord-splits
-// the shared face. Δv=+1, Δe=+2 (E -> 2 sub-edges, +1 chord), Δf=+1.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));   // 0 A
-    m.addVertex(Vec3(1, 0, 0));   // 1
-    m.addVertex(Vec3(1, 1, 0));   // 2
-    m.addVertex(Vec3(0, 1, 0));   // 3
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-
-    uint E = m.edgeIndex(2, 3);
-    assert(E != uint.max, "setup: edge (2,3) must exist");
-
-    t.commitSplitOnEdge(0, cast(int)E, 0.3f);
-
-    assert(m.vertices.length == 5, "commitSplitOnEdge: Δv=+1 (M inserted)");
-    assert(m.edges.length    == 6, "commitSplitOnEdge: Δe=+2 (E->2 sub-edges, +1 chord)");
-    assert(m.faces.length    == 2, "commitSplitOnEdge: Δf=+1");
-
-    bool hasF1 = false, hasF2 = false;
-    foreach (f; m.faces) {
-        if (facesMatchCyclic(f[], [0u, 1u, 2u, 4u])) hasF1 = true;
-        if (facesMatchCyclic(f[], [0u, 4u, 3u]))     hasF2 = true;
-    }
-    assert(hasF1, "commitSplitOnEdge: expected quad [0,1,2,M]");
-    assert(hasF2, "commitSplitOnEdge: expected tri [0,M,3]");
-
-    Vec3 expectedM = m.vertices[2] + (m.vertices[3] - m.vertices[2]) * 0.3f;
-    assert((m.vertices[4] - expectedM).length < 1e-5f,
-        "commitSplitOnEdge: M must land at lerp(v2,v3,0.3) — edges[E][0]->[1] direction");
-
-    assert(history.canUndo(), "a real mid-edge split must record one undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// splitUp — Tier-B #2: "Split at the Middle" forces f=0.5 regardless of the
-// release click's own position along the edge. Drives the REAL `splitUp`
-// (armed manually, mirroring the shipped commitSplit-adjacent tests' own
-// direct-call convention) with a release pixel biased toward v3 (f=0.65,
-// NOT the midpoint) — if the option were ignored, `ratioOnSegment` would
-// resolve f~=0.65, not 0.5.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 200, 200);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-    t.splitAtMiddle_ = true;
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(-0.3f, 0, -0.3f));  // 0 A
-    m.addVertex(Vec3( 0.3f, 0, -0.3f));  // 1
-    m.addVertex(Vec3( 0.3f, 0,  0.3f));  // 2
-    m.addVertex(Vec3(-0.3f, 0,  0.3f));  // 3
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-
-    Viewport vp = view.viewport();
-    SubjectPacket subj;
-    subj.mesh     = &m;
-    subj.viewport = vp;
-    VectorStack vts;
-    vts.put(&subj);
-
-    // f=0.65 -- far enough from EITHER screen-projected endpoint (>kTopoPenSnapPx)
-    // that `findSourceVertex`'s vertex-first snap never intercepts the release,
-    // while still measurably off-center from the true midpoint (0.5).
-    Vec3 releasePos = m.vertices[2] + (m.vertices[3] - m.vertices[2]) * 0.65f;
-    ImVec2 rp;
-    assert(TopologyPenTool.projectPt(releasePos, vp, rp), "setup: releasePos must project on-screen");
-
-    t.splitArmed_      = true;
-    t.splitSourceVert_ = 0;
-
-    SDL_MouseButtonEvent eUp;
-    eUp.button = SDL_BUTTON_MIDDLE;
-    eUp.x = cast(int)rp.x; eUp.y = cast(int)rp.y;
-    bool consumed = t.splitUp(eUp, vts);
-    assert(consumed, "splitUp must consume the release");
-
-    assert(m.vertices.length == 5, "the option must still insert exactly one vertex");
-    Vec3 expectedMid = (m.vertices[2] + m.vertices[3]) * 0.5f;
-    assert((m.vertices[4] - expectedMid).length < 1e-4f,
-        "splitAtMiddle_ must force M to the EXACT edge midpoint, ignoring the click's own "
-      ~ "0.65 fraction");
-    assert(history.canUndo(), "a real mid-edge split must record one undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #3: TRIANGLE edge-target, proving the insert
-// isn't quad-only. tri [0,1,2], A=0, E=(1,2), f=0.5 -> two tris [0,1,M] +
-// [0,M,2].
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));   // 0 A
-    m.addVertex(Vec3(1, 0, 0));   // 1
-    m.addVertex(Vec3(0, 1, 0));   // 2
-    m.addFace([0u, 1u, 2u]);
-    m.buildLoops();
-
-    uint E = m.edgeIndex(1, 2);
-    assert(E != uint.max, "setup: edge (1,2) must exist");
-
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-
-    assert(m.vertices.length == 4, "triangle edge-target: Δv=+1");
-    assert(m.edges.length    == 5, "triangle edge-target: Δe=+2");
-    assert(m.faces.length    == 2, "triangle edge-target: Δf=+1");
-
-    bool hasF1 = false, hasF2 = false;
-    foreach (f; m.faces) {
-        if (facesMatchCyclic(f[], [0u, 1u, 3u])) hasF1 = true;
-        if (facesMatchCyclic(f[], [0u, 3u, 2u])) hasF2 = true;
-    }
-    assert(hasF1, "triangle edge-target: expected tri [0,1,M]");
-    assert(hasF2, "triangle edge-target: expected tri [0,M,2]");
-    assert(history.canUndo(), "a real mid-edge split must record one undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// commitSplit — Tier-B #4 (regression pin): the shipped vertex<->vertex
-// Split is untouched by this extension — Δv=0, no mid-edge vertex is ever
-// inserted on this path.
+// commitSplit — Split Tier-B #1 (the whole of Split): the vertex<->vertex
+// chord split — Δv=0, no vertex is ever inserted on this path.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -8921,99 +8764,15 @@ unittest {
 
     t.commitSplit(0, 2);
 
-    assert(m.vertices.length == 4, "vertex<->vertex split: Δv=0, unchanged by this extension");
+    assert(m.vertices.length == 4, "vertex<->vertex split: Δv=0 — Split never creates a vertex");
     assert(m.faces.length    == 2, "vertex<->vertex split: still 2 faces");
     assert(history.canUndo());
 }
 
 // ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #5 (no-op): A is an endpoint of the target edge
-// E -> `findEdgeSplitFace` rejects (degenerate chord) BEFORE any mutation ->
-// byte-identical, no undo entry.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));
-    m.addVertex(Vec3(1, 0, 0));
-    m.addVertex(Vec3(1, 1, 0));
-    m.addVertex(Vec3(0, 1, 0));
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-
-    uint E = m.edgeIndex(0, 1);   // A(=0) is THIS edge's own endpoint
-    assert(E != uint.max);
-
-    auto before = MeshSnapshot.capture(m);
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-    auto after = MeshSnapshot.capture(m);
-
-    assert(after.vertices == before.vertices && after.edges == before.edges
-        && after.faces == before.faces,
-        "A-on-E: must be a byte-identical no-op");
-    assert(!history.canUndo(), "A-on-E: must record no undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #6 (no-op): edge E is on a face that shares NO
-// face with A (two fully disjoint quads) -> `findEdgeSplitFace` scans
-// `facesAroundEdge(E)` and finds A nowhere -> byte-identical, no undo entry.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));   // 0 A
-    m.addVertex(Vec3(1, 0, 0));   // 1
-    m.addVertex(Vec3(1, 1, 0));   // 2
-    m.addVertex(Vec3(0, 1, 0));   // 3
-    m.addFace([0u, 1u, 2u, 3u]);  // F0 -- contains A
-
-    m.addVertex(Vec3(5, 0, 0));   // 4
-    m.addVertex(Vec3(6, 0, 0));   // 5
-    m.addVertex(Vec3(6, 1, 0));   // 6
-    m.addVertex(Vec3(5, 1, 0));   // 7
-    m.addFace([4u, 5u, 6u, 7u]);  // F1 -- fully disjoint from F0
-    m.buildLoops();
-
-    uint E = m.edgeIndex(5, 6);   // an edge of F1, nowhere near A
-    assert(E != uint.max);
-
-    auto before = MeshSnapshot.capture(m);
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-    auto after = MeshSnapshot.capture(m);
-
-    assert(after.vertices == before.vertices && after.edges == before.edges
-        && after.faces == before.faces,
-        "cross-polygon: no face shares both A and E -> byte-identical no-op");
-    assert(!history.canUndo(), "cross-polygon: must record no undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// splitUp — Tier-B #7 (no-op): release on empty space (neither a vertex nor
-// an edge within `kTopoPenSnapPx`) stays the original clean no-op — the new
-// edge branch must not fabricate a target out of nothing.
+// splitUp — Split Tier-B #2 (no-op): release on empty space (no vertex
+// within `kTopoPenSnapPx`) is a clean no-op — the release must not
+// fabricate a target out of nothing.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -9063,238 +8822,12 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #8: edge-split-then-undo restores the mesh
-// exactly (counts + windings), mirroring `removeFaceAt`'s own undo test
-// above.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));
-    m.addVertex(Vec3(1, 0, 0));
-    m.addVertex(Vec3(1, 1, 0));
-    m.addVertex(Vec3(0, 1, 0));
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-
-    uint E = m.edgeIndex(2, 3);
-    assert(E != uint.max);
-
-    auto before = MeshSnapshot.capture(m);
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-    assert(history.canUndo(), "a real mid-edge split must be undoable");
-    history.undo();
-    auto after = MeshSnapshot.capture(m);
-
-    assert(after.vertices == before.vertices && after.edges == before.edges
-        && after.faces == before.faces,
-        "undo must restore the exact pre-split state, incl. the inserted vertex's removal");
-}
-
-// ---------------------------------------------------------------------------
-// commitSplitOnEdge — BOWTIE/NON-MANIFOLD ROLLBACK (MANDATORY atomicity fix,
-// doc/topopen_midedge_split_plan.md "MANDATORY atomicity fix" §3): vertex A
-// is a non-manifold "pinch" vertex — it appears TWICE in the SAME face's
-// winding (the face's two lobes, pinched together at A). `findEdgeSplitFace`
-// correctly resolves this face as viable (A is present, and is not an
-// endpoint of the target edge E), and `addEdgePoint` has ALREADY spliced M
-// into that face's winding by the time `splitFaceByVertices` runs — but the
-// chord-split kernel then finds THREE cut-vertex hits in that one face (A's
-// two occurrences plus M, not the expected two), so it legitimately declines
-// (n=0). This is the guard the MANDATORY fix exists for: the mesh must end
-// up BYTE-IDENTICAL to its state before `addEdgePoint` ran, and NO undo
-// entry may be recorded for the discarded partial mutation.
-//
-// (Empirically verified directly against the real kernels before writing
-// this test — a face `[A,B,C,A,D,E]` with target edge `(D,E)` inserts M
-// between D and E exactly as any other face would, and the subsequent
-// `splitFaceByVertices(faceIdx, A, M)` call returns 0 — confirming this is
-// a REACHABLE guard, not a hypothetical one.)
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));    // 0 A (the pinch/bowtie vertex)
-    m.addVertex(Vec3(1, 0, 0));    // 1 B
-    m.addVertex(Vec3(1, 1, 0));    // 2 C
-    m.addVertex(Vec3(-1, 0, 0));   // 3 D
-    m.addVertex(Vec3(-1, 1, 0));   // 4 E
-    // ONE bowtie face: A appears at positions 0 and 3 -- the two pinched
-    // lobes A-B-C and A-D-E, sharing only vertex A.
-    m.addFace([0u, 1u, 2u, 0u, 3u, 4u]);
-    m.buildLoops();
-
-    uint E = m.edgeIndex(3, 4);
-    assert(E != uint.max, "setup: edge (D,E) must exist");
-
-    auto before = MeshSnapshot.capture(m);
-
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-
-    auto after = MeshSnapshot.capture(m);
-    assert(after.vertices == before.vertices
-        && after.edges    == before.edges
-        && after.faces    == before.faces,
-        "bowtie: a chord-split failure AFTER addEdgePoint already mutated the mesh must roll "
-      ~ "back to the EXACT pre-mutation state, not leave M stranded");
-    assert(!history.canUndo(),
-        "bowtie: a rolled-back (partial-mutation) gesture must record NO undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// commitSplitOnEdge — Tier-B #10 (watertight neighbour): edge (2,3) is
-// shared by TWO quads, F0 (containing A=0) and F1 (on the far side). Only F0
-// gets chord-split; F1 keeps its own single face but gains M as an extra
-// (collinear) winding corner — proving `addEdgePoint`'s splice into EVERY
-// incident face keeps the mesh watertight across the seam, not just inside
-// the targeted polygon.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(0, 0, 0));   // 0 A
-    m.addVertex(Vec3(1, 0, 0));   // 1
-    m.addVertex(Vec3(1, 1, 0));   // 2
-    m.addVertex(Vec3(0, 1, 0));   // 3
-    m.addVertex(Vec3(1, 2, 0));   // 4
-    m.addVertex(Vec3(0, 2, 0));   // 5
-    m.addFace([0u, 1u, 2u, 3u]);   // F0 -- contains A
-    m.addFace([3u, 2u, 4u, 5u]);   // F1 -- shares edge (2,3), reversed winding
-    m.buildLoops();
-
-    uint E = m.edgeIndex(2, 3);
-    assert(E != uint.max);
-    size_t vBefore = m.vertices.length;
-
-    t.commitSplitOnEdge(0, cast(int)E, 0.5f);
-
-    assert(m.vertices.length == vBefore + 1, "watertight: Δv=+1 exactly");
-    assert(m.faces.length == 3,
-        "watertight: F0 splits into 2, F1 stays 1 (now a pentagon) -> 3 total");
-
-    uint M = cast(uint)vBefore;   // the newly appended vertex index
-    bool hasF0Quad = false, hasF0Tri = false, hasF1Pent = false;
-    foreach (f; m.faces) {
-        if (facesMatchCyclic(f[], [0u, 1u, 2u, M]))     hasF0Quad = true;
-        if (facesMatchCyclic(f[], [0u, M, 3u]))         hasF0Tri  = true;
-        if (facesMatchCyclic(f[], [3u, M, 2u, 4u, 5u])) hasF1Pent = true;
-    }
-    assert(hasF0Quad, "watertight: F0's quad half [0,1,2,M]");
-    assert(hasF0Tri,  "watertight: F0's tri half [0,M,3]");
-    assert(hasF1Pent, "watertight: F1 must gain M as a collinear pentagon corner");
-
-    // Both new sub-edges of the old (2,3) seam must still be shared by
-    // exactly 2 faces each (one from each side) — the mesh is watertight,
-    // not torn open at the seam.
-    uint e2M = m.edgeIndex(2, M);
-    uint eM3 = m.edgeIndex(M, 3);
-    assert(e2M != uint.max && eM3 != uint.max, "watertight: both new sub-edges must exist");
-    int n2M = 0, nM3 = 0;
-    foreach (fi; m.facesAroundEdge(e2M)) ++n2M;
-    foreach (fi; m.facesAroundEdge(eM3)) ++nM3;
-    assert(n2M == 2, "watertight: edge (2,M) must have exactly 2 incident faces");
-    assert(nM3 == 2, "watertight: edge (M,3) must have exactly 2 incident faces");
-
-    assert(history.canUndo(), "a real mid-edge split must record one undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// splitUp — vertex-first precedence (doc/topopen_midedge_split_plan.md
-// "Vertex-first precedence is correct + free"): a release NEAR an existing
-// corner (at its own projected pixel, well within `kTopoPenSnapPx`) must
-// resolve via `findSourceVertex` and take the UNCHANGED vertex<->vertex path
-// (`commitSplit`, Δv=0) — never the new mid-edge insert — even though that
-// same corner is also an endpoint of an edge `findRingSeedEdge` could
-// otherwise resolve.
-// ---------------------------------------------------------------------------
-unittest {
-    import view : View;
-    import editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
-
-    auto t       = new TopologyPenTool();
-    auto view    = new View(0, 0, 100, 100);
-    auto history = new CommandHistory();
-    t.history_          = history;
-    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
-                                                    "mesh.topoPen_split", "Topology Split",
-                                                    MeshEditScope.Geometry);
-
-    Mesh m;
-    t.meshSrc_ = () => &m;
-    m.addVertex(Vec3(-0.3f, 0, -0.3f));   // 0 A
-    m.addVertex(Vec3( 0.3f, 0, -0.3f));   // 1
-    m.addVertex(Vec3( 0.3f, 0,  0.3f));   // 2
-    m.addVertex(Vec3(-0.3f, 0,  0.3f));   // 3
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-
-    Viewport vp = view.viewport();
-    SubjectPacket subj;
-    subj.mesh     = &m;
-    subj.viewport = vp;
-    VectorStack vts;
-    vts.put(&subj);
-
-    ImVec2 p2;
-    assert(TopologyPenTool.projectPt(m.vertices[2], vp, p2));
-
-    t.splitArmed_      = true;
-    t.splitSourceVert_ = 0;
-
-    SDL_MouseButtonEvent eUp;
-    eUp.button = SDL_BUTTON_MIDDLE;
-    eUp.x = cast(int)p2.x; eUp.y = cast(int)p2.y;   // exactly v2's own pixel
-    bool consumed = t.splitUp(eUp, vts);
-    assert(consumed, "splitUp must consume the release");
-
-    assert(m.vertices.length == 4,
-        "a release on an existing corner must take the vertex path (Δv=0), not insert a mid-edge M");
-    assert(m.faces.length == 2, "the diagonal split must still happen");
-    assert(history.canUndo(), "a real vertex-target split must record one undo entry");
-}
-
-// ---------------------------------------------------------------------------
-// params() / toolStateJson — Mid-edge Split option schema
-// (doc/topopen_midedge_split_plan.md Deliverable #4): the sticky
-// `splitMiddle` Param round-trips through both the schema (for the
-// `tool.attr`/form binding) and the introspection JSON (for HTTP tests),
-// defaulting OFF, and survives `resyncSession()` (a mode toggle, not
-// per-gesture arm state — matches the `tool_activate_sticky_clobber`
-// precedent).
+// params() / toolStateJson — Add Loop "at the Middle" option schema
+// (doc/tasks/work/0480-topopen-addloop-middle.md): the sticky `middle` Param
+// round-trips through both the schema (for the `tool.attr`/form binding) and
+// the introspection JSON (for HTTP tests), defaulting OFF, and survives
+// `resyncSession()` (a mode toggle, not per-gesture arm state — matches the
+// `tool_activate_sticky_clobber` precedent).
 // ---------------------------------------------------------------------------
 unittest {
     import std.json : JSONType;
@@ -9302,25 +8835,69 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 3, "mesh.topoPen must expose the splitMiddle option, the Fill-mode "
+    assert(ps.length == 3, "mesh.topoPen must expose the Add Loop `middle` option, the Fill-mode "
                           ~ "dropdown (task 0477 continuation, doc/topopen_fill_plan.md) and the "
                           ~ "Smooth strength — every later Param is APPENDED, never a full-replace");
-    assert(ps[0].name == "splitMiddle");
+    assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
-    assert(ps[0].default_.b == false, "splitMiddle must default OFF");
-    assert(ps[0].bptr is &t.splitAtMiddle_, "the Param must bind directly to splitAtMiddle_");
+    assert(ps[0].default_.b == false, "`middle` must default OFF — the shipped click-derived "
+                                     ~ "Add Loop ratio stays the default behaviour");
+    assert(ps[0].bptr is &t.addLoopMiddle_, "the Param must bind directly to addLoopMiddle_");
 
     auto s0 = t.toolStateJson();
-    assert(s0["splitAtMiddle"].type == JSONType.false_, "must start OFF");
+    assert(s0["addLoopMiddle"].type == JSONType.false_, "must start OFF");
+    assert("splitAtMiddle" !in s0,
+        "the option is no longer attached to Split — the old key must be gone, not aliased");
 
-    t.splitAtMiddle_ = true;
+    t.addLoopMiddle_ = true;
     auto s1 = t.toolStateJson();
-    assert(s1["splitAtMiddle"].type == JSONType.true_, "must report a live toggle");
+    assert(s1["addLoopMiddle"].type == JSONType.true_, "must report a live toggle");
 
     t.resyncSession();
-    assert(t.splitAtMiddle_,
-        "splitAtMiddle_ must survive resyncSession() (external history navigation) — it is a "
+    assert(t.addLoopMiddle_,
+        "addLoopMiddle_ must survive resyncSession() (external history navigation) — it is a "
       ~ "sticky mode toggle, not per-gesture arm state");
+}
+
+// ---------------------------------------------------------------------------
+// addLoopFrac — the Add Loop insert-fraction LAW
+// (doc/tasks/work/0480-topopen-addloop-middle.md):
+// `frac = middle ? 0.5 : clamp(cursorRatio, 0, 1)`. Pins both branches
+// directly, including the fact that `middle` ignores the cursor ENTIRELY
+// (not "clamps it toward 0.5"), and that `addLoopRatio`/`addLoopFrac` in the
+// introspection JSON diverge exactly when the option is on.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs, isNaN;
+
+    auto t = new TopologyPenTool();
+
+    // --- option OFF: the click-derived ratio passes through, clamped ---
+    assert(abs(t.addLoopFrac(0.3f)  - 0.3f) < 1e-6f, "OFF: the cursor ratio passes through");
+    assert(abs(t.addLoopFrac(0.75f) - 0.75f) < 1e-6f);
+    assert(abs(t.addLoopFrac(-2.0f) - 0.0f) < 1e-6f, "OFF: below-range clamps to 0");
+    assert(abs(t.addLoopFrac(9.0f)  - 1.0f) < 1e-6f, "OFF: above-range clamps to 1");
+    assert(abs(t.addLoopFrac(float.nan) - 0.0f) < 1e-6f,
+        "OFF: a non-finite ratio must resolve to the rejected 0, never propagate — "
+      ~ "commitAddLoop's open-interval guard then no-ops it");
+
+    // --- option ON: a flat 0.5, whatever the cursor says ---
+    t.addLoopMiddle_ = true;
+    foreach (float r; [0.0f, 0.05f, 0.3f, 0.5f, 0.95f, 1.0f, -3.0f, 7.0f]) {
+        assert(abs(t.addLoopFrac(r) - 0.5f) < 1e-6f,
+            "ON: `middle` bypasses the cursor entirely — always exactly 0.5");
+    }
+    assert(!isNaN(t.addLoopFrac(float.nan)) && abs(t.addLoopFrac(float.nan) - 0.5f) < 1e-6f,
+        "ON: even a non-finite cursor ratio is bypassed, not propagated");
+
+    // --- the introspection JSON reports BOTH the raw ratio and the law's
+    //     output, so a Tier-C test can see the override without a release ---
+    t.addLoopRatio_ = 0.8f;
+    auto s = t.toolStateJson();
+    assert(abs(s["addLoopRatio"].get!double - 0.8) < 1e-6,
+        "addLoopRatio must stay the RAW cursor ratio");
+    assert(abs(s["addLoopFrac"].get!double - 0.5) < 1e-6,
+        "addLoopFrac must report what a release would actually commit");
 }
 
 // ---------------------------------------------------------------------------
@@ -9328,8 +8905,8 @@ unittest {
 // doc/topopen_fill_plan.md Phase 1, MANDATORY opponent fix #1): the `mode`
 // IntEnum Param round-trips through the schema (for the `tool.attr`/form
 // binding), defaults to Draw, and survives `resyncSession()` (a sticky mode
-// toggle, not per-gesture arm state — matches `splitAtMiddle_`'s own
-// precedent, pinned in the block immediately above).
+// toggle, not per-gesture arm state — matches `addLoopMiddle_`'s own
+// precedent, pinned in the schema block above).
 // ---------------------------------------------------------------------------
 unittest {
     auto t = new TopologyPenTool();
@@ -9390,14 +8967,21 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// onMouseButtonDown / onMouseButtonUp — MANDATORY DISPATCH for the mid-edge
-// Split extension (doc/topopen_midedge_split_plan.md Phase 3): drives the
-// REAL dispatch path end-to-end — plain-MMB down on vertex A (0), plain-MMB
-// up on the screen-space MIDPOINT of the opposite edge (2,3), never a vertex
-// — mirroring the shipped vertex<->vertex e2e test above exactly (same rig,
-// same camera), so a regression that broke `splitUp`'s new edge branch
-// (rather than just `commitSplitOnEdge`'s own mutation, which the Tier-B
-// cases above already cover) would be caught here.
+// onMouseButtonDown / onMouseButtonUp — NEGATIVE DISPATCH pin: Split does
+// NOT do mid-edge insertion (doc/tasks/work/0480-topopen-addloop-middle.md).
+// Drives the REAL dispatch path end-to-end — plain-MMB down on vertex A (0),
+// plain-MMB up on the screen-space MIDPOINT of the opposite edge (2,3),
+// never a vertex — mirroring the vertex<->vertex e2e test above exactly
+// (same rig, same camera). Split is a vertex->vertex chord split, so this
+// release must leave the mesh byte-identical with NO undo entry. Inserting a
+// vertex partway along a crossed edge belongs to Add Loop, whose own
+// `middle`/click-fraction law is pinned separately above and in
+// tests/test_topopen_addloop_middle.d.
+//
+// This test previously asserted the OPPOSITE (Δv=+1/Δf=+1/one undo entry) —
+// it encoded the wrong mode attachment and is inverted here deliberately,
+// not weakened: the same real gesture is driven, and every count is still
+// asserted exactly.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -9420,9 +9004,9 @@ unittest {
     // Scaled up from the shipped vertex e2e's -0.3..0.3 rig to keep the
     // projected edge (2,3) comfortably longer than 2*kTopoPenSnapPx at this
     // camera distance — its screen-space MIDPOINT must land clearly outside
-    // the vertex-snap radius of EITHER endpoint, or the release would
-    // wrongly resolve via the (unchanged) vertex path instead of this
-    // extension's edge path.
+    // the vertex-snap radius of EITHER endpoint, so the release genuinely
+    // resolves NO vertex (a snap to v2/v3 would turn this into an ordinary
+    // vertex-target split and the no-op assertions below would be vacuous).
     m.addVertex(Vec3(-0.8f, 0, -0.8f));   // 0 A
     m.addVertex(Vec3( 0.8f, 0, -0.8f));   // 1
     m.addVertex(Vec3( 0.8f, 0,  0.8f));   // 2
@@ -9456,32 +9040,29 @@ unittest {
     assert(t.splitArmed_, "plain-MMB press on a vertex must arm Split");
     assert(t.splitSourceVert_ == 0, "must arm the pressed vertex (0) as the split source");
 
+    // Guard the rig itself: the release pixel must resolve NO vertex, or the
+    // no-op below would prove nothing about the removed edge branch.
+    assert(t.findSourceVertex(midX, midY, vp) < 0,
+        "setup: the edge midpoint pixel must be outside every vertex's snap radius");
+
+    auto before = MeshSnapshot.capture(m);
+
     SDL_MouseButtonEvent eUp;
     eUp.button = SDL_BUTTON_MIDDLE;
     eUp.x = midX; eUp.y = midY;
     bool upConsumed = t.onMouseButtonUp(eUp, vts);
-    assert(upConsumed, "plain-MMB release on the edge midpoint must be consumed");
+    assert(upConsumed, "plain-MMB release on the edge midpoint must still be consumed");
     assert(!t.splitArmed_, "release must disarm Split regardless of outcome");
 
-    assert(m.vertices.length == 5,
-        "the real dispatch path must have inserted the mid-edge vertex");
-    assert(m.faces.length == 2, "the real dispatch path must have split the quad into 2 faces");
-    assert(m.edges.length == 6,
-        "the real dispatch path must have added 2 sub-edges + 1 chord edge");
-    assert(history.canUndo(), "the real dispatch path must record one undo entry");
-
-    // Loose tolerance (unlike T1's tight 1e-5 direct-call check): the release
-    // pixel is the midpoint of the projected SCREEN segment, which is only
-    // an approximation of the projected WORLD midpoint under perspective —
-    // `ratioOnSegment`'s own re-projection (screenPointToRay ->
-    // closestPointOnSegmentToRay) recovers a `t` close to, but not exactly,
-    // 0.5 at this rig's camera angle. This dispatch test's job is proving
-    // the real onMouseButtonDown/Up path REACHES `commitSplitOnEdge` with a
-    // sane mid-span fraction — the exact-fraction contract is already
-    // pinned tightly by the Tier-B direct-call tests above (T1/T3).
-    Vec3 expectedMid = (m.vertices[2] + m.vertices[3]) * 0.5f;
-    assert((m.vertices[4] - expectedMid).length < 0.2f,
-        "the inserted vertex must land reasonably near the edge (2,3) midpoint");
+    auto after = MeshSnapshot.capture(m);
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "Split must NOT insert a mid-edge vertex — a release on an edge is a byte-identical "
+      ~ "no-op (that behaviour belongs to Add Loop)");
+    assert(m.vertices.length == 4, "Δv=0 — no vertex may be created by a Split release");
+    assert(m.faces.length    == 1, "Δf=0 — the quad must stay whole");
+    assert(m.edges.length    == 4, "Δe=0 — no sub-edge and no chord may be created");
+    assert(!history.canUndo(), "a no-op release must record no undo entry");
 
     SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }
@@ -9489,8 +9070,8 @@ unittest {
 // ---------------------------------------------------------------------------
 // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md) — Tier-B
 // tests. The `params()`/`mode` schema round-trip is already pinned right
-// after the mid-edge Split option schema block above (mirroring
-// `splitAtMiddle_`'s own precedent); everything below exercises
+// after the Add Loop `middle` option schema block above (mirroring
+// `addLoopMiddle_`'s own precedent); everything below exercises
 // `findFillCell`/`commitFill`/the dropdown-routed dispatch/the hover
 // preview.
 //
