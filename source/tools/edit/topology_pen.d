@@ -3096,6 +3096,61 @@ public:
         return topo;
     }
 
+    // SCALE-RELATIVE no-op threshold for the Smooth gesture: the distance a
+    // vertex must move before the gesture counts as having changed anything.
+    // Returns a fraction of the pre-gesture bounding-box DIAGONAL rather than
+    // a world-unit constant.
+    //
+    // Why this had to stop being absolute. The guard's job is to catch a
+    // gesture that nets to IDENTITY — a disconnected patch with no usable
+    // neighbours, no background to snap against, or a perfectly regular mesh
+    // (an exact fixed point of this relaxation law). Every one of those
+    // produces EXACTLY zero movement, not merely small movement, so the
+    // threshold only ever has to clear float round-trip noise. The old
+    // `1e-4f` was inherited from the sibling `kMoveEps`/`kSlideEps`/
+    // `kMoveLoopEps` guards, where the displacement is DRAG-proportional and
+    // a tenth of a millimetre genuinely is nothing. Smooth's displacement is
+    // not drag-proportional: it scales with mesh size and with `strength`
+    // (per click, roughly `0.028 · strength · medianEdgeLength`). Against a
+    // fixed 1e-4 that produces a silent cliff — below it the ENTIRE gesture
+    // is discarded, mesh restored, no undo entry, no feedback of any kind.
+    // Measured: strength 0.05 (legal, well inside the Param's own [0, 4])
+    // on a mesh with 0.07-unit edges — ordinary detail-modelling scale, and
+    // exactly the spacing of the reference capture rig — displaces 5.46e-05
+    // and was swallowed whole. Scaling the threshold to the model removes the
+    // cliff instead of relocating it, which is why this is preferred over
+    // simply lowering the constant.
+    //
+    // Why 1e-6 of the diagonal. Positions are `float`, i.e. ~1.2e-7 relative
+    // precision, so a coordinate out at the extremity of a bounding box of
+    // diagonal D carries roughly D·1e-7 of quantisation. 1e-6·D sits an order
+    // of magnitude above that noise floor while staying ~370x below the
+    // smallest genuinely-visible gesture above. The floor keeps the threshold
+    // positive for a degenerate mesh (single vertex, or all vertices
+    // coincident) whose diagonal is 0, so that a background re-snap of a
+    // coincident cluster is still recorded rather than divided into nothing.
+    //
+    // Deliberately NOT applied to the sibling guards: `kMoveEps` (2906),
+    // `kSlideEps` (2957), `kSmoothLoopEps`, and `kMoveLoopEps` all sit on
+    // paths whose laws this change did not touch and whose displacement is
+    // drag-proportional, so an absolute threshold remains correct for them.
+    // `kSmoothEps` had no reader outside this function.
+    private static float smoothNoOpEps(const(Vec3)[] verts) {
+        enum float kRel   = 1e-6f;    // fraction of the bbox diagonal
+        enum float kFloor = 1e-9f;    // degenerate (zero-extent) mesh
+        if (verts.length == 0) return kFloor;
+
+        Vec3 lo = verts[0], hi = verts[0];
+        foreach (v; verts[1 .. $]) {
+            if (v.x < lo.x) lo.x = v.x;  if (v.x > hi.x) hi.x = v.x;
+            if (v.y < lo.y) lo.y = v.y;  if (v.y > hi.y) hi.y = v.y;
+            if (v.z < lo.z) lo.z = v.z;  if (v.z > hi.z) hi.z = v.z;
+        }
+        immutable float diag = (hi - lo).length;
+        immutable float eps  = kRel * diag;
+        return eps > kFloor ? eps : kFloor;
+    }
+
     // 1-D LOOP-neighbor connectivity (P12,
     // doc/topopen_p12_smoothloop_plan.md Phase 1): each vertex touched by
     // `m.selectLoopEdges(seed)` maps to its ≤2 IN-LOOP neighbors (built
@@ -3239,11 +3294,15 @@ public:
 
         // REV1 FIX-2: unconditional no-op check — a gesture that nets to
         // ZERO vertex movement (within eps) restores `before` exactly and
-        // records no undo entry at all.
-        enum float kSmoothEps = 1e-4f;   // mirrors moveVertexTo's/commitSlide's own eps guards
+        // records no undo entry at all. The threshold is SCALE-RELATIVE (see
+        // `smoothNoOpEps`) — an absolute one silently discarded whole
+        // gestures at low `smoothStrength` or on small-scale meshes.
+        // Measured against the PRE-gesture positions, so the reference scale
+        // cannot itself be perturbed by the edit being tested.
+        immutable float smoothEps = smoothNoOpEps(before.vertices);
         bool changed = false;
         foreach (i; 0 .. nV)
-            if ((m.vertices[i] - before.vertices[i]).length > kSmoothEps) { changed = true; break; }
+            if ((m.vertices[i] - before.vertices[i]).length > smoothEps) { changed = true; break; }
         if (!changed) { before.restore(*m); return; }   // no mutation worth recording — no GPU churn
 
         // NIT-1: fire the change-bus Position commit only on the CHANGED
@@ -5734,8 +5793,15 @@ unittest {
         auto topo = TopologyPenTool.buildRelaxTopology(&m);
         assert(topo.valid(m.vertices.length), "extracted topology must be self-consistent");
 
+        // Seed from `m.vertices`, NOT from the fixture's own doubles — this
+        // is the float→double widening `applySmoothPasses` itself performs,
+        // so the gate covers that step instead of bypassing it. Bit-identical
+        // either way today (every captured coordinate is float-exact), which
+        // is precisely why seeding from the rig would silently leave the
+        // conversion untested.
         auto pos = new RelaxVec3[](verts.length);
-        foreach (i, v; verts) pos[i] = RelaxVec3(v[0], v[1], v[2]);
+        foreach (i; 0 .. m.vertices.length)
+            pos[i] = RelaxVec3(m.vertices[i].x, m.vertices[i].y, m.vertices[i].z);
 
         relaxPasses(pos, topo, c.strength / 20.0, c.iters);
 
@@ -5858,6 +5924,87 @@ unittest {
       ~ "present — loose points are never snapped to a surface");
     assert(!history.canUndo(),
         "the only vertex in the gesture is untouched -> no undo entry, even with a background");
+}
+
+// ---------------------------------------------------------------------------
+// applySmoothPasses — LOW STRENGTH x SMALL EDGES must still produce a
+// visible, undoable change (review SHOULD-FIX: the no-op guard was an
+// ABSOLUTE 1e-4 world-unit threshold).
+//
+// This pins the exact combination that used to be swallowed. Smooth's
+// displacement is not drag-proportional — it scales with mesh size and with
+// `smoothStrength` — so a fixed threshold creates a silent cliff below which
+// the whole gesture is discarded: mesh restored, no undo entry, no feedback.
+// The rig is an irregular hexahedron with 0.07-unit edges (ordinary
+// detail-modelling scale, and the spacing of the reference capture rig) at
+// strength 0.05, which is legal and well inside the Param's own [0, 4].
+//
+// The middle assertion is the one that makes this a REGRESSION test rather
+// than a generic smoke test: it asserts the movement is genuinely BELOW the
+// old 1e-4 constant. So the rig provably lands in the swallowed band, and
+// this test would fail against the previous guard rather than passing for
+// unrelated reasons. `gpu_` stays null, so `refreshDisplay` is never reached
+// — safe under bare `dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+    import view : View;
+    import editmode : EditMode;
+    import snap : setBackgroundSnapSources;
+
+    setBackgroundSnapSources(null);   // no background — isolate pure relaxation
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_           = history;
+    t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                     "mesh.topoPen_smooth", "Topology Smooth",
+                                                     MeshEditScope.Position);
+
+    // Irregular hexahedron (one corner pulled out so it is NOT a fixed point
+    // of the relaxation law), scaled to 0.07-unit edges.
+    enum float s = 0.035f;
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    foreach (p; [Vec3(-1, -1, -1), Vec3(1, -1, -1), Vec3(1, 1, -1), Vec3(-1, 1, -1),
+                 Vec3(-1, -1,  1), Vec3(1, -1,  1), Vec3(1.8, 1.3, 1.1), Vec3(-1, 1, 1)])
+        m.addVertex(p * s);
+    m.addFace([0u, 3u, 2u, 1u]);  m.addFace([4u, 5u, 6u, 7u]);
+    m.addFace([0u, 1u, 5u, 4u]);  m.addFace([2u, 3u, 7u, 6u]);
+    m.addFace([1u, 2u, 6u, 5u]);  m.addFace([0u, 4u, 7u, 3u]);
+    m.buildLoops();
+
+    t.smoothStrength_ = 0.05f;   // legal, inside the Param's declared [0, 4]
+
+    auto before = MeshSnapshot.capture(m);
+    t.applySmoothPasses(1);      // one click == one iteration
+
+    float maxDisp = 0;
+    foreach (i; 0 .. m.vertices.length) {
+        immutable float d = (m.vertices[i] - before.vertices[i]).length;
+        if (d > maxDisp) maxDisp = d;
+    }
+
+    assert(maxDisp > 0,
+        "setup: an irregular mesh must genuinely relax — a regular one is an exact fixed "
+      ~ "point of this law and would make the assertions below vacuous");
+    assert(maxDisp < 1e-4f,
+        format("setup: this rig must land in the band the OLD absolute 1e-4 guard swallowed, "
+             ~ "or it is not testing the regression; maxDisp=%.4e", maxDisp));
+    assert(history.canUndo(),
+        format("a low-strength gesture on a small-scale mesh must still be recorded as a real, "
+             ~ "undoable edit — the no-op threshold must scale with the model, not sit at a "
+             ~ "fixed world-unit constant (maxDisp=%.4e)", maxDisp));
+
+    // ...and the movement must have SURVIVED, not been rolled back by the
+    // guard: `before.restore` on the no-op path would leave these identical.
+    bool anyMoved = false;
+    foreach (i; 0 .. m.vertices.length)
+        if (m.vertices[i] != before.vertices[i]) { anyMoved = true; break; }
+    assert(anyMoved,
+        "the relaxed positions must remain in the mesh — a swallowed gesture restores "
+      ~ "`before` and leaves every vertex byte-identical");
 }
 
 // ---------------------------------------------------------------------------

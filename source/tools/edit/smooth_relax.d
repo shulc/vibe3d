@@ -61,16 +61,21 @@ import std.math : sqrt, isFinite;
 struct RelaxVec3 {
     double x = 0, y = 0, z = 0;
 
-    RelaxVec3 opBinary(string op)(const RelaxVec3 r) const
+    // Attributed to match `math.d`'s `Vec3`, which carries the same set on
+    // every equivalent operator — this is what lets `relaxPasses` below be
+    // `@safe pure nothrow` in turn.
+    RelaxVec3 opBinary(string op)(const RelaxVec3 r) const @safe pure nothrow @nogc
         if (op == "+" || op == "-")
     {
         return mixin("RelaxVec3(x " ~ op ~ " r.x, y " ~ op ~ " r.y, z " ~ op ~ " r.z)");
     }
-    RelaxVec3 opBinary(string op : "*")(double s) const {
+    RelaxVec3 opBinary(string op : "*")(double s) const @safe pure nothrow @nogc {
         return RelaxVec3(x * s, y * s, z * s);
     }
-    double dot(const RelaxVec3 r) const { return x * r.x + y * r.y + z * r.z; }
-    double length() const { return sqrt(x * x + y * y + z * z); }
+    double dot(const RelaxVec3 r) const @safe pure nothrow @nogc {
+        return x * r.x + y * r.y + z * r.z;
+    }
+    double length() const @safe pure nothrow @nogc { return sqrt(x * x + y * y + z * z); }
 }
 
 /// Frozen topology for a relaxation run. Positions move during a run;
@@ -89,16 +94,28 @@ struct RelaxTopology {
     const(bool)[]   openTo;
     const(bool)[]   boundary;
 
-    size_t vertexCount() const { return offset.length ? offset.length - 1 : 0; }
+    size_t vertexCount() const @safe pure nothrow @nogc {
+        return offset.length ? offset.length - 1 : 0;
+    }
 
     /// True when this topology is internally consistent and safe to index
     /// against a position array of `nVerts`. Checked by `relaxPasses` — a
     /// malformed topology is a no-op, never an out-of-bounds read.
-    bool valid(size_t nVerts) const {
+    ///
+    /// The monotonicity check is what makes that promise true rather than
+    /// merely likely: without it `offset = [0, 100, 5]` against a 5-element
+    /// `nbrs` satisfies every other condition here (right lengths, right
+    /// terminator, in-range neighbours) and then walks `offset[v] .. offset[v+1]`
+    /// straight past the end — caught by the bounds check in a debug build,
+    /// undefined behaviour under `-release`. No producer emits a
+    /// non-monotone offset today; the point is that `valid()` states a
+    /// safety contract, so it has to actually establish it.
+    bool valid(size_t nVerts) const @safe pure nothrow @nogc {
         if (offset.length != nVerts + 1) return false;
         if (openTo.length != nbrs.length) return false;
         if (boundary.length != nVerts) return false;
         if (nVerts && offset[nVerts] != nbrs.length) return false;
+        foreach (i; 0 .. nVerts) if (offset[i] > offset[i + 1]) return false;
         foreach (n; nbrs) if (n >= nVerts) return false;
         return true;
     }
@@ -108,16 +125,28 @@ struct RelaxTopology {
 /// (fewer-than-two-face) incident edge. Computed ONCE, before any iteration
 /// — the flag is a property of topology, and topology does not move.
 ///
-/// NOTE — an UNIMPLEMENTED, deliberately-open refinement: the reference
-/// additionally gates this test on `deg(v) > 2`, so a degree-2 boundary
-/// vertex would be left UNrestricted there. That gate is a static-only
-/// observation: the conformance fixture contains four degree-2 vertices, and
-/// running it with and without the gate produces the IDENTICAL worst-case
-/// error (2.2888e-16 either way), so the fixture does not discriminate the
-/// two rules and there is nothing here to justify the extra gate from. Left
-/// out on purpose rather than guessed at; a rig where a degree-2 vertex has
-/// one open and one interior edge would settle it.
-bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) {
+/// NOTE — a refinement the reference has and this does NOT, deliberately and
+/// permanently: the reference additionally gates its boundary test on
+/// `deg(v) > 2`, leaving a degree-2 boundary vertex UNrestricted.
+///
+/// That gate is unobservable, and not merely because the fixture happens not
+/// to cover it. It is STRUCTURALLY UNREACHABLE. The gate can only change an
+/// outcome for a degree-2 vertex whose two incident edges differ in openness
+/// — one open, one shared by ≥2 faces — because when both are open the
+/// restriction keeps the whole ring anyway, and when both are interior the
+/// vertex is not flagged boundary at all. But such a vertex cannot be built:
+/// every face incident to `v` contributes exactly two edges at `v`, so a
+/// vertex of degree 2 whose first edge carries N faces necessarily has those
+/// same N faces on its second edge. Openness is therefore always EQUAL
+/// across a degree-2 vertex's two edges, and the discriminating case does
+/// not exist. Confirmed two ways: the conformance fixture (which does
+/// contain four degree-2 vertices) yields a bit-identical 2.2888e-16 with
+/// and without the gate, and a search over 200k random face soups —
+/// including non-manifold ones — produced zero instances.
+///
+/// Recorded here so this is not reopened as an oversight. Implementing the
+/// gate would add a branch that provably cannot fire.
+bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) @safe pure nothrow {
     if (offset.length == 0) return null;
     auto b = new bool[](offset.length - 1);
     foreach (v; 0 .. b.length) {
@@ -137,13 +166,22 @@ bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) {
 /// caller is responsible for capping `iters` to a sane ceiling BEFORE
 /// calling — this kernel is O(iters · E) and will honour whatever it is
 /// given.
-void relaxPasses(RelaxVec3[] pos, const ref RelaxTopology topo, double F, int iters) {
+void relaxPasses(RelaxVec3[] pos, const ref RelaxTopology topo, double F, int iters)
+    @safe pure nothrow
+{
     if (iters <= 0 || pos.length == 0) return;
     if (!isFinite(F)) return;
     if (!topo.valid(pos.length)) return;
 
     immutable size_t nV = pos.length;
     auto force = new RelaxVec3[](nV);
+    // Edge length per CSR SLOT, carried from the A/D loop to the force loop
+    // below. Both loops need |P_v − P_i| for the same slot, and at the
+    // 256-iteration cap the redundant `sqrt` dominates: computing it once
+    // per slot instead of twice halves the square roots from 4 to 2 per edge
+    // per iteration. Bit-exact — the two expressions differ only by negating
+    // each component, and the squares are identical.
+    auto slotLen = new double[](topo.nbrs.length);
 
     foreach (_; 0 .. iters) {
         force[] = RelaxVec3(0, 0, 0);
@@ -162,18 +200,19 @@ void relaxPasses(RelaxVec3[] pos, const ref RelaxTopology topo, double F, int it
                 if (bnd && !topo.openTo[k]) continue;
                 auto dv = pos[topo.nbrs[k]] - pos[v];
                 A = A + dv;
-                D += dv.length();
+                immutable double len = dv.length();
+                slotLen[k] = len;
+                D += len;
             }
             if (D == 0) continue;   // no usable neighbours, or all coincident
             A = A * F;
 
             foreach (k; lo .. hi) {
                 if (bnd && !topo.openTo[k]) continue;
-                immutable uint w = topo.nbrs[k];
-                auto e = pos[v] - pos[w];
-                immutable double d = e.length();
+                immutable uint   w = topo.nbrs[k];
+                immutable double d = slotLen[k];
                 if (d == 0) continue;
-                auto u  = e * (1.0 / d);
+                auto u  = (pos[v] - pos[w]) * (1.0 / d);
                 auto Ci = (A - u * A.dot(u)) * (d / D);
                 force[v] = force[v] + Ci;
                 force[w] = force[w] - Ci;   // the reaction term — NOT optional
@@ -268,6 +307,20 @@ unittest {   // Guard paths: non-finite F, non-positive iters, and a malformed
     assert(!bad.valid(base.length), "a short openTo must fail validation");
     relaxPasses(p, bad, 0.05, 3);
     assert(p == base, "a malformed topology must be a no-op, never an out-of-bounds read");
+
+    // A NON-MONOTONE offset passes every length / terminator / range check
+    // and would then walk `nbrs` past its end. `valid()` states a safety
+    // contract, so it must reject this rather than rely on no producer ever
+    // emitting it (bounds-checked in debug, undefined behaviour under
+    // `-release`).
+    size_t[] skew = [0, 100, 4, 6];
+    assert(skew.length == base.length + 1 && skew[base.length] == nbrs.length,
+        "setup: the skewed offset must satisfy the length and terminator checks, so that "
+      ~ "monotonicity is the ONLY thing left to reject it");
+    RelaxTopology nonMono = { skew, nbrs, openTo, deriveBoundary(off, openTo) };
+    assert(!nonMono.valid(base.length), "a non-monotone offset must fail validation");
+    relaxPasses(p, nonMono, 0.05, 3);
+    assert(p == base, "a non-monotone offset must be a no-op, never an out-of-bounds read");
 }
 
 unittest {   // `strength` scales the step LINEARLY at first order: halving it
