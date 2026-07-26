@@ -185,6 +185,15 @@ private enum BuildCase { None, Edge, Tri, Quad }
 /// (must survive `resyncSession()`, an external history navigation).
 private enum PenMode { Draw, Fill }
 
+// Why a Ctrl+LMB Slide press did not arm — see `slideDecline_`'s own doc
+// comment for the full rationale. `None` also covers "the press armed
+// normally", so a consumer reads `slideDeclineReason == "none"` as "no decline
+// to explain". A plain enum + `final switch` in `toolStateJson` (the
+// `BuildCase`/`HoverTargetKind` precedent) rather than an `IntEnumEntry` table:
+// this is not a `Param`, nothing parses it back, and the `final switch` keeps
+// the token mapping compile-time exhaustive.
+private enum SlideDecline { None, NoEdge, NoContinuation }
+
 // ---------------------------------------------------------------------------
 // TopoPenAction / kTopoPenBindings — the declarative (button, modifier) ->
 // action dispatch table (`source/tool_input.d`,
@@ -707,6 +716,42 @@ private:
     Vec3  slideAnchor_ = Vec3(0, 0, 0);
     float slideDeltaK_ = 0.0f;
 
+    // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
+    // item 3 follow-up) — read-only observability, no behaviour change.
+    //
+    // `onCtrlLmbDown` declines on two structurally DIFFERENT outcomes that were
+    // indistinguishable from outside, because both leave `slideArmed_ == false`
+    // and `slideSeed_ == -1` (the seed is only assigned once the gesture arms):
+    //   * NoEdge          — no primary edge within `kTopoPenSnapPx`: a genuine
+    //                       pick miss.
+    //   * NoContinuation  — an edge WAS resolved, but neither endpoint's rail
+    //                       resolves, so the shipped hold-fixed contract leaves
+    //                       nothing to slide (see `continuationNeighbor` for the
+    //                       enumerated open cases). Not a miss: a deliberate,
+    //                       contract-driven decline.
+    // A consumer that cannot tell those apart has to treat every non-apply as a
+    // possible port-side pick failure, which makes a whole gesture's worth of
+    // differential cells untriageable. `slideDeclineSeed_` carries the
+    // resolved-but-unarmed edge for the NoContinuation case (`-1` otherwise) so
+    // a differential can also check WHICH edge was picked, not just that one
+    // was. It is deliberately a SEPARATE field from `slideSeed_`, which keeps
+    // its existing meaning ("the ARMED gesture's seed") — nothing that reads
+    // the armed seed can be confused by a declined press.
+    //
+    // Lifecycle: written on EVERY exit of `onCtrlLmbDown` (so it always
+    // describes the most recent Slide press, not a stale one) and cleared by
+    // `activate`/`deactivate`/`resyncSession`. It is NOT arm state and is
+    // deliberately absent from `resetAllGestureArms()` (which runs BEFORE this
+    // handler on every LEFT press, and would therefore erase the record a
+    // consumer is about to read) and from `anyGestureArmed()` (a diagnostic
+    // record must never gate the hover indicator). `resyncSession` DOES clear
+    // it: an external history navigation can delete the very edge
+    // `slideDeclineSeed_` names, and publishing a stale index is worse than
+    // publishing none — same rationale as the passive hover/fill state cleared
+    // there.
+    SlideDecline slideDecline_     = SlideDecline.None;
+    int          slideDeclineSeed_ = -1;
+
     // --- P8 Smooth session state (topology_pen.d,
     // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
     // (`onShiftCtrlLmbDown`) — NO source-vertex pick (whole-primary-mesh
@@ -1172,6 +1217,12 @@ public:
     override void activate() {
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
+        // Slide decline diagnostics are a per-press RECORD, so they must not
+        // survive into a fresh activation — a stale "no_continuation" from a
+        // previous session would be read as this session's own outcome (the
+        // classic cross-test bleed). Cleared on the way out too, below.
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
         if (g_pipeCtx is null) return;
         auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
         if (cs is null) return;
@@ -1191,6 +1242,8 @@ public:
     override void deactivate() {
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
@@ -2397,6 +2450,24 @@ public:
     //     so there is no polygon to continue around.
     // Both are recorded as open rather than tie-broken; revisit when the
     // capture lane pins a polygon-selection rule.
+    //
+    // SCOPE OF "HELD FIXED" (doc/tasks/work/0482-topopen-move-nonvertex.md item
+    // 3): this rule is stated PER ENDPOINT, and `onCtrlLmbDown` composes it one
+    // step further than the wording alone implies — when NEITHER endpoint's rail
+    // resolves it declines the whole gesture instead of arming a Slide that
+    // would hold both endpoints fixed. Read that as the intended reading of this
+    // contract, not a deviation from it: the two are IDENTICAL for the geometry
+    // (a moving set in which no vertex has a rail is a Slide that moves nothing,
+    // whichever way you get there), and declining is strictly better on the
+    // channels the per-endpoint wording never addressed — it cannot leave a
+    // no-op undo entry behind, and it does not suppress the hover indicator for
+    // the duration of a hold that was never going to do anything. What the
+    // decline used to cost was observability, and that is now published
+    // explicitly (`slideDecline_` / `slideDeclineReason`) rather than left to be
+    // inferred from an armed-but-railless state that no longer exists. A
+    // 4-valent interior edge is the common shape that lands here: both endpoints
+    // hit the "2+ DISTINCT continuation candidates" open case above, so no rail
+    // resolves at either end and the press declines with `no_continuation`.
     private static int continuationNeighbor(Mesh* m, uint x, uint other) {
         int found = -1, count = 0;
         foreach (v; m.edgeNeighbors(x)) {
@@ -2417,19 +2488,33 @@ public:
     // (`continuationNeighbor` — unique remaining incident edge at valence-2,
     // polygon-continuation edge at valence>2) is slidable along it; an
     // endpoint whose rail does not resolve is HELD FIXED (see
-    // `continuationNeighbor` for the enumerated open cases). If
-    // NEITHER endpoint is slidable, nothing is armed (no documented gesture
-    // to perform) — don't consume, matching every other down-handler's miss
-    // convention. The commit itself is deferred to release
+    // `continuationNeighbor` for the enumerated open cases, and its "SCOPE OF
+    // HELD FIXED" note for why declining is the intended composition of that
+    // per-endpoint rule). If NEITHER endpoint is slidable, nothing is armed (no
+    // documented gesture to perform) — don't consume, matching every other
+    // down-handler's miss convention. The commit itself is deferred to release
     // (`onMouseButtonUp`); this only arms, freezes the drag-conversion anchor
     // (the grabbed edge's midpoint) and zeroes the law's scalar — a press with
     // no motion is by construction a zero delta, hence a zero offset.
+    //
+    // Every exit writes `slideDecline_` (and `slideDeclineSeed_`), so
+    // `/api/tool/state` always explains the OUTCOME of the most recent Slide
+    // press: a pick miss and a contract-driven hold-both-fixed decline are
+    // different answers, not the one indistinguishable "nothing armed" they used
+    // to collapse into. Purely additive bookkeeping — no gesture behaviour here
+    // reads it back.
     private bool onCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
         // this row's `ResetScope.AllButtons` already fires
         // `resetAllGestureArms()` via `dispatchInput`'s `onInputResetAll()`
         // hook before this handler runs. See `resetAllGestureArms`'s own doc
         // comment for the full hazard this closes.
+
+        // Pessimistic default: every early exit below is a "no edge to work
+        // with" outcome (a real pick miss, or no mesh at all), and the two paths
+        // that know better overwrite it explicitly.
+        slideDecline_     = SlideDecline.NoEdge;
+        slideDeclineSeed_ = -1;
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -2442,7 +2527,18 @@ public:
         int eA = cast(int)edgePair[0], eB = cast(int)edgePair[1];
         int nA = continuationNeighbor(m, cast(uint)eA, cast(uint)eB);
         int nB = continuationNeighbor(m, cast(uint)eB, cast(uint)eA);
-        if (nA < 0 && nB < 0) return false;   // neither endpoint slidable -> nothing to do
+        if (nA < 0 && nB < 0) {
+            // Neither endpoint slidable -> nothing to do. NOT a pick miss: the
+            // edge resolved, the hold-fixed contract simply leaves nothing to
+            // move. Record both facts so a consumer can tell this apart from
+            // `NoEdge` and can still see WHICH edge was picked.
+            slideDecline_     = SlideDecline.NoContinuation;
+            slideDeclineSeed_ = seed;
+            return false;
+        }
+
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
 
         slideSeed_   = seed;
         slideArmed_  = true;
@@ -4210,6 +4306,14 @@ public:
         // event must not leave a stale radius (possibly sized off a
         // now-deleted border edge) dangling into the next `draw()` call.
         fillRadiusValid_ = false;
+        // Slide decline diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md):
+        // same rationale one more time — `slideDeclineSeed_` names an EDGE
+        // INDEX, and an external undo/redo can delete that very edge, so a
+        // navigation must not leave a stale index published on
+        // `/api/tool/state`. Reporting no decline is strictly better than
+        // reporting one against geometry that no longer exists.
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
     }
 
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 4):
@@ -4861,6 +4965,30 @@ public:
         root["slideDeltaK"] = JSONValue(cast(double)slideDeltaK_);
         root["slideNbrA"]   = JSONValue(slideNbrA_);
         root["slideNbrB"]   = JSONValue(slideNbrB_);
+
+        // Why the most recent Slide press did not arm
+        // (doc/tasks/work/0482-topopen-move-nonvertex.md item 3 follow-up).
+        // Read-only; see `slideDecline_`'s own doc comment for the lifecycle.
+        // The three fields above (`slideArmed`/`slideSeed`/`slideNbr*`) describe
+        // an ARMED gesture and all read "nothing" on either decline — these two
+        // are what separate the two declines:
+        //   "none"            -> armed normally, or no Slide press yet/since a
+        //                        reset (nothing to explain).
+        //   "no_edge"         -> no primary edge within the snap radius: a real
+        //                        pick miss. `slideDeclineSeed` is -1.
+        //   "no_continuation" -> an edge WAS resolved (`slideDeclineSeed` names
+        //                        it) but neither endpoint's rail resolves, so
+        //                        the hold-fixed contract leaves nothing to
+        //                        slide. A deliberate decline, NOT a miss —
+        //                        do not score it as a pick failure.
+        string slideDeclineToken;
+        final switch (slideDecline_) {
+            case SlideDecline.None:           slideDeclineToken = "none";            break;
+            case SlideDecline.NoEdge:         slideDeclineToken = "no_edge";         break;
+            case SlideDecline.NoContinuation: slideDeclineToken = "no_continuation"; break;
+        }
+        root["slideDeclineReason"] = JSONValue(slideDeclineToken);
+        root["slideDeclineSeed"]   = JSONValue(slideDeclineSeed_);
 
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
         // gesture's state, for Tier-C tests to assert click-vs-drag pass
@@ -10676,4 +10804,112 @@ unittest {
 
     t.penMode_ = PenMode.Draw;
     assert(t.toolStateJson()["penMode"].str == "draw", "switching back must report \"draw\" again");
+}
+
+// ---------------------------------------------------------------------------
+// Slide decline diagnostics — the two declines are DISTINGUISHABLE, and the
+// record's lifecycle (doc/tasks/work/0482-topopen-move-nonvertex.md item 3
+// follow-up). `makeGridPlane(3)` carries both shapes:
+//   * edge 0-1 — a boundary edge whose endpoint 0 is a valence-2 corner, so
+//     that rail resolves and the press ARMS (reason "none");
+//   * edge 5-6 — an interior edge between two valence-4 vertices, so BOTH
+//     endpoints hit the "2+ distinct continuation candidates" open case and the
+//     press declines with NoContinuation, naming the seed;
+//   * a pixel far from every edge declines with NoEdge and names nothing.
+// The lifecycle assertions are the part an HTTP test cannot reach: the record
+// must SURVIVE a later unrelated LEFT press (`resetAllGestureArms` runs before
+// every one of them and must NOT erase it, or a consumer reading state after
+// the fact sees "none") while `resyncSession` MUST clear it (its seed is an
+// edge index an external history navigation can delete).
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+
+    ImVec2 pixOf(uint a, uint b) {
+        ImVec2 pa, pb;
+        assert(TopologyPenTool.projectPt(m.vertices[a], vp, pa), "setup: endpoint must project");
+        assert(TopologyPenTool.projectPt(m.vertices[b], vp, pb), "setup: endpoint must project");
+        return ImVec2((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
+    }
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // Baseline: nothing pressed yet.
+    assert(t.slideDecline_ == SlideDecline.None, "a fresh tool must record no decline");
+    assert(t.slideDeclineSeed_ == -1, "a fresh tool must record no declined seed");
+
+    // --- NoEdge: a pixel far off the grid entirely.
+    SDL_MouseButtonEvent far;
+    far.x = -5000; far.y = -5000;
+    assert(!t.onCtrlLmbDown(far, vts), "a Ctrl+LMB press with no edge in range must decline");
+    assert(t.slideDecline_ == SlideDecline.NoEdge,
+        "a pick miss must be recorded as NoEdge");
+    assert(t.slideDeclineSeed_ == -1, "a pick miss resolved no edge, so it names none");
+    assert(!t.slideArmed_, "a pick miss must not arm Slide");
+
+    // --- NoContinuation: the interior edge 5-6 (both endpoints valence-4).
+    immutable uint kA = 5, kB = 6;
+    immutable uint iEdge = m.edgeIndex(kA, kB);
+    assert(iEdge != ~0u, "setup: grid edge 5-6 must exist");
+    assert(TopologyPenTool.continuationNeighbor(&m, kA, kB) < 0
+        && TopologyPenTool.continuationNeighbor(&m, kB, kA) < 0,
+        "setup: edge 5-6 must be the both-endpoints-unresolved shape this case is about");
+
+    auto ip = pixOf(kA, kB);
+    SDL_MouseButtonEvent interior;
+    interior.x = cast(int)ip.x; interior.y = cast(int)ip.y;
+    assert(!t.onCtrlLmbDown(interior, vts),
+        "the interior edge must still DECLINE (the shipped hold-fixed contract)");
+    assert(t.slideDecline_ == SlideDecline.NoContinuation,
+        "an edge that resolved but has no rail at either end must be NoContinuation, NOT NoEdge");
+    assert(t.slideDeclineSeed_ == cast(int)iEdge,
+        "the declined record must name the edge that WAS resolved");
+    assert(!t.slideArmed_ && t.slideSeed_ == -1,
+        "`slideSeed_` keeps its ARMED-gesture meaning and must stay -1 on a decline");
+
+    // Lifecycle 1: a later unrelated LEFT press fires `resetAllGestureArms()`
+    // via the dispatch reset hook, which must NOT erase this record.
+    t.resetAllGestureArms();
+    assert(t.slideDecline_ == SlideDecline.NoContinuation && t.slideDeclineSeed_ == cast(int)iEdge,
+        "resetAllGestureArms must NOT clear the decline record — it runs before every LEFT "
+      ~ "press, and erasing it there would hide the outcome a consumer is about to read");
+    assert(!t.anyGestureArmed(),
+        "the decline record must not register as an armed gesture (it would gate the hover "
+      ~ "indicator)");
+
+    // Lifecycle 2: an external history navigation MUST clear it — the seed is
+    // an edge index the navigation can delete.
+    t.resyncSession();
+    assert(t.slideDecline_ == SlideDecline.None && t.slideDeclineSeed_ == -1,
+        "resyncSession must clear the decline record rather than publish a stale edge index");
+
+    // --- None: the boundary edge 0-1 arms (endpoint 0 is a valence-2 corner).
+    assert(TopologyPenTool.continuationNeighbor(&m, 0, 1) >= 0,
+        "setup: grid vertex 0 is a valence-2 corner, so its rail must resolve");
+    auto bp = pixOf(0, 1);
+    SDL_MouseButtonEvent boundary;
+    boundary.x = cast(int)bp.x; boundary.y = cast(int)bp.y;
+    assert(t.onCtrlLmbDown(boundary, vts), "a press with a resolvable rail must arm and consume");
+    assert(t.slideArmed_, "the boundary-edge press must arm Slide");
+    assert(t.slideDecline_ == SlideDecline.None && t.slideDeclineSeed_ == -1,
+        "an ARMED press must record no decline (a stuck-at-NoEdge field would otherwise be "
+      ~ "indistinguishable from a working one)");
+
+    // Lifecycle 3: deactivate clears the record, so it cannot bleed into the
+    // next activation (or, in a shared test process, the next test).
+    t.slideDecline_     = SlideDecline.NoContinuation;
+    t.slideDeclineSeed_ = cast(int)iEdge;
+    t.deactivate();
+    assert(t.slideDecline_ == SlideDecline.None && t.slideDeclineSeed_ == -1,
+        "deactivate must clear the decline record");
 }
