@@ -30,6 +30,7 @@ import params                : Param, IntEnumEntry;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
+import eventlog               : queryMouse;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -881,6 +882,25 @@ private:
     // gap cell, exactly the defining Fill-mode case).
     uint[] fillCell_;
 
+    // Fill mode hover-reach RADIUS overlay (task 0477 continuation, a
+    // derived law — full provenance/disassembly kept in the PRIVATE
+    // toolcard, toolcards/topology_pen/fill_radius_law_capture.md): a
+    // cosmetic screen-space circle, centered on the live cursor pixel,
+    // sized to the farther endpoint of whichever BORDER edge the cursor is
+    // nearest. `fillRadiusPx_` is computed alongside `fillCell_` above, in
+    // `onMouseMotion`'s Fill-mode branch (its own sibling gate, same
+    // rationale `fillCell_` isn't nested in `hoverOverMesh_`: hovering the
+    // open middle of a gap is nowhere near any vertex/edge/face within
+    // `kTopoPenSnapPx`, yet a nearby border edge still legitimately sizes
+    // the circle). `fillRadiusValid_` is false whenever Draw mode is
+    // active, a gesture is armed, or no border edge is within tolerance of
+    // the cursor (this also covers the vertex-only-hover case the toolcard
+    // leaves unresolved as an honest gap — no circle rather than a guessed
+    // one). Draw-only: never read by `findFillCell`/`commitFill`, so it
+    // cannot affect the fill kernel, undo, or Draw mode.
+    bool  fillRadiusValid_ = false;
+    float fillRadiusPx_    = 0.0f;
+
     // Visual constants (Pinned Decision 4): a steel-blue palette
     // DELIBERATELY distinct from both the P1 bg-cage bright-cyan
     // `IM_COL32(0,220,255,…)` (`markerCol`/cyan, `draw()` below) and the
@@ -902,6 +922,15 @@ private:
     // capped".
     private enum uint  kFillPreviewCol         = IM_COL32(120, 210, 120, 230);
 
+    // Fill-mode radius-overlay colour (task 0477 continuation, the derived
+    // radius law): pale, thin, and translucent — DELIBERATELY distinct
+    // from every other hue in this palette (steel-blue element, green cell
+    // preview, cyan snap highlight, orange place marker) so the reach
+    // circle never reads as any of those affordances.
+    private enum uint  kFillRadiusCol          = IM_COL32(230, 230, 230, 140);
+    private enum int   kFillRadiusSegments     = 48;
+    private enum float kFillRadiusThicknessPx  = 1.0f;
+
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
@@ -922,6 +951,20 @@ private:
         if (!projectToWindowFull(world, vp, sx, sy, ndcZ)) return false;
         pt = ImVec2(sx, sy);
         return true;
+    }
+
+    // Fill mode radius-overlay LAW (task 0477 continuation — derived from a
+    // reference engine's disassembly; full provenance kept in the PRIVATE
+    // toolcard, toolcards/topology_pen/fill_radius_law_capture.md, never in
+    // this tracked source): the hover-reach circle's radius is the FARTHER
+    // of the cursor's screen-space Euclidean distance to the two endpoints
+    // of whichever border edge the cursor is nearest. Pure + static (no
+    // mesh/GL access) so the arithmetic is independently unit-testable.
+    static float fillHoverRadiusPx(float cursorX, float cursorY,
+                                   ImVec2 edgeEndpointA, ImVec2 edgeEndpointB) {
+        immutable float dA = hypot(edgeEndpointA.x - cursorX, edgeEndpointA.y - cursorY);
+        immutable float dB = hypot(edgeEndpointB.x - cursorX, edgeEndpointB.y - cursorY);
+        return dA > dB ? dA : dB;
     }
 
 public:
@@ -1097,8 +1140,9 @@ public:
         // motion (place/build/etc. still happen on button-up; the existing
         // handler already returns `false` at the tail when idle).
         if (anyGestureArmed()) {
-            hoverOverMesh_ = false;   // gesture ghosts take precedence
-            fillCell_      = null;   // Fill mode continuation: same precedence rule
+            hoverOverMesh_   = false;   // gesture ghosts take precedence
+            fillCell_        = null;   // Fill mode continuation: same precedence rule
+            fillRadiusValid_ = false;  // Fill radius overlay: same precedence rule
         } else {
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -1122,6 +1166,30 @@ public:
             // anywhere near the cursor). Nesting it in that block would
             // make the preview never render for that scenario.
             fillCell_ = (penMode_ == PenMode.Fill) ? findFillCell(e.x, e.y, vp) : null;
+
+            // Fill mode radius overlay (task 0477 continuation, derived
+            // law — see `fillRadiusPx_`'s own doc comment for provenance):
+            // resolved alongside `fillCell_` above, same unconditional
+            // sibling gate and the same rationale — an empty-gap hover has
+            // no vertex/edge/face within `kTopoPenSnapPx`, yet a nearby
+            // border edge still legitimately sizes the circle. Recomputed
+            // every motion event, so the cached radius tracks the cursor;
+            // `draw()` re-polls the LIVE cursor pixel for the circle's
+            // CENTER (not this event's cached (e.x,e.y)), matching the
+            // law's "re-polled every redraw" cursor semantics.
+            fillRadiusValid_ = false;
+            if (penMode_ == PenMode.Fill) {
+                int bre = findNearestBorderEdge(e.x, e.y, vp);
+                auto m  = mesh;
+                if (bre >= 0 && m !is null && bre < cast(int)m.edges.length) {
+                    ImVec2 pa, pb;
+                    if (projectPt(m.vertices[m.edges[bre][0]], vp, pa)
+                     && projectPt(m.vertices[m.edges[bre][1]], vp, pb)) {
+                        fillRadiusPx_    = fillHoverRadiusPx(cast(float)e.x, cast(float)e.y, pa, pb);
+                        fillRadiusValid_ = true;
+                    }
+                }
+            }
         }
 
         // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
@@ -1541,6 +1609,38 @@ public:
             }
         }
         return bestCell;
+    }
+
+    // Fill mode radius overlay (task 0477 continuation): screen-nearest
+    // BORDER edge to the cursor, gated at `thresholdPx` — feeds the
+    // hover-reach circle's endpoints in `onMouseMotion` below, NOT cell
+    // reconstruction (`findFillCell` above stays the sole source of truth
+    // there; this is a read-only companion query over the SAME
+    // `isEdgeBorder`/`projectPt` primitives). Mirrors `findRingSeedEdge`'s
+    // point-to-segment scan (same `closestOnSegment2D` call), filtered to
+    // border edges only — a gap's boundary is exactly its border edges.
+    // Reuses `kTopoPenSnapPx`, the same edge-pick tolerance every other
+    // gesture in this tool already snaps at, rather than inventing a
+    // second constant.
+    private int findNearestBorderEdge(int mx, int my, const ref Viewport vp,
+                                      float thresholdPx = kTopoPenSnapPx) {
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        int   best  = -1;
+        float bestD = float.infinity;
+        foreach (ei, e; m.edges) {
+            if (!m.isEdgeBorder(cast(uint)ei)) continue;
+            ImVec2 pa, pb;
+            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
+            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
+            float t;
+            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                         pa.x, pa.y, pb.x, pb.y, t);
+            if (d < bestD) { bestD = d; best = cast(int)ei; }
+        }
+        if (best >= 0 && bestD <= thresholdPx) return best;
+        return -1;
     }
 
     // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
@@ -3754,6 +3854,11 @@ public:
         // cell (possibly referencing verts the navigation deleted)
         // dangling into the next `draw()` call.
         fillCell_ = null;
+        // Fill mode radius overlay (task 0477 continuation): same
+        // rationale — an external undo/redo with no subsequent motion
+        // event must not leave a stale radius (possibly sized off a
+        // now-deleted border edge) dangling into the next `draw()` call.
+        fillRadiusValid_ = false;
     }
 
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 4):
@@ -4190,6 +4295,31 @@ public:
                         dl.AddLine(pts[k], pts[(k + 1) % 4], kFillPreviewCol, kHoverEdgeWidthPx);
                 }
             }
+        }
+
+        // Fill mode radius overlay (task 0477 continuation, the derived
+        // radius law — full provenance in the PRIVATE toolcard,
+        // toolcards/topology_pen/fill_radius_law_capture.md): a cosmetic
+        // screen-space circle OUTLINE, centered on the LIVE cursor pixel,
+        // sized to `fillRadiusPx_` (resolved in `onMouseMotion` above). Its
+        // OWN sibling gate — `penMode_ == Fill && fillRadiusValid_` —
+        // mirrors the candidate-cell preview immediately above and is,
+        // for the identical reason, NOT folded into the `hoverOverMesh_`
+        // block earlier in this function: it must still render while
+        // hovering the open middle of a gap, where `hoverOverMesh_` is
+        // false. Still gated on `!anyGestureArmed()` (mode ghosts win when
+        // armed, same precedent as every other ghost). Re-polls the cursor
+        // via `queryMouse` — the same draw()-time live-cursor idiom used
+        // by this tool's own hover ghosts elsewhere in the codebase —
+        // rather than any cached (e.x,e.y), so the circle keeps tracking
+        // the cursor between motion events exactly like the derived law's
+        // own "re-polled every redraw" cursor semantics. Draw-only: no
+        // mesh read, no command, no undo interaction.
+        if (!anyGestureArmed() && penMode_ == PenMode.Fill && fillRadiusValid_) {
+            int qmx, qmy;
+            queryMouse(qmx, qmy);
+            dl.AddCircle(ImVec2(cast(float)qmx, cast(float)qmy), fillRadiusPx_,
+                        kFillRadiusCol, kFillRadiusSegments, kFillRadiusThicknessPx);
         }
 
         if (!lastHit_.hit) return;
@@ -9279,4 +9409,103 @@ unittest {
     eFar.x = -99999; eFar.y = -99999;
     t.onMouseMotion(eFar, vts);
     assert(t.fillCell_.length == 0, "a cursor far from every gap must clear the preview");
+}
+
+// Fill mode radius overlay -- pure LAW arithmetic (task 0477 continuation,
+// a derived law; full provenance/disassembly kept in the PRIVATE toolcard,
+// toolcards/topology_pen/fill_radius_law_capture.md, never in this tracked
+// source): radius = max(euclidean(cursor, edgeEndpointA),
+// euclidean(cursor, edgeEndpointB)), screen-space pixels. A 3-4-5/6-8-10
+// pair of right triangles off the SAME cursor pins both the per-endpoint
+// Euclidean arithmetic and the max() tiebreak (never sum/average/first-arg)
+// with hand-checkable numbers -- the draw itself isn't unit-testable, but
+// this arithmetic, extracted as a pure static helper, is.
+unittest {
+    import std.math : abs, sqrt;
+
+    auto cursor = ImVec2(0, 0);
+    auto a = ImVec2(3, 4);     // distance 5 from cursor
+    auto b = ImVec2(-6, 8);    // distance 10 from cursor -- farther
+
+    float r = TopologyPenTool.fillHoverRadiusPx(cursor.x, cursor.y, a, b);
+    assert(abs(r - 10.0f) < 1e-4, "radius must be the FARTHER endpoint's distance, not the nearer");
+
+    // Order-independence: swapping which argument is farther must not
+    // change the result (max, not "first argument wins").
+    float rSwapped = TopologyPenTool.fillHoverRadiusPx(cursor.x, cursor.y, b, a);
+    assert(abs(rSwapped - 10.0f) < 1e-4, "radius must be order-independent (max, not positional)");
+
+    // Cursor coincident with the NEARER endpoint: radius collapses to
+    // exactly the farther endpoint's own distance (0 max'd with a
+    // positive value), not 0 and not a sum.
+    float rAtA = TopologyPenTool.fillHoverRadiusPx(a.x, a.y, a, b);
+    float expected = sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+    assert(abs(rAtA - expected) < 1e-3,
+        "radius at a coincident endpoint must equal the OTHER endpoint's own distance");
+}
+
+// Fill mode radius overlay -- hover-time integration (task 0477
+// continuation): `fillRadiusValid_`/`fillRadiusPx_` populate alongside
+// `fillCell_` in `onMouseMotion`'s Fill-mode branch, off the screen-nearest
+// BORDER EDGE (not the candidate cell's corners). False/unset in Draw
+// mode, off any border edge, and when ANY gesture is armed -- mirrors the
+// F8 `fillCell_` test above, same precedence rules.
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.math : abs;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    uint[] cellVerts = m.faces[4].dup;
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+
+    // Hover pixel = the screen-space MIDPOINT of one of the gap's own
+    // border edges (cellVerts[0]-cellVerts[1]) -- lies exactly ON that
+    // projected segment (distance 0 in SCREEN space, by construction), so
+    // it is unambiguously the screen-nearest border edge regardless of
+    // perspective distortion.
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[cellVerts[0]], vp, p0));
+    assert(TopologyPenTool.projectPt(m.vertices[cellVerts[1]], vp, p1));
+    ImVec2 hoverPix = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseMotionEvent e;
+    e.x = cast(int)hoverPix.x; e.y = cast(int)hoverPix.y;
+
+    // Draw mode (default): no radius overlay, even directly over a border edge.
+    t.onMouseMotion(e, vts);
+    assert(!t.fillRadiusValid_, "Draw mode must never populate the radius overlay");
+
+    // Fill mode: the SAME motion must resolve the radius against THIS
+    // edge's own two endpoints, matching the pure law exactly.
+    t.penMode_ = PenMode.Fill;
+    t.onMouseMotion(e, vts);
+    assert(t.fillRadiusValid_, "Fill mode must resolve a radius when hovering a border edge");
+    float expected = TopologyPenTool.fillHoverRadiusPx(cast(float)e.x, cast(float)e.y, p0, p1);
+    assert(abs(t.fillRadiusPx_ - expected) < 1e-2,
+        "radius must equal max(dist to e0, dist to e1) for the hovered border edge");
+
+    // A gesture armed on ANY button must clear the overlay even in Fill mode.
+    t.dragArmed_ = true;
+    t.onMouseMotion(e, vts);
+    assert(!t.fillRadiusValid_, "an armed gesture must take precedence over the radius overlay");
+    t.dragArmed_ = false;
+
+    // Off any border edge (far away) -> invalid, even in Fill mode.
+    SDL_MouseMotionEvent eFar;
+    eFar.x = -99999; eFar.y = -99999;
+    t.onMouseMotion(eFar, vts);
+    assert(!t.fillRadiusValid_, "a cursor far from every border edge must clear the overlay");
 }
