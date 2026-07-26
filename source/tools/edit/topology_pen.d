@@ -307,17 +307,29 @@ unittest {
 // P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`TopoPenAction.Slide`,
 // doc/topopen_p7_slide_plan.md, V1-scope Option B — EDGE grab): a press
 // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused verbatim
-// from P6) and arms a constrained slide for each grabbed endpoint that has
-// EXACTLY ONE remaining incident edge (`continuationNeighbor`, over the raw
-// `edgeNeighbors` scan — P3 KILLER-1) — that endpoint slides COLINEARLY
-// along its own remaining edge, `[0,1]`-clamped at the neighbor
-// (`slidePoint`, a pure clamped lerp; `t=1` lands EXACTLY on the neighbor's
-// pre-slide position). An endpoint with zero or 2+ remaining incident edges
-// is HELD FIXED — the reference's (deferred) per-vertex valence>2 direction-
-// selection rule never fired in the capture (plan §5); rather than guess which of ≥2 colinear/
-// non-colinear neighbors it would pick, V1 conservatively holds such an
-// endpoint fixed (an under-approximation, never a wrong direction) and
-// defers the extension to a follow-up capture (plan §Follow-up capture).
+// from P6) and arms a constrained slide for each grabbed endpoint whose rail
+// resolves (`continuationNeighbor`) — that endpoint slides COLINEARLY along
+// its rail, `[0,1]`-clamped at the neighbor (`slidePoint`, a pure clamped
+// lerp; `t=1` lands EXACTLY on the neighbor's pre-slide position). The rail
+// is the endpoint's unique remaining incident edge at valence-2 (raw
+// `edgeNeighbors` scan — P3 KILLER-1), and at valence>2 the POLYGON-
+// CONTINUATION edge: the one continuing the grabbed edge around its own
+// polygon, a MEASURED and drag-direction-INDEPENDENT choice (6/6, two
+// capture boots) that supersedes V1's blanket hold-fixed. An endpoint whose
+// rail does not resolve — valence-1, or valence>2 with zero / 2+ distinct
+// continuation candidates — is still HELD FIXED; see
+// `continuationNeighbor`'s own comment for the enumerated open cases, which
+// are deferred rather than tie-broken (a guessed direction is worse than no
+// motion).
+//
+// NOT ported, deliberately: the slide PARAMETERISATION. The reference's is a
+// screen-affine unclamped delta from the grab pixel; vibe3d's
+// `ratioOnSegment` is an absolute, world-projective, `[0,1]`-clamped
+// fraction. That divergence is real and measured, but its gain and sign are
+// unpinned, and the three terms interact — adopting "no clamp" without a
+// correct gain and sign would swap a bounded approximation for an unbounded
+// one and could invert the gesture outright. They land together or not at
+// all.
 // Commit is deferred to release (`onMouseButtonUp`, `commitSlide`) — a
 // direct Position-only kernel write (`m.vertices[i]=pos` +
 // `commitChange(Position)`, mirroring `moveVertexTo`, extended to up to 2
@@ -644,9 +656,10 @@ private:
     // press that lands on a primary-layer edge with at least one slidable
     // endpoint (`onCtrlLmbDown`); `slideEndA_`/`slideEndB_` are the grabbed
     // edge's two endpoint vertex indices, `slideNbrA_`/`slideNbrB_` are each
-    // endpoint's OWN unique remaining incident-edge neighbor (`-1` when that
-    // endpoint is held fixed — zero or 2+ remaining neighbors,
-    // `continuationNeighbor`), and `slideTA_`/`slideTB_` are the `[0,1]`
+    // endpoint's OWN rail neighbor — its unique remaining incident edge at
+    // valence-2, its polygon-continuation edge at valence>2 (`-1` when the
+    // rail doesn't resolve and the endpoint is held fixed; see
+    // `continuationNeighbor`) — and `slideTA_`/`slideTB_` are the `[0,1]`
     // fractions each slidable endpoint tracks along ITS OWN rail
     // (`x -> neighbor`), recomputed on every subsequent motion event
     // (`onMouseMotion`) and again at release (`onMouseButtonUp`'s Slide
@@ -2098,15 +2111,80 @@ public:
         return neighbor * t + x * (1.0f - t);
     }
 
-    // P7 (doc/topopen_p7_slide_plan.md, V1-scope Option B): the endpoint
-    // `x`'s UNIQUE remaining incident edge, once the grabbed edge's OTHER
-    // endpoint `other` is excluded — via the raw `edgeNeighbors` scan (P3
-    // KILLER-1, the only adjacency that sees bare/diagonal edges a
-    // loop-fan helper would miss). Returns `-1` when `x` has zero
-    // (grabbed-edge-only, valence-1) or 2+ (valence>2, the UNMEASURED
-    // per-vertex direction-selection rule — deliberately unhandled, never
-    // guessed, plan §Follow-up capture) remaining neighbors: either way the
-    // endpoint is held FIXED, not slid.
+    // Slide, valence>2 endpoints: the DISTINCT polygon-continuation
+    // candidates at endpoint `x` of the grabbed edge `x-other`. For every
+    // face that lists `x-other` as a CONSECUTIVE corner pair, that face's
+    // other corner adjacent to `x` is one candidate — i.e. the edge that
+    // continues the grabbed edge around that same polygon. Deduplicated, so
+    // two faces naming the same continuation collapse to one entry.
+    //
+    // Deliberately keyed on faces containing the GRABBED EDGE, not merely
+    // faces containing `x`: "continuation" means the polygon walk steps
+    // across `x` from `other`, so a face that touches `x` but not the
+    // grabbed edge contributes nothing. O(total face corners); this runs
+    // only on the valence>2 branch below, twice per press and twice per
+    // release (the result is cached in `slideNbrA_`/`slideNbrB_` for the
+    // motion stream), so it is nowhere near a hot loop.
+    //
+    // Corner-ring degeneracies (`w == x` or `w == other`, i.e. a face that
+    // repeats a vertex) are skipped rather than reported as candidates —
+    // they name no usable rail.
+    private static int[] continuationRailCandidates(Mesh* m, uint x, uint other) {
+        int[] cands;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            const size_t n = f.length;
+            if (n < 3) continue;
+            foreach (k; 0 .. n) {
+                if (f[k] != x) continue;
+                const uint prev = f[(k + n - 1) % n];
+                const uint next = f[(k + 1) % n];
+                uint w;
+                if      (next == other) w = prev;
+                else if (prev == other) w = next;
+                else continue;                       // this corner isn't on the grabbed edge
+                if (w == x || w == other) continue;  // degenerate corner ring
+                bool seen = false;
+                foreach (c; cands) if (c == cast(int)w) { seen = true; break; }
+                if (!seen) cands ~= cast(int)w;
+            }
+        }
+        return cands;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md, V1-scope Option B), extended by the
+    // Slide-law decode lane's valence>2 finding: the rail the endpoint `x`
+    // slides along, once the grabbed edge's OTHER endpoint `other` is
+    // excluded. Two regimes, by how many incident edges `x` has left:
+    //
+    //   0 remaining (grabbed-edge-only, valence-1) -> -1, held FIXED.
+    //   1 remaining (valence-2) -> that unique neighbor, via the raw
+    //     `edgeNeighbors` scan (P3 KILLER-1, the only adjacency that sees
+    //     bare/diagonal edges a loop-fan helper would miss — a bare edge
+    //     chain has no face at all, so this path must NOT go through the
+    //     polygon walk). Unchanged from V1.
+    //   2+ remaining (valence>2) -> the POLYGON-CONTINUATION rail: the edge
+    //     that continues the grabbed edge around the polygon the grabbed
+    //     edge belongs to (`continuationRailCandidates`). MEASURED: the
+    //     choice is drag-direction INDEPENDENT — the same continuation rail
+    //     wins whether the drag heads toward it or toward a competing
+    //     neighbor (6/6 across two independent capture boots). This replaces
+    //     V1's blanket hold-fixed for valence>2, which was measurably wrong.
+    //
+    // OPEN CASES, still held FIXED because no measurement disambiguates them
+    // — a tie-break here would be a guess, and a guessed rail direction is
+    // worse than not moving:
+    //   * 2+ DISTINCT continuation candidates. The common shape is an
+    //     interior (2-face) grabbed edge: each of the two faces continues
+    //     across `x` in a different direction and nothing measured says
+    //     which polygon is the marked one. Non-manifold fans (3+ faces on
+    //     the grabbed edge) land here too.
+    //   * ZERO continuation candidates at a valence>2 vertex — the grabbed
+    //     edge borders no face at all (a bare edge meeting a face corner,
+    //     which the topology pen's own bare-edge build cases can produce),
+    //     so there is no polygon to continue around.
+    // Both are recorded as open rather than tie-broken; revisit when the
+    // capture lane pins a polygon-selection rule.
     private static int continuationNeighbor(Mesh* m, uint x, uint other) {
         int found = -1, count = 0;
         foreach (v; m.edgeNeighbors(x)) {
@@ -2114,17 +2192,20 @@ public:
             ++count;
             found = cast(int)v;
         }
-        return (count == 1) ? found : -1;
+        if (count == 0) return -1;
+        if (count == 1) return found;
+        auto cands = continuationRailCandidates(m, x, other);
+        return (cands.length == 1) ? cands[0] : -1;
     }
 
     // P7 (doc/topopen_p7_slide_plan.md), on the Ctrl+LMB "Slide" slot
     // (V1-scope Option B — EDGE grab, capture-verified §1/§3/§4): a press
     // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused
-    // verbatim from P6); each endpoint that has EXACTLY ONE remaining
-    // incident edge (after excluding the grabbed edge itself) is slidable
-    // along that edge (`continuationNeighbor`); an endpoint with zero or 2+
-    // remaining incident edges is HELD FIXED (the UNMEASURED per-vertex
-    // valence>2 direction-selection rule — never guessed, plan §Follow-up capture). If
+    // verbatim from P6); each endpoint whose rail resolves
+    // (`continuationNeighbor` — unique remaining incident edge at valence-2,
+    // polygon-continuation edge at valence>2) is slidable along it; an
+    // endpoint whose rail does not resolve is HELD FIXED (see
+    // `continuationNeighbor` for the enumerated open cases). If
     // NEITHER endpoint is slidable, nothing is armed (no documented gesture
     // to perform) — don't consume, matching every other down-handler's miss
     // convention. The commit itself is deferred to release
@@ -5173,12 +5254,12 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // continuationNeighbor — T6 (P7, doc/topopen_p7_slide_plan.md §Testing):
-// pure adjacency-counting tests, independent of `commitSlide`/the down
-// -handler. Valence-2 (one remaining edge) -> the unique neighbor;
-// valence-1 (grabbed-edge-only) -> -1; valence-3 (two remaining edges,
-// regardless of whether they happen to be colinear — `continuationNeighbor`
-// only COUNTS, it never inspects direction) -> -1, the deferred/held-fixed
-// case (plan §Follow-up capture — never guessed).
+// pure adjacency tests, independent of `commitSlide`/the down-handler.
+// Valence-2 (one remaining edge) -> the unique neighbor; valence-1
+// (grabbed-edge-only) -> -1; valence-3 on BARE EDGES (two remaining edges,
+// no face anywhere, so no polygon to continue around) -> -1, still the
+// held-fixed open case. The valence>2 WITH a polygon-continuation rail is
+// pinned separately below.
 // ---------------------------------------------------------------------------
 unittest {
     // Chain D-A-B: A's remaining neighbor (excluding B) is D.
@@ -5201,7 +5282,9 @@ unittest {
         assert(TopologyPenTool.continuationNeighbor(&m, a, b) == -1,
             "valence-1 (grabbed-edge-only) endpoint must report -1 (held fixed)");
     }
-    // A connects to B (grabbed), plus TWO others (E, F): 2 remaining edges.
+    // A connects to B (grabbed), plus TWO others (E, F): 2 remaining edges,
+    // and NO face anywhere — so there is no polygon whose walk could pick a
+    // continuation, and the endpoint stays on the held-fixed open case.
     {
         Mesh m;
         uint a = m.addVertex(Vec3(0, 0, 0));
@@ -5212,9 +5295,134 @@ unittest {
         m.addEdge(a, e);
         m.addEdge(a, f);
         assert(TopologyPenTool.continuationNeighbor(&m, a, b) == -1,
-            "valence>2 (2+ remaining edges) endpoint must report -1 (deferred, held fixed — "
-          ~ "never guessed among ambiguous candidates)");
+            "valence>2 with NO incident face (no polygon to continue around) must report -1 "
+          ~ "(held fixed — never guessed among ambiguous candidates)");
     }
+}
+
+// ---------------------------------------------------------------------------
+// continuationNeighbor — VALENCE>2 POLYGON-CONTINUATION RAIL (the measured
+// rule; supersedes V1's blanket hold-fixed for valence>2).
+//
+// Rig: quad [0,1,2,3] plus triangle [0,3,4] sharing edge 0-3 — the capture
+// rig. Grab edge 0-1. Endpoint v0 is valence-3, so after excluding v1 it has
+// TWO candidate neighbours in genuinely different directions (v3 along
+// +Z, v4 along -X+Z) and V1 held it FIXED. The grabbed edge 0-1 belongs to
+// exactly ONE polygon (the quad), whose walk continues across v0 onto 0-3, so
+// v0 must now resolve to v3 — and to v3 for ANY drag direction, since the
+// rule reads topology only and never the cursor. v1 (valence-2) is the
+// built-in control: its unique remaining neighbour v2, unchanged.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    uint v0 = m.addVertex(Vec3( 0, 0, 0));
+    uint v1 = m.addVertex(Vec3( 1, 0, 0));
+    uint v2 = m.addVertex(Vec3( 1, 0, 1));
+    uint v3 = m.addVertex(Vec3( 0, 0, 1));
+    uint v4 = m.addVertex(Vec3(-1, 0, 1));
+    m.addFace([v0, v1, v2, v3]);
+    m.addFace([v0, v3, v4]);
+
+    assert(m.edgeNeighbors(v0).length == 3, "setup: v0 must be valence-3");
+
+    assert(TopologyPenTool.continuationNeighbor(&m, v0, v1) == cast(int)v3,
+        "a valence>2 endpoint must take the POLYGON-CONTINUATION rail (0->3, the edge "
+      ~ "continuing the grabbed edge around its own polygon), not be held fixed");
+    assert(TopologyPenTool.continuationNeighbor(&m, v1, v0) == cast(int)v2,
+        "the valence-2 control endpoint must keep reporting its unique remaining neighbour");
+
+    // Drag-direction independence, structurally: `continuationNeighbor` takes
+    // no cursor/drag argument at all, so re-querying can only ever return the
+    // same rail. Asserted here so a future refactor that threads a direction
+    // into the rule trips this test.
+    assert(TopologyPenTool.continuationNeighbor(&m, v0, v1) == cast(int)v3,
+        "the rail choice must be drag-direction independent (measured 6/6, two boots)");
+}
+
+// ---------------------------------------------------------------------------
+// continuationNeighbor — OPEN CASE, still held fixed: an INTERIOR grabbed
+// edge (two incident faces) offers TWO distinct continuation rails at each
+// endpoint, one per face, and nothing measured says which polygon is the
+// marked one. That ambiguity is deferred, NOT tie-broken — this test pins the
+// deferral so a later "just pick the first face" shortcut cannot slip in
+// unnoticed. Rig: quads [0,1,2,3] and [1,4,5,2] sharing edge 1-2.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    uint v0 = m.addVertex(Vec3(0, 0, 0));
+    uint v1 = m.addVertex(Vec3(1, 0, 0));
+    uint v2 = m.addVertex(Vec3(1, 0, 1));
+    uint v3 = m.addVertex(Vec3(0, 0, 1));
+    uint v4 = m.addVertex(Vec3(2, 0, 0));
+    uint v5 = m.addVertex(Vec3(2, 0, 1));
+    m.addFace([v0, v1, v2, v3]);
+    m.addFace([v1, v4, v5, v2]);
+
+    assert(TopologyPenTool.continuationRailCandidates(&m, v1, v2).length == 2,
+        "setup: an interior grabbed edge must offer one continuation per incident face");
+    assert(TopologyPenTool.continuationNeighbor(&m, v1, v2) == -1,
+        "2+ distinct continuation rails is an OPEN case -> held fixed, never tie-broken");
+    assert(TopologyPenTool.continuationNeighbor(&m, v2, v1) == -1,
+        "...at both endpoints of the interior edge");
+
+    // The boundary edges of the same rig stay on the valence-2 fast path,
+    // proving the new branch didn't disturb the unchanged regime.
+    assert(TopologyPenTool.continuationNeighbor(&m, v0, v1) == cast(int)v3,
+        "a valence-2 endpoint must still report its unique remaining neighbour");
+}
+
+// ---------------------------------------------------------------------------
+// commitSlide — the valence>2 endpoint MOVES (end-to-end over the kernel, not
+// just the rail lookup). Same capture rig as above: before this change v0 was
+// held fixed at its original position for every fraction; it must now travel
+// along the 0->3 continuation rail, and land nowhere near the competing 0->4
+// neighbour. Parameterisation is untouched — `tA` is fed directly, exactly as
+// the existing V1 tests do.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_slide", "Topology Slide",
+                                                    MeshEditScope.Position);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    Vec3 p0 = Vec3( 0, 0, 0), p3 = Vec3(0, 0, 1), p4 = Vec3(-1, 0, 1);
+    uint v0 = m.addVertex(p0);
+    uint v1 = m.addVertex(Vec3(1, 0, 0));
+    uint v2 = m.addVertex(Vec3(1, 0, 1));
+    uint v3 = m.addVertex(p3);
+    uint v4 = m.addVertex(p4);
+    m.addFace([v0, v1, v2, v3]);
+    m.addFace([v0, v3, v4]);
+    Vec3 p1 = m.vertices[v1];
+
+    uint seed = m.edgeIndex(v0, v1);
+    assert(seed != uint.max, "setup: the grabbed edge 0-1 must exist");
+
+    int nA = TopologyPenTool.continuationNeighbor(&m, v0, v1);
+    int nB = TopologyPenTool.continuationNeighbor(&m, v1, v0);
+    t.commitSlide(seed, cast(int)v0, cast(int)v1, nA, nB, 0.5f, 0.0f);
+
+    assert((m.vertices[v0] - p0).length > 1e-3f,
+        "the valence>2 endpoint must no longer be held fixed");
+    assert((m.vertices[v0] - (p0 + (p3 - p0) * 0.5f)).length < 1e-5f,
+        "it must land ON the 0->3 polygon-continuation rail at the given fraction");
+    assert((m.vertices[v0] - (p0 + (p4 - p0) * 0.5f)).length > 1e-2f,
+        "and NOT on the competing 0->4 rail");
+    assert((m.vertices[v1] - p1).length < 1e-6f,
+        "the valence-2 control endpoint stays put at fraction 0");
+    assert(m.faces.length == 2 && m.vertices.length == 5,
+        "slide is position-only — topology must be untouched");
+    assert(history.canUndo(), "a real slide must record one undo entry");
+    history.undo();
+    assert((m.vertices[v0] - p0).length < 1e-6f, "undo must restore the pre-slide position");
 }
 
 // ---------------------------------------------------------------------------
@@ -5417,10 +5625,11 @@ unittest {
 // commitSlide — T5b MIXED VALENCE (P7, doc/topopen_p7_slide_plan.md
 // §Testing "held-fixed endpoint" + the mixed-valence requirement): B has
 // TWO remaining incident edges after excluding the grabbed edge A-B
-// (valence-3 overall) -> nB=-1 -> HELD FIXED, while A (valence-2) slides
-// normally in the SAME gesture. Distinct from T5a (which uses a valence-1
-// B) — this is the genuinely ambiguous ≥2-remaining case the plan's V1
-// scope defers rather than guesses (plan §Follow-up capture).
+// (valence-3 overall) and NO incident face -> nB=-1 -> HELD FIXED, while A
+// (valence-2) slides normally in the SAME gesture. Distinct from T5a (which
+// uses a valence-1 B) — this is the genuinely ambiguous ≥2-remaining case
+// with no polygon-continuation rail to resolve it, still deferred rather
+// than guessed.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -5451,7 +5660,8 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, a, b) == cast(int)d,
         "setup: A must remain the unambiguous valence-2 endpoint");
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1,
-        "setup: B must have 2 remaining incident edges (valence>2) -> deferred/held-fixed");
+        "setup: B must have 2 remaining incident edges (valence>2) and no face "
+      ~ "-> no continuation rail -> deferred/held-fixed");
 
     t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.6f, 0.9f);
 

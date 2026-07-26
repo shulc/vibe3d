@@ -130,9 +130,15 @@ unittest {
     }
 
     // --- Mixed valence + overshoot: grab edge 0-1 (vertex 0 valence-2,
-    // slidable toward vertex 3; vertex 1 is the shared valence-3 hub, HELD
-    // FIXED). A large overshoot toward vertex 3 also proves
-    // clamp-at-neighbor. ---
+    // slidable toward vertex 3; vertex 1 is the valence-3 hub). A large
+    // overshoot toward vertex 3 also proves clamp-at-neighbor.
+    //
+    // The valence-3 hub is the POLYGON-CONTINUATION case: the grabbed edge
+    // 0-1 borders exactly ONE polygon (the quad 0-1-2-3), whose walk
+    // continues across vertex 1 onto edge 1-2, so vertex 1 must travel along
+    // 1-2 — NOT stay put (the old under-approximation), and NOT take the
+    // competing 1-4 rail. The choice reads topology only; the drag heads
+    // toward vertex 3, i.e. away from vertex 2, and the rail is unaffected.
     {
         float p0x, p0y, p1x, p1y;
         assert(projectToWindow(pre[0], vp, p0x, p0y));
@@ -155,8 +161,16 @@ unittest {
         auto post = readVerticesLayer(0);
         assert(approxVec(pre[3], post[0], 1e-2),
             "overshoot must clamp EXACTLY to the neighbor's (vertex 3's) pre-slide position");
-        assert(approxVec(pre[1], post[1], 1e-4),
-            "the valence-3 hub (vertex 1) must be HELD FIXED, never slid");
+        Vec3 v1 = toVec3(post[1]);
+        enum double eps2 = 2e-2;
+        assert(perpDistToLine(v1, pre[1], pre[2]) < eps2,
+            "the valence-3 hub (vertex 1) must travel along its POLYGON-CONTINUATION "
+          ~ "rail 1-2, not stay put");
+        assert(perpDistToLine(v1, pre[1], pre[4]) > 10 * eps2,
+            "...and NOT along the competing 1-4 rail");
+        double t1 = fractionOnSegment(v1, pre[1], pre[2]);
+        assert(t1 > 0.01 && t1 < 1.0 + eps2,
+            format("vertex 1 must have genuinely moved along 1-2, within [0,1]; got %f", t1));
 
         auto u = postJson("/api/undo", "");
         assert(u["status"].str == "ok", "undo must succeed after a real Slide: " ~ u.toString);
@@ -164,5 +178,37 @@ unittest {
         foreach (i, v; restored)
             assert(approxVec(pre[i], v, 1e-5),
                 format("undo must restore vertex %d exactly", i));
+    }
+
+    // --- OPEN CASE, still held fixed: grab the INTERIOR edge 1-2, shared by
+    // BOTH quads. Each endpoint then has two competing continuation rails
+    // (one per incident face) and nothing measured picks between them, so
+    // both endpoints stay fixed — with neither endpoint slidable, the press
+    // arms nothing at all and the whole gesture is a clean no-op (no vertex
+    // write, no undo entry). This pins the deferral: a later "just take the
+    // first face" tie-break would break here. ---
+    {
+        float p1x, p1y, p2x, p2y;
+        assert(projectToWindow(pre[1], vp, p1x, p1y));
+        assert(projectToWindow(pre[2], vp, p2x, p2y));
+        int mx = cast(int)((p1x + p2x) / 2), my = cast(int)((p1y + p2y) / 2);
+
+        float p0x, p0y;
+        assert(projectToWindow(pre[0], vp, p0x, p0y));
+        int rx = mx + cast(int)((p0x - mx) * 0.6f);
+        int ry = my + cast(int)((p0y - my) * 0.6f);
+
+        auto pr = postJson("/api/play-events",
+            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, LCTRL, 1));
+        assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
+        waitPlayerIdle();
+
+        assert(vertexCountLayer(0) == 6 && edgeCountLayer(0) == 7 && faceCountLayer(0) == 2,
+            "an ambiguous-rail Slide must never change topology either");
+        auto post = readVerticesLayer(0);
+        foreach (i, v; post)
+            assert(approxVec(pre[i], v, 1e-5),
+                format("ambiguous interior-edge Slide must be a byte-clean no-op; "
+                     ~ "vertex %d moved", i));
     }
 }
