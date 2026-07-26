@@ -27,7 +27,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import change_bus            : MeshEditScope;
-import params                : Param, IntEnumEntry;
+import params                : Param, IntEnumEntry, wireTagForValue;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
@@ -1221,10 +1221,7 @@ public:
         } else {
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-            int hf       = pickPrimaryFace(e.x, e.y, vp);
-            int gateVert = findSourceVertex(e.x, e.y, vp, kTopoPenSnapPx);
-            int gateEdge = findRingSeedEdge(e.x, e.y, vp, kTopoPenSnapPx);
-            hoverOverMesh_ = (hf >= 0) || (gateVert >= 0) || (gateEdge >= 0);
+            hoverOverMesh_ = overPrimaryMesh(e.x, e.y, vp);
             if (hoverOverMesh_) {
                 computeHoverIndicator(e.x, e.y, vp);
             } else {
@@ -1673,6 +1670,46 @@ public:
         return -1;
     }
 
+    // The NON-VERTEX half of the over-mesh GATE: true when the cursor is
+    // over an EXISTING element of the primary layer that is NOT a vertex —
+    // an edge within `kTopoPenSnapPx` (`findRingSeedEdge`) or a face under
+    // the cursor (`pickPrimaryFace`, front-most BVH pick, which covers the
+    // "middle of a big face, nowhere near its rim" case an edge scan alone
+    // misses).
+    //
+    // Extracted so the gate has exactly ONE definition, shared by its two
+    // consumers (previously `onMouseMotion` inlined the only copy):
+    //   * the Generic Hover-Highlight indicator's visibility gate
+    //     (`overPrimaryMesh` below, `onMouseMotion`) — what the user SEES
+    //     highlighted under the cursor;
+    //   * the plain-LMB press's place-vs-decline decision
+    //     (`onPlainLmbDown`) — what a press at that same pixel DOES.
+    // Those two answers have to come from the same predicate: a press that
+    // lands on an element the indicator is actively highlighting must not
+    // be treated as a press on empty space (that mismatch is exactly the
+    // stray-vertex defect `onPlainLmbDown` documents).
+    //
+    // `pickPrimaryFace` needs `gpu_` (its BVH is keyed on the GPU mesh's
+    // upload version) and answers -1 without it, so under a bare `dub test`
+    // (no GL, no `gpu_`) only the edge term is live — deliberate: the face
+    // term is exercised by the HTTP tests, which have a real upload.
+    private bool overPrimaryEdgeOrFace(int mx, int my, const ref Viewport vp) {
+        return findRingSeedEdge(mx, my, vp, kTopoPenSnapPx) >= 0
+            || pickPrimaryFace(mx, my, vp) >= 0;
+    }
+
+    // The FULL over-mesh GATE (REV1 FIX-1 of doc/topopen_hover_highlight_plan.md,
+    // preserved verbatim as an OR of the same three terms — only the
+    // short-circuit order changed, which no caller can observe): the vertex
+    // term plus `overPrimaryEdgeOrFace` above. A FINITE threshold on both
+    // projection scans, deliberately a SEPARATE pass from
+    // `computeHoverIndicator`'s own `∞`-threshold RESOLUTION scan — this
+    // decides WHETHER the cursor is over the mesh, that decides WHAT to draw.
+    private bool overPrimaryMesh(int mx, int my, const ref Viewport vp) {
+        return findSourceVertex(mx, my, vp, kTopoPenSnapPx) >= 0
+            || overPrimaryEdgeOrFace(mx, my, vp);
+    }
+
     // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
     // `bindings()`/`onInputResetAll()` are now the LIVE dispatch table/reset
     // hook — `onMouseButtonDown`/`onMouseButtonUp` below route every press
@@ -1847,7 +1884,14 @@ public:
     // THAT event's own CONS-snapped hit — a stationary click's DOWN+UP
     // pixel pair therefore still yields exactly one placement/no mutation,
     // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
-    // 1). Always claims the event either way.
+    // 1).
+    //
+    // "Place" means EMPTY SPACE, not merely "no vertex resolved": a press
+    // that lands on the primary layer's existing EDGE or FACE arms neither
+    // gesture and is DECLINED (see the guard at the tail of this handler for
+    // the full rationale) — it is a press on an element this tool has no
+    // plain-LMB gesture for, never a placement. So the handler claims the
+    // event for both of its own outcomes, and only for those.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
         // the full symmetric close this handler used to do itself here is now
@@ -1881,9 +1925,43 @@ public:
         if (src >= 0) {
             moveArmed_   = true;
             grabbedVert_ = src;
-        } else {
-            placeArmed_ = true;
+            return true;
         }
+
+        // A press that resolved NO vertex is only a PLACE if it landed on
+        // empty space. If it landed on the primary layer's existing topology
+        // — an edge within `kTopoPenSnapPx`, or a face under the cursor
+        // (`overPrimaryEdgeOrFace`, the SAME gate that decides whether the
+        // hover indicator highlights that element) — the press targeted an
+        // ELEMENT, and this tool has no gesture for a plain-LMB press on a
+        // non-vertex element. DECLINE it.
+        //
+        // Without this guard the press fell through to Place, and the release
+        // committed a `mesh.addVertex` at the background-snapped cursor point:
+        // aim at an edge, get a stray floating vertex. The indicator was
+        // simultaneously highlighting that edge in steel-blue, so the tool
+        // told the user "this edge is under your cursor" and then silently did
+        // something to a different piece of geometry — undoable, but with no
+        // signal that anything unintended happened.
+        //
+        // Deliberately NOT "make Move work on edges/faces": what a press on a
+        // non-vertex element should DO is unmeasured, and inventing it would be
+        // worse than the missing behaviour. Declining (rather than arming a
+        // Move with nothing to move) matches how the other two LEFT-button
+        // gestures answer a seed they cannot use — `onShiftLmbDown` (no
+        // pre-highlighted vertex) and `onCtrlLmbDown` (edge resolved, but
+        // neither endpoint has a slide rail) both `return false` — so
+        // "resolved nothing" reads the same way across the whole tool. It is
+        // also observably inert: with a tool active, app.d's plain-LMB paths
+        // gate every selection/camera branch on `!anyToolActive`, so a
+        // declined press changes no selection, records no undo entry, and
+        // mutates nothing. The subsequent release is safe for the same reason
+        // every other decline is: `lmbPlaceOrMoveUp` trusts the arm BOOLS, not
+        // the base's `armed_[]` slot (the documented arm-before-decline gap),
+        // and both are false here.
+        if (overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
+
+        placeArmed_ = true;
         return true;
     }
 
@@ -4832,6 +4910,18 @@ public:
         int smoothLoopPassCount = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
         if (smoothLoopPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothLoopPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
         root["smoothLoopPassCount"] = JSONValue(smoothLoopPassCount);
+
+        // The sticky Mode dropdown's CURRENT value, as its wire tag
+        // ("draw" / "fill"), read straight out of `penModeTable` via
+        // `wireTagForValue` so this can never drift from the `Param.intEnum_`
+        // schema `params()` publishes or from the tag `tool.attr mesh.topoPen
+        // mode <tag>` accepts. Read-only observability: without it an
+        // automated run can SET the mode but cannot verify the setting took,
+        // so a Fill-mode no-op and a still-in-Draw-mode press are
+        // indistinguishable from outside. Flat root key (the `hover{}`/
+        // `hoverIndicator{}` nesting is for grouped per-element state; this is
+        // one tool-wide scalar, like `addLoopMiddle`).
+        root["penMode"] = JSONValue(wireTagForValue(penModeTable, cast(int)penMode_));
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 6): a NEW nested object (deliberately NOT the existing `hover{}`
@@ -10450,4 +10540,140 @@ unittest {
     eFar.x = -99999; eFar.y = -99999;
     t.onMouseMotion(eFar, vts);
     assert(!t.fillRadiusValid_, "a cursor far from every border edge must clear the overlay");
+}
+
+// ---------------------------------------------------------------------------
+// Plain-LMB press on a NON-VERTEX element -> DECLINED, arms nothing
+// (doc/tasks/work/0482-topopen-move-nonvertex.md).
+//
+// The regression class: `onPlainLmbDown` resolves its Move target with
+// `findSourceVertex` (VERTICES only), so a press aimed at an EDGE resolved
+// nothing and fell through to Place — the release then committed a stray
+// `mesh.addVertex` at the background-snapped cursor point. These pin the ARM
+// decision (`placeArmed_`/`moveArmed_`/the consumed flag); the mesh-level
+// proof — that nothing is added and no undo entry appears — needs a real
+// background surface + placement factory and lives in the HTTP test
+// (tests/test_topopen_move_nonvertex_decline.d).
+//
+// Pixel = the SCREEN-SPACE midpoint of grid edge 0-1: distance 0 from that
+// projected segment by construction, while `makeGridPlane(3)`'s cell is ~53px
+// wide under `makeGridPlaneTestViewport` so both endpoints sit ~26px away —
+// outside `kTopoPenSnapPx` (12px). Asserted below rather than assumed, so a
+// future viewport/grid change cannot silently turn this into a Move test.
+// `pickPrimaryFace` answers -1 here (no `gpu_` under a bare `dub test`), so
+// this exercises the EDGE term of the gate in isolation.
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.math : hypot;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    ImVec2 mid = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)mid.x; e.y = cast(int)mid.y;
+
+    // Setup precondition: the press pixel must be OUTSIDE snap range of every
+    // vertex, or this would be testing Move, not the edge/face fall-through.
+    assert(t.findSourceVertex(e.x, e.y, vp) < 0,
+        "setup: the edge-midpoint pixel must resolve NO vertex within kTopoPenSnapPx");
+    assert(t.findRingSeedEdge(e.x, e.y, vp) >= 0,
+        "setup: the edge-midpoint pixel must resolve the edge itself");
+    assert(hypot(mid.x - p0.x, mid.y - p0.y) > kTopoPenSnapPx,
+        "setup: the midpoint must be farther than the snap radius from endpoint 0");
+
+    immutable size_t vBefore = m.vertices.length;
+    immutable size_t eBefore = m.edges.length;
+    immutable size_t fBefore = m.faces.length;
+
+    assert(t.penMode_ == PenMode.Draw, "setup: must be in Draw mode");
+    bool consumed = t.onPlainLmbDown(e, vts);
+
+    assert(!consumed,
+        "a plain-LMB press on an EDGE must be DECLINED (no gesture for a non-vertex element)");
+    assert(!t.placeArmed_,
+        "a press on an existing edge must NOT arm Place — that is the stray-vertex defect");
+    assert(!t.moveArmed_ && t.grabbedVert_ < 0,
+        "a press on an existing edge must not arm Move either (nothing was grabbed)");
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore
+        && m.faces.length == fBefore, "the press itself must not mutate the mesh");
+
+    // The RELEASE must be inert too: `lmbPlaceOrMoveUp` trusts the arm bools,
+    // not the base's `armed_[]` slot (the arm-before-decline gap), so it
+    // commits nothing and declines as well.
+    assert(!t.lmbPlaceOrMoveUp(e, vts),
+        "the release after a declined press must commit nothing and stay unconsumed");
+    assert(m.vertices.length == vBefore && m.edges.length == eBefore
+        && m.faces.length == fBefore, "the release must not mutate the mesh either");
+}
+
+// The guard's CONTROL: Place must still arm on genuinely empty space. Same
+// tool, same viewport, a mesh of two ISOLATED vertices (no edges, no faces)
+// and a press ~70px clear of both — nothing for `overPrimaryEdgeOrFace` to
+// find, so the press is a placement exactly as before. Without this, a guard
+// that declined EVERY non-vertex press would look "fixed" while having killed
+// the pen's primary Draw gesture.
+unittest {
+    import toolpipe.packets : SubjectPacket;
+    import std.math : hypot;
+
+    auto t = new TopologyPenTool();
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1));
+    m.addVertex(Vec3( 1, 0,  1));
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // A pixel 70px from v0 (and farther still from v1, which projects on the
+    // opposite side of the grid) — clear of the 12px snap radius.
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)(p0.x + 70.0f); e.y = cast(int)p0.y;
+    assert(t.findSourceVertex(e.x, e.y, vp) < 0,
+        "setup: the probe pixel must resolve no vertex");
+    assert(m.edges.length == 0, "setup: an isolated-vertex mesh must have no edges");
+
+    assert(t.onPlainLmbDown(e, vts), "a press on empty space must still be consumed");
+    assert(t.placeArmed_, "a press on empty space must still arm Place");
+    assert(!t.moveArmed_, "a press on empty space must not arm Move");
+}
+
+// `toolStateJson().penMode` — the Mode dropdown's readback
+// (doc/tasks/work/0482-topopen-move-nonvertex.md item 2): the wire tag, not
+// the raw ordinal, and single-sourced from `penModeTable` so it tracks the
+// `Param.intEnum_` schema and the `tool.attr mesh.topoPen mode <tag>` write.
+unittest {
+    auto t = new TopologyPenTool();
+
+    auto s0 = t.toolStateJson();
+    assert("penMode" in s0, "toolStateJson must publish penMode");
+    assert(s0["penMode"].str == "draw", "the default mode must report the \"draw\" wire tag");
+
+    t.penMode_ = PenMode.Fill;
+    auto s1 = t.toolStateJson();
+    assert(s1["penMode"].str == "fill", "Fill mode must report the \"fill\" wire tag");
+
+    t.penMode_ = PenMode.Draw;
+    assert(t.toolStateJson()["penMode"].str == "draw", "switching back must report \"draw\" again");
 }
