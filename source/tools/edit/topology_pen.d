@@ -31,6 +31,7 @@ import params                : Param, IntEnumEntry;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
+import drag                  : planeDragDelta;
 import eventlog               : queryMouse;
 
 import ImGui = d_imgui;
@@ -309,27 +310,35 @@ unittest {
 // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused verbatim
 // from P6) and arms a constrained slide for each grabbed endpoint whose rail
 // resolves (`continuationNeighbor`) — that endpoint slides COLINEARLY along
-// its rail, `[0,1]`-clamped at the neighbor (`slidePoint`, a pure clamped
-// lerp; `t=1` lands EXACTLY on the neighbor's pre-slide position). The rail
-// is the endpoint's unique remaining incident edge at valence-2 (raw
-// `edgeNeighbors` scan — P3 KILLER-1), and at valence>2 the POLYGON-
-// CONTINUATION edge: the one continuing the grabbed edge around its own
-// polygon, a MEASURED and drag-direction-INDEPENDENT choice (6/6, two
-// capture boots) that supersedes V1's blanket hold-fixed. An endpoint whose
+// its rail. The rail is the endpoint's unique remaining incident edge at
+// valence-2 (raw `edgeNeighbors` scan — P3 KILLER-1), and at valence>2 the
+// POLYGON-CONTINUATION edge: the one continuing the grabbed edge around its
+// own polygon, which supersedes V1's blanket hold-fixed. An endpoint whose
 // rail does not resolve — valence-1, or valence>2 with zero / 2+ distinct
 // continuation candidates — is still HELD FIXED; see
 // `continuationNeighbor`'s own comment for the enumerated open cases, which
 // are deferred rather than tie-broken (a guessed direction is worse than no
-// motion).
+// motion), and for the CORRECTION to this rule's original "drag-independent"
+// justification.
 //
-// NOT ported, deliberately: the slide PARAMETERISATION. The reference's is a
-// screen-affine unclamped delta from the grab pixel; vibe3d's
-// `ratioOnSegment` is an absolute, world-projective, `[0,1]`-clamped
-// fraction. That divergence is real and measured, but its gain and sign are
-// unpinned, and the three terms interact — adopting "no clamp" without a
-// correct gain and sign would swap a bounded approximation for an unbounded
-// one and could invert the gesture outright. They land together or not at
-// all.
+// The slide PARAMETERISATION is now the measured law, replacing V1's
+// absolute / world-projective / `[0,1]`-clamped `ratioOnSegment` fraction:
+//
+//     k      = argmax_j |delta[j]|        (`dominantAxisDelta`)
+//     w      = unit(neighbor - endpoint)  the rail, AWAY from the grabbed edge
+//     offset = -delta[k] * w              (`slideEndpointPos`)
+//
+// applied from the pre-gesture positions, with the LAST evaluation committed
+// (not a sum), both endpoints sharing the scalar, and NO `[0,1]` clamp — a
+// vertex passes through and beyond its rail neighbour. Four measured
+// divergences closed at once (delta rather than absolute cursor; axis
+// extraction rather than a world-projective segment fraction; unbounded;
+// and the sign, which was inverted in half the tested configurations). The
+// fifth, the pixel->world MAGNITUDE CURVE, stays ours by decision — see
+// `slideDeltaFromDrag` for the measurement, the reason it was frozen, and
+// the sanity band our gain sits in. The whole set is pinned by the
+// "Slide law — REFERENCE PARITY CONFORMANCE" unittest at the bottom of this
+// module.
 // Commit is deferred to release (`onMouseButtonUp`, `commitSlide`) — a
 // direct Position-only kernel write (`m.vertices[i]=pos` +
 // `commitChange(Position)`, mirroring `moveVertexTo`, extended to up to 2
@@ -675,19 +684,28 @@ private:
     // endpoint's OWN rail neighbor — its unique remaining incident edge at
     // valence-2, its polygon-continuation edge at valence>2 (`-1` when the
     // rail doesn't resolve and the endpoint is held fixed; see
-    // `continuationNeighbor`) — and `slideTA_`/`slideTB_` are the `[0,1]`
-    // fractions each slidable endpoint tracks along ITS OWN rail
-    // (`x -> neighbor`), recomputed on every subsequent motion event
-    // (`onMouseMotion`) and again at release (`onMouseButtonUp`'s Slide
-    // branch, `commitSlide`). Cleared by `onMouseButtonUp` on commit/no-op
-    // and by `resyncSession` on an external history navigation, exactly
-    // like the P3/P4/P6 arm state above.
+    // `continuationNeighbor`).
+    //
+    // `slideAnchor_` is the grabbed edge's midpoint FROZEN AT PRESS — the
+    // plane anchor the pointer drag is converted against (`slideDeltaFromDrag`);
+    // freezing it keeps the conversion stable while the ghost moves.
+    // `slideDeltaK_` is the law's ONE signed scalar, shared by BOTH endpoints
+    // (only the rail direction differs between them — see `slideEndpointPos`),
+    // recomputed press->cursor on every motion event (`onMouseMotion`) and
+    // again at release (`slideUp` -> `commitSlide`). It replaces the pair of
+    // `[0,1]` per-rail fractions V1 tracked; there is no bounded fraction in
+    // this law at all.
+    //
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
+    // an external history navigation, exactly like the P3/P4/P6 arm state
+    // above.
     int   slideSeed_  = -1;
     bool  slideArmed_ = false;
     int   slideStartX_, slideStartY_;
     int   slideEndA_ = -1, slideEndB_ = -1;
     int   slideNbrA_ = -1, slideNbrB_ = -1;
-    float slideTA_ = 0.0f, slideTB_ = 0.0f;
+    Vec3  slideAnchor_ = Vec3(0, 0, 0);
+    float slideDeltaK_ = 0.0f;
 
     // --- P8 Smooth session state (topology_pen.d,
     // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
@@ -1262,25 +1280,20 @@ public:
             return true;
         }
 
-        // P7 (doc/topopen_p7_slide_plan.md Phase 2): while a Slide gesture
-        // is armed, recompute each SLIDABLE endpoint's `[0,1]` fraction off
-        // THIS motion event's cursor, per its OWN incident-edge rail — the
-        // only mid-drag feedback, since commit is deferred to release.
-        // Consumes, mirroring the Add Loop branch above. A held-fixed
-        // endpoint (`slideNbrA_`/`slideNbrB_ < 0`) has no rail to project
-        // onto, so its fraction is simply left at 0 (never read by
-        // `commitSlide`/the draw ghost either way).
+        // P7 (doc/topopen_p7_slide_plan.md Phase 2), re-based on the measured
+        // law: while a Slide gesture is armed, recompute the ONE shared
+        // scalar off THIS motion event's cursor, press->current (NOT
+        // accumulated — the law commits the last evaluation, not a sum).
+        // The only mid-drag feedback, since commit is deferred to release.
+        // Consumes, mirroring the Add Loop branch above. Unlike V1 this needs
+        // no per-endpoint work at all: both endpoints share the scalar, and a
+        // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) simply never
+        // consumes it (neither `commitSlide` nor the draw ghost reads a rail
+        // it does not have).
         if (slideArmed_) {
             Viewport vp;
             if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-            auto m = mesh;
-            if (m !is null) {
-                immutable vlen = cast(int)m.vertices.length;
-                if (slideNbrA_ >= 0 && slideNbrA_ < vlen && slideEndA_ >= 0 && slideEndA_ < vlen)
-                    slideTA_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndA_], m.vertices[slideNbrA_]);
-                if (slideNbrB_ >= 0 && slideNbrB_ < vlen && slideEndB_ >= 0 && slideEndB_ < vlen)
-                    slideTB_ = ratioOnSegment(e.x, e.y, vp, m.vertices[slideEndB_], m.vertices[slideNbrB_]);
-            }
+            slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
             return true;
         }
 
@@ -1744,7 +1757,8 @@ public:
         slideArmed_  = false;
         slideEndA_ = slideEndB_ = -1;
         slideNbrA_ = slideNbrB_ = -1;
-        slideTA_ = slideTB_ = 0.0f;
+        slideAnchor_ = Vec3(0, 0, 0);
+        slideDeltaK_ = 0.0f;
         // P8 Smooth (doc/topopen_p8_smooth_plan.md)
         smoothArmed_  = false;
         smoothDragPx_ = 0.0f;
@@ -2039,10 +2053,12 @@ public:
     // returned POINT to the segment, so this clamp is a defensive backstop,
     // not the primary mechanism). Falls back to 0.5 on a degenerate
     // (zero-length) segment. The segment used to be hardwired to the armed
-    // Add Loop rail (`seedRailA_`/`seedRailB_`); P7's Slide gesture needs the
-    // SAME projection against each grabbed endpoint's OWN incident-edge
-    // rail, so the segment is now a parameter — `ratioFromCursor` below is
-    // the Add Loop caller's unchanged convenience wrapper.
+    // Add Loop rail (`seedRailA_`/`seedRailB_`); it became a parameter so
+    // the mid-edge Split gesture could re-project against an arbitrary
+    // edge — `ratioFromCursor` below is the Add Loop caller's unchanged
+    // convenience wrapper. NOT used by Slide: Slide is a DELTA law
+    // (`slideDeltaFromDrag`), not an absolute cursor parameterisation, and
+    // has no `[0,1]` range at all.
     private float ratioOnSegment(int mx, int my, const ref Viewport vp, Vec3 a, Vec3 b) {
         Vec3 origin, dir;
         screenPointToRay(cast(float)mx, cast(float)my, vp, origin, dir);
@@ -2060,21 +2076,158 @@ public:
         return ratioOnSegment(mx, my, vp, seedRailA_, seedRailB_);
     }
 
-    // P7 (doc/topopen_p7_slide_plan.md, kernel-reuse verdict): pure
-    // clamped-lerp helper for the Slide gesture — colinear by construction
-    // (the result always lies on the segment `x -> neighbor`, which IS the
-    // incident-edge line), `t=1` lands EXACTLY on the neighbor's (pre-slide)
-    // position (the measured overshoot clamp), `t=0` leaves `x` untouched.
+    // Slide, THE MEASURED LAW — step 1 of 2: extract the drag's dominant
+    // world-axis component.
+    //
+    //     k = argmax_j |delta[j]|   ->   returns delta[k] (SIGNED)
+    //
+    // The reference's own move delta carries exactly one live component per
+    // evaluation (axis-aligned in 20/20 captured gestures), so there the
+    // argmax merely EXTRACTS that component rather than choosing between
+    // three. Our delta (`slideDeltaFromDrag`) is a free plane drag and is
+    // generally not axis-aligned, so the argmax is load-bearing here: it is
+    // the documented generalisation, and it is what makes the slide magnitude
+    // a single world-axis projection of the pointer travel rather than the
+    // full 3D drag length.
+    //
+    // Ties (two components equal in magnitude) resolve to the LOWEST axis
+    // index — arbitrary but deterministic, which is all a tie needs; the
+    // captured data never exercises one.
+    private static float dominantAxisDelta(Vec3 delta) {
+        import std.math : abs;
+        float ax = abs(delta.x), ay = abs(delta.y), az = abs(delta.z);
+        if (ax >= ay && ax >= az) return delta.x;
+        if (ay >= az)             return delta.y;
+        return delta.z;
+    }
+
+    // Slide, THE MEASURED LAW — step 2 of 2: the endpoint's new position.
+    //
+    //     w      = unit(neighbor - x)      // the rail, directed AWAY from
+    //                                      // the grabbed edge
+    //     offset = -deltaK * w             // |offset| == |deltaK| EXACTLY
+    //     x'     = x + offset
+    //
+    // Properties this pins, each independently verified against the captured
+    // conformance set (see the "Slide law — REFERENCE PARITY CONFORMANCE"
+    // unittest at the bottom of this module):
+    //   * colinear — `x'` always lies on the infinite rail LINE through
+    //     `x`/`neighbor` (max relative perpendicular 2.4e-08 measured);
+    //   * UNBOUNDED — there is deliberately NO `[0,1]` clamp. A vertex
+    //     passes through its rail neighbour and keeps going; the measured
+    //     parameter ranged over [-8.53, +4.19]. The previous implementation
+    //     clamped, which is why this is a behaviour change and not just a
+    //     re-derivation;
+    //   * both endpoints of a grabbed edge share `deltaK` — only `w` differs
+    //     (max relative difference between the two endpoints' scalars:
+    //     1.7e-08), which is why `commitSlide` takes ONE scalar for both.
+    //
+    // On the rail direction: the source contract states `w` as "the edge
+    // direction as traversed in its polygon's winding". Measured against the
+    // conformance set that holds for only 16 of the 32 determinate endpoints,
+    // because a polygon walk arrives at one endpoint of the grabbed edge and
+    // departs from the other. `unit(neighbor - x)` — equivalently, that same
+    // winding direction taken ORIENTED AWAY FROM THE GRABBED EDGE — is
+    // 32/32. Getting this backwards inverts the gesture, so the conformance
+    // unittest asserts positions, not just magnitudes.
+    //
+    // Takes `deltaK` as a DOUBLE and runs in double throughout, rounding once
+    // on return. The captured targets are float-exact but the normalisation is
+    // not: float everywhere leaves the achievable error at 8.9e-08 against a
+    // 1e-7 tolerance, and even keeping only `deltaK` at float still costs
+    // 6.0e-08 — no useful margin either way. In double it is 3.3e-08, the
+    // float STORAGE granularity of the targets themselves, i.e. the floor. The
+    // interactive caller's own scalar is float (it comes out of float viewport
+    // math) and simply widens for free; the width exists so the API is not the
+    // thing that loses the precision. A degenerate (zero-length) rail leaves
+    // `x` untouched rather than emitting NaN, and a non-finite `deltaK` is
+    // rejected outright.
+    //
     // static + pure so it's directly unit-testable without an app-wired
     // instance, mirroring `findRingSeedEdge`/`seedRail`'s own
     // self-contained-helper convention.
-    private static Vec3 slidePoint(Vec3 x, Vec3 neighbor, float t) {
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        // Canonical lerp form (neighbor*t + x*(1-t)) — FP-exact at BOTH ends
-        // (t=1 lands bit-exactly on `neighbor`, the captured clamp), unlike
-        // `x + (neighbor-x)*t`. Matches the project's taper-lerp convention.
-        return neighbor * t + x * (1.0f - t);
+    private static Vec3 slideEndpointPos(Vec3 x, Vec3 neighbor, double deltaK) {
+        import std.math : sqrt, isFinite;
+        if (!isFinite(deltaK)) return x;
+        const double rx = cast(double) neighbor.x - cast(double) x.x;
+        const double ry = cast(double) neighbor.y - cast(double) x.y;
+        const double rz = cast(double) neighbor.z - cast(double) x.z;
+        const double len = sqrt(rx * rx + ry * ry + rz * rz);
+        if (!(len > 1e-12)) return x;              // degenerate rail (also catches NaN)
+        const double s = -deltaK / len;
+        return Vec3(cast(float)(cast(double) x.x + rx * s),
+                    cast(float)(cast(double) x.y + ry * s),
+                    cast(float)(cast(double) x.z + rz * s));
+    }
+
+    // Slide — THE GAIN, and the one part of this law that is deliberately
+    // NOT the reference's.
+    //
+    // Returns the signed dominant-world-axis scalar the law consumes, for a
+    // pointer that has travelled from the PRESS pixel to `(mx, my)`. Computed
+    // press->current in one shot, never accumulated: the law commits the LAST
+    // evaluation's offset, not a sum over evaluations, and a ray-plane
+    // solution is affine in the pixel so press->current is exact.
+    //
+    // FROZEN DIVERGENCE — DECIDED, NOT OVERLOOKED. The reference's own
+    // pixel->world magnitude curve is SUPERLINEAR: 0.0013099 / 0.0014310 /
+    // 0.0015664 / 0.0017854 world units per pixel at 60 / 120 / 175 / 240 px
+    // of drag, i.e. ~36% growth over a 4x range. It is not a constant that
+    // could be encoded here. It was not chased because it is not a bounded
+    // leaf computation and, more importantly, not specific to this gesture at
+    // all — it is produced by shared transform-pipeline machinery selected at
+    // runtime by whichever transform / axis / action-centre stages are live,
+    // and the same conversion feeds that reference's whole Move family. So we
+    // keep OUR gain and match everything else — axis extraction, rail
+    // direction, the offset sign relative to the rail, no clamp — exactly.
+    //
+    // Our gain is `planeDragDelta`'s most-facing-world-plane drag through the
+    // grab anchor: the same free-move conversion vibe3d's own Move gizmo
+    // uses, LINEAR in the pixel. SANITY-CHECKED against the reference scale,
+    // on the reference's own captured camera: its recorded pixel size is
+    // 1.2422e-3 world units, its view direction is (-0.716, 0.316, -0.622),
+    // so the most-facing world plane is the X plane and a ray-plane drag
+    // against it stretches by 1/|fwd.x| = 1.396 — giving at most
+    // 1.2422e-3 * 1.396 = 1.735e-3 world units per pixel, and less than that
+    // once `dominantAxisDelta` takes a single component. The reference
+    // measured 1.31e-3 (60 px) to 1.79e-3 (240 px) on that same camera, so we
+    // sit inside its band across the whole sweep rather than merely near it.
+    // That check matters more than it used to: this change also removed the
+    // `[0,1]` clamp, so the implementation is no longer bounded and a
+    // badly-scaled gain now costs more than it did. Gain, clamp removal and
+    // sign are one change.
+    //
+    // ALSO FROZEN, and on purpose: which world axis the drag selects and with
+    // WHAT SIGN. That is produced by the same opaque call as the magnitude, so
+    // the capture pins only delta -> geometry, never pixels -> delta. There is
+    // no cursor-tracking rule to copy: measured over the 20 captured gestures
+    // the reference's own slide moves WITH the pointer in just 10 of them, and
+    // two gestures with exactly OPPOSITE pixel drags along the same rail
+    // (`C_C_p`/`C_C_m`) produced the SAME motion direction, because the
+    // reference picked a different world axis for each. Our literal reading —
+    // dominant axis of the free plane drag, sign as-is — reproduces that
+    // rail-orientation-dependent character rather than papering over it. A
+    // cursor-tracking convention (flip the scalar so the grab's primary
+    // endpoint follows the pointer) was considered and REJECTED: it is
+    // unmeasured, and it would introduce a full-magnitude sign flip as the
+    // drag rotates through perpendicular to the rail. If a UX call is later
+    // made to prefer tracking, THIS function is the only place it belongs —
+    // the law below it stays untouched either way.
+    //
+    // To reopen either: the evidence trail carries `delta` for every
+    // evaluation of every captured gesture, so the curve — and the axis
+    // choice — can be re-fit offline without re-driving anything.
+    //
+    // `skip` (projection failure — degenerate viewport, anchor behind the
+    // camera) yields 0, i.e. no slide this evaluation, rather than a garbage
+    // scalar.
+    private float slideDeltaFromDrag(int mx, int my, const ref Viewport vp) {
+        bool skip;
+        Vec3 d = planeDragDelta(mx, my, slideStartX_, slideStartY_,
+                                3,                    // most-facing world plane
+                                slideAnchor_, vp, skip);
+        if (skip) return 0.0f;
+        return dominantAxisDelta(d);
     }
 
     // Slide, valence>2 endpoints: the DISTINCT polygon-continuation
@@ -2131,20 +2284,35 @@ public:
     //     polygon walk). Unchanged from V1.
     //   2+ remaining (valence>2) -> the POLYGON-CONTINUATION rail: the edge
     //     that continues the grabbed edge around the polygon the grabbed
-    //     edge belongs to (`continuationRailCandidates`). MEASURED: the
-    //     choice is drag-direction INDEPENDENT — the same continuation rail
-    //     wins whether the drag heads toward it or toward a competing
-    //     neighbor (6/6 across two independent capture boots). This replaces
-    //     V1's blanket hold-fixed for valence>2, which was measurably wrong.
+    //     edge belongs to (`continuationRailCandidates`). This replaces V1's
+    //     blanket hold-fixed for valence>2, which was measurably wrong. It
+    //     acts ONLY when that yields exactly ONE candidate, which is the
+    //     unambiguous case: there is a single polygon to continue around and
+    //     nothing left to choose.
+    //
+    // CORRECTION to this rule's original justification (the change that
+    // introduced it asserted the rail choice is drag-direction INDEPENDENT,
+    // citing 6/6): that generalisation is REFUTED. Later capture on a rig
+    // whose two candidates are NOT antiparallel shows the reference's choice
+    // at a MULTI-candidate endpoint switching with the sign of the drag's
+    // dominant component. The original six drags happened to share one sign,
+    // so they could not have detected it. Nothing here changes — the
+    // single-candidate case this code acts on was never the drag-dependent
+    // one — but the reason it is safe is that it is UNAMBIGUOUS, not that
+    // selection is drag-independent.
     //
     // OPEN CASES, still held FIXED because no measurement disambiguates them
     // — a tie-break here would be a guess, and a guessed rail direction is
     // worse than not moving:
     //   * 2+ DISTINCT continuation candidates. The common shape is an
     //     interior (2-face) grabbed edge: each of the two faces continues
-    //     across `x` in a different direction and nothing measured says
-    //     which polygon is the marked one. Non-manifold fans (3+ faces on
-    //     the grabbed edge) land here too.
+    //     across `x` in a different direction. Selection here is
+    //     SIGN-DEPENDENT and UNDETERMINED: the captured cases are reproduced
+    //     by "take the candidate most aligned with +delta[k]*e_k", 4/4 — but
+    //     that is the OPPOSITE sign convention from the 32/32 rule the
+    //     single-candidate endpoints obey, so it cannot be the same law and
+    //     is not implemented. Deliberately left as hold-fixed. Non-manifold
+    //     fans (3+ faces on the grabbed edge) land here too.
     //   * ZERO continuation candidates at a valence>2 vertex — the grabbed
     //     edge borders no face at all (a bare edge meeting a face corner,
     //     which the topology pen's own bare-edge build cases can produce),
@@ -2175,9 +2343,9 @@ public:
     // NEITHER endpoint is slidable, nothing is armed (no documented gesture
     // to perform) — don't consume, matching every other down-handler's miss
     // convention. The commit itself is deferred to release
-    // (`onMouseButtonUp`); this only arms + seeds the initial `t` via THIS
-    // press's own cursor, so a stationary click still has a sane (harmless,
-    // near-zero) fraction at commit.
+    // (`onMouseButtonUp`); this only arms, freezes the drag-conversion anchor
+    // (the grabbed edge's midpoint) and zeroes the law's scalar — a press with
+    // no motion is by construction a zero delta, hence a zero offset.
     private bool onCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
         // this row's `ResetScope.AllButtons` already fires
@@ -2206,8 +2374,8 @@ public:
         slideEndB_   = eB;
         slideNbrA_   = nA;
         slideNbrB_   = nB;
-        slideTA_ = (nA >= 0) ? ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]) : 0.0f;
-        slideTB_ = (nB >= 0) ? ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]) : 0.0f;
+        slideAnchor_ = (m.vertices[eA] + m.vertices[eB]) * 0.5f;
+        slideDeltaK_ = 0.0f;
         return true;
     }
 
@@ -2654,7 +2822,11 @@ public:
     }
 
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed Slide
-    // gesture at the RELEASE event's own cursor-derived per-rail fraction.
+    // gesture at the RELEASE event's own cursor-derived scalar. Re-derived
+    // press->release here rather than reusing the last motion event's
+    // `slideDeltaK_`, so the committed offset is the LAST evaluation's — the
+    // law's own commit rule — even if the release pixel differs from the last
+    // motion pixel.
     private bool slideUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!slideArmed_) return false;
         uint seed   = cast(uint)slideSeed_;
@@ -2677,13 +2849,8 @@ public:
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-        auto m = mesh;
-        float tA = 0.0f, tB = 0.0f;
-        if (m !is null) {
-            if (nA >= 0) tA = ratioOnSegment(e.x, e.y, vp, m.vertices[eA], m.vertices[nA]);
-            if (nB >= 0) tB = ratioOnSegment(e.x, e.y, vp, m.vertices[eB], m.vertices[nB]);
-        }
-        commitSlide(seed, eA, eB, nA, nB, tA, tB);
+        commitSlide(seed, eA, eB, nA, nB, slideDeltaFromDrag(e.x, e.y, vp));
+        slideDeltaK_ = 0.0f;
         return true;
     }
 
@@ -2987,7 +3154,13 @@ public:
     // `deleteFacesByMask`, no `insertEdgeLoops`) — so unlike P5/P6 this does
     // NOT call `resyncSession()` (plan §Risks: no sibling gesture's cached
     // INDEX can dangle from a pure position write).
-    private void commitSlide(uint seed, int eA, int eB, int nA, int nB, float tA, float tB) {
+    //
+    // `deltaK` is the law's single signed scalar (`dominantAxisDelta` of the
+    // gesture's world-space move delta) — ONE value for BOTH endpoints, which
+    // is measured, not an economy: the two endpoints differ only in their rail
+    // DIRECTION. See `slideEndpointPos` for the per-endpoint law and for why
+    // there is no `[0,1]` clamp any more.
+    private void commitSlide(uint seed, int eA, int eB, int nA, int nB, double deltaK) {
         if (meshSrc_ is null || history_ is null || slideEditFactory_ is null) return;
         auto m = mesh;
         if (m is null) return;
@@ -3002,8 +3175,8 @@ public:
 
         Vec3 origA = m.vertices[eA];
         Vec3 origB = m.vertices[eB];
-        Vec3 pA = (nA >= 0) ? slidePoint(origA, m.vertices[nA], tA) : origA;
-        Vec3 pB = (nB >= 0) ? slidePoint(origB, m.vertices[nB], tB) : origB;
+        Vec3 pA = (nA >= 0) ? slideEndpointPos(origA, m.vertices[nA], deltaK) : origA;
+        Vec3 pB = (nB >= 0) ? slideEndpointPos(origB, m.vertices[nB], deltaK) : origB;
 
         enum float kSlideEps = 1e-4f;   // mirrors moveVertexTo's stationary-grab guard
         if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
@@ -4103,9 +4276,13 @@ public:
         // move), so it too is drawn BEFORE the `lastHit_.hit` early-return,
         // mirroring the Add Loop ghost above. Purely re-reads already-armed
         // state (`slideEndA_`/`slideEndB_`/`slideNbrA_`/`slideNbrB_`/
-        // `slideTA_`/`slideTB_`) — no mesh mutation, no raycast. A
+        // `slideDeltaK_`) — no mesh mutation, no raycast. A
         // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) draws at its
         // CURRENT (unmoved) position, same as `commitSlide` would leave it.
+        // The ghost runs the SAME `slideEndpointPos` the commit does, so an
+        // unbounded (past-the-neighbour) slide previews truthfully — the
+        // faint rail below is drawn edge-to-neighbour only and is a reference
+        // line, not a bound.
         if (slideArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null
@@ -4115,10 +4292,10 @@ public:
                 enum uint slideRailCol = IM_COL32(120, 200, 255, 90);    // faint rail
 
                 Vec3 pA = (slideNbrA_ >= 0 && slideNbrA_ < cast(int)m.vertices.length)
-                    ? slidePoint(m.vertices[slideEndA_], m.vertices[slideNbrA_], slideTA_)
+                    ? slideEndpointPos(m.vertices[slideEndA_], m.vertices[slideNbrA_], slideDeltaK_)
                     : m.vertices[slideEndA_];
                 Vec3 pB = (slideNbrB_ >= 0 && slideNbrB_ < cast(int)m.vertices.length)
-                    ? slidePoint(m.vertices[slideEndB_], m.vertices[slideNbrB_], slideTB_)
+                    ? slideEndpointPos(m.vertices[slideEndB_], m.vertices[slideNbrB_], slideDeltaK_)
                     : m.vertices[slideEndB_];
 
                 ImVec2 pa, pb;
@@ -4597,11 +4774,15 @@ public:
 
         // P7 (doc/topopen_p7_slide_plan.md Phase 4): the armed Slide
         // gesture's state, for Tier-C tests to assert the picked seed edge
-        // and tracked per-endpoint fractions without driving a full release.
-        root["slideArmed"] = JSONValue(slideArmed_);
-        root["slideSeed"]  = JSONValue(slideSeed_);
-        root["slideTA"]    = JSONValue(cast(double)slideTA_);
-        root["slideTB"]    = JSONValue(cast(double)slideTB_);
+        // and the tracked scalar without driving a full release.
+        // `slideDeltaK` replaces V1's `slideTA`/`slideTB` pair: the measured
+        // law has ONE signed world-space scalar shared by both endpoints, and
+        // no per-endpoint `[0,1]` fraction exists to report.
+        root["slideArmed"]  = JSONValue(slideArmed_);
+        root["slideSeed"]   = JSONValue(slideSeed_);
+        root["slideDeltaK"] = JSONValue(cast(double)slideDeltaK_);
+        root["slideNbrA"]   = JSONValue(slideNbrA_);
+        root["slideNbrB"]   = JSONValue(slideNbrB_);
 
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
         // gesture's state, for Tier-C tests to assert click-vs-drag pass
@@ -5341,9 +5522,15 @@ unittest {
 // TWO candidate neighbours in genuinely different directions (v3 along
 // +Z, v4 along -X+Z) and V1 held it FIXED. The grabbed edge 0-1 belongs to
 // exactly ONE polygon (the quad), whose walk continues across v0 onto 0-3, so
-// v0 must now resolve to v3 — and to v3 for ANY drag direction, since the
-// rule reads topology only and never the cursor. v1 (valence-2) is the
-// built-in control: its unique remaining neighbour v2, unchanged.
+// v0 must now resolve to v3. v1 (valence-2) is the built-in control: its
+// unique remaining neighbour v2, unchanged.
+//
+// This rig is the SINGLE-candidate case: `continuationRailCandidates` yields
+// exactly one, so there is nothing to select and the answer cannot depend on
+// the drag. That is asserted structurally below. It is NOT evidence that
+// selection among SEVERAL candidates is drag-independent — that claim was
+// made when this rule landed and has since been refuted; see
+// `continuationNeighbor`'s doc comment.
 // ---------------------------------------------------------------------------
 unittest {
     Mesh m;
@@ -5363,21 +5550,30 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, v1, v0) == cast(int)v2,
         "the valence-2 control endpoint must keep reporting its unique remaining neighbour");
 
-    // Drag-direction independence, structurally: `continuationNeighbor` takes
-    // no cursor/drag argument at all, so re-querying can only ever return the
-    // same rail. Asserted here so a future refactor that threads a direction
-    // into the rule trips this test.
+    // Scoped structural check: with exactly ONE candidate there is nothing to
+    // select, and `continuationNeighbor` takes no cursor/drag argument at all,
+    // so re-querying can only ever return the same rail. Asserted here so a
+    // future refactor that threads a direction into the SINGLE-candidate path
+    // trips this test. (The multi-candidate path is a different question and
+    // is deliberately not answered — see the OPEN-CASE test below.)
+    assert(TopologyPenTool.continuationRailCandidates(&m, v0, v1).length == 1,
+        "setup: this rig's valence>2 endpoint must offer exactly ONE continuation "
+      ~ "candidate — the unambiguous case, which is all this rule acts on");
     assert(TopologyPenTool.continuationNeighbor(&m, v0, v1) == cast(int)v3,
-        "the rail choice must be drag-direction independent (measured 6/6, two boots)");
+        "a single-candidate rail is unambiguous and cannot depend on the drag");
 }
 
 // ---------------------------------------------------------------------------
 // continuationNeighbor — OPEN CASE, still held fixed: an INTERIOR grabbed
 // edge (two incident faces) offers TWO distinct continuation rails at each
-// endpoint, one per face, and nothing measured says which polygon is the
-// marked one. That ambiguity is deferred, NOT tie-broken — this test pins the
-// deferral so a later "just pick the first face" shortcut cannot slip in
-// unnoticed. Rig: quads [0,1,2,3] and [1,4,5,2] sharing edge 1-2.
+// endpoint, one per face. Measurement says the reference DOES pick one and
+// that the pick flips with the sign of the drag's dominant component — a
+// SIGN-DEPENDENT selection rule that is not determined (the one candidate law
+// that fits all four captured multi-candidate gestures carries the opposite
+// sign convention from the 32/32 single-candidate law, so it cannot be the
+// same rule). Deferred, NOT tie-broken — this test pins the deferral so a
+// later "just pick the first face" shortcut, or a guessed sign rule, cannot
+// slip in unnoticed. Rig: quads [0,1,2,3] and [1,4,5,2] sharing edge 1-2.
 // ---------------------------------------------------------------------------
 unittest {
     Mesh m;
@@ -5405,11 +5601,20 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // commitSlide — the valence>2 endpoint MOVES (end-to-end over the kernel, not
-// just the rail lookup). Same capture rig as above: before this change v0 was
-// held fixed at its original position for every fraction; it must now travel
-// along the 0->3 continuation rail, and land nowhere near the competing 0->4
-// neighbour. Parameterisation is untouched — `tA` is fed directly, exactly as
-// the existing V1 tests do.
+// just the rail lookup). Same capture rig as above: v0 was once held fixed at
+// its original position for every fraction; it must travel along the 0->3
+// continuation rail, and land nowhere near the competing 0->4 neighbour.
+//
+// UPDATED for the measured law. `commitSlide` now takes the law's ONE signed
+// scalar instead of a per-endpoint `[0,1]` fraction pair. `deltaK = -0.5`
+// gives `offset = +0.5 * unit(rail)` at BOTH endpoints; the 0->3 rail is unit
+// length, so v0's landing point is numerically the same `p0 + (p3-p0)*0.5` the
+// old `tA = 0.5` produced — the rail-CHOICE assertions this test exists for
+// are unchanged. What did change: v1 no longer has an independent `tB = 0`, so
+// it slides too (its own 1->2 rail, same scalar). That is the law, not a
+// weakening — the old "stays put at fraction 0" line is replaced by an
+// assertion that v1 lands exactly on ITS own rail, which is a strictly
+// stronger statement about the same vertex.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -5433,23 +5638,24 @@ unittest {
     uint v4 = m.addVertex(p4);
     m.addFace([v0, v1, v2, v3]);
     m.addFace([v0, v3, v4]);
-    Vec3 p1 = m.vertices[v1];
+    Vec3 p1 = m.vertices[v1], p2 = m.vertices[v2];
 
     uint seed = m.edgeIndex(v0, v1);
     assert(seed != uint.max, "setup: the grabbed edge 0-1 must exist");
 
     int nA = TopologyPenTool.continuationNeighbor(&m, v0, v1);
     int nB = TopologyPenTool.continuationNeighbor(&m, v1, v0);
-    t.commitSlide(seed, cast(int)v0, cast(int)v1, nA, nB, 0.5f, 0.0f);
+    t.commitSlide(seed, cast(int)v0, cast(int)v1, nA, nB, -0.5f);
 
     assert((m.vertices[v0] - p0).length > 1e-3f,
         "the valence>2 endpoint must no longer be held fixed");
     assert((m.vertices[v0] - (p0 + (p3 - p0) * 0.5f)).length < 1e-5f,
-        "it must land ON the 0->3 polygon-continuation rail at the given fraction");
+        "it must land ON the 0->3 polygon-continuation rail, 0.5 world units along it");
     assert((m.vertices[v0] - (p0 + (p4 - p0) * 0.5f)).length > 1e-2f,
         "and NOT on the competing 0->4 rail");
-    assert((m.vertices[v1] - p1).length < 1e-6f,
-        "the valence-2 control endpoint stays put at fraction 0");
+    assert((m.vertices[v1] - (p1 + (p2 - p1) * 0.5f)).length < 1e-5f,
+        "the valence-2 control endpoint slides the SAME 0.5 world units along ITS "
+      ~ "own 1->2 rail — one scalar, two rail directions");
     assert(m.faces.length == 2 && m.vertices.length == 5,
         "slide is position-only — topology must be untouched");
     assert(history.canUndo(), "a real slide must record one undo entry");
@@ -5458,14 +5664,25 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// commitSlide — T1 (P7, doc/topopen_p7_slide_plan.md §Testing, "colinear @
-// fraction (two-sided)"): a rig where the grabbed edge A-B has A also on
-// edge A-D and B also on edge B-E (both valence-2, DIFFERENT rail
-// directions) — each endpoint must land at its OWN independently-computed
-// clamped-lerp position along ITS OWN incident edge, regardless of the
-// other endpoint's rail. Driven directly (private, same-module access);
-// `gpu_` stays null so the guarded display tail never runs under bare
-// `dub test`, mirroring every other Tier-B unittest in this file.
+// commitSlide — T1 (P7, doc/topopen_p7_slide_plan.md §Testing, "colinear
+// (two-sided)"): a rig where the grabbed edge A-B has A also on edge A-D and
+// B also on edge B-E (both valence-2, DIFFERENT rail directions, and
+// DIFFERENT rail LENGTHS: |AD| = 2, |BE| = sqrt(18)) — each endpoint must land
+// on ITS OWN incident edge, regardless of the other endpoint's rail. Driven
+// directly (private, same-module access); `gpu_` stays null so the guarded
+// display tail never runs under bare `dub test`, mirroring every other Tier-B
+// unittest in this file.
+//
+// UPDATED for the measured law, with the test's POINT strengthened rather
+// than weakened. The old version fed independent fractions (0.4, 0.7) and
+// asserted two independent lerps — which under the old law could be satisfied
+// by any per-endpoint parameterisation. The law says both endpoints share ONE
+// signed scalar and differ only in rail direction, so this now feeds one
+// scalar and asserts the consequence the old form could not see: the two
+// endpoints travel the SAME world DISTANCE (|deltaK|) along rails of
+// DIFFERENT length, i.e. the displacement is a world offset and emphatically
+// NOT a shared normalised fraction. Rail INDEPENDENCE, the original point, is
+// still asserted — each landing point is checked against its own rail.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -5497,23 +5714,41 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, a, b) == cast(int)d);
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == cast(int)e);
 
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, cast(int)e, 0.4f, 0.7f);
+    enum float kDeltaK = -0.8f;   // negative -> both endpoints move TOWARD their rail neighbour
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, cast(int)e, kDeltaK);
 
-    Vec3 expectedA = a0 + (d0 - a0) * 0.4f;
-    Vec3 expectedB = b0 + (e0 - b0) * 0.7f;
+    Vec3 railA = (d0 - a0) * (1.0f / (d0 - a0).length);
+    Vec3 railB = (e0 - b0) * (1.0f / (e0 - b0).length);
+    Vec3 expectedA = a0 + railA * (-kDeltaK);
+    Vec3 expectedB = b0 + railB * (-kDeltaK);
     assert((m.vertices[a] - expectedA).length < 1e-5f,
-        "A must slide EXACTLY 0.4 of the way toward D along A's own incident edge");
+        "A must slide 0.8 WORLD UNITS toward D along A's own incident edge");
     assert((m.vertices[b] - expectedB).length < 1e-5f,
-        "B must slide EXACTLY 0.7 of the way toward E along B's own incident edge, "
-      ~ "independent of A's own rail/fraction");
+        "B must slide 0.8 WORLD UNITS toward E along B's own incident edge, "
+      ~ "independent of A's own rail direction");
+    assert(((m.vertices[a] - a0).length - (m.vertices[b] - b0).length) < 1e-5f
+        && ((m.vertices[b] - b0).length - (m.vertices[a] - a0).length) < 1e-5f,
+        "both endpoints must travel the SAME world distance despite rails of "
+      ~ "different length — one shared scalar, not a shared [0,1] fraction");
     assert(history.canUndo(), "a real slide must record one undo entry");
 }
 
 // ---------------------------------------------------------------------------
-// commitSlide — T2 (P7, doc/topopen_p7_slide_plan.md §Testing,
-// "clamp-at-neighbor"): an overshoot fraction (t > 1, already clamped to 1.0
-// by `slidePoint`) must land the endpoint EXACTLY at the neighbor's
-// pre-slide position — the captured overshoot clamp (plan §1/§3).
+// commitSlide — T2, INVERTED BY MEASUREMENT: NO OVERSHOOT CLAMP.
+//
+// This test used to assert the opposite — that an overshoot fraction clamps
+// EXACTLY to the neighbour's pre-slide position — on the strength of an
+// early reading of the reference (plan §1/§3). The conformance capture
+// refutes it directly: the reference's slide parameter was measured over
+// [-8.53, +4.19] and vertices pass THROUGH the rail neighbour and keep going.
+// So the assertion is reversed, not relaxed: the endpoint must land at the
+// exact unbounded position, strictly PAST the neighbour, and the old
+// clamped-at-neighbour answer is now explicitly asserted WRONG. It is also
+// checked in the negative direction (a vertex may run backwards past its own
+// start), which the clamped implementation could never do at all.
+//
+// This is the assertion that makes the gain matter — see
+// `slideDeltaFromDrag`'s note on clamp removal.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -5538,10 +5773,24 @@ unittest {
     m.addEdge(a, b);
     uint seed = m.edgeIndex(a, b);
 
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 5.0f, 0.0f);
+    // |A->D| = sqrt(10) ~= 3.1623. Slide 5 world units toward D: comfortably
+    // PAST D, which the old [0,1] clamp made unreachable.
+    Vec3 rail = (d0 - a0) * (1.0f / (d0 - a0).length);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -5.0f);
 
-    assert((m.vertices[a] - d0).length < 1e-5f,
-        "an overshoot fraction must clamp EXACTLY to the neighbor's pre-slide position");
+    assert((m.vertices[a] - (a0 + rail * 5.0f)).length < 1e-5f,
+        "an overshoot must land at the exact UNBOUNDED position — there is no [0,1] clamp");
+    assert((m.vertices[a] - d0).length > 1.0f,
+        "...and specifically must NOT stop at the neighbour's pre-slide position");
+    assert(dot(m.vertices[a] - d0, d0 - a0) > 0.0f,
+        "...it must be BEYOND the neighbour, on the far side");
+
+    // The negative direction is equally unbounded: the vertex runs backwards
+    // past its own start, away from the rail neighbour.
+    history.undo();
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 2.0f);
+    assert((m.vertices[a] - (a0 - rail * 2.0f)).length < 1e-5f,
+        "a negative slide must run AWAY from the rail neighbour, past the start point");
 }
 
 // ---------------------------------------------------------------------------
@@ -5571,7 +5820,7 @@ unittest {
     uint seed = m.edgeIndex(a, b);
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.0f);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -0.5f);
 
     assert(m.vertices.length == vBefore, "Slide must never add/remove vertices");
     assert(m.edges.length == eBefore, "Slide must never add/remove edges");
@@ -5605,7 +5854,7 @@ unittest {
     uint seed = m.edgeIndex(a, b);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.0f);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -0.5f);
     assert(history.canUndo(), "a real slide must be undoable");
     history.undo();
     auto after = MeshSnapshot.capture(m);
@@ -5645,12 +5894,16 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1,
         "setup: B must have no remaining incident edge once A-B is excluded");
 
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.5f, 0.5f);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -1.0f);
 
+    // deltaK = -1.0 on the unit-length-per-world-unit rail A->D (|AD| = 2)
+    // puts A exactly 1 world unit toward D — numerically the same point the
+    // old `tA = 0.5` fraction produced, so this assertion is unchanged.
     Vec3 expectedA = a0 + (d0 - a0) * 0.5f;
     assert((m.vertices[a] - expectedA).length < 1e-5f, "A (slidable) must slide normally");
     assert((m.vertices[b] - b0).length < 1e-6f,
-        "B (valence-1, held fixed) must NOT move, regardless of the tB argument");
+        "B (valence-1, held fixed) must NOT move — a held-fixed endpoint consumes "
+      ~ "no scalar at all, even though the scalar is now shared");
 }
 
 // ---------------------------------------------------------------------------
@@ -5695,8 +5948,10 @@ unittest {
         "setup: B must have 2 remaining incident edges (valence>2) and no face "
       ~ "-> no continuation rail -> deferred/held-fixed");
 
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 0.6f, 0.9f);
+    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -1.2f);
 
+    // deltaK = -1.2 on the |AD| = 2 rail lands A at the same point the old
+    // `tA = 0.6` fraction produced — assertion unchanged.
     Vec3 expectedA = a0 + (d0 - a0) * 0.6f;
     assert((m.vertices[a] - expectedA).length < 1e-5f,
         "the valence-2 endpoint (A) must slide normally");
@@ -5735,7 +5990,7 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSlide(seed, cast(int)a, cast(int)b, -1, -1, 0.5f, 0.5f);
+    t.commitSlide(seed, cast(int)a, cast(int)b, -1, -1, -0.5f);
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices, "both-fixed slide must not move any vertex");
@@ -5794,8 +6049,10 @@ unittest {
     t.slideEndB_   = cast(int)b;
     t.slideNbrA_   = cast(int)d;
     t.slideNbrB_   = -1;
-    t.slideTA_     = 0.5f;
-    t.slideTB_     = 0.0f;
+    t.slideAnchor_ = Vec3(1, 0, 0);
+    // A deliberately NON-zero pending scalar: the gate must reject on pixel
+    // travel alone, without relying on the scalar happening to be ~0.
+    t.slideDeltaK_ = 0.5f;
 
     auto before = MeshSnapshot.capture(m);
     SDL_MouseButtonEvent e;
@@ -5810,6 +6067,437 @@ unittest {
     assert(!t.slideArmed_, "release must disarm Slide regardless of the min-drag gate");
     assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
     assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// Slide law — REFERENCE PARITY CONFORMANCE (the primary gate for this
+// gesture's parameterisation: `dominantAxisDelta` + `slideEndpointPos` +
+// `continuationNeighbor`, driven through the REAL `commitSlide` path).
+//
+// 20 independently-captured gestures over 3 meshes, each giving the mesh, the
+// grabbed edge, the reference's own world-space move delta for the committed
+// evaluation, and the exact post-gesture vertex positions. Feeding the
+// RECORDED delta in — rather than a pixel drag — is deliberate and is what
+// makes this a real gate: it tests axis extraction, rail resolution and rail
+// ORIENTATION independently of our gain, which is a documented divergence
+// (see `slideDeltaFromDrag`). A wrong sign, a wrong rail, or a surviving
+// `[0,1]` clamp all fail here; only the magnitude curve is out of scope.
+//
+// Tolerance 1e-7, the fixture's own. A correct port lands at 3.3e-08, which
+// is the float STORAGE granularity of the captured targets — i.e. the floor,
+// not a slack budget. Anything materially above it means the law drifted.
+//
+// SPLIT BY DETERMINACY. 16 of the 20 cases grab an edge whose endpoints each
+// have exactly ONE continuation edge; those are asserted against
+// `expected_vertices`, and their resolved rails are additionally cross-checked
+// against the captured ones (32/32 endpoints). The other 4 have TWO
+// continuation candidates per endpoint, where the reference's selection is
+// sign-dependent and undetermined (`continuationNeighbor`'s doc comment), so
+// this tool holds those endpoints FIXED by design. For those the test asserts
+// exactly that — no movement, no undo entry — instead of asserting positions
+// we deliberately do not reproduce. That is the shipped contract under test,
+// not a weakened assertion; asserting `expected_vertices` there would require
+// guessing the selection rule.
+//
+// On the rail ORIENTATION, which is the subtle half of this law: the source
+// contract phrases it as the continuation edge's direction "as traversed in
+// its polygon's winding". Measured over these 32 determinate endpoints that
+// reproduces only 16 — a polygon walk departs from one end of the grabbed
+// edge and ARRIVES at the other, so the raw traversal points inward at one of
+// them. `unit(neighbor - endpoint)`, i.e. the same edge taken oriented AWAY
+// from the grabbed edge, is 32/32. Half these cases invert under the other
+// reading, which is why the assertions below are on positions.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+    import view       : View;
+    import editmode   : EditMode;
+
+    static immutable double[3][8] run11BoundaryVerts = [
+        [0.49750889051610303, -0.41370677261163746, -0.03908497105394376],
+        [0.36219140916061615, -0.35986172605662464, 0.1441044938142526],
+        [-0.15470460441553574, 0.27729932133893814, -0.4249950066121535],
+        [-0.019387123060048833, 0.22345427478392532, -0.6081844714803498],
+        [-0.011595571798637481, -0.045949952078994126, 0.16439239563592428],
+        [-0.13274307498054808, 0.10338466840434088, 0.031009700223485356],
+        [-0.36729337599672546, 0.19671608243302977, 0.3485381059950258],
+        [-0.24614587281481487, 0.04738146194969475, 0.4819208014074648],
+    ];
+    static immutable uint[][2] run11BoundaryFaces = [
+        [3u, 2u, 1u, 0u],
+        [4u, 5u, 6u, 7u],
+    ];
+
+    static immutable double[3][6] run13StripVerts = [
+        [0.2678946589037937, -0.2549208077455667, 0.0735016433594463],
+        [0.09021165423699151, -0.03589669770334199, -0.12212630991213082],
+        [-0.08747135042981072, 0.18312741233888274, -0.3177542631837079],
+        [0.08747135042981116, -0.18312741233888297, 0.31775426318370814],
+        [-0.09021165423699107, 0.035896697703341765, 0.12212630991213104],
+        [-0.26789465890379327, 0.25492080774556647, -0.07350164335944608],
+    ];
+    static immutable uint[][2] run13StripFaces = [
+        [0u, 1u, 4u, 3u],
+        [1u, 2u, 5u, 4u],
+    ];
+
+    static immutable double[3][6] run14BentVerts = [
+        [0.2678946589037937, -0.2549208077455667, 0.0735016433594463],
+        [0.09021165423699151, -0.03589669770334199, -0.12212630991213082],
+        [0.09171882133094071, 0.04508019534620554, -0.3640606251148423],
+        [0.08747135042981116, -0.18312741233888297, 0.31775426318370814],
+        [-0.09021165423699107, 0.035896697703341765, 0.12212630991213104],
+        [-0.2048835161282584, 0.2224315836214501, -0.13699603164314578],
+    ];
+    static immutable uint[][2] run14BentFaces = [
+        [0u, 1u, 4u, 3u],
+        [1u, 2u, 5u, 4u],
+    ];
+
+    static immutable double[3][8] exp00 = [
+        [0.6394095420837402, -0.5886231660842896, 0.1171468198299408],
+        [0.5040920376777649, -0.5347781181335449, 0.3003362715244293],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp01 = [
+        [0.3714374601840973, -0.25830259919166565, -0.177888885140419],
+        [0.23611997067928314, -0.20445753633975983, 0.005300584714859724],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp02 = [
+        [0.6394095420837402, -0.5886231660842896, 0.1171468198299408],
+        [0.5040920376777649, -0.5347781181335449, 0.3003362715244293],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp03 = [
+        [0.5381929874420166, -0.4638567268848419, 0.0057079605758190155],
+        [0.40287548303604126, -0.4100116789340973, 0.18889743089675903],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp04 = [
+        [0.5864051580429077, -0.5232864022254944, 0.05878932401537895],
+        [0.45108771324157715, -0.46944132447242737, 0.24197879433631897],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp05 = [
+        [0.7193203568458557, -0.6871265769004822, 0.20512813329696655],
+        [0.5840028524398804, -0.6332815289497375, 0.38831761479377747],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp06 = [
+        [0.6394095420837402, -0.5886231660842896, 0.1171468198299408],
+        [0.5040920376777649, -0.5347781181335449, 0.3003362715244293],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp07 = [
+        [0.4104355275630951, -0.3063742518424988, -0.13495221734046936],
+        [0.27511805295944214, -0.25252923369407654, 0.04823724552989006],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp08 = [
+        [0.4975088834762573, -0.41370677947998047, -0.03908497095108032],
+        [0.36219140887260437, -0.35986173152923584, 0.1441044956445694],
+        [0.09341167658567429, -0.028545614331960678, -0.15182043612003326],
+        [0.22872914373874664, -0.08239065110683441, -0.335009902715683],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp09 = [
+        [0.4975088834762573, -0.41370677947998047, -0.03908497095108032],
+        [0.36219140887260437, -0.35986173152923584, 0.1441044956445694],
+        [-0.3369227945804596, 0.5019137859344482, -0.625616192817688],
+        [-0.20160531997680664, 0.4480687975883484, -0.8088056445121765],
+        [-0.011595571413636208, -0.04594995081424713, 0.1643923968076706],
+        [-0.13274307548999786, 0.10338466614484787, 0.031009700149297714],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp10 = [
+        [0.4975088834762573, -0.41370677947998047, -0.03908497095108032],
+        [0.36219140887260437, -0.35986173152923584, 0.1441044956445694],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.1161508783698082, -0.004345679190009832, 0.3059367835521698],
+        [-0.237298384308815, 0.14498893916606903, 0.17255409061908722],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][8] exp11 = [
+        [0.4975088834762573, -0.41370677947998047, -0.03908497095108032],
+        [0.36219140887260437, -0.35986173152923584, 0.1441044956445694],
+        [-0.15470460057258606, 0.27729931473731995, -0.4249950051307678],
+        [-0.019387122243642807, 0.2234542816877365, -0.6081844568252563],
+        [-0.11959760636091232, -0.002974170260131359, 0.3106028735637665],
+        [-0.24074511229991913, 0.14636044204235077, 0.1772201806306839],
+        [-0.3672933876514435, 0.1967160850763321, 0.3485381007194519],
+        [-0.24614587426185608, 0.047381460666656494, 0.4819208085536957],
+    ];
+    static immutable double[3][6] exp12 = [
+        [0.2678946554660797, -0.2549208104610443, 0.07350164651870728],
+        [-0.2885283827781677, 0.430963933467865, -0.5391168594360352],
+        [-0.08747135102748871, 0.18312741816043854, -0.31775426864624023],
+        [0.08747135102748871, -0.18312741816043854, 0.31775426864624023],
+        [-0.46895167231559753, 0.5027573108673096, -0.2948642671108246],
+        [-0.2678946554660797, 0.2549208104610443, -0.07350164651870728],
+    ];
+    static immutable double[3][6] exp13 = [
+        [0.2678946554660797, -0.2549208104610443, 0.07350164651870728],
+        [0.26759618520736694, -0.2545529007911682, 0.07317303866147995],
+        [-0.08747135102748871, 0.18312741816043854, -0.31775426864624023],
+        [0.08747135102748871, -0.18312741816043854, 0.31775426864624023],
+        [0.08717288821935654, -0.18275950849056244, 0.3174256682395935],
+        [-0.2678946554660797, 0.2549208104610443, -0.07350164651870728],
+    ];
+    static immutable double[3][6] exp14 = [
+        [0.48049625754356384, -0.5169879794120789, 0.3075747787952423],
+        [0.0902116522192955, -0.03589669615030289, -0.12212631106376648],
+        [-0.08747135102748871, 0.18312741816043854, -0.31775426864624023],
+        [0.30007296800613403, -0.4451945722103119, 0.5518273711204529],
+        [-0.0902116522192955, 0.03589669615030289, 0.12212631106376648],
+        [-0.2678946554660797, 0.2549208104610443, -0.07350164651870728],
+    ];
+    static immutable double[3][6] exp15 = [
+        [0.14727678894996643, -0.10623905807733536, -0.05929791182279587],
+        [0.0902116522192955, -0.03589669615030289, -0.12212631106376648],
+        [-0.08747135102748871, 0.18312741816043854, -0.31775426864624023],
+        [-0.033146511763334274, -0.03444566950201988, 0.1849547028541565],
+        [-0.0902116522192955, 0.03589669615030289, 0.12212631106376648],
+        [-0.2678946554660797, 0.2549208104610443, -0.07350164651870728],
+    ];
+    static immutable double[3][6] exp16 = [
+        [0.2678946554660797, -0.2549208104610443, 0.07350164651870728],
+        [0.09385570138692856, 0.1598898470401764, -0.707076907157898],
+        [0.09171882271766663, 0.04508019611239433, -0.3640606105327606],
+        [0.08747135102748871, -0.18312741816043854, 0.31775426864624023],
+        [-0.2987203001976013, 0.3750743865966797, -0.34903764724731445],
+        [-0.20488351583480835, 0.22243158519268036, -0.13699603080749512],
+    ];
+    static immutable double[3][6] exp17 = [
+        [0.2678946554660797, -0.2549208104610443, 0.07350164651870728],
+        [0.28252652287483215, -0.2729570269584656, 0.0896112322807312],
+        [0.09171882271766663, 0.04508019611239433, -0.3640606105327606],
+        [0.08747135102748871, -0.18312741816043854, 0.31775426864624023],
+        [0.10210320353507996, -0.2011636346578598, 0.33386385440826416],
+        [-0.20488351583480835, 0.22243158519268036, -0.13699603080749512],
+    ];
+    static immutable double[3][6] exp18 = [
+        [0.07406548410654068, -0.015993835404515266, -0.13990314304828644],
+        [0.0902116522192955, -0.03589669615030289, -0.12212631106376648],
+        [0.09171882271766663, 0.04508019611239433, -0.3640606105327606],
+        [-0.10635782033205032, 0.05579955875873566, 0.10434948652982712],
+        [-0.0902116522192955, 0.03589669615030289, 0.12212631106376648],
+        [-0.20488351583480835, 0.22243158519268036, -0.13699603080749512],
+    ];
+    static immutable double[3][6] exp19 = [
+        [0.40300917625427246, -0.42147210240364075, 0.2222619205713272],
+        [0.0902116522192955, -0.03589669615030289, -0.12212631106376648],
+        [0.09171882271766663, 0.04508019611239433, -0.3640606105327606],
+        [0.22258585691452026, -0.34967872500419617, 0.46651455760002136],
+        [-0.0902116522192955, 0.03589669615030289, 0.12212631106376648],
+        [-0.20488351583480835, 0.22243158519268036, -0.13699603080749512],
+    ];
+
+    struct Case {
+        string id; int mesh; uint ga, gb; double[3] delta; int domAxis;
+        int railA, railB;            // -1 = fixture reports no rail for that endpoint
+        bool determinate;            // false = MULTI-candidate endpoint, held fixed here
+        const(double[3])[] expect;
+    }
+    static immutable Case[20] cases = [
+        Case("run11_boundary/A_step02", 0, 0u, 1u, [0.0, 0.2741165855213294, 0.0], 1, 3, 2, true, exp00[]),
+        Case("run11_boundary/A_step03", 0, 0u, 1u, [0.0, 0.0, -0.24353848868170486], 2, 3, 2, true, exp01[]),
+        Case("run11_boundary/A_step06", 0, 0u, 1u, [0.0, 0.2741165855213294, 0.0], 1, 3, 2, true, exp02[]),
+        Case("run11_boundary/B_px060", 0, 0u, 1u, [0.0, 0.0785914666275071, 0.0], 1, 3, 2, true, exp03[]),
+        Case("run11_boundary/B_px120", 0, 0u, 1u, [0.0, 0.17172540888373483, 0.0], 1, 3, 2, true, exp04[]),
+        Case("run11_boundary/B_px240", 0, 0u, 1u, [0.0, 0.4284842559971134, 0.0], 1, 3, 2, true, exp05[]),
+        Case("run11_boundary/C_S_p", 0, 0u, 1u, [0.0, 0.2741165855213294, 0.0], 1, 3, 2, true, exp06[]),
+        Case("run11_boundary/C_S_m", 0, 0u, 1u, [0.0, -0.16820394089168939, 0.0], 1, 3, 2, true, exp07[]),
+        Case("run11_boundary/C_F_p", 0, 2u, 3u, [0.0, -0.47929860233631355, 0.0], 1, 1, 0, true, exp08[]),
+        Case("run11_boundary/C_F_m", 0, 2u, 3u, [0.0, 0.352, 0.0], 1, 1, 0, true, exp09[]),
+        Case("run11_boundary/C_C_p", 0, 4u, 5u, [-0.18082462078503622, 0.0, 0.0], 0, 7, 6, true, exp10[]),
+        Case("run11_boundary/C_C_m", 0, 4u, 5u, [0.0, 0.0, -0.1867856083621176], 2, 7, 6, true, exp11[]),
+        Case("run13_strip/I_shared_p", 1, 1u, 4u, [0.0, 0.7316310550781467, 0.0], 1, 2, 5, false, exp12[]),
+        Case("run13_strip/I_shared_m", 1, 1u, 4u, [0.0, -0.3426625872266482, 0.0], 1, 2, 5, false, exp13[]),
+        Case("run13_strip/I_outer_p", 1, 0u, 3u, [0.0, 0.41069314088024644, 0.0], 1, 1, 4, true, exp14[]),
+        Case("run13_strip/I_outer_m", 1, 0u, 3u, [0.0, -0.23300354934593515, 0.0], 1, 1, 4, true, exp15[]),
+        Case("run14_bent/I_shared_p", 2, 1u, 4u, [0.0, 0.0, -0.6168572132788047], 2, 2, 5, false, exp16[]),
+        Case("run14_bent/I_shared_m", 2, 1u, 4u, [0.0, 0.0, 0.37150423149664574], 2, 0, 3, false, exp17[]),
+        Case("run14_bent/I_outer_p", 2, 0u, 3u, [0.0, 0.0, -0.3744295004047694], 2, 1, 4, true, exp18[]),
+        Case("run14_bent/I_outer_m", 2, 0u, 3u, [0.0, 0.0, 0.26100744462938286], 2, 1, 4, true, exp19[]),
+    ];
+
+    string report;
+    double overallWorst = 0;
+    int gated = 0, heldFixed = 0;
+
+    foreach (ref c; cases) {
+        auto verts = c.mesh == 0 ? run11BoundaryVerts[]
+                   : c.mesh == 1 ? run13StripVerts[]
+                                 : run14BentVerts[];
+        auto faces = c.mesh == 0 ? run11BoundaryFaces[]
+                   : c.mesh == 1 ? run13StripFaces[]
+                                 : run14BentFaces[];
+        // Two disjoint quads vs a 2-quad strip sharing one edge. Asserted so a
+        // face-list transcription error cannot quietly change the topology
+        // under test — the rail resolution reads faces, not just positions.
+        immutable size_t expectEdges = (c.mesh == 0) ? 8 : 7;
+
+        auto t       = new TopologyPenTool();
+        auto view    = new View(0, 0, 100, 100);
+        auto history = new CommandHistory();
+        t.history_          = history;
+        t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                        "mesh.topoPen_slide", "Topology Slide",
+                                                        MeshEditScope.Position);
+        Mesh m;
+        t.meshSrc_ = () => &m;
+        foreach (v; verts)
+            m.addVertex(Vec3(cast(float) v[0], cast(float) v[1], cast(float) v[2]));
+        foreach (fc; faces) m.addFace(fc.dup);
+        m.buildLoops();
+
+        assert(m.vertices.length == verts.length && m.faces.length == faces.length
+            && m.edges.length == expectEdges,
+            format("case %s: rebuilt rig must match the captured one "
+                 ~ "(%d verts / %d edges / %d faces); got %d/%d/%d",
+                   c.id, verts.length, expectEdges, faces.length,
+                   m.vertices.length, m.edges.length, m.faces.length));
+
+        uint seed = m.edgeIndex(c.ga, c.gb);
+        assert(seed != uint.max,
+            format("case %s: the grabbed edge %d-%d must exist", c.id, c.ga, c.gb));
+
+        // --- Axis extraction, checked against the reference's OWN recorded
+        // dominant axis rather than against our own re-derivation of it. ---
+        Vec3 dv = Vec3(cast(float) c.delta[0], cast(float) c.delta[1], cast(float) c.delta[2]);
+        float gotAxisVal = TopologyPenTool.dominantAxisDelta(dv);
+        immutable float wantAxisVal = c.domAxis == 0 ? dv.x : c.domAxis == 1 ? dv.y : dv.z;
+        assert(gotAxisVal == wantAxisVal,
+            format("case %s: argmax|delta| must select world axis %d", c.id, c.domAxis));
+        // Consume the FULL-precision component, not the float round-trip —
+        // see `slideEndpointPos` on why the API is double.
+        immutable double deltaK = c.delta[c.domAxis];
+
+        int nA = TopologyPenTool.continuationNeighbor(&m, c.ga, c.gb);
+        int nB = TopologyPenTool.continuationNeighbor(&m, c.gb, c.ga);
+
+        auto before = MeshSnapshot.capture(m);
+        t.commitSlide(seed, cast(int) c.ga, cast(int) c.gb, nA, nB, deltaK);
+
+        assert(m.vertices.length == verts.length && m.edges.length == expectEdges
+            && m.faces.length == faces.length,
+            format("case %s: slide is position-only — topology must be untouched", c.id));
+
+        if (!c.determinate) {
+            // MULTI-candidate endpoints: selection is undetermined, so both
+            // ends are held fixed and the whole gesture is a clean no-op.
+            ++heldFixed;
+            assert(nA == -1 && nB == -1,
+                format("case %s: a multi-continuation endpoint must resolve to NO rail "
+                     ~ "(-1); got %d/%d — a tie-break has slipped in", c.id, nA, nB));
+            assert(m.vertices == before.vertices,
+                format("case %s: with neither endpoint slidable the commit must not "
+                     ~ "move any vertex", c.id));
+            assert(!history.canUndo(),
+                format("case %s: a both-fixed slide must record NO undo entry", c.id));
+            continue;
+        }
+
+        ++gated;
+        assert(nA == c.railA && nB == c.railB,
+            format("case %s: resolved rails must match the captured ones "
+                 ~ "(%d/%d); got %d/%d", c.id, c.railA, c.railB, nA, nB));
+
+        double worst = 0;
+        size_t worstAt = 0;
+        foreach (i; 0 .. verts.length) {
+            auto e = c.expect[i];
+            const double dx = cast(double) m.vertices[i].x - e[0];
+            const double dy = cast(double) m.vertices[i].y - e[1];
+            const double dz = cast(double) m.vertices[i].z - e[2];
+            import std.math : sqrt;
+            const double dist = sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist > worst) { worst = dist; worstAt = i; }
+        }
+        report ~= format("\n    %-26s axis=%d delta=%+.6f worst=%.4e at v%d",
+                         c.id, c.domAxis, deltaK, worst, worstAt);
+        if (worst > overallWorst) overallWorst = worst;
+
+        // Guard against a vacuous pass: the grabbed endpoints must genuinely
+        // move, or "reproduces the target" would be satisfied by doing nothing.
+        assert((m.vertices[c.ga] - before.vertices[c.ga]).length > 1e-4f
+            && (m.vertices[c.gb] - before.vertices[c.gb]).length > 1e-4f,
+            format("case %s: both grabbed endpoints must actually slide", c.id));
+
+        // The captured invariant that both endpoints share ONE scalar: equal
+        // travel distance, independent of the two rails' directions/lengths.
+        immutable double travA = (m.vertices[c.ga] - before.vertices[c.ga]).length;
+        immutable double travB = (m.vertices[c.gb] - before.vertices[c.gb]).length;
+        import std.math : abs;
+        assert(abs(travA - travB) < 1e-6,
+            format("case %s: both endpoints must travel the same distance "
+                 ~ "(%.9f vs %.9f)", c.id, travA, travB));
+        // ...and that distance is |delta[k]| EXACTLY — no clamp anywhere.
+        assert(abs(travA - abs(deltaK)) < 1e-6,
+            format("case %s: travel must equal |delta[k]| = %.9f exactly (got %.9f) "
+                 ~ "— a surviving [0,1] clamp would shorten it", c.id, abs(deltaK), travA));
+
+        assert(history.canUndo(), format("case %s: a real slide must be undoable", c.id));
+        history.undo();
+        foreach (i; 0 .. verts.length)
+            assert((m.vertices[i] - before.vertices[i]).length < 1e-6f,
+                format("case %s: one undo must fully revert the gesture", c.id));
+    }
+
+    assert(gated == 16 && heldFixed == 4,
+        format("the split by determinacy must stay 16 gated / 4 held-fixed; got %d/%d",
+               gated, heldFixed));
+    assert(overallWorst < 1e-7,
+        format("the Slide law must reproduce every determinate captured gesture to the "
+             ~ "fixture's 1e-7 (a correct port lands at 3.3e-08); worst over %d cases "
+             ~ "= %.4e%s", gated, overallWorst, report));
 }
 
 // ---------------------------------------------------------------------------
