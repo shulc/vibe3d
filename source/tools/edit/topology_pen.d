@@ -18,6 +18,7 @@ import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
 import constraint           : resolveHoverTarget, kTopoPenSnapPx, closestPointOnMeshes;
 import snap                  : backgroundSourcesSnapshot;
+import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick, SurfaceHit;
 import command_history      : CommandHistory;
@@ -827,6 +828,28 @@ private:
     private enum float kSmoothPassStridePx      = 20.0f;
     private enum int   MAX_TOPOPEN_SMOOTH_PASSES = 256;
 
+    // UNMEASURED, DELIBERATELY UNCHANGED (reference parity task): the
+    // drag→iteration-count MAPPING above is *not* established. What IS
+    // measured about the reference: a click yields exactly 1 iteration, a
+    // ~40px drag yielded 1/2/7/15/23 across its evaluations and a ~160px drag
+    // 1/6/25/57, and setting the reference's own iteration ATTRIBUTE to 3
+    // still left the count at 1 — so the count is driven by the drag, not by
+    // an attribute. The exact function of drag distance was never captured
+    // (an early linear fit was retracted), and `1 + dragPx/20` here is
+    // equally unmeasured. It is kept AS-IS on purpose: replacing one
+    // unmeasured mapping with another would add no parity and would churn
+    // `smoothPassCount`'s HTTP contract and its tests. Close it with a
+    // capture, not a guess.
+
+    // Smooth relaxation force factor (measured): `F = strength / 20`, with a
+    // reference default `strength` of 1.0 → F = 0.05. The divisor is a
+    // literal read from the reference, not a fitted constant. Backing store
+    // for the `smoothStrength` Param (see `params()`); sticky across
+    // gestures like every other tool option here.
+    private enum float kSmoothStrengthDefault = 1.0f;
+    private enum float kSmoothStrengthDivisor = 20.0f;
+    float smoothStrength_ = kSmoothStrengthDefault;
+
     // --- Generic Hover-Highlight indicator (doc/topopen_hover_highlight_plan.md,
     // REV1). An always-on, mode-INDEPENDENT "what's under the cursor"
     // affordance over the PRIMARY mesh, orthogonal to every armed gesture
@@ -1086,11 +1109,26 @@ public:
     // yaml row. "mode" MUST match `config/forms/topology_pen.yaml`'s new
     // dropdown row's `control:` string exactly, same contract as
     // `splitMiddle` above.
+    //
+    // Smooth strength (reference parity, `doc/tasks/work/0478-topopen-smooth-kernel.md`):
+    // APPENDED for the same reason — never a full-replace. Scales the Smooth
+    // relaxation force as `F = smoothStrength / kSmoothStrengthDivisor`
+    // (`applySmoothPasses`); the reference's own default is 1.0, giving
+    // F = 0.05. Bounds are `.enforceBounds()`-backed so a headless
+    // `tool.attr` injection cannot drive the force outside the sane range
+    // (0 = a pure no-op, the upper end already well past useful). This is a
+    // FORCE scale, not a work scale — the iteration count, which IS the work
+    // scale, carries its own `MAX_TOPOPEN_SMOOTH_PASSES` cap in
+    // `applySmoothPasses`, and the kernel additionally rejects a non-finite
+    // factor that `.enforceBounds()` cannot clamp.
     override Param[] params() {
         return [
             Param.bool_("splitMiddle", "Split at the Middle", &splitAtMiddle_, false),
             Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
                            cast(int)PenMode.Draw),
+            Param.float_("smoothStrength", "Smooth Strength", &smoothStrength_,
+                         kSmoothStrengthDefault)
+                 .min(0.0f).max(4.0f).enforceBounds(),
         ];
     }
 
@@ -2952,9 +2990,12 @@ public:
     }
 
     // P8: true when vertex `v` is incident to AT LEAST ONE open edge
-    // (`isOpenEdge`) — a boundary vertex, per the measured relax rule in
-    // `smoothedRelaxTarget` below. `adjOff`/`adjNbrs` are the caller's
-    // already-fetched CSR adjacency (avoids re-fetching per vertex).
+    // (`isOpenEdge`) — a boundary vertex, per the measured relax rule the
+    // Smooth kernel applies (`buildRelaxTopology` below feeds the equivalent
+    // per-slot flags to `deriveBoundary`, which is the authority on that
+    // path; this predicate remains for single-vertex queries and tests).
+    // `adjOff`/`adjNbrs` are the caller's already-fetched CSR adjacency
+    // (avoids re-fetching per vertex).
     private static bool isOpenVertex(Mesh* m, uint v,
                                      const(size_t)[] adjOff, const(uint)[] adjNbrs) {
         foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
@@ -2963,20 +3004,29 @@ public:
         return false;
     }
 
-    // MEASURED inverse-edge-length relax KERNEL (P12,
-    // doc/topopen_p12_smoothloop_plan.md Phase 1 — extracted from P8's
-    // `smoothedRelaxTarget`, below, so BOTH the whole-mesh Smooth gesture
-    // and the 1-D Smooth+Loop gesture share the IDENTICAL measured law over
-    // whatever neighbor SET the caller hands it): a closer neighbor pulls
-    // harder —
+    // Inverse-edge-length relax KERNEL for the 1-D Smooth+Loop gesture (P12,
+    // doc/topopen_p12_smoothloop_plan.md Phase 1).
+    //
+    // SCOPE (narrowed — read this before reusing it): this was originally
+    // extracted so the whole-mesh Smooth gesture and the 1-D Smooth+Loop
+    // gesture could share one law. That premise no longer holds. The
+    // whole-mesh Smooth path has since been re-measured and moved to a
+    // DIFFERENT, force-accumulating law (`tools/edit/smooth_relax.d`), which
+    // superseded the reading below — in particular the weights there are
+    // proportional to edge LENGTH, not its inverse, and the step is projected
+    // perpendicular to each edge. Smooth+Loop's own weighting has NOT been
+    // re-measured, so it keeps this law until it is; do not "unify" the two
+    // on the assumption that they must agree, and do not treat this function
+    // as evidence about the whole-mesh path.
+    //
+    // The law it does implement: a closer neighbor pulls harder —
     //   relaxTarget(v) = Σ_i (n_i / len_i) / Σ_i (1 / len_i)
     // where `len_i = |v − n_i|` at the caller-supplied `readPos` snapshot
     // (every vertex in a pass reads from the SAME snapshot, mirroring
     // `MeshSmooth`'s own prev/cur double-buffer, smooth.d:280-297) and
     // `nbrs` is whatever neighbor set the caller has already resolved
-    // (`smoothedRelaxTarget`'s boundary-restricted full 1-ring, or
-    // `applySmoothLoopPasses`'s 1-D loop-neighbor pair) — this function
-    // itself has NO topology awareness beyond the list it's handed.
+    // (today: `applySmoothLoopPasses`'s 1-D loop-neighbor pair) — this
+    // function itself has NO topology awareness beyond the list it's handed.
     // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
     // so a future capture can retune it without touching the weight law.
     // An empty `nbrs` returns `readPos[v]` UNCHANGED — a true no-op,
@@ -3003,66 +3053,47 @@ public:
         return readPos[v] + (mean - readPos[v]) * kStrength;
     }
 
-    // PLUGGABLE relax target — the pre-re-snap smoothed position of vertex
-    // `v` (P8, doc/topopen_p8_smooth_plan.md "The MEASURED weight"). Reads
-    // `v`'s neighbors from `m.vertexAdjacencyCSR` — the EXACT same CSR
+    // Freeze this mesh's topology into the form the measured relaxation
+    // kernel consumes (`tools/edit/smooth_relax.d`, which owns the law
+    // itself and the evidence for it). Built ONCE per Smooth gesture: the
+    // gesture is Position-only, so `edges[]`/`faces[]` — and therefore every
+    // field here — are invariant across all of its iterations.
+    //
+    // Neighbours come from `m.vertexAdjacencyCSR`, the EXACT same CSR
     // adjacency the shipped Laplacian smooth averages over
-    // (`commands/mesh/smooth.d`) — so this gesture's neighbor SET can never
-    // drift from that command's.
+    // (`commands/mesh/smooth.d`), so this gesture's neighbour SET can never
+    // drift from that command's. `openTo` is filled slot-for-slot from
+    // `isOpenEdge` — the same open-edge classification `seedRail` /
+    // `commitAddLoop` use — and `boundary` is DERIVED from it by
+    // `deriveBoundary`, never assembled here, so the per-vertex flag and the
+    // per-slot flags cannot disagree.
     //
-    // MEASURED (task 0477 P8 capture, 3 independent boots, 14/16 verts —
-    // 87.5%): INVERSE EDGE-LENGTH weighting — NOT a uniform centroid (the
-    // shared law lives in `inverseEdgeLenRelax` above, P12 extraction);
-    // this function's OWN job is resolving WHICH neighbors feed it —
-    //
-    // Boundary vertices (measured — the reference's boundary-restriction rule): a vertex on the
-    // open boundary (`isOpenVertex`) relaxes using ONLY its open-edge
-    // -incident neighbors, not its full 1-ring — a neighbor reached only
-    // via a fully-interior (2-face) edge is excluded for such a vertex.
-    //
-    // RESIDUAL (flagged, NOT modeled — do not guess): the reference applies
-    // an additional tangential/shrinkage-correction term this function does
-    // not reproduce, so inverse-edge-length is CLOSE to the reference but
-    // not bit-exact (see this file's T4-equivalent unittest below, a
-    // tolerance-based discriminator, never an exact-value assert).
-    //
-    // A vertex with zero (usable) neighbors — an isolated point, or
-    // (defensively; should not occur — the classifying edge is itself an
-    // open-edge neighbor) a boundary vertex with none — returns `readPos[v]`
-    // UNCHANGED: a true no-op, bit-identical (no arithmetic performed).
-    // `hadNeighbors` reports WHICH case this was so the caller
-    // (`applySmoothPasses`) can tell "genuinely relaxed" apart from
-    // "passthrough no-op" and skip a 0-neighbor vertex ENTIRELY — no relax,
-    // no background re-snap either (review NIT-2: snapping an isolated/
-    // loose point onto a background surface is a deliberate NON-goal here,
-    // and UNMEASURED against the reference — flagged, not modeled — so a
-    // 0-neighbor vertex is left untouched rather than guessed at).
-    private static Vec3 smoothedRelaxTarget(Mesh* m, uint v, const(Vec3)[] readPos,
-                                            out bool hadNeighbors) {
+    // The measured boundary rule: a vertex with at least one open edge
+    // relaxes using ONLY its open-edge neighbours, not its full 1-ring
+    // (dropping this restriction costs 4.3e-02 against the conformance
+    // fixture). A missing `edgeIndex` (defensive — should not occur
+    // post-`buildLoops`) is treated as NOT open, i.e. as an interior edge:
+    // the conservative choice, since it can only restrict, never widen.
+    private static RelaxTopology buildRelaxTopology(Mesh* m) {
         const(size_t)[] adjOff;
         const(uint)[]   adjNbrs;
         m.vertexAdjacencyCSR(adjOff, adjNbrs);
-        auto nbrs = adjNbrs[adjOff[v] .. adjOff[v + 1]];
-        if (nbrs.length == 0) return readPos[v];
 
-        immutable bool boundary = isOpenVertex(m, v, adjOff, adjNbrs);
-
-        // P12 (Phase 1 extraction): build the boundary-restricted 1-ring
-        // list when needed, then delegate the actual weighting to the
-        // shared kernel — the SAME one `applySmoothLoopPasses`'s 1-D loop
-        // relax calls with a different (loop-neighbor) list.
-        const(uint)[] relaxNbrs = nbrs;
-        uint[] restricted;
-        if (boundary) {
-            foreach (nb; nbrs) {
-                uint ei = m.edgeIndex(v, nb);
-                if (ei != uint.max && isOpenEdge(m, ei)) restricted ~= nb;
+        auto openTo = new bool[](adjNbrs.length);
+        foreach (v; 0 .. m.vertices.length) {
+            foreach (k; adjOff[v] .. adjOff[v + 1]) {
+                uint ei = m.edgeIndex(cast(uint) v, adjNbrs[k]);
+                openTo[k] = (ei != uint.max) && isOpenEdge(m, ei);
             }
-            relaxNbrs = restricted;
         }
-        if (relaxNbrs.length == 0) return readPos[v];   // defensive; should not occur (see doc comment above)
 
-        return inverseEdgeLenRelax(readPos, v, relaxNbrs, hadNeighbors);
+        RelaxTopology topo = {
+            offset:   adjOff,
+            nbrs:     adjNbrs,
+            openTo:   openTo,
+            boundary: deriveBoundary(adjOff, openTo),
+        };
+        return topo;
     }
 
     // 1-D LOOP-neighbor connectivity (P12,
@@ -3088,29 +3119,52 @@ public:
         return nbrs;
     }
 
-    // P8 (doc/topopen_p8_smooth_plan.md Phase 2/REV1): commit `passCount`
-    // passes of relax+re-snap over the WHOLE primary mesh (V1 scope — no
-    // falloff-radius brushing, see plan §Scope). Click supplies
-    // `passCount==1`; a drag supplies more (`onMouseButtonUp`'s Smooth
-    // branch). Each pass: snapshot the current positions ONCE
-    // (`read = m.vertices.dup`), then for every vertex compute
-    // `smoothedRelaxTarget` (the measured inverse-edge-length weight) and,
-    // when a background source exists, re-snap it onto the NEAREST point
-    // of that background via `closestPointOnMeshes` (constraint.d;
-    // capture-verified crux — a nearest-FOOT query, NOT a camera-ray one —
-    // the same primitive the CONS Point-mode branch already uses).
-    // `sources`/`before` are captured ONCE per commit (not per pass):
-    // `sources` is a point-in-time snapshot of the live background layers,
-    // `before` is the DOWN-time state. Deferring every pass to release
-    // (plan "Undo — COALESCE") means the mesh is never mutated before this
-    // one call, so `mutationVersion` never moves mid-loop — the CSR
-    // adjacency cache (`vertexAdjacencyCSR`, fetched once per vertex per
-    // pass inside `smoothedRelaxTarget`) stays warm across the WHOLE
-    // N-pass loop; only `closestPointOnMeshes`'s brute-force scan carries
-    // the O(V·F_bg) per-pass cost (plan Risk 3). Position-only, zero
-    // topology delta — never resizes/rebuilds `faces[]`/`edges[]`/
-    // `vertices[]`, so unlike P5/P6 this does NOT call `resyncSession()`
-    // (mirrors `commitSlide`'s own reasoning).
+    // Commit ONE Smooth evaluation of `passCount` relaxation iterations over
+    // the WHOLE primary mesh (V1 scope — no falloff-radius brushing), then a
+    // SINGLE background re-snap. Click supplies `passCount==1`; a drag
+    // supplies more (`onMouseButtonUp`'s Smooth branch).
+    //
+    // The relaxation law itself lives in `tools/edit/smooth_relax.d` — see
+    // that module's header for the measured formula and the per-part
+    // ablation evidence. This function owns everything AROUND it: the
+    // topology freeze, the float↔double conversion, the re-snap, and the
+    // undo record.
+    //
+    // EVALUATION SEMANTICS (measured, reference parity). Three properties,
+    // all of which this shape satisfies:
+    //
+    //   (1) RESTART FROM THE PRE-GESTURE MESH. Every evaluation begins from
+    //       the positions the mesh had before the gesture started — passes
+    //       do not compound across evaluations. Here that holds by
+    //       construction: the whole gesture is deferred to release, so this
+    //       is the ONLY evaluation and `m.vertices` still holds the DOWN-time
+    //       state when the iteration loop is seeded from it.
+    //   (2) SNAP ONCE, AFTER ALL ITERATIONS — not between them. This is a
+    //       real change from the previous shape, which re-snapped every
+    //       pass: re-snapping mid-relaxation feeds the constrained position
+    //       back into the next iteration's neighbour reads, which is a
+    //       different trajectory (and, with N>1, a visibly different result)
+    //       from relaxing freely and constraining the outcome once.
+    //   (3) COMMIT ONLY THE LAST EVALUATION — one `history_.record` for the
+    //       whole gesture, which this already did.
+    //
+    // The iteration loop is pure arithmetic on a local `double` array, so
+    // `mutationVersion` never moves inside it and the CSR adjacency behind
+    // `buildRelaxTopology` is fetched exactly once. `closestPointOnMeshes`'s
+    // brute-force O(V·F_bg) scan now runs ONCE per gesture instead of once
+    // per pass — property (2) makes the multi-pass case cheaper, not dearer.
+    // Position-only, zero topology delta, so unlike P5/P6 this does NOT call
+    // `resyncSession()` (mirrors `commitSlide`'s own reasoning).
+    //
+    // `lockBound` / `lockCorner` — MEASURED, NOT OVERLOOKED. The reference
+    // carries two such flags and they are deliberately absent here: both
+    // were confirmed to reach the reference's own kernel and to change
+    // NOTHING on this whole-mesh path (with either flag on, all 15 boundary
+    // and all 4 corner vertices of the capture rig still moved, bit-identical
+    // to the unlocked run — the conformance fixture pins two of those cases
+    // directly). Implementing them as vertex-holding here would therefore
+    // CREATE a divergence, not close one. They become real only on the
+    // falloff / edge-loop path, if that is ever ported.
     //
     // REV1 FIX-2 (PRIORITY, not hedged/unconditional — opponent obj-2): a
     // Smooth gesture that produces NO net vertex change — 0-neighbor
@@ -3128,6 +3182,9 @@ public:
         // Two-layer clamp (plan "Passes"): floor at 1 (a click always
         // applies exactly one pass), cap at MAX_TOPOPEN_SMOOTH_PASSES (the
         // runaway backstop, mirroring MeshSmooth's own MAX_SMOOTH_ITER).
+        // This is the ONLY work-scaling quantity on this path and the cap is
+        // unconditional, so a headless caller cannot drive the O(iters·E)
+        // loop past it.
         if (passCount < 1) passCount = 1;
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
@@ -3135,28 +3192,49 @@ public:
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         immutable size_t nV = m.vertices.length;
-        foreach (pass; 0 .. passCount) {
-            Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot
-            foreach (vi; 0 .. nV) {
-                bool hadNeighbors;
-                Vec3 relaxed = smoothedRelaxTarget(m, cast(uint)vi, read, hadNeighbors);
-                // NIT-2: a vertex with no relaxation neighbors is a loose
-                // (0-neighbor) point — skip it ENTIRELY, including the
-                // background re-snap below, so it is a TRUE no-op rather
-                // than getting silently pulled onto the background surface
-                // (see this function's own doc comment above — this is
-                // what keeps `smoothedRelaxTarget`'s no-op premise true).
-                if (!hadNeighbors) continue;
-                if (sources.length) {
-                    Vec3  hit, hitN;
-                    int   si, fi;
-                    float d2;
-                    enum bool dblSided = false;   // V1 default — matches CONS Point-mode's own default
-                    if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
-                        relaxed = hit;
-                }
-                m.vertices[vi] = relaxed;
+        if (nV == 0) return;
+
+        // Topology frozen once (Position-only gesture — it cannot move).
+        auto topo = buildRelaxTopology(m);
+
+        // Seed the double-precision working set from the PRE-GESTURE
+        // positions (semantics (1) above) and run every iteration on it.
+        auto pos = new RelaxVec3[](nV);
+        foreach (vi; 0 .. nV)
+            pos[vi] = RelaxVec3(m.vertices[vi].x, m.vertices[vi].y, m.vertices[vi].z);
+
+        relaxPasses(pos, topo, cast(double) smoothStrength_ / kSmoothStrengthDivisor,
+                    passCount);
+
+        // ONE re-snap pass over the relaxed result (semantics (2) above),
+        // onto the NEAREST point of the background via `closestPointOnMeshes`
+        // (constraint.d; capture-verified crux — a nearest-FOOT query, NOT a
+        // camera-ray one — the same primitive the CONS Point-mode branch
+        // already uses).
+        foreach (vi; 0 .. nV) {
+            // A 0-neighbor vertex is a loose point: it can neither generate
+            // nor receive a relaxation force, so it is skipped ENTIRELY,
+            // including the background re-snap, leaving it byte-unchanged.
+            //
+            // OPEN / static-only: the reference is understood to still run
+            // its per-vertex commit callback for such a vertex, and would
+            // therefore snap it to the background. The conformance fixture
+            // cannot settle this — its minimum vertex degree is 2, so it
+            // contains no isolated vertex at all — so the existing
+            // vibe3d behavior is kept rather than changed on a prediction.
+            if (topo.offset[vi] == topo.offset[vi + 1]) continue;
+
+            Vec3 relaxed = Vec3(cast(float) pos[vi].x, cast(float) pos[vi].y,
+                                cast(float) pos[vi].z);
+            if (sources.length) {
+                Vec3  hit, hitN;
+                int   si, fi;
+                float d2;
+                enum bool dblSided = false;   // V1 default — matches CONS Point-mode's own default
+                if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
+                    relaxed = hit;
             }
+            m.vertices[vi] = relaxed;
         }
 
         // REV1 FIX-2: unconditional no-op check — a gesture that nets to
@@ -5434,59 +5512,257 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// smoothedRelaxTarget — T4 (P8, doc/topopen_p8_smooth_plan.md "Testing
-// Strategy"): on an IRREGULAR 1-ring (one very distant neighbor, two close
-// ones — a "hub" of 3 BARE edges, so every incident edge is open and the
-// boundary-filtering branch keeps the full ring, isolating the weight-law
-// question from the boundary-restriction one), the relaxed result must be
-// CLOSER to the MEASURED inverse-edge-length-weighted target than to the
-// uniform (plain) mean — mirroring the capture's own discriminator. This is
-// primarily a TOLERANCE-based assertion (not a bit-exact one against the
-// reference — this file's own doc comment on `smoothedRelaxTarget` flags an
-// unmodeled tangential/shrinkage-correction residual there); the SECOND
-// assertion below (distToWeighted near-zero) IS an exact check, but only
-// against this function's OWN documented formula, independently
-// re-derived here — never a second call into the implementation under
-// test.
+// Smooth relaxation kernel — REFERENCE PARITY CONFORMANCE (the primary gate
+// for `tools/edit/smooth_relax.d`; that module's header states the law and
+// the ablation evidence).
+//
+// Six independently-captured cases over two rigs, replayed through the REAL
+// path this tool uses: a `Mesh` built from the rig, `buildRelaxTopology`'s
+// own CSR + open-edge extraction, then `relaxPasses`. The expected values
+// are the exact positions the reference kernel produces BEFORE its per-vertex
+// background re-snap — i.e. precisely the output this kernel must reproduce
+// — read at full double precision and stable across independent capture
+// sessions. Coverage: both rig orientations, strength 1.0 and 0.5, a single
+// iteration and a 57-iteration run, and the two lock flags.
+//
+// Tolerance: 1e-9. A correct port lands near 1e-16 (the fixture's own
+// clean-room verifier reaches 2.3e-16); the four orders of margin absorb
+// only the neighbour-summation ORDER difference between that verifier's
+// sorted 1-ring and this mesh's CSR order. Anything approaching 1e-9 means
+// the law itself has drifted, not that the arithmetic reassociated.
+//
+// The two lock cases are the load-bearing evidence for NOT implementing
+// `lockBound`/`lockCorner` on this path: their expected positions are
+// IDENTICAL to the unlocked case's, boundary and corner vertices included.
+// See `applySmoothPasses`'s doc comment.
 // ---------------------------------------------------------------------------
 unittest {
     import std.format : format;
+    import std.math   : abs;
 
-    Mesh m;
-    uint v  = m.addVertex(Vec3(0, 0, 0));
-    uint n1 = m.addVertex(Vec3(1, 0, 0));    // close  (len 1)
-    uint n2 = m.addVertex(Vec3(0, 10, 0));   // far    (len 10)
-    uint n3 = m.addVertex(Vec3(0, 0, 1));    // close  (len 1)
-    m.addEdge(v, n1);
-    m.addEdge(v, n2);
-    m.addEdge(v, n3);
-    m.buildLoops();
+    string report;          // every case's worst error, so ONE failure shows the whole picture
+    double overallWorst = 0;
 
-    Vec3[] readPos = m.vertices.dup;
-    bool hadNeighbors;
-    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v, readPos, hadNeighbors);
-    assert(hadNeighbors, "a hub of 3 bare edges must report usable relax neighbors");
+    // Shared topology (the two rigs are the same builder output, differing
+    // only in orientation, so edges/faces are identical).
+    static immutable uint[][9] rigFaces = [
+        [0u,2u,3u,1u],
+        [2u,4u,5u,3u],
+        [4u,6u,7u,5u],
+        [6u,8u,9u,7u],
+        [10u,11u,12u],
+        [10u,12u,13u],
+        [10u,13u,14u],
+        [10u,14u,15u],
+        [10u,15u,11u],
+    ];
+    enum size_t kRigEdgeCount = 23;
+    static immutable double[3][16] rigAVerts = [
+        [-0.3499999940395355, -0.05000000074505806, 0.55859375],
+        [-0.3499999940395355, 0.05000000074505806, 0.55859375],
+        [-0.2800000011920929, -0.05000000074505806, 0.6274999976158142],
+        [-0.2800000011920929, 0.05000000074505806, 0.6274999976158142],
+        [0.0, -0.05000000074505806, 0.75],
+        [0.0, 0.05000000074505806, 0.75],
+        [0.10000000149011612, -0.05000000074505806, 0.734375],
+        [0.10000000149011612, 0.05000000074505806, 0.734375],
+        [0.3499999940395355, -0.05000000074505806, 0.55859375],
+        [0.3499999940395355, 0.05000000074505806, 0.55859375],
+        [0.75, 0.0, 0.5],
+        [1.0499999523162842, 0.05000000074505806, 0.5],
+        [0.8999999761581421, 0.2800000011920929, 0.5],
+        [0.6499999761581421, 0.20000000298023224, 0.5],
+        [0.4699999988079071, -0.05000000074505806, 0.5],
+        [0.8299999833106995, -0.25, 0.5],
+    ];
+    static immutable double[3][16] rigBVerts = [
+        [0.55859375, -0.3499999940395355, -0.05000000074505806],
+        [0.55859375, -0.3499999940395355, 0.05000000074505806],
+        [0.6274999976158142, -0.2800000011920929, -0.05000000074505806],
+        [0.6274999976158142, -0.2800000011920929, 0.05000000074505806],
+        [0.75, 0.0, -0.05000000074505806],
+        [0.75, 0.0, 0.05000000074505806],
+        [0.734375, 0.10000000149011612, -0.05000000074505806],
+        [0.734375, 0.10000000149011612, 0.05000000074505806],
+        [0.55859375, 0.3499999940395355, -0.05000000074505806],
+        [0.55859375, 0.3499999940395355, 0.05000000074505806],
+        [0.5, 0.75, 0.0],
+        [0.5, 1.0499999523162842, 0.05000000074505806],
+        [0.5, 0.8999999761581421, 0.2800000011920929],
+        [0.5, 0.6499999761581421, 0.20000000298023224],
+        [0.5, 0.4699999988079071, -0.05000000074505806],
+        [0.5, 0.8299999833106995, -0.25],
+    ];
 
-    // Independently-computed candidates — never re-deriving the tool's own
-    // implementation by calling back into it.
-    Vec3 uniformMean = (readPos[n1] + readPos[n2] + readPos[n3]) * (1.0f / 3.0f);
-    float w1 = 1.0f / (readPos[v] - readPos[n1]).length;
-    float w2 = 1.0f / (readPos[v] - readPos[n2]).length;
-    float w3 = 1.0f / (readPos[v] - readPos[n3]).length;
-    Vec3 weightedMean = (readPos[n1] * w1 + readPos[n2] * w2 + readPos[n3] * w3)
-                       * (1.0f / (w1 + w2 + w3));
+    // The six captured cases: rig, strength, iteration count, and the exact
+    // pre-re-snap position the reference kernel produces for every vertex.
+    struct Case { string id; bool rigB; double strength; int iters; const(double[3])[] expect; }
+    static immutable double[3][16] expect0 = [
+        [-0.3509309595007398, -0.047522392129164905, 0.5595394926268349],
+        [-0.3509309595007398, 0.047522392129164905, 0.5595394926268349],
+        [-0.2793560716931852, -0.052477609360951215, 0.6272103371785385],
+        [-0.2793560716931852, 0.052477609360951215, 0.6272103371785385],
+        [0.0002310144766059759, -0.05000000074505806, 0.7489853802966783],
+        [0.0002310144766059759, 0.05000000074505806, 0.7489853802966783],
+        [0.09908954754612097, -0.05376729737875115, 0.7333589947213962],
+        [0.09908954754612097, 0.05376729737875115, 0.7333589947213962],
+        [0.3509664694692213, -0.04623270411136497, 0.5599682927923663],
+        [0.3509664694692213, 0.04623270411136497, 0.5599682927923663],
+        [0.7531294454837306, 0.005525881341248126, 0.5],
+        [1.0514480743992267, 0.04595558369844894, 0.5],
+        [0.9012222446670399, 0.278483298147573, 0.5],
+        [0.6439291070734187, 0.20394696446603477, 0.5],
+        [0.47358182993924025, -0.05548756388530698, 0.5],
+        [0.8266891851885189, -0.24842415959567274, 0.5],
+    ];
+    static immutable double[3][16] expect1 = [
+        [0.5595394926268349, -0.3509309595007398, -0.047522392129164905],
+        [0.5595394926268349, -0.3509309595007398, 0.047522392129164905],
+        [0.6272103371785385, -0.2793560716931852, -0.052477609360951215],
+        [0.6272103371785385, -0.2793560716931852, 0.052477609360951215],
+        [0.7489853802966783, 0.0002310144766059759, -0.05000000074505806],
+        [0.7489853802966783, 0.0002310144766059759, 0.05000000074505806],
+        [0.7333589947213962, 0.09908954754612097, -0.05376729737875115],
+        [0.7333589947213962, 0.09908954754612097, 0.05376729737875115],
+        [0.5599682927923663, 0.3509664694692213, -0.04623270411136497],
+        [0.5599682927923663, 0.3509664694692213, 0.04623270411136497],
+        [0.5, 0.7531294454837306, 0.005525881341248126],
+        [0.5, 1.0514480743992267, 0.04595558369844894],
+        [0.5, 0.9012222446670399, 0.278483298147573],
+        [0.5, 0.6439291070734187, 0.20394696446603477],
+        [0.5, 0.47358182993924025, -0.05548756388530698],
+        [0.5, 0.8266891851885189, -0.24842415959567274],
+    ];
+    static immutable double[3][16] expect2 = [
+        [0.5590666213134174, -0.3504654767701377, -0.04876119643711148],
+        [0.5590666213134174, -0.3504654767701377, 0.04876119643711148],
+        [0.6273551673971763, -0.27967803644263906, -0.05123880505300464],
+        [0.6273551673971763, -0.27967803644263906, 0.05123880505300464],
+        [0.7494926901483392, 0.00011550723830298796, -0.05000000074505806],
+        [0.7494926901483392, 0.00011550723830298796, 0.05000000074505806],
+        [0.7338669973606982, 0.09954477451811855, -0.0518836490619046],
+        [0.7338669973606982, 0.09954477451811855, 0.0518836490619046],
+        [0.5592810213961832, 0.3504832317543784, -0.048116352428211516],
+        [0.5592810213961832, 0.3504832317543784, 0.048116352428211516],
+        [0.5, 0.7515647227418654, 0.002762940670624063],
+        [0.5, 1.0507240133577553, 0.047977792221753496],
+        [0.5, 0.900611110412591, 0.27924164966983295],
+        [0.5, 0.6469645416157803, 0.2019734837231335],
+        [0.5, 0.4717909143735737, -0.05274378231518252],
+        [0.5, 0.8283445842496092, -0.24921207979783636],
+    ];
+    static immutable double[3][16] expect3 = [
+        [0.5595394926268349, -0.3509309595007398, -0.047522392129164905],
+        [0.5595394926268349, -0.3509309595007398, 0.047522392129164905],
+        [0.6272103371785385, -0.2793560716931852, -0.052477609360951215],
+        [0.6272103371785385, -0.2793560716931852, 0.052477609360951215],
+        [0.7489853802966783, 0.0002310144766059759, -0.05000000074505806],
+        [0.7489853802966783, 0.0002310144766059759, 0.05000000074505806],
+        [0.7333589947213962, 0.09908954754612097, -0.05376729737875115],
+        [0.7333589947213962, 0.09908954754612097, 0.05376729737875115],
+        [0.5599682927923663, 0.3509664694692213, -0.04623270411136497],
+        [0.5599682927923663, 0.3509664694692213, 0.04623270411136497],
+        [0.5, 0.7531294454837306, 0.005525881341248126],
+        [0.5, 1.0514480743992267, 0.04595558369844894],
+        [0.5, 0.9012222446670399, 0.278483298147573],
+        [0.5, 0.6439291070734187, 0.20394696446603477],
+        [0.5, 0.47358182993924025, -0.05548756388530698],
+        [0.5, 0.8266891851885189, -0.24842415959567274],
+    ];
+    static immutable double[3][16] expect4 = [
+        [0.5595394926268349, -0.3509309595007398, -0.047522392129164905],
+        [0.5595394926268349, -0.3509309595007398, 0.047522392129164905],
+        [0.6272103371785385, -0.2793560716931852, -0.052477609360951215],
+        [0.6272103371785385, -0.2793560716931852, 0.052477609360951215],
+        [0.7489853802966783, 0.0002310144766059759, -0.05000000074505806],
+        [0.7489853802966783, 0.0002310144766059759, 0.05000000074505806],
+        [0.7333589947213962, 0.09908954754612097, -0.05376729737875115],
+        [0.7333589947213962, 0.09908954754612097, 0.05376729737875115],
+        [0.5599682927923663, 0.3509664694692213, -0.04623270411136497],
+        [0.5599682927923663, 0.3509664694692213, 0.04623270411136497],
+        [0.5, 0.7531294454837306, 0.005525881341248126],
+        [0.5, 1.0514480743992267, 0.04595558369844894],
+        [0.5, 0.9012222446670399, 0.278483298147573],
+        [0.5, 0.6439291070734187, 0.20394696446603477],
+        [0.5, 0.47358182993924025, -0.05548756388530698],
+        [0.5, 0.8266891851885189, -0.24842415959567274],
+    ];
+    static immutable double[3][16] expect5 = [
+        [0.5962737273978181, -0.363094558491022, -0.015080484073826325],
+        [0.5962737273978181, -0.363094558491022, 0.015080484073826325],
+        [0.626922080802297, -0.27763038288802244, -0.052343801519729456],
+        [0.626922080802297, -0.27763038288802244, 0.052343801519729456],
+        [0.6965278116823995, 0.00827632716910339, -0.09207342573683973],
+        [0.6965278116823995, 0.00827632716910339, 0.09207342573683973],
+        [0.6937818213225817, 0.08148025116265885, -0.08522879883085108],
+        [0.6937818213225817, 0.08148025116265885, 0.08522879883085108],
+        [0.6155570564107176, 0.37096836334530564, -0.005273493564043758],
+        [0.6155570564107176, 0.37096836334530564, 0.005273493564043758],
+        [0.5, 0.7749926766641773, 0.03832796273685365],
+        [0.5, 1.0515001104481065, 0.006508481493563776],
+        [0.5, 0.9192413876921455, 0.2789238997470296],
+        [0.5, 0.5861224012616796, 0.22484105746251834],
+        [0.5, 0.5177956877733761, -0.08903431310515317],
+        [0.5, 0.8003476229116904, -0.22956708416248714],
+    ];
+    static immutable Case[6] cases = [
+        Case("click_strength1_iter1", false, 1.0, 1, expect0[]),
+        Case("click_strength1_iter1_rigB", true, 1.0, 1, expect1[]),
+        Case("click_strength0.5_iter1", true, 0.5, 1, expect2[]),
+        Case("click_lockBound_true", true, 1.0, 1, expect3[]),
+        Case("click_lockCorner_true", true, 1.0, 1, expect4[]),
+        Case("drag_57_iterations", true, 1.0, 57, expect5[]),
+    ];
 
-    float distToWeighted = (actual - weightedMean).length;
-    float distToUniform  = (actual - uniformMean).length;
+    foreach (ci, ref c; cases) {
+        auto verts = c.rigB ? rigBVerts[] : rigAVerts[];
 
-    assert(distToWeighted < distToUniform,
-        format("relax target must be CLOSER to the inverse-edge-length-weighted mean "
-             ~ "than to the uniform mean; distToWeighted=%f distToUniform=%f",
-               distToWeighted, distToUniform));
-    assert(distToWeighted < 1e-4f,
-        "the implementation must match the documented inverse-edge-length formula exactly "
-      ~ "pre-re-snap (the flagged residual is a divergence from the REFERENCE, not from "
-      ~ "this function's own stated law)");
+        Mesh m;
+        foreach (v; verts) m.addVertex(Vec3(cast(float) v[0], cast(float) v[1], cast(float) v[2]));
+        foreach (f; rigFaces) m.addFace(f.dup);
+        m.buildLoops();
+
+        // Rig sanity: the faces must derive exactly the captured edge set, or
+        // the topology under test is not the topology that was measured.
+        assert(m.vertices.length == verts.length && m.edges.length == kRigEdgeCount
+            && m.faces.length == rigFaces.length,
+            format("case %s: rebuilt rig must match the captured one "
+                 ~ "(%d verts / %d edges / %d faces); got %d/%d/%d",
+                   c.id, verts.length, kRigEdgeCount, rigFaces.length,
+                   m.vertices.length, m.edges.length, m.faces.length));
+
+        auto topo = TopologyPenTool.buildRelaxTopology(&m);
+        assert(topo.valid(m.vertices.length), "extracted topology must be self-consistent");
+
+        auto pos = new RelaxVec3[](verts.length);
+        foreach (i, v; verts) pos[i] = RelaxVec3(v[0], v[1], v[2]);
+
+        relaxPasses(pos, topo, c.strength / 20.0, c.iters);
+
+        double worst = 0;
+        size_t worstAt = 0;
+        foreach (i; 0 .. verts.length) {
+            auto e = c.expect[i];
+            auto d = RelaxVec3(pos[i].x - e[0], pos[i].y - e[1], pos[i].z - e[2]).length();
+            if (d > worst) { worst = d; worstAt = i; }
+        }
+        report ~= format("\n    %-28s strength=%-4g iters=%-3d worst=%.4e at v%d",
+                         c.id, c.strength, c.iters, worst, worstAt);
+        if (worst > overallWorst) overallWorst = worst;
+
+        // Guard against a vacuous pass: the rig must genuinely move, or the
+        // comparison above would be satisfied by doing nothing at all.
+        double moved = 0;
+        foreach (i; 0 .. verts.length)
+            moved += RelaxVec3(pos[i].x - verts[i][0], pos[i].y - verts[i][1],
+                               pos[i].z - verts[i][2]).length();
+        assert(moved > 1e-6, format("case %s: the rig must actually relax", c.id));
+    }
+
+    assert(overallWorst < 1e-9,
+        format("the Smooth kernel must reproduce every captured reference relaxation target "
+             ~ "to 1e-9 (a correct port lands near 1e-16); worst over all %d cases = %.4e%s",
+               cases.length, overallWorst, report));
 }
 
 // ---------------------------------------------------------------------------
@@ -5585,16 +5861,19 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// smoothedRelaxTarget — boundary-restriction coverage (review NIT-4): no
-// existing P8 test exercises the branch that EXCLUDES a boundary vertex's
-// interior (2-face-shared) edge neighbors from its relax average — T4 above
-// is an all-bare-edge hub (every incident edge is open, so the exclusion
-// never actually removes anyone) and the click/build tests use a single
-// triangle (no interior edge exists at all to exclude). This rig gives
-// boundary vertex `v0` BOTH kinds of neighbor at once: `v1`/`v3` via open
-// (single-face) edges, `v2` via the edge shared by both triangles — so a
-// regression that dropped the exclusion (falling back to the full 1-ring)
-// would still pass every other P8 test but fail this one.
+// buildRelaxTopology — boundary-restriction coverage (review NIT-4, carried
+// forward to the current kernel): the conformance fixture above pins the
+// restriction NUMERICALLY (dropping it costs 4.3e-02 there), but only as one
+// term inside a whole-mesh result. This isolates the extraction itself on a
+// rig where boundary vertex `v0` has BOTH kinds of neighbor at once:
+// `v1`/`v3` via open (single-face) edges, `v2` via the edge shared by both
+// triangles. A regression that dropped the exclusion would still reproduce
+// every other structural property and fail here.
+//
+// Asserted against `buildRelaxTopology`'s OWN output — the per-slot `openTo`
+// flags and the derived per-vertex `boundary` flag — rather than against a
+// relaxed position, so the failure points at the extraction rather than at
+// the arithmetic downstream of it.
 // ---------------------------------------------------------------------------
 unittest {
     import std.format : format;
@@ -5621,32 +5900,32 @@ unittest {
     assert(TopologyPenTool.isOpenVertex(&m, v0, adjOff, adjNbrs),
         "setup: v0 must classify as a boundary vertex (has open edges v0-v1/v0-v3)");
 
-    Vec3[] readPos = m.vertices.dup;
-    bool hadNeighbors;
-    Vec3 actual = TopologyPenTool.smoothedRelaxTarget(&m, v0, readPos, hadNeighbors);
-    assert(hadNeighbors, "v0 has usable (open-edge) relax neighbors");
+    auto topo = TopologyPenTool.buildRelaxTopology(&m);
+    assert(topo.valid(m.vertices.length), "extracted topology must be self-consistent");
+    assert(topo.boundary[v0],
+        "v0 has open incident edges — the derived boundary flag must be set, which is what "
+      ~ "restricts its relaxation neighbor set");
 
-    // Independently-computed expected target using ONLY the open-edge
-    // neighbors v1/v3 — never re-deriving the implementation under test.
-    float w1 = 1.0f / (readPos[v0] - readPos[v1]).length;
-    float w3 = 1.0f / (readPos[v0] - readPos[v3]).length;
-    Vec3 openOnlyTarget = (readPos[v1] * w1 + readPos[v3] * w3) * (1.0f / (w1 + w3));
+    // The restriction that flag triggers: exactly v1 and v3 survive for v0,
+    // and the interior neighbor v2 is excluded.
+    bool sawV1, sawV2, sawV3;
+    foreach (k; topo.offset[v0] .. topo.offset[v0 + 1]) {
+        immutable uint nb = topo.nbrs[k];
+        if (nb == v1) { sawV1 = true; assert(topo.openTo[k], "v0-v1 is a single-face edge — must be OPEN"); }
+        if (nb == v3) { sawV3 = true; assert(topo.openTo[k], "v0-v3 is a single-face edge — must be OPEN"); }
+        if (nb == v2) {
+            sawV2 = true;
+            assert(!topo.openTo[k],
+                format("v0-v2 is shared by both faces — it must NOT be flagged open, or the "
+                     ~ "interior neighbor leaks into boundary vertex v0's relaxation set"));
+        }
+    }
+    assert(sawV1 && sawV2 && sawV3, "setup: v0's CSR ring must contain all three neighbors");
 
-    // The target that WOULD result if the exclusion regressed away and the
-    // interior neighbor v2 leaked into the average.
-    float w2 = 1.0f / (readPos[v0] - readPos[v2]).length;
-    Vec3 fullRingTarget = (readPos[v1] * w1 + readPos[v2] * w2 + readPos[v3] * w3)
-                         * (1.0f / (w1 + w2 + w3));
-
-    float distToOpenOnly = (actual - openOnlyTarget).length;
-    float distToFullRing = (actual - fullRingTarget).length;
-    assert(distToOpenOnly < 1e-4f,
-        format("boundary relax must use ONLY the open-edge neighbors (v1,v3), excluding the "
-             ~ "interior neighbor v2; distToOpenOnly=%f", distToOpenOnly));
-    assert(distToFullRing > 0.05f,
-        format("this rig must actually discriminate the exclusion — the full-ring (regressed) "
-             ~ "target must be MEASURABLY different from the open-edge-only one; "
-             ~ "distToFullRing=%f", distToFullRing));
+    // v2 itself is also a boundary vertex here (its v2-v1 / v2-v3 rim edges
+    // are single-face), so the flag is not vacuously true for v0 alone.
+    assert(topo.boundary[v1] && topo.boundary[v2] && topo.boundary[v3],
+        "every vertex of this two-triangle patch sits on the rim");
 }
 
 // ---------------------------------------------------------------------------
@@ -8666,9 +8945,9 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 2, "mesh.topoPen must expose the splitMiddle option plus the Fill-mode "
-                          ~ "dropdown (task 0477 continuation, doc/topopen_fill_plan.md) — the "
-                          ~ "`mode` Param is APPENDED, never a full-replace");
+    assert(ps.length == 3, "mesh.topoPen must expose the splitMiddle option, the Fill-mode "
+                          ~ "dropdown (task 0477 continuation, doc/topopen_fill_plan.md) and the "
+                          ~ "Smooth strength — every later Param is APPENDED, never a full-replace");
     assert(ps[0].name == "splitMiddle");
     assert(ps[0].kind == Param.Kind.Bool);
     assert(ps[0].default_.b == false, "splitMiddle must default OFF");
@@ -8714,6 +8993,43 @@ unittest {
     assert(t.penMode_ == PenMode.Fill,
         "penMode_ must survive resyncSession() (external history navigation) — it is a sticky "
       ~ "mode toggle, not per-gesture arm state");
+}
+
+// ---------------------------------------------------------------------------
+// params() — Smooth strength schema (reference parity,
+// doc/tasks/work/0478-topopen-smooth-kernel.md): the measured `strength` attribute
+// exposed as a real, bound, bounded Param. Defaults to the reference's own
+// 1.0 (force factor 0.05 after the ÷20), binds directly to the field the
+// Smooth kernel reads, declares `.enforceBounds()` so a headless `tool.attr`
+// injection is clamped rather than honoured, and — like every other option on
+// this tool — is sticky across `resyncSession()`.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+
+    auto t = new TopologyPenTool();
+
+    auto ps = t.params();
+    assert(ps[2].name == "smoothStrength");
+    assert(ps[2].kind == Param.Kind.Float);
+    assert(abs(ps[2].default_.f - 1.0f) < 1e-6f,
+        "smoothStrength must default to 1.0 — the reference's own default, giving F = 1/20 = 0.05");
+    assert(ps[2].fptr is &t.smoothStrength_, "the Param must bind directly to smoothStrength_");
+    assert(ps[2].enforceBounds_,
+        "smoothStrength must clamp injected values — an out-of-range force factor would be "
+      ~ "honoured verbatim by the headless attr path otherwise");
+    assert(ps[2].hints.hasMinF && ps[2].hints.hasMaxF
+        && abs(ps[2].hints.minF - 0.0f) < 1e-6f && abs(ps[2].hints.maxF - 4.0f) < 1e-6f,
+        "smoothStrength bounds must be declared as [0, 4] — `.enforceBounds()` clamps to the "
+      ~ "hinted range, so a missing hint would silently disarm the clamp");
+
+    assert(abs(t.smoothStrength_ - 1.0f) < 1e-6f, "must start at the default strength");
+
+    t.smoothStrength_ = 0.5f;
+    t.resyncSession();
+    assert(abs(t.smoothStrength_ - 0.5f) < 1e-6f,
+        "smoothStrength_ must survive resyncSession() — it is a sticky tool option, not "
+      ~ "per-gesture arm state");
 }
 
 // ---------------------------------------------------------------------------

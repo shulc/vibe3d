@@ -12,6 +12,22 @@
 // `resyncSession()` only clears already-reset tool booleans and never
 // touches vertex data, so the two are equivalent here.
 //
+// RIG NOTE (reference-parity kernel, doc/tasks/work/0478-topopen-smooth-kernel.md):
+// this test used to run on `/api/reset`'s default cube. It cannot any more —
+// and the reason is a property of the measured relaxation law, not a defect.
+// That law accumulates, for each vertex, its own edge-perpendicular force AND
+// an equal-and-opposite reaction from every neighbour. On a perfectly regular
+// mesh those two cancel EXACTLY: a unit cube is a fixed point, moving 0.0
+// (not merely a little) for any strength and any number of iterations. The
+// old inverse-edge-length law instead contracted the cube toward its
+// centroid, which is what used to make this rig move.
+//
+// The assertions below are UNCHANGED — one gesture, one undo entry, exact
+// restore. Only the rig is swapped for an irregular hexahedron with the same
+// 8/12/6 topology, which relaxes ~0.15 world units over this drag. Weakening
+// the movement threshold instead would have hidden the fixed-point property
+// rather than accommodating it.
+//
 // Run via: ./run_test.d topopen_smooth_undo
 
 import topopen_place_helpers;
@@ -29,8 +45,21 @@ bool vecApproxEq(Vec3 a, Vec3 b, float eps) {
     return dot(d, d) < eps * eps;
 }
 
+// An IRREGULAR closed hexahedron: a unit cube with the (1,1,1) corner pulled
+// out to (1.8,1.3,1.1). Same 8 vertices / 12 edges / 6 faces as the default
+// cube, so every topology assertion below is unchanged — but see the rig note
+// in this file's header for why the default cube itself cannot be used.
+string irregularHexBody() {
+    return `{"vertices":[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],`
+         ~ `[-1,-1,1],[1,-1,1],[1.8,1.3,1.1],[-1,1,1]],`
+         ~ `"faces":[[0,3,2,1],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[0,4,7,3]]}`;
+}
+
 unittest {
-    postJson("/api/reset", "");   // default cube, single layer == primary (layer 0)
+    postJson("/api/reset", "");   // single layer == primary (layer 0)
+
+    auto lr = postJson("/api/load-mesh", irregularHexBody());
+    assert(lr["status"].str == "ok", "load-mesh (irregular hexahedron) failed: " ~ lr.toString);
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
@@ -44,7 +73,7 @@ unittest {
 
     cmd("tool.set mesh.topoPen on");
 
-    // A genuine multi-step drag (>1 pass) over the default cube. No
+    // A genuine multi-step drag (>1 pass) over the irregular hexahedron. No
     // background layer exists here (single-layer scene), so this exercises
     // pure relaxation (no re-snap) — T1 elsewhere covers the re-snap crux.
     auto pr = postJson("/api/play-events",
