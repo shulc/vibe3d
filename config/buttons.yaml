@@ -112,6 +112,9 @@ panels:
                   - "prim.arc cenX:0 cenY:0 cenZ:0 radius:0.5 startAngle:0 endAngle:180 segments:24 axis:1"
           - label: Pen
             action: { kind: tool, id: pen }
+            ctrl:
+              label: "Topology Pen"
+              action: { kind: tool, id: mesh.topoPen }
           - label: Vertex
             action: { kind: tool, id: prim.vertex }
   # Deform palette
