@@ -1210,6 +1210,93 @@ import ui.panels : firstCheckedLabel, pushPopupStyle, popPopupStyle,
     drawSectionHeader, pushPanelChromeStyle, popPanelChromeStyle,
     pushButtonBarStyle, popButtonBarStyle;
 
+// Pick the variant a button currently represents.
+//
+// A HELD modifier wins — that is the preview while you hold Ctrl/Alt/Shift.
+// Otherwise, if a variant's action is a tool AND that tool is the active one,
+// the button represents THAT variant: it keeps the variant's label and, because
+// the caller derives the pressed state from the returned `action`, it stays lit
+// after the modifier is released.
+//
+// Without the second rule a sticky tool reached through a modifier can never
+// show as active: the moment you let go of Ctrl the button falls back to its
+// primary action, compares the active tool against the WRONG id, goes dark, and
+// re-labels itself as the primary tool — so it reads as "the button did
+// nothing" while the tool is in fact running. (Found on the Pen button's Ctrl
+// variant, which activates the topology pen.) One-shot variants — command or
+// script — have no active state to latch and are unaffected.
+private void selectButtonVariant(ref Button btn, SDL_Keymod mods, string activeToolId,
+                                 out string label, out Action action, out string variant) {
+    label = btn.label;
+    action = btn.action;
+    variant = "";
+
+    static bool isActiveTool(ref Action a, string activeToolId) {
+        return a.kind == ActionKind.tool && a.id == activeToolId
+            && activeToolId.length > 0;
+    }
+
+    if      (btn.ctrl.present  && (mods & KMOD_CTRL))  { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
+    else if (btn.alt.present   && (mods & KMOD_ALT))   { label = btn.alt.label;   action = btn.alt.action;   variant = "_alt";   }
+    else if (btn.shift.present && (mods & KMOD_SHIFT)) { label = btn.shift.label; action = btn.shift.action; variant = "_shift"; }
+    // No modifier held: let an ACTIVE variant tool claim the button. The
+    // primary action is checked by the caller's own pressed-state logic, so
+    // only variants need claiming here.
+    else if (btn.ctrl.present  && isActiveTool(btn.ctrl.action,  activeToolId)) { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
+    else if (btn.alt.present   && isActiveTool(btn.alt.action,   activeToolId)) { label = btn.alt.label;   action = btn.alt.action;   variant = "_alt";   }
+    else if (btn.shift.present && isActiveTool(btn.shift.action, activeToolId)) { label = btn.shift.label; action = btn.shift.action; variant = "_shift"; }
+}
+
+unittest {
+    // Regression: a sticky tool reached through a modifier variant must keep
+    // the button lit and labelled after the modifier is released. Before the
+    // active-variant rule the button fell back to its primary action, compared
+    // the active tool against the wrong id, and read as "the button did
+    // nothing" while the tool was running.
+    static Button penButton() {
+        Button b;
+        b.label  = "Pen";
+        b.action = Action(ActionKind.tool, "pen");
+        b.ctrl.present = true;
+        b.ctrl.label   = "Topology Pen";
+        b.ctrl.action  = Action(ActionKind.tool, "mesh.topoPen");
+        return b;
+    }
+    string label; Action action; string variant;
+    auto btn = penButton();
+
+    // 1. Ctrl HELD — the variant previews regardless of what is active.
+    selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
+    assert(action.id == "mesh.topoPen" && label == "Topology Pen" && variant == "_ctrl");
+
+    // 2. Ctrl RELEASED while the variant's tool is active — the button still
+    //    represents the variant. This is the bug this rule fixes.
+    selectButtonVariant(btn, KMOD_NONE, "mesh.topoPen", label, action, variant);
+    assert(action.id == "mesh.topoPen", "released modifier must not drop an active variant tool");
+    assert(label == "Topology Pen", "an active variant must keep its own label");
+
+    // 3. Primary tool active — primary wins, no variant claim.
+    selectButtonVariant(btn, KMOD_NONE, "pen", label, action, variant);
+    assert(action.id == "pen" && label == "Pen" && variant == "");
+
+    // 4. Nothing active — primary, unlit.
+    selectButtonVariant(btn, KMOD_NONE, "", label, action, variant);
+    assert(action.id == "pen" && variant == "");
+
+    // 5. A held modifier still beats an active variant of a DIFFERENT kind:
+    //    one-shot variants have no active state, so they must never claim the
+    //    button when unheld.
+    Button cmdBtn;
+    cmdBtn.label  = "Arc";
+    cmdBtn.action = Action(ActionKind.tool, "prim.arc");
+    cmdBtn.ctrl.present = true;
+    cmdBtn.ctrl.label   = "Unit Arc";
+    cmdBtn.ctrl.action  = Action(ActionKind.command, "prim.arc.unit");
+    selectButtonVariant(cmdBtn, KMOD_NONE, "prim.arc", label, action, variant);
+    assert(action.id == "prim.arc" && variant == "",
+           "a command variant must not claim the button");
+}
+
 void drawSidePanel(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
@@ -1234,21 +1321,8 @@ void drawSidePanel(EditorApp app) {
             // alt-click survives the user releasing Alt — see the
             // BeginPopup loop at the end.
             SDL_Keymod mods = SDL_GetModState();
-            string label   = btn.label;
-            Action action  = btn.action;
-            string variant = "";
-            if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
-                label = btn.ctrl.label;  action = btn.ctrl.action;
-                variant = "_ctrl";
-            }
-            else if (btn.alt.present   && (mods & KMOD_ALT))   {
-                label = btn.alt.label;   action = btn.alt.action;
-                variant = "_alt";
-            }
-            else if (btn.shift.present && (mods & KMOD_SHIFT)) {
-                label = btn.shift.label; action = btn.shift.action;
-                variant = "_shift";
-            }
+            string label; Action action; string variant;
+            selectButtonVariant(btn, mods, activeToolId, label, action, variant);
 
             string sc;
             if (action.kind == ActionKind.tool) {
@@ -1439,21 +1513,8 @@ void drawStatusBar(EditorApp app) {
                 // releasing the modifier (see the BeginPopup loop
                 // at the end of this block).
                 SDL_Keymod mods = SDL_GetModState();
-                string label   = btn.label;
-                Action action  = btn.action;
-                string variant = "";
-                if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
-                    label = btn.ctrl.label;  action = btn.ctrl.action;
-                    variant = "_ctrl";
-                }
-                else if (btn.alt.present   && (mods & KMOD_ALT))   {
-                    label = btn.alt.label;   action = btn.alt.action;
-                    variant = "_alt";
-                }
-                else if (btn.shift.present && (mods & KMOD_SHIFT)) {
-                    label = btn.shift.label; action = btn.shift.action;
-                    variant = "_shift";
-                }
+                string label; Action action; string variant;
+                selectButtonVariant(btn, mods, activeToolId, label, action, variant);
 
                 // "Popup face" behaviour. When a popup action sets
                 // `dynamicLabel: true`, swap the
