@@ -1236,15 +1236,22 @@ private void selectButtonVariant(ref Button btn, SDL_Keymod mods, string activeT
             && activeToolId.length > 0;
     }
 
-    // On macOS ⌘ is THE modifier for UI chords and Control is rarely used for
-    // them, so a `ctrl:` variant must answer to Cmd as well — otherwise the
-    // variant is unreachable for anyone using the platform's own convention
-    // (reported: the Pen button's Ctrl variant worked on Linux, not on macOS).
-    // Cmd is free to alias here: KMOD_GUI appears nowhere else in the app
-    // except shortcuts.d, which keeps `ctrl+` and `cmd+` as distinct SHORTCUT
-    // spellings — that stays untouched, this aliases only button variants.
+    // macOS: a `ctrl:` variant answers to ⌘ and DELIBERATELY NOT to Control.
+    //
+    // Control+click is reserved by macOS itself as the secondary click — the OS
+    // delivers it as a RIGHT button, our ImGui backend maps right → button 1,
+    // and `ImGui.Button` only fires on button 0. So a Control+click on a panel
+    // button can never land, no matter what this function returns. Reported
+    // exactly that way: "with Ctrl I see the changed buttons, but I can't press
+    // them" — every ctrl: variant, not just the pen.
+    //
+    // Reacting to Control here would keep that trap alive: the label would
+    // promise a variant the click cannot reach. So on macOS Control selects
+    // nothing and ⌘ — a plain left click carrying a modifier — selects the
+    // variant. shortcuts.d is untouched; it keeps `ctrl+` and `cmd+` as
+    // distinct SHORTCUT spellings, which is a separate concern from clicks.
     // Elsewhere the mask is plain KMOD_CTRL, so Linux/Windows are unchanged.
-    version (OSX) enum ctrlMask = KMOD_CTRL | KMOD_GUI;
+    version (OSX) enum ctrlMask = KMOD_GUI;
     else          enum ctrlMask = KMOD_CTRL;
 
     if      (btn.ctrl.present  && (mods & ctrlMask))   { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
@@ -1294,18 +1301,26 @@ unittest {
     selectButtonVariant(btn, KMOD_NONE, "", label, action, variant);
     assert(action.id == "pen" && variant == "");
 
-    // 5. Cmd reaches a `ctrl:` variant on macOS and ONLY there. This is the
-    //    half that cannot be exercised on Linux — it compiles per platform —
-    //    so it is pinned on both sides rather than left to the build that
-    //    happens to run it.
+    // 5. Which physical modifier reaches a `ctrl:` variant is platform-split,
+    //    and only one half compiles per build — so pin BOTH rather than leave
+    //    it to whichever platform happens to run the suite.
     version (OSX) {
+        // ⌘ selects it: a plain left click carrying a modifier.
         selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
         assert(action.id == "mesh.topoPen",
-               "macOS: Cmd must reach a ctrl: variant — it is the platform's UI modifier");
+               "macOS: Cmd must reach a ctrl: variant");
+        // Control must NOT — macOS turns Control+click into a right click, so
+        // the label would advertise a variant the click can never activate.
+        selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
+        assert(action.id == "pen" && label == "Pen",
+               "macOS: Control must not preview a variant it cannot click");
     } else {
         selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
         assert(action.id == "pen",
                "non-macOS: Super/Cmd must NOT alias Ctrl");
+        selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
+        assert(action.id == "mesh.topoPen",
+               "non-macOS: Control selects the ctrl: variant");
     }
 
     // 6. A held modifier still beats an active variant of a DIFFERENT kind:
