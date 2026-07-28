@@ -1236,7 +1236,18 @@ private void selectButtonVariant(ref Button btn, SDL_Keymod mods, string activeT
             && activeToolId.length > 0;
     }
 
-    if      (btn.ctrl.present  && (mods & KMOD_CTRL))  { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
+    // On macOS ⌘ is THE modifier for UI chords and Control is rarely used for
+    // them, so a `ctrl:` variant must answer to Cmd as well — otherwise the
+    // variant is unreachable for anyone using the platform's own convention
+    // (reported: the Pen button's Ctrl variant worked on Linux, not on macOS).
+    // Cmd is free to alias here: KMOD_GUI appears nowhere else in the app
+    // except shortcuts.d, which keeps `ctrl+` and `cmd+` as distinct SHORTCUT
+    // spellings — that stays untouched, this aliases only button variants.
+    // Elsewhere the mask is plain KMOD_CTRL, so Linux/Windows are unchanged.
+    version (OSX) enum ctrlMask = KMOD_CTRL | KMOD_GUI;
+    else          enum ctrlMask = KMOD_CTRL;
+
+    if      (btn.ctrl.present  && (mods & ctrlMask))   { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
     else if (btn.alt.present   && (mods & KMOD_ALT))   { label = btn.alt.label;   action = btn.alt.action;   variant = "_alt";   }
     else if (btn.shift.present && (mods & KMOD_SHIFT)) { label = btn.shift.label; action = btn.shift.action; variant = "_shift"; }
     // No modifier held: let an ACTIVE variant tool claim the button. The
@@ -1283,7 +1294,21 @@ unittest {
     selectButtonVariant(btn, KMOD_NONE, "", label, action, variant);
     assert(action.id == "pen" && variant == "");
 
-    // 5. A held modifier still beats an active variant of a DIFFERENT kind:
+    // 5. Cmd reaches a `ctrl:` variant on macOS and ONLY there. This is the
+    //    half that cannot be exercised on Linux — it compiles per platform —
+    //    so it is pinned on both sides rather than left to the build that
+    //    happens to run it.
+    version (OSX) {
+        selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
+        assert(action.id == "mesh.topoPen",
+               "macOS: Cmd must reach a ctrl: variant — it is the platform's UI modifier");
+    } else {
+        selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
+        assert(action.id == "pen",
+               "non-macOS: Super/Cmd must NOT alias Ctrl");
+    }
+
+    // 6. A held modifier still beats an active variant of a DIFFERENT kind:
     //    one-shot variants have no active state, so they must never claim the
     //    button when unheld.
     Button cmdBtn;
