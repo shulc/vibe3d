@@ -1121,6 +1121,21 @@ private:
     bool hoverBoundary_     = false;
     int  hoverBoundaryFace_ = -1;
 
+    // WHAT a press at the current cursor would grab (task 0484 follow-up),
+    // resolved by the SAME `resolveGrabTarget` the press itself calls — so
+    // the highlight cannot name one element while the press takes another.
+    // This is what `draw()` renders: exactly ONE element, never the
+    // nearest-vertex-and-nearest-edge pair the fields above describe.
+    //
+    // Those fields stay, and stay published: they answer a DIFFERENT question
+    // ("what is nearest, at any distance" — an ∞-threshold scan, the
+    // affordance the hover plan specified) which `/api/tool/state` consumers
+    // already read. This pair answers "what is under the cursor, within pick
+    // range, and therefore live". `hoverGrabIndex_` indexes whichever array
+    // `hoverGrabElem_` names.
+    MoveElem hoverGrabElem_  = MoveElem.None;
+    int      hoverGrabIndex_ = -1;
+
     // Fill mode hover preview (task 0477 continuation,
     // doc/topopen_fill_plan.md Phase 5): the ONE candidate gap-cell's 4
     // corner verts (any rotation) under the cursor, or `null` when the mode
@@ -1432,6 +1447,8 @@ public:
         // handler already returns `false` at the tail when idle).
         if (anyGestureArmed()) {
             hoverOverMesh_   = false;   // gesture ghosts take precedence
+            hoverGrabElem_   = MoveElem.None;
+            hoverGrabIndex_  = -1;
             fillCell_        = null;   // Fill mode continuation: same precedence rule
             fillRadiusValid_ = false;  // Fill radius overlay: same precedence rule
         } else {
@@ -1440,9 +1457,16 @@ public:
             hoverOverMesh_ = overPrimaryMesh(e.x, e.y, vp);
             if (hoverOverMesh_) {
                 computeHoverIndicator(e.x, e.y, vp);
+                // The grab target, from the press's own resolver. Whenever
+                // `hoverOverMesh_` holds this resolves something: that gate
+                // is the OR of the very three terms `resolveGrabTarget`
+                // tries, at the same thresholds.
+                hoverGrabElem_ = resolveGrabTarget(e.x, e.y, vp, hoverGrabIndex_);
             } else {
                 hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
                 hoverBoundary_    = false;
+                hoverGrabElem_    = MoveElem.None;
+                hoverGrabIndex_   = -1;
             }
 
             // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
@@ -2276,7 +2300,7 @@ public:
             // release is safe because `lmbPlaceOrMoveUp` trusts the arm BOOLS
             // rather than the base's `armed_[]` slot (the documented
             // arm-before-decline gap).
-            return armMoveElement(e, vts, vp, src);
+            return armMoveElement(e, vts, vp);
         }
 
         // Empty space. Only Point mode places here; Move mode has nothing to
@@ -2285,6 +2309,40 @@ public:
 
         placeArmed_ = true;
         return true;
+    }
+
+    // WHICH element the cursor is on — the single source of truth for both
+    // "what would a press grab" (`armMoveElement`) and "what does the hover
+    // indicator highlight" (`onMouseMotion`/`draw`). Those two answers MUST
+    // come from one function: a highlight that names a different element than
+    // the press takes is worse than no highlight, because the user aims by it.
+    //
+    // Proximity order — vertex within `kTopoPenSnapPx`, else edge within the
+    // same radius, else the face under the cursor. `index` is the resolved
+    // element's own index in its own array (vertex / edge / face), or -1.
+    //
+    // `pickPrimaryFace` needs `gpu_` and answers -1 without it, so under a
+    // bare `dub test` (no GL) only the vertex and edge terms are live — the
+    // face term is exercised by the HTTP tests, which have a real upload.
+    private MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index) {
+        index = -1;
+        auto m = mesh;
+        if (m is null) return MoveElem.None;
+
+        // Explicit `>= 0` on every pick, never a truthiness test: these
+        // answer -1 on a miss, and index 0 is a perfectly ordinary element.
+        immutable int vi = findSourceVertex(mx, my, vp);
+        if (vi >= 0 && vi < cast(int)m.vertices.length) { index = vi; return MoveElem.Vertex; }
+
+        immutable int ei = findRingSeedEdge(mx, my, vp);
+        if (ei >= 0 && ei < cast(int)m.edges.length) { index = ei; return MoveElem.Edge; }
+
+        immutable int fi = pickPrimaryFace(mx, my, vp);
+        if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) {
+            index = fi;
+            return MoveElem.Face;
+        }
+        return MoveElem.None;
     }
 
     // Resolve the element under a Move-family press and arm it (task 0484).
@@ -2300,36 +2358,22 @@ public:
     // stray-vertex defect 0482 closed. One extra edge scan and one BVH pick,
     // per PRESS (never per motion event), buys that guarantee.
     private bool armMoveElement(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
-                                const ref Viewport vp, int srcVert) {
+                                const ref Viewport vp) {
         auto m = mesh;
         if (m is null) return false;
 
-        MoveElem kind = MoveElem.None;
-        uint[]   verts;
+        int index;
+        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index);
+        if (kind == MoveElem.None) return false;
 
-        if (srcVert >= 0 && srcVert < cast(int)m.vertices.length) {
-            kind  = MoveElem.Vertex;
-            verts = [cast(uint) srcVert];
-        } else {
-            // Explicit `>= 0`, never a truthiness test: `findRingSeedEdge`
-            // answers -1 on a miss, and edge 0 is a perfectly ordinary edge
-            // to grab.
-            int ei = findRingSeedEdge(e.x, e.y, vp);
-            if (ei >= 0 && ei < cast(int)m.edges.length) {
-                kind  = MoveElem.Edge;
-                verts = [m.edges[ei][0], m.edges[ei][1]];
-            }
+        uint[] verts;
+        final switch (kind) {
+        case MoveElem.Vertex: verts = [cast(uint) index];                     break;
+        case MoveElem.Edge:   verts = [m.edges[index][0], m.edges[index][1]]; break;
+        case MoveElem.Face:   verts = m.faces[index].dup;                     break;
+        case MoveElem.None:   return false;   // unreachable, guarded above
         }
-
-        if (kind == MoveElem.None) {
-            int fi = pickPrimaryFace(e.x, e.y, vp);
-            if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) {
-                kind  = MoveElem.Face;
-                verts = m.faces[fi].dup;
-            }
-        }
-
-        if (kind == MoveElem.None || verts.length == 0) return false;
+        if (verts.length == 0) return false;
 
         // A face's corner list can name the same vertex twice on a
         // malformed polygon; moving one twice is harmless but recording it
@@ -4827,6 +4871,8 @@ public:
         hoverNearestEdge_  = -1;
         hoverBoundaryFace_ = -1;
         hoverBoundary_     = false;
+        hoverGrabElem_     = MoveElem.None;   // same staleness hazard, same fix
+        hoverGrabIndex_    = -1;
         // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md):
         // also drop the passive candidate-cell preview — an external
         // undo/redo with no subsequent motion event must not leave a stale
@@ -5226,41 +5272,62 @@ public:
         if (!anyGestureArmed() && hoverOverMesh_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null) {
-                immutable vlen = cast(int)m.vertices.length;
-                immutable elen = cast(int)m.edges.length;
-
-                // (a) nearest-EDGE line (full length) — under the square.
-                if (hoverNearestEdge_ >= 0 && hoverNearestEdge_ < elen) {
-                    auto he = m.edges[hoverNearestEdge_];
-                    ImVec2 ea, eb;
-                    if (projectPt(m.vertices[he[0]], vp, ea)
-                     && projectPt(m.vertices[he[1]], vp, eb))
-                        dl.AddLine(ea, eb, kHoverElemCol, kHoverEdgeWidthPx);
-                }
-
-                // (b) boundary-edge face CROSS-HATCH.
-                if (hoverBoundary_ && hoverBoundaryFace_ >= 0
-                                   && hoverBoundaryFace_ < cast(int)m.faces.length) {
-                    ImVec2[] pts;
-                    bool ok = true;
-                    foreach (fvi; m.faces[hoverBoundaryFace_]) {
-                        ImVec2 p;
-                        if (!projectPt(m.vertices[fvi], vp, p)) { ok = false; break; }
-                        pts ~= p;
+                // ONE element — the one a press would grab (task 0484
+                // follow-up), resolved by the press's own
+                // `resolveGrabTarget`. This block used to paint the nearest
+                // VERTEX and the nearest EDGE simultaneously, plus a hatch on
+                // a boundary edge's face: three affordances answering "what
+                // is near you". Now that a press grabs exactly one element,
+                // showing more than that one misleads — the user aims by this
+                // highlight, so it has to name what they will actually get.
+                final switch (hoverGrabElem_) {
+                case MoveElem.Vertex:
+                    if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.vertices.length) {
+                        ImVec2 vc;
+                        if (projectPt(m.vertices[hoverGrabIndex_], vp, vc))
+                            dl.AddRectFilled(
+                                ImVec2(vc.x - kHoverVertSquareHalfPx, vc.y - kHoverVertSquareHalfPx),
+                                ImVec2(vc.x + kHoverVertSquareHalfPx, vc.y + kHoverVertSquareHalfPx),
+                                kHoverElemCol);
                     }
-                    if (ok && pts.length >= 3)
-                        hatchScreenPolygon(dl, pts, kHoverHatchCol,
-                                          kHoverHatchSpacingPx, kHoverHatchWidthPx, vp);
-                }
+                    break;
 
-                // (c) nearest-VERTEX filled SQUARE — on top.
-                if (hoverNearestVert_ >= 0 && hoverNearestVert_ < vlen) {
-                    ImVec2 vc;
-                    if (projectPt(m.vertices[hoverNearestVert_], vp, vc))
-                        dl.AddRectFilled(
-                            ImVec2(vc.x - kHoverVertSquareHalfPx, vc.y - kHoverVertSquareHalfPx),
-                            ImVec2(vc.x + kHoverVertSquareHalfPx, vc.y + kHoverVertSquareHalfPx),
-                            kHoverElemCol);
+                case MoveElem.Edge:
+                    if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.edges.length) {
+                        auto he = m.edges[hoverGrabIndex_];
+                        ImVec2 ea, eb;
+                        if (projectPt(m.vertices[he[0]], vp, ea)
+                         && projectPt(m.vertices[he[1]], vp, eb))
+                            dl.AddLine(ea, eb, kHoverElemCol, kHoverEdgeWidthPx);
+                    }
+                    break;
+
+                case MoveElem.Face:
+                    // Cross-hatch + outline. ANY face under the cursor, not
+                    // just a boundary edge's — the hatch used to be reachable
+                    // only through `hoverBoundary_`, which is a fact about an
+                    // EDGE, and left an interior polygon with no highlight at
+                    // all even though a press there grabs it.
+                    if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.faces.length) {
+                        ImVec2[] pts;
+                        bool ok = true;
+                        foreach (fvi; m.faces[hoverGrabIndex_]) {
+                            ImVec2 p;
+                            if (!projectPt(m.vertices[fvi], vp, p)) { ok = false; break; }
+                            pts ~= p;
+                        }
+                        if (ok && pts.length >= 3) {
+                            hatchScreenPolygon(dl, pts, kHoverHatchCol,
+                                              kHoverHatchSpacingPx, kHoverHatchWidthPx, vp);
+                            foreach (i, pa; pts)
+                                dl.AddLine(pa, pts[(i + 1) % pts.length],
+                                           kHoverElemCol, kHoverEdgeWidthPx);
+                        }
+                    }
+                    break;
+
+                case MoveElem.None:
+                    break;   // over the mesh but nothing resolved -> nothing to promise
                 }
             }
         }
@@ -5619,6 +5686,15 @@ public:
         hi["nearestEdge"]  = JSONValue(hoverNearestEdge_);
         hi["isBoundary"]   = JSONValue(hoverBoundary_);
         hi["boundaryFace"] = JSONValue(hoverBoundaryFace_);
+        // WHAT a press here would grab, and therefore the one element this
+        // indicator draws (task 0484 follow-up). Distinct from `nearestVert`
+        // /`nearestEdge` above, which are ∞-threshold "what is closest"
+        // answers: this one is pick-range-limited and single, and it is the
+        // only way an automated run can check that the highlight and the
+        // press agree — they share `resolveGrabTarget`, and this field is
+        // what proves it from outside.
+        hi["grabElem"]  = JSONValue(moveElemTag(hoverGrabElem_));
+        hi["grabIndex"] = JSONValue(hoverGrabIndex_);
         root["hoverIndicator"] = hi;
 
         return root;
