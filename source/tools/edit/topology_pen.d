@@ -1032,10 +1032,11 @@ private:
     // `onDupLoopShiftRmbDown`'s own narrow self-reset would then silently
     // cancel the LEFT drag by clearing state they shared. Separate fields
     // keep that property intact.
-    bool dupEdgeArmed_ = false;
-    int  dupEdgeSeed_  = -1;
-    int  dupEdgeStartX_, dupEdgeStartY_;
-    int  dupEdgeCurX_,   dupEdgeCurY_;
+    bool  dupEdgeArmed_ = false;
+    int   dupEdgeSeed_  = -1;
+    int[] dupEdgeEdges_;          // what the release will duplicate: [seed], or the trimmed border run
+    int   dupEdgeStartX_, dupEdgeStartY_;
+    int   dupEdgeCurX_,   dupEdgeCurY_;
 
     // --- P12 Smooth+Loop session state (topology_pen.d,
     // doc/topopen_p12_smoothloop_plan.md). Armed on a Shift+Ctrl+RMB press
@@ -2134,6 +2135,7 @@ public:
         // for the same reason as every LEFT-button arm above.
         dupEdgeArmed_ = false;
         dupEdgeSeed_  = -1;
+        dupEdgeEdges_ = null;
         // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
         // here so the LEFT-button trio's own reset (and `resyncSession()`,
         // below) close a stray smooth-loop arm too; `onSmoothLoopRmbDown`
@@ -2224,7 +2226,12 @@ public:
         case PenMode.Point:
             return moveOrPlaceDown(e, vts, true);
         case PenMode.Duplicate:
-            if (edgeLoop_) return stamp(onDupLoopShiftRmbDown(e, vts), TopoPenAction.DupLoop);
+            // Task 0486 (contract C-4): the dropdown+plain-LMB path was
+            // measured BIT-IDENTICAL to the Shift+LMB chord, so it must route
+            // through the same handler rather than a parallel one — including
+            // its border gate and its reading of `edgeLoop_`. Routing
+            // `edgeLoop_` to the RMB handler (as this did) would additionally
+            // have forced the loop, which is that chord's own override.
             return stamp(onShiftLmbDown(e, vts), TopoPenAction.Build);
         case PenMode.Remove:
             // No loop variant is implemented (see `edgeLoop_`'s own doc
@@ -2377,6 +2384,118 @@ public:
             return MoveElem.Face;
         }
         return MoveElem.None;
+    }
+
+    // The border-run TRIM (task 0486, measured — implementer contract C-4 in
+    // toolcards/topology_pen/dragweld_dupedge_loopscope_capture.md, PRIVATE).
+    //
+    // The gather and the COMMITTED SET are two different sets, and only the
+    // gather was ported. `Mesh.selectLoopEdges` is the right gather — its
+    // border branch walking the whole open boundary is what the reference's
+    // own gather does, confirmed edge-for-edge on a 12-edge perimeter. What
+    // was missing is the filter the reference applies between gathering and
+    // committing, and only when the pressed edge is a BORDER edge:
+    //
+    //     4x4 grid, top border seed:  gather 12 (whole perimeter) -> commit 3
+    //     flat annulus, outer border: gather  8 (closed ring)     -> commit 8
+    //
+    // So it is a no-op on a CLOSED boundary and only bites on an OPEN one —
+    // which is exactly why a port that never trims looks correct on a cylinder
+    // and duplicates the entire perimeter of a retopo patch. That 12-vs-3 is
+    // the owner-reported "it takes all edges".
+    //
+    // The rule: keep the seed, walk the border chain outward from BOTH of its
+    // endpoints, and stop at the first chain-end vertex with a single incident
+    // polygon (a patch corner). The annulus is unchanged because its boundary
+    // has no such vertex — which also refutes any GEOMETRIC co-linearity
+    // phrasing of the rule: that boundary turns 45 degrees at every vertex and
+    // still survives whole. The predicate is topological.
+    //
+    // FLAGGED, not guessed: on every rig measured, "one incident polygon" and
+    // "valence 2" select the same vertices, so this capture does not separate
+    // the two phrasings. The polygon-count phrasing is used because the
+    // reference's own branching is on the polygon count. A case where the two
+    // disagree needs a re-measure, not a re-reading of this comment.
+    private int[] trimBorderRunAroundSeed(const(int)[] gathered, int seed) {
+        auto m = mesh;
+        if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return null;
+
+        // Only edges the gather already returned may survive — the trim
+        // narrows a set, it never invents an edge the walk did not reach.
+        bool[int] inSet;
+        foreach (ei; gathered) inSet[ei] = true;
+        if ((seed in inSet) is null) return [seed];
+
+        size_t polyCount(uint vi) {
+            size_t n = 0;
+            foreach (fi; m.facesAroundVertex(vi)) ++n;
+            return n;
+        }
+
+        int[] run = [seed];
+        bool[int] taken;
+        taken[seed] = true;
+
+        foreach (endpoint; [m.edges[seed][0], m.edges[seed][1]]) {
+            uint cur  = endpoint;
+            int  came = seed;
+            while (true) {
+                if (polyCount(cur) <= 1) break;   // chain-end corner -> stop this direction
+                int next = -1;
+                foreach (ei; m.edgesAroundVertex(cur)) {
+                    immutable int e2 = cast(int) ei;
+                    if (e2 == came) continue;
+                    if ((e2 in inSet) is null) continue;
+                    if ((e2 in taken) !is null) continue;
+                    if (!m.isEdgeBorder(cast(uint) e2)) continue;
+                    next = e2;
+                    break;
+                }
+                if (next < 0) break;
+                taken[next] = true;
+                run ~= next;
+                auto ep = m.edges[next];
+                cur  = (ep[0] == cur) ? ep[1] : ep[0];
+                came = next;
+            }
+        }
+        return run;
+    }
+
+    // The Duplicate slot's EDGE outcome (task 0486, contract C-0/C-1/C-4).
+    // `loopFlag` is the slot's effective Edge Loop: `edgeLoop_` for Shift+LMB,
+    // forced true for Shift+RMB (C-1 — the chord stores the literal 1 and
+    // never reads the attribute, measured both directions).
+    //
+    // C-0 gates everything else here: Duplicate requires a BORDER edge. On an
+    // interior edge the reference silently runs MOVE instead — so a Shift+LMB
+    // there is a 2-vertex element move and a Shift+RMB there is a move-loop,
+    // NOT a declined press and NOT a duplicate. This is the gate that makes
+    // the rest of the contract coherent, and it was found only because the
+    // capture recorded the engine's own guard value per press.
+    private bool armDuplicateOnEdge(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                    const ref Viewport vp, int seed, bool loopFlag) {
+        auto m = mesh;
+        if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return false;
+
+        if (!m.isEdgeBorder(cast(uint) seed)) {
+            // Interior seed -> the Move family, per the effective loop flag.
+            if (loopFlag) return stamp(onMoveLoopRmbDown(e, vts), TopoPenAction.MoveLoop);
+            return stamp(armMoveElement(e, vts, vp), TopoPenAction.LmbPlaceOrMove);
+        }
+
+        int[] edges = [seed];
+        if (loopFlag) {
+            edges = trimBorderRunAroundSeed(m.selectLoopEdges(cast(uint) seed), seed);
+            if (edges.length == 0) edges = [seed];
+        }
+
+        dupEdgeSeed_   = seed;
+        dupEdgeEdges_  = edges;
+        dupEdgeStartX_ = dupEdgeCurX_ = e.x;
+        dupEdgeStartY_ = dupEdgeCurY_ = e.y;
+        dupEdgeArmed_  = true;
+        return true;
     }
 
     // Resolve the element under a Move-family press and arm it (task 0484).
@@ -2623,11 +2742,10 @@ public:
             int ei = findRingSeedEdge(e.x, e.y, vp);
             if (ei < 0) return false;   // neither vertex nor edge -> no documented gesture
 
-            dupEdgeSeed_   = ei;
-            dupEdgeStartX_ = dupEdgeCurX_ = e.x;
-            dupEdgeStartY_ = dupEdgeCurY_ = e.y;
-            dupEdgeArmed_  = true;
-            return true;   // consume; the duplicate (if any) commits on release
+            // Task 0486 (contract C-1): this slot READS `edgeLoop_` — measured
+            // both ways on one seed (1 quad with the flag off, 3 with it on).
+            // Its Shift+RMB sibling does the opposite and ignores the flag.
+            return armDuplicateOnEdge(e, vts, vp, ei, edgeLoop_);
         }
 
         sourceVert_     = src;
@@ -3338,7 +3456,18 @@ public:
 
         auto m = mesh;
         if (m is null) return false;
-        auto edges = m.selectLoopEdges(cast(uint)seed);
+
+        // Task 0486 (contract C-0): Duplicate needs a BORDER edge. On an
+        // interior one this chord is a MOVE-LOOP, not a declined press and not
+        // a duplicate — the reference's Evaluate guards Duplicate on
+        // `isEdgeBorder(pressed)` and silently runs Move when it fails.
+        if (!m.isEdgeBorder(cast(uint) seed)) return onMoveLoopRmbDown(e, vts);
+
+        // Contract C-1: this chord FORCES the loop on and never reads
+        // `edgeLoop_` — `loop=false` and `loop=true` were bit-identical on one
+        // seed. C-4: the committed set is the border RUN, not the whole
+        // gathered perimeter.
+        auto edges = trimBorderRunAroundSeed(m.selectLoopEdges(cast(uint)seed), seed);
         if (edges.length == 0) return false;   // defensive; shouldn't happen for a valid seed
 
         dupLoopSeed_    = seed;
@@ -3580,7 +3709,13 @@ public:
         // exclusively — `onShiftLmbDown` arms exactly one of the two, so this
         // can never shadow a vertex build.
         if (dupEdgeArmed_) return dupEdgeUp(e, vts);
-        if (!dragArmed_) return false;
+        // Task 0486 (contract C-0): the Duplicate slot FALLS THROUGH to the
+        // Move family on an interior edge, so this release must be able to
+        // reach a move's commit leg too. `lmbModeUp` dispatches on the action
+        // the press recorded, and every leg it can reach is guarded by its own
+        // arm bool — so when nothing was armed this stays the same no-op it
+        // was before.
+        if (!dragArmed_) return lmbModeUp(e, vts);
         int       a     = sourceVert_;
         BuildCase casee  = classifiedCase_;
         int       n      = triN_;
@@ -3753,6 +3888,10 @@ public:
     // explicit, clean no-op (no extrude, no undo entry), mirroring every
     // other gesture's `kMinDragPx` guard.
     private bool dupLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Task 0486 (contract C-0): on an interior edge this chord fell through
+        // to a move-loop, whose commit leg is `moveLoopUp` — reach it, or the
+        // gesture would arm and then never commit.
+        if (!dupLoopArmed_ && moveLoopArmed_) return moveLoopUp(e, vts);
         if (!dupLoopArmed_) return false;
         auto edges = dupLoopEdges_;
         int  sx = dupLoopStartX_, sy = dupLoopStartY_;
@@ -3776,22 +3915,23 @@ public:
     // the same release-pixel delta. Disarms on every path.
     private bool dupEdgeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!dupEdgeArmed_) return false;
-        immutable int seed = dupEdgeSeed_;
+        auto edges = dupEdgeEdges_;
         immutable int sx = dupEdgeStartX_, sy = dupEdgeStartY_;
         dupEdgeArmed_ = false;
         dupEdgeSeed_  = -1;
+        dupEdgeEdges_ = null;
 
         enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
         immutable int dx = e.x - sx, dy = e.y - sy;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
-        if (seed < 0) return true;
+        if (edges.length == 0) return true;
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
         // so the entry carries that slot's own wire name, never the loop
         // gesture's (the OBJ-3/D4 discipline every commit path here follows).
-        commitDupEdges([seed], dx, dy, vp, buildEditFactory_, "Topology Duplicate Edge");
+        commitDupEdges(edges, dx, dy, vp, buildEditFactory_, "Topology Duplicate Edge");
         return true;
     }
 
@@ -5286,8 +5426,8 @@ public:
 
         // Task 0485: the SAME ghost for the Shift+LMB single-edge duplicate —
         // one edge instead of a loop, identical preview arithmetic.
-        if (dupEdgeArmed_ && dupEdgeSeed_ >= 0 && meshSrc_ !is null)
-            drawDupGhost(dl, vp, [dupEdgeSeed_],
+        if (dupEdgeArmed_ && dupEdgeEdges_.length && meshSrc_ !is null)
+            drawDupGhost(dl, vp, dupEdgeEdges_,
                          dupEdgeCurX_ - dupEdgeStartX_, dupEdgeCurY_ - dupEdgeStartY_);
 
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the Smooth+Loop
@@ -5750,8 +5890,9 @@ public:
         // Task 0485: the Shift+LMB single-edge duplicate's own arm, kept
         // separate from the loop gesture's so a test (and a reader of the
         // state) can tell which of the two is in flight.
-        root["dupEdgeArmed"] = JSONValue(dupEdgeArmed_);
-        root["dupEdgeSeed"]  = JSONValue(dupEdgeSeed_);
+        root["dupEdgeArmed"]     = JSONValue(dupEdgeArmed_);
+        root["dupEdgeSeed"]      = JSONValue(dupEdgeSeed_);
+        root["dupEdgeEdgeCount"] = JSONValue(cast(int)dupEdgeEdges_.length);
 
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the armed
         // Smooth+Loop gesture's state, for Tier-C tests to assert the
@@ -9745,6 +9886,95 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// The BORDER GATE on Duplicate (task 0486, contract C-0) — the finding that
+// re-scoped the whole capture. The reference's Evaluate guards Duplicate on
+// `isEdgeBorder(pressed edge)`; when it fails it silently runs MOVE. So an
+// interior-edge press through the Duplicate slot is neither a duplicate NOR a
+// declined press: Shift+LMB there is a 2-vertex element move, Shift+RMB there
+// is a move-loop.
+//
+// `makeGridPlane(3)` carries both sides of the gate: its rim edges are border
+// edges (one incident face) and its inner edges are not (two).
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+    auto vp = makeGridPlaneTestViewport();
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // Find one border edge and one interior edge, and the pixel at each midpoint.
+    int borderEdge = -1, interiorEdge = -1;
+    foreach (ei; 0 .. cast(int)m.edges.length) {
+        if (m.isEdgeBorder(cast(uint) ei)) { if (borderEdge < 0) borderEdge = ei; }
+        else if (interiorEdge < 0) interiorEdge = ei;
+    }
+    assert(borderEdge >= 0 && interiorEdge >= 0,
+        "setup: a 3x3 grid must carry both a border and an interior edge");
+
+    SDL_MouseButtonEvent pixOf(int ei) {
+        ImVec2 pa, pb;
+        assert(TopologyPenTool.projectPt(m.vertices[m.edges[ei][0]], vp, pa));
+        assert(TopologyPenTool.projectPt(m.vertices[m.edges[ei][1]], vp, pb));
+        SDL_MouseButtonEvent ev;
+        ev.x = cast(int)((pa.x + pb.x) * 0.5f);
+        ev.y = cast(int)((pa.y + pb.y) * 0.5f);
+        return ev;
+    }
+
+    // --- BORDER side: Shift+LMB duplicates.
+    auto eB = pixOf(borderEdge);
+    assert(t.findSourceVertex(eB.x, eB.y, vp) < 0,
+        "setup: the border midpoint must resolve no vertex, or this tests the vertex outcome");
+    assert(t.onShiftLmbDown(eB, vts), "Shift+LMB on a BORDER edge must be consumed");
+    assert(t.dupEdgeArmed_, "a border seed must arm the DUPLICATE");
+    assert(!t.moveArmed_, "and must not arm a move");
+
+    // --- INTERIOR side, same chord: falls through to a 2-vertex MOVE.
+    t.resetAllGestureArms();
+    auto eI = pixOf(interiorEdge);
+    if (t.findSourceVertex(eI.x, eI.y, vp) < 0 && t.findRingSeedEdge(eI.x, eI.y, vp) == interiorEdge) {
+        assert(t.onShiftLmbDown(eI, vts), "Shift+LMB on an INTERIOR edge must still be consumed");
+        assert(!t.dupEdgeArmed_,
+            "an interior seed must NOT arm a duplicate — the reference gates Duplicate on "
+          ~ "isEdgeBorder and silently runs Move instead");
+        assert(t.moveArmed_ && t.moveElem_ == MoveElem.Edge,
+            "it must arm the EDGE move family instead");
+        assert(t.moveVerts_.length == 2,
+            format("a 2-vertex move, per the measured interior outcome; got %d",
+                   t.moveVerts_.length));
+
+        // The release must reach the MOVE's commit leg, not the build's — the
+        // Duplicate slot's UP has to follow where its own DOWN went.
+        assert(t.buildUp(eI, vts), "the release after a fall-through must be consumed");
+        assert(!t.moveArmed_, "and must disarm the move it actually armed");
+    }
+
+    // --- INTERIOR side, Shift+RMB: falls through to a MOVE-LOOP.
+    t.resetAllGestureArms();
+    if (t.findRingSeedEdge(eI.x, eI.y, vp) == interiorEdge) {
+        SDL_MouseButtonEvent eR = eI;
+        eR.button = SDL_BUTTON_RIGHT;
+        t.onDupLoopShiftRmbDown(eR, vts);
+        assert(!t.dupLoopArmed_,
+            "Shift+RMB on an interior edge must NOT arm a duplicate-loop");
+        assert(t.moveLoopArmed_, "it must arm the MOVE-loop instead");
+        assert(t.dupLoopUp(eR, vts),
+            "and the release must reach moveLoopUp through the dup-loop UP leg");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // onDupLoopShiftRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
 // consume/arm (doc/topopen_p11_duploop_plan.md "Shift+RMB dispatch
 // resolution": a miss must fall through to Shift+RMB-lasso unchanged).
@@ -9778,8 +10008,24 @@ unittest {
     bool consumed = t.onDupLoopShiftRmbDown(eHit, vts);
     assert(consumed, "a Shift+RMB press on a valid boundary edge midpoint must arm and consume");
     assert(t.dupLoopArmed_, "must arm the Dup Loop gesture");
-    assert(t.dupLoopEdges_.length == 8,
-        format("armed loop must be the full closed 8-edge rim; got %d edges", t.dupLoopEdges_.length));
+
+    // Task 0486 (contract C-4): the armed set is the trimmed border RUN, not
+    // the whole gathered rim. `makeGridPlane(2)` is 2x2 quads, so its rim's
+    // four CORNER vertices have a single incident polygon each; the walk from
+    // seed 0-1 stops at both of them and keeps the top run {0-1, 1-2}. This
+    // assertion used to demand all 8 rim edges — which is exactly the
+    // owner-reported "it takes all edges", and what the reference does NOT do
+    // (measured 12-gathered -> 3-committed on the 4x4 grid; the run length is
+    // the number of quads along that side).
+    assert(t.dupLoopEdges_.length == 2,
+        format("armed set must be the trimmed 2-edge top run, not the whole rim; got %d edges",
+               t.dupLoopEdges_.length));
+    foreach (ei; t.dupLoopEdges_) {
+        assert(m.isEdgeBorder(cast(uint) ei), "every edge in the run must be a border edge");
+        auto ep = m.edges[ei];
+        assert(ep[0] <= 2 && ep[1] <= 2,
+            "the run must stay on the TOP row (vertices 0-2), never turn a corner");
+    }
 
     t.dupLoopArmed_ = false;   // reset for the miss probe below
     SDL_MouseButtonEvent eMiss;
@@ -9952,7 +10198,8 @@ unittest {
     bool downConsumed = t.onMouseButtonDown(eDown, vts);
     assert(downConsumed, "Shift+RMB-down on the seed edge must be consumed via the real dispatch");
     assert(t.dupLoopArmed_, "the real dispatch must have armed Dup Loop");
-    assert(t.dupLoopEdges_.length == 8, "the real dispatch must have gathered the full closed rim");
+    assert(t.dupLoopEdges_.length == 2,
+        "the real dispatch must arm the TRIMMED border run (task 0486 C-4), not the whole rim");
 
     SDL_MouseMotionEvent eMove;
     eMove.x = mx + 12; eMove.y = my - 7;
@@ -9968,9 +10215,18 @@ unittest {
     assert(upConsumed, "RMB-up must be consumed");
     assert(!t.dupLoopArmed_, "release must disarm Dup Loop regardless of outcome");
 
-    assert(m.vertices.length == vBefore + 8 && m.edges.length == eBefore + 16
-        && m.faces.length == fBefore + 8,
-        "the real dispatch path must grow topology by the closed-rim delta (+8v/+16e/+8f)");
+    // Task 0486 (contract C-4): the trimmed 2-edge run, not the 8-edge rim.
+    // An OPEN run of n edges duplicates to +(n+1) vertices, +(2n+1) edges
+    // (n duplicated + n+1 rungs) and +n faces — the same arithmetic the
+    // reference was measured at for n=1 (+2/+3/+1) and n=3 (+4/+7/+3). Here
+    // n=2, so +3/+5/+2. A CLOSED rim would be +8/+16/+8, which is what this
+    // used to assert and what the trim exists to prevent on an open patch.
+    assert(m.vertices.length == vBefore + 3 && m.edges.length == eBefore + 5
+        && m.faces.length == fBefore + 2,
+        format("the real dispatch path must grow by the trimmed 2-edge-run delta "
+             ~ "(+3v/+5e/+2f); got (+%d/+%d/+%d)",
+               m.vertices.length - vBefore, m.edges.length - eBefore,
+               m.faces.length - fBefore));
     assert(history.canUndo(), "the real dispatch path must record one undo entry");
 
     foreach (vi; vBefore .. m.vertices.length)
@@ -10745,7 +11001,7 @@ unittest {
         Row(PenMode.Point,     false, TopoPenAction.LmbPlaceOrMove, "Point = place-or-move"),
         Row(PenMode.Point,     true,  TopoPenAction.MoveLoop,       "Point on geometry follows Move"),
         Row(PenMode.Duplicate, false, TopoPenAction.Build,          "Duplicate = the Shift+LMB gesture"),
-        Row(PenMode.Duplicate, true,  TopoPenAction.DupLoop,        "Duplicate + Edge Loop = Shift+RMB"),
+        Row(PenMode.Duplicate, true,  TopoPenAction.Build,          "Duplicate + Edge Loop stays the Shift+LMB slot — the flag widens the armed run, it does not switch chords"),
         Row(PenMode.Remove,    false, TopoPenAction.Remove,         "Remove = the Ctrl+MMB gesture"),
         Row(PenMode.Remove,    true,  TopoPenAction.Remove,         "Remove has NO loop variant — the flag is ignored"),
         Row(PenMode.Split,     false, TopoPenAction.Split,          "Split = the MMB gesture"),
@@ -10763,6 +11019,32 @@ unittest {
         t.edgeLoop_  = r.loop;
         t.onPlainLmbDown(e, vts);
         assert(t.lmbAction_ == r.want, r.why);
+    }
+
+    // Task 0486 (contract C-1/C-4): for Duplicate, Edge Loop does not change
+    // WHICH gesture runs — it changes HOW MUCH that gesture takes. The action
+    // stays the Shift+LMB slot either way (pinned in the table above); what
+    // grows is the armed edge run. The reference reads `edgeLoop_` on this
+    // slot and forces it on for its Shift+RMB sibling, so this is the slot
+    // where the flag is observable at all.
+    {
+        auto t1 = new TopologyPenTool();
+        t1.meshSrc_ = () => &m;
+        t1.penMode_ = PenMode.Duplicate;
+        t1.onPlainLmbDown(e, vts);
+        immutable size_t oneEdge = t1.dupEdgeEdges_.length;
+
+        auto t2 = new TopologyPenTool();
+        t2.meshSrc_ = () => &m;
+        t2.penMode_ = PenMode.Duplicate;
+        t2.edgeLoop_ = true;
+        t2.onPlainLmbDown(e, vts);
+        immutable size_t withLoop = t2.dupEdgeEdges_.length;
+
+        assert(oneEdge == 1, "Duplicate with the flag OFF arms exactly the pressed edge");
+        assert(withLoop >= oneEdge,
+            "Duplicate with Edge Loop ON must arm at least the pressed edge — the trimmed "
+          ~ "border run, never fewer");
     }
 
     // Edge Slide reroutes the Move family — and ONLY the Move family — to the

@@ -1,21 +1,29 @@
 // Topology Pen P11 — duploop_resnap (Tier-C, doc/topopen_p11_duploop_plan.md
 // "Testing strategy").
 //
-// A Shift+RMB-drag on a BOUNDARY edge of a small quad grid (the
-// owner-observed/measured spec case — REV1 FIX-1: a boundary seed gathers
-// the FULL CLOSED perimeter), over a curved (sphere) background: the drag
-// duplicates the closed rim into a new ring of quads (`Mesh.extendEdgesByMask`,
+// A Shift+RMB-drag on a BOUNDARY edge of a small quad grid, over a curved
+// (sphere) background: the drag duplicates the border RUN through that seed
+// into new quads (`Mesh.extendEdgesByMask`,
 // identity TRS), then re-snaps EACH new (tail) vertex onto the sphere surface
 // at that vertex's own SHARED-screen-delta-shifted pixel (camera-ray, the
 // SAME primitive P10 Move Loop's re-snap ultimately rests on) —
 // independently verified via `expectedRayHitOnSphere` (ray-sphere
 // intersection computed from scratch, never a second call into the code
 // under test). The primary layer's topology must grow by the computed
-// closed-rim delta (+8v/+16e/+8f), the original 9 grid vertices must stay
-// byte-unchanged, and each new vertex must match exactly one of the 8
+// border-run delta (+3v/+5e/+2f), the original 9 grid vertices must stay
+// byte-unchanged, and each new vertex must match exactly one of the 3
 // independently-computed expected targets (a bijective set match — the
 // exact new-vertex INDEX ordering is an internal kernel detail, not part of
 // the tool's contract).
+//
+// TASK 0486: this test used to assert the FULL CLOSED RIM (+8v/+16e/+8f) on
+// the strength of an owner observation recorded at the time. A live capture
+// of the reference refuted it (`dragweld_dupedge_loopscope_capture.md`): the
+// gather is indeed the whole perimeter, but the COMMITTED set is the border
+// run through the seed, stopping at the chain-end vertices with a single
+// incident polygon — the patch corners. On this 3x3 grid the seed 0-1 run is
+// {0-1, 1-2}, i.e. the top row, and the two corners 0 and 2 end it. The rim
+// reading is exactly the owner's later "it takes all edges" report.
 //
 // Run via: ./run_test.d topopen_duploop_resnap
 
@@ -76,9 +84,9 @@ unittest {
         gridPos[i * 3 + j] = Vec3(x, 0, z);
     }
 
-    // Boundary seed: edge 0-1, a genuine top-row perimeter edge — the
-    // owner-observed spec case (a side/boundary edge duplicates the WHOLE
-    // closed rim).
+    // Boundary seed: edge 0-1, a genuine top-row perimeter edge. Its trimmed
+    // run is the top row {0-1, 1-2}: vertex 0 and vertex 2 are patch corners
+    // (one incident polygon each) and stop the walk in each direction.
     float s0x, s0y, s1x, s1y;
     assert(projectToWindow(gridPos[0], vp, s0x, s0y), "setup: v0 must project on-screen");
     assert(projectToWindow(gridPos[1], vp, s1x, s1y), "setup: v1 must project on-screen");
@@ -95,16 +103,19 @@ unittest {
     assert("error" !in pr, "Shift+RMB drag failed: " ~ pr.toString);
     waitPlayerIdle();
 
-    // Closed-rim topology delta: +8 verts, +16 edges (8 new ring + 8 spokes), +8 faces.
-    assert(vertexCountLayer(1) == 17,
-        format("Dup Loop must add exactly 8 vertices for the closed rim; got %d", vertexCountLayer(1)));
-    assert(edgeCountLayer(1) == 28 && faceCountLayer(1) == 12,
-        format("Dup Loop must add exactly 16 edges / 8 faces; got e=%d f=%d",
+    // Border-run delta: an OPEN run of n edges duplicates to +(n+1) vertices,
+    // +(2n+1) edges (n duplicated + n+1 rungs) and +n faces — the arithmetic
+    // the reference was measured at for n=1 and n=3. Here n=2, so +3/+5/+2.
+    assert(vertexCountLayer(1) == 12,
+        format("Dup Loop must add exactly 3 vertices for the 2-edge border run; got %d total",
+               vertexCountLayer(1)));
+    assert(edgeCountLayer(1) == 17 && faceCountLayer(1) == 6,
+        format("Dup Loop must add exactly 5 edges / 2 faces; got e=%d f=%d",
                edgeCountLayer(1), faceCountLayer(1)));
     assert(vertexCountLayer(0) == sphereVertexCount(LON, LAT), "bg vertex count must be unchanged");
 
     auto post = readVerticesLayer(1);
-    assert(post.length == 17);
+    assert(post.length == 12);
 
     // The 9 original grid verts (incl. the untouched center, 4) must be
     // exactly unchanged — DupLoop never writes the original loop.
@@ -112,35 +123,35 @@ unittest {
         assert(approxVec(gridPos[vi], post[vi], 1e-5),
             format("original grid vertex %d must stay exactly at its original position", vi));
 
-    // The 8 rim source vertices' independently-computed shifted-pixel
-    // camera-ray hits on the sphere.
-    uint[8] rimIdx = [0, 1, 2, 3, 5, 6, 7, 8];
-    Vec3[8] expected;
+    // The 3 RUN source vertices' independently-computed shifted-pixel
+    // camera-ray hits on the sphere (the top row; NOT the whole rim).
+    uint[3] rimIdx = [0, 1, 2];
+    Vec3[3] expected;
     foreach (k, vi; rimIdx) {
         float sx, sy;
         assert(projectToWindow(gridPos[vi], vp, sx, sy),
             format("setup: rim vertex %d must project on-screen", vi));
         assert(expectedRayHitOnSphere(c, sx + dx, sy + dy, R, expected[k]),
-            format("rim vertex %d's shifted-pixel camera-ray must hit the sphere", vi));
+            format("run vertex %d's shifted-pixel camera-ray must hit the sphere", vi));
     }
 
-    // Bijective match: each of the 8 NEW (tail, indices 9..17) vertices must
-    // match exactly one of the 8 expected targets (the exact index
+    // Bijective match: each of the 3 NEW (tail, indices 9..12) vertices must
+    // match exactly one of the 3 expected targets (the exact index
     // correspondence is an internal kernel detail — extendEdgesByMask
     // iterates edges in ASCENDING INDEX order, not loop-chain order — so a
     // set match is the correct, robust assertion here).
-    bool[8] used;
-    foreach (ti; 9 .. 17) {
+    bool[3] used;
+    foreach (ti; 9 .. 12) {
         Vec3 tv = toVec3(post[ti]);
         int bestK = -1;
         double bestD = double.infinity;
-        foreach (k; 0 .. 8) {
+        foreach (k; 0 .. 3) {
             if (used[k]) continue;
             double d = distSq(tv, expected[k]);
             if (d < bestD) { bestD = d; bestK = cast(int)k; }
         }
         assert(bestK >= 0 && sqrt(bestD) < TOL,
-            format("new vertex %d must match one of the 8 expected sphere-hit targets; "
+            format("new vertex %d must match one of the 3 expected sphere-hit targets; "
                  ~ "nearest dist=%f", ti, sqrt(bestD)));
         used[bestK] = true;
 
@@ -148,8 +159,8 @@ unittest {
         assert(abs(distFromOrigin - R) < TOL,
             format("new vertex %d must lie on the sphere surface", ti));
     }
-    foreach (k; 0 .. 8)
-        assert(used[k], format("expected target %d (rim vertex %d) must be matched by exactly "
+    foreach (k; 0 .. 3)
+        assert(used[k], format("expected target %d (run vertex %d) must be matched by exactly "
                              ~ "one new vertex", k, rimIdx[k]));
 }
 

@@ -93,8 +93,12 @@ unittest {
     waitPlayerIdle();
 
     // Setup sanity: the drag must have actually grown the topology.
-    assert(vertexCountLayer(1) == 17 && edgeCountLayer(1) == 28 && faceCountLayer(1) == 12,
-        "setup: the drag must have duplicated the closed rim (+8v/+16e/+8f)");
+    // Task 0486: the committed set is the border RUN through the seed, not the
+    // whole gathered rim — measured, see dragweld_dupedge_loopscope_capture.md.
+    // Seed 0-1 on a 3x3 grid runs {0-1, 1-2} (the corners 0 and 2 stop it), so
+    // an open 2-edge run: +3 vertices, +5 edges, +2 faces.
+    assert(vertexCountLayer(1) == 12 && edgeCountLayer(1) == 17 && faceCountLayer(1) == 6,
+        "setup: the drag must have duplicated the 2-edge border run (+3v/+5e/+2f)");
 
     auto moved = readVerticesLayer(1);
 
@@ -119,12 +123,12 @@ unittest {
     postJson("/api/play-events", viewport ~ "\n" ~ redoTap(60.0) ~ "\n");
     waitPlayerIdle();
 
-    assert(vertexCountLayer(1) == 17 && edgeCountLayer(1) == 28 && faceCountLayer(1) == 12,
-        "redo must re-apply the exact topology growth (+8v/+16e/+8f)");
+    assert(vertexCountLayer(1) == 12 && edgeCountLayer(1) == 17 && faceCountLayer(1) == 6,
+        "redo must re-apply the exact topology growth (+3v/+5e/+2f)");
 
     auto afterRedo = readVerticesLayer(1);
-    assert(afterRedo.length == 17);
-    foreach (vi; 0 .. 17)
+    assert(afterRedo.length == 12);
+    foreach (vi; 0 .. 12)
         assert(approxVec(toVec3(moved[vi]), afterRedo[vi], 1e-4),
             format("redo must restore vertex %d's exact post-drag position; got %s expected %s",
                    vi, afterRedo[vi], moved[vi]));
