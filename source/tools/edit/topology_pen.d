@@ -212,6 +212,26 @@ private enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smo
 // the token mapping compile-time exhaustive.
 private enum SlideDecline { None, NoEdge, NoContinuation }
 
+/// Which kind of element a Move-family press grabbed (task 0484). Resolved
+/// by PROXIMITY, in this order — vertex within `kTopoPenSnapPx`, else edge
+/// within the same radius, else the face under the cursor — so the closest
+/// thing to the cursor is what moves, which is how the reference's Move mode
+/// reads to a user ("hover it, drag it").
+///
+/// `Vertex` keeps P4's measured law verbatim: the grabbed vertex goes TO the
+/// cursor's own constrained surface hit. `Edge`/`Face` cannot follow that law
+/// (there is no single point to place), so they take the law this tool
+/// already measured for its OTHER multi-vertex gesture, Move Loop: one shared
+/// SCREEN delta applied to every vertex of the set, each re-snapped to the
+/// background surface independently, a per-vertex miss keeping its original
+/// position (`perVertexTargets`).
+///
+/// `None` = nothing armed. A plain enum + `final switch` rather than an
+/// `IntEnumEntry` table, for the `BuildCase`/`SlideDecline` reason: it is not
+/// a `Param`, nothing parses it back, and the exhaustive switch makes a new
+/// member a compile error at every consumer.
+private enum MoveElem { None, Vertex, Edge, Face }
+
 // ---------------------------------------------------------------------------
 // TopoPenAction / kTopoPenBindings — the declarative (button, modifier) ->
 // action dispatch table (`source/tool_input.d`,
@@ -368,7 +388,7 @@ unittest {
 // module.
 // Commit is deferred to release (`onMouseButtonUp`, `commitSlide`) — a
 // direct Position-only kernel write (`m.vertices[i]=pos` +
-// `commitChange(Position)`, mirroring `moveVertexTo`, extended to up to 2
+// `commitChange(Position)`, mirroring `applyMoveTargets`, extended to up to 2
 // vertices), one atomic undo via its OWN dedicated `slideEditFactory_`
 // (wireName "mesh.topoPen_slide" — never `moveEditFactory_`, despite
 // sharing its Position-only scope, or the undo history / event-log replay /
@@ -457,22 +477,36 @@ unittest {
 // P4 adds MOVE on the plain (unmodified) **LMB** slot (`TopoPenAction.LmbPlaceOrMove`) —
 // the dispatch backbone's base behavior, every modifier an overlay on top of
 // it (capture-verified, doc/topopen_p4_plan.md "The MEASURED mechanism").
-// Design A: BOTH Move and Place now commit on RELEASE, not DOWN — a plain
-// LMB press disambiguates at press time (`onPlainLmbDown`, reusing P3's
-// `findSourceVertex`, kTopoPenSnapPx threshold, over the PRIMARY layer
-// only): landing on an existing vertex arms Move (`moveArmed_`/
-// `grabbedVert_`); landing on empty background arms Place (`placeArmed_`,
-// the same P2 `placeVertexAt` path, now deferred). `onMouseButtonUp`
-// commits whichever is armed at the release event's own CONS-snapped hit:
-// Move re-snaps the grabbed vertex to that hit (`moveVertexTo` — a direct
-// `m.vertices[i]=pos` + `m.commitChange(Position)` write, no new mesh.d
-// seam, its own `topoPenMoveEditFactory`/wireName "mesh.topoPen_move", OBJ-3
-// FOLDED); Place creates one vertex exactly as P2 always did. A release
-// landing back within eps of the grabbed vertex's CURRENT position
-// (stationary click, or an all-on-surface no-move) is a clean no-op — no
-// mutation, no undo entry, mirroring P3's degenerate-release convention.
-// `draw()` renders a live Move ghost (grabbed vertex's re-snapped position)
-// since commit is deferred to release — the only mid-drag feedback.
+// Design A: BOTH Move and Place resolve at press time (`onPlainLmbDown`,
+// reusing P3's `findSourceVertex`, kTopoPenSnapPx threshold, over the PRIMARY
+// layer only) and land at the RELEASE event's own CONS-snapped hit: landing
+// on geometry arms Move (`moveArmed_` + the moving set, `armMoveElement`);
+// landing on empty background arms Place (`placeArmed_`, the same P2
+// `placeVertexAt` path, deferred to release). A release landing back within
+// eps of the moving set's CURRENT positions (stationary click, or an
+// all-on-surface no-move) is a clean no-op — no mutation, no undo entry,
+// mirroring P3's degenerate-release convention.
+//
+// Task 0484 widened Move on both axes, per the reference's own description of
+// it ("moves an element as you drag it, but it remains fixed against the
+// background surface as it slides around ... useful in editing vertices,
+// edges, and polygons"):
+//   * WHAT — a press grabs the nearest element by proximity (vertex, else
+//     edge, else the face under the cursor) and moves ITS whole vertex set;
+//     an edge/face press used to be declined outright (0482).
+//   * WHEN — the mesh is written LIVE on every motion event, so the geometry
+//     itself deforms under the cursor instead of a ghost line predicting it.
+//     Still exactly ONE undo entry: `moveBefore_` is captured at arm time and
+//     `finishMove` records the (before, after) pair at release, which is the
+//     `MeshSessionEdit` contract. Where the gesture LANDS is unchanged — the
+//     release recomputes its targets from its own pixel, as it always did.
+// A single grabbed vertex keeps P4's measured law verbatim (go to the
+// cursor's constrained hit); a multi-vertex element takes the law this tool
+// already measured for Move Loop (one shared screen delta, per-vertex
+// re-snap). Both write through `applyMoveTargets` — a direct
+// `m.vertices[i]=pos` + `m.commitChange(Position)`, no new mesh.d seam,
+// recorded through its own `topoPenMoveEditFactory`/wireName
+// "mesh.topoPen_move" (OBJ-3 FOLDED).
 //
 // P3 adds the DRAG-FROM-VERTEX build gesture on the **Shift+LMB** overlay
 // slot (doc-mined gesture grid, cross-confirmed by 3 independent reference
@@ -668,6 +702,52 @@ private:
     bool placeArmed_  = false;
     bool moveArmed_   = false;
     int  grabbedVert_ = -1;
+
+    // --- Move-mode ELEMENT grab + LIVE drag (task 0484). Two extensions of
+    // the P4 vertex grab above, both owner-observed on the reference and
+    // spelled out by its own Move description ("moves an element as you drag
+    // it, but it remains fixed against the background surface as it slides
+    // around — useful in editing vertices, EDGES, and POLYGONS"):
+    //
+    //   1. WHAT can be grabbed. A press resolves the element under the
+    //      cursor by proximity — vertex within `kTopoPenSnapPx`, else edge
+    //      within the same radius, else the face under the cursor — and
+    //      `moveVerts_` becomes THAT element's vertices (1 / 2 / N). Before
+    //      this, an edge or face press was declined outright
+    //      (doc/tasks/done/0482-topopen-move-nonvertex.md deliberately left
+    //      it unimplemented rather than invent one).
+    //
+    //   2. WHEN the mesh changes. The move is applied LIVE on every motion
+    //      event, not only at release — the geometry deforms under the
+    //      cursor instead of a ghost line predicting it. `moveBefore_` is
+    //      captured ONCE at arm time and the whole drag records exactly ONE
+    //      undo entry at release: the `MeshSessionEdit` contract ("mutates
+    //      the mesh freely while the user drags ... records this command
+    //      holding (before, after) snapshots so the entire gesture is a
+    //      single undo step").
+    //
+    // The FINAL positions still come from the RELEASE event's own pixel, as
+    // they always did — the live writes are a preview made of real geometry,
+    // and they never change where the gesture lands. That is what keeps this
+    // a superset of the P4 law rather than a replacement for it.
+    //
+    // `moveBase_` is the moving set's positions AT ARM TIME and every target
+    // is computed from it, never from the live (already-moved) positions —
+    // otherwise each motion event would compound onto the previous one and
+    // the element would race away from the cursor.
+    //
+    // `moveDirty_` records whether any live write actually happened, so a
+    // press-with-no-motion stays the byte-identical no-op it has always been
+    // (no snapshot pair, no undo entry, no GPU churn). Cleared — like every
+    // arm above — by `resetAllGestureArms()`; `deactivate()` finalizes a
+    // still-dirty drag first, so switching tools mid-gesture cannot leave an
+    // un-undoable mutation behind.
+    MoveElem     moveElem_  = MoveElem.None;
+    uint[]       moveVerts_;
+    Vec3[]       moveBase_;
+    int          moveStartX_, moveStartY_;
+    bool         moveDirty_ = false;
+    MeshSnapshot moveBefore_;
 
     // --- P6 Add Loop session state (topology_pen.d,
     // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
@@ -1316,6 +1396,13 @@ public:
     }
 
     override void deactivate() {
+        // Task 0484: Move is the one gesture here that writes the mesh
+        // DURING the drag, so a tool switch mid-drag would otherwise leave
+        // those writes applied with no history entry to undo them. Record
+        // what is already on the mesh, then clear. No new targets are
+        // computed — there is no event, hence no pixel, to compute them for;
+        // the mesh's current state IS the answer.
+        commitLiveMoveIfDirty();
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
         slideDecline_     = SlideDecline.None;
@@ -1391,6 +1478,27 @@ public:
                     }
                 }
             }
+        }
+
+        // Move-family LIVE drag (task 0484). Alone among this tool's
+        // gestures, Move mutates the mesh DURING the drag rather than
+        // previewing it with a ghost: the element deforms the geometry under
+        // the cursor, which is what the reference does and what makes a
+        // multi-vertex grab readable at all (a ghost line cannot show an edge
+        // or a polygon dragging its incident faces along with it).
+        //
+        // Still ONE undo entry: `moveBefore_` was captured at arm time and
+        // `finishMove` records the pair at release. The targets are absolute
+        // (always recomputed from `moveBase_`), so an event stream of any
+        // density lands in exactly the same place — and the release recomputes
+        // them once more for its OWN pixel, which is what actually decides
+        // where the gesture ends. Consumes, mirroring every armed branch
+        // below.
+        if (moveArmed_) {
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            applyMoveTargets(moveTargets(e.x, e.y, vp, vts));
+            return true;
         }
 
         // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
@@ -1916,10 +2024,15 @@ public:
         dragArmed_      = false;
         classifiedCase_ = BuildCase.None;
         triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
-        // P4 Move/Place (doc/topopen_p4_plan.md)
+        // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
+        // `clearMoveArm` drops the live drag's base positions and its
+        // arm-time snapshot WITHOUT recording anything — correct for every
+        // caller of this helper: a same-slot re-press starts a fresh gesture,
+        // and `resyncSession` runs when an external history navigation has
+        // already replaced the mesh this drag was editing, so there is no
+        // "before" left that a recorded entry could mean anything against.
         placeArmed_     = false;
-        moveArmed_      = false;
-        grabbedVert_    = -1;
+        clearMoveArm();
         // P6 Add Loop (doc/topopen_p6_addloop_plan.md)
         addLoopSeed_    = -1;
         addLoopArmed_   = false;
@@ -2144,42 +2257,26 @@ public:
             // routes to, so mode+flag and chord are the same code path.
             if (edgeLoop_)  return stamp(onMoveLoopRmbDown(e, vts), TopoPenAction.MoveLoop);
             if (edgeSlide_) return stamp(onCtrlLmbDown(e, vts),     TopoPenAction.Slide);
-            if (src >= 0) {
-                moveArmed_   = true;
-                grabbedVert_ = src;
-                return true;
-            }
 
-            // The press landed on an EDGE or a FACE (not a vertex), and
-            // neither flag widened the grab into a gesture that could use
-            // it. DECLINE (doc/tasks/done/0482-topopen-move-nonvertex.md).
+            // The Move grab (task 0484). Resolve WHICH element is under the
+            // cursor by proximity — vertex, else edge, else the face the
+            // cursor is over — and arm that element's whole vertex set. A
+            // press on an edge or a face used to be DECLINED here
+            // (doc/tasks/done/0482-topopen-move-nonvertex.md: the behaviour
+            // was unmeasured, and inventing one would have been worse than
+            // the gap); the reference's own Move description settles it —
+            // Move slides "an element ... against the background surface",
+            // and is "useful in editing vertices, edges, and polygons".
             //
-            // Without this guard the press fell through to Place, and the
-            // release committed a `mesh.addVertex` at the background-snapped
-            // cursor point: aim at an edge, get a stray floating vertex. The
-            // indicator was simultaneously highlighting that edge in
-            // steel-blue, so the tool told the user "this edge is under your
-            // cursor" and then silently did something to a different piece of
-            // geometry — undoable, but with no signal that anything
-            // unintended happened.
-            //
-            // Deliberately NOT "make Move work on edges/faces": what a press
-            // on a non-vertex element should DO is unmeasured, and inventing
-            // it would be worse than the missing behaviour. Declining (rather
-            // than arming a Move with nothing to move) matches how the other
-            // two LEFT-button gestures answer a seed they cannot use —
-            // `onShiftLmbDown` (no pre-highlighted vertex) and `onCtrlLmbDown`
-            // (edge resolved, but neither endpoint has a slide rail) both
-            // `return false` — so "resolved nothing" reads the same way across
-            // the whole tool. It is also observably inert: with a tool active,
-            // app.d's plain-LMB paths gate every selection/camera branch on
-            // `!anyToolActive`, so a declined press changes no selection,
-            // records no undo entry, and mutates nothing. The subsequent
-            // release is safe for the same reason every other decline is:
-            // `lmbPlaceOrMoveUp` trusts the arm BOOLS, not the base's
-            // `armed_[]` slot (the documented arm-before-decline gap), and
-            // both are false here.
-            return false;
+            // A press that lands on geometry the pick cannot resolve into any
+            // element still declines, for the reasons the old guard spelled
+            // out: with a tool active app.d gates every selection/camera
+            // branch on `!anyToolActive`, so a declined press changes no
+            // selection, records no undo entry and mutates nothing, and the
+            // release is safe because `lmbPlaceOrMoveUp` trusts the arm BOOLS
+            // rather than the base's `armed_[]` slot (the documented
+            // arm-before-decline gap).
+            return armMoveElement(e, vts, vp, src);
         }
 
         // Empty space. Only Point mode places here; Move mode has nothing to
@@ -2188,6 +2285,230 @@ public:
 
         placeArmed_ = true;
         return true;
+    }
+
+    // Resolve the element under a Move-family press and arm it (task 0484).
+    // `srcVert` is the caller's already-computed `findSourceVertex` result,
+    // passed in rather than recomputed so the pick runs exactly once per
+    // press. Returns false — arming nothing — when no element resolves.
+    //
+    // The edge/face picks here repeat the two `overPrimaryEdgeOrFace` just
+    // ran for the caller's on-geometry gate. Deliberately NOT folded into one
+    // pass: the gate answering true while this returns false — a degenerate
+    // (<3 corner) face, a stale index — must stay a DECLINE, and folding them
+    // would turn exactly that case into a fall-through to Place, which is the
+    // stray-vertex defect 0482 closed. One extra edge scan and one BVH pick,
+    // per PRESS (never per motion event), buys that guarantee.
+    private bool armMoveElement(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                const ref Viewport vp, int srcVert) {
+        auto m = mesh;
+        if (m is null) return false;
+
+        MoveElem kind = MoveElem.None;
+        uint[]   verts;
+
+        if (srcVert >= 0 && srcVert < cast(int)m.vertices.length) {
+            kind  = MoveElem.Vertex;
+            verts = [cast(uint) srcVert];
+        } else {
+            // Explicit `>= 0`, never a truthiness test: `findRingSeedEdge`
+            // answers -1 on a miss, and edge 0 is a perfectly ordinary edge
+            // to grab.
+            int ei = findRingSeedEdge(e.x, e.y, vp);
+            if (ei >= 0 && ei < cast(int)m.edges.length) {
+                kind  = MoveElem.Edge;
+                verts = [m.edges[ei][0], m.edges[ei][1]];
+            }
+        }
+
+        if (kind == MoveElem.None) {
+            int fi = pickPrimaryFace(e.x, e.y, vp);
+            if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) {
+                kind  = MoveElem.Face;
+                verts = m.faces[fi].dup;
+            }
+        }
+
+        if (kind == MoveElem.None || verts.length == 0) return false;
+
+        // A face's corner list can name the same vertex twice on a
+        // malformed polygon; moving one twice is harmless but recording it
+        // twice in `moveBase_` is not (the second copy would carry a
+        // stale base). Deduplicate, preserving order.
+        uint[] uniq;
+        foreach (vi; verts) {
+            if (vi >= m.vertices.length) return false;   // stale pick — arm nothing
+            bool seen = false;
+            foreach (u; uniq) if (u == vi) { seen = true; break; }
+            if (!seen) uniq ~= vi;
+        }
+
+        moveElem_    = kind;
+        moveVerts_   = uniq;
+        moveBase_.length = uniq.length;
+        foreach (i, vi; uniq) moveBase_[i] = m.vertices[vi];
+        moveStartX_  = e.x;
+        moveStartY_  = e.y;
+        moveDirty_   = false;
+        moveArmed_   = true;
+        grabbedVert_ = (kind == MoveElem.Vertex) ? cast(int) uniq[0] : -1;
+        return true;
+    }
+
+    // Where the armed moving set belongs for a cursor at (px,py) — the ONE
+    // place the two Move laws live, so the live preview and the release
+    // commit can never drift apart (task 0484).
+    //
+    //   Vertex — P4's measured law, unchanged: the grabbed vertex goes TO the
+    //            cursor's own constrained hit. A cursor that misses every
+    //            background surface leaves it where it started.
+    //   Edge/Face — Move Loop's measured law: one shared SCREEN delta from
+    //            the press pixel, applied to each vertex's ARM-TIME position
+    //            and re-snapped to the background independently, a per-vertex
+    //            miss keeping that vertex's original position.
+    //
+    // Always computed from `moveBase_`, never from the live positions, so N
+    // motion events produce the same answer as one — no compounding.
+    private Vec3[] moveTargets(int px, int py, const ref Viewport vp, ref VectorStack vts) {
+        if (moveElem_ == MoveElem.Vertex) {
+            Vec3[] one = [ moveBase_[0] ];
+            readHit(vts);   // the CONS-snapped hit for THIS event's pixel
+            if (lastHit_.hit) one[0] = lastHit_.point;
+            return one;
+        }
+
+        // Click-vs-drag gate, inherited WITH the screen-delta law from Move
+        // Loop (`moveLoopUp`'s own `kMinDragPx`) — every gesture in this tool
+        // that re-snaps a whole set by a shared delta carries it. Without it
+        // a bare CLICK on an edge or a face would apply a zero delta, which
+        // is NOT a no-op: each vertex would re-snap to whatever background
+        // surface sits under its own pixel, yanking the element onto the
+        // background just for being clicked. Below the threshold the set
+        // stays exactly where it is.
+        enum int kMinDragPx = 3;
+        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return moveBase_.dup;
+
+        return perVertexTargetsFrom(moveBase_, dx, dy, vp);
+    }
+
+    // Apply `targets` to the armed moving set in place — the live half of the
+    // drag (task 0484). No snapshot, no history: `moveBefore_` was taken at
+    // arm time and the single undo entry is recorded once, at release
+    // (`finishMove`). Sets `moveDirty_` so a gesture that never actually
+    // moved anything stays a true no-op.
+    private void applyMoveTargets(const(Vec3)[] targets) {
+        auto m = mesh;
+        if (m is null || targets.length != moveVerts_.length) return;
+        foreach (vi; moveVerts_)
+            if (vi >= m.vertices.length) return;   // stale arm — defensive
+
+        enum float kMoveEps = 1e-4f;   // stationary-grab / all-on-surface no-move guard
+        bool changed = false;
+        foreach (i, vi; moveVerts_)
+            if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
+        if (!changed) return;
+
+        // The undo baseline is captured LAZILY, at the first write of the
+        // gesture rather than at arm time: a press that never drags — by far
+        // the common case, every click this tool sees — then costs no
+        // whole-mesh snapshot at all. `moveDirty_` is still false here, so
+        // the mesh is untouched by this gesture and this IS the pre-gesture
+        // state.
+        if (!moveDirty_) moveBefore_ = MeshSnapshot.capture(*m);
+
+        foreach (i, vi; moveVerts_) m.vertices[vi] = targets[i];
+        m.commitChange(MeshEditScope.Position);
+        moveDirty_ = true;
+
+        m.syncSelection();
+        if (gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m, gpu_, vc_, ec_, fc_);
+    }
+
+    // Close an armed Move: apply the FINAL targets, then record the whole
+    // drag as ONE undo entry (task 0484). The final positions come from the
+    // caller's event pixel — the release's own, exactly as before this
+    // gesture went live — so where a Move lands is unchanged; the live writes
+    // only decided what the user saw on the way there.
+    //
+    // Records nothing when the mesh never actually moved (`moveDirty_` false
+    // after the final apply): a stationary click, or a drag whose every
+    // vertex missed the background surface, stays the byte-identical no-op it
+    // has always been. Disarms unconditionally on the way out.
+    private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
+        scope(exit) clearMoveArm();
+        if (!moveArmed_ || moveVerts_.length == 0) return;
+        applyMoveTargets(moveTargets(px, py, vp, vts));
+        recordLiveMove();
+    }
+
+    // Record whatever the live drag has already written, WITHOUT computing
+    // new targets — the tool-switch path (`deactivate`), which has no event
+    // and therefore no pixel to compute them for. Disarms afterwards, so a
+    // reactivation starts clean.
+    private void commitLiveMoveIfDirty() {
+        if (!moveArmed_) return;
+        scope(exit) clearMoveArm();
+        recordLiveMove();
+    }
+
+    // The single undo entry for an armed Move drag: `moveBefore_` (arm time)
+    // paired with the mesh as it stands now. A gesture that moved nothing
+    // records nothing — a stationary click, or a drag whose every vertex
+    // missed the background surface, stays the byte-identical no-op it has
+    // always been.
+    private void recordLiveMove() {
+        if (!moveDirty_) return;
+        auto m = mesh;
+        if (m is null || history_ is null || moveEditFactory_ is null) return;
+
+        // A drag that wandered and came home again HAS written the mesh
+        // (`moveDirty_`), but its net effect is nothing — recording it would
+        // put an undo entry on the stack that restores what is already there.
+        // Compare the moving set against its arm-time base and drop the
+        // entry when they agree; only the moving set can have changed, so
+        // this stays O(set), not O(mesh).
+        enum float kNetEps = 1e-4f;   // the same eps `applyMoveTargets` writes by
+        bool net = false;
+        foreach (i, vi; moveVerts_) {
+            if (vi >= m.vertices.length) { net = true; break; }   // stale: record, don't lose it
+            if ((m.vertices[vi] - moveBase_[i]).length > kNetEps) { net = true; break; }
+        }
+        if (!net) return;
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = moveEditFactory_();
+        cmd.setSnapshots(moveBefore_, after, "Topology Move");
+        history_.record(cmd);
+        // Position-only edit: no `resyncSession()` — no index this or any
+        // sibling gesture caches can have been invalidated (the same
+        // reasoning `commitMoveLoop` documents).
+    }
+
+    // Drop the arm WITHOUT recording. Every caller either has already
+    // recorded (`finishMove`, `commitLiveMoveIfDirty`) or genuinely has
+    // nothing to record — `resyncSession`, where an external history
+    // navigation has already replaced the mesh this drag was editing, so an
+    // (arm-time, post-navigation) snapshot pair would describe a transition
+    // that never happened.
+    //
+    // ONE narrow consequence, deliberately not machined around: a MIDDLE- or
+    // RIGHT-button gesture that commits while a LEFT Move drag is still held
+    // (a legitimate two-button chord — see `resetAllGestureArms`'s own note)
+    // routes through `resyncSession` too, so the live delta so far is not
+    // recorded as its OWN entry. It is not lost and the mesh is not
+    // corrupted: that sibling captured its `before` AFTER these writes, so
+    // the delta is simply part of its baseline and survives its undo. Only
+    // the granularity differs, and only for that chord.
+    private void clearMoveArm() {
+        moveArmed_   = false;
+        grabbedVert_ = -1;
+        moveElem_    = MoveElem.None;
+        moveVerts_   = null;
+        moveBase_    = null;
+        moveDirty_   = false;
+        moveBefore_  = MeshSnapshot.init;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
@@ -3044,14 +3365,31 @@ public:
     // (defensive; callers already guard this).
     private Vec3[] perVertexTargets(const(uint)[] verts, int dx, int dy,
                                     const ref Viewport vp) {
-        Vec3[] targets;
+        Vec3[] base;
         auto m = mesh;
-        if (m is null) return targets;
-        targets.length = verts.length;
-        foreach (i, vi; verts) {
-            Vec3 orig = (vi < m.vertices.length) ? m.vertices[vi] : Vec3(0, 0, 0);
-            targets[i] = orig;   // default: miss (or out-of-range) keeps the original
-            if (vi >= m.vertices.length) continue;
+        if (m is null) return base;
+        base.length = verts.length;
+        foreach (i, vi; verts)
+            base[i] = (vi < m.vertices.length) ? m.vertices[vi] : Vec3(0, 0, 0);
+        return perVertexTargetsFrom(base, dx, dy, vp);
+    }
+
+    // The same law, taking the source positions EXPLICITLY (task 0484). A
+    // gesture that writes the mesh LIVE cannot project "the vertex's current
+    // position" — by the second motion event that is already the moved one,
+    // and the element would race away from the cursor by an ever-growing
+    // delta. It hands its ARM-TIME positions in instead, so every motion
+    // event recomputes the same absolute answer from the same origin.
+    //
+    // `perVertexTargets` above is the identity case (base = live positions),
+    // which is exactly right for a gesture that only ever computes this once,
+    // at release — Move Loop / Dup Loop are unchanged by this split.
+    private Vec3[] perVertexTargetsFrom(const(Vec3)[] base, int dx, int dy,
+                                        const ref Viewport vp) {
+        Vec3[] targets;
+        targets.length = base.length;
+        foreach (i, orig; base) {
+            targets[i] = orig;   // default: a miss keeps the original
 
             ImVec2 pt;
             if (!projectPt(orig, vp, pt)) continue;   // behind camera -> keep original
@@ -3122,11 +3460,15 @@ public:
             return true;
         }
         if (moveArmed_) {
-            int vi = grabbedVert_;
-            moveArmed_   = false;
-            grabbedVert_ = -1;
-            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
-            if (lastHit_.hit) moveVertexTo(vi, lastHit_.point);
+            // Task 0484: the release applies the FINAL targets for its own
+            // pixel and records the whole drag as one undo entry — see
+            // `finishMove`. For a grabbed VERTEX this is P4's original law
+            // verbatim (go to the release event's CONS-snapped hit), so
+            // where a vertex move lands is unchanged; edges and faces take
+            // the shared screen-delta law.
+            Viewport vp;
+            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            finishMove(e.x, e.y, vp, vts);
             return true;
         }
         return false;
@@ -3377,6 +3719,17 @@ public:
     // an `IntEnumEntry` table: this is not a `Param`, nothing parses it back,
     // and the exhaustive switch makes a newly added action a COMPILE error
     // here instead of a silently unlabelled state field.
+    // `moveElem_` as a stable wire token for `/api/tool/state` (task 0484),
+    // same `final switch` discipline as `lmbActionTag` below.
+    private static string moveElemTag(MoveElem k) {
+        final switch (k) {
+        case MoveElem.None:   return "none";
+        case MoveElem.Vertex: return "vertex";
+        case MoveElem.Edge:   return "edge";
+        case MoveElem.Face:   return "face";
+        }
+    }
+
     private static string lmbActionTag(TopoPenAction a) {
         final switch (a) {
         case TopoPenAction.LmbPlaceOrMove: return "place_or_move";
@@ -3491,45 +3844,6 @@ public:
         return cast(int)(mesh.vertices.length - 1);
     }
 
-    // P4 (doc/topopen_p4_plan.md): commit the armed Move gesture — a
-    // position-only write, direct kernel mutation with NO new mesh.d seam
-    // (the plan's kernel-layering decision): `m.vertices[vi] = pos` +
-    // `m.commitChange(MeshEditScope.Position)` from OUTSIDE `Mesh` is
-    // idiomatic in this codebase (`commands/mesh/move_vertex.d`,
-    // `edge_slide.d`, `linear_align.d` all do exactly this), bracketed in
-    // ONE before/after `MeshSnapshot` pair recorded through the DEDICATED
-    // `moveEditFactory_` (OBJ-3 FOLDED — wireName "mesh.topoPen_move", NOT
-    // `buildEditFactory_`'s "mesh.topoPen_build"), so one Move drag is one
-    // atomic undo entry, mirroring `buildFromSource`'s own
-    // capture/mutate/record/refresh shape. A release that re-snaps back to
-    // (within eps of) the vertex's CURRENT position — a stationary grab, or
-    // an all-on-surface no-move — is a clean no-op: no mutation, no undo
-    // entry, matching `buildFromSource`'s degenerate-release convention
-    // (this path never partially mutates before the check, so the guard is
-    // a simple up-front distance test rather than a restore-after-the-fact).
-    private void moveVertexTo(int vi, Vec3 pos) {
-        if (meshSrc_ is null || history_ is null || moveEditFactory_ is null) return;
-        auto m = mesh;
-        if (m is null || vi < 0 || vi >= cast(int)m.vertices.length) return;
-
-        Vec3 origPos = m.vertices[vi];
-        enum float kMoveEps = 1e-4f;   // stationary-grab / all-on-surface no-move guard
-        if ((pos - origPos).length <= kMoveEps) return;
-
-        MeshSnapshot before = MeshSnapshot.capture(*m);
-        m.vertices[vi] = pos;
-        m.commitChange(MeshEditScope.Position);
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-
-        auto cmd = moveEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Move");
-        history_.record(cmd);
-
-        m.syncSelection();
-        if (gpu_ !is null) gpu_.upload(*m);
-        refreshDisplay(m, gpu_, vc_, ec_, fc_);
-    }
-
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
     // gesture — writes AT MOST 2 vertex positions (the grabbed edge's own
     // endpoints; a HELD-FIXED endpoint, `nA`/`nB == -1`, keeps its CURRENT
@@ -3537,11 +3851,11 @@ public:
     // (`m.vertices[i] = pos` + `commitChange(Position)`), bracketed in ONE
     // before/after `MeshSnapshot` pair recorded through the DEDICATED
     // `slideEditFactory_` (wireName "mesh.topoPen_slide") — mirrors
-    // `moveVertexTo`'s shape, extended to up to 2 vertices. `seed` is a
+    // `applyMoveTargets`'s shape, extended to up to 2 vertices. `seed` is a
     // defensive cross-check (the grabbed edge must still connect `eA`/`eB`
     // — guards against a stale/corrupted arm rather than trusting the
     // caller's indices blindly); the eps no-op guard mirrors
-    // `moveVertexTo`'s. Zero topology change — never resizes/rebuilds
+    // `applyMoveTargets`'s. Zero topology change — never resizes/rebuilds
     // `faces[]`/`edges[]`/`vertices[]` (no `buildLoops`, no
     // `deleteFacesByMask`, no `insertEdgeLoops`) — so unlike P5/P6 this does
     // NOT call `resyncSession()` (plan §Risks: no sibling gesture's cached
@@ -3570,7 +3884,7 @@ public:
         Vec3 pA = (nA >= 0) ? slideEndpointPos(origA, m.vertices[nA], deltaK) : origA;
         Vec3 pB = (nB >= 0) ? slideEndpointPos(origB, m.vertices[nB], deltaK) : origB;
 
-        enum float kSlideEps = 1e-4f;   // mirrors moveVertexTo's stationary-grab guard
+        enum float kSlideEps = 1e-4f;   // mirrors applyMoveTargets's stationary-grab guard
         if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
@@ -3841,7 +4155,7 @@ public:
     // Smooth gesture that produces NO net vertex change — 0-neighbor
     // disconnected verts, no background source, or any other combination
     // that nets to identity — restores `before` and records NO undo entry
-    // (mirrors `moveVertexTo`/`commitSlide`'s own eps guards). This is
+    // (mirrors `applyMoveTargets`/`commitSlide`'s own eps guards). This is
     // ROUTINE, not a rare edge case (a freshly-placed, still-disconnected
     // patch with no bg layer is exactly this), so the guard runs on EVERY
     // commit, never skipped.
@@ -4143,7 +4457,7 @@ public:
     // Move's Position-only scope; opponent KILLER-1 — never
     // `buildEditFactory_`/`moveEditFactory_`, which would bake the wrong
     // wire name onto this op). A miss/out-of-range `faceIdx` bails BEFORE
-    // any mutation (D3) — mirrors `moveVertexTo`'s up-front guard shape.
+    // any mutation (D3) — mirrors `applyMoveTargets`'s up-front guard shape.
     //
     // On SUCCESS, calls `resyncSession()` (opponent KILLER-2, Risk 1): the
     // tool never overrides `isDragging()`, so a Ctrl+MMB Remove can fire
@@ -4360,7 +4674,7 @@ public:
     // `faces[]`/`edges[]`/`vertices[]` — so unlike P5/P6/P9 this does NOT
     // call `resyncSession()` (mirrors `commitSlide`'s/`applySmoothPasses`'s
     // own reasoning: no sibling gesture's cached INDEX can dangle from a
-    // pure position write). Eps no-op guard (mirrors `moveVertexTo`/
+    // pure position write). Eps no-op guard (mirrors `applyMoveTargets`/
     // `commitSlide`): a gesture that nets to ZERO vertex movement (every
     // target within eps of its own original position — e.g. every ray
     // missed, or a whole-loop click-without-drag that slipped past the
@@ -4373,7 +4687,7 @@ public:
         foreach (vi; verts)
             if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
 
-        enum float kMoveLoopEps = 1e-4f;   // mirrors moveVertexTo's/commitSlide's own eps guards
+        enum float kMoveLoopEps = 1e-4f;   // mirrors applyMoveTargets's/commitSlide's own eps guards
         bool changed = false;
         foreach (i, vi; verts)
             if ((targets[i] - m.vertices[vi]).length > kMoveLoopEps) { changed = true; break; }
@@ -5076,21 +5390,26 @@ public:
             }
         }
 
-        // P4 (doc/topopen_p4_plan.md): ghost preview of an in-progress Move
-        // drag — since the commit is deferred to RELEASE (Design A), this is
-        // the ONLY live feedback for the grabbed vertex: a line from its
-        // CURRENT (pre-commit) position to the live CONS-snapped re-snap
-        // point, plus a ghost dot at that point. Mirrors the `dragArmed_`
-        // ghost block immediately above (same `hitPt`/projectPt inputs); no
-        // mesh mutation, no raycast.
-        if (moveArmed_ && hitPtOk && meshSrc_ !is null) {
+        // Move drag affordance (P4's ghost, re-purposed by task 0484). P4
+        // drew a line from the grabbed vertex's pre-commit position to the
+        // live re-snap point, because the mesh did not move until release and
+        // that line was the ONLY feedback. The drag is live now — the
+        // geometry itself is the feedback — so the line would connect a point
+        // to itself. What remains is a marker on the moving set, so the user
+        // can still see WHICH element they grabbed once it is sitting under
+        // the cursor: a small square per moving vertex, in the same green.
+        if (moveArmed_ && meshSrc_ !is null) {
             auto m = mesh;
-            if (m !is null && grabbedVert_ >= 0 && grabbedVert_ < cast(int)m.vertices.length) {
-                enum uint moveGhostCol = IM_COL32(80, 220, 120, 220);   // move ghost green
-                ImVec2 fromPt;
-                if (projectPt(m.vertices[grabbedVert_], vp, fromPt))
-                    dl.AddLine(fromPt, hitPt, moveGhostCol, 2.0f);
-                dl.AddCircleFilled(hitPt, 5.0f, moveGhostCol, 16);
+            if (m !is null) {
+                enum uint  moveGhostCol = IM_COL32(80, 220, 120, 220);   // move green
+                enum float halfPx       = 4.0f;
+                foreach (vi; moveVerts_) {
+                    if (vi >= m.vertices.length) continue;
+                    ImVec2 p;
+                    if (!projectPt(m.vertices[vi], vp, p)) continue;
+                    dl.AddRectFilled(ImVec2(p.x - halfPx, p.y - halfPx),
+                                     ImVec2(p.x + halfPx, p.y + halfPx), moveGhostCol);
+                }
             }
         }
     }
@@ -5155,6 +5474,16 @@ public:
         // release.
         root["placeArmed"]  = JSONValue(placeArmed_);
         root["moveArmed"]   = JSONValue(moveArmed_);
+        // Which element the armed Move grabbed, and how many vertices it is
+        // dragging (task 0484). `grabbedVert` alone cannot say: it is -1 for
+        // BOTH "nothing armed" and "an edge/face is armed", which are
+        // opposite states. `moveDirty` separates "armed but nothing has
+        // actually moved yet" from "the live drag has already written the
+        // mesh" — the difference between a press and a press+drag, invisible
+        // from geometry alone until the release records its entry.
+        root["moveElem"]      = JSONValue(moveElemTag(moveElem_));
+        root["moveVertCount"] = JSONValue(cast(int)moveVerts_.length);
+        root["moveDirty"]     = JSONValue(moveDirty_);
         root["grabbedVert"] = JSONValue(grabbedVert_);
 
         // P6 (doc/topopen_p6_addloop_plan.md Phase 5): the armed Add Loop
@@ -5388,17 +5717,18 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// moveVertexTo — the eps no-op guard (P4, doc/topopen_p4_plan.md hard
-// requirement #4): a release landing back within eps of the grabbed
-// vertex's CURRENT position (stationary grab / all-on-surface no-move)
-// must leave the mesh untouched and record NO undo entry. Driven directly
-// (private, same-module access) — the no-op path returns BEFORE the
-// `refreshDisplay`/`gpu_.upload` tail, so it's safe under a bare `dub test`
-// with no GL context, mirroring the buildFromSource degenerate-release
-// unittest immediately above. (The committing/"real move" path — which DOES
-// reach `gpu_.upload` and therefore needs a live GL context — is covered
-// end-to-end by the HTTP suite instead: test_topopen_move_drag.d /
-// test_topopen_move_undo_redo.d.)
+// applyMoveTargets — the eps no-op guard (P4, doc/topopen_p4_plan.md hard
+// requirement #4, carried onto the live-drag path by task 0484): targets
+// landing back within eps of the moving set's CURRENT positions (stationary
+// grab / all-on-surface no-move) must leave the mesh untouched, leave
+// `moveDirty_` false, and — through `recordLiveMove`'s own `moveDirty_`
+// gate — record NO undo entry. Driven directly (private, same-module
+// access) — the no-op path returns BEFORE the `refreshDisplay`/`gpu_.upload`
+// tail, so it's safe under a bare `dub test` with no GL context, mirroring
+// the buildFromSource degenerate-release unittest immediately above. (The
+// committing/"real move" path — which DOES reach `gpu_.upload` and therefore
+// needs a live GL context — is covered end-to-end by the HTTP suite instead:
+// test_topopen_move_drag.d / test_topopen_move_undo_redo.d.)
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -5416,11 +5746,20 @@ unittest {
     t.meshSrc_ = () => &m;
     uint a = m.addVertex(Vec3(1, 2, 3));
 
-    // Stationary grab: release EXACTLY at the vertex's own position.
+    // Stationary grab: the target IS the vertex's own position.
+    t.moveArmed_ = true;
+    t.moveElem_  = MoveElem.Vertex;
+    t.moveVerts_ = [a];
+    t.moveBase_  = [Vec3(1, 2, 3)];
+    t.moveBefore_ = MeshSnapshot.capture(m);
+
     auto before = MeshSnapshot.capture(m);
-    t.moveVertexTo(cast(int)a, Vec3(1, 2, 3));
+    t.applyMoveTargets([Vec3(1, 2, 3)]);
     auto after = MeshSnapshot.capture(m);
     assert(after.vertices == before.vertices, "stationary grab must not move the vertex");
+    assert(!t.moveDirty_, "a no-op apply must leave the drag clean");
+
+    t.recordLiveMove();
     assert(!history.canUndo(), "stationary grab must record NO undo entry");
 }
 
@@ -5596,7 +5935,7 @@ unittest {
 // Δv=+4/Δe=+8/Δf=+4 (8/12/6 -> 12/20/10), every new vertex at the EXACT
 // midpoint of one of the 4 crossed belt edges. Driven directly (private,
 // same-module access; `gpu_` stays null so the guarded display tail never
-// runs under bare `dub test`, mirroring `moveVertexTo`/`removeFaceAt`'s own
+// runs under bare `dub test`, mirroring `applyMoveTargets`/`removeFaceAt`'s own
 // unittests above).
 // ---------------------------------------------------------------------------
 unittest {
@@ -11072,16 +11411,20 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Plain-LMB press on a NON-VERTEX element -> DECLINED, arms nothing
-// (doc/tasks/work/0482-topopen-move-nonvertex.md).
+// Plain-LMB press on an EDGE -> arms an EDGE move, and NEVER Place
+// (task 0484, superseding doc/tasks/done/0482-topopen-move-nonvertex.md).
 //
-// The regression class: `onPlainLmbDown` resolves its Move target with
-// `findSourceVertex` (VERTICES only), so a press aimed at an EDGE resolved
-// nothing and fell through to Place — the release then committed a stray
-// `mesh.addVertex` at the background-snapped cursor point. These pin the ARM
-// decision (`placeArmed_`/`moveArmed_`/the consumed flag); the mesh-level
-// proof — that nothing is added and no undo entry appears — needs a real
-// background surface + placement factory and lives in the HTTP test
+// The regression class 0482 closed: `onPlainLmbDown` resolved its Move target
+// with `findSourceVertex` (VERTICES only), so a press aimed at an EDGE
+// resolved nothing and fell through to Place — the release then committed a
+// stray `mesh.addVertex` at the background-snapped cursor point. 0482 fixed
+// that by DECLINING the press, because what an edge press should do was
+// unmeasured at the time. 0484 measures it: the press grabs the edge and
+// moves it. The half this test still pins unchanged is the important one —
+// such a press must never, ever arm Place.
+//
+// The mesh-level proof (the edge's two endpoints actually move, one undo
+// entry) needs a real background surface + GL and lives in the HTTP test
 // (tests/test_topopen_move_nonvertex_decline.d).
 //
 // Pixel = the SCREEN-SPACE midpoint of grid edge 0-1: distance 0 from that
@@ -11129,24 +11472,137 @@ unittest {
     immutable size_t fBefore = m.faces.length;
 
     assert(t.penMode_ == PenMode.Move, "setup: must be in the default Move mode");
+    immutable int seedEdge = t.findRingSeedEdge(e.x, e.y, vp);
     bool consumed = t.onPlainLmbDown(e, vts);
 
-    assert(!consumed,
-        "a plain-LMB press on an EDGE must be DECLINED (no gesture for a non-vertex element)");
+    assert(consumed, "a plain-LMB press on an EDGE must be consumed — it grabs the edge");
     assert(!t.placeArmed_,
         "a press on an existing edge must NOT arm Place — that is the stray-vertex defect");
-    assert(!t.moveArmed_ && t.grabbedVert_ < 0,
-        "a press on an existing edge must not arm Move either (nothing was grabbed)");
+    assert(t.moveArmed_, "the press must arm a Move");
+    assert(t.moveElem_ == MoveElem.Edge, "the grabbed element must be the EDGE, not a vertex");
+    assert(t.grabbedVert_ < 0,
+        "`grabbedVert` names a single grabbed VERTEX — an edge grab must leave it -1");
+    assert(t.moveVerts_.length == 2, "an edge move drags exactly its two endpoints");
+    assert(t.moveVerts_[0] == m.edges[seedEdge][0] && t.moveVerts_[1] == m.edges[seedEdge][1],
+        "the moving set must be the picked edge's own endpoints");
+    assert(t.moveBase_.length == 2
+        && t.moveBase_[0] == m.vertices[t.moveVerts_[0]]
+        && t.moveBase_[1] == m.vertices[t.moveVerts_[1]],
+        "the arm must snapshot the endpoints' CURRENT positions as the drag's origin");
+    assert(!t.moveDirty_, "arming alone must not count as a mutation");
     assert(m.vertices.length == vBefore && m.edges.length == eBefore
         && m.faces.length == fBefore, "the press itself must not mutate the mesh");
 
-    // The RELEASE must be inert too: `lmbPlaceOrMoveUp` trusts the arm bools,
-    // not the base's `armed_[]` slot (the arm-before-decline gap), so it
-    // commits nothing and declines as well.
-    assert(!t.lmbPlaceOrMoveUp(e, vts),
-        "the release after a declined press must commit nothing and stay unconsumed");
+    // A release with no intervening motion is still a no-op: the targets land
+    // back on the base positions (no background surface here, so every
+    // re-snap misses and keeps its original), so nothing is written and no
+    // undo entry is recorded. Consumed, because the gesture WAS armed.
+    assert(t.lmbPlaceOrMoveUp(e, vts), "the release of an armed Move is consumed");
+    assert(!t.moveArmed_ && t.moveElem_ == MoveElem.None, "the release must disarm");
     assert(m.vertices.length == vBefore && m.edges.length == eBefore
-        && m.faces.length == fBefore, "the release must not mutate the mesh either");
+        && m.faces.length == fBefore, "a stationary edge grab must not mutate the mesh");
+}
+
+// ---------------------------------------------------------------------------
+// The LIVE drag is ABSOLUTE, not incremental (task 0484, the compounding
+// hazard). Every motion event recomputes its targets from `moveBase_` — the
+// positions captured at ARM time — so N events at the same cursor position
+// land the set in the same place as one, and a stream of events walking to a
+// pixel lands it where a single event straight to that pixel would.
+//
+// If the targets were ever computed from the LIVE positions instead, each
+// event would stack its delta onto the previous event's result and the
+// element would race away from the cursor at a rate set by the event density
+// — the classic bug this pins shut. Driven directly through the Vertex law
+// (no background surface needed: `readHit` misses, so the target is the base
+// position and the write is a no-op) plus a direct `perVertexTargetsFrom`
+// comparison for the set law.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // Arm an EDGE grab by hand (the pick itself is covered above).
+    t.moveArmed_  = true;
+    t.moveElem_   = MoveElem.Edge;
+    t.moveVerts_  = [m.edges[0][0], m.edges[0][1]];
+    t.moveBase_   = [m.vertices[t.moveVerts_[0]], m.vertices[t.moveVerts_[1]]];
+    t.moveStartX_ = 100;
+    t.moveStartY_ = 100;
+
+    // The same cursor, asked twice, must answer twice the same — even after
+    // the first answer has been written into the mesh.
+    auto first = t.moveTargets(180, 140, vp, vts);
+    t.applyMoveTargets(first);
+    auto second = t.moveTargets(180, 140, vp, vts);
+    assert(first.length == second.length, "target count must not depend on the live mesh");
+    foreach (i, v; first)
+        assert((v - second[i]).length < 1e-6f,
+            "a repeated motion event must recompute the SAME target — targets are absolute, "
+          ~ "computed from the arm-time base, never from the already-moved positions");
+
+    // And the delta itself is measured from the PRESS pixel, not the previous
+    // event's: the law is `perVertexTargetsFrom(base, cursor - press)`.
+    auto direct = t.perVertexTargetsFrom(t.moveBase_, 180 - 100, 140 - 100, vp);
+    foreach (i, v; direct)
+        assert((v - first[i]).length < 1e-6f,
+            "the set law must be the shared screen delta from the press pixel");
+}
+
+// ---------------------------------------------------------------------------
+// The click-vs-drag gate on the SET law (task 0484): a press-and-release
+// under `kMinDragPx` leaves the element exactly where it was. Without it a
+// bare click would apply a ZERO delta — which is not a no-op, since each
+// vertex would then re-snap to whatever background surface sits under its own
+// pixel — and clicking an edge would yank it onto the background. Inherited
+// with the law from Move Loop, whose `moveLoopUp` carries the same gate.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    t.moveArmed_  = true;
+    t.moveElem_   = MoveElem.Edge;
+    t.moveVerts_  = [m.edges[0][0], m.edges[0][1]];
+    t.moveBase_   = [m.vertices[t.moveVerts_[0]], m.vertices[t.moveVerts_[1]]];
+    t.moveStartX_ = 200;
+    t.moveStartY_ = 200;
+
+    // 2px away — inside the gate.
+    auto held = t.moveTargets(201, 201, vp, vts);
+    assert(held.length == 2);
+    foreach (i, v; held)
+        assert((v - t.moveBase_[i]).length < 1e-9f,
+            "a sub-threshold drag must leave every vertex on its arm-time position");
+
+    // 10px away — through the gate, so the law runs (and, with no background
+    // surface in this fixture, every re-snap misses and keeps its original —
+    // which is the documented miss policy, not the gate).
+    t.moveStartX_ = 200; t.moveStartY_ = 200;
+    auto moved = t.moveTargets(210, 200, vp, vts);
+    assert(moved.length == 2, "past the gate the law still answers one target per vertex");
 }
 
 // The guard's CONTROL: Place must still arm on genuinely empty space. Same

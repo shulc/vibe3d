@@ -1,5 +1,6 @@
-// Topology Pen — a plain-LMB (Move) press on a NON-VERTEX element must
-// change NOTHING (doc/tasks/work/0482-topopen-move-nonvertex.md item 1).
+// Topology Pen — a plain-LMB (Move) CLICK on a NON-VERTEX element must
+// change NOTHING (doc/tasks/done/0482-topopen-move-nonvertex.md item 1,
+// still true after task 0484).
 //
 // The defect this pins: `onPlainLmbDown` resolved its Move target with
 // `findSourceVertex`, which searches VERTICES only. A press aimed at an EDGE
@@ -7,6 +8,16 @@
 // release committed a `mesh.addVertex` at the background-snapped cursor
 // point — aim at an edge, get a stray floating vertex, undoable but with no
 // signal that anything unintended happened.
+//
+// 0482 closed that by DECLINING such a press outright. Task 0484 replaced the
+// decline with the real behaviour — an edge/face press now GRABS that element
+// and drags it (tests/test_topopen_move_element_drag.d) — and this file keeps
+// pinning the half that must survive both designs: a CLICK, i.e. a press and
+// release with no drag between them, still changes nothing at all. That holds
+// because the set law carries Move Loop's click-vs-drag gate: under 3px of
+// travel the element stays exactly where it is, so no vertex is added, no
+// vertex is moved, and no undo entry appears. Every assertion below is
+// therefore unchanged from 0482; only what makes them true has moved.
 //
 // The rig, and why each piece is load-bearing:
 //   * BACKGROUND (layer 0) = a dense sphere at the origin. Without a
@@ -21,8 +32,8 @@
 //     never occludes the quad).
 //   * The CONTROL press at the end fires the SAME gesture, same camera, same
 //     tool, at a pixel clear of the quad — and must still place a vertex. That
-//     is what proves the two no-ops above are genuine declines and not a dead
-//     rig, and that a declined press leaves no stuck arm behind.
+//     is what proves the two no-ops above are genuine and not a dead rig, and
+//     that the preceding presses leave no stuck arm behind.
 //
 // ORDER MATTERS: `/api/load-mesh` restores the same post-load state
 // `/api/reset` leaves behind, INCLUDING the camera. Every load therefore
