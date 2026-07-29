@@ -176,14 +176,32 @@ alias TopoPenFillFactory = MeshSessionEdit delegate();
 /// -triangle-hub, which is exactly `None`).
 private enum BuildCase { None, Edge, Tri, Quad }
 
-/// Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
-/// REV 2, owner decision 1): the two values a plain-LMB click can dispatch
-/// to. `Draw` (default) is today's existing place-on-empty/grab-move
-/// behavior, byte-unchanged; `Fill` reroutes plain-LMB to
-/// `findFillCell`/`commitFill` (Phase 4). A tool-wide dropdown, not a
-/// per-gesture arm — mirrors `addLoopMiddle_`'s sticky-option precedent
-/// (must survive `resyncSession()`, an external history navigation).
-private enum PenMode { Draw, Fill }
+/// The Mode dropdown's value set (task 0483, doc/tasks/work/0483-topopen-mode-set.md) —
+/// a 1:1 transcription of the reference tool's own `mode` enum: the SAME
+/// eight values, in the reference dropdown's own order, under the reference's
+/// own wire tags and labels (doc-mined from the reference catalog's
+/// per-option `UserName`/`Desc` table; the value set and the `move` default
+/// are both live-measured — toolcards/topology_pen/attr_defaults_capture.md,
+/// PRIVATE).
+///
+/// Every value here names a gesture this tool ALREADY implements on a
+/// modifier chord (`kTopoPenBindings` below); the dropdown is the second way
+/// to reach it — it decides what an UNMODIFIED LMB press does, exactly as the
+/// reference's own per-option `Desc` strings spell out ("Move element
+/// position. (RMB plus Edge Loop)", "Duplicate vertex or edge. (Shift-LMB,
+/// Shift-RMB plus Edge Loop)", ...). The chords stay ABSOLUTE overrides: they
+/// resolve to their own action whatever the dropdown says, which is what makes
+/// the modeless chord workflow and the dropdown workflow coexist.
+///
+/// `Point` is the mode this tool used to call "Draw": place a vertex on an
+/// empty-space click, behave as `Move` on a click that lands on geometry
+/// (the reference's own wording for its Point option). The old vibe3d-only
+/// `Draw` tag is GONE — it named a mode the reference does not have.
+///
+/// A tool-wide sticky dropdown, not per-gesture arm state — mirrors
+/// `addLoopMiddle_`'s precedent (must survive `resyncSession()`, an external
+/// history navigation).
+private enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smooth }
 
 // Why a Ctrl+LMB Slide press did not arm — see `slideDecline_`'s own doc
 // comment for the full rationale. `None` also covers "the press armed
@@ -788,20 +806,70 @@ private:
     int  splitSourceVert_  = -1;
     int  splitTargetVert_  = -1;
 
-    // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
-    // Phase 1): the wire-tag table backing `PenMode`'s `Param.intEnum_` —
-    // mirrors `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. A
-    // STICKY tool-wide mode toggle, NOT per-gesture arm state — like
+    // The Mode dropdown (task 0477 continuation + task 0483): the wire-tag
+    // table backing `PenMode`'s `Param.intEnum_` — mirrors
+    // `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. Tags and
+    // labels are the REFERENCE's own, single-sourced here so the form row,
+    // the `tool.attr mesh.topoPen mode <tag>` write and the
+    // `/api/tool/state` readback can never drift apart.
+    //
+    // A STICKY tool-wide mode toggle, NOT per-gesture arm state — like
     // `addLoopMiddle_` above, deliberately absent from
     // `resetAllGestureArms()`/`resyncSession()` (a mode switch must survive
     // an external history navigation) and read live by dispatch
     // (`onPlainLmbDown`) / the motion-time preview compute
     // (`onMouseMotion`), never cached.
-    private static immutable IntEnumEntry[2] penModeTable = [
-        IntEnumEntry(cast(int)PenMode.Draw, "draw", "Draw"),
-        IntEnumEntry(cast(int)PenMode.Fill, "fill", "Fill"),
+    private static immutable IntEnumEntry[8] penModeTable = [
+        IntEnumEntry(cast(int)PenMode.Move,      "move",      "Move"),
+        IntEnumEntry(cast(int)PenMode.Duplicate, "duplicate", "Duplicate"),
+        IntEnumEntry(cast(int)PenMode.Remove,    "remove",    "Remove"),
+        IntEnumEntry(cast(int)PenMode.Split,     "split",     "Split"),
+        IntEnumEntry(cast(int)PenMode.AddLoop,   "addLoop",   "Add Loop"),
+        IntEnumEntry(cast(int)PenMode.Point,     "point",     "Point"),
+        IntEnumEntry(cast(int)PenMode.Fill,      "fill",      "Fill"),
+        IntEnumEntry(cast(int)PenMode.Smooth,    "smooth",    "Smoothing"),
     ];
-    PenMode penMode_ = PenMode.Draw;   // default = today's plain-LMB place/move, unchanged
+    PenMode penMode_ = PenMode.Move;   // live-measured reference default
+
+    // Edge Loop / Edge Slide — the two sticky boolean modifiers that sit
+    // ALONGSIDE the Mode dropdown in the reference's own Tool Properties
+    // sheet, with the same defaults (both OFF, live-measured —
+    // toolcards/topology_pen/attr_defaults_capture.md, PRIVATE).
+    //
+    // `edgeLoop_` ("Edge Loop") promotes a mode to its loop variant, exactly
+    // as the reference's per-option `Desc` strings pair them: Move+loop is
+    // the RMB gesture (`onMoveLoopRmbDown`), Duplicate+loop the Shift+RMB one
+    // (`onDupLoopShiftRmbDown`), Smoothing+loop the Shift+Ctrl+RMB one
+    // (`onSmoothLoopRmbDown`). The other five modes have no loop variant
+    // implemented here and IGNORE the flag — including Remove, whose
+    // reference loop variant (documented, not ported) would be this tool's
+    // one remaining unwired input slot; a Remove press with Edge Loop on is
+    // deliberately a single-element remove, never a silent loop delete.
+    //
+    // `edgeSlide_` ("Edge Slide") restricts a move to the neighbouring edge
+    // rails — the reference documents it as doing exactly what holding Ctrl
+    // in Move mode does, so it routes to the SAME `onCtrlLmbDown` the Ctrl
+    // chord does. It applies to the Move family only (Move mode, and Point
+    // mode's move half, which the reference defines as "works as in the Move
+    // mode"); `edgeLoop_` wins when both are on (there is no slide-a-whole-
+    // loop gesture in this tool, so a loop press is the only one of the two
+    // that can be honoured — see `moveOrPlaceDown`).
+    //
+    // Sticky, for the same reason `penMode_` is: they are dropdown-adjacent
+    // options, not gesture state.
+    bool edgeLoop_  = false;
+    bool edgeSlide_ = false;
+
+    // Which gesture the LAST unmodified-LMB press actually resolved to
+    // (task 0483). Written by `onPlainLmbDown`'s router at DOWN, read by
+    // `lmbModeUp` at UP so the release reaches THAT gesture's commit leg —
+    // re-resolving the mode at release would dispatch the wrong commit if
+    // the dropdown moved mid-drag (`tool.attr mesh.topoPen mode <tag>` is
+    // reachable over HTTP at any moment, and the Tool Properties dropdown
+    // is one click away). Per-press RECORD, so `resetAllGestureArms()`
+    // returns it to the neutral `LmbPlaceOrMove` — whose UP leg is guarded
+    // by `placeArmed_`/`moveArmed_` and therefore a safe no-op.
+    TopoPenAction lmbAction_ = TopoPenAction.LmbPlaceOrMove;
 
     // --- P10 Move Loop session state (topology_pen.d,
     // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
@@ -996,12 +1064,12 @@ private:
     // rationale `fillCell_` isn't nested in `hoverOverMesh_`: hovering the
     // open middle of a gap is nowhere near any vertex/edge/face within
     // `kTopoPenSnapPx`, yet a nearby border edge still legitimately sizes
-    // the circle). `fillRadiusValid_` is false whenever Draw mode is
+    // the circle). `fillRadiusValid_` is false whenever a non-Fill mode is
     // active, a gesture is armed, or no border edge is within tolerance of
     // the cursor (this also covers the vertex-only-hover case the toolcard
     // leaves unresolved as an honest gap — no circle rather than a guessed
-    // one). Draw-only: never read by `findFillCell`/`commitFill`, so it
-    // cannot affect the fill kernel, undo, or Draw mode.
+    // one). Overlay-only: never read by `findFillCell`/`commitFill`, so it
+    // cannot affect the fill kernel, undo, or any other mode.
     bool  fillRadiusValid_ = false;
     float fillRadiusPx_    = 0.0f;
 
@@ -1184,13 +1252,19 @@ public:
     // boot-time `validateForms` strict-checks every form attr against this
     // list and fails loud on a typo.
     //
-    // Fill mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
+    // Mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
     // Phase 1, MANDATORY opponent fix #1): the `mode` IntEnum Param is
     // APPENDED to this array — never a full-replace, which would drop
     // `middle` and fail boot-time `validateForms` against its existing
     // yaml row. "mode" MUST match `config/forms/topology_pen.yaml`'s new
     // dropdown row's `control:` string exactly, same contract as
     // `middle` above.
+    //
+    // `loop` / `slide` (task 0483) — the reference's own "Edge Loop" /
+    // "Edge Slide" checkboxes, APPENDED for that same reason. They modify
+    // what the Mode dropdown dispatches an unmodified LMB press to; see
+    // `edgeLoop_`/`edgeSlide_`'s own doc comment for the routing rules and
+    // `onPlainLmbDown` for the table that applies them.
     //
     // Smooth strength (reference parity, `doc/tasks/work/0478-topopen-smooth-kernel.md`):
     // APPENDED for the same reason — never a full-replace. Scales the Smooth
@@ -1207,7 +1281,9 @@ public:
         return [
             Param.bool_("middle", "Split at the Middle", &addLoopMiddle_, false),
             Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
-                           cast(int)PenMode.Draw),
+                           cast(int)PenMode.Move),
+            Param.bool_("loop",  "Edge Loop",  &edgeLoop_,  false),
+            Param.bool_("slide", "Edge Slide", &edgeSlide_, false),
             Param.float_("smoothStrength", "Smooth Strength", &smoothStrength_,
                          kSmoothStrengthDefault)
                  .min(0.0f).max(4.0f).enforceBounds(),
@@ -1830,6 +1906,11 @@ public:
     // already goes through `resyncSession()` via `removeFaceAt`/
     // `commitAddLoop`'s own commit paths.
     private void resetAllGestureArms() {
+        // Mode router (task 0483) — the per-press record of WHICH gesture the
+        // unmodified-LMB slot resolved to. Neutral value first, so a press
+        // that declines leaves behind an UP leg that is a guarded no-op
+        // rather than a stale mode's commit.
+        lmbAction_      = TopoPenAction.LmbPlaceOrMove;
         // P3 build (doc/topopen_p3_plan.md)
         sourceVert_     = -1;
         dragArmed_      = false;
@@ -1926,93 +2007,184 @@ public:
             || dupLoopArmed_ || smoothLoopArmed_;
     }
 
-    // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A): a
-    // plain (unmodified) LEFT press disambiguates HERE, at press time,
-    // between grabbing an existing primary-layer vertex (Move) and placing
-    // a new one on the background surface (Place) — reusing P3's
-    // `findSourceVertex` (the SAME `kTopoPenSnapPx` screen-space threshold,
-    // over the PRIMARY mesh only; the background is the snap reference,
-    // never grabbed). Neither outcome commits here: both are armed only,
-    // and the actual mutation happens on RELEASE (`onMouseButtonUp`) at
-    // THAT event's own CONS-snapped hit — a stationary click's DOWN+UP
-    // pixel pair therefore still yields exactly one placement/no mutation,
-    // same as the pre-P4 DOWN-commit behavior (byte-identity gate, P4 step
-    // 1).
+    // The Mode router (task 0483) — the ONE place the Mode dropdown, the
+    // Edge Loop flag and the Edge Slide flag turn into a gesture. Every
+    // branch delegates to a handler that ALREADY exists for the equivalent
+    // modifier chord, so a mode and its chord run byte-identical code:
     //
-    // "Place" means EMPTY SPACE, not merely "no vertex resolved": a press
-    // that lands on the primary layer's existing EDGE or FACE arms neither
-    // gesture and is DECLINED (see the guard at the tail of this handler for
-    // the full rationale) — it is a press on an element this tool has no
-    // plain-LMB gesture for, never a placement. So the handler claims the
-    // event for both of its own outcomes, and only for those.
+    //     mode        loop=0            loop=1              measured chord
+    //     ----------- ----------------- ------------------- ----------------------
+    //     Move        move (or slide)   move loop           LMB   / RMB
+    //     Duplicate   build             dup loop            Shift+LMB / Shift+RMB
+    //     Remove      remove            remove (no variant) Ctrl+MMB
+    //     Split       split             split               MMB
+    //     AddLoop     add loop          add loop            Shift+MMB
+    //     Point       place-or-move     place-or-move-loop  (no chord)
+    //     Fill        fill              fill                (no chord)
+    //     Smooth      smooth            smooth loop         Shift+Ctrl+LMB / Shift+Ctrl+RMB
+    //
+    // The chords themselves are untouched and remain ABSOLUTE: they resolve
+    // through `kTopoPenBindings` to their own action whatever this dropdown
+    // says, so the modeless chord workflow keeps working unchanged and a
+    // mode is never able to shadow it.
+    //
+    // The resolved action is RECORDED in `lmbAction_` so the matching
+    // RELEASE (`lmbModeUp`) reaches the same gesture's commit leg even if
+    // the dropdown is written mid-drag (`tool.attr` is reachable over HTTP
+    // at any time) — resolving the mode a second time at release would
+    // otherwise commit a gesture nobody armed.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
         // the full symmetric close this handler used to do itself here is now
         // guaranteed by `dispatchInput`'s `onInputResetAll()` hook — this
         // row's `ResetScope.AllButtons` (`kTopoPenBindings`) fires
         // `resetAllGestureArms()` unconditionally BEFORE this handler is
-        // called. See `resetAllGestureArms`'s own doc comment for the full
-        // hazard this closes.
-
-        // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
-        // Phase 4): the Mode dropdown reroutes plain-LMB entirely — Fill
-        // OWNS this slot and NEVER falls through to place/move below.
-        // Commit-on-DOWN (like Remove, `:2339`-ish): the cell is fully
-        // determined by the DOWN pixel, there is no drag to defer. A miss
-        // (cursor over a solid face / empty area / no gap cell under it)
-        // is a clean no-op — still consumed, so Draw's place/move can
-        // never fire underneath an active Fill-mode click. No arm bool,
-        // no `resyncSession`/`resetAllGestureArms` entry needed — Fill is
-        // a click op, like Remove.
-        if (penMode_ == PenMode.Fill) {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-            auto cell = findFillCell(e.x, e.y, vp);
-            if (cell.length == 4) commitFill(cell);
-            return true;
+        // called (which also resets `lmbAction_`). See `resetAllGestureArms`'s
+        // own doc comment for the full hazard this closes.
+        // `lmbAction_` is stamped AFTER the delegated handler returns, never
+        // before: a commit-on-DOWN gesture (Remove) runs `resyncSession()`
+        // inside its own handler, which calls `resetAllGestureArms()` and
+        // would wipe a record written up front. Stamping last makes the field
+        // describe the press that just happened, whatever the handler did
+        // along the way.
+        final switch (penMode_) {
+        case PenMode.Move:
+            return moveOrPlaceDown(e, vts, false);
+        case PenMode.Point:
+            return moveOrPlaceDown(e, vts, true);
+        case PenMode.Duplicate:
+            if (edgeLoop_) return stamp(onDupLoopShiftRmbDown(e, vts), TopoPenAction.DupLoop);
+            return stamp(onShiftLmbDown(e, vts), TopoPenAction.Build);
+        case PenMode.Remove:
+            // No loop variant is implemented (see `edgeLoop_`'s own doc
+            // comment) — Edge Loop is deliberately IGNORED here rather than
+            // silently promoted to something this tool cannot do. Commits on
+            // DOWN and arms nothing, exactly like the Ctrl+MMB chord.
+            return stamp(onCtrlMmbDown(e, vts), TopoPenAction.Remove);
+        case PenMode.Split:
+            return stamp(onPlainMmbDown(e, vts), TopoPenAction.Split);
+        case PenMode.AddLoop:
+            return stamp(onShiftMmbDown(e, vts), TopoPenAction.AddLoop);
+        case PenMode.Smooth:
+            if (edgeLoop_) return stamp(onSmoothLoopRmbDown(e, vts), TopoPenAction.SmoothLoop);
+            return stamp(onShiftCtrlLmbDown(e, vts), TopoPenAction.Smooth);
+        case PenMode.Fill:
+            return fillDown(e, vts);
         }
+    }
+
+    // Record `a` as the gesture this press resolved to and pass `consumed`
+    // straight through — the router's one-liner for "delegate, then stamp".
+    private bool stamp(bool consumed, TopoPenAction a) {
+        lmbAction_ = a;
+        return consumed;
+    }
+
+    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
+    // Phase 4): Fill OWNS the plain-LMB slot and NEVER falls through to
+    // place/move. Commit-on-DOWN (like Remove): the cell is fully
+    // determined by the DOWN pixel, there is no drag to defer. A miss
+    // (cursor over a solid face / empty area / no gap cell under it)
+    // is a clean no-op — still consumed, so no other mode's place/move can
+    // fire underneath an active Fill-mode click. No arm bool, no
+    // `resyncSession`/`resetAllGestureArms` entry needed — Fill is a click
+    // op, like Remove.
+    private bool fillDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        lmbAction_ = TopoPenAction.LmbPlaceOrMove;   // no UP leg — nothing was armed
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        auto cell = findFillCell(e.x, e.y, vp);
+        if (cell.length == 4) commitFill(cell);
+        return true;
+    }
+
+    // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A), now
+    // the Move / Point modes' shared DOWN leg: a plain (unmodified) LEFT
+    // press disambiguates HERE, at press time, between grabbing an existing
+    // primary-layer vertex (Move) and placing a new one on the background
+    // surface (Place) — reusing P3's `findSourceVertex` (the SAME
+    // `kTopoPenSnapPx` screen-space threshold, over the PRIMARY mesh only;
+    // the background is the snap reference, never grabbed). Neither outcome
+    // commits here: both are armed only, and the actual mutation happens on
+    // RELEASE (`onMouseButtonUp`) at THAT event's own CONS-snapped hit — a
+    // stationary click's DOWN+UP pixel pair therefore still yields exactly
+    // one placement/no mutation, same as the pre-P4 DOWN-commit behavior
+    // (byte-identity gate, P4 step 1).
+    //
+    // `placeOnEmpty` is what separates the two modes, and it is the ONLY
+    // thing that does: Point places a vertex on an empty-space press, Move
+    // declines it (the reference's Move mode has nothing to move there;
+    // placing is Point's job). A press that lands on GEOMETRY runs the same
+    // move family in both — which is the reference's own definition of its
+    // Point mode ("if you click any geometry component in this mode, then
+    // the tool works as in the Move mode").
+    //
+    // "Place" means EMPTY SPACE, not merely "no vertex resolved": a press
+    // that lands on the primary layer's existing EDGE or FACE arms neither
+    // gesture and is DECLINED (see the geometry branch below for the full
+    // rationale) — it is a press on an element this tool has no plain-LMB
+    // gesture for, never a placement. So the handler claims the event for
+    // both of its own outcomes, and only for those.
+    private bool moveOrPlaceDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                 bool placeOnEmpty) {
+        lmbAction_ = TopoPenAction.LmbPlaceOrMove;
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int src = findSourceVertex(e.x, e.y, vp);
-        if (src >= 0) {
-            moveArmed_   = true;
-            grabbedVert_ = src;
-            return true;
+
+        // Is this press on GEOMETRY at all? `||` short-circuits, so a press
+        // that resolved a vertex never pays for the `overPrimaryEdgeOrFace`
+        // scan — the same call pattern this handler has always had.
+        if (src >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) {
+            // On geometry -> the move family. Edge Loop first (it is the
+            // wider gesture, and there is no slide-a-whole-loop gesture to
+            // compose the two into), then Edge Slide, then the plain grab.
+            // Both flags route to the very handler their equivalent chord
+            // routes to, so mode+flag and chord are the same code path.
+            if (edgeLoop_)  return stamp(onMoveLoopRmbDown(e, vts), TopoPenAction.MoveLoop);
+            if (edgeSlide_) return stamp(onCtrlLmbDown(e, vts),     TopoPenAction.Slide);
+            if (src >= 0) {
+                moveArmed_   = true;
+                grabbedVert_ = src;
+                return true;
+            }
+
+            // The press landed on an EDGE or a FACE (not a vertex), and
+            // neither flag widened the grab into a gesture that could use
+            // it. DECLINE (doc/tasks/done/0482-topopen-move-nonvertex.md).
+            //
+            // Without this guard the press fell through to Place, and the
+            // release committed a `mesh.addVertex` at the background-snapped
+            // cursor point: aim at an edge, get a stray floating vertex. The
+            // indicator was simultaneously highlighting that edge in
+            // steel-blue, so the tool told the user "this edge is under your
+            // cursor" and then silently did something to a different piece of
+            // geometry — undoable, but with no signal that anything
+            // unintended happened.
+            //
+            // Deliberately NOT "make Move work on edges/faces": what a press
+            // on a non-vertex element should DO is unmeasured, and inventing
+            // it would be worse than the missing behaviour. Declining (rather
+            // than arming a Move with nothing to move) matches how the other
+            // two LEFT-button gestures answer a seed they cannot use —
+            // `onShiftLmbDown` (no pre-highlighted vertex) and `onCtrlLmbDown`
+            // (edge resolved, but neither endpoint has a slide rail) both
+            // `return false` — so "resolved nothing" reads the same way across
+            // the whole tool. It is also observably inert: with a tool active,
+            // app.d's plain-LMB paths gate every selection/camera branch on
+            // `!anyToolActive`, so a declined press changes no selection,
+            // records no undo entry, and mutates nothing. The subsequent
+            // release is safe for the same reason every other decline is:
+            // `lmbPlaceOrMoveUp` trusts the arm BOOLS, not the base's
+            // `armed_[]` slot (the documented arm-before-decline gap), and
+            // both are false here.
+            return false;
         }
 
-        // A press that resolved NO vertex is only a PLACE if it landed on
-        // empty space. If it landed on the primary layer's existing topology
-        // — an edge within `kTopoPenSnapPx`, or a face under the cursor
-        // (`overPrimaryEdgeOrFace`, the SAME gate that decides whether the
-        // hover indicator highlights that element) — the press targeted an
-        // ELEMENT, and this tool has no gesture for a plain-LMB press on a
-        // non-vertex element. DECLINE it.
-        //
-        // Without this guard the press fell through to Place, and the release
-        // committed a `mesh.addVertex` at the background-snapped cursor point:
-        // aim at an edge, get a stray floating vertex. The indicator was
-        // simultaneously highlighting that edge in steel-blue, so the tool
-        // told the user "this edge is under your cursor" and then silently did
-        // something to a different piece of geometry — undoable, but with no
-        // signal that anything unintended happened.
-        //
-        // Deliberately NOT "make Move work on edges/faces": what a press on a
-        // non-vertex element should DO is unmeasured, and inventing it would be
-        // worse than the missing behaviour. Declining (rather than arming a
-        // Move with nothing to move) matches how the other two LEFT-button
-        // gestures answer a seed they cannot use — `onShiftLmbDown` (no
-        // pre-highlighted vertex) and `onCtrlLmbDown` (edge resolved, but
-        // neither endpoint has a slide rail) both `return false` — so
-        // "resolved nothing" reads the same way across the whole tool. It is
-        // also observably inert: with a tool active, app.d's plain-LMB paths
-        // gate every selection/camera branch on `!anyToolActive`, so a
-        // declined press changes no selection, records no undo entry, and
-        // mutates nothing. The subsequent release is safe for the same reason
-        // every other decline is: `lmbPlaceOrMoveUp` trusts the arm BOOLS, not
-        // the base's `armed_[]` slot (the documented arm-before-decline gap),
-        // and both are false here.
-        if (overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
+        // Empty space. Only Point mode places here; Move mode has nothing to
+        // move and declines, exactly like every other miss in this tool.
+        if (!placeOnEmpty) return false;
 
         placeArmed_ = true;
         return true;
@@ -3174,6 +3346,52 @@ public:
         return true;
     }
 
+    // The Mode router's RELEASE leg (task 0483): the unmodified-LMB slot's
+    // UP dispatches to whichever gesture THIS press's DOWN actually resolved
+    // to (`lmbAction_`), never to a freshly re-read `penMode_` — see
+    // `lmbAction_`'s own doc comment for the mid-drag hazard that closes.
+    //
+    // Every `*Up` below already guards on its own arm bool, so a DOWN that
+    // resolved-but-declined lands here as a clean no-op. `Remove` and the
+    // Fill click op have no UP leg at all (both commit on DOWN) and return
+    // `false`, unconsumed — matching how the Ctrl+MMB chord's own UP case
+    // answers. `LmbPlaceOrMove` is both the Move/Point modes' leg and the
+    // neutral post-reset value, and is guarded by `placeArmed_`/`moveArmed_`.
+    private bool lmbModeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        switch (lmbAction_) {
+        case TopoPenAction.Build:      return buildUp(e, vts);
+        case TopoPenAction.Slide:      return slideUp(e, vts);
+        case TopoPenAction.Smooth:     return smoothUp(e, vts);
+        case TopoPenAction.Split:      return splitUp(e, vts);
+        case TopoPenAction.AddLoop:    return addLoopUp(e, vts);
+        case TopoPenAction.MoveLoop:   return moveLoopUp(e, vts);
+        case TopoPenAction.DupLoop:    return dupLoopUp(e, vts);
+        case TopoPenAction.SmoothLoop: return smoothLoopUp(e, vts);
+        case TopoPenAction.Remove:     return false;   // commits on DOWN (D2)
+        default:                       return lmbPlaceOrMoveUp(e, vts);
+        }
+    }
+
+    // `lmbAction_` as a stable wire token for `/api/tool/state` (task 0483).
+    // A `final switch` (the `BuildCase`/`SlideDecline` precedent) rather than
+    // an `IntEnumEntry` table: this is not a `Param`, nothing parses it back,
+    // and the exhaustive switch makes a newly added action a COMPILE error
+    // here instead of a silently unlabelled state field.
+    private static string lmbActionTag(TopoPenAction a) {
+        final switch (a) {
+        case TopoPenAction.LmbPlaceOrMove: return "place_or_move";
+        case TopoPenAction.Build:          return "build";
+        case TopoPenAction.Slide:          return "slide";
+        case TopoPenAction.Smooth:         return "smooth";
+        case TopoPenAction.Split:          return "split";
+        case TopoPenAction.AddLoop:        return "add_loop";
+        case TopoPenAction.Remove:         return "remove";
+        case TopoPenAction.MoveLoop:       return "move_loop";
+        case TopoPenAction.DupLoop:        return "dup_loop";
+        case TopoPenAction.SmoothLoop:     return "smooth_loop";
+        }
+    }
+
     // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
     // delivers one resolved action at one phase — the LIVE seam
     // `onMouseButtonDown`/`onMouseButtonUp` above now route through
@@ -3196,7 +3414,7 @@ public:
         final switch (cast(TopoPenAction) a) {
         case TopoPenAction.LmbPlaceOrMove:
             if (p == InputPhase.Down) return onPlainLmbDown(e, vts);
-            if (p == InputPhase.Up)   return lmbPlaceOrMoveUp(e, vts);
+            if (p == InputPhase.Up)   return lmbModeUp(e, vts);
             return false;
         case TopoPenAction.Build:
             if (p == InputPhase.Down) return onShiftLmbDown(e, vts);
@@ -5040,16 +5258,27 @@ public:
         root["smoothLoopPassCount"] = JSONValue(smoothLoopPassCount);
 
         // The sticky Mode dropdown's CURRENT value, as its wire tag
-        // ("draw" / "fill"), read straight out of `penModeTable` via
-        // `wireTagForValue` so this can never drift from the `Param.intEnum_`
-        // schema `params()` publishes or from the tag `tool.attr mesh.topoPen
-        // mode <tag>` accepts. Read-only observability: without it an
-        // automated run can SET the mode but cannot verify the setting took,
-        // so a Fill-mode no-op and a still-in-Draw-mode press are
-        // indistinguishable from outside. Flat root key (the `hover{}`/
-        // `hoverIndicator{}` nesting is for grouped per-element state; this is
-        // one tool-wide scalar, like `addLoopMiddle`).
+        // ("move" / "duplicate" / ... / "smooth"), read straight out of
+        // `penModeTable` via `wireTagForValue` so this can never drift from
+        // the `Param.intEnum_` schema `params()` publishes or from the tag
+        // `tool.attr mesh.topoPen mode <tag>` accepts. Read-only
+        // observability: without it an automated run can SET the mode but
+        // cannot verify the setting took, so a Fill-mode no-op and a
+        // still-in-Move-mode press are indistinguishable from outside. Flat
+        // root key (the `hover{}`/`hoverIndicator{}` nesting is for grouped
+        // per-element state; this is one tool-wide scalar, like
+        // `addLoopMiddle`).
         root["penMode"] = JSONValue(wireTagForValue(penModeTable, cast(int)penMode_));
+
+        // The two dropdown-adjacent sticky flags, and the gesture the LAST
+        // unmodified-LMB press actually resolved to under them (task 0483).
+        // `lmbAction` is the router's own decision made visible: it is what
+        // separates "Edge Loop was on, so the press armed a loop move" from
+        // "Edge Loop was on but the press found no ring seed", which the arm
+        // bools alone cannot tell apart from outside.
+        root["edgeLoop"]  = JSONValue(edgeLoop_);
+        root["edgeSlide"] = JSONValue(edgeSlide_);
+        root["lmbAction"] = JSONValue(lmbActionTag(lmbAction_));
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 6): a NEW nested object (deliberately NOT the existing `hover{}`
@@ -9741,8 +9970,8 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 3, "mesh.topoPen must expose the Add Loop `middle` option, the Fill-mode "
-                          ~ "dropdown (task 0477 continuation, doc/topopen_fill_plan.md) and the "
+    assert(ps.length == 5, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+                          ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483) and the "
                           ~ "Smooth strength — every later Param is APPENDED, never a full-replace");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
@@ -9807,12 +10036,18 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// params() — Fill mode dropdown schema (task 0477 continuation,
-// doc/topopen_fill_plan.md Phase 1, MANDATORY opponent fix #1): the `mode`
-// IntEnum Param round-trips through the schema (for the `tool.attr`/form
-// binding), defaults to Draw, and survives `resyncSession()` (a sticky mode
-// toggle, not per-gesture arm state — matches `addLoopMiddle_`'s own
-// precedent, pinned in the schema block above).
+// params() — Mode dropdown schema (task 0477 continuation + task 0483): the
+// `mode` IntEnum Param round-trips through the schema (for the
+// `tool.attr`/form binding), carries the reference's OWN eight values in the
+// reference's own order under the reference's own wire tags, defaults to the
+// live-measured `move`, and survives `resyncSession()` (a sticky mode toggle,
+// not per-gesture arm state — matches `addLoopMiddle_`'s own precedent,
+// pinned in the schema block above).
+//
+// The wire-tag list is pinned member-by-member ON PURPOSE: these tags are the
+// external contract (`tool.attr mesh.topoPen mode <tag>`, the `/api/tool/state`
+// readback, every reference-comparison harness case), so a rename or a
+// reordering has to be a deliberate edit here, not a silent side effect.
 // ---------------------------------------------------------------------------
 unittest {
     auto t = new TopologyPenTool();
@@ -9820,19 +10055,185 @@ unittest {
     auto ps = t.params();
     assert(ps[1].name == "mode");
     assert(ps[1].kind == Param.Kind.IntEnum);
-    assert(ps[1].default_.i == cast(int)PenMode.Draw, "mode must default to Draw");
+    assert(ps[1].default_.i == cast(int)PenMode.Move, "mode must default to Move");
     assert(ps[1].iePtr is cast(int*)&t.penMode_, "the Param must bind directly to penMode_");
-    assert(ps[1].intEnumValues.length == 2, "exactly Draw + Fill are exposed in V1");
-    assert(ps[1].intEnumValues[0].wireTag == "draw");
-    assert(ps[1].intEnumValues[1].wireTag == "fill");
+    assert(ps[1].intEnumValues.length == 8, "the reference's mode enum has exactly 8 values");
 
-    assert(t.penMode_ == PenMode.Draw, "must start in Draw mode");
+    static immutable string[8] wantTags =
+        ["move", "duplicate", "remove", "split", "addLoop", "point", "fill", "smooth"];
+    static immutable string[8] wantLabels =
+        ["Move", "Duplicate", "Remove", "Split", "Add Loop", "Point", "Fill", "Smoothing"];
+    foreach (i, want; wantTags) {
+        assert(ps[1].intEnumValues[i].wireTag == want,
+            "mode entry " ~ want ~ " must keep its reference wire tag and position");
+        assert(ps[1].intEnumValues[i].userLabel == wantLabels[i],
+            "mode entry " ~ want ~ " must keep its reference label");
+        assert(ps[1].intEnumValues[i].value == cast(int)i,
+            "the table's values must be the enum's own ordinals, in order");
+    }
+
+    assert(t.penMode_ == PenMode.Move, "must start in Move mode");
 
     t.penMode_ = PenMode.Fill;
     t.resyncSession();
     assert(t.penMode_ == PenMode.Fill,
         "penMode_ must survive resyncSession() (external history navigation) — it is a sticky "
       ~ "mode toggle, not per-gesture arm state");
+}
+
+// ---------------------------------------------------------------------------
+// params() — Edge Loop / Edge Slide schema (task 0483): the reference's own
+// two dropdown-adjacent checkboxes, bound to the fields the router reads,
+// both defaulting OFF (live-measured), both sticky across `resyncSession()`
+// for the same reason `penMode_` is.
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+
+    auto ps = t.params();
+    assert(ps[2].name == "loop"  && ps[2].kind == Param.Kind.Bool);
+    assert(ps[3].name == "slide" && ps[3].kind == Param.Kind.Bool);
+    assert(ps[2].bptr is &t.edgeLoop_,  "loop must bind directly to edgeLoop_");
+    assert(ps[3].bptr is &t.edgeSlide_, "slide must bind directly to edgeSlide_");
+    assert(!ps[2].default_.b && !ps[3].default_.b, "both flags default OFF");
+    assert(!t.edgeLoop_ && !t.edgeSlide_, "a fresh tool must start with both flags OFF");
+
+    t.edgeLoop_ = t.edgeSlide_ = true;
+    t.resyncSession();
+    assert(t.edgeLoop_ && t.edgeSlide_,
+        "the flags must survive resyncSession() — sticky options, not gesture state");
+}
+
+// ---------------------------------------------------------------------------
+// The Mode router's full table (task 0483) — every (mode, Edge Loop) pair
+// dispatches an unmodified LMB press to the gesture the reference pairs it
+// with. Asserted through `lmbAction_`, the router's own recorded decision,
+// so a row is pinned by WHICH gesture it chose and not by whether that
+// gesture happened to find a seed under the probe pixel: a seed miss is the
+// delegated handler's business (each has its own tests), a misrouted mode is
+// this table's.
+//
+// The press pixel is an edge midpoint on a grid plane — geometry, so the
+// Move family takes its on-geometry branch — and the same pixel is used for
+// every row, which is what makes the rows comparable.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    Mesh m = makeGridPlane(3);
+    auto vp = makeGridPlaneTestViewport();
+
+    ImVec2 pa, pb;
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][0]], vp, pa), "setup: endpoint projects");
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][1]], vp, pb), "setup: endpoint projects");
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)((pa.x + pb.x) * 0.5f);
+    e.y = cast(int)((pa.y + pb.y) * 0.5f);
+
+    static struct Row { PenMode mode; bool loop; TopoPenAction want; string why; }
+    static immutable Row[] rows = [
+        Row(PenMode.Move,      false, TopoPenAction.LmbPlaceOrMove, "Move = the plain LMB gesture"),
+        Row(PenMode.Move,      true,  TopoPenAction.MoveLoop,       "Move + Edge Loop = the RMB gesture"),
+        Row(PenMode.Point,     false, TopoPenAction.LmbPlaceOrMove, "Point = place-or-move"),
+        Row(PenMode.Point,     true,  TopoPenAction.MoveLoop,       "Point on geometry follows Move"),
+        Row(PenMode.Duplicate, false, TopoPenAction.Build,          "Duplicate = the Shift+LMB gesture"),
+        Row(PenMode.Duplicate, true,  TopoPenAction.DupLoop,        "Duplicate + Edge Loop = Shift+RMB"),
+        Row(PenMode.Remove,    false, TopoPenAction.Remove,         "Remove = the Ctrl+MMB gesture"),
+        Row(PenMode.Remove,    true,  TopoPenAction.Remove,         "Remove has NO loop variant — the flag is ignored"),
+        Row(PenMode.Split,     false, TopoPenAction.Split,          "Split = the MMB gesture"),
+        Row(PenMode.Split,     true,  TopoPenAction.Split,          "Split ignores Edge Loop"),
+        Row(PenMode.AddLoop,   false, TopoPenAction.AddLoop,        "Add Loop = the Shift+MMB gesture"),
+        Row(PenMode.AddLoop,   true,  TopoPenAction.AddLoop,        "Add Loop ignores Edge Loop"),
+        Row(PenMode.Smooth,    false, TopoPenAction.Smooth,         "Smoothing = the Shift+Ctrl+LMB gesture"),
+        Row(PenMode.Smooth,    true,  TopoPenAction.SmoothLoop,     "Smoothing + Edge Loop = Shift+Ctrl+RMB"),
+    ];
+
+    foreach (r; rows) {
+        auto t = new TopologyPenTool();
+        t.meshSrc_   = () => &m;
+        t.penMode_   = r.mode;
+        t.edgeLoop_  = r.loop;
+        t.onPlainLmbDown(e, vts);
+        assert(t.lmbAction_ == r.want, r.why);
+    }
+
+    // Edge Slide reroutes the Move family — and ONLY the Move family — to the
+    // very gesture the Ctrl+LMB chord runs. Edge Loop wins when both are on
+    // (there is no slide-a-whole-loop gesture to compose them into).
+    foreach (mode; [PenMode.Move, PenMode.Point]) {
+        auto t = new TopologyPenTool();
+        t.meshSrc_   = () => &m;
+        t.penMode_   = mode;
+        t.edgeSlide_ = true;
+        t.onPlainLmbDown(e, vts);
+        assert(t.lmbAction_ == TopoPenAction.Slide, "Edge Slide must route the Move family to Slide");
+
+        t.resetAllGestureArms();
+        t.edgeLoop_ = true;
+        t.onPlainLmbDown(e, vts);
+        assert(t.lmbAction_ == TopoPenAction.MoveLoop, "Edge Loop must win over Edge Slide");
+    }
+
+    // Every OTHER mode ignores Edge Slide outright.
+    foreach (mode; [PenMode.Duplicate, PenMode.Remove, PenMode.Split,
+                    PenMode.AddLoop, PenMode.Smooth]) {
+        auto t = new TopologyPenTool();
+        t.meshSrc_   = () => &m;
+        t.penMode_   = mode;
+        t.edgeSlide_ = true;
+        t.onPlainLmbDown(e, vts);
+        assert(t.lmbAction_ != TopoPenAction.Slide,
+            "Edge Slide must not leak into a non-Move-family mode");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The router's RELEASE leg follows the press, not the dropdown (task 0483):
+// a mode written mid-drag must not redirect the commit to a gesture nobody
+// armed. Split is the probe — it arms on a vertex press and its `splitUp`
+// disarms observably — and the dropdown is flipped to Move (whose UP leg is
+// the entirely different `lmbPlaceOrMoveUp`) between the press and the
+// release.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)p0.x; e.y = cast(int)p0.y;
+
+    t.penMode_ = PenMode.Split;
+    assert(t.onPlainLmbDown(e, vts), "a Split-mode press on a vertex must arm");
+    assert(t.splitArmed_ && t.splitSourceVert_ == 0, "Split must arm at the pressed vertex");
+    assert(t.lmbAction_ == TopoPenAction.Split, "the press must record the Split gesture");
+
+    // The dropdown moves mid-drag (this is reachable over HTTP at any time).
+    t.penMode_ = PenMode.Move;
+
+    assert(t.lmbModeUp(e, vts), "the release must still reach Split's own commit leg");
+    assert(!t.splitArmed_, "Split's commit leg must have run and disarmed");
 }
 
 // ---------------------------------------------------------------------------
@@ -9850,16 +10251,16 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps[2].name == "smoothStrength");
-    assert(ps[2].kind == Param.Kind.Float);
-    assert(abs(ps[2].default_.f - 1.0f) < 1e-6f,
+    assert(ps[4].name == "smoothStrength");
+    assert(ps[4].kind == Param.Kind.Float);
+    assert(abs(ps[4].default_.f - 1.0f) < 1e-6f,
         "smoothStrength must default to 1.0 — the reference's own default, giving F = 1/20 = 0.05");
-    assert(ps[2].fptr is &t.smoothStrength_, "the Param must bind directly to smoothStrength_");
-    assert(ps[2].enforceBounds_,
+    assert(ps[4].fptr is &t.smoothStrength_, "the Param must bind directly to smoothStrength_");
+    assert(ps[4].enforceBounds_,
         "smoothStrength must clamp injected values — an out-of-range force factor would be "
       ~ "honoured verbatim by the headless attr path otherwise");
-    assert(ps[2].hints.hasMinF && ps[2].hints.hasMaxF
-        && abs(ps[2].hints.minF - 0.0f) < 1e-6f && abs(ps[2].hints.maxF - 4.0f) < 1e-6f,
+    assert(ps[4].hints.hasMinF && ps[4].hints.hasMaxF
+        && abs(ps[4].hints.minF - 0.0f) < 1e-6f && abs(ps[4].hints.maxF - 4.0f) < 1e-6f,
         "smoothStrength bounds must be declared as [0, 4] — `.enforceBounds()` clamps to the "
       ~ "hinted range, so a missing hint would silently disarm the clamp");
 
@@ -10453,10 +10854,10 @@ unittest {
     assert(!history.canUndo(), "a miss/empty cell must record NO undo entry");
 }
 
-// F5/F9 — dropdown routing: plain-LMB is a NO-OP for Draw's place/move path
-// when Fill owns it, and vice versa. dropdown=Draw (default) must arm
-// place/move exactly like pre-Fill behavior; dropdown=Fill must fill
-// immediately (commit-on-DOWN) and arm NOTHING.
+// F5/F9 — dropdown routing: plain-LMB is a NO-OP for Point's place/move path
+// when Fill owns it, and vice versa. dropdown=Point must arm place/move
+// exactly like pre-Fill behavior; dropdown=Fill must fill immediately
+// (commit-on-DOWN) and arm NOTHING.
 unittest {
     import mesh : makeGridPlane;
     import view : View;
@@ -10493,15 +10894,15 @@ unittest {
     SDL_MouseButtonEvent e;
     e.x = cast(int)cpix.x; e.y = cast(int)cpix.y;
 
-    // dropdown = Draw (default): plain-LMB over the gap centroid must arm
-    // place/move -- NEVER Fill -- byte-identical to pre-Fill behavior.
-    assert(t.penMode_ == PenMode.Draw, "must start in Draw mode");
+    // dropdown = Point: plain-LMB over the gap centroid must arm place/move
+    // -- NEVER Fill -- byte-identical to pre-Fill behavior.
+    t.penMode_ = PenMode.Point;
     int facesBefore = cast(int)m.faces.length;
     bool consumed = t.onPlainLmbDown(e, vts);
     assert(consumed, "plain-LMB must always be consumed");
     assert(t.placeArmed_ || t.moveArmed_,
-        "Draw mode must arm place/move, exactly like pre-Fill behavior");
-    assert(cast(int)m.faces.length == facesBefore, "Draw mode must not mutate the mesh on DOWN");
+        "Point mode must arm place/move, exactly like pre-Fill behavior");
+    assert(cast(int)m.faces.length == facesBefore, "Point mode must not mutate the mesh on DOWN");
     t.placeArmed_ = false; t.moveArmed_ = false; t.grabbedVert_ = -1;
 
     // dropdown = Fill: the SAME press must fill the cell and arm NOTHING.
@@ -10516,7 +10917,7 @@ unittest {
 }
 
 // F8 — hover preview state: `fillCell_` equals the cell (as a set) after
-// the Fill-mode motion compute; `null` in Draw mode, off any gap, and when
+// the Fill-mode motion compute; `null` in every other mode, off any gap, and when
 // ANY gesture is armed (mode ghosts win, mirroring `hoverOverMesh_`'s own
 // precedence rule -- MANDATORY opponent fix #2's sibling gate, not nested
 // inside `hoverOverMesh_`).
@@ -10547,10 +10948,10 @@ unittest {
     SDL_MouseMotionEvent e;
     e.x = cast(int)cpix.x; e.y = cast(int)cpix.y;
 
-    // Draw mode (default): the preview must stay empty even directly over
+    // Move mode (the default): the preview must stay empty even directly over
     // a gap cell -- Fill's hatch is gated on the mode.
     t.onMouseMotion(e, vts);
-    assert(t.fillCell_.length == 0, "Draw mode must never populate the Fill preview");
+    assert(t.fillCell_.length == 0, "a non-Fill mode must never populate the Fill preview");
 
     // Fill mode: the SAME motion must resolve exactly the gap cell.
     t.penMode_ = PenMode.Fill;
@@ -10644,9 +11045,9 @@ unittest {
     SDL_MouseMotionEvent e;
     e.x = cast(int)hoverPix.x; e.y = cast(int)hoverPix.y;
 
-    // Draw mode (default): no radius overlay, even directly over a border edge.
+    // Move mode (the default): no radius overlay, even directly over a border edge.
     t.onMouseMotion(e, vts);
-    assert(!t.fillRadiusValid_, "Draw mode must never populate the radius overlay");
+    assert(!t.fillRadiusValid_, "a non-Fill mode must never populate the radius overlay");
 
     // Fill mode: the SAME motion must resolve the radius against THIS
     // edge's own two endpoints, matching the pure law exactly.
@@ -10727,7 +11128,7 @@ unittest {
     immutable size_t eBefore = m.edges.length;
     immutable size_t fBefore = m.faces.length;
 
-    assert(t.penMode_ == PenMode.Draw, "setup: must be in Draw mode");
+    assert(t.penMode_ == PenMode.Move, "setup: must be in the default Move mode");
     bool consumed = t.onPlainLmbDown(e, vts);
 
     assert(!consumed,
@@ -10753,7 +11154,9 @@ unittest {
 // and a press ~70px clear of both — nothing for `overPrimaryEdgeOrFace` to
 // find, so the press is a placement exactly as before. Without this, a guard
 // that declined EVERY non-vertex press would look "fixed" while having killed
-// the pen's primary Draw gesture.
+// Point mode's placement gesture. Runs in Point mode explicitly — the
+// default Move mode DECLINES an empty-space press, which is the very
+// distinction between the two modes (task 0483).
 unittest {
     import toolpipe.packets : SubjectPacket;
     import std.math : hypot;
@@ -10782,9 +11185,18 @@ unittest {
         "setup: the probe pixel must resolve no vertex");
     assert(m.edges.length == 0, "setup: an isolated-vertex mesh must have no edges");
 
+    t.penMode_ = PenMode.Point;
     assert(t.onPlainLmbDown(e, vts), "a press on empty space must still be consumed");
     assert(t.placeArmed_, "a press on empty space must still arm Place");
     assert(!t.moveArmed_, "a press on empty space must not arm Move");
+
+    // ... and the SAME press in Move mode places nothing: Move has nothing to
+    // move out there, and placing is Point's job (live-measured reference
+    // split — toolcards/topology_pen/attr_defaults_capture.md, PRIVATE).
+    t.resetAllGestureArms();
+    t.penMode_ = PenMode.Move;
+    assert(!t.onPlainLmbDown(e, vts), "Move mode must DECLINE a press on empty space");
+    assert(!t.placeArmed_ && !t.moveArmed_, "Move mode must arm nothing on empty space");
 }
 
 // `toolStateJson().penMode` — the Mode dropdown's readback
@@ -10792,18 +11204,35 @@ unittest {
 // the raw ordinal, and single-sourced from `penModeTable` so it tracks the
 // `Param.intEnum_` schema and the `tool.attr mesh.topoPen mode <tag>` write.
 unittest {
+    import std.json : JSONType;
+
     auto t = new TopologyPenTool();
 
     auto s0 = t.toolStateJson();
     assert("penMode" in s0, "toolStateJson must publish penMode");
-    assert(s0["penMode"].str == "draw", "the default mode must report the \"draw\" wire tag");
+    assert(s0["penMode"].str == "move", "the default mode must report the \"move\" wire tag");
 
-    t.penMode_ = PenMode.Fill;
+    // Every value round-trips through the SAME table the Param publishes, so
+    // the readback cannot drift from the tag `tool.attr` accepts.
+    static immutable string[8] tags =
+        ["move", "duplicate", "remove", "split", "addLoop", "point", "fill", "smooth"];
+    foreach (i, tag; tags) {
+        t.penMode_ = cast(PenMode) i;
+        assert(t.toolStateJson()["penMode"].str == tag,
+            "mode " ~ tag ~ " must report its own wire tag");
+    }
+
+    // The two dropdown-adjacent flags are published alongside it (task 0483).
+    t.penMode_ = PenMode.Move;
     auto s1 = t.toolStateJson();
-    assert(s1["penMode"].str == "fill", "Fill mode must report the \"fill\" wire tag");
-
-    t.penMode_ = PenMode.Draw;
-    assert(t.toolStateJson()["penMode"].str == "draw", "switching back must report \"draw\" again");
+    assert(s1["edgeLoop"].type == JSONType.false_ && s1["edgeSlide"].type == JSONType.false_,
+        "both flags must start OFF in the readback");
+    assert(s1["lmbAction"].str == "place_or_move",
+        "a fresh tool must report the neutral LMB action");
+    t.edgeLoop_ = t.edgeSlide_ = true;
+    auto s2 = t.toolStateJson();
+    assert(s2["edgeLoop"].type == JSONType.true_ && s2["edgeSlide"].type == JSONType.true_,
+        "the readback must track the flags");
 }
 
 // ---------------------------------------------------------------------------

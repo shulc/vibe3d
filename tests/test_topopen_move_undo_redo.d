@@ -36,6 +36,10 @@ unittest {
     assert(expectedRayHitOnSphere(c, cast(float)nx, cast(float)ny, R, expectedMoved));
 
     cmd("tool.set mesh.topoPen on");
+    // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
+    // expects the place-on-empty/grab-move gesture, which is `point` —
+    // the default is now `move`, which places nothing on empty space.
+    cmd("tool.attr mesh.topoPen mode point");
 
     // Place A, then drag it to a new pixel (T2's own scenario, replayed here
     // so this file stays independently runnable).

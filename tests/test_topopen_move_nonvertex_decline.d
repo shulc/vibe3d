@@ -137,6 +137,10 @@ unittest {
              ~ "by more than %.0fpx; bounding radius is only %.1fpx", kSnapPx, qrMax));
 
     cmd("tool.set mesh.topoPen on");
+    // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
+    // expects the place-on-empty/grab-move gesture, which is `point` —
+    // the default is now `move`, which places nothing on empty space.
+    cmd("tool.attr mesh.topoPen mode point");
 
     immutable size_t undo0 = undoDepth();
 

@@ -41,6 +41,10 @@ unittest {
         "the drag-destination pixel's camera-ray must hit the sphere");
 
     cmd("tool.set mesh.topoPen on");
+    // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
+    // expects the place-on-empty/grab-move gesture, which is `point` —
+    // the default is now `move`, which places nothing on empty space.
+    cmd("tool.attr mesh.topoPen mode point");
 
     // 1) Place A via a plain (stationary) P2/P4-Place click.
     postJson("/api/play-events", clickLog(c.vpX, c.vpY, c.width, c.height, cx, cy));

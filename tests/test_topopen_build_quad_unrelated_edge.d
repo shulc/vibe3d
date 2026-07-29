@@ -51,6 +51,10 @@ unittest {
     }
 
     cmd("tool.set mesh.topoPen on");
+    // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
+    // expects the place-on-empty/grab-move gesture, which is `point` —
+    // the default is now `move`, which places nothing on empty space.
+    cmd("tool.attr mesh.topoPen mode point");
 
     // Build the UNRELATED floating edge first: hub2(1) via P2 click, then a
     // Shift+LMB drag from it to vert 2 -> edge (1,2). NEVER touched again.

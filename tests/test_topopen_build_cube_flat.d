@@ -38,6 +38,10 @@ unittest {
         "drag-destination B's camera-ray must hit the cube");
 
     cmd("tool.set mesh.topoPen on");
+    // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
+    // expects the place-on-empty/grab-move gesture, which is `point` —
+    // the default is now `move`, which places nothing on empty space.
+    cmd("tool.attr mesh.topoPen mode point");
 
     // Hub A via a plain P2 click.
     postJson("/api/play-events", clickLog(c.vpX, c.vpY, c.width, c.height, cx, cy));
