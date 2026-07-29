@@ -1016,6 +1016,27 @@ private:
     int   dupLoopStartX_, dupLoopStartY_;
     int   dupLoopCurX_,   dupLoopCurY_;
 
+    // --- Duplicate-EDGE session state (task 0485). The single-edge sibling
+    // of the Dup Loop state above, armed by a Shift+LMB press that lands on
+    // an edge instead of a vertex: the reference's Duplicate mode
+    // "duplicates an edge as you drag it", and only widens that to a whole
+    // loop "with Edge Loop enabled or by dragging with the right mouse
+    // button". So Shift+LMB on an edge is the ONE-edge case of the very
+    // operation Shift+RMB already runs, and it commits through the same
+    // kernel (`commitDupEdges`) with a one-element edge list.
+    //
+    // DELIBERATELY NOT the `dupLoop*` fields reused with a shorter list: a
+    // RIGHT-button press can legitimately arrive while a LEFT gesture is
+    // still held (the two-button chord this tool's MIDDLE/RIGHT handlers are
+    // careful to preserve — see `resetAllGestureArms`), and
+    // `onDupLoopShiftRmbDown`'s own narrow self-reset would then silently
+    // cancel the LEFT drag by clearing state they shared. Separate fields
+    // keep that property intact.
+    bool dupEdgeArmed_ = false;
+    int  dupEdgeSeed_  = -1;
+    int  dupEdgeStartX_, dupEdgeStartY_;
+    int  dupEdgeCurX_,   dupEdgeCurY_;
+
     // --- P12 Smooth+Loop session state (topology_pen.d,
     // doc/topopen_p12_smoothloop_plan.md). Armed on a Shift+Ctrl+RMB press
     // that lands on a primary-layer edge (`onSmoothLoopRmbDown`, reusing
@@ -1610,6 +1631,15 @@ public:
             return true;
         }
 
+        // Task 0485: same cursor tracking for the single-edge duplicate — the
+        // ghost's only input; the committed delta always comes from the
+        // RELEASE event's own pixel (`dupEdgeUp`), never from this cache.
+        if (dupEdgeArmed_) {
+            dupEdgeCurX_ = e.x;
+            dupEdgeCurY_ = e.y;
+            return true;
+        }
+
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 2): while a
         // Smooth+Loop gesture is armed, accumulate cursor travel off the
         // RUNNING last position (mirrors the whole-mesh Smooth branch's
@@ -2100,6 +2130,10 @@ public:
         dupLoopArmed_ = false;
         dupLoopSeed_  = -1;
         dupLoopEdges_ = null;
+        // Duplicate EDGE (task 0485) — the Shift+LMB sibling; cleared here
+        // for the same reason as every LEFT-button arm above.
+        dupEdgeArmed_ = false;
+        dupEdgeSeed_  = -1;
         // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
         // here so the LEFT-button trio's own reset (and `resyncSession()`,
         // below) close a stray smooth-loop arm too; `onSmoothLoopRmbDown`
@@ -2141,7 +2175,7 @@ public:
     private bool anyGestureArmed() const {
         return dragArmed_ || placeArmed_ || moveArmed_ || addLoopArmed_
             || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_
-            || dupLoopArmed_ || smoothLoopArmed_;
+            || dupLoopArmed_ || smoothLoopArmed_ || dupEdgeArmed_;
     }
 
     // The Mode router (task 0483) — the ONE place the Mode dropdown, the
@@ -2575,7 +2609,26 @@ public:
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int src = findSourceVertex(e.x, e.y, vp);
-        if (src < 0) return false;   // no pre-highlighted element -> no documented gesture
+        if (src < 0) {
+            // Not a vertex — try an EDGE (task 0485). The reference's
+            // Duplicate mode "duplicates an edge as you drag it", and widens
+            // that to a whole loop only "with Edge Loop enabled or by
+            // dragging with the right mouse button": Shift+LMB on an edge is
+            // the ONE-edge case of the operation Shift+RMB already runs, so
+            // it arms here and commits through the same `commitDupEdges`
+            // kernel with a one-element list. Dragging an edge sideways
+            // therefore builds the quad between it and its duplicate — the
+            // single most common retopo stroke, and the one this slot used to
+            // decline outright.
+            int ei = findRingSeedEdge(e.x, e.y, vp);
+            if (ei < 0) return false;   // neither vertex nor edge -> no documented gesture
+
+            dupEdgeSeed_   = ei;
+            dupEdgeStartX_ = dupEdgeCurX_ = e.x;
+            dupEdgeStartY_ = dupEdgeCurY_ = e.y;
+            dupEdgeArmed_  = true;
+            return true;   // consume; the duplicate (if any) commits on release
+        }
 
         sourceVert_     = src;
         dragArmed_      = true;
@@ -3523,6 +3576,10 @@ public:
     // stationary click-on-vertex — "revisit = Move/no-op", capture SESSION 1)
     // builds nothing.
     private bool buildUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Task 0485: the same slot's EDGE outcome. Checked first and
+        // exclusively — `onShiftLmbDown` arms exactly one of the two, so this
+        // can never shadow a vertex build.
+        if (dupEdgeArmed_) return dupEdgeUp(e, vts);
         if (!dragArmed_) return false;
         int       a     = sourceVert_;
         BuildCase casee  = classifiedCase_;
@@ -3710,6 +3767,31 @@ public:
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         commitDupLoop(edges, dx, dy, vp);
+        return true;
+    }
+
+    // Task 0485: commits the armed Shift+LMB duplicate-EDGE gesture — the
+    // single-edge sibling of `dupLoopUp` immediately above, with the same
+    // click-vs-drag gate (a stationary Shift+click duplicates nothing) and
+    // the same release-pixel delta. Disarms on every path.
+    private bool dupEdgeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!dupEdgeArmed_) return false;
+        immutable int seed = dupEdgeSeed_;
+        immutable int sx = dupEdgeStartX_, sy = dupEdgeStartY_;
+        dupEdgeArmed_ = false;
+        dupEdgeSeed_  = -1;
+
+        enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
+        immutable int dx = e.x - sx, dy = e.y - sy;
+        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (seed < 0) return true;
+
+        Viewport vp;
+        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
+        // so the entry carries that slot's own wire name, never the loop
+        // gesture's (the OBJ-3/D4 discipline every commit path here follows).
+        commitDupEdges([seed], dx, dy, vp, buildEditFactory_, "Topology Duplicate Edge");
         return true;
     }
 
@@ -4793,7 +4875,20 @@ public:
     // index would dangle.
     private void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
                                const ref Viewport vp) {
-        if (meshSrc_ is null || history_ is null || dupLoopEditFactory_ is null) return;
+        if (dupLoopEditFactory_ is null) return;
+        commitDupEdges(loopEdges, dx, dy, vp, dupLoopEditFactory_,
+                       "Topology Duplicate Loop");
+    }
+
+    // The duplicate-edges KERNEL, shared by the Shift+RMB loop gesture above
+    // and the Shift+LMB single-edge one (task 0485). Identical work either
+    // way — the two differ ONLY in how many edges the caller put in the list
+    // and in which factory/label the entry carries — so they cannot drift
+    // apart in the extrude, the re-snap, or the undo shape.
+    private void commitDupEdges(const(int)[] loopEdges, int dx, int dy,
+                                const ref Viewport vp,
+                                MeshSessionEdit delegate() factory, string label) {
+        if (meshSrc_ is null || history_ is null || factory is null) return;
         auto m = mesh;
         if (m is null || loopEdges.length == 0) return;
 
@@ -4825,8 +4920,8 @@ public:
         m.commitChange(MeshEditScope.Position);
         MeshSnapshot after = MeshSnapshot.capture(*m);
 
-        auto cmd = dupLoopEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Duplicate Loop");
+        auto cmd = factory();
+        cmd.setSnapshots(before, after, label);
         history_.record(cmd);
 
         resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
@@ -5186,49 +5281,14 @@ public:
         // primitives, no mesh mutation, no extrude — pure preview).
         // Independent of `lastHit_`/CONS, drawn before the same
         // `!lastHit_.hit` early-return as every other gesture ghost.
-        if (dupLoopArmed_ && meshSrc_ !is null) {
-            auto m = mesh;
-            if (m !is null) {
-                enum uint dupLoopCol = IM_COL32(60, 220, 140, 220);   // dup-loop ghost green
-                int dx = dupLoopCurX_ - dupLoopStartX_;
-                int dy = dupLoopCurY_ - dupLoopStartY_;
+        if (dupLoopArmed_ && meshSrc_ !is null) drawDupGhost(dl, vp, dupLoopEdges_,
+            dupLoopCurX_ - dupLoopStartX_, dupLoopCurY_ - dupLoopStartY_);
 
-                foreach (ei; dupLoopEdges_) {
-                    if (ei < 0 || ei >= cast(int)m.edges.length) continue;
-                    auto edgeE = m.edges[ei];
-                    Vec3 a = m.vertices[edgeE[0]], b = m.vertices[edgeE[1]];
-
-                    Vec3 aP = a, bP = b;   // default: miss (or off-screen) keeps coincident
-                    ImVec2 pa, pb;
-                    if (projectPt(a, vp, pa)) {
-                        Vec3 hitA;
-                        if (resnapToBackground(cast(int)(pa.x + cast(float)dx),
-                                               cast(int)(pa.y + cast(float)dy), vp, hitA)) aP = hitA;
-                    }
-                    if (projectPt(b, vp, pb)) {
-                        Vec3 hitB;
-                        if (resnapToBackground(cast(int)(pb.x + cast(float)dx),
-                                               cast(int)(pb.y + cast(float)dy), vp, hitB)) bP = hitB;
-                    }
-
-                    ImVec2 sa, sb, saP, sbP;
-                    bool ok = projectPt(a, vp, sa) && projectPt(b, vp, sb)
-                           && projectPt(aP, vp, saP) && projectPt(bP, vp, sbP);
-                    if (!ok) continue;
-
-                    // The predicted bridge quad a-b-b'-a' + the new dup-loop
-                    // edge a'-b' (drawn with a heavier stroke), + a dot per
-                    // predicted (dragged) vert.
-                    dl.AddLine(sa, sb,   dupLoopCol, 1.5f);
-                    dl.AddLine(sb, sbP,  dupLoopCol, 1.5f);
-                    dl.AddLine(sbP, saP, dupLoopCol, 2.0f);
-                    dl.AddLine(saP, sa,  dupLoopCol, 1.5f);
-
-                    dl.AddCircleFilled(saP, 4.0f, dupLoopCol, 16);
-                    dl.AddCircleFilled(sbP, 4.0f, dupLoopCol, 16);
-                }
-            }
-        }
+        // Task 0485: the SAME ghost for the Shift+LMB single-edge duplicate —
+        // one edge instead of a loop, identical preview arithmetic.
+        if (dupEdgeArmed_ && dupEdgeSeed_ >= 0 && meshSrc_ !is null)
+            drawDupGhost(dl, vp, [dupEdgeSeed_],
+                         dupEdgeCurX_ - dupEdgeStartX_, dupEdgeCurY_ - dupEdgeStartY_);
 
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the Smooth+Loop
         // ghost — highlights the ARMED loop at its CURRENT (pre-relax)
@@ -5481,6 +5541,54 @@ public:
         }
     }
 
+    // The duplicate ghost, shared by the Shift+RMB loop gesture and the
+    // Shift+LMB single-edge one (task 0485): preview of the
+    // coincident-then-dragged duplicate + its bridge quads, recomputed every
+    // frame from the LIVE cursor delta. Mirrors the Move Loop ghost's
+    // primitives (`resnapToBackground`/`projectPt`) — no mesh mutation, no
+    // extrude, pure preview. Independent of `lastHit_`/CONS, drawn before the
+    // same `!lastHit_.hit` early-return as every other gesture ghost.
+    private void drawDupGhost(ImDrawList* dl, const ref Viewport vp,
+                              const(int)[] edgeList, int dx, int dy) {
+        auto m = mesh;
+        if (m is null) return;
+        enum uint dupCol = IM_COL32(60, 220, 140, 220);   // duplicate ghost green
+
+        foreach (ei; edgeList) {
+            if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+            auto edgeE = m.edges[ei];
+            Vec3 a = m.vertices[edgeE[0]], b = m.vertices[edgeE[1]];
+
+            Vec3 aP = a, bP = b;   // default: miss (or off-screen) keeps coincident
+            ImVec2 pa, pb;
+            if (projectPt(a, vp, pa)) {
+                Vec3 hitA;
+                if (resnapToBackground(cast(int)(pa.x + cast(float)dx),
+                                       cast(int)(pa.y + cast(float)dy), vp, hitA)) aP = hitA;
+            }
+            if (projectPt(b, vp, pb)) {
+                Vec3 hitB;
+                if (resnapToBackground(cast(int)(pb.x + cast(float)dx),
+                                       cast(int)(pb.y + cast(float)dy), vp, hitB)) bP = hitB;
+            }
+
+            ImVec2 sa, sb, saP, sbP;
+            bool ok = projectPt(a, vp, sa) && projectPt(b, vp, sb)
+                   && projectPt(aP, vp, saP) && projectPt(bP, vp, sbP);
+            if (!ok) continue;
+
+            // The predicted bridge quad a-b-b'-a' + the new duplicate edge
+            // a'-b' (heavier stroke), + a dot per predicted (dragged) vert.
+            dl.AddLine(sa, sb,   dupCol, 1.5f);
+            dl.AddLine(sb, sbP,  dupCol, 1.5f);
+            dl.AddLine(sbP, saP, dupCol, 2.0f);
+            dl.AddLine(saP, sa,  dupCol, 1.5f);
+
+            dl.AddCircleFilled(saP, 4.0f, dupCol, 16);
+            dl.AddCircleFilled(sbP, 4.0f, dupCol, 16);
+        }
+    }
+
     // ----- Test-introspection (task 0234 pattern, GET /api/tool/state) ----
     override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
@@ -5638,6 +5746,12 @@ public:
         root["dupLoopArmed"]     = JSONValue(dupLoopArmed_);
         root["dupLoopSeed"]      = JSONValue(dupLoopSeed_);
         root["dupLoopEdgeCount"] = JSONValue(cast(int)dupLoopEdges_.length);
+
+        // Task 0485: the Shift+LMB single-edge duplicate's own arm, kept
+        // separate from the loop gesture's so a test (and a reader of the
+        // state) can tell which of the two is in flight.
+        root["dupEdgeArmed"] = JSONValue(dupEdgeArmed_);
+        root["dupEdgeSeed"]  = JSONValue(dupEdgeSeed_);
 
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the armed
         // Smooth+Loop gesture's state, for Tier-C tests to assert the
@@ -9557,6 +9671,77 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
 
     assert(history.canUndo(), "setup: the commit must have actually recorded an undo entry");
     assert(!t.moveLoopArmed_, "resyncSession() on a successful Dup Loop commit must clear a sibling arm");
+}
+
+// ---------------------------------------------------------------------------
+// onShiftLmbDown on an EDGE -> arms the single-edge DUPLICATE, not a build
+// (task 0485). The reference's Duplicate mode "duplicates an edge as you drag
+// it", widening to a loop only under Edge Loop / the right mouse button — so
+// this slot has two outcomes, resolved by what the press lands on, and the
+// vertex outcome (P3's drag-build) must keep working untouched.
+//
+// A stationary Shift+click duplicates nothing: same click-vs-drag gate as
+// every other gesture here. Driven directly — the no-drag path returns before
+// any `gpu_`/GL tail, so it runs under a bare `dub test`.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 100, 100);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    Viewport vp = view.viewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][0]], vp, p0), "setup: endpoint projects");
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][1]], vp, p1), "setup: endpoint projects");
+
+    // --- EDGE midpoint: no vertex within snap range, so the edge outcome.
+    SDL_MouseButtonEvent eEdge;
+    eEdge.x = cast(int)((p0.x + p1.x) * 0.5f);
+    eEdge.y = cast(int)((p0.y + p1.y) * 0.5f);
+    assert(t.findSourceVertex(eEdge.x, eEdge.y, vp) < 0,
+        "setup: the midpoint must resolve NO vertex, or this would test the build path");
+    immutable int seed = t.findRingSeedEdge(eEdge.x, eEdge.y, vp);
+    assert(seed >= 0, "setup: the midpoint must resolve an edge");
+
+    assert(t.onShiftLmbDown(eEdge, vts), "a Shift+LMB press on an edge must be consumed");
+    assert(t.dupEdgeArmed_, "it must arm the single-edge duplicate");
+    assert(t.dupEdgeSeed_ == seed, "and arm it on the edge the pick resolved");
+    assert(!t.dragArmed_, "it must NOT arm P3's vertex drag-build");
+    assert(t.anyGestureArmed(), "the new arm must be visible to anyGestureArmed()");
+
+    // A release back at the press pixel is a click, not a drag: no mutation.
+    immutable size_t vBefore = m.vertices.length, fBefore = m.faces.length;
+    assert(t.buildUp(eEdge, vts), "the release of an armed gesture is consumed");
+    assert(!t.dupEdgeArmed_, "the release must disarm");
+    assert(m.vertices.length == vBefore && m.faces.length == fBefore,
+        "a stationary Shift+click on an edge must duplicate nothing");
+
+    // --- VERTEX: P3's drag-build still owns that outcome, unchanged.
+    t.resetAllGestureArms();
+    SDL_MouseButtonEvent eVert;
+    eVert.x = cast(int)p0.x; eVert.y = cast(int)p0.y;
+    assert(t.onShiftLmbDown(eVert, vts), "a Shift+LMB press on a vertex must still be consumed");
+    assert(t.dragArmed_, "a vertex press must still arm the drag-build");
+    assert(!t.dupEdgeArmed_, "a vertex press must NOT arm the edge duplicate");
+
+    // --- Neither: still declined, so a Shift+LMB on empty space falls through
+    // to the host's own sel-add path exactly as before.
+    t.resetAllGestureArms();
+    SDL_MouseButtonEvent eFar;
+    eFar.x = -99999; eFar.y = -99999;
+    assert(!t.onShiftLmbDown(eFar, vts), "a press on nothing must stay unconsumed");
+    assert(!t.dragArmed_ && !t.dupEdgeArmed_, "and must arm neither outcome");
 }
 
 // ---------------------------------------------------------------------------
