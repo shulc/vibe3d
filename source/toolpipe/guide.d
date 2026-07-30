@@ -102,11 +102,17 @@ interface SnapGuide {
     /// and `slot` its snap source (0 = active mesh, 1..N = background source),
     /// exactly as `SnapAdmit` sees them.
     ///
-    /// `nothrow` for the same reason `SnapAdmit` is: this runs inside the
-    /// candidate walk's hot path, next to a process-global grid under a mutex,
-    /// and must not unwind through it. A guide that wants to fail rejects.
+    /// Deliberately NOT `nothrow`, where the sibling seam `snap.SnapAdmit`
+    /// is. The difference is not an oversight: an admission predicate answers
+    /// from data it already has, while a guide's proximity is a PROJECTION,
+    /// and the projection helper this tree ships (`math.projectToWindowFull`)
+    /// carries no attributes — so `nothrow` here would push a `try`/`catch`
+    /// into the body of every real guide. It is affordable because the
+    /// candidate walk consults nothing while the grid mutex is held: every
+    /// `synchronized` block in `snap.d` is closed before a candidate reaches
+    /// `consider`, so an unwinding guide cannot strand the lock.
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, out int priority) nothrow;
+                   out float distPx, out int priority);
 
     /// Off / Suggest / Chosen — the draw protocol.
     ///

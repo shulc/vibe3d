@@ -736,3 +736,111 @@ unittest {
 
     invalidateSnapGrids();
 }
+
+// ---------------------------------------------------------------------------
+// S4(a) of doc/toolpipe_architecture_plan.md — the guide REGISTRY.
+//
+// The equivalence of the two ranking paths is pinned in `source/snap.d`. What
+// belongs here is the registry's own contract, and the first clause of it is
+// the neutrality claim itself:
+//
+//   1. EMPTY. A fresh stage holds no guide, and nothing in this tree registers
+//      one. That is what makes the arbitration branch in `snapCursor`
+//      unreachable, and it is the whole of phase (a)'s neutrality argument.
+//      The assertion is cheap; its value is that a later commit which
+//      registers a guide from inside the stage cannot do so silently.
+//   2. LIFECYCLE (MEASURED). Add, remove, and add-is-idempotent — a guide
+//      registered twice is one guide, not two votes in the arbitration.
+//      `reset()` empties the registry, because a guide is scoped to a gesture
+//      and a scene reset ends every gesture there was.
+//   3. RANGES PUSHED IN (MEASURED direction). Registration hands the guide the
+//      stage's current pair, and a later evaluation hands it the pair again,
+//      so a range changed mid-gesture reaches a guide already registered. The
+//      guide never sources the pair for itself.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    private class RecordingGuide : SnapGuide {
+        import math : Vec3;
+        float  innerPx = -1, outerPx = -1;
+        int    pushes;
+        size_t queries;
+
+        void limits(float i, float o) { innerPx = i; outerPx = o; ++pushes; }
+        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+                       out float distPx, out int priority)
+        {
+            ++queries;
+            return false;   // admits nothing: this guide is here to be counted
+        }
+        void setDrawState(GuideDrawState s) {}
+        uint flags() const { return 0; }
+    }
+}
+
+unittest {
+    auto st = new SnapStage();
+
+    // --- 1. EMPTY -----------------------------------------------------------
+    assert(st.guideCount == 0,
+        "S4(a): a fresh SNAP stage registers no guide, and neither does any "
+        ~ "tool in this tree — that emptiness is what keeps the arbitration "
+        ~ "path in snapCursor unreachable, which is the entire neutrality "
+        ~ "argument for this stage");
+
+    // --- 3. RANGES PUSHED IN, at registration -------------------------------
+    auto g = new RecordingGuide();
+    st.innerRangePx = 11.0f;
+    st.outerRangePx = 22.0f;
+    st.addGuide(g);
+    assert(st.guideCount == 1);
+    assert(g.pushes == 1 && g.innerPx == 11.0f && g.outerPx == 22.0f,
+        "the environment's ranges are pushed IN when a guide registers — the "
+        ~ "guide does not source the pair for itself");
+
+    // --- 2. LIFECYCLE -------------------------------------------------------
+    st.addGuide(g);
+    assert(st.guideCount == 1,
+        "registering the same guide twice must be a no-op, not a second vote "
+        ~ "in the arbitration");
+    st.addGuide(null);
+    assert(st.guideCount == 1, "a null guide is not a guide");
+
+    auto h = new RecordingGuide();
+    st.addGuide(h);
+    assert(st.guideCount == 2 && st.guides[0] is g && st.guides[1] is h,
+        "the registry keeps registration order — the arbitration settles "
+        ~ "equal priorities by it");
+
+    assert(st.removeGuide(g) && st.guideCount == 1 && st.guides[0] is h,
+        "remove takes out the named guide and leaves the rest in order");
+    assert(!st.removeGuide(g),
+        "removing a guide that is not registered reports so rather than "
+        ~ "corrupting the registry");
+
+    // --- 3. ...and again on every evaluation --------------------------------
+    // A mid-gesture range change must reach a guide that is already
+    // registered, so the push is not a registration-time courtesy.
+    st.innerRangePx = 33.0f;
+    st.outerRangePx = 44.0f;
+    st.enabled      = true;
+    {
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;               // cursorValid stays false: no query
+        VectorStack vts;
+        vts.put(&subj);
+        assert(st.evaluate(vts));
+    }
+    assert(h.innerPx == 33.0f && h.outerPx == 44.0f,
+        "an evaluation re-pushes the current ranges, so a pair changed "
+        ~ "mid-gesture reaches a guide that registered before the change");
+    assert(h.queries == 0,
+        "and it does so WITHOUT running the query — the cursor gate still "
+        ~ "governs whether any candidate is enumerated at all");
+
+    // --- 2. reset() empties the registry ------------------------------------
+    st.reset();
+    assert(st.guideCount == 0,
+        "a scene reset ends every gesture there was, so it can leave no guide "
+        ~ "registered — a guide outliving the tool that owns it is the one "
+        ~ "lifecycle error the measured add/remove pair rules out");
+}

@@ -1695,3 +1695,352 @@ unittest {
     assert(cNone.constraintType == SnapType.None);
     assert(sameVec(cNone.worldPos, cursorWorld));
 }
+
+// ---------------------------------------------------------------------------
+// S4(a) of doc/toolpipe_architecture_plan.md — the guide registry, and the
+// equivalence that makes registering a real guide safe later.
+//
+// Phase (a) lands the interface, the registry and the arbitration path with
+// the registry EMPTY, so the arbitration branch is unreachable and nothing in
+// the tree ranks differently. That is a statement about REACHABILITY, and a
+// test cannot observe it — the grep is the proof, not this block.
+//
+// What this block proves is the other half, the half phase (b) will rest on:
+// that the two ranking paths AGREE. Four obligations:
+//
+//   1. EQUIVALENCE. A guide whose `proximity` mirrors the service's own
+//      distance rule — same projection, same pixel difference, same sqrt,
+//      priority 0 — must reproduce the no-guide result field for field,
+//      INCLUDING the tie-break. If phase (b)'s first guide changes a fixture,
+//      this block says the change came from the guide's policy and not from
+//      the mechanism that carries it.
+//   2. IDENTITY. The guide is offered exactly the candidates the enumeration
+//      offers, with exactly the (type, index, slot) triple the sibling seam
+//      `SnapAdmit` sees for the same query — cross-checked against a real
+//      `admit` run rather than against a hand-written expectation. A design
+//      that consulted the guide only about the WINNER would pass an
+//      "equivalence" test and fails this one.
+//   3. RE-RANK. The guide's `distPx` is the ranking value, not decoration: a
+//      guide that inverts the distance order must hand the snap to the
+//      FARTHEST candidate. This is the assertion that fails if the returned
+//      distance is dropped and the service's own is ranked instead.
+//   4. ARBITRATION. Between two guides that both admit a candidate, the higher
+//      `priority` decides — and priority outranks distance, which is exactly
+//      the rule phase (b) turns on.
+//
+// The fixture is collinear vertices with NO faces, so `needVis` is false and
+// ranking is pure screen distance: what the assertions observe is the property
+// under test and not the visibility gate.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    import toolpipe.guide : GuideDrawState;
+
+    /// A guide that answers with the service's own rule: same projection, same
+    /// pixel difference, same sqrt, priority 0, admits everything that
+    /// projects. Registering it must change nothing.
+    private class MirrorGuide : SnapGuide {
+        Viewport vp;
+        int      sx, sy;
+
+        // Observation channel — the candidates this guide was offered, in
+        // order, as a packed (type, idx, slot) key. Fixed storage: the walk is
+        // hot and an allocating guide would be testing the allocator.
+        long[256] seen;
+        size_t    seenCount;
+
+        // What the stage pushed in, and what it last asked us to draw.
+        float          innerPx = -1, outerPx = -1;
+        GuideDrawState draw    = GuideDrawState.Off;
+
+        // The priority this guide answers with — 0 for the mirror, overridden
+        // by the arbitration block below.
+        int answerPrio = 0;
+        // When true the guide INVERTS the ranking: near reads as far. The
+        // inverted distance stays inside the acceptance range on purpose —
+        // `bestDist` is what the merge tests against `innerRangePx`, so a
+        // guide's answer decides acceptance as well as order, and an inverted
+        // ranking that reported 900 px would prove nothing but a miss.
+        bool  invert     = false;
+        float invertBase = 0;
+        // Types this guide refuses outright.
+        bool admitAll = true;
+
+        this(Viewport v, int x, int y) { vp = v; sx = x; sy = y; }
+
+        // `nothrow` so the S1 predicate below — which is `nothrow` by its
+        // alias — can call it and record the same sequence.
+        static long key(SnapType t, int idx, int slot) pure nothrow @safe {
+            return (cast(long)t << 40) | (cast(long)(idx + 2) << 8) | cast(long)slot;
+        }
+
+        void limits(float i, float o) { innerPx = i; outerPx = o; }
+
+        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+                       out float distPx, out int priority)
+        {
+            if (seenCount < seen.length) seen[seenCount++] = key(type, idx, slot);
+            if (!admitAll) return false;
+            float qx, qy, qz;
+            if (!projectToWindowFull(candWorld, vp, qx, qy, qz)) return false;
+            immutable float dx = qx - cast(float)sx;
+            immutable float dy = qy - cast(float)sy;
+            immutable float d  = sqrt(dx * dx + dy * dy);
+            distPx   = invert ? (invertBase - d) : d;
+            priority = answerPrio;
+            return true;
+        }
+
+        void setDrawState(GuideDrawState s) { draw = s; }
+        uint flags() const { return 0; }
+    }
+}
+
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI;
+
+    // Same reason as the S1 block above: this module's other unittests
+    // populate the slot-0 grids, and a fresh local Mesh can land on a recycled
+    // address with the same (zero) mutationVersion.
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0.00f, 0, 0),   // 0 — directly under the cursor pixel
+        Vec3(0.15f, 0, 0),   // 1 — the runner-up
+        Vec3(0.30f, 0, 0),   // 2 — the farthest, and still inside acceptance
+    ];
+
+    float px0, py0, ndc0;
+    assert(projectToWindowFull(m.vertices[0], vp, px0, py0, ndc0),
+        "fixture: vertex 0 must project on-screen");
+    immutable int sx = cast(int)round(px0);
+    immutable int sy = cast(int)round(py0);
+
+    float pixDist(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every candidate must project on-screen");
+        immutable float dx = qx - cast(float)sx;
+        immutable float dy = qy - cast(float)sy;
+        return sqrt(dx * dx + dy * dy);
+    }
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex;   // discrete tier only, one type
+    cfg.snapScope    = SnapMode.Global;
+    cfg.innerRangePx = 30.0f;
+    cfg.outerRangePx = 100.0f;
+
+    immutable float d0 = pixDist(m.vertices[0]);
+    immutable float d1 = pixDist(m.vertices[1]);
+    immutable float d2 = pixDist(m.vertices[2]);
+    assert(d0 < d1 && d1 < d2,
+        "fixture: the three candidates must rank strictly by screen distance");
+    assert(d2 < cfg.innerRangePx,
+        "fixture: even the farthest candidate must be able to SNAP, so that a "
+        ~ "re-ranking guide's winner is a snap and not a bare highlight");
+
+    // The value an inverting guide reflects distances about: `invertBase - d`
+    // reverses the order while keeping every answer inside acceptance, so what
+    // the re-rank block observes is the ORDER changing and not the range test
+    // failing.
+    immutable float invertBase = d2 + 1.0f;
+    assert(invertBase <= cfg.innerRangePx,
+        "fixture: the whole reflected range must stay inside acceptance, or "
+        ~ "the re-rank block would be testing the acceptance test");
+
+    // Not any candidate's position: the pass-through assertions are only
+    // meaningful if the input is distinguishable from every candidate.
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    static bool sameVec(Vec3 a, Vec3 b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    }
+    // Field for field rather than `a == b`, so a failure names WHICH field
+    // diverged and a field added to SnapResult shows up here as an omission.
+    static bool sameResult(SnapResult a, SnapResult b) {
+        return sameVec(a.worldPos, b.worldPos)
+            && sameVec(a.highlightPos, b.highlightPos)
+            && a.snapped        == b.snapped
+            && a.highlighted    == b.highlighted
+            && a.targetType     == b.targetType
+            && a.targetIndex    == b.targetIndex
+            && a.targetSource   == b.targetSource
+            && a.constraintType == b.constraintType;
+    }
+
+    // --- baseline: no guide at all, i.e. every call site in the tree ---------
+    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(bare.snapped && bare.targetIndex == 0
+        && bare.targetType == SnapType.Vertex && bare.targetSource == 0,
+        "baseline: vertex 0 sits under the cursor");
+    assert(sameVec(bare.worldPos, m.vertices[0]));
+
+    // --- 1. EQUIVALENCE: the mirror guide changes nothing --------------------
+    invalidateSnapGrids();
+    auto mirror = new MirrorGuide(vp, sx, sy);
+    SnapResult guided = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                   [mirror]);
+    assert(sameResult(bare, guided),
+        "S4 equivalence: a guide that mirrors the service's own distance rule "
+        ~ "must reproduce the no-guide result field for field — this is the "
+        ~ "pin that makes registering a REAL guide a change of policy and not "
+        ~ "a change of mechanism");
+
+    // --- 2. IDENTITY: the guide sees the enumeration, not the winner ---------
+    // Cross-checked against the sibling seam rather than a hand-written list:
+    // both are consulted per candidate, in the same walk, so the sequences
+    // must be identical. A guide consulted only about the winner would have a
+    // sequence of length 1 here.
+    invalidateSnapGrids();
+    long[256] admitSeen;
+    size_t    admitCount;
+    SnapResult admitted = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+        (SnapType t, int i, int s) {
+            if (admitCount < admitSeen.length)
+                admitSeen[admitCount++] = MirrorGuide.key(t, i, s);
+            return true;
+        });
+    assert(sameResult(bare, admitted), "sanity: the S1 seam is still neutral");
+    assert(admitCount >= 3,
+        "fixture: the enumeration must offer all three vertices, else the "
+        ~ "sequence comparison below is vacuous");
+    assert(mirror.seenCount == admitCount,
+        "S4 identity: the guide must be offered exactly as many candidates as "
+        ~ "the admission predicate is — the two seams sit in the same walk");
+    assert(mirror.seen[0 .. mirror.seenCount] == admitSeen[0 .. admitCount],
+        "S4 identity: and the same candidates, in the same order, with the "
+        ~ "same (type, index, slot) triple");
+
+    // --- 3. RE-RANK: the guide's distance is the ranking value ---------------
+    invalidateSnapGrids();
+    auto inverted = new MirrorGuide(vp, sx, sy);
+    inverted.invert     = true;
+    inverted.invertBase = invertBase;
+    SnapResult flipped = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                    [inverted]);
+    assert(flipped.snapped && flipped.targetIndex == 2,
+        "S4 re-rank: a guide that inverts the distance order must hand the "
+        ~ "snap to the FARTHEST candidate — if the service ranked by its own "
+        ~ "distance and merely asked the guide for permission, vertex 0 would "
+        ~ "still win and nothing would announce it");
+    assert(sameVec(flipped.worldPos, m.vertices[2]),
+        "the guide re-ranks a candidate; it never moves one");
+
+    // --- ...and rejecting everything is the clean pass-through --------------
+    invalidateSnapGrids();
+    auto refuses = new MirrorGuide(vp, sx, sy);
+    refuses.admitAll = false;
+    SnapResult none = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                 [refuses]);
+    SnapPacket offCfg = cfg;
+    offCfg.enabled = false;
+    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, offCfg);
+    assert(sameResult(none, disabled),
+        "S4: a guide that admits nothing must be the same clean pass-through "
+        ~ "as `cfg.enabled == false` — a rejected candidate must be as if it "
+        ~ "had never been enumerated");
+
+    // --- 4. ARBITRATION: priority outranks distance --------------------------
+    // Two guides over the same candidates. `low` mirrors the distance rule at
+    // priority 0; `high` inverts it at priority 1. The higher priority must
+    // decide, and it must decide AGAINST the nearer candidate — otherwise
+    // "(priority, distance)" would be indistinguishable from "distance".
+    invalidateSnapGrids();
+    auto low  = new MirrorGuide(vp, sx, sy);
+    auto high = new MirrorGuide(vp, sx, sy);
+    high.invert     = true;
+    high.invertBase = invertBase;
+    high.answerPrio = 1;
+    SnapResult arb = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                [low, high]);
+    assert(arb.snapped && arb.targetIndex == 2,
+        "S4 arbitration: the higher-priority guide decides, even though the "
+        ~ "lower-priority one reported a shorter distance");
+
+    // Order of registration must not matter to the priority decision.
+    invalidateSnapGrids();
+    auto low2  = new MirrorGuide(vp, sx, sy);
+    auto high2 = new MirrorGuide(vp, sx, sy);
+    high2.invert     = true;
+    high2.invertBase = invertBase;
+    high2.answerPrio = 1;
+    SnapResult arbSwapped = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+                                       null, [high2, low2]);
+    assert(sameResult(arb, arbSwapped),
+        "S4 arbitration: priority decides, so registration order must not — "
+        ~ "it settles EQUAL priorities and nothing else");
+
+    // --- the tie-break survives the guide path ------------------------------
+    // Two coincident vertices: a tie by construction (a mirrored ±x pair only
+    // ties to within floating point, which is not a tie). The service breaks
+    // it by ascending index under a strict `<`; the mirror guide, feeding the
+    // same distances into the same comparison, must break it the same way.
+    invalidateSnapGrids();
+    Mesh tie;
+    tie.vertices = [Vec3(0.25f, 0, 0), Vec3(0.25f, 0, 0)];
+    assert(pixDist(tie.vertices[0]) == pixDist(tie.vertices[1]),
+        "fixture: the two candidates must be an EXACT tie, otherwise this "
+        ~ "block tests ranking and not tie-breaking");
+    assert(pixDist(tie.vertices[0]) < cfg.innerRangePx,
+        "fixture: the tied pair must be close enough to snap");
+
+    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, cfg);
+    assert(tieBare.snapped && tieBare.targetIndex == 0,
+        "the tie goes to the lower index");
+    invalidateSnapGrids();
+    auto tieMirror = new MirrorGuide(vp, sx, sy);
+    SnapResult tieGuided = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+                                      null, [tieMirror]);
+    assert(sameResult(tieBare, tieGuided),
+        "S4 equivalence: the tie-break is part of the result, so it is part "
+        ~ "of the equivalence — a guide path that compared with `<=` would "
+        ~ "hand the tie to the higher index and pass every other assertion "
+        ~ "in this block");
+
+    // --- the constraint tier carries the same arbitration --------------------
+    invalidateSnapGrids();
+    float pxa, pya, ndca;
+    assert(projectToWindowFull(Vec3(1, 0, 0), vp, pxa, pya, ndca));
+    immutable int cx = cast(int)round(pxa);
+    immutable int cy = cast(int)round(pya);
+
+    SnapPacket ccfg = cfg;
+    ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
+
+    SnapResult cBare = snapCursor(cursorWorld, cx, cy, vp, m, ccfg);
+    assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
+        "fixture: a world-axis constraint must fire at this pixel, otherwise "
+        ~ "the constraint-tier assertions below are vacuous");
+
+    invalidateSnapGrids();
+    auto cMirror = new MirrorGuide(vp, cx, cy);
+    SnapResult cGuided = snapCursor(cursorWorld, cx, cy, vp, m, ccfg, null,
+                                    null, [cMirror]);
+    assert(sameResult(cBare, cGuided),
+        "S4 equivalence holds in the constraint tier too");
+
+    invalidateSnapGrids();
+    auto cRefuses = new MirrorGuide(vp, cx, cy);
+    cRefuses.admitAll = false;
+    SnapResult cNone = snapCursor(cursorWorld, cx, cy, vp, m, ccfg, null, null,
+                                  [cRefuses]);
+    assert(cRefuses.seenCount >= 1,
+        "fixture: the axis lines must be offered to the guide");
+    assert(!cNone.snapped && cNone.constraintType == SnapType.None
+        && sameVec(cNone.worldPos, cursorWorld),
+        "S4: a guide that rejects must be able to veto a CONSTRAINT too — "
+        ~ "otherwise a guide whose whole job is an admission rule would "
+        ~ "reject every element and then watch a constraint hit sail past it");
+
+    invalidateSnapGrids();
+}
