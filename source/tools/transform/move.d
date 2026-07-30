@@ -874,8 +874,17 @@ public:
         Vec3 worldDelta;
         bool skip;
         if (dragAxis <= 2) {
-            // LAW A — incremental, per event, against the live gizmo. Unchanged.
-            worldDelta = axisDragDelta(e.x, e.y, lastMX, lastMY,
+            // LAW A — incremental, per event, against the live gizmo. The
+            // conversion is unchanged; only where the previous pixel comes
+            // from has moved. `lastMX/lastMY` stay written below — they are
+            // the fallback for any dispatch that publishes no cooked gesture,
+            // and the other half of the debug cross-check inside
+            // `gesturePrevPixel`.
+            import toolpipe.packets : GesturePacket;
+            int prevMX, prevMY;
+            gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                             lastMX, lastMY, prevMX, prevMY);
+            worldDelta = axisDragDelta(e.x, e.y, prevMX, prevMY,
                                        dragAxis, handler,
                                        mi0, mi1, mi2,
                                        cachedVp, skip);

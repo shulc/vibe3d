@@ -3,6 +3,7 @@ module drag;
 import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
+import toolpipe.packets : GesturePacket, GestureTrack;
 
 // ---------------------------------------------------------------------------
 // THE DRAG CONVERSION SEAM
@@ -57,6 +58,78 @@ import handler : MoveHandler, gizmoSize, getGizmoPixels;
 // All three laws return Vec3(0,0,0) / 0 and set `skip = true` when projection
 // fails and the caller should just update lastMX/lastMY without moving.
 // ---------------------------------------------------------------------------
+
+// ===========================================================================
+// THE INPUT PAIR — which two pixels a per-event conversion is measured from
+// ===========================================================================
+
+// The previous event's pixel, taken from the cooked gesture rather than from
+// the tool's own bookkeeping.
+//
+// Every incremental drag in this tree used to answer "what was the previous
+// pixel?" out of a private `lastMX/lastMY` pair that the tool wrote at the end
+// of each motion handler. That is one copy of the same law per tool, and a
+// law that lives in fourteen places is a law that lands in one file and not
+// its twin. The cooked event already states it once, at the one place a
+// gesture's pixel state is known, so a tool reads it instead of keeping it.
+//
+// `g` is whatever the caller found in its vector stack, and may be null (any
+// dispatch that is not a mouse event publishes nothing) or invalid (the
+// caller-supplied default). `fallback*` is the tool's own pair, which stays
+// alive for exactly those cases — and for the cross-check below.
+//
+// N3 — COMPUTE BOTH AND ASSERT THEY AGREE. The increment is the same integer
+// subtraction either way, so an agreeing pair means the arithmetic downstream
+// is byte-identical; the `debug` assert proves that case by case on the
+// existing suite instead of asserting it in prose. A disagreement is a real
+// finding: it means this tool saw a different sequence of events than the
+// dispatcher cooked (an event consumed before it reached the tool, a gesture
+// re-anchored mid-drag), and that is a behaviour question, not a hygiene one.
+//
+// The packet is honoured only when it describes THIS event (`curX/curY`
+// match). A caller that hands a stale or foreign packet gets its own pair
+// back rather than a silently wrong reference pixel.
+void gesturePrevPixel(const(GesturePacket)* g,
+                      int curX, int curY,
+                      int fallbackX, int fallbackY,
+                      out int prevX, out int prevY)
+{
+    prevX = fallbackX;
+    prevY = fallbackY;
+    if (g is null || !g.valid) return;
+    if (g.curX != curX || g.curY != curY) return;
+    debug assert(g.prevX == fallbackX && g.prevY == fallbackY,
+        "gesturePrevPixel: the cooked gesture and the tool's own previous "
+        ~ "pixel disagree — the tool did not see every event the dispatcher "
+        ~ "cooked, which is a behaviour difference, not a conversion detail");
+    prevX = g.prevX;
+    prevY = g.prevY;
+}
+
+unittest {
+    // No packet at all → the caller's own pair, untouched.
+    int px, py;
+    gesturePrevPixel(null, 40, 30, 12, 34, px, py);
+    assert(px == 12 && py == 34);
+
+    // Default-constructed (every non-mouse dispatch) → same.
+    GesturePacket idle;
+    gesturePrevPixel(&idle, 40, 30, 12, 34, px, py);
+    assert(px == 12 && py == 34);
+
+    // A valid packet for THIS event → the packet's previous pixel, which the
+    // assert has just proven equal to the caller's.
+    GestureTrack tr;
+    tr.event(GesturePacket.Phase.Down, 12, 34);
+    auto mv = tr.event(GesturePacket.Phase.Move, 40, 30);
+    gesturePrevPixel(&mv, 40, 30, 12, 34, px, py);
+    assert(px == 12 && py == 34);
+    assert(40 - px == mv.incrementX() && 30 - py == mv.incrementY());
+
+    // A packet for a DIFFERENT event is not this event's reference.
+    gesturePrevPixel(&mv, 41, 30, 12, 34, px, py);
+    assert(px == 12 && py == 34);
+}
 
 // ===========================================================================
 // LAW A — axis projection
