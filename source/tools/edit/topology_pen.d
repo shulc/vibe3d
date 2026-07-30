@@ -9570,6 +9570,235 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// commitSplit — T6 (task 0489): the split LAW as it was measured live, rather
+// than as it was reasoned about.
+//
+// Two chord cells committed under instrumentation with every gate value read
+// out of the reference engine on the way through, and both produced the same
+// three-part signature:
+//
+//     Δ(V,E,F) = (0, +1, +1),  max|dp| = 0,  exactly ONE undo restores both
+//     the counts and the positions.
+//
+// The vertex count is the load-bearing third of that: a chord split adds no
+// vertex, so a kernel that ever grew `vertices` would be wrong even with the
+// right face count. `max|dp| = 0` is the fourth: a split never moves geometry.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    // the measured rig: a regular hexagon, one polygon
+    foreach (i; 0 .. 6) {
+        import std.math : cos, sin, PI;
+        const float th = cast(float)(PI / 2.0 - 2.0 * PI * i / 6.0);
+        m.addVertex(Vec3(2.0f * cos(th), 2.0f * sin(th), 0));
+    }
+    m.addFace([0u, 1u, 2u, 3u, 4u, 5u]);
+    m.buildLoops();
+
+    auto before = MeshSnapshot.capture(m);
+    const size_t v0 = m.vertices.length, e0 = m.edges.length, f0 = m.faces.length;
+
+    t.commitSplit(0, 2);   // the measured cell: press v0, release v2
+
+    assert(m.vertices.length == v0, "measured law: a chord split is Δv = 0");
+    assert(m.edges.length == e0 + 1, "measured law: a chord split is Δe = +1");
+    assert(m.faces.length == f0 + 1, "measured law: a chord split is Δf = +1");
+
+    // no vertex moves — measured as max|dp| = 0 on every committing cell
+    auto after = MeshSnapshot.capture(m);
+    assert(after.vertices[0 .. v0] == before.vertices[0 .. v0],
+        "measured law: a chord split never moves existing geometry");
+
+    // ONE undo restores counts AND positions (measured: undo_steps == 1)
+    assert(history.canUndo(), "a real split records exactly one undo entry");
+    history.undo();
+    assert(m.vertices.length == v0 && m.edges.length == e0
+        && m.faces.length == f0,
+        "measured law: ONE undo restores the counts");
+    assert(MeshSnapshot.capture(m).vertices == before.vertices,
+        "measured law: ONE undo restores the positions");
+    assert(!history.canUndo(), "the split must be ONE undo entry, not two");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T7 (task 0489): the GATE EQUIVALENCE, proven exhaustively
+// instead of argued in a comment.
+//
+// The reference refuses a chord through four separate tests. Three of them are
+// redundant: with `n1 = ((j - i) mod n) + 1` and `n2 = n - n1 + 2`, the pair
+// `n1 >= 3 && n2 >= 3` is equivalent to `2 <= (j - i) mod n <= n - 2`, which is
+// exactly "distinct, and not neighbours around the ring"; the `|i - j| >= 2`
+// test is strictly implied by it, and the `n >= 4` test is implied for a
+// triangle. So the whole law is ONE clause, and it is the clause
+// `findCommonSplitFace` already spells as `adjacent`.
+//
+// This asserts that equality over every polygon size and every ordered pair,
+// so the claim stops depending on anyone re-reading the argument.
+// ---------------------------------------------------------------------------
+unittest {
+    foreach (n; 3 .. 13) {
+        foreach (i; 0 .. n) {
+            foreach (j; 0 .. n) {
+                // our clause, written exactly as findCommonSplitFace has it
+                const int lo = i < j ? i : j;
+                const int hi = i < j ? j : i;
+                const bool ours = !(i == j)
+                    && !((hi == lo + 1) || (lo == 0 && hi == n - 1));
+
+                // the reference's four tests, in its own arithmetic
+                const int n1 = ((j - i) % n + n) % n + 1;
+                const int n2 = n - n1 + 2;
+                const bool theirs = (n >= 4)
+                    && (i > j ? i - j : j - i) >= 2
+                    && n1 >= 3 && n2 >= 3;
+
+                assert(ours == theirs,
+                    "gate equivalence broken: our adjacency reject and the "
+                    ~ "reference's four gates must accept exactly the same "
+                    ~ "(polygon size, corner pair) set");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T8 (task 0489): divergence D1, the NON-MANIFOLD fork.
+//
+// MEASURED: on a rig where the same vertex pair is a legal chord of one
+// incident polygon and an illegal one of another, the reference resolves
+// EXACTLY ONE candidate, finds it unsuitable, and abandons the split — it does
+// not try the other polygon. Δ = (0,0,0), with the engine printing
+// `nverts = 3` for the candidate it picked.
+//
+// vibe3d deliberately does the opposite: `findCommonSplitFace` walks the
+// pressed vertex's faces and `continue`s past a failing candidate to the next
+// one, so it finds the quad and cuts. The retry is defended on purpose by the
+// REV1 FIX-3 comment above that function.
+//
+// This test pins OUR behaviour and NAMES it as the measured divergence, so the
+// day someone decides to match the reference this assertion is the thing that
+// tells them the change is intentional rather than a regression.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(1, -1, 0));   // 0
+    m.addVertex(Vec3(-1, -1, 0));  // 1
+    m.addVertex(Vec3(-1, 1, 0));   // 2
+    m.addVertex(Vec3(1, 1, 0));    // 3
+    m.addFace([0u, 1u, 2u]);       // the triangle: (0,2) is ADJACENT here
+    m.addFace([0u, 1u, 2u, 3u]);   // the quad:     (0,2) is a legal chord here
+    m.buildLoops();
+
+    const size_t f0 = m.faces.length;
+    t.commitSplit(0, 2);
+
+    // DIVERGENCE D1, deliberate and now measured: the reference refuses here
+    // (one candidate, no retry); we retry and cut.
+    assert(m.faces.length == f0 + 1,
+        "D1: vibe3d retries past the unsuitable candidate and splits the quad "
+        ~ "-- the reference resolves one candidate and refuses. If this "
+        ~ "assertion is being changed, the change is a deliberate move TOWARD "
+        ~ "the reference, not a regression.");
+    assert(m.vertices.length == 4, "D1: the split still adds no vertex");
+}
+
+// ---------------------------------------------------------------------------
+// commitSplit — T9 (task 0489): divergence D2, WHICH HALF KEEPS THE PARENT
+// POLYGON'S SLOT.
+//
+// MEASURED, on the one case shape that can tell the two conventions apart —
+// a chord whose PRESS index is the HIGHER winding index. The reference keeps
+// the arc running from the PRESSED vertex forward to the RELEASED one in the
+// parent's slot, and appends the mirror arc as the new polygon. vibe3d's
+// `rebuildFacesWithChordSplits` takes `f1 = face[i .. j+1]` with `i` the LOWER
+// winding index regardless of which end was pressed, so the two halves are
+// SWAPPED whenever `idx(press) > idx(release)`.
+//
+// The counts are identical either way, which is why this went unnoticed: only
+// the face identity differs, and today both halves inherit the same per-face
+// attributes, so the divergence is visible only through the facet index and
+// anything keyed on it.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                    "mesh.topoPen_split", "Topology Split",
+                                                    MeshEditScope.Geometry);
+
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    foreach (i; 0 .. 6) {
+        import std.math : cos, sin, PI;
+        const float th = cast(float)(PI / 2.0 - 2.0 * PI * i / 6.0);
+        m.addVertex(Vec3(2.0f * cos(th), 2.0f * sin(th), 0));
+    }
+    m.addFace([0u, 1u, 2u, 3u, 4u, 5u]);
+    m.buildLoops();
+
+    // REVERSED chord: press v3, release v0 -> idx(press) 3 > idx(release) 0
+    t.commitSplit(3, 0);
+    assert(m.faces.length == 2 && m.edges.length == 7 && m.vertices.length == 6,
+        "D2 setup: the reversed chord must still split (0,+1,+1)");
+
+    // OUR convention: the parent slot (face index 0) keeps the LOW-index arc.
+    assert(m.faces[0][] == [0u, 1u, 2u, 3u],
+        "D2: vibe3d keeps the LOW-index arc in the parent slot. MEASURED, the "
+        ~ "reference keeps the arc from the PRESSED vertex ([3,4,5,0] here) "
+        ~ "and appends [0,1,2,3]. The halves are swapped whenever the press "
+        ~ "index is the higher one. Changing this assertion to [3,4,5,0] is "
+        ~ "the fix that closes D2 -- it is an owner call because it moves a "
+        ~ "shipped facet index.");
+    assert(m.faces[1][] == [3u, 4u, 5u, 0u],
+        "D2: and the new polygon is the other arc");
+
+    // the FORWARD chord is where the two conventions agree -- kept here so the
+    // test itself documents why a forward-chord case can never discriminate
+    Mesh m2;
+    t.meshSrc_ = () => &m2;
+    foreach (i; 0 .. 6) {
+        import std.math : cos, sin, PI;
+        const float th = cast(float)(PI / 2.0 - 2.0 * PI * i / 6.0);
+        m2.addVertex(Vec3(2.0f * cos(th), 2.0f * sin(th), 0));
+    }
+    m2.addFace([0u, 1u, 2u, 3u, 4u, 5u]);
+    m2.buildLoops();
+    t.commitSplit(0, 3);
+    assert(m2.faces[0][] == [0u, 1u, 2u, 3u],
+        "D2 control: on a FORWARD chord both conventions give the same parent "
+        ~ "slot, which is why every earlier case was blind to the difference");
+}
+
+// ---------------------------------------------------------------------------
 // commitSplit — T5 (P9, doc/topopen_p9_split_plan.md §Testing): a release
 // that does not land on a vertex (C == -1) must be a byte-identical no-op.
 // ---------------------------------------------------------------------------
