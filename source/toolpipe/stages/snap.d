@@ -629,7 +629,9 @@ unittest {
         vts.put(&subj);
         assert(st.evaluate(vts));
         auto p = vts.get!SnapHitPacket();
-        assert(p !is null);
+        assert(p !is null,
+            "S2: publication is gated on the CURSOR, not on the outcome — a "
+            ~ "query that only highlighted still ran, and still publishes");
         assert(!p.snapped && p.highlighted,
             "fixture: cursor B must highlight vertex 0 without snapping to it");
         assert(p.targetIndex == 0 && p.targetType == SnapType.Vertex,
