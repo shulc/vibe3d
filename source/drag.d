@@ -3,7 +3,6 @@ module drag;
 import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
-import tools.create.create_common : mostFacingAxis;
 
 // ---------------------------------------------------------------------------
 // THE DRAG CONVERSION SEAM
@@ -328,8 +327,57 @@ PlaneJacobian planeJacobian(Vec3 anchor, Vec3 axisU, Vec3 axisV,
     return j;
 }
 
+// The direction the free plane pick differences.
+//
+// MEASURED CORRECTION (task 0518 §4.2): the reference differences the eye
+// vector at the VIEW CENTRE — the direction from the eye to the point the view
+// calls its centre — not the view matrix's forward row. On the reference's own
+// state dumps for the main corpus camera the two are 15.92 degrees apart,
+// which is enough to select a different axis whenever the two largest
+// components sit inside that cone.
+//
+// In OUR camera model those two vectors are the same vector: every `Viewport`
+// the editor produces has `view == lookAt(eye, focus, up)`, so the forward row
+// IS `normalize(focus - eye)` (`view.d::viewportWith`). The correction is
+// therefore measured-inert here rather than invisible — see the unittest that
+// drives the corpus's own four cameras through both readings. It is written
+// this way round so the rule the code states is the measured one, and so a
+// viewport that ever stops being a plain look-at does not silently change
+// which plane a drag runs in.
+//
+// Falls back to the forward row when the view carries no usable centre (a
+// synthetic `Viewport` with `eye == focus`, which several unittests build).
+private Vec3 planePickDirection(const ref Viewport vp) {
+    Vec3 d = vp.focus - vp.eye;
+    if (dot(d, d) > 1e-12f) return d;   // an argmax does not care about length
+    const ref float[16] v2 = vp.view;
+    return Vec3(v2[2], v2[6], v2[10]);
+}
+
+// Dominant-axis argmax for the free plane pick.
+//
+// MEASURED CORRECTION (task 0518 §4.3): the reference's tie-break falls to the
+// LAST axis; `mostFacingAxis`, which this call site used to use, falls to the
+// FIRST. Both tests below are strict, so an exact tie on the leading axis drops
+// through to the trailing one. Worked case, a camera on the 45-degree azimuth
+// with `dir = (0.707, 0, 0.707)`: `|x| > |z|` is false, so 0 is not returned;
+// `|y| >= |x|` is false, so 1 is not returned; the answer is 2 (Z). The
+// first-wins chain answers 0 (X) — a different plane on the same camera.
+//
+// Deliberately NOT applied to `mostFacingAxis` itself. That helper also picks
+// the construction plane for every Create tool, and those call sites carry no
+// reference measurement; moving their tie-break here would be extrapolation
+// beyond what was read, and there would be no reference number to review the
+// changed fixtures against.
+private int dragPlaneAxis(Vec3 dir, Vec3 a, Vec3 b, Vec3 c) {
+    float da = abs(dot(dir, a)), db = abs(dot(dir, b)), dc = abs(dot(dir, c));
+    if (da > db && da > dc)  return 0;
+    if (db >= da && db > dc) return 1;
+    return 2;
+}
+
 // Plane drag (dragAxis 3/4/5/6).
-//   3 = most-facing plane (normal derived from view matrix vs basis)
+//   3 = most-facing plane (normal derived from the view's line of sight)
 //   4 = XY plane (normal Z)   5 = YZ plane (normal X)   6 = XZ plane (normal Y)
 //
 // Optional `axisX/axisY/axisZ` rotate the planes into the workplane basis —
@@ -380,11 +428,7 @@ Vec3 planeDragDelta(int mx,     int my,
     else if (dragAxis == 6) n = axisY;
     else if (!isNaN(planeNormal.x)) n = planeNormal;
     else {
-        // Most-facing plane: pick the basis axis most aligned with the
-        // camera-back direction (view's third row in column-major).
-        const ref float[16] v2 = vp.view;
-        Vec3 camBack = Vec3(v2[2], v2[6], v2[10]);
-        final switch (mostFacingAxis(camBack, axisX, axisY, axisZ)) {
+        final switch (dragPlaneAxis(planePickDirection(vp), axisX, axisY, axisZ)) {
             case 0: n = axisX; break;
             case 1: n = axisY; break;
             case 2: n = axisZ; break;
@@ -609,6 +653,61 @@ unittest {  // LAW B: how far the frozen linearisation is from the exact solve.
                "frozen-vs-exact divergence must stay first-order in drag length");
         assert(vlen(frozen) <= vlen(exact) * 1.0005f,
                "the frozen linearisation is the shorter of the two");
+    }
+}
+
+unittest {  // LAW B: the tie-break falls to the LAST axis.
+    // A camera on the 45-degree azimuth: |x| and |z| of the line of sight are
+    // equal, |y| is zero. The reference's argmax is strict on both compares and
+    // drops through to the trailing axis; the first-wins chain this call site
+    // used to run answered X. Same camera, different plane.
+    Viewport vp;
+    Vec3 eye = Vec3(5, 0, 5), focus = Vec3(0, 0, 0);
+    vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    vp.width  = 800; vp.height = 800;
+    vp.eye    = eye; vp.focus = focus;
+
+    assert(dragPlaneAxis(planePickDirection(vp),
+                         Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)) == 2,
+           "a 45-degree azimuth camera must fall to the last axis");
+
+    // and the drag really does run in the Z-normal plane: no Z component.
+    bool skip;
+    Vec3 d = planeDragDelta(500, 400, 400, 400, 3, Vec3(0,0,0), vp, skip);
+    assert(!skip);
+    assert(abs(d.z) <= 1e-6f * (abs(d.x) + abs(d.y) + 1e-6f));
+}
+
+unittest {  // LAW B: the eye-vector-at-centre reading, and why it is inert here.
+    // The reference reads the direction from the eye to the view's centre; we
+    // used to read the view matrix's forward row. In our camera model those are
+    // the same vector, and this is the assert that says so on the corpus's own
+    // four cameras instead of on a camera chosen to make it true.
+    foreach (c; corpusCams) {
+        auto vp = corpusViewport(c);
+        const ref float[16] v2 = vp.view;
+        Vec3 row = Vec3(v2[2], v2[6], v2[10]);
+        Vec3 eyeVec = planePickDirection(vp);
+        assert(dragPlaneAxis(eyeVec, Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)) ==
+               dragPlaneAxis(row,    Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)),
+               "eye-vector-at-centre and the forward row must pick the same "
+               ~ "plane for a look-at camera");
+    }
+
+    // …and the fallback fires for a synthetic viewport that has no centre.
+    // Two shapes, because both occur in the tree: `Viewport.eye` has no
+    // initialiser, so a hand-built viewport leaves it NaN; and a caller can
+    // legitimately place the eye ON the focus.
+    foreach (degenerate; 0 .. 2) {
+        Viewport bare;
+        bare.view   = lookAt(Vec3(0, 0, 5), Vec3(0, 0, 0), Vec3(0, 1, 0));
+        bare.proj   = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+        bare.width  = 800; bare.height = 800;
+        if (degenerate == 1) { bare.eye = Vec3(0, 0, 0); bare.focus = Vec3(0, 0, 0); }
+        Vec3 fb = planePickDirection(bare);
+        assert(abs(fb.z) > 0.9f, "must fall back to the view's forward row");
+        assert(dragPlaneAxis(fb, Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)) == 2);
     }
 }
 
