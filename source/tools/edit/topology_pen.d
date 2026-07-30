@@ -14910,6 +14910,123 @@ unittest {
     assert(!t.moveArmed_, "a press that BUILT must not also grab the edge");
 }
 
+// THE POST-BUILD CLEANUP: a fill CONSUMES the degenerate polygons it
+// swallows — a LINE polygon (2 corners) lying along a new side, and a POINT
+// polygon (1 corner) sitting at a new corner. Measured as part of the build
+// itself, inside the same undo step.
+//
+// FAILS ON THE OLD RULE, which had no cleanup pass at all (and, on this rig,
+// no candidate either).
+//
+// This clause is INERT on meshes vibe3d produces: nothing here creates a
+// polygon with fewer than three corners, and loose retopo geometry is modelled
+// as bare edges and orphan vertices instead — which are not polygons and are
+// deliberately untouched. The rig therefore plants both degenerate polygons
+// by hand, the way an importer that does carry them would deliver them.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    uint[4] barA, barB;
+    Mesh m = makeFillBridgeRig(barA, barB);
+    // A line polygon along one future side, and a point polygon at a future
+    // corner. Both are legal storage here; neither is reachable by any vibe3d
+    // editing path today.
+    m.addFace([barA[1], barB[0]]);
+    m.addFace([barB[3]]);
+    m.buildLoops();
+    assert(m.faces.length == 4, "setup: two quads, one line polygon, one point polygon");
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+
+    // The degenerate polygons must not disturb the search: their corners
+    // qualify through the border clause exactly as before (a vertex on a
+    // 2-corner polygon and on a bordered quad is still a border vertex).
+    auto ring = t.findFillRing(cast(int)cur.x, cast(int)cur.y, vp);
+    assert(ring.length == 4, "the bridge still resolves with degenerate polygons present");
+
+    t.commitFill(ring);
+
+    assert(m.faces.length == 3,
+        "one facet built, and BOTH degenerate polygons consumed by it — net 4 - 2 + 1");
+    foreach (const ref f; m.faces)
+        assert(f.length >= 3, "no line or point polygon may survive on the new ring");
+    assert(m.vertices.length == 8,
+        "consuming a degenerate polygon must not eat the corner it sat on");
+    assert(history.canUndo(), "the cleanup rides inside the fill's single undo entry");
+
+    // And undo restores all four polygons, degenerate ones included.
+    history.undo();
+    assert(m.faces.length == 4, "undo restores the consumed polygons too");
+}
+
+// UNBOUNDED IS NOT UNARBITRATED. Fill's press has no reach radius — that is
+// what lets a press at the bare centre of a gap, nowhere near anything, cap
+// the cell. But whatever else is NEARER still wins the press, and only an
+// EDGE press can fill: a recording caught a press at a hole's centre
+// resolving an isolated vertex sitting inside that hole, and nothing
+// happening.
+//
+// FAILS ON THE OLD RULE, which consulted no pick at all and capped the cell
+// from that pixel regardless of what was sitting in it.
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(0, 0, 0), vp, cur));   // the hole's centre
+    immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
+
+    // With nothing in the hole, the centre press reaches the border edge
+    // however far away it is — Fill's press has no radius.
+    assert(t.fillSeedEdge(cx, cy, vp) >= 0,
+        "an empty gap's centre must still resolve a border edge at ANY distance");
+    assert(t.findFillRing(cx, cy, vp).length == 4, "and cap the cell");
+
+    // Drop one isolated vertex right under the cursor. It is now the nearest
+    // element, so the press is a VERTEX press and Fill has no path from one.
+    m.addVertex(Vec3(0, 0, 0));
+    assert(t.fillSeedEdge(cx, cy, vp) == -1,
+        "a nearer vertex takes the press, and a vertex press cannot fill");
+    assert(t.findFillRing(cx, cy, vp).length == 0);
+
+    // And that press does nothing at all — not a fill, and not the
+    // destructive refusal either, which belongs to a border-EDGE press.
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    SDL_MouseButtonEvent e;
+    e.x = cx; e.y = cy;
+    immutable size_t f0 = m.faces.length;
+    assert(t.onPlainLmbDown(e, vts), "still consumed — Fill owns the slot");
+    assert(m.faces.length == f0, "no facet");
+    assert(!t.moveArmed_ && !t.placeArmed_, "and nothing armed");
+}
+
 // ---------------------------------------------------------------------------
 // Plain-LMB press on an EDGE -> arms an EDGE move, and NEVER Place
 // (task 0484, superseding doc/tasks/done/0482-topopen-move-nonvertex.md).
