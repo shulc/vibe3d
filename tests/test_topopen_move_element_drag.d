@@ -20,11 +20,26 @@
 //     camera is posted AFTER every load.
 //
 // Expected positions are computed INDEPENDENTLY, never read back from vibe3d
-// and re-compared: the law is "project the vertex's pre-drag position, shift
-// by the drag's pixel delta, intersect THAT pixel's camera ray with the
-// background sphere", and each step here is this file's own arithmetic
-// (`projectToWindow` + `expectedRayHitOnSphere`, the same independent
-// ray-sphere solver the placement tests use).
+// and re-compared.
+//
+// TASK 0503 — WHAT THE RE-SNAP IS. The law used to be "project the vertex's
+// pre-drag position, shift by the drag's pixel delta, intersect THAT pixel's
+// camera ray with the background sphere". The ray was the port's own
+// invention and is measured wrong twice over — dupedge_resnap_capture.md
+// contract C-2 (|new edge|/|source edge| = cos(tilt) to 2.9e-7 at three tilt
+// angles, against 1.804 / 2.484 / 4.369 for a per-vertex ray; and 1.000
+// against 1.220 on a flat background, cell A0-FLAT) and
+// addloop_bgresnap_undo_capture.md verdict V-1 on a second gesture and rig.
+// The measured law is the NEAREST POINT on the background facet, clamped to
+// that facet, so this file's arithmetic is now `expectedNearestOnSphere`
+// (`shiftedWorldPoint` + a brute-force nearest foot over the sphere's own
+// facets, both written out in topopen_place_helpers.d).
+//
+// EDGE and POLYGON grabs are the two Move outcomes this file pins, and they
+// are the ones that changed: they resolve their targets through
+// `perVertexTargetsFrom`. A VERTEX grab does NOT — it rides the cursor's own
+// CONS hit, which is still a camera ray, and its fixtures
+// (test_topopen_move_drag.d and friends) are untouched by 0503.
 //
 // Run via: ./run_test.d topopen_move_element_drag
 
@@ -100,16 +115,11 @@ CameraState setupRig() {
 /// Where vertex `base` must end up after a (kDragX, kDragY) pixel drag —
 /// this file's OWN computation of the tool's law, not a readback.
 Vec3 expectedAfterDrag(CameraState c, Viewport vp, double[] base) {
-    float sx, sy;
-    assert(projectToWindow(Vec3(cast(float)base[0], cast(float)base[1], cast(float)base[2]),
-                           vp, sx, sy),
-        "setup: a moving vertex must project on-screen to have a shifted pixel at all");
-    Vec3 hit;
-    assert(expectedRayHitOnSphere(c, sx + kDragX, sy + kDragY, R, hit),
-        format("setup: the shifted pixel (%.1f,%.1f) must still hit the background sphere — "
-             ~ "otherwise the tool's documented MISS policy keeps the vertex put and the "
-             ~ "assertion below would be testing nothing", sx + kDragX, sy + kDragY));
-    return hit;
+    Vec3 src = Vec3(cast(float)base[0], cast(float)base[1], cast(float)base[2]);
+    Vec3 foot;
+    assert(expectedNearestOnSphere(c, src, kDragX, kDragY, R, LON, LAT, foot),
+        "setup: a moving vertex must project on-screen to have a drag-shifted point at all");
+    return foot;
 }
 
 // --- EDGE grab: exactly the two endpoints move, the other two corners stay.

@@ -3,18 +3,38 @@
 //
 // A Shift+RMB-drag on a BOUNDARY edge of a small quad grid, over a curved
 // (sphere) background: the drag duplicates the border RUN through that seed
-// into new quads (`Mesh.extendEdgesByMask`,
-// identity TRS), then re-snaps EACH new (tail) vertex onto the sphere surface
-// at that vertex's own SHARED-screen-delta-shifted pixel (camera-ray, the
-// SAME primitive P10 Move Loop's re-snap ultimately rests on) —
-// independently verified via `expectedRayHitOnSphere` (ray-sphere
-// intersection computed from scratch, never a second call into the code
-// under test). The primary layer's topology must grow by the computed
-// border-run delta (+3v/+5e/+2f), the original 9 grid vertices must stay
-// byte-unchanged, and each new vertex must match exactly one of the 3
-// independently-computed expected targets (a bijective set match — the
-// exact new-vertex INDEX ordering is an internal kernel detail, not part of
-// the tool's contract).
+// into new quads (`Mesh.extendEdgesByMask`, identity TRS), then re-snaps EACH
+// new (tail) vertex onto the sphere surface independently. The primary
+// layer's topology must grow by the computed border-run delta (+3v/+5e/+2f),
+// the original 9 grid vertices must stay byte-unchanged, and each new vertex
+// must match exactly one of the 3 independently-computed expected targets (a
+// bijective set match — the exact new-vertex INDEX ordering is an internal
+// kernel detail, not part of the tool's contract).
+//
+// TASK 0503 — WHAT THE RE-SNAP IS. This file used to assert the camera-ray
+// hit at each source vertex's own shifted pixel. That was the port's law and
+// it is measured wrong on THIS VERY GESTURE: dupedge_resnap_capture.md's
+// cell A is a Duplicate, and it measures |new edge|/|source edge| = cos(tilt)
+// at 30/45/60 degrees to 2.9e-7 where a per-vertex ray predicts
+// 1.804 / 2.484 / 4.369 (contract C-2), plus 1.000 against the ray law's
+// 1.220 on a FLAT background (cell A0-FLAT). Add Loop's own capture
+// (addloop_bgresnap_undo_capture.md, verdict V-1) puts the same
+// perpendicular-foot law on a second gesture and a second rig, to
+// 5.36e-09 D against 5.75e-03 D for the ray.
+//
+// The expectation is therefore `expectedNearestOnSphere` — this suite's own
+// nearest-foot solve against the sphere's OWN FACETS, from scratch, never a
+// second call into the code under test. The tilted-background fixture where
+// the two laws differ loudly is in `source/tools/edit/topology_pen.d`'s own
+// unittests; a sphere cannot show a cos(tilt) ratio.
+//
+// Also measured on this gesture and NOT asserted here, deliberately: the
+// reference feeds the query `src_i + Δ` with ONE 3D offset shared by every
+// new vertex, where this port shifts each vertex's own pixel by a shared
+// SCREEN delta (a depth-dependent world delta). The two agree whenever the
+// moving vertices share a view depth — as they do on every rig either
+// capture ran — and Δ's own law is explicitly not established, so porting it
+// would mean inventing it. See `shiftedWorldPoint` in the tool.
 //
 // TASK 0486: this test used to assert the FULL CLOSED RIM (+8v/+16e/+8f) on
 // the strength of an owner observation recorded at the time. A live capture
@@ -123,17 +143,14 @@ unittest {
         assert(approxVec(gridPos[vi], post[vi], 1e-5),
             format("original grid vertex %d must stay exactly at its original position", vi));
 
-    // The 3 RUN source vertices' independently-computed shifted-pixel
-    // camera-ray hits on the sphere (the top row; NOT the whole rim).
+    // The 3 RUN source vertices' independently-computed NEAREST POINTS on
+    // the sphere's facets, from their own drag-shifted world points (the top
+    // row; NOT the whole rim).
     uint[3] rimIdx = [0, 1, 2];
     Vec3[3] expected;
-    foreach (k, vi; rimIdx) {
-        float sx, sy;
-        assert(projectToWindow(gridPos[vi], vp, sx, sy),
-            format("setup: rim vertex %d must project on-screen", vi));
-        assert(expectedRayHitOnSphere(c, sx + dx, sy + dy, R, expected[k]),
-            format("run vertex %d's shifted-pixel camera-ray must hit the sphere", vi));
-    }
+    foreach (k, vi; rimIdx)
+        assert(expectedNearestOnSphere(c, gridPos[vi], dx, dy, R, LON, LAT, expected[k]),
+            format("setup: run vertex %d must project on-screen to have a shifted point", vi));
 
     // Bijective match: each of the 3 NEW (tail, indices 9..12) vertices must
     // match exactly one of the 3 expected targets (the exact index
@@ -151,7 +168,7 @@ unittest {
             if (d < bestD) { bestD = d; bestK = cast(int)k; }
         }
         assert(bestK >= 0 && sqrt(bestD) < TOL,
-            format("new vertex %d must match one of the 3 expected sphere-hit targets; "
+            format("new vertex %d must match one of the 3 expected nearest-foot targets; "
                  ~ "nearest dist=%f", ti, sqrt(bestD)));
         used[bestK] = true;
 

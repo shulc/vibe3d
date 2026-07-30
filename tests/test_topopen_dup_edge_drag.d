@@ -14,11 +14,22 @@
 // bridge quad), and three new edges (the duplicate edge plus the two sides).
 //
 // The rig is the element-drag test's — background sphere (the surface the new
-// vertices re-snap ONTO; with none, every re-snap misses and the duplicate
-// would stay coincident, making the position assertions vacuous) plus one quad
-// in the primary layer. Expected positions are computed independently here:
-// project the source endpoint, shift by the drag delta, intersect THAT pixel's
-// camera ray with the sphere.
+// vertices re-snap ONTO; with none, every re-snap is refused, the duplicate
+// stays coincident, and the position assertions would be vacuous) plus one
+// quad in the primary layer.
+//
+// TASK 0503 — WHAT THE RE-SNAP IS. Expected positions used to be a camera-ray
+// hit: project the source endpoint, shift by the drag delta, intersect THAT
+// pixel's ray with the sphere. That was the port's law, and Duplicate is the
+// gesture on which it was measured wrong — dupedge_resnap_capture.md cell A
+// reads |new edge|/|source edge| = cos(tilt) at 30/45/60 degrees to 2.9e-7,
+// against 1.804 / 2.484 / 4.369 for a per-vertex ray (contract C-2), and
+// 1.000 against the ray law's 1.220 on a FLAT background (cell A0-FLAT). The
+// same perpendicular-foot law is measured independently on Add Loop
+// (addloop_bgresnap_undo_capture.md verdict V-1). So the expectation is the
+// NEAREST POINT on the background facet, clamped to that facet —
+// `expectedNearestOnSphere`, solved here against the sphere's own facets,
+// never a call into the code under test.
 //
 // Run via: ./run_test.d topopen_dup_edge_drag
 
@@ -121,13 +132,11 @@ unittest {
     // computation of the kernel's law, never a readback.
     Vec3[2] want;
     foreach (k, src; [ea, eb]) {
-        float sx, sy;
-        assert(projectToWindow(Vec3(cast(float)before[src][0], cast(float)before[src][1],
-                                    cast(float)before[src][2]), vp, sx, sy));
-        assert(expectedRayHitOnSphere(c, sx + kDragX, sy + kDragY, R, want[k]),
-            format("setup: the shifted pixel (%.1f,%.1f) must still hit the background sphere, "
-                 ~ "or the duplicate would stay coincident and this would assert nothing",
-                   sx + kDragX, sy + kDragY));
+        Vec3 srcPos = Vec3(cast(float)before[src][0], cast(float)before[src][1],
+                           cast(float)before[src][2]);
+        assert(expectedNearestOnSphere(c, srcPos, kDragX, kDragY, R, LON, LAT, want[k]),
+            format("setup: source endpoint %d must project on-screen to have a drag-shifted "
+                 ~ "point at all", src));
     }
 
     immutable size_t undo0 = undoDepth();
