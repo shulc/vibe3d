@@ -16,7 +16,7 @@ import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
-import drag : planeDragDelta, screenAxisDelta;
+import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 
 version (unittest) import std.conv : to;
@@ -613,6 +613,16 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (moverDragAxis < 0) return false;
 
+        // Both branches below are per-event increments, so both take their
+        // previous pixel from the cooked gesture rather than from this tool's
+        // own pair. `moverLastMX/MY` stay written: they are the fallback when
+        // no gesture is published, and the other half of the debug agreement
+        // check inside `gesturePrevPixel`.
+        import toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         moverLastMX, moverLastMY, prevMX, prevMY);
+
         if (moverDragAxis == 4) {
             // Rotate box (M4): single-DOF drag along the tangent direction
             // `refAxis(axis) × currentNormal` — the direction the box itself
@@ -627,7 +637,7 @@ public:
             Vec3  tangent   = normalize(cross(rAxis, curNormal));
             float arm       = gizmoSize(params_.center, cachedVp) * 0.55f;
             bool skip;
-            Vec3 delta = screenAxisDelta(e.x, e.y, moverLastMX, moverLastMY,
+            Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
                                          rotateBox.pos, tangent, cachedVp, skip);
             if (!skip && arm > 1e-6f) {
                 float d = dot(delta, tangent);   // signed world length along tangent
@@ -643,7 +653,7 @@ public:
         // Task 0233: with the axis arrows gone, the only remaining center
         // drag is the center box (moverDragAxis == 3) — always a planar drag.
         bool skip;
-        Vec3 delta = planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
+        Vec3 delta = planeDragDelta(e.x, e.y, prevMX, prevMY,
                                     moverDragAxis, mover.center, cachedVp, skip);
         if (!skip) {
             params_.center += delta;
