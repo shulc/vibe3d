@@ -326,9 +326,15 @@ unittest {
         vts.put(&subj);
         publish(vts, slot, GestureTrack().event(GesturePacket.Phase.Move, 5, 6));
         vts.put(&snap);
-        assert(vts.get!SubjectPacket()  is &subj);
-        assert(vts.get!SnapPacket()     is &snap);
-        assert(vts.get!GesturePacket()  is &slot);
+        assert(vts.get!SubjectPacket()  is &subj,
+               "S3 slot: the gesture must not land on a neighbour's kind — "
+               ~ "an aliased PacketKind clobbers a packet somebody DOES read");
+        assert(vts.get!SnapPacket()     is &snap,
+               "S3 slot: a later put must not be able to reach the gesture's "
+               ~ "slot, nor the gesture reach a later publisher's");
+        assert(vts.get!GesturePacket()  is &slot,
+               "S3 slot: the gesture reads back as the caller's own storage, "
+               ~ "not as whatever last wrote the kind it was mapped onto");
         assert(vts.get!GesturePacket().curX == 5);
     }
 }
