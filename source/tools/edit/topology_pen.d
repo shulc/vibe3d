@@ -12,7 +12,7 @@ import math               : Vec3, Viewport, projectToWindowFull, closestOnSegmen
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
-                             SubjectPacket;
+                             SubjectPacket, SnapPacket;
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
@@ -1125,6 +1125,40 @@ private:
     int  splitSourceVert_  = -1;
     int  splitTargetVert_  = -1;
 
+    // --- The snap CONFIGURATION this gesture runs on, snapshotted at press.
+    //
+    // The drag-snap acceptance and gather radii are not the pen's own numbers.
+    // They belong to the application-wide snapping service (our `SnapStage`,
+    // which publishes them on the `SnapPacket` every other snapping consumer
+    // in the tree already reads) and the tool is one client of it among many.
+    // The pen used to carry a private copy of the same pair in `constraint.d`
+    // — two subsystems storing one fact, each unable to see the other — and
+    // this field is what replaced it.
+    //
+    // SNAPSHOT-AT-PRESS, dropped at release, deliberately: the ranges must not
+    // change under a gesture that is already in flight, so a mid-drag `snap
+    // innerRange` edit takes effect on the NEXT press and not this one. That
+    // is the same lifetime a registered snapping guide has — the ranges are
+    // pushed into it when its drag starts and it is unregistered when the drag
+    // ends — and the same shape `XfrmToolBase.captureSnapForDrag` already uses
+    // for the transform tools.
+    //
+    // Read from the `VectorStack` the event handler is already holding rather
+    // than by walking the pipeline again: `app.d`'s `buildToolVts` has already
+    // run `pipeline.evaluate` into it, so the packet is right there, and this
+    // is `captureSnapForDrag`'s own source. When no SNAP stage is registered
+    // this stays `SnapPacket.init`, whose ranges ARE the stage's declared
+    // defaults (pinned by a unittest in `toolpipe/stages/snap.d`), so a
+    // pipeline-less pen — every direct-construction unittest below, and the
+    // headless paths — behaves exactly as it did when the constants were
+    // private.
+    //
+    // NOT gated on `SnapPacket.enabled`. Whether the pen should fall silent
+    // when the user turns snapping off is an open question with a real
+    // behaviour change on either answer; it is not settled here, and taking
+    // only the numbers is the change that costs nothing.
+    SnapPacket dragSnap_;
+
     // The Mode dropdown (task 0477 continuation + task 0483): the wire-tag
     // table backing `PenMode`'s `Param.intEnum_` — mirrors
     // `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. Tags and
@@ -1857,6 +1891,10 @@ public:
         lastTarget_ = HoverTarget.init;
         slideDecline_     = SlideDecline.None;
         slideDeclineSeed_ = -1;
+        // Per-gesture snap snapshot — a tool switch mid-drag ends the gesture,
+        // so it must not survive into the next activation any more than the
+        // decline diagnostics above do.
+        dragSnap_ = SnapPacket.init;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
@@ -2150,11 +2188,14 @@ public:
     /// does a drag land on.
     ///
     /// A DIFFERENT QUERY from the press pick, with its own — much wider —
-    /// radius. Measured: the press pick reaches ~8px (`topoPenPressPickPx`),
-    /// this one accepts at 24px (`topoPenSnapAcceptPx`). They were once fused
-    /// behind a single 15px constant, which was simultaneously too wide for
-    /// the press and too narrow for the landing. The candidate SET is the
-    /// measured one too: border-only unless `innerSnap` opens the interior.
+    /// radius, and a different OWNER. The press pick reaches ~8px
+    /// (`topoPenPressPickPx`), a constant the tool owns; this one accepts at
+    /// the snapping service's inner range (`topoPenSnapAcceptPx`, 24px at the
+    /// default configuration), taken from the packet this gesture snapshotted
+    /// at press (`dragSnap_`). They were once fused behind a single 15px
+    /// constant, which was simultaneously too wide for the press and too
+    /// narrow for the landing. The candidate SET is the measured one too:
+    /// border-only unless `innerSnap` opens the interior.
     ///
     /// The one caller today is the Split gesture, whose target vertex C is by
     /// its own definition the element the drag snaps to (and whose reference
@@ -2163,7 +2204,8 @@ public:
     /// rather than call `findSourceVertex` directly, so the candidate set AND
     /// the radius stay stated in one place.
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
-        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp), !innerSnap_);
+        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
+                                !innerSnap_);
     }
 
     // P3 (doc/topopen_p3_plan.md): project every vertex of the PRIMARY
@@ -2540,8 +2582,23 @@ public:
     // calling `onToolAction`.
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
                                     ref VectorStack vts) {
+        // Take the gesture's snap configuration BEFORE dispatching: whichever
+        // gesture this press turns out to arm, it runs on the ranges that were
+        // live when the button went down (see `dragSnap_`). Unconditional and
+        // free of any arm bool — the capture must happen even for a press that
+        // goes on to decline, because `resetAllGestureArms()` runs INSIDE the
+        // dispatch below and would otherwise be a place to lose it.
+        captureSnapForGesture(vts);
         return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
                              InputPhase.Down, e, vts);
+    }
+
+    /// Snapshot the live SNAP configuration for the gesture that is starting.
+    /// Mirrors `XfrmToolBase.captureSnapForDrag` — same packet, same source,
+    /// same "no stage registered ⇒ the init packet's defaults" fallback.
+    private void captureSnapForGesture(ref VectorStack vts) {
+        if (auto sp = vts.get!SnapPacket()) dragSnap_ = *sp;
+        else                                dragSnap_ = SnapPacket.init;
     }
 
     // REV1 FIX-1 (opponent objection 1, cross-arm coupling — doc/topopen_p7_slide_plan.md
@@ -4357,8 +4414,14 @@ public:
     // inline, per-button-branch, before the Phase-2 flip.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
-        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
-                             InputPhase.Up, e, vts);
+        // The release still runs on the press's ranges — `splitUp` re-resolves
+        // its target vertex at the release pixel and must use the same
+        // acceptance the whole gesture used — so the drop happens AFTER the
+        // dispatch, never before it.
+        bool handled = dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+                                     InputPhase.Up, e, vts);
+        dragSnap_ = SnapPacket.init;
+        return handled;
     }
 
     // --- Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
@@ -14441,10 +14504,16 @@ unittest {
     // placed first would mask the behavioural probes it is meant to explain.
     assert(topoPenPressPickPx(vp) == 8.0f,
         "the press pick carries the one limit the reference printed, 8px at scale 1");
-    assert(topoPenSnapAcceptPx(vp) == 24.0f,
+    // The drag-snap pair comes off the gesture's snap snapshot, which on a
+    // freshly-constructed tool is the default configuration — so these still
+    // pin the measured values, and they now pin them at their real source.
+    assert(topoPenSnapAcceptPx(vp, t.dragSnap_) == 24.0f,
         "the drag-snap acceptance is a separate, wider radius — 24px at scale 1");
-    assert(topoPenSnapGatherPx(vp) == 40.0f,
+    assert(topoPenSnapGatherPx(vp, t.dragSnap_) == 40.0f,
         "and its gather is 40px, a ratio of 5/3 rather than the refuted 2x");
+    assert(t.dragSnap_ == SnapPacket.init,
+        "a pen that has seen no press runs on the default snap configuration, "
+        ~ "which is what makes the pipeline-less paths behave as before");
 }
 
 // ---------------------------------------------------------------------------
@@ -14812,7 +14881,12 @@ unittest {
     SDL_SetModState(cast(SDL_Keymod)0);
 
     // Split MUTATES on success, so each offset gets its own tool + mesh.
-    static bool splitLands(float offsetPx, Mesh* m, out size_t facesBefore) {
+    // `snapPkt` is the SNAP configuration the press sees: null means "no SNAP
+    // stage registered", the case every other assertion below runs, and the
+    // one whose ranges must stay exactly what the pen used when it owned
+    // private constants.
+    static bool splitLands(float offsetPx, Mesh* m, out size_t facesBefore,
+                           SnapPacket* snapPkt = null) {
         auto t       = new TopologyPenTool();
         auto view    = new View(0, 0, 100, 100);
         auto history = new CommandHistory();
@@ -14829,6 +14903,7 @@ unittest {
         subj.viewport = vp;
         VectorStack vts;
         vts.put(subj);
+        if (snapPkt !is null) vts.put(snapPkt);
 
         ImVec2 pa, pb;
         assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: v1 must project");
@@ -14873,8 +14948,35 @@ unittest {
     // The value last, as a label on the behaviour above rather than a
     // substitute for it. Note it is deliberately NOT the press-pick reach.
     auto vp = makeGridPlaneTestViewport();
-    assert(topoPenSnapAcceptPx(vp) == 24.0f,
-        "the drag-snap acceptance is 24px at scale 1, its own measured number");
+    assert(topoPenSnapAcceptPx(vp, SnapPacket.init) == 24.0f,
+        "the drag-snap acceptance is 24px at scale 1, its own measured number — "
+        ~ "and it is the snap service's default inner range, not a constant the "
+        ~ "pen keeps for itself");
+
+    // THE DE-DUPLICATION, as behaviour: 24px is a CONFIGURED number, so a
+    // press that sees a narrower configured acceptance must land differently
+    // at the very same pixel. The 20px release above split the quad; with the
+    // acceptance moved to 12px it is a clean no-op, and nothing else changed.
+    // This is the assertion a re-introduced private constant fails.
+    SnapPacket narrow;
+    narrow.innerRangePx = 12.0f;
+    Mesh mNarrow;
+    size_t fNarrow;
+    assert(!splitLands(20.0f, &mNarrow, fNarrow, &narrow),
+        "the acceptance is snap CONFIGURATION, not a constant the pen owns: at a "
+        ~ "12px inner range the same 20px release must stop landing");
+    assert(mNarrow.faces.length == fNarrow && mNarrow.edges.length == 12,
+        "and the declined split must leave the grid untouched");
+
+    // ... and widening it the other way re-lands the release the default
+    // rejected, so the pen is reading the number rather than merely being
+    // gated by one.
+    SnapPacket wide;
+    wide.innerRangePx = 40.0f;
+    Mesh mWide;
+    size_t fWide;
+    assert(splitLands(26.0f, &mWide, fWide, &wide),
+        "and at a 40px inner range the 26px release the default rejected must land");
 }
 
 version (unittest) private float projectedX(Mesh* m, uint vi, const ref Viewport vp) {

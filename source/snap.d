@@ -1257,9 +1257,18 @@ unittest {
     assert(projectToWindowFull(cube.vertices[0], vp, px0, py0, ndc0),
         "vertex 0 should project on-screen");
 
+    // The gather range every query below runs at. NAMED, not a retyped 40.0f:
+    // there is exactly one pair of snap ranges in this tree, `SnapStage`
+    // declares it and publishes it on this packet, and a test that spells its
+    // own copy of the number is a fourth place for that pair to drift to. The
+    // grid's coverage proof is stated in terms of `outerRangePx` (see
+    // `cellPx`), so reading the default from the packet is also the honest
+    // statement of what this test is exercising.
+    immutable float gatherPx = SnapPacket.init.outerRangePx;
+
     // Build + populate the grid at vertex 0's ORIGINAL screen position.
     auto cands0 = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
-                                     cast(int)px0, cast(int)py0, 40.0f, null);
+                                     cast(int)px0, cast(int)py0, gatherPx, null);
     assert(cands0.canFind(0),
         "sanity: vertex 0 should be a candidate at its own screen position");
 
@@ -1286,7 +1295,7 @@ unittest {
     // by the pre-edit projection. Asserting this first proves the repro is
     // real (guards against the test silently becoming a no-op).
     auto candsStale = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
-                                         cast(int)px1, cast(int)py1, 40.0f, null);
+                                         cast(int)px1, cast(int)py1, gatherPx, null);
     assert(!candsStale.canFind(0),
         "sanity: without invalidateSnapGrids() the grid must reproduce the "
         ~ "historical stale-after-position-edit bug");
@@ -1296,7 +1305,7 @@ unittest {
     // that call directly.
     invalidateSnapGrids();
     auto candsFresh = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
-                                         cast(int)px1, cast(int)py1, 40.0f, null);
+                                         cast(int)px1, cast(int)py1, gatherPx, null);
     assert(candsFresh.canFind(0),
         "task 0401: invalidateSnapGrids() must force a rebuild against the "
         ~ "moved vertex");

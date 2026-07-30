@@ -6,7 +6,7 @@ import math : Vec3, Viewport, dot, cross, normalize,
               projectToWindowFull, closestOnSegment2D;
 import mesh : Mesh, edgeKey;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
-                          HoverTarget, HoverTargetKind;
+                          HoverTarget, HoverTargetKind, SnapPacket;
 
 // ---------------------------------------------------------------------------
 // World-space geometry constraint math — Stage 3 of doc/cons_constraint_plan.md.
@@ -374,12 +374,43 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 //     different query with its own radii: acceptance 24.0px, candidate gather
 //     40.0px. Neither number gates a press.
 //
-// TWO constants, therefore, wired to two consumers — see `topoPenPressPickPx`
+// TWO QUERIES, therefore, wired to two consumers — see `topoPenPressPickPx`
 // and `topoPenSnapAcceptPx` below. One constant standing in for both was wrong
 // in BOTH directions at once: too wide for a press (a vertex 14px away, or an
 // edge 9px away, was ours to grab and the reference's to skip in favour of the
 // polygon — a ~7px annulus of disagreement around every vertex and edge) and
 // too narrow for the drag snap that decides whether a drag welds.
+//
+// ONE of the two queries keeps a constant here, and the other does NOT, and
+// the asymmetry is the whole point:
+//
+//   * The PRESS PICK's 8px is the pen's own. Nothing configures it, no
+//     snapping guide is registered for it, and no range is pushed into it —
+//     it is a plain closest-element query the tool runs for itself. Its
+//     constant stays right here, below.
+//
+//   * The DRAG SNAP's two radii are NOT the pen's. They are application-wide
+//     snapping CONFIGURATION with a public setter, defaulting to 24 (the
+//     acceptance) and 40 (the gather); the pen is one registered snapping
+//     guide among nine, and the numbers are handed TO it at gesture start.
+//     Our own SNAP stage has carried the same pair since the root commit,
+//     which means the pen lane and the snap lane independently derived one
+//     fact and then stored it twice, in two subsystems that cannot see each
+//     other. So `topoPenSnapAcceptPx`/`topoPenSnapGatherPx` take the ranges
+//     from a `SnapPacket` instead of owning constants: one pair of numbers
+//     in the tree, published by the stage that owns the field.
+//
+// The 8 and the 24 are therefore NOT to be merged, however alike they look
+// once written down as bare floats. They answer different questions, they
+// come from different owners, and one of them is configurable while the
+// other is not. Merging them is the exact confusion this arrangement exists
+// to prevent.
+//
+// NOTE the packet is DATA, not a pipeline: `toolpipe.packets` imports only
+// math/mesh/editmode (this module already depends on it for
+// `ConstrainHitPacket`), so taking a `SnapPacket` parameter keeps every
+// function here pure and unit-testable with no toolpipe running. Reading the
+// LIVE packet is the caller's job, and lives in the tool.
 //
 // PIXEL CONSTANTS, not scale-derived — and this is the second correction the
 // live run forced. A natural experiment settled it: a restart moved the
@@ -444,27 +475,22 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 /// rig's geometry and the reference's own computed distance. Move this number
 /// only with a measurement that narrows those brackets.
 ///
+/// THIS ONE STAYS A CONSTANT, and it is deliberately not the snap acceptance
+/// even though `SnapPacket.init.innerRangePx` once also read 8.0f and made
+/// them look interchangeable. The press pick is a different QUERY with a
+/// different OWNER: no snapping guide is registered for it, no configured
+/// range is pushed into it, and no user setting moves it — it is the tool's
+/// own closest-element reach. The drag-snap radii below, by contrast, are
+/// application-wide configuration the pen is HANDED, so they come off a
+/// `SnapPacket` and there is no `kTopoPenSnapAcceptNominalPx` to pair with
+/// this. Do not reintroduce one, and do not fold this into the packet: the
+/// numeric coincidence that briefly made 8.0 the packet's acceptance default
+/// is precisely the confusion being prevented here.
 /// SCOPE (task 0507): every mode but Fill, and only while the reference's
-/// "lazy selection" preference is off -- see the MODE-DEPENDENT and PREFERENCE
+/// "lazy selection" preference is off — see the MODE-DEPENDENT and PREFERENCE
 /// DEFAULT paragraphs in the block comment above before wiring this into a new
 /// call site.
 enum float kTopoPenPressPickNominalPx = 8.0f;
-
-/// Nominal DRAG-SNAP acceptance radius — the distance compare that decides
-/// whether a drag lands on (welds to) an existing element. Measured as a pixel
-/// constant, invariant under a 4.7% change of the reference's own pixel scale.
-/// Not to be used raw: call `topoPenSnapAcceptPx(vp)`.
-enum float kTopoPenSnapAcceptNominalPx = 24.0f;
-
-/// Nominal DRAG-SNAP gather range — how far the candidate enumeration looks
-/// before the acceptance compare runs. Measured alongside the acceptance in
-/// the same struct: 40.0 against 24.0, i.e. a ratio of 5/3.
-///
-/// It is a SECOND MEASURED NOMINAL, not a factor applied to the acceptance: an
-/// earlier `kTopoPenGatherFactor = 2.0f` was refuted by that pair (the 2.0
-/// multiply is real, but it multiplies the world-space quantity described in
-/// the block comment above, never the pixel radius).
-enum float kTopoPenSnapGatherNominalPx = 40.0f;
 
 /// Sentinel for the pen resolvers' `thresholdPx` parameter meaning "derive the
 /// threshold from the view" (`topoPenPressPickPx`). Negative, so it can never
@@ -508,13 +534,25 @@ float topoPenPressPickPx(const ref Viewport vp) pure nothrow @nogc @safe {
 
 /// The Topology Pen's DRAG-SNAP acceptance radius for this view: how close a
 /// drag must come to an existing element for the drag to LAND on it. Three
-/// times the press-pick reach, and measured separately from it — a press and a
-/// drag-landing at the same pixel legitimately answer differently.
-float topoPenSnapAcceptPx(const ref Viewport vp) pure nothrow @nogc @safe {
-    return kTopoPenSnapAcceptNominalPx * viewPixelScale(vp);
+/// times the press-pick reach at the default configuration, and measured
+/// separately from it — a press and a drag-landing at the same pixel
+/// legitimately answer differently.
+///
+/// `snap` is the CONFIGURATION, not a constant: the acceptance is the snap
+/// service's inner range, which every snapping client in the application
+/// shares and which has a public setter. The pen holds a snapshot taken at
+/// gesture start (`TopologyPenTool.dragSnap_`) and passes it here, which is
+/// the same shape as the ranges being pushed into a registered guide when its
+/// drag begins. Pass `SnapPacket.init` for the default pair.
+float topoPenSnapAcceptPx(const ref Viewport vp, in SnapPacket snap)
+    pure nothrow @nogc @safe
+{
+    return snap.innerRangePx * viewPixelScale(vp);
 }
 
-/// The Topology Pen's drag-snap candidate GATHER range for this view.
+/// The Topology Pen's drag-snap candidate GATHER range for this view — the
+/// snap service's outer range, same configuration source as the acceptance
+/// above (see that function's note on `snap`).
 ///
 /// It bounds nothing today, and that is a property of OUR shape rather than a
 /// half-port: the snap-target resolver enumerates the whole primary mesh and
@@ -523,34 +561,42 @@ float topoPenSnapAcceptPx(const ref Viewport vp) pure nothrow @nogc @safe {
 /// acceptance test runs. It is defined and pinned here because the law has two
 /// radii on this query and any consumer that DOES need the wider one must read
 /// it from here rather than re-deriving it from the acceptance.
-float topoPenSnapGatherPx(const ref Viewport vp) pure nothrow @nogc @safe {
-    return kTopoPenSnapGatherNominalPx * viewPixelScale(vp);
+float topoPenSnapGatherPx(const ref Viewport vp, in SnapPacket snap)
+    pure nothrow @nogc @safe
+{
+    return snap.outerRangePx * viewPixelScale(vp);
 }
 
 unittest { // the THREE measured numbers, and the two refutations behind them
     auto vp = makeHoverTestViewport();
+    // The default snap configuration — the pen's own drag snapshot is exactly
+    // this whenever the user has not moved the ranges, so the measured values
+    // are still pinned here, just through their real owner.
+    const SnapPacket snap;
+
     assert(viewPixelScale(vp) == 1.0f,
         "the measured radii are pixel constants; the scale seam is ours, and it is 1.0 today");
 
     assert(topoPenPressPickPx(vp) == 8.0f,
         "the press pick reaches the one limit the reference printed on every press");
-    assert(topoPenSnapAcceptPx(vp) == 24.0f,
-        "the drag-snap acceptance is its own, separately measured radius");
-    assert(topoPenSnapGatherPx(vp) == 40.0f,
+    assert(topoPenSnapAcceptPx(vp, snap) == 24.0f,
+        "the drag-snap acceptance is its own, separately measured radius — and it "
+        ~ "is the snap service's DEFAULT inner range, one fact stored once");
+    assert(topoPenSnapGatherPx(vp, snap) == 40.0f,
         "the drag-snap gather is a second measured nominal, not a factor on the acceptance");
 
     // The two queries are DIFFERENT reaches. This is the whole correction: a
     // single constant cannot serve both, and the 15px that used to sit here
     // was neither of them.
-    assert(topoPenPressPickPx(vp) < topoPenSnapAcceptPx(vp),
+    assert(topoPenPressPickPx(vp) < topoPenSnapAcceptPx(vp, snap),
         "press pick and drag snap are two queries with two reaches, not one shared gate");
-    assert(topoPenPressPickPx(vp) != 15.0f && topoPenSnapAcceptPx(vp) != 15.0f,
+    assert(topoPenPressPickPx(vp) != 15.0f && topoPenSnapAcceptPx(vp, snap) != 15.0f,
         "15px was the fusion of the two queries and is neither of them");
 
     // gather : acceptance is 5/3. A `2.0` factor here was refuted outright.
-    assert(topoPenSnapGatherPx(vp) / topoPenSnapAcceptPx(vp) == 5.0f / 3.0f,
+    assert(topoPenSnapGatherPx(vp, snap) / topoPenSnapAcceptPx(vp, snap) == 5.0f / 3.0f,
         "the gather:acceptance ratio is 5/3, not the 2.0 the static reading assumed");
-    assert(topoPenSnapGatherPx(vp) != 2.0f * topoPenSnapAcceptPx(vp),
+    assert(topoPenSnapGatherPx(vp, snap) != 2.0f * topoPenSnapAcceptPx(vp, snap),
         "the refuted 2.0 factor must not creep back in");
 
     // Type-uniformity of the GATHER is structural, not a value check: each
@@ -564,8 +610,26 @@ unittest { // the THREE measured numbers, and the two refutations behind them
     // block comment above (task 0507).
     assert(topoPenPressPickPx(vp) == topoPenPressPickPx(vp),
         "one press-pick GATHER reach for vertex, edge and polygon candidates alike");
-    assert(topoPenSnapAcceptPx(vp) == topoPenSnapAcceptPx(vp),
+    assert(topoPenSnapAcceptPx(vp, snap) == topoPenSnapAcceptPx(vp, snap),
         "one drag-snap acceptance for every candidate type");
+
+    // THE DE-DUPLICATION, asserted rather than merely commented: the pen has no
+    // acceptance/gather constants of its own left, so these two functions can
+    // only be reporting the snap service's configuration. Move the ranges and
+    // both must move with them — a re-introduced private constant would pin
+    // them at 24/40 here and fail.
+    SnapPacket moved;
+    moved.innerRangePx = 12.0f;
+    moved.outerRangePx = 33.0f;
+    assert(topoPenSnapAcceptPx(vp, moved) == 12.0f,
+        "the acceptance is the packet's inner range, not a constant this module owns");
+    assert(topoPenSnapGatherPx(vp, moved) == 33.0f,
+        "the gather is the packet's outer range, not a constant this module owns");
+
+    // The press pick does NOT follow it: different query, different owner,
+    // nothing configures it. This is the merge that must never happen.
+    assert(topoPenPressPickPx(vp) == 8.0f,
+        "the press pick is the pen's own reach and no snap setting may move it");
 }
 
 /// PINNED shape AND pinned precedence: pure screen-space resolution of
