@@ -1804,12 +1804,20 @@ struct Mesh {
         return referenced;
     }
 
-    /// `pinned` vertices are KEPT even when no face references them. The only
-    /// caller that passes a non-empty list is edge.bevel's valence-4 full-hub
-    /// free-end cap, which deliberately retains the reference's orphan cap
-    /// slide (see `bevelPinnedOrphans_`); every other call site keeps the
-    /// default (empty) and so behaves exactly as before.
-    size_t compactUnreferenced(const(uint)[] pinned = null) {
+    /// `pinned` vertices are KEPT even when no face references them. Callers
+    /// that pass a non-empty list: edge.bevel's valence-4 full-hub free-end
+    /// cap, which deliberately retains the reference's orphan cap slide (see
+    /// `bevelPinnedOrphans_`); `dissolveVerticesByMask(keepOrphans)`; and the
+    /// loose-geometry preservation in the dissolve kernels (task 0502 — see
+    /// `captureLooseGeometry`).
+    ///
+    /// `remapOut`, when non-null, receives the old→new vertex index table this
+    /// compaction applied (`~0u` for a dropped vertex). It is written even on
+    /// the `removed == 0` early-out, where it is the identity — so a caller may
+    /// rely on it unconditionally. It is the ONLY way to carry a vertex
+    /// identity across this call by index; positions work too but carry a
+    /// coincident-position caveat this does not.
+    size_t compactUnreferenced(const(uint)[] pinned = null, uint[]* remapOut = null) {
         bool[] referenced = computeReferencedVertexMask();
         foreach (pi; pinned)
             if (pi < referenced.length) referenced[pi] = true;
@@ -1828,6 +1836,9 @@ struct Mesh {
                 ++removed;
             }
         }
+        // Published BEFORE the early-out so `remapOut` is filled on every path
+        // (identity when nothing was dropped).
+        if (remapOut !is null) *remapOut = remap;
         if (removed == 0) return 0;
         // Class R tracker hook — inert unless a batch is open. Record the
         // dropped verts (their pre-compaction indices + positions) THEN the
@@ -2067,11 +2078,22 @@ struct Mesh {
     /// compact removes them regardless; pinning the non-masked verts spares the
     /// collateral orphans. Default false preserves the compact-all behaviour for
     /// every other caller (edge_join, the cleanup hygiene sweep).
+    ///
+    /// Independent of `keepOrphans`: face-less geometry that was ALREADY
+    /// face-less before this call — loose points, bare wire edges, anywhere in
+    /// the mesh — survives (task 0502, see `captureLooseGeometry`). A MASKED
+    /// vertex is never spared by that, because the mask is the caller naming
+    /// it. `keepOrphans` remains the knob for the different question of what to
+    /// do with verts THIS call newly orphaned.
     size_t dissolveVerticesByMask(in bool[] mask, bool keepOrphans = false) {
         if (mask.length != vertices.length) return 0;
         size_t dissolved = 0;
         foreach (vi; 0 .. mask.length) if (mask[vi]) ++dissolved;
         if (dissolved == 0) return 0;
+
+        // Before anything rewrites `faces[]`: what is face-less right NOW is
+        // pre-existing, and nothing this call does can make it collateral.
+        const loose = captureLooseGeometry();
 
         // Rebuild faces array, dropping each masked vert from every face's
         // boundary. Faces shrunk below 3 verts (degenerate) are dropped.
@@ -2162,16 +2184,21 @@ struct Mesh {
         // dissolved (now-orphan) verts and re-derives edges yet again.
         rebuildEdges();
         clearEdgeSelectionResize();
+        uint[] pinned;
         if (keepOrphans) {
             // Pin every non-masked vert so the compact removes ONLY the
             // dissolved (masked, now unreferenced) verts, sparing collateral
             // orphans (see the keepOrphans note on the signature).
-            uint[] pinned;
             foreach (i; 0 .. mask.length) if (!mask[i]) pinned ~= cast(uint)i;
-            compactUnreferenced(pinned);
         } else {
-            compactUnreferenced();
+            // Pin only the PRE-EXISTING loose points (task 0502) — collateral
+            // orphans this call created still go, which is what !keepOrphans
+            // means.
+            pinned = looseVertPins(loose, mask);
         }
+        uint[] vremap;
+        compactUnreferenced(pinned, &vremap);
+        restoreLooseWires(loose, vremap);
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
@@ -2240,6 +2267,95 @@ struct Mesh {
             if (dx*dx + dy*dy + dz*dz <= epsSq) return true;
         }
         return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Loose (face-less) geometry preservation — task 0502
+    //
+    // Every dissolve kernel below ends in `rebuildEdges()` + `compactUnreferenced()`.
+    // BOTH re-derive from `faces[]`, MESH-WIDE: the first rebuilds `edges[]` by
+    // walking the surviving faces, so an edge that borders NO polygon vanishes;
+    // the second drops every vertex no polygon references. Neither looks at
+    // which part of the mesh the caller actually edited, so dissolving ONE
+    // interior edge used to take every bare wire edge and every loose point in
+    // the mesh with it, arbitrarily far from the edit.
+    //
+    // That is pure collateral damage, not a behaviour: vibe3d builds both as
+    // ordinary intermediate retopo state (a placed point; a chain drawn before
+    // any polygon closes over it), so the loss is silent destruction of work in
+    // progress. `deleteFacesByMask` already carries `keepFloatingEdges` for
+    // exactly this reason; the dissolves cannot take that route because they
+    // REINDEX vertices, so the edge array cannot simply be left alone.
+    //
+    // The fix is therefore capture-and-replay, and it is the KERNEL's job
+    // rather than each caller's: no caller of a dissolve can plausibly want
+    // mesh-wide destruction of geometry it did not name, and an opt-in flag
+    // would leave the trap armed for the next caller. Explicit orphan removal
+    // remains available and untouched — `compactUnreferenced()` direct, or
+    // Cleanup's `removeOrphans` — so nothing loses the ability to sweep.
+    //
+    // What is deliberately NOT preserved: geometry the edit itself consumed. A
+    // wire edge whose endpoint the dissolve legitimately removed stays gone
+    // (its endpoint's remap entry is `~0u`, and the replay skips it). This
+    // restores UNRELATED geometry; it does not resurrect the edit.
+    // -----------------------------------------------------------------------
+
+    /// The mesh's FACE-LESS geometry — vertices no polygon references, and
+    /// edges no polygon borders — in the CURRENT vertex-index space.
+    private static struct LooseGeometry {
+        uint[]    verts;   // vertex indices referenced by no face
+        uint[2][] wires;   // edges bordering no face, by endpoint vertex index
+        bool empty() const { return verts.length == 0 && wires.length == 0; }
+    }
+
+    /// Snapshot the face-less geometry BEFORE a dissolve rewrites `faces[]`.
+    /// Indices are valid until the tail `compactUnreferenced` reindexes — every
+    /// dissolve leaves `vertices[]` untouched until then, which is what makes
+    /// the index-keyed (rather than position-keyed) capture sound here.
+    private LooseGeometry captureLooseGeometry() const {
+        LooseGeometry g;
+        auto referenced = computeReferencedVertexMask();
+        foreach (i, r; referenced)
+            if (!r) g.verts ~= cast(uint)i;
+        // Zero incident polygons ⇒ a bare wire. Counted off `faces[]` via
+        // `edgePolygonCounts`, the counter that cannot undercount.
+        auto polyCount = edgePolygonCounts();
+        foreach (ei; 0 .. edges.length)
+            if (polyCount[ei] == 0)
+                g.wires ~= [edges[ei][0], edges[ei][1]];
+        return g;
+    }
+
+    /// The vertices of `g` that must be PINNED through the tail compaction,
+    /// minus anything `excluded` (a dissolve's own target mask) names: a loose
+    /// vertex the caller explicitly asked to remove is not collateral damage.
+    /// `excluded` may be empty.
+    private static uint[] looseVertPins(in LooseGeometry g, in bool[] excluded) {
+        uint[] pins;
+        foreach (v; g.verts)
+            if (v >= excluded.length || !excluded[v]) pins ~= v;
+        return pins;
+    }
+
+    /// Re-add the bare wire edges of `g` that the rebuild wiped, through the
+    /// `remap` the tail `compactUnreferenced` published. Call AFTER that
+    /// compaction and BEFORE the terminal `buildLoops()`. A wire is skipped
+    /// when either endpoint was dropped (the edit took it), when the rebuild
+    /// already re-derived it from a surviving face, or when it degenerated.
+    private void restoreLooseWires(in LooseGeometry g, in uint[] remap) {
+        if (g.wires.length == 0) return;
+        bool added = false;
+        foreach (ref w; g.wires) {
+            if (w[0] >= remap.length || w[1] >= remap.length) continue;
+            immutable uint a = remap[w[0]], b = remap[w[1]];
+            if (a == cast(uint)~0u || b == cast(uint)~0u || a == b) continue;
+            if (edgeIndex(a, b) != cast(uint)~0u) continue;
+            addEdge(a, b);
+            added = true;
+        }
+        // `addEdge` appends past the length the enclosing kernel's
+        // `clearEdgeSelectionResize()` just settled on.
+        if (added) clearEdgeSelectionResize();
     }
 
     /// Which vertices an edge dissolve of `mask` consumes ENTIRELY — the
@@ -2387,8 +2503,16 @@ struct Mesh {
     ///
     /// This overload KEEPS every vertex the merge consumed, as a corner of the
     /// merged polygon. The two-argument overload above drops them instead.
+    ///
+    /// Face-less geometry elsewhere in the mesh (loose points, bare wire edges)
+    /// SURVIVES — see the `captureLooseGeometry` block above for why the tail
+    /// used to wipe it mesh-wide and why the fix lives here rather than in each
+    /// caller.
     size_t removeEdgesByMask(in bool[] mask) {
         if (mask.length != edges.length) return 0;
+        // Before anything rewrites `faces[]`: what is face-less right NOW is
+        // pre-existing, and nothing this call does can make it collateral.
+        const loose = captureLooseGeometry();
 
         // Touched-region capture (task 0474): remember the POSITIONS of the
         // endpoints of the edges the caller asked to delete, BEFORE any mutation.
@@ -2659,10 +2783,14 @@ struct Mesh {
         if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
         clearFaceSelectionResize();
 
-        // Rebuild edges + compact orphan verts.
+        // Rebuild edges + compact orphan verts. The pre-existing loose verts
+        // are PINNED so the compaction takes only what this dissolve consumed,
+        // and the bare wires are replayed through its remap (task 0502).
         rebuildEdges();
         clearEdgeSelectionResize();
-        compactUnreferenced();
+        uint[] vremap;
+        compactUnreferenced(loose.verts, &vremap);
+        restoreLooseWires(loose, vremap);
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
@@ -12663,9 +12791,50 @@ struct Mesh {
     }
 
     /// Return a range over the 1–2 faces incident to edge `ei`.
+    ///
+    /// MANIFOLD ONLY, and the "1–2" above is a hard ceiling, not a typical
+    /// case: this walks the half-edge rings, which have no representation for
+    /// a NON-MANIFOLD fan. Probed on three quads sharing one edge, the range
+    /// yields ONE face — not three, and not even two. So `n >= 2` over this
+    /// range is NOT "is this edge interior": a non-manifold edge reads as a
+    /// border edge, silently and with no diagnostic.
+    ///
+    /// Repairing the rings is a `buildLoops`/dart-representation change and is
+    /// deliberately not attempted here. Any caller that needs a COUNT — rather
+    /// than "give me a neighbouring face" — must use `edgePolygonCounts`
+    /// below, which counts straight off `faces[]` and cannot undercount.
     EdgeFaceRange facesAroundEdge(uint ei) const {
         return EdgeFaceRange(loops, edges, vertLoop, vertFanOrdered_,
                              vertDartStart, vertDartAdj, ei);
+    }
+
+    /// How many polygons border each edge, BY EDGE INDEX — counted straight
+    /// off `faces[]`, so a non-manifold fan is reported at its true size (3
+    /// quads sharing an edge give 3) and a bare wire edge gives 0.
+    ///
+    /// The truthful counterpart to `facesAroundEdge` (whose ring walk cannot
+    /// witness a third incident polygon — see its note) and to
+    /// `buildEdgeFaces` (whose two-slot `int[2]` cannot even store one). Use
+    /// this whenever the QUESTION is a count or a threshold — "exactly two",
+    /// "at least two", "zero" — and reserve the ring walk for "hand me a
+    /// neighbouring face".
+    ///
+    /// O(E + Σ face arity), one pass, and independent of `edgeIndexMap`'s
+    /// validity stamp: the key→index table is built from `edges[]` right here,
+    /// so this is safe to call mid-op, before a `buildLoops()` has re-stamped
+    /// the map. Returns a zero-filled `int[edges.length]` when there are no
+    /// faces (every edge is then a wire, and 0 is the true answer).
+    int[] edgePolygonCounts() const {
+        auto n = new int[](edges.length);
+        if (edges.length == 0 || faces.length == 0) return n;
+        uint[ulong] idx;
+        foreach (i; 0 .. edges.length)
+            idx[edgeKey(edges[i][0], edges[i][1])] = cast(uint)i;
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                if (auto p = edgeKey(f[k], f[(k + 1) % f.length]) in idx)
+                    ++n[*p];
+        return n;
     }
 
     /// Return a range over all faces that share an edge with face `fi`.
@@ -28815,4 +28984,195 @@ unittest { // a WHOLE fan in the mask: the shared vertex goes, its neighbours
         return -1;
     }
     assert(idxOf(pre[5]) < 0 && idxOf(pre[1]) < 0 && idxOf(pre[4]) < 0);
+}
+
+
+// ---------------------------------------------------------------------------
+// Task 0502 — LOOSE (face-less) GEOMETRY SURVIVES A DISSOLVE.
+//
+// Every dissolve tail is `rebuildEdges()` + `compactUnreferenced()`, and both
+// re-derive from `faces[]` MESH-WIDE. Before this task one edge dissolve
+// therefore took every bare wire edge and every loose point in the mesh with
+// it, arbitrarily far from the edit — silent destruction of ordinary
+// intermediate retopo state (a placed point; a chain drawn before any polygon
+// closes over it).
+//
+// Every fixture below puts the loose geometry AT A DISTANCE — coordinates 10
+// and 20 against a unit grid — and never lets it touch the edited region, so a
+// green result cannot come from the edit happening to spare a neighbour. The
+// shared helpers address it by POSITION, because a fix that preserves the
+// geometry is still free to renumber it.
+// ---------------------------------------------------------------------------
+private int looseTestVertAt(in Mesh m, Vec3 p) {
+    foreach (i, ref v; m.vertices)
+        if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+    return -1;
+}
+
+private bool looseTestHasWire(in Mesh m, Vec3 a, Vec3 b) {
+    immutable int ia = looseTestVertAt(m, a), ib = looseTestVertAt(m, b);
+    if (ia < 0 || ib < 0) return false;
+    // Scanned straight off `edges[]` — never through `edgeIndexMap`, so the
+    // assertion cannot pass on a stale lookup table alone.
+    foreach (ref e; m.edges)
+        if ((e[0] == ia && e[1] == ib) || (e[0] == ib && e[1] == ia)) return true;
+    return false;
+}
+
+private enum Vec3 kLoosePoint = Vec3(10, 10, 10);
+private enum Vec3 kLooseWireA = Vec3(20, 0, 0);
+private enum Vec3 kLooseWireB = Vec3(21, 0, 0);
+
+/// `makeGridPlane(n)` plus, FAR from it, one loose point and one bare wire
+/// edge — neither referenced by any polygon.
+private Mesh makeGridWithLooseGeometry(int n) {
+    Mesh m = makeGridPlane(n);
+    m.addVertex(kLoosePoint);
+    immutable uint w0 = m.addVertex(kLooseWireA);
+    immutable uint w1 = m.addVertex(kLooseWireB);
+    m.addEdge(w0, w1);
+    m.buildLoops();
+    m.syncSelection();
+    // The fixture must actually contain what the tests are about.
+    assert(looseTestVertAt(m, kLoosePoint) >= 0, "fixture: the loose point");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB), "fixture: the bare wire edge");
+    return m;
+}
+
+unittest { // removeEdgesByMask: one interior dissolve, loose geometry untouched
+    Mesh m = makeGridWithLooseGeometry(2);   // 3x3 verts / 4 quads + 3 loose verts
+    immutable size_t vBefore = m.vertices.length;
+
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(1, 4)] = true;          // an INTERIOR grid edge, nowhere near
+    assert(m.removeEdgesByMask(mask) == 1, "setup: the interior edge must dissolve");
+
+    assert(m.faces.length == 3, "the two quads either side merged into one");
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "FAILS ON THE OLD BEHAVIOUR: the tail compactUnreferenced dropped every "
+      ~ "face-less vertex in the mesh, including this one 10 units away");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+        "FAILS ON THE OLD BEHAVIOUR: the tail rebuildEdges re-derived edges[] from "
+      ~ "faces[] alone, so a bare wire edge anywhere in the mesh vanished");
+    assert(m.vertices.length == vBefore,
+        "the dissolve consumed no vertex, so none may go — not the grid's, not the loose ones");
+}
+
+unittest { // …and the same through the EDGE-REMOVE COMMAND's exact kernel pair
+    // `MeshRemove`/`MeshDelete` in Edges mode run removeEdgesByMask and then
+    // dissolveDegree2Verts over the touched region (commands/mesh/{remove,delete}.d).
+    // The second call is its own dissolve with its own mesh-wide tail, so the
+    // pair has to be pinned together — fixing only the first one leaves the
+    // shipped commands still wiping the wire.
+    Mesh m = makeGridWithLooseGeometry(2);
+
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(1, 4)] = true;
+    immutable size_t n = m.removeEdgesByMask(mask);
+    assert(n == 1, "setup");
+    m.dissolveDegree2Verts(m.edgeDeleteRegion(), /*keepOrphans*/true);
+
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "the loose point must survive the command's SECOND dissolve too");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+        "FAILS ON THE OLD BEHAVIOUR at dissolveVerticesByMask's own rebuildEdges: "
+      ~ "the wire survives the edge dissolve only to be wiped by the 2-valent cleanup");
+}
+
+unittest { // dissolveVerticesByMask, BOTH keepOrphans arms
+    foreach (keepOrphans; [false, true]) {
+        Mesh m = makeGridWithLooseGeometry(2);
+        auto vmask = new bool[](m.vertices.length);
+        vmask[4] = true;                     // the grid's centre vertex
+        assert(m.dissolveVerticesByMask(vmask, keepOrphans) == 1, "setup");
+
+        assert(m.faces.length == 4, "the four quads reshaped to triangles");
+        assert(looseTestVertAt(m, kLoosePoint) >= 0,
+            "a pre-existing loose point is not this call's collateral, at either keepOrphans");
+        assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+            "FAILS ON THE OLD BEHAVIOUR (both arms): keepOrphans only ever protected "
+          ~ "floating VERTICES; the rebuildEdges above it wiped floating EDGES regardless");
+    }
+}
+
+unittest { // keepOrphans:false still sweeps the orphans THIS call created
+    // The preservation is scoped to what was face-less BEFORE the call — it is
+    // not a blanket "never compact". Without this pin, a fix that simply
+    // pinned every vertex would pass every block above.
+    Mesh m;
+    foreach (p; [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)]) m.addVertex(p);
+    m.addFace([0u, 1u, 2u]);
+    m.addVertex(kLoosePoint);
+    m.buildLoops();
+    m.syncSelection();
+
+    auto vmask = new bool[](m.vertices.length);
+    vmask[0] = true;                         // the triangle degenerates away
+    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/false) == 1);
+    assert(m.faces.length == 0, "setup: the only face dropped below 3 corners");
+    assert(looseTestVertAt(m, Vec3(1, 0, 0)) < 0 && looseTestVertAt(m, Vec3(0, 1, 0)) < 0,
+        "verts THIS call orphaned still go — that is what keepOrphans:false means");
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "…but the point that was already loose before the call is not its collateral");
+}
+
+unittest { // a wire the edit ITSELF consumed stays gone — no resurrection
+    // A wire hanging off the grid's centre vertex, which the dissolve then
+    // removes. Preservation restores UNRELATED geometry; it must not put back
+    // an edge whose endpoint the caller deliberately deleted.
+    Mesh m = makeGridPlane(2);
+    immutable uint tip = m.addVertex(Vec3(0, 5, 0));
+    m.addEdge(4, tip);                        // wire off the centre vertex
+    m.buildLoops();
+    m.syncSelection();
+    assert(looseTestHasWire(m, m.vertices[4], Vec3(0, 5, 0)), "fixture");
+    immutable Vec3 centre = m.vertices[4];
+
+    auto vmask = new bool[](m.vertices.length);
+    vmask[4] = true;
+    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/true) == 1);
+
+    assert(looseTestVertAt(m, centre) < 0, "the masked vertex is gone");
+    assert(looseTestVertAt(m, Vec3(0, 5, 0)) >= 0,
+        "its far tip was already face-less, so it stays as a loose point");
+    assert(!looseTestHasWire(m, centre, Vec3(0, 5, 0)),
+        "but the wire itself cannot come back — one of its endpoints was deleted");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0502 — `edgePolygonCounts` sees a NON-MANIFOLD fan; `facesAroundEdge`
+// cannot. Three quads share edge 0-1 here. The ring walk reports ONE face —
+// not three, and not even two — because the half-edge rings have no
+// representation for the fan; the direct face scan reports 3.
+//
+// This is the fixture that separates a real count from an undercount, and it
+// is why every "how many polygons border this edge" test in the repo must run
+// on it rather than on a grid (where the two agree).
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(0,-1,0), Vec3(1,-1,0)])
+        m.addVertex(p);
+    m.addFace([0u, 1u, 3u, 2u]);
+    m.addFace([0u, 1u, 5u, 4u]);
+    m.addFace([0u, 1u, 7u, 6u]);
+    m.buildLoops();
+
+    immutable uint shared_ = m.edgeIndex(0, 1);
+    auto counts = m.edgePolygonCounts();
+    assert(counts[shared_] == 3, "three quads border this edge, and the count says so");
+
+    uint viaRings = 0;
+    foreach (_; m.facesAroundEdge(shared_)) ++viaRings;
+    assert(viaRings < 3,
+        "the documented blind spot: if the rings ever learn to enumerate a "
+      ~ "non-manifold fan, delete this line — but do NOT weaken edgePolygonCounts to match");
+
+    // The other two answers the counter has to get right on the same mesh.
+    assert(counts[m.edgeIndex(1, 3)] == 1, "a border edge of one quad");
+    m.addVertex(Vec3(9, 9, 9));
+    m.addVertex(Vec3(9, 9, 8));
+    m.addEdge(8, 9);
+    assert(m.edgePolygonCounts()[m.edgeIndex(8, 9)] == 0, "a bare wire edge borders nothing");
 }

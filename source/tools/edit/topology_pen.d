@@ -2115,21 +2115,39 @@ public:
     // ---------------------------------------------------------------------
 
     /// True if edge `ei` is INTERIOR — shared by two or more polygons.
+    ///
+    /// Counted off `faces[]` via `Mesh.edgePolygonCounts`, NOT through
+    /// `facesAroundEdge` (task 0502): the half-edge rings have no
+    /// representation for a non-manifold fan and report ONE face for three
+    /// quads sharing an edge, so the ring walk classified a NON-MANIFOLD edge
+    /// as a BORDER edge — and this predicate is the border-only snap-candidate
+    /// filter, so such an edge silently became a snap target. `>= 2` is
+    /// unchanged; only the counter under it is now truthful.
+    private static bool isEdgeInterior(in int[] polyCount, uint ei) {
+        return ei < polyCount.length && polyCount[ei] >= 2;
+    }
+
+    /// One-off convenience — RECOUNTS THE WHOLE MESH per call. Any loop over
+    /// edges or vertices must hoist `Mesh.edgePolygonCounts()` once and use the
+    /// array overload; the two `borderOnly` scans below do exactly that.
     private static bool isEdgeInterior(Mesh* m, uint ei) {
-        uint n = 0;
-        foreach (fi; m.facesAroundEdge(ei)) { ++n; if (n > 1) break; }
-        return n > 1;
+        return isEdgeInterior(m.edgePolygonCounts(), ei);
     }
 
     /// True if vertex `vi` is INTERIOR — it has incident edges and EVERY one
     /// of them is interior, i.e. it touches no border and no wire edge.
-    private static bool isVertexInterior(Mesh* m, uint vi) {
+    private static bool isVertexInterior(Mesh* m, in int[] polyCount, uint vi) {
         bool any = false;
         foreach (ei; m.edgesAroundVertex(vi)) {
             any = true;
-            if (!isEdgeInterior(m, ei)) return false;
+            if (!isEdgeInterior(polyCount, ei)) return false;
         }
         return any;
+    }
+
+    /// One-off convenience — see the `isEdgeInterior` overload above.
+    private static bool isVertexInterior(Mesh* m, uint vi) {
+        return isVertexInterior(m, m.edgePolygonCounts(), vi);
     }
 
     /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
@@ -2181,8 +2199,11 @@ public:
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD2 = float.infinity;
+        // Hoisted once — the per-element overload of the predicate would
+        // recount the whole mesh on every vertex (task 0502).
+        const int[] polyCount = borderOnly ? m.edgePolygonCounts() : null;
         foreach (vi; 0 .. m.vertices.length) {
-            if (borderOnly && isVertexInterior(m, cast(uint)vi)) continue;
+            if (borderOnly && isVertexInterior(m, polyCount, cast(uint)vi)) continue;
             ImVec2 pt;
             if (!projectPt(m.vertices[vi], vp, pt)) continue;
             float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
@@ -3424,8 +3445,10 @@ public:
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD  = float.infinity;
+        // Hoisted once — see findSourceVertex.
+        const int[] polyCount = borderOnly ? m.edgePolygonCounts() : null;
         foreach (ei, e; m.edges) {
-            if (borderOnly && isEdgeInterior(m, cast(uint)ei)) continue;
+            if (borderOnly && isEdgeInterior(polyCount, cast(uint)ei)) continue;
             ImVec2 pa, pb;
             if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
             if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
@@ -5376,26 +5399,6 @@ public:
 
     // ---- Remove's other two primitives (task 0494) ------------------------
 
-    /// How many polygons border each edge, BY EDGE INDEX — counted straight off
-    /// `faces[]`, once per gesture.
-    ///
-    /// Deliberately not `facesAroundEdge`, and not `isEdgeInterior` (which is
-    /// `>= 2`). The measured filter here is EXACTLY TWO, so the count has to be
-    /// exact in both directions, and the half-edge rings cannot deliver that:
-    /// probed on three quads sharing one edge, `facesAroundEdge` yields ONE —
-    /// the rings have no representation for a non-manifold fan. Counting off
-    /// the faces, 3 is 3, so such an edge is excluded by the rule rather than
-    /// by an undercount that happens to land on the same answer.
-    private static int[] edgePolyCounts(Mesh* m) {
-        auto n = new int[](m.edges.length);
-        foreach (ref f; m.faces)
-            foreach (k; 0 .. f.length) {
-                immutable uint ei = m.edgeIndex(f[k], f[(k + 1) % f.length]);
-                if (ei < n.length) ++n[ei];
-            }
-        return n;
-    }
-
     /// The index of the vertex at exactly `p`, or -1. Positions survive the
     /// dissolve kernels' vertex compaction by value (they are copied, never
     /// re-derived), which is what makes this the way to carry a vertex
@@ -5407,66 +5410,14 @@ public:
         return -1;
     }
 
-    /// The mesh's FACE-LESS geometry — loose vertices and bare edges — as
-    /// POSITIONS, so it can be carried across a kernel that reindexes.
-    ///
-    /// This tool BUILDS both as a normal intermediate retopo state: a placed
-    /// point, and a chain drawn before any polygon closes over it
-    /// (`classifySource`'s CASE-EDGE). Both dissolve primitives below finish
-    /// inside a kernel that re-derives `edges[]` from `faces[]` and then
-    /// compacts every vertex no face references — so ONE press on an interior
-    /// edge would otherwise take every loose point and every bare edge in the
-    /// mesh with it, anywhere, related to the edit or not.
-    /// `deleteFacesByMask` carries a `keepFloatingEdges` flag for exactly this
-    /// reason and `removeFaceAt` passes it; the dissolves cannot take that
-    /// route (they reindex vertices, so the edge array cannot simply be left
-    /// alone), hence capture-and-re-add.
-    ///
-    /// vibe3d-side CONTRACT PRESERVATION, not a ported behaviour, and labelled
-    /// as such: the reference's own retopo never produces face-less geometry,
-    /// so its removal primitives have nothing to say about it. What IS measured
-    /// — what happens to the polygons — is identical either way.
-    ///
-    /// One visible side effect, stated rather than hidden: restored loose
-    /// vertices are APPENDED, so their indices change. Nothing but the restored
-    /// bare edges refers to them (that is what face-less means), and those are
-    /// re-derived here by position.
-    private static struct LooseGeometry {
-        Vec3[]    verts;
-        Vec3[2][] wires;
-    }
-
-    private static LooseGeometry captureLooseGeometry(Mesh* m, in int[] polyCount) {
-        LooseGeometry g;
-        auto referenced = m.computeReferencedVertexMask();
-        foreach (i, r; referenced)
-            if (!r) g.verts ~= m.vertices[i];
-        foreach (ei; 0 .. m.edges.length) {
-            if (ei < polyCount.length && polyCount[ei] != 0) continue;
-            auto e = m.edges[ei];
-            if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) continue;
-            g.wires ~= [m.vertices[e[0]], m.vertices[e[1]]];
-        }
-        return g;
-    }
-
-    /// Put back whatever of `g` the kernel took. A bare edge whose endpoint the
-    /// removal DELIBERATELY took stays gone: this restores unrelated geometry,
-    /// it does not resurrect the edit.
-    private static void restoreLooseGeometry(Mesh* m, in LooseGeometry g) {
-        bool any = false;
-        foreach (p; g.verts)
-            if (vertexAtPosition(m, p) < 0) { m.addVertex(p); any = true; }
-        foreach (ref w; g.wires) {
-            immutable int a = vertexAtPosition(m, w[0]);
-            immutable int b = vertexAtPosition(m, w[1]);
-            if (a < 0 || b < 0 || a == b) continue;
-            if (m.edgeIndex(cast(uint)a, cast(uint)b) != ~0u) continue;
-            m.addEdge(cast(uint)a, cast(uint)b);
-            any = true;
-        }
-        if (any) m.buildLoops();
-    }
+    // Face-less geometry (placed points, a chain drawn before any polygon
+    // closes over it) used to be wiped MESH-WIDE by the dissolve kernels' tail,
+    // and this tool carried its own capture/re-add pair to survive that. Task
+    // 0502 moved the preservation INTO the kernels (`Mesh.captureLooseGeometry`
+    // and the pins/remap replay around `compactUnreferenced`), where it also
+    // covers `edge.remove` / `edge.delete` — which rode the same kernel and had
+    // the same defect. The local copy is gone; nothing here needs to bracket a
+    // dissolve any more.
 
     /// Remove-on-an-EDGE (task 0494, contracts C-1/C-2/C-3/C-4): DISSOLVE the
     /// pressed edge — its two incident polygons merge into one — through the
@@ -5503,7 +5454,7 @@ public:
         if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
 
         // C-3: the seed gate, before the gather.
-        auto polyCount = edgePolyCounts(m);
+        auto polyCount = m.edgePolygonCounts();
         if (polyCount[edgeIdx] != 2) return;
 
         auto mask = new bool[](m.edges.length);
@@ -5515,11 +5466,9 @@ public:
             }
         mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
 
-        auto loose = captureLooseGeometry(m, polyCount);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
-        restoreLooseGeometry(m, loose);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = removeEdgeEditFactory_();
@@ -5578,7 +5527,7 @@ public:
         if (!hasFan) return;
 
         immutable Vec3 pos = m.vertices[vertIdx];
-        auto polyCount = edgePolyCounts(m);
+        auto polyCount = m.edgePolygonCounts();
         auto mask = new bool[](m.edges.length);
         size_t nMerge = 0;
         foreach (ei; 0 .. m.edges.length) {
@@ -5589,7 +5538,6 @@ public:
             ++nMerge;
         }
 
-        auto loose = captureLooseGeometry(m, polyCount);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         // Merge the fan, KEEPING every consumed vertex — the one the press
@@ -5606,7 +5554,6 @@ public:
             vmask[vi] = true;
             m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
         }
-        restoreLooseGeometry(m, loose);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = removeVertexEditFactory_();
@@ -15034,7 +14981,7 @@ unittest { // ...and the seed gate is a GATE, not the kernel's per-edge skip
     m.buildLoops();
 
     immutable uint seed = m.edgeIndex(0, 1);
-    assert(TopologyPenTool.edgePolyCounts(&m)[seed] == 3,
+    assert(m.edgePolygonCounts()[seed] == 3,
         "setup: the count must SEE all three — the half-edge rings report 1 here, "
       ~ "which is why this tool counts off the faces instead");
 
