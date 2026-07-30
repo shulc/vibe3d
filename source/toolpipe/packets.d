@@ -749,6 +749,57 @@ struct SnapPacket {
     float  gridStep        = 1.0f;
 }
 
+/// The RESULT of the snap query at the current cursor — the producer /
+/// consumer channel between the SNAP stage and downstream tools. Distinct
+/// from `SnapPacket`, which is the stage's CONFIG (always published while
+/// the stage is enabled): this packet carries what the query at THIS
+/// cursor pixel actually found.
+///
+/// It is the exact sibling of `ConstrainHitPacket` above — same producer
+/// shape (a stage publishing a per-cursor result), same publication gate
+/// (`SubjectPacket.cursorValid`, so the query runs once per real
+/// main-thread input event and never on an HTTP thread), same field
+/// convention (every field carries an explicit default, and a field is
+/// meaningful only when the flag / index it is paired with says so).
+///
+/// Field-by-field this is `snap.SnapResult` — same names, same meanings —
+/// plus the screen point and pixel distance of the winner and the
+/// Document-layer index behind `targetSource`. Nothing here is computed
+/// that the snap query did not already compute.
+///
+/// What a consumer must know before reading it:
+///
+/// * `worldPos` / `screenX` / `screenY` / `distPx` are meaningful ONLY when
+///   `snapped`. On a miss the query's pass-through position is the seed the
+///   producer supplied, which is not a measurement of anything, so the
+///   producer leaves all four at their defaults instead of publishing it.
+/// * `targetType` / `targetIndex` / `targetSource` / `layer` name the
+///   discrete ELEMENT that won, and are meaningful whenever `highlighted`
+///   — an element can highlight without snapping (inside the outer gather
+///   range, outside the inner acceptance range).
+/// * When a LINE / PLANE constraint supplied the position while a discrete
+///   element only highlighted, `worldPos` is the constrained point and
+///   `targetIndex` is that element — the same split `SnapResult` itself
+///   carries between `worldPos` and `highlightPos`.
+/// * The query behind this packet has NO moving set: the stage has no
+///   gesture and cannot know which vertices are being dragged, so nothing
+///   is excluded. A consumer that drags geometry must still keep its own
+///   exclusion (else it can read a snap onto the very element it moves).
+struct SnapHitPacket {
+    bool     snapped      = false;
+    bool     highlighted  = false;   // a candidate inside the OUTER range
+    Vec3     worldPos     = Vec3(0, 0, 0);
+    float    screenX      = 0, screenY = 0;   // the snapped point's own pixel
+    float    distPx       = float.infinity;   // its distance from the cursor
+    SnapType targetType   = SnapType.None;
+    int      targetIndex  = -1;      // element index within the source's mesh
+    int      targetSource = 0;       // 0 = active mesh, 1..N = background slot
+    int      layer        = -1;      // Document-layer index, as ConstrainHitPacket;
+                                     // -1 when the winner came from the active
+                                     // mesh (whose layer the snap service does
+                                     // not hold) or from no source at all
+}
+
 /// Path packet — published by the PATH stage. Carries the resolved
 /// world-space polyline knots so a downstream consumer (curve-extrude,
 /// clone, sweep) can sweep geometry along the path without needing its

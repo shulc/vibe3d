@@ -3,7 +3,7 @@ module operator;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,
-                          PathPacket;
+                          PathPacket, SnapHitPacket;
 
 // ---------------------------------------------------------------------------
 // Operator architecture — Phase 0 of doc/operator_refactor_plan.md.
@@ -59,7 +59,8 @@ enum PacketKind : ubyte {
     Constrain     = 7,
     Path          = 8,
     ConstrainHit  = 9,
-    Count         = 10
+    SnapHit       = 10,
+    Count         = 11
 }
 
 /// Compile-time map T → PacketKind. Used by VectorStack.put!T/get!T to
@@ -76,6 +77,7 @@ template packetKindOf(T) {
     else static if (is(T == ConstrainPacket))     enum packetKindOf = PacketKind.Constrain;
     else static if (is(T == PathPacket))          enum packetKindOf = PacketKind.Path;
     else static if (is(T == ConstrainHitPacket))  enum packetKindOf = PacketKind.ConstrainHit;
+    else static if (is(T == SnapHitPacket))       enum packetKindOf = PacketKind.SnapHit;
     else                                          static assert(false,
         "packetKindOf: unregistered packet type " ~ T.stringof
         ~ " — add a branch in source/operator.d");
