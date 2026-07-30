@@ -63,9 +63,9 @@ enum int    LON  = 96, LAT = 72;   // resolution rationale: topopen_place_helper
 enum double TOL  = R * 0.04;
 
 // The tool's own screen-space pick tolerance (source/constraint.d's
-// `kTopoPenSnapPx`) — mirrored here so the preconditions below are stated in
+// `topoPenSnapPx`) — mirrored here so the preconditions below are stated in
 // the same units the code under test uses.
-enum float kSnapPx = 12.0f;
+enum float kSnapPx = 15.0f;
 
 // The primary quad: a 1.5x1.5 square in the world XY plane through the
 // origin, well inside the R=2 background sphere. At distance 8 with the

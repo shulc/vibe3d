@@ -42,6 +42,13 @@
 # to the neighbouring edge rails — the same gesture Ctrl+LMB runs — and
 # applies to Move and Point only. Routing table: `onPlainLmbDown`.
 #
+# `innerSnap` — the reference's own "Inner Snap" checkbox, default OFF
+# (measured, doc/tasks/work/0496-topopen-snap-precedence-thresholds.md). It
+# selects WHICH existing elements the pen's snap target may resolve to: with it
+# off only border geometry (an edge with at most one polygon, or a vertex
+# touching one) is a candidate; with it on the mesh interior is snappable too.
+# It is NOT a radius knob — the snap radius is the same either way.
+#
 # `smoothStrength` — the Smooth gesture's relaxation strength (reference
 # parity, doc/tasks/work/0478-topopen-smooth-kernel.md). Scales the per-iteration
 # relaxation force as `F = smoothStrength / 20`; the default 1.0 matches the
@@ -64,6 +71,8 @@
 # (`smoothPassesForDragDx`, source/tools/edit/topology_pen.d). Adding a row
 # here would CREATE a divergence, not close one — same resolution as the
 # reference's boundary/corner lock attributes, which are equally absent.
+# `innerSnap` is the counter-example that shows the rule is about EVIDENCE and
+# not about caution: its behaviour is measured, so it gets a row.
 
 forms:
   - id: topopen.main
@@ -77,6 +86,7 @@ forms:
       - { control: "tool.attr mesh.topoPen mode ?",           label: Mode }
       - { control: "tool.attr mesh.topoPen loop ?",           label: "Edge Loop" }
       - { control: "tool.attr mesh.topoPen slide ?",          label: "Edge Slide" }
+      - { control: "tool.attr mesh.topoPen innerSnap ?",      label: "Inner Snap" }
       - { control: "tool.attr mesh.topoPen middle ?",         label: "Split at the Middle" }
       - { control: "tool.attr mesh.topoPen smoothStrength ?", label: Strength }
       - { control: "tool.attr mesh.topoPen showVertex ?",     label: "Show Vertex" }

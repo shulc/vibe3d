@@ -343,12 +343,103 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
     return (idx >= 0 && idx < cast(int)len) ? idx : -1;
 }
 
-// PLACEHOLDER radius for `resolveHoverTarget`'s Vertex/Edge snap test, in
-// screen pixels. This is NOT the reference editor's real snap threshold —
-// that (and the real vertex/edge/face precedence, including snapping
-// against the PRIMARY layer's own new topology, which P1 does not resolve
-// at all) is DEFERRED-CAPTURE (topology-pen C2 -> P4, doc/topopen_p1_plan.md).
-enum float kTopoPenSnapPx = 12.0f;
+// ---------------------------------------------------------------------------
+// The Topology Pen's snap radius (reference parity, task 0496)
+//
+// MEASURED, and the measurement changed the KIND of the thing, not just its
+// value: the reference does not hold a snap radius at all, it DERIVES two of
+// them per view from one nominal pixel count and the view's own pixel scale.
+//
+//   acceptance = 15 * <view pixel scale>   — a resolved candidate farther
+//                                            than this is discarded
+//   gather     =  2 * acceptance           — how far the candidate
+//                                            enumeration looks in the first
+//                                            place (i.e. 30 * scale)
+//
+// The old `kTopoPenSnapPx = 12.0f` was therefore wrong twice over — wrong
+// magnitude AND wrong shape (a display-independent constant). Both radii now
+// come from ONE place, `topoPenSnapPx` / `topoPenGatherPx` below, so a future
+// HiDPI plumbing job is a one-line change in `viewPixelScale` instead of a
+// hunt for magic numbers.
+//
+// TYPE-UNIFORM, deliberately: the reference's vertex / edge / polygon
+// candidates converge on ONE distance compare with no type discrimination, so
+// there are no per-type thresholds here and none may be introduced. Every
+// Topology Pen proximity test in the codebase reads the SAME function.
+// ---------------------------------------------------------------------------
+
+/// Nominal acceptance radius in "reference pixels" — multiplied by the view's
+/// pixel scale to get the real threshold. Not to be used raw: call
+/// `topoPenSnapPx(vp)`.
+enum float kTopoPenSnapNominalPx = 15.0f;
+
+/// The gather range is exactly twice the acceptance threshold (measured as a
+/// literal `2.0` multiply on the acceptance radius, not as a second nominal).
+enum float kTopoPenGatherFactor = 2.0f;
+
+/// Sentinel for the pen resolvers' `thresholdPx` parameter meaning "derive the
+/// threshold from the view" (`topoPenSnapPx`). Negative, so it can never be
+/// confused with a real pixel distance, and distinct from `float.infinity`,
+/// which those resolvers already use to mean "nearest at ANY distance".
+enum float kTopoPenSnapAuto = -1.0f;
+
+/// The view's pixel scale — the dimensionless factor between the nominal
+/// pixel counts above and the pixel space this codebase actually picks in.
+///
+/// vibe3d picks in WINDOW-space points: SDL mouse coordinates, `Viewport.x/y/
+/// width/height` and `projectToWindowFull`'s output are all the same space,
+/// and nothing on `Viewport` carries a device-pixel ratio. `app.d` does know
+/// one (`SDL_GL_GetDrawableSize` vs `SDL_GetWindowSize`, used for `glViewport`
+/// and the thick-line program) but it is never plumbed into the pick path, so
+/// the honest value here is 1.0 — a HiDPI window picks with the same numbers
+/// as a 1x one today.
+///
+/// TODO (task 0496 follow-up): when a per-view device-pixel ratio reaches the
+/// pick path, return it HERE and every Topology Pen radius follows. Deliberately
+/// takes the viewport it scales, so that change needs no signature churn.
+float viewPixelScale(const ref Viewport vp) pure nothrow @nogc @safe {
+    return 1.0f;
+}
+
+/// The Topology Pen's ACCEPTANCE radius for this view, in the pixel space the
+/// pick math uses. A candidate resolved farther than this is not accepted.
+float topoPenSnapPx(const ref Viewport vp) pure nothrow @nogc @safe {
+    return kTopoPenSnapNominalPx * viewPixelScale(vp);
+}
+
+/// The Topology Pen's candidate GATHER range for this view — twice the
+/// acceptance radius.
+///
+/// It bounds nothing today, and that is a property of OUR shape rather than a
+/// half-port: both pen resolvers (`findSourceVertex` / `findRingSeedEdge`)
+/// enumerate the whole primary mesh and keep the single closest candidate, so
+/// "closest within 2R" and "closest within infinity" accept and reject exactly
+/// the same set once the acceptance test at R runs. It is defined and pinned
+/// here because the law has two radii and the snap-target consumers that DO
+/// need the wider one (the pen's Fill radius work, and the drag-time
+/// snap/weld target) must read it from here rather than re-deriving it.
+float topoPenGatherPx(const ref Viewport vp) pure nothrow @nogc @safe {
+    return kTopoPenGatherFactor * topoPenSnapPx(vp);
+}
+
+unittest { // the two radii ARE the measured law, and the gather is 2x the gate
+    auto vp = makeHoverTestViewport();
+    assert(viewPixelScale(vp) == 1.0f,
+        "no per-view device-pixel ratio reaches the pick path yet — see the TODO");
+    assert(topoPenSnapPx(vp) == 15.0f,
+        "the acceptance gate is 15 nominal px times the view's pixel scale");
+    assert(topoPenGatherPx(vp) == 30.0f,
+        "the gather range is exactly 2x the acceptance gate");
+    assert(topoPenGatherPx(vp) == kTopoPenGatherFactor * topoPenSnapPx(vp),
+        "the gather must stay DERIVED from the gate, never a second literal");
+    // Type-uniformity is structural, not a value check: there is exactly one
+    // threshold function, so a per-type radius cannot be expressed without
+    // adding one. This assertion documents the invariant the reference proved
+    // (all three candidate types share one compare) so a future per-type
+    // "improvement" has to delete a stated law first.
+    assert(topoPenSnapPx(vp) == topoPenSnapPx(vp),
+        "one threshold for vertex, edge and polygon candidates alike");
+}
 
 /// PINNED shape, PLACEHOLDER precedence: pure screen-space resolution of
 /// the hover's place-target from an already-published `ConstrainHitPacket`
@@ -361,10 +452,25 @@ enum float kTopoPenSnapPx = 12.0f;
 /// `nearestFaceVertex`/`nearestFaceEdge` above, NOT in the CONS stage or
 /// the tool).
 ///
-/// Precedence Vertex > Edge > Face at a single fixed pixel radius
-/// (`thPx`) is an explicit PLACEHOLDER (see `kTopoPenSnapPx`'s doc
-/// comment) — NOT a claim that this matches the reference editor's real
-/// snap precedence. `h.hit == false` (no surface hit at all) resolves to
+/// The pixel radius `thPx` is MEASURED (task 0496 — callers pass
+/// `topoPenSnapPx(vp)`), and it is type-uniform by construction: the same
+/// `thPx` gates the vertex and the edge candidate, matching the reference's
+/// single distance compare. The PRECEDENCE around it (Vertex > Edge > Face,
+/// short-circuited) is still a PLACEHOLDER — the reference picks ONE closest
+/// candidate across types and only then applies the radius, so a vertex 14px
+/// away must not beat an edge 2px away. That half is decoded but NOT ported
+/// (task 0496 `## Открыто`): it needs its own owner call, because it changes
+/// which element every pen press resolves.
+///
+/// MEASURING POINT, recorded not fixed: this resolver measures from the
+/// projected surface HIT (`h.point`), while the pen's own primary-mesh
+/// resolvers measure from the RAW CURSOR pixel — two different origins behind
+/// one shared radius. The reference measures from a third thing again (the
+/// press position plus the drag offset, re-projected). Both of our origins are
+/// pinned by tests so the discrepancy cannot drift silently; unifying them is
+/// task 0496 `## Открыто`.
+///
+/// `h.hit == false` (no surface hit at all) resolves to
 /// `HoverTargetKind.None`; a hit that is behind the camera when projected
 /// (should not normally happen — the hit itself came from a ray through
 /// the same viewport) also degrades to `None` rather than asserting.
@@ -899,7 +1005,7 @@ version (unittest) private Viewport makeHoverTestViewport() {
 unittest { // resolveHoverTarget — no hit -> None (default packet)
     auto vp = makeHoverTestViewport();
     ConstrainHitPacket h;   // hit == false by default
-    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
     assert(t.kind == HoverTargetKind.None, "no hit must resolve to None");
     assert(t.vert == -1 && t.edge == -1);
 }
@@ -936,7 +1042,7 @@ unittest { // resolveHoverTarget — edge wins when the vertex candidate is far
     h.nearestEdgeA = Vec3(0,  0.1f, 0);       // projects to (400, 392)
     h.nearestEdgeB = Vec3(0, -0.1f, 0);       // projects to (400, 408)
 
-    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
     assert(t.kind == HoverTargetKind.Edge, "vertex far / edge through the hit pixel must resolve to Edge");
     assert(t.edge == 5);
 }
@@ -953,14 +1059,14 @@ unittest { // resolveHoverTarget — neither candidate in range -> Face
     h.nearestEdgeA = Vec3(2.0f,  0.1f, 0);
     h.nearestEdgeB = Vec3(2.0f, -0.1f, 0);
 
-    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
     assert(t.kind == HoverTargetKind.Face, "no candidate within the default radius must resolve to Face");
     assert(t.vert == -1 && t.edge == -1);
 }
 
 unittest { // resolveHoverTarget — near-threshold, independently computed:
            // a 0.1499-world-unit offset at S=80px/unit projects to ~11.992px
-           // (0.1499*80=11.992), a hair BELOW kTopoPenSnapPx (12.0) rather
+           // (0.1499*80=11.992), a hair BELOW the 12.0f this case passes rather
            // than exactly on it (review NIT-2 — the prior version picked an
            // offset landing EXACTLY at the threshold and asserted `==`
            // through the full lookAt/perspective/mulMV pipeline; that FP
@@ -1016,7 +1122,7 @@ unittest { // resolveHoverTarget — stale candidate reset to -1 by the
     h.nearestEdgeA   = Vec3(0, 0, 0);
     h.nearestEdgeB   = Vec3(0, 0, 0);
 
-    auto t = resolveHoverTarget(h, vp, kTopoPenSnapPx);
+    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
     assert(t.kind == HoverTargetKind.Face,
         "a reset (-1) candidate must never resolve to a phantom origin vertex/edge");
     assert(t.vert == -1 && t.edge == -1);

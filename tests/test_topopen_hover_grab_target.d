@@ -31,7 +31,8 @@ void main() {}
 
 enum float R         = 2.0f;
 enum int   LON       = 96, LAT = 72;
-enum float kSnapPx   = 12.0f;   // the tool's own pick radius (kTopoPenSnapPx)
+enum float kSnapPx   = 15.0f;   // the tool's own pick radius (`topoPenSnapPx`,
+                                // 15 nominal px x the view pixel scale)
 enum float kQuadHalf = 0.75f;
 
 float distToSeg(float px, float py, float ax, float ay, float bx, float by) {

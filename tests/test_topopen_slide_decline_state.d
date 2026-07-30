@@ -39,9 +39,9 @@ void main() {}
 
 enum uint LCTRL = 0x0040;   // KMOD_LCTRL — the Slide gesture's own modifier
 
-// The tool's own screen-space pick tolerance (`kTopoPenSnapPx`), mirrored so
+// The tool's own screen-space pick tolerance (`topoPenSnapPx`), mirrored so
 // the "far from every edge" precondition is stated in the same units.
-enum float kSnapPx = 12.0f;
+enum float kSnapPx = 15.0f;
 
 string dominoMeshBody() {
     return `{

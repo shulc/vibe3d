@@ -337,7 +337,7 @@ class HttpServer {
     // SubjectPacket.cursorValid, only ever true on a main-thread path — can
     // run safely. Returns the resolved ConstrainHitPacket as JSON. `thresholdPx`
     // (P1, doc/topopen_p1_plan.md) is the resolveHoverTarget snap radius;
-    // <= 0 means "use the tool's own default" (kTopoPenSnapPx).
+    // <= 0 means "use the tool's own default" (`topoPenSnapPx(vp)`).
     private alias SurfaceRaycastProvider = string delegate(int x, int y, float thresholdPx);
     private SurfaceRaycastProvider surfaceRaycastProvider;
 

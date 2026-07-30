@@ -3820,7 +3820,7 @@ void main(string[] args) {
         httpServer.setSurfaceRaycastProvider((int x, int y, float thresholdPx) {
             import std.format        : format;
             import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
-            import constraint        : resolveHoverTarget, kTopoPenSnapPx;
+            import constraint        : resolveHoverTarget, topoPenSnapPx;
 
             SubjectPacket subj;
             subj.mesh        = &mesh();
@@ -3839,7 +3839,7 @@ void main(string[] args) {
             if (hp is null)
                 return `{"hit":false,"targetKind":"none","targetVert":-1,"targetEdge":-1}`;
 
-            float th = (thresholdPx > 0.0f) ? thresholdPx : kTopoPenSnapPx;
+            float th = (thresholdPx > 0.0f) ? thresholdPx : topoPenSnapPx(subj.viewport);
             auto tgt = resolveHoverTarget(*hp, subj.viewport, th);
             string kindToken;
             final switch (tgt.kind) {
