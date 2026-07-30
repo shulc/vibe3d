@@ -5392,39 +5392,57 @@ public:
         return -1;
     }
 
-    /// Every BARE (face-less) edge, as an endpoint POSITION pair.
+    /// The mesh's FACE-LESS geometry — loose vertices and bare edges — as
+    /// POSITIONS, so it can be carried across a kernel that reindexes.
     ///
-    /// This tool BUILDS bare edges as a normal intermediate retopo state (a
-    /// chain drawn before any polygon closes over it — `classifySource`'s
-    /// CASE-EDGE), and every kernel that re-derives `edges[]` from `faces[]`
-    /// wipes them mesh-wide, related to the edit or not.
-    /// `deleteFacesByMask` carries a `keepFloatingEdges` flag for exactly that
-    /// reason and `removeFaceAt` passes it; the two dissolve primitives below
-    /// cannot take that route (they reindex vertices, so the edge array cannot
-    /// simply be left alone), so they capture the wire edges here and re-add
-    /// the survivors afterwards.
+    /// This tool BUILDS both as a normal intermediate retopo state: a placed
+    /// point, and a chain drawn before any polygon closes over it
+    /// (`classifySource`'s CASE-EDGE). Both dissolve primitives below finish
+    /// inside a kernel that re-derives `edges[]` from `faces[]` and then
+    /// compacts every vertex no face references — so ONE press on an interior
+    /// edge would otherwise take every loose point and every bare edge in the
+    /// mesh with it, anywhere, related to the edit or not.
+    /// `deleteFacesByMask` carries a `keepFloatingEdges` flag for exactly this
+    /// reason and `removeFaceAt` passes it; the dissolves cannot take that
+    /// route (they reindex vertices, so the edge array cannot simply be left
+    /// alone), hence capture-and-re-add.
     ///
-    /// This is vibe3d-side CONTRACT PRESERVATION, not a ported behaviour: the
-    /// reference's own retopo never produces a face-less edge, so its removal
-    /// primitives have nothing to say about them. What IS measured — what
-    /// happens to the polygons — is identical either way.
-    private static Vec3[2][] captureWireEdges(Mesh* m) {
-        Vec3[2][] wire;
+    /// vibe3d-side CONTRACT PRESERVATION, not a ported behaviour, and labelled
+    /// as such: the reference's own retopo never produces face-less geometry,
+    /// so its removal primitives have nothing to say about it. What IS measured
+    /// — what happens to the polygons — is identical either way.
+    ///
+    /// One visible side effect, stated rather than hidden: restored loose
+    /// vertices are APPENDED, so their indices change. Nothing but the restored
+    /// bare edges refers to them (that is what face-less means), and those are
+    /// re-derived here by position.
+    private static struct LooseGeometry {
+        Vec3[]    verts;
+        Vec3[2][] wires;
+    }
+
+    private static LooseGeometry captureLooseGeometry(Mesh* m) {
+        LooseGeometry g;
+        auto referenced = m.computeReferencedVertexMask();
+        foreach (i, r; referenced)
+            if (!r) g.verts ~= m.vertices[i];
         foreach (ei; 0 .. m.edges.length) {
             if (edgePolyCount(m, cast(uint)ei, 1) != 0) continue;
             auto e = m.edges[ei];
             if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) continue;
-            wire ~= [m.vertices[e[0]], m.vertices[e[1]]];
+            g.wires ~= [m.vertices[e[0]], m.vertices[e[1]]];
         }
-        return wire;
+        return g;
     }
 
-    /// Re-add the wire edges of `wire` whose BOTH endpoints still exist. An
-    /// edge whose endpoint the removal deliberately took stays gone — this
-    /// restores unrelated wire geometry, it does not resurrect the edit.
-    private static void restoreWireEdges(Mesh* m, in Vec3[2][] wire) {
+    /// Put back whatever of `g` the kernel took. A bare edge whose endpoint the
+    /// removal DELIBERATELY took stays gone: this restores unrelated geometry,
+    /// it does not resurrect the edit.
+    private static void restoreLooseGeometry(Mesh* m, in LooseGeometry g) {
         bool any = false;
-        foreach (ref w; wire) {
+        foreach (p; g.verts)
+            if (vertexAtPosition(m, p) < 0) { m.addVertex(p); any = true; }
+        foreach (ref w; g.wires) {
             immutable int a = vertexAtPosition(m, w[0]);
             immutable int b = vertexAtPosition(m, w[1]);
             if (a < 0 || b < 0 || a == b) continue;
@@ -5481,11 +5499,11 @@ public:
             }
         mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
 
-        auto wire = captureWireEdges(m);
+        auto loose = captureLooseGeometry(m);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
-        restoreWireEdges(m, wire);
+        restoreLooseGeometry(m, loose);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = removeEdgeEditFactory_();
@@ -5554,7 +5572,7 @@ public:
             ++nMerge;
         }
 
-        auto wire = captureWireEdges(m);
+        auto loose = captureLooseGeometry(m);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         // Merge the fan, KEEPING every consumed vertex — the one the press
@@ -5571,7 +5589,7 @@ public:
             vmask[vi] = true;
             m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
         }
-        restoreWireEdges(m, wire);
+        restoreLooseGeometry(m, loose);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = removeVertexEditFactory_();
@@ -14167,4 +14185,428 @@ version (unittest) private float projectedY(Mesh* m, uint vi, const ref Viewport
     ImVec2 p;
     assert(TopologyPenTool.projectPt(m.vertices[vi], vp, p), "vertex must project");
     return p.y;
+}
+
+// ---------------------------------------------------------------------------
+// Remove — the ELEMENT-CLASS dispatch, the edge loop, Keep Vertices and the
+// border no-op (task 0494).
+//
+// Every number below is a measured cell on a 4x4 planar grid, which is what
+// `makeGridPlane(3)` is (16v/24e/9f, vertex index 4*row + col), so these
+// assertions are the capture rows and not a re-derivation of our own code.
+//
+// The presses go through `onPlainLmbDown` — the real router — rather than
+// calling the primitives directly, because the DISPATCH is the thing that
+// changed: before this task every one of these presses deleted a polygon.
+// Each test first asserts WHICH element class the press latches, so a failure
+// says "the aim moved" or "the outcome moved" rather than leaving the two
+// indistinguishable.
+// ---------------------------------------------------------------------------
+version (unittest) private TopologyPenTool makeRemoveTestTool(Mesh* m, CommandHistory h) {
+    import view : View;
+    import editmode : EditMode;
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 100, 100);
+    t.meshSrc_ = () => m;
+    t.history_ = h;
+    t.penMode_ = PenMode.Remove;
+    // All three, with their own wire names — mirrors the app.d construction
+    // site. Leaving one null would make its primitive a silent no-op and the
+    // test would read as "the dispatch is wrong".
+    t.removeEditFactory_ = () => new MeshSessionEdit(m, view, EditMode.Vertices,
+                                 "mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
+    t.removeEdgeEditFactory_ = () => new MeshSessionEdit(m, view, EditMode.Vertices,
+                                 "mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
+    t.removeVertexEditFactory_ = () => new MeshSessionEdit(m, view, EditMode.Vertices,
+                                 "mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
+    return t;
+}
+
+version (unittest) private SDL_MouseButtonEvent gridEdgeMidPixel(ref Mesh m, ref Viewport vp,
+                                                                 uint a, uint b) {
+    ImVec2 pa, pb;
+    assert(TopologyPenTool.projectPt(m.vertices[a], vp, pa), "setup: endpoint projects");
+    assert(TopologyPenTool.projectPt(m.vertices[b], vp, pb), "setup: endpoint projects");
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)((pa.x + pb.x) * 0.5f);
+    e.y = cast(int)((pa.y + pb.y) * 0.5f);
+    return e;
+}
+
+version (unittest) private SDL_MouseButtonEvent gridVertPixel(ref Mesh m, ref Viewport vp, uint v) {
+    ImVec2 p;
+    assert(TopologyPenTool.projectPt(m.vertices[v], vp, p), "setup: vertex projects");
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)p.x;
+    e.y = cast(int)p.y;
+    return e;
+}
+
+version (unittest) private int gridVertAt(ref Mesh m, Vec3 p) {
+    foreach (i, ref v; m.vertices)
+        if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+    return -1;
+}
+
+unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a polygon
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    Mesh m   = makeGridPlane(3);
+    auto vp  = makeGridPlaneTestViewport();
+    auto history = new CommandHistory();
+    auto t   = makeRemoveTestTool(&m, history);
+
+    SubjectPacket subj;
+    subj.mesh = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    immutable uint seed = m.edgeIndex(5, 9);
+    auto e = gridEdgeMidPixel(m, vp, 5, 9);
+    int idx;
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge && idx == cast(int)seed,
+        "setup: the press must LATCH THE INTERIOR EDGE, or this measures the aim");
+
+    assert(t.onPlainLmbDown(e, vts), "a Remove press is always consumed");
+
+    assert(m.vertices.length == 16 && m.edges.length == 23 && m.faces.length == 8,
+        "an edge-latched Remove dissolves ONE edge: 16/23/8. The pre-0494 behaviour "
+      ~ "was 16/24/8 — one polygon gone, no edge — which is what this pins against");
+    assert(m.edgeIndex(5, 9) == ~0u, "and it is the pressed edge that went");
+    assert(m.edgeIndex(4, 5) != ~0u && m.edgeIndex(5, 6) != ~0u,
+        "its neighbours are untouched");
+
+    // The two quads it separated are now ONE hexagon, and nothing else moved.
+    size_t hexes = 0;
+    foreach (ref f; m.faces) {
+        if (f.length == 4) continue;
+        assert(f.length == 6, "the merge produces a hexagon, nothing else");
+        ++hexes;
+        uint[] got = f.dup;
+        import std.algorithm : sort;
+        got.sort();
+        assert(got == [4u, 5u, 6u, 8u, 9u, 10u], "the union of the two incident quads");
+    }
+    assert(hexes == 1);
+    assert(history.canUndo(), "a real removal records one undo entry");
+}
+
+unittest { // a VERTEX-latched press merges its whole fan and drops the vertex
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    Mesh m   = makeGridPlane(3);
+    auto vp  = makeGridPlaneTestViewport();
+    auto history = new CommandHistory();
+    auto t   = makeRemoveTestTool(&m, history);
+
+    SubjectPacket subj;
+    subj.mesh = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    auto pre = m.vertices.dup;
+    auto e   = gridVertPixel(m, vp, 5);
+    int idx;
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Vertex && idx == 5,
+        "setup: the press must LATCH THE VERTEX");
+
+    assert(t.onPlainLmbDown(e, vts));
+
+    assert(m.vertices.length == 15 && m.edges.length == 20 && m.faces.length == 6,
+        "the four quads around vertex 5 become ONE 8-gon and only vertex 5 goes: 15/20/6");
+    assert(gridVertAt(m, pre[5]) < 0, "the pressed vertex is gone");
+    foreach (keep; [1, 4, 6, 9])
+        assert(gridVertAt(m, pre[keep]) >= 0,
+            "and ONLY it — the vertex primitive is not the edge path's fan rule, which "
+          ~ "would also have taken 1 and 4 (13/18/6)");
+
+    size_t bigs = 0;
+    foreach (ref f; m.faces) if (f.length != 4) { assert(f.length == 8); ++bigs; }
+    assert(bigs == 1, "exactly one 8-gon");
+}
+
+unittest { // a CORNER vertex (one incident polygon): the merge is vacuous and
+           // the quad collapses to a triangle
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    Mesh m   = makeGridPlane(3);
+    auto vp  = makeGridPlaneTestViewport();
+    auto history = new CommandHistory();
+    auto t   = makeRemoveTestTool(&m, history);
+
+    SubjectPacket subj;
+    subj.mesh = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    auto pre = m.vertices.dup;
+    auto e   = gridVertPixel(m, vp, 0);
+    int idx;
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Vertex && idx == 0,
+        "setup: the press must LATCH THE CORNER VERTEX");
+
+    assert(t.onPlainLmbDown(e, vts));
+
+    assert(m.vertices.length == 15 && m.edges.length == 23 && m.faces.length == 9,
+        "15/23/9 — the corner quad becomes a triangle and no polygon is lost");
+    assert(gridVertAt(m, pre[0]) < 0);
+    immutable int v1 = gridVertAt(m, pre[1]);
+    immutable int v4 = gridVertAt(m, pre[4]);
+    assert(v1 >= 0 && v4 >= 0 && m.edgeIndex(cast(uint)v1, cast(uint)v4) != ~0u,
+        "the triangle's new edge closes across the removed corner");
+    size_t tris = 0;
+    foreach (ref f; m.faces) if (f.length == 3) ++tris;
+    assert(tris == 1, "exactly one triangle");
+}
+
+unittest { // Edge Loop + Keep Vertices, both ways round, on an edge-latched press
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    // Runs one Remove press with the given flags and hands the mesh back.
+    static void press(ref Mesh m, bool loop, bool keepVertex, ref CommandHistory h) {
+        auto vp = makeGridPlaneTestViewport();
+        auto t  = makeRemoveTestTool(&m, h);
+        t.edgeLoop_   = loop;
+        t.keepVertex_ = keepVertex;
+
+        SubjectPacket subj;
+        subj.mesh = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        auto e = gridEdgeMidPixel(m, vp, 5, 9);
+        int idx;
+        assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge
+            && idx == cast(int)m.edgeIndex(5, 9), "setup: the press must latch the seed edge");
+        assert(t.onPlainLmbDown(e, vts));
+    }
+
+    // Keep Vertices ON: the three loop edges dissolve, every vertex stays as a
+    // corner of a merged hexagon.
+    {
+        Mesh m = makeGridPlane(3);
+        auto h = new CommandHistory();
+        press(m, /*loop*/true, /*keepVertex*/true, h);
+        assert(m.vertices.length == 16 && m.edges.length == 21 && m.faces.length == 6,
+            "16/21/6");
+        assert(m.edgeIndex(1, 5) == ~0u && m.edgeIndex(5, 9) == ~0u
+            && m.edgeIndex(9, 13) == ~0u,
+            "the gather is the vertex-continuation loop through the seed — exactly "
+          ~ "those three, which is also what refutes a perpendicular ring");
+        assert(m.edgeIndex(4, 5) != ~0u && m.edgeIndex(5, 6) != ~0u,
+            "and nothing perpendicular to it");
+    }
+
+    // Keep Vertices OFF — the measured DEFAULT: the four vertices whose whole
+    // polygon fan the dissolve ate go with it, and their survivors re-stitch.
+    {
+        Mesh m   = makeGridPlane(3);
+        auto pre = m.vertices.dup;
+        auto h   = new CommandHistory();
+        press(m, /*loop*/true, /*keepVertex*/false, h);
+        assert(m.vertices.length == 12 && m.edges.length == 17 && m.faces.length == 6,
+            "12/17/6 — this is what the tool now does by DEFAULT, where before this "
+          ~ "task it kept the orphans unconditionally (the Keep-Vertices-ON branch)");
+        foreach (gone; [1, 5, 9, 13])
+            assert(gridVertAt(m, pre[gone]) < 0, "the consumed vertices go");
+        assert(gridVertAt(m, pre[4]) >= 0,
+            "but NOT vertex 4, whose fan is equally consumed and which is nobody's "
+          ~ "dissolving endpoint");
+        foreach (pair; [[0, 2], [4, 6], [8, 10], [12, 14]]) {
+            immutable int a = gridVertAt(m, pre[pair[0]]), b = gridVertAt(m, pre[pair[1]]);
+            assert(a >= 0 && b >= 0 && m.edgeIndex(cast(uint)a, cast(uint)b) != ~0u,
+                "and the survivors are re-stitched across the gap");
+        }
+        assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+    }
+
+    // And the DEFAULT tool takes the OFF branch — the flag's default is the
+    // behaviour, not a formality.
+    {
+        Mesh m = makeGridPlane(3);
+        auto h = new CommandHistory();
+        auto t = makeRemoveTestTool(&m, h);
+        assert(!t.keepVertex_, "a fresh tool must purge");
+    }
+}
+
+unittest { // the loop variant keys on the EFFECTIVE flag, never on the button
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    // The chord that FORCES the loop flag, against a plain press with the flag
+    // set by the user. These were measured bit-identical down to the removed-
+    // edge / new-edge / removed-vertex sets, so the port must not be able to
+    // tell them apart either.
+    static Mesh run(bool viaChord) {
+        Mesh m  = makeGridPlane(3);
+        auto vp = makeGridPlaneTestViewport();
+        auto h  = new CommandHistory();
+        auto t  = makeRemoveTestTool(&m, h);
+        t.edgeLoop_ = !viaChord;   // the chord supplies it in the other arm
+
+        SubjectPacket subj;
+        subj.mesh = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        auto e = gridEdgeMidPixel(m, vp, 5, 9);
+        if (viaChord)
+            t.onToolAction(TopoPenChord.Rmb, InputPhase.Down, e, vts);
+        else
+            t.onPlainLmbDown(e, vts);
+        return m;
+    }
+
+    Mesh viaFlag  = run(false);
+    Mesh viaChord = run(true);
+    assert(viaFlag.vertices == viaChord.vertices, "same vertices");
+    assert(viaFlag.edges    == viaChord.edges,    "same edges");
+    assert(viaFlag.faces    == viaChord.faces,    "same faces");
+    assert(viaFlag.vertices.length == 12 && viaFlag.edges.length == 17
+        && viaFlag.faces.length == 6, "and both ran the LOOP variant");
+}
+
+unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    foreach (loop; [false, true]) {
+        Mesh m   = makeGridPlane(3);
+        auto vp  = makeGridPlaneTestViewport();
+        auto h   = new CommandHistory();
+        auto t   = makeRemoveTestTool(&m, h);
+        t.edgeLoop_ = loop;
+
+        SubjectPacket subj;
+        subj.mesh = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        auto before = MeshSnapshot.capture(m);
+        auto e = gridEdgeMidPixel(m, vp, 0, 1);   // top-left BORDER edge
+        int idx;
+        assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge
+            && idx == cast(int)m.edgeIndex(0, 1), "setup: the press must latch the border edge");
+
+        assert(t.onPlainLmbDown(e, vts), "still consumed");
+
+        auto after = MeshSnapshot.capture(m);
+        assert(after.vertices == before.vertices && after.edges == before.edges
+            && after.faces == before.faces,
+            "16/24/9 and not one vertex moved — the gate is on the SEED and runs "
+          ~ "BEFORE the gather, so 'just filter the gathered set' is not the same law");
+        assert(!h.canUndo(), "and no undo entry is recorded");
+    }
+}
+
+unittest { // one undo restores counts AND positions, for all three primitives
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    static void roundTrip(bool loop, uint a, uint b, bool vertexPress, uint v) {
+        Mesh m  = makeGridPlane(3);
+        auto vp = makeGridPlaneTestViewport();
+        auto h  = new CommandHistory();
+        auto t  = makeRemoveTestTool(&m, h);
+        t.edgeLoop_ = loop;
+
+        SubjectPacket subj;
+        subj.mesh = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        auto before = MeshSnapshot.capture(m);
+        auto e = vertexPress ? gridVertPixel(m, vp, v) : gridEdgeMidPixel(m, vp, a, b);
+        assert(t.onPlainLmbDown(e, vts));
+        assert(h.canUndo(), "the gesture must be undoable");
+        h.undo();
+        auto after = MeshSnapshot.capture(m);
+        assert(after.vertices == before.vertices && after.edges == before.edges
+            && after.faces == before.faces,
+            "ONE undo must restore counts AND positions — the whole gesture is one step");
+    }
+
+    roundTrip(/*loop*/false, 5, 9, false, 0);   // edge dissolve
+    roundTrip(/*loop*/true,  5, 9, false, 0);   // edge loop dissolve (+ the purge)
+    roundTrip(/*loop*/false, 0, 0, true,  5);   // vertex fan merge
+}
+
+unittest { // Keep Vertices reaches the EDGE path and nothing else
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    // Measured only on the edge path, and the reference reads the flag in
+    // neither of the other two primitives — so honouring it there would be
+    // inventing a second meaning for it.
+    foreach (keep; [false, true]) {
+        Mesh m  = makeGridPlane(3);
+        auto vp = makeGridPlaneTestViewport();
+        auto h  = new CommandHistory();
+        auto t  = makeRemoveTestTool(&m, h);
+        t.keepVertex_ = keep;
+
+        SubjectPacket subj;
+        subj.mesh = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        auto e = gridVertPixel(m, vp, 5);
+        assert(t.onPlainLmbDown(e, vts));
+        assert(m.vertices.length == 15 && m.edges.length == 20 && m.faces.length == 6,
+            "the vertex primitive ignores Keep Vertices in both positions");
+    }
+}
+
+unittest { // a bare retopo chain elsewhere in the mesh SURVIVES a dissolve
+    import toolpipe.packets : SubjectPacket;
+    import mesh : makeGridPlane;
+
+    // vibe3d-side contract, not a ported behaviour (`captureWireEdges`): this
+    // tool builds face-less edges as an ordinary intermediate state, and the
+    // dissolve kernels re-derive the edge array from the faces, which would
+    // otherwise wipe every one of them mesh-wide — related to the edit or not.
+    Mesh m  = makeGridPlane(3);
+    auto vp = makeGridPlaneTestViewport();
+    auto h  = new CommandHistory();
+    auto t  = makeRemoveTestTool(&m, h);
+
+    // Two loose vertices joined by a bare edge, plus one placed point with no
+    // edge at all — well away from the grid, and all three face-less.
+    immutable uint w0 = m.addVertex(Vec3(5, 0, 5));
+    immutable uint w1 = m.addVertex(Vec3(6, 0, 5));
+    immutable uint w2 = m.addVertex(Vec3(7, 0, 5));
+    m.addEdge(w0, w1);
+    m.buildLoops();
+    auto wa = m.vertices[w0], wb = m.vertices[w1], wc = m.vertices[w2];
+    assert(m.edges.length == 25, "setup: 24 grid edges plus the wire");
+
+    SubjectPacket subj;
+    subj.mesh = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    auto e = gridEdgeMidPixel(m, vp, 5, 9);
+    assert(t.onPlainLmbDown(e, vts));
+
+    immutable int a = gridVertAt(m, wa), b = gridVertAt(m, wb);
+    assert(a >= 0 && b >= 0, "the wire's endpoints must survive");
+    assert(m.edgeIndex(cast(uint)a, cast(uint)b) != ~0u,
+        "and so must the bare edge between them");
+    assert(gridVertAt(m, wc) >= 0,
+        "and so must a placed point with no edge at all — the kernel's tail compaction "
+      ~ "drops every face-less vertex in the mesh, not only the ones this edit touched");
 }
