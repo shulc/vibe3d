@@ -1155,10 +1155,13 @@ private:
     // headless paths — behaves exactly as it did when the constants were
     // private.
     //
-    // NOT gated on `SnapPacket.enabled`. Whether the pen should fall silent
-    // when the user turns snapping off is an open question with a real
-    // behaviour change on either answer; it is not settled here, and taking
-    // only the numbers is the change that costs nothing.
+    // GATED on `SnapPacket.enabled` since task 0523, where it used not to be.
+    // The pen welded whether or not the user had snapping on — alone among the
+    // snapping clients in this tree — and that was our divergence, not a
+    // feature: the reference gates its pen on the shared enable through both
+    // of the tool's channels, and the mechanism that would have excused us (a
+    // guide declaring itself always-on) does not exist. `resolveSnapTargetVert`
+    // is where the gate reads; see its doc for what it costs at our default.
     SnapPacket dragSnap_;
 
     // The Mode dropdown (task 0477 continuation + task 0483): the wire-tag
@@ -2505,7 +2508,32 @@ public:
     /// Aims the guide before it asks it. The guide answers proximity for
     /// whoever is querying, and the cursor is not something the service pushes
     /// in (see `PenSnapGuide`'s block comment), so the query supplies it.
+    ///
+    /// GATED ON THE MASTER SNAP ENABLE (task 0523). Snapping off means no snap
+    /// target, which means no weld — the same answer the service gives every
+    /// other client, and the answer the reference gives this one. It is gated
+    /// through BOTH of the channels this tool has, which is why the check is
+    /// here and not only on the guide: the service's own gate covers the guide
+    /// (a disabled stage publishes nothing and never queries), and this covers
+    /// the tool's own resolver. The reference's pen tests the shared flag at
+    /// the very top of its own snap entry, exactly here, and returns no-snap.
+    ///
+    /// This was our long-standing divergence — the pen welded unconditionally,
+    /// alone among the snapping clients in this tree — and the reading that
+    /// would have made it parity is dead: the pen's guide declares no flags at
+    /// all, so it never claims the "ignore the global enable" bit, and in the
+    /// reference the master enable short-circuits above the guide walk where no
+    /// flag could reach it anyway.
+    ///
+    /// WHAT THIS COSTS AT OUR DEFAULT, stated because it is a real user-facing
+    /// consequence and not a detail: `SnapStage.enabled` ships FALSE here,
+    /// while the reference's own enable was measured on at ITS defaults. So
+    /// with this gate and that default, the Split gesture — the only consumer
+    /// of this query — is a no-op until the user turns snapping on. Whether the
+    /// default should follow the reference is a separate decision about a
+    /// different field, with six other consumers hanging off it.
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
+        if (!dragSnap_.enabled) return -1;
         auto g = snapGuide();
         g.retarget(mesh, innerSnap_);
         g.aimAt(vp, mx, my);
@@ -10792,6 +10820,12 @@ unittest {
     subj.viewport = vp;
     VectorStack vts;
     vts.put(&subj);
+    // Task 0523: this case's subject is the DISPATCH — that a plain-MMB
+    // press/release really does reach `commitSplit` through the restructured
+    // MIDDLE branch. Split lands on a snap target, and a snap target needs
+    // snapping on, so the rig says so. Without this the release is a lawful
+    // no-op and the case would pass vacuously while testing nothing.
+    vts.put(penTestSnapOn());
 
     float sx0, sy0, sx2, sy2, ndcZ;
     assert(projectToWindowFull(m.vertices[0], vp, sx0, sy0, ndcZ),
@@ -11681,6 +11715,23 @@ version (unittest) private Viewport makeHoverIndicatorTestViewport() {
     vp.x = 0;
     vp.y = 0;
     return vp;
+}
+
+/// A SNAP configuration with the master enable ON, at the stage's own default
+/// ranges — heap-allocated so it can be pushed onto a `VectorStack` that
+/// outlives the expression.
+///
+/// Task 0523. The pen's snap target is gated on this flag now, so a rig that
+/// wants to exercise a WELD has to say that snapping is on; a rig that pushes
+/// no `SnapPacket` at all is a rig with snapping OFF, and it will get no weld.
+/// That is not a testing inconvenience to route around — it is the behaviour
+/// under test, and the rigs that call this are the ones whose subject is what
+/// the pen does when it DOES land on a vertex. The rigs that assert a no-op
+/// deliberately do not call it.
+version (unittest) private SnapPacket* penTestSnapOn() {
+    auto p = new SnapPacket;
+    p.enabled = true;
+    return p;
 }
 
 version (unittest) private Viewport makeGridPlaneTestViewport() {
@@ -13155,6 +13206,11 @@ unittest {
 
     t.splitArmed_      = true;
     t.splitSourceVert_ = 0;
+    // Hand-armed like the two lines above, because this case enters at
+    // `splitUp` and never runs the press that would have captured it. Task
+    // 0523: without it the master gate would answer for the release and this
+    // would be a no-op case that proves nothing about EMPTY SPACE.
+    t.dragSnap_        = *penTestSnapOn();
     SDL_MouseButtonEvent eUp;
     eUp.button = SDL_BUTTON_MIDDLE;
     eUp.x = 5; eUp.y = 5;   // far corner -- nothing projects anywhere near here
@@ -13888,6 +13944,13 @@ unittest {
     subj.viewport = vp;
     VectorStack vts;
     vts.put(&subj);
+
+    // Task 0523: snapping ON, in a case whose whole subject is that the
+    // release resolves NO vertex. With the master gate closed the release
+    // resolves nothing whatever the pixel, the rig guard below would pass for
+    // the wrong reason, and every no-op assertion after it would be vacuous —
+    // which is exactly what this block's own header warns against.
+    vts.put(penTestSnapOn());
 
     float sx0, sy0, ndcZ;
     assert(projectToWindowFull(m.vertices[0], vp, sx0, sy0, ndcZ),
@@ -16276,6 +16339,12 @@ unittest {
         r.subj.mesh     = m;
         r.subj.viewport = r.vp;
         r.vts.put(r.subj);
+        // Task 0523: BOTH cases run with snapping on, including the one that
+        // expects a no-op. The subject here is the ADMISSION rule, and a rig
+        // with snapping off would reach the same no-op through the master
+        // gate — the interior vertex would never be judged, and the case
+        // would pass without exercising what it names.
+        r.vts.put(penTestSnapOn());
         return r;
     }
 
@@ -16321,9 +16390,19 @@ unittest {
                                  cast(int)projectedY(&mOff, 4, off.vp), off.vp) == 4,
         "the press-time pick must still resolve an INTERIOR vertex — the captures we hold show "
       ~ "the reference grabbing interior elements at this flag's default");
+    // The gesture is over, so the tool has dropped its snap snapshot; re-arm it
+    // by hand or the master gate (task 0523) answers -1 for this call and the
+    // assertion below would be about the gate rather than about `innerSnap`.
+    off.t.dragSnap_ = *penTestSnapOn();
     assert(off.t.resolveSnapTargetVert(cast(int)projectedX(&mOff, 4, off.vp),
                                       cast(int)projectedY(&mOff, 4, off.vp), off.vp) < 0,
         "the SNAP TARGET must refuse the interior vertex at innerSnap = false");
+    off.t.innerSnap_ = true;
+    assert(off.t.resolveSnapTargetVert(cast(int)projectedX(&mOff, 4, off.vp),
+                                      cast(int)projectedY(&mOff, 4, off.vp), off.vp) == 4,
+        "and accept it with innerSnap on — which is what makes the refusal above the BORDER "
+      ~ "rule's answer and not the radius's or the gate's");
+    off.t.innerSnap_ = false;
 
     // --- innerSnap on: the very same drag splits.
     Mesh mOn;
@@ -16369,10 +16448,16 @@ unittest {
     SDL_SetModState(cast(SDL_Keymod)0);
 
     // Split MUTATES on success, so each offset gets its own tool + mesh.
-    // `snapPkt` is the SNAP configuration the press sees: null means "no SNAP
-    // stage registered", the case every other assertion below runs, and the
-    // one whose ranges must stay exactly what the pen used when it owned
-    // private constants.
+    // `snapPkt` is the SNAP configuration the press sees; null means "the
+    // stage's own defaults, master enable on", which is the configuration the
+    // ranges below were measured under and the one every assertion here but
+    // the two explicit re-ranges runs.
+    //
+    // Task 0523: this used to default to NO packet at all, i.e. to the init
+    // packet — whose ranges are the same but whose master enable is FALSE.
+    // That distinction did not exist while the weld was unconditional; it does
+    // now, and every case in this block is about the RADIUS, so every case
+    // needs the gate open or it would be measuring the gate instead.
     static bool splitLands(float offsetPx, Mesh* m, out size_t facesBefore,
                            SnapPacket* snapPkt = null) {
         auto t       = new TopologyPenTool();
@@ -16391,7 +16476,7 @@ unittest {
         subj.viewport = vp;
         VectorStack vts;
         vts.put(subj);
-        if (snapPkt !is null) vts.put(snapPkt);
+        vts.put(snapPkt is null ? penTestSnapOn() : snapPkt);
 
         ImVec2 pa, pb;
         assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: v1 must project");
@@ -16447,6 +16532,7 @@ unittest {
     // acceptance moved to 12px it is a clean no-op, and nothing else changed.
     // This is the assertion a re-introduced private constant fails.
     SnapPacket narrow;
+    narrow.enabled      = true;   // the gate open, so the RANGE is what decides
     narrow.innerRangePx = 12.0f;
     Mesh mNarrow;
     size_t fNarrow;
@@ -16460,6 +16546,7 @@ unittest {
     // rejected, so the pen is reading the number rather than merely being
     // gated by one.
     SnapPacket wide;
+    wide.enabled      = true;
     wide.innerRangePx = 40.0f;
     Mesh mWide;
     size_t fWide;
