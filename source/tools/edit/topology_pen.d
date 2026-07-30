@@ -248,14 +248,18 @@ private enum MoveElem { None, Vertex, Edge, Face }
 // text, per-mode cfg Desc strings, and the input-map cfg's abstract-event
 // grid — see toolcards/topology_pen/gesture_map.md, PRIVATE) has NO
 // Alt-modified slot (Alt is reserved for camera nav everywhere in vibe3d,
-// hard-blocked by `resolveToolAction` itself, above any table scan) and 2
-// slots that stay undocumented/unimplemented (Ctrl+RMB, Shift+Ctrl+MMB).
-// `kTopoPenBindings` is a 1:1 transcription of the 10 WIRED slots; the 2
-// undocumented slots and every Alt combo are simply ABSENT from the table,
-// so `resolveToolAction` answers `PassThrough` for them and `dispatchInput`
-// returns `false` without ever calling `onToolAction` — byte-identical to
-// the old classifier's own `CtrlRmb`/`ShiftCtrlMmb`/`None` cases falling
-// through unconsumed.
+// hard-blocked by `resolveToolAction` itself, above any table scan).
+// `kTopoPenBindings` is a 1:1 transcription of ALL 12 slots (task 0499):
+// the last two — Ctrl+RMB and Shift+Ctrl+MMB — carry no documentation
+// because the reference's dispatcher has no case for them, and a MEASURED
+// capture (`toolcards/topology_pen/dragweld_unlabeled_slots_capture.md`,
+// PRIVATE) showed what that means concretely: the event falls through to
+// "run whatever the Mode dropdown currently holds", with no loop gather, no
+// slide constraint and no smoothing of its own. Under the 0487 chord model
+// that is expressible as data — a row that overrides NOTHING — so they are
+// now WIRED rows rather than absent ones. Every Alt combo stays absent, so
+// `resolveToolAction` answers `PassThrough` for it and `dispatchInput`
+// returns `false` without ever calling `onToolAction`.
 // ---------------------------------------------------------------------------
 private enum PenGesture {
     PlaceOrMove,      // place-on-empty OR grab-move (resolved at Down)
@@ -287,7 +291,8 @@ private enum PenGesture {
 //   * The two formerly-undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) were
 //     measured executing "whatever the Mode dropdown currently is"
 //     (`status.yaml: unlabeled_slots`) — which only makes sense if a chord
-//     leaves the mode alone unless it overrides it.
+//     leaves the mode alone unless it overrides it. Task 0499 WIRES those two
+//     as exactly that: a row that overrides nothing.
 //
 // Why it matters beyond tidiness: under the old table a chord could not
 // compose with the dropdown at all, so plain RMB was hard-wired to move-loop
@@ -308,13 +313,20 @@ private struct ChordOv {
     FlagOv slide = FlagOv.FromUser;
 }
 
-/// The 10 wired slots, named by the CHORD they are — the gesture each one ends
+/// All 12 wired slots, named by the CHORD they are — the gesture each one ends
 /// up running is a RESULT now, not an identity. `dispatchInput` only ever moves
 /// this id around, so it doubles as the index into `kChordOv` below.
+///
+/// APPEND ONLY. This enum is simultaneously the index into the fixed-length
+/// `kChordOv` below, so inserting a value in the MIDDLE silently rebinds every
+/// row after it instead of failing to compile — the same footgun the positional
+/// `setUndoBindings` parameters carry. `CtrlRmb`/`ShiftCtrlMmb` (task 0499) are
+/// therefore last, in wiring order, not grouped with their own buttons.
 private enum TopoPenChord : ToolAction {
     Lmb, ShiftLmb, CtrlLmb, ShiftCtrlLmb,
     Mmb, ShiftMmb, CtrlMmb,
     Rmb, ShiftRmb, ShiftCtrlRmb,
+    CtrlRmb, ShiftCtrlMmb,
 }
 
 /// What each chord overrides. Indexed by `TopoPenChord`.
@@ -323,7 +335,7 @@ private enum TopoPenChord : ToolAction {
 /// at its default (`move`, both flags off) — that was the acceptance condition
 /// for this refactor, so the only outcomes that CHANGE are the ones the
 /// capture pins: a chord composing with a NON-default dropdown.
-private immutable ChordOv[10] kChordOv = [
+private immutable ChordOv[12] kChordOv = [
     // Lmb          — the base slot: the dropdown, verbatim.                    [M]
     ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser),
     // ShiftLmb     — Duplicate, and it READS the loop flag.                    [M]
@@ -349,6 +361,25 @@ private immutable ChordOv[10] kChordOv = [
     ChordOv(ModeOv.Duplicate, FlagOv.ForceOn,  FlagOv.FromUser),
     // ShiftCtrlRmb — Smoothing "plus Edge Loop".                              [D]
     ChordOv(ModeOv.Smooth,    FlagOv.ForceOn,  FlagOv.FromUser),
+    // CtrlRmb      — overrides NOTHING: the dropdown's mode, the user's own
+    //                loop flag, the user's own slide flag. The reference's
+    //                dispatcher has no case for this slot, and the capture
+    //                measured the fall-through directly: dropdown=Move ran a
+    //                plain per-vertex move (whose own mesh delta carries the
+    //                already-decoded "empty selection ⇒ whole mesh" signature,
+    //                not a slide constraint), dropdown=Split ran the split, in
+    //                lockstep. NOT "like the base slot of its own button":
+    //                plain RMB forces the loop and this one does not, and it
+    //                does NOT force slide either — which is precisely the
+    //                measurement `CtrlLmb`'s asymmetric slide row rests on, so
+    //                these two rows have to be read together.               [M]
+    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser),
+    // ShiftCtrlMmb — the same unbound-slot fall-through, measured on the other
+    //                button and refuting "probably inert": dropdown=Move ran a
+    //                per-vertex move where the base MMB slot in the very same
+    //                condition ran Split, so this row cannot be "like the base
+    //                slot of its own button" either.                        [M]
+    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser),
 ];
 
 /// Which physical button a chord slot belongs to. Taken from the SLOT rather
@@ -361,8 +392,10 @@ private InputButton chordButton(TopoPenChord c) {
     case TopoPenChord.CtrlLmb: case TopoPenChord.ShiftCtrlLmb:
         return InputButton.Left;
     case TopoPenChord.Mmb: case TopoPenChord.ShiftMmb: case TopoPenChord.CtrlMmb:
+    case TopoPenChord.ShiftCtrlMmb:
         return InputButton.Middle;
     case TopoPenChord.Rmb: case TopoPenChord.ShiftRmb: case TopoPenChord.ShiftCtrlRmb:
+    case TopoPenChord.CtrlRmb:
         return InputButton.Right;
     }
 }
@@ -387,6 +420,18 @@ private PenMode modeOfOverride(ModeOv m) {
 /// `resetAllGestureArms`'s own doc comment for why MIDDLE/RIGHT deliberately
 /// do NOT get a full reset: a chord on those buttons can legitimately coexist
 /// with a held LEFT drag).
+///
+/// The two rows task 0499 added (Ctrl+RMB, Shift+Ctrl+MMB) are MIDDLE/RIGHT
+/// rows and take the same default `SelfButton` — `AllButtons` there would
+/// change the neighbouring gestures' reset behavior rather than port these two.
+///
+/// Ctrl+RMB has a visible PRICE outside this tool and it is deliberate: an
+/// un-consumed RMB press falls through to the application's own RMB lasso
+/// select (`source/app.d`, "give the ACTIVE tool first crack at RMB"), so
+/// binding the slot hands Ctrl+RMB to the pen while the pen is active. It is
+/// the same fall-through plain RMB already lives with: `dispatchInput` returns
+/// this tool's own Down verdict, so a Ctrl+RMB press the pen DECLINES (nothing
+/// grabbable under the cursor) still reaches the lasso.
 private immutable InputBinding[] kTopoPenBindings = [
     InputBinding(InputButton.Left,   InputMod.None,                   TopoPenChord.Lmb,          ResetScope.AllButtons),
     InputBinding(InputButton.Left,   InputMod.Shift,                  TopoPenChord.ShiftLmb,     ResetScope.AllButtons),
@@ -398,6 +443,8 @@ private immutable InputBinding[] kTopoPenBindings = [
     InputBinding(InputButton.Right,  InputMod.None,                   TopoPenChord.Rmb),
     InputBinding(InputButton.Right,  InputMod.Shift,                  TopoPenChord.ShiftRmb),
     InputBinding(InputButton.Right,  InputMod.Shift | InputMod.Ctrl,  TopoPenChord.ShiftCtrlRmb),
+    InputBinding(InputButton.Right,  InputMod.Ctrl,                   TopoPenChord.CtrlRmb),
+    InputBinding(InputButton.Middle, InputMod.Shift | InputMod.Ctrl,  TopoPenChord.ShiftCtrlMmb),
 ];
 
 // ---------------------------------------------------------------------------
@@ -407,9 +454,9 @@ private immutable InputBinding[] kTopoPenBindings = [
 // the pre-Phase-2 classifier used to need (Ctrl+MMB/Shift+MMB/Ctrl+LMB/
 // plain-MMB/plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table
 // so a bad merge that silently drops or misroutes a row is caught here
-// rather than by 7 separate best-effort pins. All 10 bound slots resolve to
-// their documented action; the 2 undocumented slots (Ctrl+RMB,
-// Shift+Ctrl+MMB) and every Alt-held combo resolve to `PassThrough` (Alt is
+// rather than by 7 separate best-effort pins. All 12 slots of the grid now
+// resolve to their own chord id (task 0499 wired the last two, Ctrl+RMB and
+// Shift+Ctrl+MMB); every Alt-held combo resolves to `PassThrough` (Alt is
 // hard-blocked by `resolveToolAction` itself, above the table scan — this
 // pin also proves that holds for THIS tool's table).
 // ---------------------------------------------------------------------------
@@ -437,6 +484,13 @@ unittest {
         == TopoPenChord.ShiftRmb, "Shift+RMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift | InputMod.Ctrl)
         == TopoPenChord.ShiftCtrlRmb, "Shift+Ctrl+RMB");
+    // The 2 slots the reference's dispatcher has no case for — WIRED (task
+    // 0499) as rows that override nothing, after being measured executing the
+    // dropdown's own mode. They used to answer `PassThrough` here.
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl)
+        == TopoPenChord.CtrlRmb, "Ctrl+RMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenChord.ShiftCtrlMmb, "Shift+Ctrl+MMB");
 
     // Every chord belongs to the button its own slot names — the mapping the
     // dispatch books a gesture against, taken from the SLOT so a synthetic
@@ -447,6 +501,8 @@ unittest {
     assert(chordButton(TopoPenChord.CtrlMmb)      == InputButton.Middle);
     assert(chordButton(TopoPenChord.Rmb)          == InputButton.Right);
     assert(chordButton(TopoPenChord.ShiftCtrlRmb) == InputButton.Right);
+    assert(chordButton(TopoPenChord.CtrlRmb)      == InputButton.Right);
+    assert(chordButton(TopoPenChord.ShiftCtrlMmb) == InputButton.Middle);
 
     // The override table itself — the measured half stated as assertions, so a
     // future edit that levels the FlagOv distinction away fails here.
@@ -467,11 +523,24 @@ unittest {
     assert(kChordOv[TopoPenChord.Rmb].slide      == FlagOv.FromUser,
         "and Ctrl+RMB was measured NOT forcing slide, so the rule is not 'Ctrl forces slide'");
 
-    // The 2 undocumented slots -- absent from the table -> PassThrough.
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl) == PassThrough,
-        "Ctrl+RMB is undocumented -> PassThrough");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift | InputMod.Ctrl) == PassThrough,
-        "Shift+Ctrl+MMB is undocumented -> PassThrough");
+    // The 2 rows task 0499 wired: they override NOTHING, on all three columns.
+    // Stated column by column because each one pins a separate half of the
+    // measurement, and each one is a different way to get this wrong:
+    //   * mode  — the slot is not "the base slot of its own button" (base MMB
+    //             forces Split, base RMB forces the loop);
+    //   * loop  — it is not an RMB-family forced loop either;
+    //   * slide — the measured "Ctrl+RMB ran a plain move, no slide" is the
+    //             very reason `CtrlLmb`'s slide row is NOT generalised to
+    //             "Ctrl forces slide". Level this one out and that asymmetry
+    //             loses its evidence.
+    foreach (c; [TopoPenChord.CtrlRmb, TopoPenChord.ShiftCtrlMmb]) {
+        assert(kChordOv[c].mode  == ModeOv.FromUser,
+            "an unbound slot runs the DROPDOWN's mode, not its own button's base mode");
+        assert(kChordOv[c].loop  == FlagOv.FromUser,
+            "an unbound slot does not force the loop flag");
+        assert(kChordOv[c].slide == FlagOv.FromUser,
+            "an unbound slot does not force Edge Slide (measured on Ctrl+RMB)");
+    }
 
     // Every Alt combo -> PassThrough, on every button, with or without other
     // modifiers held alongside it (Alt is hard-blocked above the table scan,
@@ -1343,6 +1412,30 @@ private:
     MoveElem hoverGrabElem_  = MoveElem.None;
     int      hoverGrabIndex_ = -1;
 
+    // The reference's two DISPLAY toggles for this tool (task 0499), both
+    // measured default ON and both plain booleans with no mode gate of their
+    // own. They are the only two attributes in the reference's whole attribute
+    // set whose behavior is measured AND which vibe3d does not publish: a
+    // display flag has no numeric or topological effect to get wrong, which is
+    // exactly why these two can be ported when the numeric ones cannot.
+    //
+    // SCOPE IS A VIBE3D DECISION, NOT A MEASURED LAW — do not silently widen
+    // it. What is measured: the attributes exist, they are booleans, they
+    // default ON, and they control drawing only. WHICH overlay elements they
+    // gate in the reference was NOT measured. We gate exactly our own pen
+    // hover indicator's vertex marker / edge line (`hoverIndicatorElem`), and
+    // nothing else — never the viewport's own vertex/edge display, which is a
+    // global view setting here and would be a far larger claim than the
+    // measurement supports. Both default `true`, so the drawn result with an
+    // untouched panel is byte-identical to before this row existed.
+    //
+    // The hover indicator's third case — the FACE hatch — has no counterpart
+    // among the reference's two toggles and is therefore left ungated
+    // (recorded as an open item in the task file, not resolved by guessing a
+    // third toggle into existence).
+    bool showVertex_ = true;
+    bool showEdge_   = true;
+
     // Fill mode hover preview (task 0477 continuation,
     // doc/topopen_fill_plan.md Phase 5): the ONE candidate gap-cell's 4
     // corner verts (any rotation) under the cursor, or `null` when the mode
@@ -1579,6 +1672,50 @@ public:
     // scale, carries its own `MAX_TOPOPEN_SMOOTH_PASSES` cap in
     // `applySmoothPasses`, and the kernel additionally rejects a non-finite
     // factor that `.enforceBounds()` cannot clamp.
+    //
+    // `showVertex` / `showEdge` (task 0499) — the reference's two DISPLAY
+    // toggles, both measured default ON, both ungated booleans. APPENDED, same
+    // reason as every row above. See their fields' own doc comment for the one
+    // thing about them that is a vibe3d decision rather than a measurement (the
+    // SCOPE of what they hide) and for why the face hatch stays ungated.
+    //
+    // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
+    //
+    // The reference tool carries 31 attributes; this list publishes 7. The gap
+    // is deliberate and sorted into three buckets. A knob whose BEHAVIOR is not
+    // measured is not "approximately right" — it does something else and the
+    // user cannot tell. A knob with GUESSED BOUNDS is the same class of error,
+    // so every row here traces to the measured clamp table (task 0499 §C-0 in
+    // the task file; recovered live AND statically, so it is not re-derivable
+    // from anything in this repo — read it there before adding a row).
+    //
+    //   (a) behavior measured, safe to publish now — EMPTY. Nothing left: the
+    //       bounds sweep measured RANGES, and a range is a row's spec, not a
+    //       licence to ship it.
+    //   (b) measured as pure DISPLAY — `showVertex`, `showEdge`. Below.
+    //   (c) awaiting their own measurement — NOT published, one owner each:
+    //         `quadOnly`, `range`                        -> task 0488 (Fill)
+    //         iteration count (see the note below)       -> task 0490 (Smooth)
+    //         `falloffDist`, `connect`, `shape`, p0/p1   -> task 0491 (falloff)
+    //         `joinDisco`                                -> task 0500 (weld)
+    //         boundary/corner locks + the iteration row  -> task 0501 (gated
+    //                                                       rows; they need a
+    //                                                       panel-gate
+    //                                                       mechanism first)
+    //         `reverse`                                  -> no owner yet; an
+    //                                                       undocumented
+    //                                                       boolean whose
+    //                                                       behavior was never
+    //                                                       measured at all
+    //
+    // Two rows are absent ON PURPOSE rather than pending, and both stay absent:
+    // an iteration/pass-count row (the reference overwrites that attribute with
+    // 1 at the start of every Smooth press, so publishing it would CREATE a
+    // divergence — see `config/forms/topology_pen.yaml`'s own note and
+    // `applySmoothPasses`), and the boundary/corner locks (measured inert on
+    // the path we implement, but that measurement is path-conditional — task
+    // 0501 owns re-deciding them, so shipping them "inert" here is exactly what
+    // must not happen).
     override Param[] params() {
         return [
             Param.bool_("middle", "Split at the Middle", &addLoopMiddle_, false),
@@ -1589,6 +1726,8 @@ public:
             Param.float_("smoothStrength", "Smooth Strength", &smoothStrength_,
                          kSmoothStrengthDefault)
                  .min(0.0f).max(4.0f).enforceBounds(),
+            Param.bool_("showVertex", "Show Vertex", &showVertex_, true),
+            Param.bool_("showEdge",   "Show Edge",   &showEdge_,   true),
         ];
     }
 
@@ -2212,11 +2351,10 @@ public:
     // mask) via `kTopoPenBindings`, arms the resolved action on THIS button,
     // and calls `onToolAction(a, Down, ...)` — which routes to the same
     // `on*Down` method `resolveGestureSlot`'s old `final switch` used to call
-    // directly. The 2 undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) and every
-    // Alt combo are simply ABSENT from `kTopoPenBindings`, so
-    // `resolveToolAction` answers `PassThrough` and `dispatchInput` returns
-    // `false` without ever calling `onToolAction` — byte-identical to the old
-    // switch's `CtrlRmb`/`ShiftCtrlMmb`/`None` cases.
+    // directly. All 12 grid slots are present in `kTopoPenBindings` since task
+    // 0499; every Alt combo is still ABSENT, so `resolveToolAction` answers
+    // `PassThrough` for it and `dispatchInput` returns `false` without ever
+    // calling `onToolAction`.
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
                                     ref VectorStack vts) {
         return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
@@ -2595,6 +2733,30 @@ public:
             return MoveElem.Face;
         }
         return MoveElem.None;
+    }
+
+    // The hover indicator element `draw()` actually paints: the RESOLVED grab
+    // target (`hoverGrabElem_`) filtered by the two display toggles (task
+    // 0499). `draw()` switches on THIS, never on `hoverGrabElem_` directly, so
+    // the toggle cannot be honoured in one of the two places and forgotten in
+    // the other — and so a unittest can pin the drawn outcome without an ImGui
+    // draw list.
+    //
+    // Display-only, by construction: this never feeds `armMoveElement`, so a
+    // hidden indicator still grabs exactly the same element on a press.
+    // Hiding the marker does not disable the grab — that would be a behavior
+    // claim nothing measured.
+    //
+    // `MoveElem.Face` passes through unfiltered: the reference has two
+    // toggles, not three, and inventing a `showPolygon` here would be exactly
+    // the kind of guessed knob task 0499 exists to refuse.
+    private MoveElem hoverIndicatorElem() const {
+        final switch (hoverGrabElem_) {
+        case MoveElem.Vertex: return showVertex_ ? MoveElem.Vertex : MoveElem.None;
+        case MoveElem.Edge:   return showEdge_   ? MoveElem.Edge   : MoveElem.None;
+        case MoveElem.Face:   return MoveElem.Face;
+        case MoveElem.None:   return MoveElem.None;
+        }
     }
 
     // The border-run TRIM (task 0486, measured — implementer contract C-4 in
@@ -5722,7 +5884,12 @@ public:
                 // is near you". Now that a press grabs exactly one element,
                 // showing more than that one misleads — the user aims by this
                 // highlight, so it has to name what they will actually get.
-                final switch (hoverGrabElem_) {
+                //
+                // Switched on `hoverIndicatorElem()`, not on `hoverGrabElem_`:
+                // that is the resolved target with the `showVertex`/`showEdge`
+                // display toggles applied (task 0499). Both default ON, so the
+                // painted result is unchanged unless the user turns one off.
+                final switch (hoverIndicatorElem()) {
                 case MoveElem.Vertex:
                     if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.vertices.length) {
                         ImVec2 vc;
@@ -6191,6 +6358,14 @@ public:
         // what proves it from outside.
         hi["grabElem"]  = JSONValue(moveElemTag(hoverGrabElem_));
         hi["grabIndex"] = JSONValue(hoverGrabIndex_);
+        // What `draw()` actually PAINTS — `grabElem` filtered by the
+        // `showVertex`/`showEdge` display toggles (task 0499). Reported
+        // separately from `grabElem` above precisely because the toggles must
+        // not change what a press grabs: an automated run can see the marker
+        // disappear (`shownElem` = "none") while the grab target stays put.
+        hi["shownElem"] = JSONValue(moveElemTag(hoverIndicatorElem()));
+        hi["showVertex"] = JSONValue(showVertex_);
+        hi["showEdge"]   = JSONValue(showEdge_);
         root["hoverIndicator"] = hi;
 
         return root;
@@ -11476,9 +11651,10 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 5, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
-                          ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483) and the "
-                          ~ "Smooth strength — every later Param is APPENDED, never a full-replace");
+    assert(ps.length == 7, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+                          ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483), the "
+                          ~ "Smooth strength and the two display toggles (task 0499) — every "
+                          ~ "later Param is APPENDED, never a full-replace");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
     assert(ps[0].default_.b == false, "`middle` must default OFF — the shipped click-derived "
@@ -11820,6 +11996,98 @@ unittest {
         assert(t.gestureOn_[InputButton.Middle] == PenGesture.Remove,
             "and the MIDDLE booking is its own");
     }
+
+    // --- task 0499: the two slots that override NOTHING. Each one must run
+    //     the DROPDOWN's mode — the whole content of the measurement — and
+    //     must NOT behave like the base slot of its own button.
+    foreach (c; [TopoPenChord.CtrlRmb, TopoPenChord.ShiftCtrlMmb]) {
+        assert(press(c, PenMode.Move)      == PenGesture.PlaceOrMove,
+            "an unbound slot with the dropdown on Move runs a plain move");
+        assert(press(c, PenMode.Remove)    == PenGesture.Remove,
+            "…on Remove it removes");
+        assert(press(c, PenMode.Split)     == PenGesture.Split,
+            "…on Split it splits (the condition the capture ran in lockstep)");
+        assert(press(c, PenMode.AddLoop)   == PenGesture.AddLoop);
+        assert(press(c, PenMode.Duplicate) == PenGesture.Build);
+        // Smoothing WITHOUT the loop — this is the assertion that fails if
+        // either row is ever "fixed" into looking like its own button's base
+        // slot: plain RMB forces the loop (-> SmoothLoop) and Ctrl+RMB does
+        // not, and plain MMB forces Split where Shift+Ctrl+MMB does not.
+        assert(press(c, PenMode.Smooth)    == PenGesture.Smooth,
+            "an unbound slot does NOT force the loop the way its button's base slot may");
+        // …and it still READS the user's own flags, like the base LMB slot.
+        assert(press(c, PenMode.Smooth, /*loop=*/true) == PenGesture.SmoothLoop,
+            "FromUser means the user's Edge Loop reaches the slot");
+        assert(press(c, PenMode.Move, /*loop=*/false, /*slide=*/true) == PenGesture.Slide,
+            "…and so does the user's Edge Slide");
+    }
+    // The distinction stated as a direct comparison, in the exact condition the
+    // capture ran (dropdown = Move / Split): same button, different slot.
+    assert(press(TopoPenChord.Rmb, PenMode.Move) != press(TopoPenChord.CtrlRmb, PenMode.Move),
+        "plain RMB forces the loop, Ctrl+RMB does not — measured on the same rig");
+    assert(press(TopoPenChord.Mmb, PenMode.Move) != press(TopoPenChord.ShiftCtrlMmb, PenMode.Move),
+        "plain MMB forces Split, Shift+Ctrl+MMB followed the dropdown (measured: MOVE)");
+    assert(press(TopoPenChord.Mmb, PenMode.Split) == press(TopoPenChord.ShiftCtrlMmb, PenMode.Split),
+        "and with the dropdown ON Split the two agree — the other half of the lockstep");
+}
+
+// ---------------------------------------------------------------------------
+// The 12-slot grid at the DEFAULT dropdown — the "nothing else moved"
+// acceptance condition, restated for task 0499 exactly as task 0487 stated it:
+// with the dropdown parked at its default (`move`, both flags off), every slot
+// that existed before yields EXACTLY the gesture it yielded before, and the two
+// new rows land on the base slot's own outcome (they override nothing, so at the
+// default dropdown they cannot differ from plain LMB's routing).
+//
+// One table, all 12 rows, driven through the real `onToolAction` seam. A future
+// edit that "tidies" the chord table by shifting an enum member or a row is a
+// silent rebinding of everything after it (`kChordOv` is indexed BY the enum) —
+// this is the pin that turns that into a failure.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    Mesh m = makeGridPlane(3);
+    auto vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)p0.x; e.y = cast(int)p0.y;
+
+    static struct Slot { TopoPenChord chord; PenGesture want; string why; }
+    immutable Slot[] grid = [
+        Slot(TopoPenChord.Lmb,          PenGesture.PlaceOrMove, "plain LMB"),
+        Slot(TopoPenChord.ShiftLmb,     PenGesture.Build,       "Shift+LMB = Duplicate, loop from the user (off)"),
+        Slot(TopoPenChord.CtrlLmb,      PenGesture.Slide,       "Ctrl+LMB forces Edge Slide"),
+        Slot(TopoPenChord.ShiftCtrlLmb, PenGesture.Smooth,      "Shift+Ctrl+LMB = Smoothing, no loop"),
+        Slot(TopoPenChord.Mmb,          PenGesture.Split,       "plain MMB = Split"),
+        Slot(TopoPenChord.ShiftMmb,     PenGesture.AddLoop,     "Shift+MMB = Add Loop"),
+        Slot(TopoPenChord.CtrlMmb,      PenGesture.Remove,      "Ctrl+MMB = Remove"),
+        Slot(TopoPenChord.Rmb,          PenGesture.MoveLoop,    "plain RMB = the dropdown + forced loop"),
+        Slot(TopoPenChord.ShiftRmb,     PenGesture.DupLoop,     "Shift+RMB = Duplicate + forced loop"),
+        Slot(TopoPenChord.ShiftCtrlRmb, PenGesture.SmoothLoop,  "Shift+Ctrl+RMB = Smoothing + forced loop"),
+        // The two rows task 0499 wired. At the DEFAULT dropdown they are the
+        // base slot's own outcome — that is what "overrides nothing" means, and
+        // it is why wiring them cannot disturb any row above.
+        Slot(TopoPenChord.CtrlRmb,      PenGesture.PlaceOrMove, "Ctrl+RMB follows the dropdown"),
+        Slot(TopoPenChord.ShiftCtrlMmb, PenGesture.PlaceOrMove, "Shift+Ctrl+MMB follows the dropdown"),
+    ];
+    assert(grid.length == kChordOv.length,
+        "every chord slot must appear in this pin — a new row without a row here is a gap");
+
+    foreach (s; grid) {
+        auto t = new TopologyPenTool();
+        t.meshSrc_ = () => &m;   // default dropdown/flags: Move, loop off, slide off
+        t.onToolAction(s.chord, InputPhase.Down, e, vts);
+        assert(t.gestureOn_[chordButton(s.chord)] == s.want, s.why);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -11898,6 +12166,106 @@ unittest {
     assert(abs(t.smoothStrength_ - 0.5f) < 1e-6f,
         "smoothStrength_ must survive resyncSession() — it is a sticky tool option, not "
       ~ "per-gesture arm state");
+}
+
+// ---------------------------------------------------------------------------
+// params() / toolStateJson — the two DISPLAY toggles (task 0499): the
+// reference's `showVertex`/`showEdge`, both measured default ON, published as
+// plain sticky booleans. Nothing here is bounded or gated — they are the only
+// two attributes in the reference's set whose behavior is measured to be
+// "drawing only", which is what makes them portable when the numeric ones are
+// not.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json : JSONType;
+
+    auto t = new TopologyPenTool();
+
+    auto ps = t.params();
+    assert(ps[5].name == "showVertex");
+    assert(ps[5].kind == Param.Kind.Bool);
+    assert(ps[5].default_.b == true, "showVertex must default ON — the measured default");
+    assert(ps[5].bptr is &t.showVertex_, "the Param must bind directly to showVertex_");
+    assert(ps[6].name == "showEdge");
+    assert(ps[6].kind == Param.Kind.Bool);
+    assert(ps[6].default_.b == true, "showEdge must default ON — the measured default");
+    assert(ps[6].bptr is &t.showEdge_, "the Param must bind directly to showEdge_");
+
+    // Defaults ON => a tool nobody touched draws exactly what it drew before
+    // these rows existed.
+    assert(t.showVertex_ && t.showEdge_, "both toggles must start ON");
+
+    auto s0 = t.toolStateJson();
+    assert(s0["hoverIndicator"]["showVertex"].type == JSONType.true_);
+    assert(s0["hoverIndicator"]["showEdge"].type   == JSONType.true_);
+
+    t.showVertex_ = false;
+    t.resyncSession();
+    assert(!t.showVertex_,
+        "showVertex_ must survive resyncSession() — a sticky display option, not arm state");
+    auto s1 = t.toolStateJson();
+    assert(s1["hoverIndicator"]["showVertex"].type == JSONType.false_,
+        "the live toggle must be observable from outside");
+}
+
+// ---------------------------------------------------------------------------
+// hoverIndicatorElem — WHAT the toggles actually do (task 0499). `draw()`
+// switches on this function, so this is the drawn outcome, pinned without an
+// ImGui draw list.
+//
+// The load-bearing half is the SECOND assertion of each pair: turning a marker
+// off must NOT change `hoverGrabElem_`, i.e. what a press grabs. These are
+// display toggles; nothing measured says they disable the grab, and a knob that
+// silently changed the grab target would be the exact failure mode task 0499
+// exists to avoid.
+// ---------------------------------------------------------------------------
+unittest {
+    auto t = new TopologyPenTool();
+
+    // A resolved VERTEX target.
+    t.hoverGrabElem_  = MoveElem.Vertex;
+    t.hoverGrabIndex_ = 3;
+    assert(t.hoverIndicatorElem() == MoveElem.Vertex, "ON by default -> the marker draws");
+    t.showVertex_ = false;
+    assert(t.hoverIndicatorElem() == MoveElem.None, "showVertex off -> nothing is painted");
+    assert(t.hoverGrabElem_ == MoveElem.Vertex && t.hoverGrabIndex_ == 3,
+        "…and the resolved grab target is untouched — the press still takes the vertex");
+    // The OTHER toggle is not involved.
+    t.showEdge_ = false;
+    t.showVertex_ = true;
+    assert(t.hoverIndicatorElem() == MoveElem.Vertex,
+        "showEdge must not gate the vertex marker");
+
+    // A resolved EDGE target, same shape.
+    t.hoverGrabElem_  = MoveElem.Edge;
+    t.hoverGrabIndex_ = 7;
+    t.showEdge_ = true;
+    assert(t.hoverIndicatorElem() == MoveElem.Edge);
+    t.showEdge_ = false;
+    assert(t.hoverIndicatorElem() == MoveElem.None, "showEdge off -> nothing is painted");
+    assert(t.hoverGrabElem_ == MoveElem.Edge && t.hoverGrabIndex_ == 7,
+        "…and the press still takes the edge");
+    t.showVertex_ = false;
+    t.showEdge_   = true;
+    assert(t.hoverIndicatorElem() == MoveElem.Edge,
+        "showVertex must not gate the edge line");
+
+    // The FACE hatch has no toggle in the reference's two-flag set, so neither
+    // flag may hide it. Guessing a third toggle into existence here is the
+    // failure this asserts against.
+    t.hoverGrabElem_  = MoveElem.Face;
+    t.hoverGrabIndex_ = 1;
+    t.showVertex_ = false;
+    t.showEdge_   = false;
+    assert(t.hoverIndicatorElem() == MoveElem.Face,
+        "the face hatch is ungated — the reference has two display toggles, not three");
+
+    // Nothing resolved stays nothing, either way.
+    t.hoverGrabElem_  = MoveElem.None;
+    t.hoverGrabIndex_ = -1;
+    t.showVertex_ = true;
+    t.showEdge_   = true;
+    assert(t.hoverIndicatorElem() == MoveElem.None);
 }
 
 // ---------------------------------------------------------------------------
