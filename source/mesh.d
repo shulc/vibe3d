@@ -2242,6 +2242,136 @@ struct Mesh {
         return false;
     }
 
+    /// Which vertices an edge dissolve of `mask` consumes ENTIRELY — the
+    /// companion query to `removeEdgesByMask(mask, keepConsumedVerts:false)`.
+    ///
+    /// The rule, in full (task 0494, recovered from the reference editor's own
+    /// removal primitive and reproduced here directly rather than approximated):
+    ///
+    ///   a vertex disappears **iff** it is an endpoint of a dissolving edge
+    ///   AND every polygon of its incident fan is itself incident to some
+    ///   dissolving edge.
+    ///
+    /// Read the two halves separately, because BOTH are load-bearing:
+    ///
+    ///   * The CANDIDATE set is the endpoints of the dissolving edges, never
+    ///     "every vertex the merge touched". On a 4x4 grid dissolving the
+    ///     3-edge column {(1,5),(5,9),(9,13)}, vertex 4's whole fan {f00,f10}
+    ///     IS consumed — but 4 is nobody's dissolving endpoint, so it stays.
+    ///   * The TEST is fan completeness, not valence. `dissolveDegree2Verts`
+    ///     (this file's other cleanup pass) is the valence rule, and the two
+    ///     DIVERGE IN BOTH DIRECTIONS — see this method's unittests, which pin
+    ///     the two constructed masks that separate them. On a plain quad grid
+    ///     dissolving a whole loop they happen to coincide, so a green test on
+    ///     that fixture alone proves nothing about which rule is implemented.
+    ///
+    /// Only mask entries that will ACTUALLY dissolve count: an edge with other
+    /// than exactly two incident polygons is skipped, matching
+    /// `removeEdgesByMask`'s own boundary-edge skip, so a border edge in the
+    /// mask neither marks its single polygon nor nominates its endpoints.
+    ///
+    /// Pure query — indexes and answers in the CURRENT (pre-dissolve) vertex
+    /// index space. Returns an all-false mask when `mask` is the wrong length.
+    bool[] consumedFanVertexMask(in bool[] mask) const {
+        bool[] result;
+        result.length = vertices.length;
+        if (mask.length != edges.length || faces.length == 0) return result;
+
+        // How many polygons each undirected edge borders. Counted straight off
+        // `faces` (not `buildEdgeFaces`, whose two-slot int[2] cannot witness a
+        // third incident polygon) so "exactly two" really means exactly two.
+        int[ulong] polyCount;
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                ++polyCount[edgeKeyOrdered(f[k], f[(k + 1) % f.length])];
+
+        // The edges that will dissolve, as undirected keys.
+        bool[ulong] doomed;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            immutable ulong key = edgeKeyOrdered(edges[i][0], edges[i][1]);
+            auto pc = key in polyCount;
+            if (pc is null || *pc != 2) continue;
+            doomed[key] = true;
+        }
+        if (doomed.length == 0) return result;
+
+        // Candidates: the endpoints of those edges, and nothing else.
+        bool[] candidate;
+        candidate.length = vertices.length;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            if (edgeKeyOrdered(edges[i][0], edges[i][1]) !in doomed) continue;
+            foreach (v; edges[i])
+                if (v < candidate.length) candidate[v] = true;
+        }
+
+        // A polygon is CONSUMED when it borders a dissolving edge.
+        bool[] consumedFace;
+        consumedFace.length = faces.length;
+        foreach (fi, ref f; faces)
+            foreach (k; 0 .. f.length)
+                if (edgeKeyOrdered(f[k], f[(k + 1) % f.length]) in doomed) {
+                    consumedFace[fi] = true;
+                    break;
+                }
+
+        // A vertex is SPARED as soon as one polygon of its fan survives; a
+        // vertex with no fan at all is spared too (an empty fan is not a
+        // consumed one).
+        bool[] spared, hasFan;
+        spared.length = hasFan.length = vertices.length;
+        foreach (fi, ref f; faces)
+            foreach (v; f) {
+                if (v >= vertices.length) continue;
+                hasFan[v] = true;
+                if (!consumedFace[fi]) spared[v] = true;
+            }
+
+        foreach (i; 0 .. vertices.length)
+            result[i] = candidate[i] && hasFan[i] && !spared[i];
+        return result;
+    }
+
+    /// `removeEdgesByMask`, then DROP the vertices the dissolve consumed
+    /// entirely (`consumedFanVertexMask`) — re-stitching the survivors around
+    /// them. Task 0494: the reference editor's edge removal runs this purge
+    /// unless its "keep vertex" option is on, and that option defaults OFF, so
+    /// THIS overload is the reference default and the one-argument form above
+    /// is its "keep vertex ON" branch.
+    ///
+    /// `keepConsumedVerts: true` forwards verbatim to the one-argument overload
+    /// (so a caller can pass the flag straight through without branching); every
+    /// pre-existing caller keeps the one-argument form and is byte-unchanged.
+    ///
+    /// The consumed set is resolved BEFORE the dissolve and carried across it by
+    /// POSITION — the dissolve reindexes vertices (`compactUnreferenced`), and
+    /// positions flow through compaction by value. Same technique, and the same
+    /// coincident-position caveat, as `lastEdgeDeleteRegion_`.
+    ///
+    /// Returns the number of edges dissolved, exactly as the one-argument form.
+    size_t removeEdgesByMask(in bool[] mask, bool keepConsumedVerts) {
+        if (keepConsumedVerts) return removeEdgesByMask(mask);
+
+        Vec3[] consumedPos;
+        foreach (i, c; consumedFanVertexMask(mask))
+            if (c) consumedPos ~= vertices[i];
+
+        immutable size_t dissolved = removeEdgesByMask(mask);
+        if (dissolved == 0 || consumedPos.length == 0) return dissolved;
+
+        // A consumed vertex that the merge already left face-unreferenced is
+        // gone (the dissolve's own tail compaction took it); the rest are still
+        // corners of a merged polygon and are dropped from it here.
+        bool[] vmask;
+        vmask.length = vertices.length;
+        size_t hit = 0;
+        foreach (i; 0 .. vertices.length)
+            if (positionInRegion(vertices[i], consumedPos)) { vmask[i] = true; ++hit; }
+        if (hit > 0) dissolveVerticesByMask(vmask, /*keepOrphans*/true);
+        return dissolved;
+    }
+
     /// Dissolve the edges marked true in `mask`: each selected edge is
     /// removed, and any group of faces transitively connected through
     /// selected edges is merged into a single polygon along the union's
@@ -2254,6 +2384,9 @@ struct Mesh {
     /// produce a bowtie polygon in that case. Boundary edges (only one
     /// adjacent face) are skipped. Returns the number of selected edges
     /// actually dissolved.
+    ///
+    /// This overload KEEPS every vertex the merge consumed, as a corner of the
+    /// merged polygon. The two-argument overload above drops them instead.
     size_t removeEdgesByMask(in bool[] mask) {
         if (mask.length != edges.length) return 0;
 
@@ -28498,3 +28631,188 @@ unittest { // makePolygonFromVerts(autoOrient:false) — the winding bypass
         ~ "with autoOrient:false");
 }
 
+
+// ---------------------------------------------------------------------------
+// consumedFanVertexMask / removeEdgesByMask(mask, keepConsumedVerts) — task
+// 0494, the recovered "a vertex disappears iff its WHOLE polygon fan was
+// consumed" purge rule.
+//
+// The fixture is `makeGridPlane(3)` — a 4x4 planar grid, 16v/24e/9f, vertex
+// index 4*row + col, one quad per cell — which is exactly the rig the
+// behaviour was captured on, so the numbers below are comparable to the
+// capture row by row.
+//
+// READ THIS BEFORE TOUCHING THESE TESTS: on a plain quad grid dissolving a
+// whole edge loop, the fan rule and this file's OTHER cleanup pass
+// (`dissolveDegree2Verts`, a VALENCE rule) predict the identical post-mesh. A
+// green loop test therefore proves nothing about which of the two is
+// implemented, which is why the fourth block below is a two-armed witness on a
+// CONSTRUCTED mask where they disagree — delete that block and the rest of
+// this file no longer pins the rule at all.
+// ---------------------------------------------------------------------------
+unittest { // single interior edge: the purge RUNS and deletes NOTHING
+    Mesh m = makeGridPlane(3);
+    assert(m.vertices.length == 16 && m.edges.length == 24 && m.faces.length == 9,
+        "setup: makeGridPlane(3) must be the 4x4 grid the capture used");
+
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(5, 9)] = true;
+
+    // Vertices 5 and 9 each carry a fan of FOUR quads of which the dissolve
+    // consumes TWO — partial fans, so nothing is purged even with the purge
+    // enabled. This is the cheap regression anchor for the rule: a valence
+    // test would be equally quiet here, but a "drop every touched endpoint"
+    // implementation would wrongly take both.
+    foreach (i, c; m.consumedFanVertexMask(mask))
+        assert(!c, "a partially consumed fan must never be purged");
+
+    assert(m.removeEdgesByMask(mask, /*keepConsumedVerts*/false) == 1);
+    assert(m.vertices.length == 16 && m.edges.length == 23 && m.faces.length == 8,
+        "an interior edge dissolve merges its two quads into one hexagon and "
+        ~ "loses nothing else");
+    assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+}
+
+unittest { // an edge LOOP, both ways round the keep-vertex flag
+    // The vertical 3-edge run through the middle column of the grid.
+    static bool[] loopMask(ref Mesh m) {
+        auto mask = new bool[](m.edges.length);
+        mask[m.edgeIndex(1, 5)]  = true;
+        mask[m.edgeIndex(5, 9)]  = true;
+        mask[m.edgeIndex(9, 13)] = true;
+        return mask;
+    }
+
+    // KEEP the consumed vertices: the merged hexagons carry them as corners.
+    {
+        Mesh m = makeGridPlane(3);
+        assert(m.removeEdgesByMask(loopMask(m)) == 3);
+        assert(m.vertices.length == 16 && m.edges.length == 21 && m.faces.length == 6);
+        assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+    }
+
+    // DROP them (the reference default): each hexagon collapses back to a
+    // quad, and the four re-stitching edges appear.
+    {
+        Mesh m = makeGridPlane(3);
+        auto pre  = m.vertices.dup;
+        auto mask = loopMask(m);
+
+        auto consumed = m.consumedFanVertexMask(mask);
+        uint[] taken;
+        foreach (i, c; consumed) if (c) taken ~= cast(uint)i;
+        assert(taken == [1u, 5u, 9u, 13u],
+            "exactly the loop's own endpoints, whose fans the dissolve eats whole "
+            ~ "— NOT vertex 4, whose fan is also eaten but which is nobody's "
+            ~ "dissolving endpoint");
+
+        assert(m.removeEdgesByMask(mask, /*keepConsumedVerts*/false) == 3);
+        assert(m.vertices.length == 12 && m.edges.length == 17 && m.faces.length == 6,
+            "dropping the four consumed vertices re-stitches the survivors");
+        assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+
+        // Positions, not indices: the dissolve reindexes.
+        int idxOf(Vec3 p) {
+            foreach (i, ref v; m.vertices)
+                if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+            return -1;
+        }
+        foreach (gone; [1, 5, 9, 13])
+            assert(idxOf(pre[gone]) < 0, "a consumed vertex must be gone");
+        foreach (pair; [[0, 2], [4, 6], [8, 10], [12, 14]]) {
+            immutable int a = idxOf(pre[pair[0]]), b = idxOf(pre[pair[1]]);
+            assert(a >= 0 && b >= 0 && m.edgeIndex(cast(uint)a, cast(uint)b) != ~0u,
+                "the survivors must be re-stitched across the gap");
+        }
+    }
+}
+
+unittest { // a BORDER edge in the mask neither dissolves nor nominates anything
+    Mesh m = makeGridPlane(3);
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(0, 1)] = true;   // top-left border edge, ONE incident quad
+
+    foreach (c; m.consumedFanVertexMask(mask))
+        assert(!c, "a one-polygon edge cannot consume a fan");
+    assert(m.removeEdgesByMask(mask, /*keepConsumedVerts*/false) == 0);
+    assert(m.vertices.length == 16 && m.edges.length == 24 && m.faces.length == 9,
+        "border seed must be a total no-op");
+}
+
+unittest { // THE KERNEL TRAP, both arms — "whole fan consumed" is NOT "2-valent"
+    // Two dissolving edges meeting at interior vertex 5, whose fourth quad
+    // [5,6,10,9] is NOT consumed. The fan rule spares 5; the valence rule
+    // takes it (after the dissolve 5 has exactly two edges left) and mangles
+    // that surviving quad into a triangle.
+    static bool[] trapMask(ref Mesh m) {
+        auto mask = new bool[](m.edges.length);
+        mask[m.edgeIndex(1, 5)] = true;
+        mask[m.edgeIndex(4, 5)] = true;
+        return mask;
+    }
+    static int idxOf(ref Mesh m, Vec3 p) {
+        foreach (i, ref v; m.vertices)
+            if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+        return -1;
+    }
+
+    // Arm 1 — the implemented rule.
+    {
+        Mesh m = makeGridPlane(3);
+        auto pre = m.vertices.dup;
+
+        uint[] taken;
+        foreach (i, c; m.consumedFanVertexMask(trapMask(m))) if (c) taken ~= cast(uint)i;
+        assert(taken == [1u, 4u],
+            "only the endpoints whose fan is eaten WHOLE — vertex 5 keeps one quad");
+
+        assert(m.removeEdgesByMask(trapMask(m), /*keepConsumedVerts*/false) == 2);
+        assert(m.vertices.length == 14 && m.edges.length == 20 && m.faces.length == 7);
+        assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+        assert(idxOf(m, pre[5]) >= 0, "vertex 5 must SURVIVE — its fan was not eaten");
+        assert(idxOf(m, pre[1]) < 0 && idxOf(m, pre[4]) < 0);
+        foreach (ref f; m.faces)
+            assert(f.length >= 4, "no surviving quad may be reduced to a triangle");
+    }
+
+    // Arm 2 — the valence rule on the SAME input, to prove the two genuinely
+    // disagree here rather than that the first arm merely passed.
+    {
+        Mesh m = makeGridPlane(3);
+        auto pre = m.vertices.dup;
+        assert(m.removeEdgesByMask(trapMask(m)) == 2);
+        m.dissolveDegree2Verts(m.edgeDeleteRegion(), /*keepOrphans*/true);
+        assert(m.vertices.length == 13 && m.edges.length == 19 && m.faces.length == 7,
+            "control: the valence rule takes one vertex more");
+        assert(idxOf(m, pre[5]) < 0, "control: the valence rule DELETES vertex 5");
+        bool anyTri = false;
+        foreach (ref f; m.faces) if (f.length == 3) anyTri = true;
+        assert(anyTri, "control: and mangles the unconsumed quad into a triangle");
+    }
+}
+
+unittest { // a WHOLE fan in the mask: the shared vertex goes, its neighbours
+           // go, the untouched ring stays — and here the two rules COINCIDE,
+           // recorded so nobody reads this block as a second discriminator.
+    Mesh m = makeGridPlane(3);
+    auto pre = m.vertices.dup;
+    auto mask = new bool[](m.edges.length);
+    foreach (pair; [[1, 5], [4, 5], [5, 6], [5, 9]])
+        mask[m.edgeIndex(cast(uint)pair[0], cast(uint)pair[1])] = true;
+
+    uint[] taken;
+    foreach (i, c; m.consumedFanVertexMask(mask)) if (c) taken ~= cast(uint)i;
+    assert(taken == [1u, 4u, 5u],
+        "5 (whole fan), plus 1 and 4 whose two-quad fans are also eaten whole; "
+        ~ "6 and 9 keep an outer quad each");
+
+    assert(m.removeEdgesByMask(mask, /*keepConsumedVerts*/false) == 4);
+    assert(m.vertices.length == 13 && m.edges.length == 18 && m.faces.length == 6);
+    assert(m.vertices.length - m.edges.length + m.faces.length == 1, "Euler");
+    int idxOf(Vec3 p) {
+        foreach (i, ref v; m.vertices)
+            if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+        return -1;
+    }
+    assert(idxOf(pre[5]) < 0 && idxOf(pre[1]) < 0 && idxOf(pre[4]) < 0);
+}
