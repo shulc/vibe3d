@@ -8,6 +8,7 @@ import std.algorithm : canFind;
 import toolpipe.stage    : Stage, TaskCode, ordSnap;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SnapPacket, SnapHitPacket, SnapType, SnapMode;
+import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 
@@ -39,6 +40,9 @@ class SnapStage : Stage, Operator {
     // the VectorStack holds POINTERS into the publisher, valid for the one
     // `pipeline.evaluate` call.
     private SnapHitPacket _hitPkt;
+    // The guide registry (S4(a) of doc/toolpipe_architecture_plan.md). Empty
+    // in this phase and in every existing code path: nothing registers.
+    private SnapGuide[] _guides;
 
     Task task() const { return Task.Snap; }
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
@@ -66,8 +70,60 @@ class SnapStage : Stage, Operator {
         _publishedPacket = pkt;
         vts.put(&_publishedPacket);
 
+        // The ranges go to the guides before the query that will consult them,
+        // so a range changed mid-gesture reaches a guide that is already
+        // registered. Zero iterations while the registry is empty.
+        pushLimitsToGuides();
         publishSnapHit(vts, pkt);
         return true;
+    }
+
+    // ---- the guide registry (S4(a) of doc/toolpipe_architecture_plan.md) ---
+    //
+    // A guide is a gesture-scoped snapping CLIENT: the tool that owns the
+    // gesture registers one when the gesture starts and removes it when the
+    // gesture ends. That LIFECYCLE is MEASURED (an observed add/remove pair
+    // around a drag); the interface's method set and its `priority` return are
+    // header-derived and unmeasured — see `toolpipe.guide` for which is which.
+    //
+    // Phase (a) lands the registry EMPTY. No tool in this tree calls
+    // `addGuide`, so `_guides.length` is 0 at every `snapCursor` this stage
+    // makes, the arbitration branch inside `snapCursor` is unreachable, and
+    // the ranking is the historical "nearest wins". Changing that is phase
+    // (b), and it is named behaviour-changing.
+
+    /// Register a gesture-scoped guide, and push the current ranges into it.
+    ///
+    /// Idempotent: registering the same guide twice is a no-op rather than a
+    /// second vote in the arbitration. Ignores null.
+    void addGuide(SnapGuide g) {
+        if (g is null) return;
+        foreach (e; _guides) if (e is g) return;
+        _guides ~= g;
+        // MEASURED direction — the environment's ranges are pushed IN at
+        // registration; a guide never sources the pair for itself.
+        g.limits(innerRangePx, outerRangePx);
+    }
+
+    /// Remove a previously registered guide. Returns true if it was there.
+    bool removeGuide(SnapGuide g) {
+        foreach (i, e; _guides) {
+            if (e !is g) continue;
+            _guides = _guides[0 .. i] ~ _guides[i + 1 .. $];
+            return true;
+        }
+        return false;
+    }
+
+    /// The registered guides, in registration order — which is also the order
+    /// the arbitration settles equal priorities by.
+    SnapGuide[] guides() { return _guides; }
+
+    /// How many guides are registered. 0 in phase (a), always.
+    size_t guideCount() const { return _guides.length; }
+
+    private void pushLimitsToGuides() {
+        foreach (g; _guides) g.limits(innerRangePx, outerRangePx);
     }
 
     // ---- the per-cursor RESULT (S2 of doc/toolpipe_architecture_plan.md) ---
@@ -109,8 +165,21 @@ class SnapStage : Stage, Operator {
         // (see SnapHitPacket's contract). Were the seed to acquire meaning,
         // this line would have to become a real derivation, and the packet's
         // "meaningful only when `snapped`" clause is what keeps that honest.
+        // `_guides` is the S4(a) registry, and it is empty: nothing in this
+        // tree registers a guide, so this argument is `null` in effect and the
+        // query takes the historical ranking. It is passed anyway because the
+        // registry has to reach the arbitration through SOMETHING, and this is
+        // the one query the stage owns.
+        //
+        // NOTE for phase (b): the four tool-side `snapCursor` call sites
+        // (`app.d`, `tools/create/create_common.d`, `tools/transform/move.d`,
+        // `tools/transform/transform.d`) do NOT consult the registry. The
+        // moment a real guide registers, they and this query would rank
+        // differently — so migrating them is part of registering the first
+        // guide, not a follow-up.
         SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
-                                   subj.viewport, *subj.mesh, cfg);
+                                   subj.viewport, *subj.mesh, cfg,
+                                   null, null, _guides);
 
         SnapHitPacket hit;   // every field at its documented default
         hit.snapped      = sr.snapped;
@@ -185,6 +254,11 @@ class SnapStage : Stage, Operator {
         // Drop the last per-cursor result too, so a scene reset cannot leave a
         // stale hit behind the stage's pointer (mirrors the CONS stage).
         _hitPkt       = SnapHitPacket.init;
+        // And drop the guide registry: a guide is scoped to a gesture, and a
+        // scene reset ends every gesture there was. Leaving one registered
+        // would outlive the tool that owns it — the one lifecycle error the
+        // measured add/remove pair rules out.
+        _guides       = null;
         publishState();
     }
 

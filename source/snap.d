@@ -9,6 +9,7 @@ import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
               closestPointOnLineToRay;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+import toolpipe.guide   : SnapGuide;
 import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
@@ -278,12 +279,23 @@ alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
 /// that a later candidate must beat. A null `admit` (the default) admits
 /// everything, so every call site that does not pass one takes exactly the
 /// pre-existing path.
+///
+/// `guides`, when non-empty, replaces "nearest wins" with "(priority,
+/// distance) wins" — see `arbitrate` inside. An EMPTY `guides` (the default)
+/// leaves every candidate at priority 0 and its own screen distance, which is
+/// the pre-existing ranking exactly; this is S4(a)'s neutrality argument
+/// (technique N4 of doc/toolpipe_architecture_plan.md) and it is a statement
+/// about reachability, not about agreement. That the two paths also AGREE,
+/// for a guide that mirrors the distance rule, is proved by the unittest at
+/// the bottom of this module, because that agreement is what phase (b) rests
+/// on.
 SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                       const ref Viewport vp,
                       const ref Mesh mesh,
                       const ref SnapPacket cfg,
                       const(uint)[] excludeVerts = null,
-                      scope SnapAdmit admit = null)
+                      scope SnapAdmit admit = null,
+                      scope SnapGuide[] guides = null)
 {
     // One coarse scope per call — snapCursor is invoked once per drag
     // frame (not per vertex), so this captures the WHOLE geometric
@@ -327,6 +339,60 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     Vec3     cBestWorld = cursorWorld;
     SnapType cBestType  = SnapType.None;
 
+    // ------------------------------------------------------------------
+    // S4(a): the guide arbitration's half of the accumulator.
+    //
+    // `int.min` is the "nothing accumulated yet" sentinel, and it is chosen so
+    // that the generalised comparison below REDUCES to the historical one when
+    // no guide is registered, rather than merely agreeing with it:
+    //
+    //   with `guides` empty every candidate carries `prio == 0`, so
+    //     first candidate : 0 > int.min                 -> accept
+    //                       (old: d < float.infinity    -> accept)
+    //     later candidates: 0 == 0 && d < bestDist      -> compare distance
+    //                       (old: d < bestDist          -> compare distance)
+    //
+    // Those are the same two decisions, not two decisions that happen to
+    // coincide on this fixture. A `bestPrio` initialised to 0 instead would
+    // have silently dropped the first candidate whenever a guide returned a
+    // negative priority, which is exactly the class of bug an "empty registry"
+    // stage cannot catch by running.
+    // ------------------------------------------------------------------
+    int bestPrio  = int.min;
+    int cBestPrio = int.min;
+
+    // Ask the registered guides about one enumerated candidate. Returns false
+    // when NO guide admits it, in which case the candidate is dropped as if it
+    // had never been enumerated (the same contract `admit` has). When several
+    // guides admit it, the HIGHEST-priority answer supplies both the ranking
+    // distance and the priority; equal priorities are settled by registration
+    // order (strict `>`), which is the only tie-break the registry can offer.
+    //
+    // U2 — the whole rule is header-derived. The `priority` return has never
+    // been observed on a wire, so neither has anything built on it. Phase (a)
+    // keeps this unreachable: nothing registers a guide.
+    //
+    // The guide re-RANKS a candidate; it never introduces one. `candWorld`,
+    // `type`, `idx` and `slot` are the enumeration's, and the winner's world
+    // position is still the candidate's own — a guide that answers with a
+    // different distance changes WHICH candidate wins, never WHERE it is.
+    bool arbitrate(Vec3 candWorld, SnapType type, int idx, int slot,
+                   ref float distPx, ref int prio)
+    {
+        bool admitted = false;
+        foreach (g; guides) {
+            float gd;
+            int   gp;
+            if (!g.proximity(candWorld, type, idx, slot, gd, gp)) continue;
+            if (!admitted || gp > prio) {
+                admitted = true;
+                distPx   = gd;
+                prio     = gp;
+            }
+        }
+        return admitted;
+    }
+
     // `slot` identifies which snap SOURCE this candidate came from (0 = active
     // mesh, 1..N = background source). It is recorded on the winner so the
     // highlight renderer can resolve the element against the right mesh — a
@@ -349,8 +415,21 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         float dy = pys - cast(float)sy;
         float d  = sqrt(dx * dx + dy * dy);
         if (d > cfg.outerRangePx) return;
-        if (d < bestDist) {
+        // S4(a): the guide arbitration. The gather cutoff above stays ahead of
+        // it deliberately — the candidate GRID is queried with `outerRangePx`
+        // in the first place, so a candidate outside the gather range is one
+        // no guide could have been offered anyway, and applying the cutoff to
+        // a guide-supplied distance would let the ranking value masquerade as
+        // a range test.
+        //
+        // UNREACHABLE in phase (a): `guides` is empty at every call site, so
+        // `prio` stays 0 and the comparison below is the historical one.
+        int prio = 0;
+        if (guides.length != 0 && !arbitrate(candWorld, type, idx, slot, d, prio))
+            return;
+        if (prio > bestPrio || (prio == bestPrio && d < bestDist)) {
             bestDist   = d;
+            bestPrio   = prio;
             bestWorld  = candWorld;
             bestIdx    = idx;
             bestSource = slot;
@@ -373,8 +452,18 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         float dy = pys - cast(float)sy;
         float d  = sqrt(dx * dx + dy * dy);
         if (d > cfg.outerRangePx) return;
-        if (d < cBestDist) {
+        // Same guide arbitration, same order (see `consider`). Extending it to
+        // the constraint tier is OURS and unmeasured — the two-tier split is
+        // ours, the reference has no analogue of it — but the alternative is
+        // worse in a nameable way: a guide whose whole job is an admission
+        // rule would reject every discrete candidate and then watch a
+        // constraint hit sail past it. Uniform beats surprising.
+        int prio = 0;
+        if (guides.length != 0 && !arbitrate(candWorld, type, -1, 0, d, prio))
+            return;
+        if (prio > cBestPrio || (prio == cBestPrio && d < cBestDist)) {
             cBestDist  = d;
+            cBestPrio  = prio;
             cBestWorld = candWorld;
             cBestType  = type;
         }
