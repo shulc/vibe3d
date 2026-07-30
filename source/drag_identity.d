@@ -148,11 +148,12 @@ private bool bitEq(Vec3 a, Vec3 b) {
     return bitEq(a.x, b.x) && bitEq(a.y, b.y) && bitEq(a.z, b.z);
 }
 
-private Viewport mkVp(Vec3 eye, Vec3 focus, bool ortho, int w, int h, int ox, int oy) {
+private Viewport mkVp(Vec3 eye, Vec3 focus, bool ortho, int w, int h, int ox, int oy,
+                      float halfH = 2.0f) {
     Viewport vp;
     vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
     float asp = cast(float)w / cast(float)h;
-    vp.proj   = ortho ? orthographicMatrix(2.0f, asp, 0.1f, 100.0f)
+    vp.proj   = ortho ? orthographicMatrix(halfH, asp, 0.1f, 100.0f)
                       : perspectiveMatrix(cast(float)(45.0 * PI / 180.0), asp, 0.05f, 500.0f);
     vp.width  = w;
     vp.height = h;
@@ -172,6 +173,18 @@ unittest {
         mkVp(Vec3(0.1f, 6,   0.05f),Vec3(0,0,0), false, 1920,1080,  0,  0), // near top-down
         mkVp(Vec3(-7,   2,  -9),    Vec3(0,0,0), false, 1024, 768, 37, 19), // offset vp
         mkVp(Vec3(4,    3,   5),    Vec3(0,0,0), true,  1280, 720,  0,  0), // ortho
+        // Two ortho zooms chosen so the guards stop shadowing each other and
+        // each one is independently observable:
+        //   halfH 514  → a 1.0-world axis spans ~0.70 px, so slen2 ≈ 0.49 —
+        //                inside the (0,1) band the slen2 guard is defined by,
+        //                while other arms in the same sweep land above it.
+        //   halfH 1e-8 → a 1e-10-world axis still spans ~3.6 px, so slen2 ≈ 13
+        //                and the axisLen guard is the ONLY thing that can
+        //                reject it. Without this camera a relaxed axisLen
+        //                threshold is invisible, because slen2 catches the
+        //                same cases first (measured: it did).
+        mkVp(Vec3(4,    3,   5),    Vec3(0,0,0), true,  1280, 720,  0,  0, 514.0f),
+        mkVp(Vec3(4,    3,   5),    Vec3(0,0,0), true,  1280, 720,  0,  0, 1e-8f),
     ];
 
     // --- anchors: origin, off-centre, far, and one BEHIND the first camera ---
