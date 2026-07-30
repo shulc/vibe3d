@@ -5,21 +5,23 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-import mesh                : Mesh, GpuMesh;
+import mesh                : Mesh, GpuMesh, MeshCacheKey;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect;
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
-                             SubjectPacket, SnapPacket;
+                             SubjectPacket, SnapPacket, SnapType;
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
+import toolpipe.stages.snap : SnapStage;
+import toolpipe.guide       : SnapGuide, GuideDrawState;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
-import snap                  : backgroundSourcesSnapshot;
+import snap                  : backgroundSourcesSnapshot, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick;
@@ -1951,8 +1953,12 @@ public:
         slideDeclineSeed_ = -1;
         // Per-gesture snap snapshot — a tool switch mid-drag ends the gesture,
         // so it must not survive into the next activation any more than the
-        // decline diagnostics above do.
+        // decline diagnostics above do. The guide's registration is the same
+        // per-gesture state and goes with it (task 0523): a guide left in the
+        // service's registry after its tool is gone would keep admitting
+        // against a mesh nobody is editing.
         dragSnap_ = SnapPacket.init;
+        unregisterSnapGuide();
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
@@ -2261,6 +2267,220 @@ public:
         return isVertexInterior(m, m.edgePolygonCounts(), vi);
     }
 
+    // -----------------------------------------------------------------------
+    // The pen's SNAPPING GUIDE — S6 of doc/toolpipe_architecture_plan.md.
+    //
+    // The pen has no snapping of its own to own. It is a CLIENT of the one
+    // snapping service in this tree, and the only thing about that service
+    // that is the pen's is the ADMISSION RULE: which enumerated candidate the
+    // pen is willing to land on. That rule used to be a `bool borderOnly`
+    // parameter threaded through the tool's own vertex scan — a policy with no
+    // owner, invisible to the service and unusable by anything else. It lives
+    // here now, in one object, with the lifetime of one gesture.
+    //
+    // MEASURED — the LIFECYCLE. The reference's pen registers a guide object
+    // on the shared event-translation packet when its drag starts and removes
+    // it on mouse-up; the environment's pixel ranges are pushed INTO the guide
+    // by the framework, which is why `limits` is a setter and not a getter.
+    // Our `SnapStage` is the same service: `addGuide` on the press,
+    // `removeGuide` on the release (`TopologyPenTool.onMouseButtonDown` /
+    // `onMouseButtonUp` / `deactivate`), and the stage pushes the ranges in.
+    //
+    // MEASURED — the PRIORITY. `kPriority` below is read out of the reference,
+    // not chosen: its pen guide declares 2 where its element-snap guide
+    // declares 3, and both are live for the whole of a pen drag. The framework
+    // pre-seeds the priority slot to 1 before every proximity call, so 1 is
+    // what a guide that ignores the parameter reports — 2 is a deliberate
+    // value, one step above the default and one below the element snap's.
+    //
+    // MEASURED — `flags`. The reference's pen guide installs NO flags accessor
+    // at all (the vtable slot is NULL, and it is one of exactly three
+    // tool-owned guides that leave it so). `0` is the faithful stand-in for
+    // "declares nothing": no bit is set, and in particular the pen does NOT
+    // claim the "run even when the global snap enable is off" bit — which is
+    // the whole of why the weld below is gated. Do not put a bit here without
+    // a measurement.
+    //
+    // OURS, and unmeasured: the AIM (`aimAt`). The interface pushes the
+    // environment's RANGES in but not its CURSOR, and a guide cannot answer
+    // "how far away is this candidate" without one. So whoever is about to run
+    // a query aims the guide first, exactly as it would push a range. The
+    // reference's guide carries a view and a host pointer in its own context
+    // and is likewise aimed by its owner, so the direction is right; the
+    // spelling is ours.
+    // -----------------------------------------------------------------------
+    static final class PenSnapGuide : SnapGuide {
+        /// The priority this guide answers proximity queries with. MEASURED —
+        /// see the block comment above. Higher wins outright; distance only
+        /// breaks ties WITHIN one priority.
+        enum int kPriority = 2;
+
+        // The mesh the admission rule is evaluated against, and the border
+        // classification of its edges. The counts are a CACHE, keyed on
+        // (address, mutationVersion) so a gesture that edits the mesh under
+        // the guide — Move writes on every motion event — re-derives them
+        // instead of admitting against a stale topology. The pen's own scan
+        // used to recompute them once per call, so this is never more work
+        // and usually less.
+        private Mesh*        mesh_;
+        private int[]        polyCount_;
+        private MeshCacheKey polyKey_;
+
+        /// `innerSnap`: when set, the interior opens up and every vertex is a
+        /// candidate. The pen attribute, mirrored here rather than read
+        /// through a back-pointer — a guide answers from what it was told.
+        private bool interiorOk_;
+
+        // The aim. `aimed_` is deliberately NOT defaulted true: a guide that
+        // has never been aimed must reject rather than answer against a
+        // zero viewport, because a wrong distance is a wrong winner and would
+        // be indistinguishable from a near miss.
+        private Viewport aimVp_;
+        private int      aimX_, aimY_;
+        private bool     aimed_;
+
+        // What the service pushed in. Recorded, not consumed: the pen's own
+        // resolver takes the acceptance radius off the packet it snapshotted
+        // at press (one gesture, one set of ranges), and the service applies
+        // its own gather cutoff before a candidate ever reaches `proximity`.
+        // They are held so a reader — and the unittests below — can see that
+        // the push arrived.
+        private float innerPx_ = -1.0f, outerPx_ = -1.0f;
+        private GuideDrawState draw_ = GuideDrawState.Off;
+
+        /// Point the guide at the mesh and the admission policy of the gesture
+        /// that is starting.
+        ///
+        /// `interiorOk` is `innerSnap`, in the SAME polarity — not the
+        /// `borderOnly` negation the scan parameter used to carry. Stated
+        /// because the flip is one character and the two spellings coexisted
+        /// during this move; the 0496 Split cases below are what catch it.
+        void retarget(Mesh* m, bool interiorOk) {
+            mesh_       = m;
+            interiorOk_ = interiorOk;
+            polyKey_.invalidate();
+        }
+
+        /// Aim the guide at the query that is about to run. See the block
+        /// comment: OURS, because the interface pushes ranges but not a cursor.
+        void aimAt(const ref Viewport vp, int mx, int my) {
+            aimVp_ = vp;
+            aimX_  = mx;
+            aimY_  = my;
+            aimed_ = true;
+        }
+
+        /// THE PEN'S ADMISSION RULE, and the only copy of it.
+        ///
+        /// Shaped as `snap.SnapAdmit` so the pen's own resolver can hand it
+        /// straight to a candidate walk, and called by `proximity` below so
+        /// the service's walk applies the identical rule. One predicate, two
+        /// channels — which is the reference's own arrangement: its pen
+        /// carries an admission callback on its own snap call AND registers a
+        /// guide for the framework's, and both enforce the same border rule.
+        ///
+        /// * VERTICES only. The pen's snap target is a vertex by definition
+        ///   (a landing on an edge mid-span is a no-op, not a weld), so every
+        ///   other enumerated type is refused rather than silently outranked.
+        /// * The ACTIVE mesh only (`slot == 0`). A background layer is a
+        ///   snapping source for placement, never a weld target — the pen
+        ///   cannot edit it.
+        /// * BORDER vertices only, unless `innerSnap` opens the interior. A
+        ///   vertex with no incident edges at all is NOT interior and stays a
+        ///   candidate, exactly as the scan this replaces had it.
+        ///
+        /// `nothrow` by the `SnapAdmit` contract. The count refresh allocates
+        /// and is therefore not `nothrow` itself; a failure REJECTS, which is
+        /// that contract's own stated answer for a predicate that cannot
+        /// decide ("a predicate that needs to fail should reject").
+        bool admits(SnapType type, int idx, int slot) nothrow {
+            if (type != SnapType.Vertex) return false;
+            if (slot != 0)               return false;
+            if (mesh_ is null || idx < 0) return false;
+            if (idx >= cast(int)mesh_.vertices.length) return false;
+            if (interiorOk_) return true;
+            try {
+                if (!polyKey_.matches(*mesh_)) {
+                    polyCount_ = mesh_.edgePolygonCounts();
+                    polyKey_.stamp(*mesh_);
+                }
+                return !isVertexInterior(mesh_, polyCount_, cast(uint)idx);
+            } catch (Exception) {
+                return false;
+            }
+        }
+
+        // ---- SnapGuide ----------------------------------------------------
+
+        void limits(float innerPx, float outerPx) {
+            innerPx_ = innerPx;
+            outerPx_ = outerPx;
+        }
+
+        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+                       out float distPx, out int priority)
+        {
+            if (!admits(type, idx, slot)) return false;
+            if (!aimed_) return false;
+            float qx, qy, qz;
+            if (!projectToWindowFull(candWorld, aimVp_, qx, qy, qz)) return false;
+            immutable float dx = qx - cast(float)aimX_;
+            immutable float dy = qy - cast(float)aimY_;
+            distPx   = hypot(dx, dy);
+            priority = kPriority;
+            return true;
+        }
+
+        void setDrawState(GuideDrawState s) { draw_ = s; }
+
+        uint flags() const { return 0; }
+
+        // ---- readback, for the tests and for a reader ---------------------
+        float innerPushedPx() const { return innerPx_; }
+        float outerPushedPx() const { return outerPx_; }
+        GuideDrawState drawState() const { return draw_; }
+        bool  isAimed() const { return aimed_; }
+    }
+
+    /// The guide this tool registers for the duration of a gesture. One
+    /// object for the tool's lifetime, re-pointed at each gesture's mesh and
+    /// policy — the REGISTRATION is what is per-gesture, not the allocation
+    /// (the reference re-adds the same object on every move of one drag and
+    /// the registry dedups it, which is our registry's behaviour too).
+    private PenSnapGuide snapGuide_;
+
+    private PenSnapGuide snapGuide() {
+        if (snapGuide_ is null) snapGuide_ = new PenSnapGuide();
+        return snapGuide_;
+    }
+
+    /// The SNAP stage of the live pipeline, or null when there is none —
+    /// every direct-construction unittest, and every headless path. Mirrors
+    /// `XfrmToolBase.snapStageForHooks`, same lookup, same null discipline.
+    private SnapStage snapStageForGesture() {
+        if (g_pipeCtx is null) return null;
+        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+    }
+
+    /// Gesture start: point the guide at this gesture's mesh + policy and
+    /// register it with the service. Idempotent at both ends — the registry
+    /// dedups, and `removeGuide` on an unregistered guide is a no-op — so a
+    /// malformed DOWN-DOWN-UP sequence cannot leave a double registration or
+    /// strand one.
+    private void registerSnapGuide() {
+        auto g = snapGuide();
+        g.retarget(mesh, innerSnap_);
+        if (auto st = snapStageForGesture()) st.addGuide(g);
+    }
+
+    /// Gesture end. Also called by `deactivate` — a tool switch mid-drag ends
+    /// the gesture, and a guide that outlived its tool would keep answering
+    /// for a mesh nobody is editing.
+    private void unregisterSnapGuide() {
+        if (snapGuide_ is null) return;
+        if (auto st = snapStageForGesture()) st.removeGuide(snapGuide_);
+    }
+
     /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
     /// does a drag land on.
     ///
@@ -2271,8 +2491,9 @@ public:
     /// default configuration), taken from the packet this gesture snapshotted
     /// at press (`dragSnap_`). They were once fused behind a single 15px
     /// constant, which was simultaneously too wide for the press and too
-    /// narrow for the landing. The candidate SET is the measured one too:
-    /// border-only unless `innerSnap` opens the interior.
+    /// narrow for the landing. The candidate SET is the measured one too, and
+    /// it is no longer stated here: the admission rule lives on the gesture's
+    /// GUIDE (`PenSnapGuide.admits`), and this query consults that one copy.
     ///
     /// The one caller today is the Split gesture, whose target vertex C is by
     /// its own definition the element the drag snaps to (and whose reference
@@ -2280,9 +2501,16 @@ public:
     /// (mid-drag Split feedback, Duplicate re-snap) must come through HERE
     /// rather than call `findSourceVertex` directly, so the candidate set AND
     /// the radius stay stated in one place.
+    ///
+    /// Aims the guide before it asks it. The guide answers proximity for
+    /// whoever is querying, and the cursor is not something the service pushes
+    /// in (see `PenSnapGuide`'s block comment), so the query supplies it.
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
+        auto g = snapGuide();
+        g.retarget(mesh, innerSnap_);
+        g.aimAt(vp, mx, my);
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
-                                !innerSnap_);
+                                &g.admits);
     }
 
     // P3 (doc/topopen_p3_plan.md): project every vertex of the PRIMARY
@@ -2300,25 +2528,29 @@ public:
     // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
     // distinct calls, never conflated.
     //
-    // `borderOnly` (task 0496) applies the measured snap-candidate filter above:
-    // interior vertices are not candidates at all. It defaults to FALSE, and
-    // only the SNAP-TARGET caller passes `!innerSnap_` — every press-time PICK
-    // stays unfiltered, because the captures we hold show the reference picking
-    // interior elements with `innerSnap` at its default (see `innerSnap_`).
+    // `admit` (S1 of doc/toolpipe_architecture_plan.md) is the CLIENT'S
+    // admission rule, consulted once per candidate BEFORE the projection and
+    // the distance compare — order is load-bearing for the same reason it is
+    // in `snap.snapCursor`'s own walk: a rejected candidate must be as if it
+    // were never enumerated, or an inadmissible vertex would shrink `bestD2`
+    // and veto an admissible one further away. It defaults to NULL, which
+    // admits everything, so every press-time PICK caller stays byte-identical
+    // — the press pick is not snapping at all and has no admission policy.
+    // The one caller that passes a rule is the SNAP-TARGET resolver, and what
+    // it passes is the gesture guide's own predicate (task 0523): the
+    // border-only filter used to be a `bool` parameter here, i.e. a policy
+    // with no owner that the snapping service could not see.
     private int findSourceVertex(int mx, int my, const ref Viewport vp,
                                  float thresholdPx = kTopoPenSnapAuto,
-                                 bool borderOnly = false) {
+                                 scope SnapAdmit admit = null) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD2 = float.infinity;
-        // Hoisted once — the per-element overload of the predicate would
-        // recount the whole mesh on every vertex (task 0502).
-        const int[] polyCount = borderOnly ? m.edgePolygonCounts() : null;
         foreach (vi; 0 .. m.vertices.length) {
-            if (borderOnly && isVertexInterior(m, polyCount, cast(uint)vi)) continue;
+            if (admit !is null && !admit(SnapType.Vertex, cast(int)vi, 0)) continue;
             ImVec2 pt;
             if (!projectPt(m.vertices[vi], vp, pt)) continue;
             float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
@@ -2852,6 +3084,14 @@ public:
         // goes on to decline, because `resetAllGestureArms()` runs INSIDE the
         // dispatch below and would otherwise be a place to lose it.
         captureSnapForGesture(vts);
+        // Task 0523: and register this gesture's snapping guide, on the same
+        // unconditional press-to-release window and for the same reason. The
+        // registration is NOT gated on the master snap enable — the service's
+        // own gate short-circuits above the guide walk (a disabled `SnapStage`
+        // publishes nothing and never queries), which is where the reference
+        // puts it too: its master-enable test sits above the guide loop, not
+        // inside the guide.
+        registerSnapGuide();
         return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
                              InputPhase.Down, e, vts);
     }
@@ -3798,23 +4038,24 @@ public:
     // byte-identical (none pass a 3rd argument); the hover path passes
     // `float.infinity` for RESOLUTION and a finite value for the GATE.
     //
-    // `borderOnly` (task 0496): the same measured snap-candidate filter
-    // `findSourceVertex` carries, over edges — an interior edge (two or more
-    // incident polygons) is not a candidate. Defaults FALSE for exactly the
-    // same reason: only a SNAP-TARGET caller may pass it.
+    // NO admission parameter, deliberately (task 0523). This query has exactly
+    // one kind of caller — a press-time PICK — and a press pick is not
+    // snapping: no guide is registered for it, no configured range is pushed
+    // into it. It used to carry a `borderOnly` twin of `findSourceVertex`'s,
+    // added for a snap-target consumer over EDGES that was never written; no
+    // caller ever passed it. A second, unowned copy of the pen's admission
+    // rule is precisely what moving that rule onto the gesture's guide is
+    // for, so it goes. A future edge snap-target asks the guide, as the
+    // vertex one now does.
     private int findRingSeedEdge(int mx, int my, const ref Viewport vp,
-                                 float thresholdPx = kTopoPenSnapAuto,
-                                 bool borderOnly = false) {
+                                 float thresholdPx = kTopoPenSnapAuto) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD  = float.infinity;
-        // Hoisted once — see findSourceVertex.
-        const int[] polyCount = borderOnly ? m.edgePolygonCounts() : null;
         foreach (ei, e; m.edges) {
-            if (borderOnly && isEdgeInterior(polyCount, cast(uint)ei)) continue;
             ImVec2 pa, pb;
             if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
             if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
@@ -4735,6 +4976,11 @@ public:
         bool handled = dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
                                      InputPhase.Up, e, vts);
         dragSnap_ = SnapPacket.init;
+        // Task 0523: the guide's registration ends where the ranges snapshot
+        // does, and for the same reason — one gesture, one configuration. It
+        // is dropped AFTER the dispatch, so `splitUp` still resolves its
+        // target vertex against the rule the whole gesture ran on.
+        unregisterSnapGuide();
         return handled;
     }
 
@@ -15681,6 +15927,258 @@ unittest {
     assert(wireEdge != uint.max, "setup: the wire edge must exist");
     assert(!TopologyPenTool.isEdgeInterior(wp, wireEdge),
         "a zero-polygon wire edge is not interior");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0523 — the GUIDE now owns that rule, and owns exactly that rule.
+//
+// The border-only filter moved off a `bool` parameter and onto the object the
+// pen registers with the snapping service. This block pins the move as an
+// EQUALITY against the predicate the old parameter used, vertex by vertex, so
+// "the rule went somewhere else" cannot quietly become "the rule changed":
+// `admits` is the only copy now, and it has to answer what the scan answered.
+//
+// Then the three refusals the parameter never had to make, because a private
+// vertex scan can only ever be offered vertices of the mesh it is scanning,
+// and the service's walk can offer anything it enumerates.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+
+    Mesh m = makeGridPlane(2);   // 3x3 verts / 4 quads; vertex 4 is the interior one
+    Mesh* mp = &m;
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+    g.retarget(mp, false);       // innerSnap off — the measured default
+
+    // (1) EQUALITY with the predicate, over every vertex. Not "the interior one
+    // is refused" — every vertex, so a rule that drifted on any single one of
+    // them fails here rather than in a fixture six months later.
+    foreach (vi; 0 .. m.vertices.length)
+        assert(g.admits(SnapType.Vertex, cast(int)vi, 0)
+                 == !TopologyPenTool.isVertexInterior(mp, cast(uint)vi),
+            "the guide's admission rule must BE the border predicate, vertex for vertex");
+    assert(!g.admits(SnapType.Vertex, 4, 0),
+        "and concretely: the grid's interior vertex is refused at innerSnap = false");
+
+    // (2) innerSnap opens the interior, and opens it for everything.
+    g.retarget(mp, true);
+    foreach (vi; 0 .. m.vertices.length)
+        assert(g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "innerSnap on: every vertex of the mesh is a candidate");
+
+    // (3) the three refusals a scan never had to make.
+    g.retarget(mp, true);        // deliberately the PERMISSIVE setting, so what
+                                 // follows is the type/slot/range rule alone and
+                                 // not the border rule answering for it.
+    assert(!g.admits(SnapType.Edge, 0, 0) && !g.admits(SnapType.EdgeCenter, 0, 0)
+        && !g.admits(SnapType.Polygon, 0, 0) && !g.admits(SnapType.PolyCenter, 0, 0)
+        && !g.admits(SnapType.Grid, -1, 0) && !g.admits(SnapType.Workplane, -1, 0),
+        "the pen's snap target is a VERTEX by definition — every other enumerated type is "
+      ~ "refused outright, never merely outranked");
+    assert(!g.admits(SnapType.Vertex, 4, 1),
+        "a BACKGROUND source is a placement reference, never a weld target: the pen cannot "
+      ~ "edit that mesh, so its vertices are not candidates");
+    assert(!g.admits(SnapType.Vertex, cast(int)m.vertices.length, 0)
+        && !g.admits(SnapType.Vertex, -1, 0),
+        "an index outside the mesh is refused rather than read");
+
+    // (4) no mesh at all — a guide the tool has not pointed anywhere yet.
+    auto blank = new TopologyPenTool.PenSnapGuide();
+    assert(!blank.admits(SnapType.Vertex, 0, 0),
+        "a guide with no mesh admits nothing; it must not answer from a null");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0523 — the guide's border classification follows the mesh it guards.
+//
+// The scan this replaces recounted the whole mesh on every call, so staleness
+// was impossible by construction. The guide caches the counts, and its
+// registration spans a whole gesture — and one of the pen's gestures (Move)
+// writes the mesh on every motion event. The cache key is what makes those two
+// facts compatible, and this is its pin: the SAME guide, the SAME vertex, a
+// different answer once the topology under it changes.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+
+    Mesh m = makeGridPlane(2);
+    Mesh* mp = &m;
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+    g.retarget(mp, false);
+    assert(!g.admits(SnapType.Vertex, 4, 0),
+        "setup: vertex 4 is interior to the intact grid and must be refused");
+
+    // Delete one of the four quads. Vertex 4 now touches a border edge, so the
+    // very same query must start admitting it.
+    bool[] drop = new bool[](m.faces.length);
+    drop[0] = true;
+    assert(m.deleteFacesByMask(drop, true, true) == 1, "setup: one quad must have gone");
+    assert(!TopologyPenTool.isVertexInterior(mp, 4),
+        "setup: with a quad gone the centre vertex touches a border edge");
+    assert(g.admits(SnapType.Vertex, 4, 0),
+        "FAILS ON A STALE CACHE: the guide must re-derive its border counts when the mesh "
+      ~ "it guards is edited under it — the pen's Move gesture does exactly that, mid-gesture");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0523 — the guide as the snapping service sees it.
+//
+// `admits` is the pen's own channel; `proximity` is the service's, and the two
+// must be one rule wearing two shapes. Also the values that are MEASURED and
+// must not drift: priority 2, and no flags at all.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+
+    Mesh m = makeGridPlane(2);
+    Mesh* mp = &m;
+    Viewport vp = makeGridPlaneTestViewport();
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+    g.retarget(mp, false);
+
+    float d;
+    int   prio;
+
+    // Un-aimed: a guide that has never been told where the cursor is cannot
+    // answer a distance, and answering one anyway would be indistinguishable
+    // from a near miss.
+    assert(!g.isAimed(), "a fresh guide is not aimed");
+    assert(!g.proximity(m.vertices[0], SnapType.Vertex, 0, 0, d, prio),
+        "an un-aimed guide must REJECT rather than measure against a zero viewport");
+
+    immutable int cx = cast(int)projectedX(mp, 0, vp);
+    immutable int cy = cast(int)projectedY(mp, 0, vp);
+    g.aimAt(vp, cx, cy);
+
+    // The rule is the same rule: whatever `admits` refuses, `proximity` refuses.
+    foreach (vi; 0 .. m.vertices.length) {
+        float dd; int pp;
+        assert(g.proximity(m.vertices[vi], SnapType.Vertex, cast(int)vi, 0, dd, pp)
+                 == g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "proximity and admits are one rule — the service's channel and the tool's own "
+          ~ "must never disagree about a candidate");
+    }
+
+    // The distance is the candidate's own screen distance from the aim, which
+    // is what makes the service's ranking mean anything.
+    assert(g.proximity(m.vertices[0], SnapType.Vertex, 0, 0, d, prio),
+        "vertex 0 is a border vertex and is admitted");
+    assert(d < 1.0f,
+        "the candidate under the aim reports ~0 px; it is a screen distance, not a world one");
+    float dFar; int prioFar;
+    assert(g.proximity(m.vertices[2], SnapType.Vertex, 2, 0, dFar, prioFar),
+        "the far corner is a border vertex too");
+    assert(dFar > d, "and it must rank farther — the ordering is the aim's, not the index's");
+
+    // MEASURED, both of them. See PenSnapGuide's block comment before moving
+    // either: 2 is the reference's own declared priority for this guide (one
+    // above the framework's pre-seeded default, one below the element snap's),
+    // and its flags accessor is absent entirely — in particular it does NOT
+    // claim "run even when the global snap enable is off".
+    assert(prio == TopologyPenTool.PenSnapGuide.kPriority && prio == 2,
+        "the pen's guide declares priority 2");
+    assert(prioFar == 2, "and it declares it for every candidate, not just the winner");
+    assert(g.flags() == 0,
+        "the pen's guide declares NO flags — the reference installs no accessor at all, and "
+      ~ "the missing 'always-on' bit is the whole reason the weld is gated");
+
+    // The draw protocol has a producer and no consumer yet; pin that the guide
+    // at least records what it was told, so a renderer has something to read.
+    assert(g.drawState() == GuideDrawState.Off, "a guide starts undrawn");
+    g.setDrawState(GuideDrawState.Chosen);
+    assert(g.drawState() == GuideDrawState.Chosen, "and records the state pushed into it");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0523 — the REGISTRATION, through the real press/release dispatch.
+//
+// MEASURED lifecycle: the reference's pen adds its guide to the shared
+// event-translation packet when the drag starts and removes it on mouse-up,
+// re-adding the same object on every intervening move (the registry dedups).
+// This drives our own press and release and watches the service's registry.
+//
+// The registry is on the live `SnapStage`, reached through the pipeline
+// global, so this block installs a pipeline and restores whatever was there.
+// ---------------------------------------------------------------------------
+unittest {
+    import view     : View;
+    import editmode : EditMode;
+    import mesh     : makeGridPlane;
+    import toolpipe.packets  : SubjectPacket;
+    import toolpipe.pipeline : ToolPipeContext;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;   // restore, never force-null: this global is
+                                     // process-wide and shared with every other
+                                     // unittest in the binary.
+
+    auto ctx = new ToolPipeContext();
+    auto st  = new SnapStage();
+    ctx.pipeline.add(st);
+    g_pipeCtx = ctx;
+
+    Mesh m = makeGridPlane(2);
+    Mesh* mp = &m;
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.meshSrc_          = () => mp;
+    t.history_          = history;
+    t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_split", "Topology Split",
+                                                   MeshEditScope.Geometry);
+    Viewport vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = mp;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    assert(st.guideCount == 0, "setup: the service's registry starts empty");
+
+    SDL_MouseButtonEvent down;
+    down.button = SDL_BUTTON_MIDDLE;
+    down.x = cast(int)projectedX(mp, 0, vp);
+    down.y = cast(int)projectedY(mp, 0, vp);
+    assert(t.onMouseButtonDown(down, vts), "a plain-MMB press on a vertex must consume");
+    assert(st.guideCount == 1, "the press must have registered the pen's guide");
+    assert(st.guides[0] is t.snapGuide_, "and it must be the pen's own object");
+
+    // The ranges are pushed IN at registration — the guide does not source
+    // them. This is the direction that is measured, and the value is the
+    // stage's, not a constant the pen carries.
+    assert(t.snapGuide_.innerPushedPx() == st.innerRangePx
+        && t.snapGuide_.outerPushedPx() == st.outerRangePx,
+        "the service pushes its ranges into the guide at registration");
+
+    // A second press without a release (a malformed sequence, and the shape of
+    // the reference's own re-add on every move) must not register twice.
+    assert(t.onMouseButtonDown(down, vts), "a second press is still consumed");
+    assert(st.guideCount == 1, "re-registering the same guide is a no-op, not a second vote");
+
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_MIDDLE;
+    up.x = cast(int)projectedX(mp, 2, vp);
+    up.y = cast(int)projectedY(mp, 2, vp);
+    assert(t.onMouseButtonUp(up, vts), "a plain-MMB release must consume");
+    assert(st.guideCount == 0, "the release must have removed it");
+
+    // A tool switch mid-gesture ends the gesture the same way. Re-arm, then
+    // deactivate without ever releasing.
+    assert(t.onMouseButtonDown(down, vts), "re-arm for the deactivate case");
+    assert(st.guideCount == 1, "setup: registered again");
+    t.deactivate();
+    assert(st.guideCount == 0,
+        "a tool switch mid-drag must not leave a guide in the service's registry, still "
+      ~ "admitting for a mesh nobody is editing");
+
+    SDL_SetModState(cast(SDL_Keymod)0);
 }
 
 // ---------------------------------------------------------------------------
