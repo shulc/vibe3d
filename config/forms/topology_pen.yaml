@@ -57,6 +57,24 @@
 # touching one) is a candidate; with it on the mesh interior is snappable too.
 # It is NOT a radius knob — the snap radius is the same either way.
 #
+# `range` / `quadOnly` — the two FILL-mode attributes (reference parity,
+# doc/tasks/work/0488-topopen-fill-candidate-rule.md). `range` multiplies the
+# hover radius to give the candidate GATHER radius in screen pixels; it never
+# enters the ranking, so above a mesh's own threshold more reach changes
+# nothing and below it the press refuses. `quadOnly` is the count gate: on
+# (the default), the search accepts exactly four candidates; off, exactly four
+# OR exactly three, and the three-path runs no shape test at all. Bounds are
+# the MEASURED ones — `range` min 0.0 with no upper bound, `quadOnly` a plain
+# boolean — from the same measured clamp table every other numeric row here
+# traces to; they are not guessed and not "sane-looking". Affect the Fill mode
+# only; every other gesture ignores both.
+#
+# One clause of these two is deliberately NOT carried: the reference REFUSES a
+# write to either outside Fill mode (an error, not an ignore) and greys the row
+# out. This form has no value-conditional row-disable mechanism — the same gap
+# `smoothStrength` sits in today — so both rows stay always-visible and
+# always-writable until that mechanism lands.
+#
 # `smoothStrength` — the Smooth gesture's relaxation strength (reference
 # parity, doc/tasks/work/0478-topopen-smooth-kernel.md). Scales the per-iteration
 # relaxation force as `F = smoothStrength / 20`; the default 1.0 matches the
@@ -97,6 +115,8 @@ forms:
       - { control: "tool.attr mesh.topoPen innerSnap ?",      label: "Inner Snap" }
       - { control: "tool.attr mesh.topoPen keepVertex ?",     label: "Keep Vertices" }
       - { control: "tool.attr mesh.topoPen middle ?",         label: "Split at the Middle" }
+      - { control: "tool.attr mesh.topoPen range ?",          label: Range }
+      - { control: "tool.attr mesh.topoPen quadOnly ?",       label: "Quads Only" }
       - { control: "tool.attr mesh.topoPen smoothStrength ?", label: Strength }
       - { control: "tool.attr mesh.topoPen showVertex ?",     label: "Show Vertex" }
       - { control: "tool.attr mesh.topoPen showEdge ?",       label: "Show Edge" }

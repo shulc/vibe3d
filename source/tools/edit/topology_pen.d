@@ -1257,6 +1257,44 @@ private:
     // Sticky across gestures, for the same reason `penMode_` is.
     bool keepVertex_ = false;
 
+    // `fillRange_` ("Range") and `fillQuadOnly_` ("Quads Only") — the two
+    // FILL-mode attributes (task 0488). Both were in this tool's "awaiting
+    // their own measurement" bucket (see `params()`'s three-bucket audit)
+    // until the Fill candidate rule was measured twice — once live and once
+    // off a recording — and both are now load-bearing inputs to
+    // `findFillRing`, so they ship together with it rather than as knobs
+    // added for their own sake.
+    //
+    //   `fillRange_`    multiplies the hover radius to give the candidate
+    //                   GATHER radius, in screen pixels
+    //                   (`fillRange_ * fillHoverRadiusPx(...)`). It is a
+    //                   gather radius and NOTHING else: it never enters the
+    //                   ranking, so above the mesh's own threshold more reach
+    //                   changes nothing (the nearest-four cap absorbs it) and
+    //                   below it the gesture refuses.
+    //   `fillQuadOnly_` is the COUNT gate: on, the search accepts exactly 4
+    //                   candidates; off, exactly 4 OR exactly 3 (and the
+    //                   3-path runs no shape test at all).
+    //
+    // BOUNDS, measured, never guessed — the same measured clamp table every
+    // other row on this tool traces to (task 0499 §C-0, recovered live AND
+    // statically from the reference's own UI-hint table, so it is not
+    // re-derivable from anything in this repo — read it there before moving a
+    // number): `range` is min 0.0 with NO upper bound; `quadOnly` is [0,1],
+    // i.e. a plain boolean. Defaults 1.5 / ON, both measured (the reference's
+    // own reset seeds 1.5, and every armed cell of the live run read back
+    // exactly the requested value).
+    //
+    // WHAT IS NOT PORTED WITH THEM: the reference REFUSES a write to either
+    // attribute outside Fill mode (an error, not an ignore) and greys the row
+    // out in its panel. vibe3d has no value-conditional row-disable mechanism
+    // yet (it is owned by the forms-engine task that also owes it to
+    // `smoothStrength`), so these rows stay always-writable exactly like
+    // `smoothStrength` does today. Recorded, not silently diverged.
+    private enum float kFillRangeDefault = 1.5f;
+    float fillRange_    = kFillRangeDefault;
+    bool  fillQuadOnly_ = true;
+
     // Which gesture the LAST unmodified-LMB press actually resolved to
     // (task 0483). Written by `onPlainLmbDown`'s router at DOWN, read by
     // `lmbModeUp` at UP so the release reaches THAT gesture's commit leg —
@@ -1800,6 +1838,17 @@ public:
     // did: our pre-0494 behaviour was its ON branch, so the row does not merely
     // expose a knob, it moves the default. See the field's own doc comment.
     //
+    // `range` / `quadOnly` (task 0488) — the two FILL attributes, APPENDED
+    // LAST, same reason as every row above. They leave the "awaiting
+    // measurement" bucket below because the Fill candidate rule is now
+    // measured twice over and BOTH are load-bearing inputs to it: `range`
+    // multiplies the hover radius into the candidate gather radius, and
+    // `quadOnly` is the 3-vs-4 count gate. Bounds are the measured ones (min
+    // 0.0, no upper bound / [0,1]) — see `fillRange_`'s own doc comment for
+    // the provenance and for the one clause NOT ported with them (the
+    // reference REFUSES a write outside Fill mode; we have no row-disable
+    // mechanism yet, exactly as with `smoothStrength`).
+    //
     // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
     //
     // The reference tool carries 31 attributes; this list publishes 7. The gap
@@ -1810,12 +1859,12 @@ public:
     // the task file; recovered live AND statically, so it is not re-derivable
     // from anything in this repo — read it there before adding a row).
     //
-    //   (a) behavior measured, safe to publish now — EMPTY. Nothing left: the
-    //       bounds sweep measured RANGES, and a range is a row's spec, not a
-    //       licence to ship it.
+    //   (a) behavior measured, safe to publish now — `range`, `quadOnly`
+    //       (task 0488). Both graduated out of bucket (c) when Fill's
+    //       candidate rule was measured; neither is a knob for its own sake
+    //       (each is an input the ported search reads).
     //   (b) measured as pure DISPLAY — `showVertex`, `showEdge`. Below.
     //   (c) awaiting their own measurement — NOT published, one owner each:
-    //         `quadOnly`, `range`                        -> task 0488 (Fill)
     //         iteration count (see the note below)       -> task 0490 (Smooth)
     //         `falloffDist`, `connect`, `shape`, p0/p1   -> task 0491 (falloff)
     //         `joinDisco`                                -> task 0500 (weld)
@@ -1851,6 +1900,9 @@ public:
             Param.bool_("showEdge",   "Show Edge",   &showEdge_,   true),
             Param.bool_("innerSnap", "Inner Snap", &innerSnap_, false),
             Param.bool_("keepVertex", "Keep Vertices", &keepVertex_, false),
+            Param.float_("range", "Range", &fillRange_, kFillRangeDefault)
+                 .min(0.0f).enforceBounds(),
+            Param.bool_("quadOnly", "Quads Only", &fillQuadOnly_, true),
         ];
     }
 
