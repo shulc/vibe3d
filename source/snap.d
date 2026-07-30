@@ -1980,6 +1980,35 @@ unittest {
         "S4 arbitration: priority decides, so registration order must not — "
         ~ "it settles EQUAL priorities and nothing else");
 
+    // ...and when the priorities ARE equal, registration order is the whole
+    // tie-break the registry can offer. Two guides at priority 0 that disagree
+    // about distance: the FIRST registered must be the one heard.
+    invalidateSnapGrids();
+    auto firstMirror = new MirrorGuide(vp, sx, sy);
+    auto secondFlip  = new MirrorGuide(vp, sx, sy);
+    secondFlip.invert     = true;
+    secondFlip.invertBase = invertBase;
+    assert(firstMirror.answerPrio == secondFlip.answerPrio,
+        "fixture: this block is about EQUAL priorities");
+    SnapResult tiedPrio = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+                                     null, [firstMirror, secondFlip]);
+    assert(tiedPrio.snapped && tiedPrio.targetIndex == 0,
+        "S4 arbitration: at equal priority the first-registered guide is "
+        ~ "heard — a later guide must not be able to overrule a peer it does "
+        ~ "not outrank");
+    invalidateSnapGrids();
+    auto firstFlip    = new MirrorGuide(vp, sx, sy);
+    firstFlip.invert     = true;
+    firstFlip.invertBase = invertBase;
+    auto secondMirror = new MirrorGuide(vp, sx, sy);
+    SnapResult tiedPrioSwapped = snapCursor(cursorWorld, sx, sy, vp, m, cfg,
+                                            null, null,
+                                            [firstFlip, secondMirror]);
+    assert(tiedPrioSwapped.snapped && tiedPrioSwapped.targetIndex == 2,
+        "and the same two guides in the other order give the other answer — "
+        ~ "which is what makes the previous assertion about ORDER and not "
+        ~ "about which guide happens to be right");
+
     // --- the tie-break survives the guide path ------------------------------
     // Two coincident vertices: a tie by construction (a mirrored ±x pair only
     // ties to within floating point, which is not a tie). The service breaks
