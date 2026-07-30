@@ -233,7 +233,7 @@ private enum SlideDecline { None, NoEdge, NoContinuation }
 private enum MoveElem { None, Vertex, Edge, Face }
 
 // ---------------------------------------------------------------------------
-// TopoPenAction / kTopoPenBindings — the declarative (button, modifier) ->
+// PenGesture / kTopoPenBindings — the declarative (button, modifier) ->
 // action dispatch table (`source/tool_input.d`,
 // doc/topopen_input_dispatch_phase2_plan.md), now the LIVE, authoritative
 // classifier: `onMouseButtonDown`/`onMouseButtonUp` route every press through
@@ -257,39 +257,147 @@ private enum MoveElem { None, Vertex, Edge, Face }
 // the old classifier's own `CtrlRmb`/`ShiftCtrlMmb`/`None` cases falling
 // through unconsumed.
 // ---------------------------------------------------------------------------
-private enum TopoPenAction : ToolAction {
-    LmbPlaceOrMove,   // plain LMB       — place-on-empty OR grab-move (resolved at Down)
-    Build,            // Shift+LMB       — drag-build (P3)
-    Slide,            // Ctrl+LMB        — edge slide (P7)
-    Smooth,           // Shift+Ctrl+LMB  — whole-mesh smooth (P8)
-    Split,            // plain MMB       — vertex-to-vertex split (P9)
-    AddLoop,          // Shift+MMB       — add loop cut (P6)
-    Remove,           // Ctrl+MMB        — remove-on-DOWN face delete (P5); Up is a no-op
-    MoveLoop,         // plain RMB       — move edge loop (P10)
-    DupLoop,          // Shift+RMB       — duplicate edge loop (P11)
-    SmoothLoop,       // Shift+Ctrl+RMB  — loop-restricted smooth (P12)
+private enum PenGesture {
+    PlaceOrMove,      // place-on-empty OR grab-move (resolved at Down)
+    Build,            // drag-build / duplicate from a vertex (P3)
+    Slide,            // edge slide (P7)
+    Smooth,           // whole-mesh smooth (P8)
+    Split,            // vertex-to-vertex split (P9)
+    AddLoop,          // add loop cut (P6)
+    Remove,           // remove-on-DOWN face delete (P5); Up is a no-op
+    MoveLoop,         // move edge loop (P10)
+    DupLoop,          // duplicate edge loop (P11)
+    SmoothLoop,       // loop-restricted smooth (P12)
+}
+
+// ---------------------------------------------------------------------------
+// The CHORD model (task 0487) — a chord is an OVERRIDE PAIR, not a gesture.
+//
+// This table used to map each (button, modifier) slot straight onto a gesture,
+// as if the tool had ten independent gestures. It does not. A live capture of
+// the Duplicate slot (`toolcards/topology_pen/dragweld_dupedge_loopscope_capture.md`,
+// PRIVATE) measured the actual shape: a chord contributes an optional MODE
+// override and an optional FLAG override, and the result feeds the ONE mode
+// dispatcher the Mode dropdown already drives. Two independent captures agree:
+//
+//   * Shift+RMB stores a LITERAL 1 into the effective loop flag and never
+//     reads the attribute (`loop=false` and `loop=true` came back
+//     bit-identical), while Shift+LMB DOES read it (1 quad vs 3 on one seed).
+//     So "forced" vs "from the user" is a real, measured distinction.
+//   * The two formerly-undocumented slots (Ctrl+RMB, Shift+Ctrl+MMB) were
+//     measured executing "whatever the Mode dropdown currently is"
+//     (`status.yaml: unlabeled_slots`) — which only makes sense if a chord
+//     leaves the mode alone unless it overrides it.
+//
+// Why it matters beyond tidiness: under the old table a chord could not
+// compose with the dropdown at all, so plain RMB was hard-wired to move-loop
+// and stayed move-loop with the dropdown on Remove. Under the measured model
+// it is "the dropdown's mode, with the loop forced on".
+//
+// PROVENANCE IS PER COLUMN, and the difference is load-bearing — do not level
+// it out. `[M]` = measured on this tool; `[D]` = doc-derived from the
+// reference catalog's own per-option `Desc` strings (the same source that gave
+// the 10-slot grid, and which every ported gesture already rests on).
+// Nothing here is inferred from a third slot's behavior.
+private enum ModeOv : ubyte { FromUser, Duplicate, Split, AddLoop, Remove, Smooth }
+private enum FlagOv : ubyte { FromUser, ForceOn }
+
+private struct ChordOv {
+    ModeOv mode  = ModeOv.FromUser;
+    FlagOv loop  = FlagOv.FromUser;
+    FlagOv slide = FlagOv.FromUser;
+}
+
+/// The 10 wired slots, named by the CHORD they are — the gesture each one ends
+/// up running is a RESULT now, not an identity. `dispatchInput` only ever moves
+/// this id around, so it doubles as the index into `kChordOv` below.
+private enum TopoPenChord : ToolAction {
+    Lmb, ShiftLmb, CtrlLmb, ShiftCtrlLmb,
+    Mmb, ShiftMmb, CtrlMmb,
+    Rmb, ShiftRmb, ShiftCtrlRmb,
+}
+
+/// What each chord overrides. Indexed by `TopoPenChord`.
+///
+/// Every row reproduces this tool's previous behavior when the dropdown sits
+/// at its default (`move`, both flags off) — that was the acceptance condition
+/// for this refactor, so the only outcomes that CHANGE are the ones the
+/// capture pins: a chord composing with a NON-default dropdown.
+private immutable ChordOv[10] kChordOv = [
+    // Lmb          — the base slot: the dropdown, verbatim.                    [M]
+    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser),
+    // ShiftLmb     — Duplicate, and it READS the loop flag.                    [M]
+    ChordOv(ModeOv.Duplicate, FlagOv.FromUser, FlagOv.FromUser),
+    // CtrlLmb      — the dropdown, with Edge SLIDE forced: the reference
+    //                documents Ctrl in Move mode as doing exactly what the
+    //                Edge Slide option does. Ctrl+RMB was MEASURED not to
+    //                force slide (it ran a plain move), so this is asymmetric
+    //                on purpose and is NOT generalised to "Ctrl forces slide". [D]
+    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.ForceOn),
+    // ShiftCtrlLmb — Smoothing.                                               [D]
+    ChordOv(ModeOv.Smooth,    FlagOv.FromUser, FlagOv.FromUser),
+    // Mmb          — Split.                                                   [D]
+    ChordOv(ModeOv.Split,     FlagOv.FromUser, FlagOv.FromUser),
+    // ShiftMmb     — Add Loop.                                                [D]
+    ChordOv(ModeOv.AddLoop,   FlagOv.FromUser, FlagOv.FromUser),
+    // CtrlMmb      — Remove.                                                  [D]
+    ChordOv(ModeOv.Remove,    FlagOv.FromUser, FlagOv.FromUser),
+    // Rmb          — the dropdown, loop FORCED. The row the old table got
+    //                wrong: it read as an absolute move-loop.                 [M]
+    ChordOv(ModeOv.FromUser,  FlagOv.ForceOn,  FlagOv.FromUser),
+    // ShiftRmb     — Duplicate, loop FORCED (the literal-1 store).            [M]
+    ChordOv(ModeOv.Duplicate, FlagOv.ForceOn,  FlagOv.FromUser),
+    // ShiftCtrlRmb — Smoothing "plus Edge Loop".                              [D]
+    ChordOv(ModeOv.Smooth,    FlagOv.ForceOn,  FlagOv.FromUser),
+];
+
+/// Which physical button a chord slot belongs to. Taken from the SLOT rather
+/// than from the event, so a synthetic press whose `button` field was never
+/// filled in (every direct-call unittest in this file) still books its gesture
+/// against the right button.
+private InputButton chordButton(TopoPenChord c) {
+    final switch (c) {
+    case TopoPenChord.Lmb: case TopoPenChord.ShiftLmb:
+    case TopoPenChord.CtrlLmb: case TopoPenChord.ShiftCtrlLmb:
+        return InputButton.Left;
+    case TopoPenChord.Mmb: case TopoPenChord.ShiftMmb: case TopoPenChord.CtrlMmb:
+        return InputButton.Middle;
+    case TopoPenChord.Rmb: case TopoPenChord.ShiftRmb: case TopoPenChord.ShiftCtrlRmb:
+        return InputButton.Right;
+    }
+}
+
+/// The mode a chord's override names. `FromUser` never reaches here.
+private PenMode modeOfOverride(ModeOv m) {
+    final switch (m) {
+    case ModeOv.FromUser:  return PenMode.Move;   // unreachable; caller checks first
+    case ModeOv.Duplicate: return PenMode.Duplicate;
+    case ModeOv.Split:     return PenMode.Split;
+    case ModeOv.AddLoop:   return PenMode.AddLoop;
+    case ModeOv.Remove:    return PenMode.Remove;
+    case ModeOv.Smooth:    return PenMode.Smooth;
+    }
 }
 
 /// LEFT rows are `ResetScope.AllButtons` — reproduces the LEFT-button trio's
-/// own top-of-handler `resetAllGestureArms()` call (`onPlainLmbDown`/
-/// `onShiftLmbDown`/`onCtrlLmbDown`/`onShiftCtrlLmbDown`), now wired through
+/// own top-of-handler `resetAllGestureArms()` call, now wired through
 /// `dispatchInput`'s `onInputResetAll()` hook instead. MIDDLE/RIGHT rows stay
-/// the default `SelfButton` — each mode's own narrow self-reset (already
-/// inside the kept `on*Down` methods) is what closes a same-slot re-press
-/// hazard for those buttons, exactly as today (see `resetAllGestureArms`'s
-/// own doc comment for why MIDDLE/RIGHT deliberately do NOT get a full reset:
-/// a chord on those buttons can legitimately coexist with a held LEFT drag).
+/// the default `SelfButton` — each mode's own narrow self-reset is what closes
+/// a same-slot re-press hazard for those buttons, exactly as today (see
+/// `resetAllGestureArms`'s own doc comment for why MIDDLE/RIGHT deliberately
+/// do NOT get a full reset: a chord on those buttons can legitimately coexist
+/// with a held LEFT drag).
 private immutable InputBinding[] kTopoPenBindings = [
-    InputBinding(InputButton.Left,   InputMod.None,                   TopoPenAction.LmbPlaceOrMove, ResetScope.AllButtons),
-    InputBinding(InputButton.Left,   InputMod.Shift,                  TopoPenAction.Build,          ResetScope.AllButtons),
-    InputBinding(InputButton.Left,   InputMod.Ctrl,                   TopoPenAction.Slide,          ResetScope.AllButtons),
-    InputBinding(InputButton.Left,   InputMod.Shift | InputMod.Ctrl,  TopoPenAction.Smooth,         ResetScope.AllButtons),
-    InputBinding(InputButton.Middle, InputMod.None,                   TopoPenAction.Split),
-    InputBinding(InputButton.Middle, InputMod.Shift,                  TopoPenAction.AddLoop),
-    InputBinding(InputButton.Middle, InputMod.Ctrl,                   TopoPenAction.Remove),
-    InputBinding(InputButton.Right,  InputMod.None,                   TopoPenAction.MoveLoop),
-    InputBinding(InputButton.Right,  InputMod.Shift,                  TopoPenAction.DupLoop),
-    InputBinding(InputButton.Right,  InputMod.Shift | InputMod.Ctrl,  TopoPenAction.SmoothLoop),
+    InputBinding(InputButton.Left,   InputMod.None,                   TopoPenChord.Lmb,          ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Shift,                  TopoPenChord.ShiftLmb,     ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Ctrl,                   TopoPenChord.CtrlLmb,      ResetScope.AllButtons),
+    InputBinding(InputButton.Left,   InputMod.Shift | InputMod.Ctrl,  TopoPenChord.ShiftCtrlLmb, ResetScope.AllButtons),
+    InputBinding(InputButton.Middle, InputMod.None,                   TopoPenChord.Mmb),
+    InputBinding(InputButton.Middle, InputMod.Shift,                  TopoPenChord.ShiftMmb),
+    InputBinding(InputButton.Middle, InputMod.Ctrl,                   TopoPenChord.CtrlMmb),
+    InputBinding(InputButton.Right,  InputMod.None,                   TopoPenChord.Rmb),
+    InputBinding(InputButton.Right,  InputMod.Shift,                  TopoPenChord.ShiftRmb),
+    InputBinding(InputButton.Right,  InputMod.Shift | InputMod.Ctrl,  TopoPenChord.ShiftCtrlRmb),
 ];
 
 // ---------------------------------------------------------------------------
@@ -306,27 +414,58 @@ private immutable InputBinding[] kTopoPenBindings = [
 // pin also proves that holds for THIS tool's table).
 // ---------------------------------------------------------------------------
 unittest {
-    // The 10 documented slots.
+    // The 10 wired slots, each resolving to its own CHORD id (task 0487 —
+    // the id names the chord now; which GESTURE it runs is resolved later
+    // from the chord's override plus the user's dropdown/flags).
     assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.None)
-        == TopoPenAction.LmbPlaceOrMove, "plain LMB must resolve to LmbPlaceOrMove");
+        == TopoPenChord.Lmb, "plain LMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift)
-        == TopoPenAction.Build, "Shift+LMB must resolve to Build");
+        == TopoPenChord.ShiftLmb, "Shift+LMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Ctrl)
-        == TopoPenAction.Slide, "Ctrl+LMB must resolve to Slide");
+        == TopoPenChord.CtrlLmb, "Ctrl+LMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift | InputMod.Ctrl)
-        == TopoPenAction.Smooth, "Shift+Ctrl+LMB must resolve to Smooth");
+        == TopoPenChord.ShiftCtrlLmb, "Shift+Ctrl+LMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.None)
-        == TopoPenAction.Split, "plain MMB must resolve to Split");
+        == TopoPenChord.Mmb, "plain MMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift)
-        == TopoPenAction.AddLoop, "Shift+MMB must resolve to AddLoop");
+        == TopoPenChord.ShiftMmb, "Shift+MMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Ctrl)
-        == TopoPenAction.Remove, "Ctrl+MMB must resolve to Remove");
+        == TopoPenChord.CtrlMmb, "Ctrl+MMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.None)
-        == TopoPenAction.MoveLoop, "plain RMB must resolve to MoveLoop");
+        == TopoPenChord.Rmb, "plain RMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift)
-        == TopoPenAction.DupLoop, "Shift+RMB must resolve to DupLoop");
+        == TopoPenChord.ShiftRmb, "Shift+RMB");
     assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift | InputMod.Ctrl)
-        == TopoPenAction.SmoothLoop, "Shift+Ctrl+RMB must resolve to SmoothLoop");
+        == TopoPenChord.ShiftCtrlRmb, "Shift+Ctrl+RMB");
+
+    // Every chord belongs to the button its own slot names — the mapping the
+    // dispatch books a gesture against, taken from the SLOT so a synthetic
+    // press with no `button` field still lands on the right one.
+    assert(chordButton(TopoPenChord.Lmb)          == InputButton.Left);
+    assert(chordButton(TopoPenChord.ShiftCtrlLmb) == InputButton.Left);
+    assert(chordButton(TopoPenChord.Mmb)          == InputButton.Middle);
+    assert(chordButton(TopoPenChord.CtrlMmb)      == InputButton.Middle);
+    assert(chordButton(TopoPenChord.Rmb)          == InputButton.Right);
+    assert(chordButton(TopoPenChord.ShiftCtrlRmb) == InputButton.Right);
+
+    // The override table itself — the measured half stated as assertions, so a
+    // future edit that levels the FlagOv distinction away fails here.
+    assert(kChordOv[TopoPenChord.Rmb].loop       == FlagOv.ForceOn,
+        "plain RMB FORCES the loop flag (measured: the literal-1 store)");
+    assert(kChordOv[TopoPenChord.ShiftRmb].loop  == FlagOv.ForceOn,
+        "Shift+RMB FORCES the loop flag (measured bit-identical across loop=false/true)");
+    assert(kChordOv[TopoPenChord.ShiftLmb].loop  == FlagOv.FromUser,
+        "Shift+LMB READS the loop flag (measured: 1 quad vs 3 on one seed)");
+    assert(kChordOv[TopoPenChord.Lmb].mode       == ModeOv.FromUser,
+        "the base slot never overrides the dropdown");
+    assert(kChordOv[TopoPenChord.Rmb].mode       == ModeOv.FromUser,
+        "plain RMB runs the DROPDOWN's mode — it is not an absolute move-loop");
+    assert(kChordOv[TopoPenChord.ShiftLmb].mode  == ModeOv.Duplicate);
+    assert(kChordOv[TopoPenChord.ShiftRmb].mode  == ModeOv.Duplicate);
+    assert(kChordOv[TopoPenChord.CtrlLmb].slide  == FlagOv.ForceOn,
+        "Ctrl+LMB forces Edge Slide");
+    assert(kChordOv[TopoPenChord.Rmb].slide      == FlagOv.FromUser,
+        "and Ctrl+RMB was measured NOT forcing slide, so the rule is not 'Ctrl forces slide'");
 
     // The 2 undocumented slots -- absent from the table -> PassThrough.
     assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl) == PassThrough,
@@ -352,7 +491,7 @@ unittest {
 // doc/topopen_p4_plan.md, doc/topopen_p5_remove_plan.md,
 // doc/topopen_p6_addloop_plan.md, doc/topopen_p7_slide_plan.md).
 //
-// P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`TopoPenAction.Slide`,
+// P7 adds SLIDE on the **Ctrl+LMB** overlay slot (`PenGesture.Slide`,
 // doc/topopen_p7_slide_plan.md, V1-scope Option B — EDGE grab): a press
 // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused verbatim
 // from P6) and arms a constrained slide for each grabbed endpoint whose rail
@@ -429,7 +568,7 @@ unittest {
 // `slideStartX_`/`slideStartY_` genuinely read).
 //
 // P6 adds ADD LOOP on the **Shift+MMB** overlay slot
-// (`TopoPenAction.AddLoop`, doc/topopen_p6_addloop_plan.md): a press picks
+// (`PenGesture.AddLoop`, doc/topopen_p6_addloop_plan.md): a press picks
 // the nearest primary-layer EDGE under the cursor (`findRingSeedEdge`,
 // mirroring `findSourceVertex` but over edges) and, if that edge's
 // perpendicular quad ring exists (`collectEdgeRing`), arms a loop-cut —
@@ -455,7 +594,7 @@ unittest {
 // post-cut loop-edge selection (the capture did not measure one for this
 // gesture, unlike `mesh.addLoop`'s own `selectNewLoopEdges`).
 //
-// P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`TopoPenAction.Remove`,
+// P5 adds REMOVE on the **Ctrl+MMB** overlay slot (`PenGesture.Remove`,
 // doc/topopen_p5_remove_plan.md): remove-on-DOWN (D2, capture-faithful and
 // the simplest composition — no `onMouseButtonUp` involvement at all, so
 // it is disjoint from every LEFT-button gesture above). One press picks the
@@ -474,7 +613,7 @@ unittest {
 // `moveArmed_` grab) — `isDragging()` is never overridden, so those CAN be
 // armed concurrently with a Ctrl+MMB press.
 //
-// P4 adds MOVE on the plain (unmodified) **LMB** slot (`TopoPenAction.LmbPlaceOrMove`) —
+// P4 adds MOVE on the plain (unmodified) **LMB** slot (`PenGesture.PlaceOrMove`) —
 // the dispatch backbone's base behavior, every modifier an overlay on top of
 // it (capture-verified, doc/topopen_p4_plan.md "The MEASURED mechanism").
 // Design A: BOTH Move and Place resolve at press time (`onPlainLmbDown`,
@@ -513,7 +652,7 @@ unittest {
 // sources — toolcards/topology_pen/gesture_map.md, PRIVATE; the "Duplicate"
 // overlay while the tool would otherwise be in its Move mode; correction to
 // the initial mode-less draft, applied BEFORE this phase shipped — see
-// `TopoPenAction`/`kTopoPenBindings` above): a Shift+LMB press landing on an
+// `PenGesture`/`kTopoPenBindings` above): a Shift+LMB press landing on an
 // existing primary-layer vertex A arms a drag-build (`findSourceVertex`/
 // `classifySource`, both handled entirely by THIS class — no CONS
 // involvement, the source pick/classify is intrinsic to the gesture, not a
@@ -531,7 +670,7 @@ unittest {
 // still fires verbatim on the Place branch, just deferred to release.
 // Every other slot in the grid (Move+Edge-Loop, Split, Add Loop, Slide,
 // Remove, the two loop-variant overlays, Smoothing, the 2 undocumented
-// slots) is a named, inert stub for later phases — see `TopoPenAction`'s own
+// slots) is a named, inert stub for later phases — see `PenGesture`'s own
 // doc comment.
 //
 // LAYERED like the reference editor (owner hard rule #1): the background-
@@ -947,9 +1086,9 @@ private:
     // the dropdown moved mid-drag (`tool.attr mesh.topoPen mode <tag>` is
     // reachable over HTTP at any moment, and the Tool Properties dropdown
     // is one click away). Per-press RECORD, so `resetAllGestureArms()`
-    // returns it to the neutral `LmbPlaceOrMove` — whose UP leg is guarded
+    // returns it to the neutral `PlaceOrMove` — whose UP leg is guarded
     // by `placeArmed_`/`moveArmed_` and therefore a safe no-op.
-    TopoPenAction lmbAction_ = TopoPenAction.LmbPlaceOrMove;
+    PenGesture[3] gestureOn_ = PenGesture.PlaceOrMove;
 
     // --- P10 Move Loop session state (topology_pen.d,
     // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
@@ -2073,7 +2212,7 @@ public:
         // unmodified-LMB slot resolved to. Neutral value first, so a press
         // that declines leaves behind an UP leg that is a guarded no-op
         // rather than a stale mode's commit.
-        lmbAction_      = TopoPenAction.LmbPlaceOrMove;
+        gestureOn_[]    = PenGesture.PlaceOrMove;
         // P3 build (doc/topopen_p3_plan.md)
         sourceVert_     = -1;
         dragArmed_      = false;
@@ -2201,60 +2340,70 @@ public:
     // says, so the modeless chord workflow keeps working unchanged and a
     // mode is never able to shadow it.
     //
-    // The resolved action is RECORDED in `lmbAction_` so the matching
+    // The resolved action is RECORDED in `gestureOn_` so the matching
     // RELEASE (`lmbModeUp`) reaches the same gesture's commit leg even if
     // the dropdown is written mid-drag (`tool.attr` is reachable over HTTP
     // at any time) — resolving the mode a second time at release would
     // otherwise commit a gesture nobody armed.
     private bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
-        // the full symmetric close this handler used to do itself here is now
-        // guaranteed by `dispatchInput`'s `onInputResetAll()` hook — this
-        // row's `ResetScope.AllButtons` (`kTopoPenBindings`) fires
-        // `resetAllGestureArms()` unconditionally BEFORE this handler is
-        // called (which also resets `lmbAction_`). See `resetAllGestureArms`'s
-        // own doc comment for the full hazard this closes.
-        // `lmbAction_` is stamped AFTER the delegated handler returns, never
-        // before: a commit-on-DOWN gesture (Remove) runs `resyncSession()`
-        // inside its own handler, which calls `resetAllGestureArms()` and
-        // would wipe a record written up front. Stamping last makes the field
-        // describe the press that just happened, whatever the handler did
-        // along the way.
-        final switch (penMode_) {
+        return runPenMode(penMode_, edgeLoop_, edgeSlide_, InputButton.Left, e, vts);
+    }
+
+    // THE mode dispatcher (task 0487) — the one place a resolved
+    // (mode, loop, slide) triple turns into a gesture. Every chord reaches it:
+    // the chord contributes its overrides (`kChordOv`), the user's dropdown and
+    // flags supply the rest, and this runs the result. Before this refactor the
+    // ten chords each named a gesture outright, so a chord could not compose
+    // with the dropdown at all.
+    //
+    // `btn` is the physical button the gesture is booked against, taken from
+    // the chord's own slot rather than from the event — a release then reaches
+    // the same gesture's commit leg, per button, so a MIDDLE chord fired
+    // during a held LEFT drag cannot redirect the LEFT release.
+    //
+    // The gesture is stamped AFTER the delegated handler returns, never
+    // before: a commit-on-DOWN gesture (Remove) runs `resyncSession()` inside
+    // its own handler, which calls `resetAllGestureArms()` and would wipe a
+    // record written up front. Stamping last makes the field describe the
+    // press that just happened, whatever the handler did along the way.
+    private bool runPenMode(PenMode mode, bool loop, bool slide, InputButton btn,
+                            ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        final switch (mode) {
         case PenMode.Move:
-            return moveOrPlaceDown(e, vts, false);
+            return moveOrPlaceDown(e, vts, false, loop, slide, btn);
         case PenMode.Point:
-            return moveOrPlaceDown(e, vts, true);
+            return moveOrPlaceDown(e, vts, true, loop, slide, btn);
         case PenMode.Duplicate:
-            // Task 0486 (contract C-4): the dropdown+plain-LMB path was
-            // measured BIT-IDENTICAL to the Shift+LMB chord, so it must route
-            // through the same handler rather than a parallel one — including
-            // its border gate and its reading of `edgeLoop_`. Routing
-            // `edgeLoop_` to the RMB handler (as this did) would additionally
-            // have forced the loop, which is that chord's own override.
-            return stamp(onShiftLmbDown(e, vts), TopoPenAction.Build);
+            // Two variants, one implementation each, both on this path: the
+            // loop variant gathers and trims (`onDupLoopShiftRmbDown`), the
+            // plain one takes the pressed edge alone. Both carry the border
+            // gate (task 0486 C-0). Measured BIT-IDENTICAL to the Shift+LMB /
+            // Shift+RMB chords respectively, which is why those chords are
+            // just (mode=Duplicate, loop=...) rows now.
+            if (loop) return stamp(onDupLoopShiftRmbDown(e, vts), PenGesture.DupLoop, btn);
+            return stamp(onShiftLmbDown(e, vts), PenGesture.Build, btn);
         case PenMode.Remove:
             // No loop variant is implemented (see `edgeLoop_`'s own doc
             // comment) — Edge Loop is deliberately IGNORED here rather than
             // silently promoted to something this tool cannot do. Commits on
-            // DOWN and arms nothing, exactly like the Ctrl+MMB chord.
-            return stamp(onCtrlMmbDown(e, vts), TopoPenAction.Remove);
+            // DOWN and arms nothing.
+            return stamp(onCtrlMmbDown(e, vts), PenGesture.Remove, btn);
         case PenMode.Split:
-            return stamp(onPlainMmbDown(e, vts), TopoPenAction.Split);
+            return stamp(onPlainMmbDown(e, vts), PenGesture.Split, btn);
         case PenMode.AddLoop:
-            return stamp(onShiftMmbDown(e, vts), TopoPenAction.AddLoop);
+            return stamp(onShiftMmbDown(e, vts), PenGesture.AddLoop, btn);
         case PenMode.Smooth:
-            if (edgeLoop_) return stamp(onSmoothLoopRmbDown(e, vts), TopoPenAction.SmoothLoop);
-            return stamp(onShiftCtrlLmbDown(e, vts), TopoPenAction.Smooth);
+            if (loop) return stamp(onSmoothLoopRmbDown(e, vts), PenGesture.SmoothLoop, btn);
+            return stamp(onShiftCtrlLmbDown(e, vts), PenGesture.Smooth, btn);
         case PenMode.Fill:
-            return fillDown(e, vts);
+            return fillDown(e, vts, btn);
         }
     }
 
     // Record `a` as the gesture this press resolved to and pass `consumed`
     // straight through — the router's one-liner for "delegate, then stamp".
-    private bool stamp(bool consumed, TopoPenAction a) {
-        lmbAction_ = a;
+    private bool stamp(bool consumed, PenGesture g, InputButton btn) {
+        if (btn != InputButton.None) gestureOn_[btn] = g;
         return consumed;
     }
 
@@ -2267,8 +2416,9 @@ public:
     // fire underneath an active Fill-mode click. No arm bool, no
     // `resyncSession`/`resetAllGestureArms` entry needed — Fill is a click
     // op, like Remove.
-    private bool fillDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        lmbAction_ = TopoPenAction.LmbPlaceOrMove;   // no UP leg — nothing was armed
+    private bool fillDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                          InputButton btn) {
+        stamp(true, PenGesture.PlaceOrMove, btn);   // no UP leg — nothing was armed
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         auto cell = findFillCell(e.x, e.y, vp);
@@ -2304,8 +2454,26 @@ public:
     // gesture for, never a placement. So the handler claims the event for
     // both of its own outcomes, and only for those.
     private bool moveOrPlaceDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
-                                 bool placeOnEmpty) {
-        lmbAction_ = TopoPenAction.LmbPlaceOrMove;
+                                 bool placeOnEmpty, bool loop, bool slide,
+                                 InputButton btn) {
+        stamp(true, PenGesture.PlaceOrMove, btn);
+
+        // Edge Loop / Edge Slide resolve FIRST, above the on-geometry gate —
+        // each routes to the very handler its equivalent chord routes to, and
+        // those handlers do their OWN pick and their OWN decline bookkeeping.
+        // Checking them after the gate (as an earlier draft of task 0487 did)
+        // silently swallowed that bookkeeping: a Ctrl+LMB press with no edge in
+        // range never reached `onCtrlLmbDown`, so `slideDecline_` kept reading
+        // "none" where it must read "no_edge" — the diagnostic channel task
+        // 0482 added on purpose, and the regression the suite caught. Resolving
+        // them here also keeps both byte-identical to the pre-refactor chords,
+        // which went straight to their handler whatever was under the cursor.
+        //
+        // Edge Loop wins when both are set: there is no slide-a-whole-loop
+        // gesture in this tool, so a loop press is the only one of the two that
+        // can be honoured.
+        if (loop)  return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop, btn);
+        if (slide) return stamp(onCtrlLmbDown(e, vts),     PenGesture.Slide,    btn);
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
@@ -2315,14 +2483,6 @@ public:
         // that resolved a vertex never pays for the `overPrimaryEdgeOrFace`
         // scan — the same call pattern this handler has always had.
         if (src >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) {
-            // On geometry -> the move family. Edge Loop first (it is the
-            // wider gesture, and there is no slide-a-whole-loop gesture to
-            // compose the two into), then Edge Slide, then the plain grab.
-            // Both flags route to the very handler their equivalent chord
-            // routes to, so mode+flag and chord are the same code path.
-            if (edgeLoop_)  return stamp(onMoveLoopRmbDown(e, vts), TopoPenAction.MoveLoop);
-            if (edgeSlide_) return stamp(onCtrlLmbDown(e, vts),     TopoPenAction.Slide);
-
             // The Move grab (task 0484). Resolve WHICH element is under the
             // cursor by proximity — vertex, else edge, else the face the
             // cursor is over — and arm that element's whole vertex set. A
@@ -2480,15 +2640,15 @@ public:
 
         if (!m.isEdgeBorder(cast(uint) seed)) {
             // Interior seed -> the Move family, per the effective loop flag.
-            if (loopFlag) return stamp(onMoveLoopRmbDown(e, vts), TopoPenAction.MoveLoop);
-            return stamp(armMoveElement(e, vts, vp), TopoPenAction.LmbPlaceOrMove);
+            if (loopFlag) return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop,
+                                       InputButton.Left);
+            return stamp(armMoveElement(e, vts, vp), PenGesture.PlaceOrMove, InputButton.Left);
         }
 
+        // The LOOP variant is `onDupLoopShiftRmbDown`'s job (gather + trim);
+        // this path is the single pressed edge, so there is exactly one
+        // implementation of each and no chance of the two drifting apart.
         int[] edges = [seed];
-        if (loopFlag) {
-            edges = trimBorderRunAroundSeed(m.selectLoopEdges(cast(uint) seed), seed);
-            if (edges.length == 0) edges = [seed];
-        }
 
         dupEdgeSeed_   = seed;
         dupEdgeEdges_  = edges;
@@ -3956,37 +4116,46 @@ public:
 
     // The Mode router's RELEASE leg (task 0483): the unmodified-LMB slot's
     // UP dispatches to whichever gesture THIS press's DOWN actually resolved
-    // to (`lmbAction_`), never to a freshly re-read `penMode_` — see
-    // `lmbAction_`'s own doc comment for the mid-drag hazard that closes.
+    // to (`gestureOn_`), never to a freshly re-read `penMode_` — see
+    // `gestureOn_`'s own doc comment for the mid-drag hazard that closes.
     //
     // Every `*Up` below already guards on its own arm bool, so a DOWN that
     // resolved-but-declined lands here as a clean no-op. `Remove` and the
     // Fill click op have no UP leg at all (both commit on DOWN) and return
     // `false`, unconsumed — matching how the Ctrl+MMB chord's own UP case
-    // answers. `LmbPlaceOrMove` is both the Move/Point modes' leg and the
+    // answers. `PlaceOrMove` is both the Move/Point modes' leg and the
     // neutral post-reset value, and is guarded by `placeArmed_`/`moveArmed_`.
     private bool lmbModeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        switch (lmbAction_) {
-        case TopoPenAction.Build:      return buildUp(e, vts);
-        case TopoPenAction.Slide:      return slideUp(e, vts);
-        case TopoPenAction.Smooth:     return smoothUp(e, vts);
-        case TopoPenAction.Split:      return splitUp(e, vts);
-        case TopoPenAction.AddLoop:    return addLoopUp(e, vts);
-        case TopoPenAction.MoveLoop:   return moveLoopUp(e, vts);
-        case TopoPenAction.DupLoop:    return dupLoopUp(e, vts);
-        case TopoPenAction.SmoothLoop: return smoothLoopUp(e, vts);
-        case TopoPenAction.Remove:     return false;   // commits on DOWN (D2)
-        default:                       return lmbPlaceOrMoveUp(e, vts);
+        return penGestureUp(gestureOn_[InputButton.Left], e, vts);
+    }
+
+    /// Dispatch a RELEASE to the commit leg of the gesture `g` — the gesture
+    /// the matching press actually resolved to, per button (task 0487). Every
+    /// leg guards on its own arm bool, so a press that resolved-but-declined
+    /// lands here as a clean no-op.
+    private bool penGestureUp(PenGesture g, ref const SDL_MouseButtonEvent e,
+                              ref VectorStack vts) {
+        switch (g) {
+        case PenGesture.Build:      return buildUp(e, vts);
+        case PenGesture.Slide:      return slideUp(e, vts);
+        case PenGesture.Smooth:     return smoothUp(e, vts);
+        case PenGesture.Split:      return splitUp(e, vts);
+        case PenGesture.AddLoop:    return addLoopUp(e, vts);
+        case PenGesture.MoveLoop:   return moveLoopUp(e, vts);
+        case PenGesture.DupLoop:    return dupLoopUp(e, vts);
+        case PenGesture.SmoothLoop: return smoothLoopUp(e, vts);
+        case PenGesture.Remove:     return false;   // commits on DOWN (D2)
+        default:                    return lmbPlaceOrMoveUp(e, vts);
         }
     }
 
-    // `lmbAction_` as a stable wire token for `/api/tool/state` (task 0483).
+    // `gestureOn_` as a stable wire token for `/api/tool/state` (task 0483).
     // A `final switch` (the `BuildCase`/`SlideDecline` precedent) rather than
     // an `IntEnumEntry` table: this is not a `Param`, nothing parses it back,
     // and the exhaustive switch makes a newly added action a COMPILE error
     // here instead of a silently unlabelled state field.
     // `moveElem_` as a stable wire token for `/api/tool/state` (task 0484),
-    // same `final switch` discipline as `lmbActionTag` below.
+    // same `final switch` discipline as `penGestureTag` below.
     private static string moveElemTag(MoveElem k) {
         final switch (k) {
         case MoveElem.None:   return "none";
@@ -3996,18 +4165,18 @@ public:
         }
     }
 
-    private static string lmbActionTag(TopoPenAction a) {
+    private static string penGestureTag(PenGesture a) {
         final switch (a) {
-        case TopoPenAction.LmbPlaceOrMove: return "place_or_move";
-        case TopoPenAction.Build:          return "build";
-        case TopoPenAction.Slide:          return "slide";
-        case TopoPenAction.Smooth:         return "smooth";
-        case TopoPenAction.Split:          return "split";
-        case TopoPenAction.AddLoop:        return "add_loop";
-        case TopoPenAction.Remove:         return "remove";
-        case TopoPenAction.MoveLoop:       return "move_loop";
-        case TopoPenAction.DupLoop:        return "dup_loop";
-        case TopoPenAction.SmoothLoop:     return "smooth_loop";
+        case PenGesture.PlaceOrMove:    return "place_or_move";
+        case PenGesture.Build:          return "build";
+        case PenGesture.Slide:          return "slide";
+        case PenGesture.Smooth:         return "smooth";
+        case PenGesture.Split:          return "split";
+        case PenGesture.AddLoop:        return "add_loop";
+        case PenGesture.Remove:         return "remove";
+        case PenGesture.MoveLoop:       return "move_loop";
+        case PenGesture.DupLoop:        return "dup_loop";
+        case PenGesture.SmoothLoop:     return "smooth_loop";
         }
     }
 
@@ -4030,47 +4199,24 @@ public:
     // directly, unchanged.
     override bool onToolAction(ToolAction a, InputPhase p,
                                ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        final switch (cast(TopoPenAction) a) {
-        case TopoPenAction.LmbPlaceOrMove:
-            if (p == InputPhase.Down) return onPlainLmbDown(e, vts);
-            if (p == InputPhase.Up)   return lmbModeUp(e, vts);
-            return false;
-        case TopoPenAction.Build:
-            if (p == InputPhase.Down) return onShiftLmbDown(e, vts);
-            if (p == InputPhase.Up)   return buildUp(e, vts);
-            return false;
-        case TopoPenAction.Slide:
-            if (p == InputPhase.Down) return onCtrlLmbDown(e, vts);
-            if (p == InputPhase.Up)   return slideUp(e, vts);
-            return false;
-        case TopoPenAction.Smooth:
-            if (p == InputPhase.Down) return onShiftCtrlLmbDown(e, vts);
-            if (p == InputPhase.Up)   return smoothUp(e, vts);
-            return false;
-        case TopoPenAction.Split:
-            if (p == InputPhase.Down) return onPlainMmbDown(e, vts);
-            if (p == InputPhase.Up)   return splitUp(e, vts);
-            return false;
-        case TopoPenAction.AddLoop:
-            if (p == InputPhase.Down) return onShiftMmbDown(e, vts);
-            if (p == InputPhase.Up)   return addLoopUp(e, vts);
-            return false;
-        case TopoPenAction.Remove:
-            if (p == InputPhase.Down) return onCtrlMmbDown(e, vts);
-            return false;   // Up is a no-op — Remove commits on Down (D2)
-        case TopoPenAction.MoveLoop:
-            if (p == InputPhase.Down) return onMoveLoopRmbDown(e, vts);
-            if (p == InputPhase.Up)   return moveLoopUp(e, vts);
-            return false;
-        case TopoPenAction.DupLoop:
-            if (p == InputPhase.Down) return onDupLoopShiftRmbDown(e, vts);
-            if (p == InputPhase.Up)   return dupLoopUp(e, vts);
-            return false;
-        case TopoPenAction.SmoothLoop:
-            if (p == InputPhase.Down) return onSmoothLoopRmbDown(e, vts);
-            if (p == InputPhase.Up)   return smoothLoopUp(e, vts);
-            return false;
+        immutable auto chord = cast(TopoPenChord) a;
+        immutable auto btn   = chordButton(chord);
+        immutable auto ov    = kChordOv[chord];
+
+        if (p == InputPhase.Down) {
+            // The chord's overrides on top of the user's own settings — the
+            // whole of the input model, in three lines.
+            immutable PenMode mode = (ov.mode == ModeOv.FromUser)
+                                   ? penMode_ : modeOfOverride(ov.mode);
+            immutable bool loop    = (ov.loop  == FlagOv.ForceOn) || edgeLoop_;
+            immutable bool slide   = (ov.slide == FlagOv.ForceOn) || edgeSlide_;
+            return runPenMode(mode, loop, slide, btn, e, vts);
         }
+        if (p == InputPhase.Up) return penGestureUp(gestureOn_[btn], e, vts);
+        // `Move` never arrives — this tool does not route `onMouseMotion`
+        // through `dispatchInput` (Move-phase routing is deferred, design §5);
+        // `onMouseMotion` keeps reading the arm bools directly, unchanged.
+        return false;
     }
 
     // Create one isolated vertex at `point` in the PRIMARY layer via the
@@ -5929,7 +6075,7 @@ public:
         // bools alone cannot tell apart from outside.
         root["edgeLoop"]  = JSONValue(edgeLoop_);
         root["edgeSlide"] = JSONValue(edgeSlide_);
-        root["lmbAction"] = JSONValue(lmbActionTag(lmbAction_));
+        root["lmbAction"] = JSONValue(penGestureTag(gestureOn_[InputButton.Left]));
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
         // 6): a NEW nested object (deliberately NOT the existing `hover{}`
@@ -9206,7 +9352,7 @@ unittest {
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P10, doc/topopen_p10_moveloop_plan.md): drives the REAL RMB gesture
 // end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
-// `TopoPenAction.MoveLoop` -> `onMoveLoopRmbDown`), a motion event, and the
+// `PenGesture.MoveLoop` -> `onMoveLoopRmbDown`), a motion event, and the
 // RIGHT-button release branch
 // (-> `commitMoveLoop`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
@@ -10134,7 +10280,7 @@ unittest {
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P11, doc/topopen_p11_duploop_plan.md): drives the REAL Shift+RMB gesture
 // end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
-// `TopoPenAction.DupLoop` ->
+// `PenGesture.DupLoop` ->
 // `onDupLoopShiftRmbDown`), a motion event, and the RIGHT-button release
 // branch (-> `commitDupLoop`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
@@ -10630,7 +10776,7 @@ unittest {
 // onMouseButtonDown / onMouseMotion / onMouseButtonUp — MANDATORY DISPATCH
 // (P12, doc/topopen_p12_smoothloop_plan.md): drives the REAL Shift+Ctrl+RMB
 // gesture end-to-end — dispatch (`onMouseButtonDown` -> `dispatchInput` ->
-// `TopoPenAction.SmoothLoop` -> `onSmoothLoopRmbDown`), a motion event (drag-distance
+// `PenGesture.SmoothLoop` -> `onSmoothLoopRmbDown`), a motion event (drag-distance
 // accumulation), and the RIGHT-button release branch (->
 // `applySmoothLoopPasses`) — against a REAL background mesh
 // (`setBackgroundSnapSources`, CPU-only BVH raycast, no GL context needed),
@@ -10963,7 +11109,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // The Mode router's full table (task 0483) — every (mode, Edge Loop) pair
 // dispatches an unmodified LMB press to the gesture the reference pairs it
-// with. Asserted through `lmbAction_`, the router's own recorded decision,
+// with. Asserted through `gestureOn_`, the router's own recorded decision,
 // so a row is pinned by WHICH gesture it chose and not by whether that
 // gesture happened to find a seed under the probe pixel: a seed miss is the
 // delegated handler's business (each has its own tests), a misrouted mode is
@@ -10994,22 +11140,22 @@ unittest {
     e.x = cast(int)((pa.x + pb.x) * 0.5f);
     e.y = cast(int)((pa.y + pb.y) * 0.5f);
 
-    static struct Row { PenMode mode; bool loop; TopoPenAction want; string why; }
+    static struct Row { PenMode mode; bool loop; PenGesture want; string why; }
     static immutable Row[] rows = [
-        Row(PenMode.Move,      false, TopoPenAction.LmbPlaceOrMove, "Move = the plain LMB gesture"),
-        Row(PenMode.Move,      true,  TopoPenAction.MoveLoop,       "Move + Edge Loop = the RMB gesture"),
-        Row(PenMode.Point,     false, TopoPenAction.LmbPlaceOrMove, "Point = place-or-move"),
-        Row(PenMode.Point,     true,  TopoPenAction.MoveLoop,       "Point on geometry follows Move"),
-        Row(PenMode.Duplicate, false, TopoPenAction.Build,          "Duplicate = the Shift+LMB gesture"),
-        Row(PenMode.Duplicate, true,  TopoPenAction.Build,          "Duplicate + Edge Loop stays the Shift+LMB slot — the flag widens the armed run, it does not switch chords"),
-        Row(PenMode.Remove,    false, TopoPenAction.Remove,         "Remove = the Ctrl+MMB gesture"),
-        Row(PenMode.Remove,    true,  TopoPenAction.Remove,         "Remove has NO loop variant — the flag is ignored"),
-        Row(PenMode.Split,     false, TopoPenAction.Split,          "Split = the MMB gesture"),
-        Row(PenMode.Split,     true,  TopoPenAction.Split,          "Split ignores Edge Loop"),
-        Row(PenMode.AddLoop,   false, TopoPenAction.AddLoop,        "Add Loop = the Shift+MMB gesture"),
-        Row(PenMode.AddLoop,   true,  TopoPenAction.AddLoop,        "Add Loop ignores Edge Loop"),
-        Row(PenMode.Smooth,    false, TopoPenAction.Smooth,         "Smoothing = the Shift+Ctrl+LMB gesture"),
-        Row(PenMode.Smooth,    true,  TopoPenAction.SmoothLoop,     "Smoothing + Edge Loop = Shift+Ctrl+RMB"),
+        Row(PenMode.Move,      false, PenGesture.PlaceOrMove, "Move = the plain LMB gesture"),
+        Row(PenMode.Move,      true,  PenGesture.MoveLoop,       "Move + Edge Loop = the RMB gesture"),
+        Row(PenMode.Point,     false, PenGesture.PlaceOrMove, "Point = place-or-move"),
+        Row(PenMode.Point,     true,  PenGesture.MoveLoop,       "Point on geometry follows Move"),
+        Row(PenMode.Duplicate, false, PenGesture.Build,          "Duplicate = the Shift+LMB gesture"),
+        Row(PenMode.Duplicate, true,  PenGesture.DupLoop,        "Duplicate + Edge Loop = the loop variant (gather + trim), the same mode's other half"),
+        Row(PenMode.Remove,    false, PenGesture.Remove,         "Remove = the Ctrl+MMB gesture"),
+        Row(PenMode.Remove,    true,  PenGesture.Remove,         "Remove has NO loop variant — the flag is ignored"),
+        Row(PenMode.Split,     false, PenGesture.Split,          "Split = the MMB gesture"),
+        Row(PenMode.Split,     true,  PenGesture.Split,          "Split ignores Edge Loop"),
+        Row(PenMode.AddLoop,   false, PenGesture.AddLoop,        "Add Loop = the Shift+MMB gesture"),
+        Row(PenMode.AddLoop,   true,  PenGesture.AddLoop,        "Add Loop ignores Edge Loop"),
+        Row(PenMode.Smooth,    false, PenGesture.Smooth,         "Smoothing = the Shift+Ctrl+LMB gesture"),
+        Row(PenMode.Smooth,    true,  PenGesture.SmoothLoop,     "Smoothing + Edge Loop = Shift+Ctrl+RMB"),
     ];
 
     foreach (r; rows) {
@@ -11018,33 +11164,34 @@ unittest {
         t.penMode_   = r.mode;
         t.edgeLoop_  = r.loop;
         t.onPlainLmbDown(e, vts);
-        assert(t.lmbAction_ == r.want, r.why);
+        assert(t.gestureOn_[InputButton.Left] == r.want, r.why);
     }
 
-    // Task 0486 (contract C-1/C-4): for Duplicate, Edge Loop does not change
-    // WHICH gesture runs — it changes HOW MUCH that gesture takes. The action
-    // stays the Shift+LMB slot either way (pinned in the table above); what
-    // grows is the armed edge run. The reference reads `edgeLoop_` on this
-    // slot and forces it on for its Shift+RMB sibling, so this is the slot
-    // where the flag is observable at all.
+    // Task 0486 (C-1/C-4) + 0487: for Duplicate, Edge Loop selects between the
+    // mode's TWO variants — the pressed edge alone, or the gathered-and-trimmed
+    // border run. One implementation each, both reached from the one
+    // dispatcher, so they cannot drift. The reference reads `edgeLoop_` on the
+    // Shift+LMB slot and FORCES it on Shift+RMB, which is why those two chords
+    // are now just (mode=Duplicate, loop=...) rows in `kChordOv` rather than
+    // two hand-wired gestures.
     {
         auto t1 = new TopologyPenTool();
         t1.meshSrc_ = () => &m;
         t1.penMode_ = PenMode.Duplicate;
         t1.onPlainLmbDown(e, vts);
-        immutable size_t oneEdge = t1.dupEdgeEdges_.length;
+        assert(t1.dupEdgeEdges_.length == 1,
+            "Duplicate with the flag OFF arms exactly the pressed edge");
+        assert(!t1.dupLoopArmed_, "and never the loop variant");
 
         auto t2 = new TopologyPenTool();
         t2.meshSrc_ = () => &m;
         t2.penMode_ = PenMode.Duplicate;
         t2.edgeLoop_ = true;
         t2.onPlainLmbDown(e, vts);
-        immutable size_t withLoop = t2.dupEdgeEdges_.length;
-
-        assert(oneEdge == 1, "Duplicate with the flag OFF arms exactly the pressed edge");
-        assert(withLoop >= oneEdge,
-            "Duplicate with Edge Loop ON must arm at least the pressed edge — the trimmed "
-          ~ "border run, never fewer");
+        assert(t2.dupLoopArmed_, "Duplicate with Edge Loop ON arms the loop variant");
+        assert(t2.dupLoopEdges_.length >= 1,
+            "and its set is the trimmed border run — never fewer than the pressed edge");
+        assert(t2.dupEdgeEdges_.length == 0, "the single-edge variant must stay untouched");
     }
 
     // Edge Slide reroutes the Move family — and ONLY the Move family — to the
@@ -11056,12 +11203,12 @@ unittest {
         t.penMode_   = mode;
         t.edgeSlide_ = true;
         t.onPlainLmbDown(e, vts);
-        assert(t.lmbAction_ == TopoPenAction.Slide, "Edge Slide must route the Move family to Slide");
+        assert(t.gestureOn_[InputButton.Left] == PenGesture.Slide, "Edge Slide must route the Move family to Slide");
 
         t.resetAllGestureArms();
         t.edgeLoop_ = true;
         t.onPlainLmbDown(e, vts);
-        assert(t.lmbAction_ == TopoPenAction.MoveLoop, "Edge Loop must win over Edge Slide");
+        assert(t.gestureOn_[InputButton.Left] == PenGesture.MoveLoop, "Edge Loop must win over Edge Slide");
     }
 
     // Every OTHER mode ignores Edge Slide outright.
@@ -11072,8 +11219,102 @@ unittest {
         t.penMode_   = mode;
         t.edgeSlide_ = true;
         t.onPlainLmbDown(e, vts);
-        assert(t.lmbAction_ != TopoPenAction.Slide,
+        assert(t.gestureOn_[InputButton.Left] != PenGesture.Slide,
             "Edge Slide must not leak into a non-Move-family mode");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The CHORD MODEL composes with the dropdown (task 0487) — the property the old
+// table could not express and the reason for the refactor.
+//
+// Two halves, and the second is the one that used to be wrong:
+//   * a chord that OVERRIDES the mode ignores the dropdown (Shift+MMB is Add
+//     Loop whatever the dropdown says);
+//   * a chord that does NOT override it runs the DROPDOWN's mode. Plain RMB is
+//     that case — measured as "the dropdown's mode with the loop forced on",
+//     where the old table hard-wired it to move-loop, so it stayed a move-loop
+//     with the dropdown parked on Remove.
+//
+// Driven through the real `onToolAction` seam with a synthetic chord id, so the
+// override resolution and the per-button booking are both exercised.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    Mesh m = makeGridPlane(3);
+    auto vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    // A vertex pixel: every mode below resolves SOMETHING there, so the rows
+    // differ by the routing decision and not by a pick miss.
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)p0.x; e.y = cast(int)p0.y;
+
+    PenGesture press(TopoPenChord c, PenMode dropdown, bool loop = false, bool slide = false) {
+        auto t = new TopologyPenTool();
+        t.meshSrc_  = () => &m;
+        t.penMode_  = dropdown;
+        t.edgeLoop_ = loop;
+        t.edgeSlide_ = slide;
+        t.onToolAction(c, InputPhase.Down, e, vts);
+        return t.gestureOn_[chordButton(c)];
+    }
+
+    // --- a mode-overriding chord ignores the dropdown entirely.
+    foreach (dropdown; [PenMode.Move, PenMode.Remove, PenMode.Fill, PenMode.Smooth]) {
+        assert(press(TopoPenChord.ShiftMmb, dropdown) == PenGesture.AddLoop,
+            "Shift+MMB overrides the mode to Add Loop whatever the dropdown says");
+        assert(press(TopoPenChord.CtrlMmb, dropdown) == PenGesture.Remove,
+            "Ctrl+MMB overrides the mode to Remove whatever the dropdown says");
+    }
+
+    // --- a NON-overriding chord follows the dropdown. This is the row the old
+    //     absolute table got wrong.
+    assert(press(TopoPenChord.Rmb, PenMode.Move) == PenGesture.MoveLoop,
+        "plain RMB with the dropdown on Move is a move-LOOP (the loop is forced)");
+    assert(press(TopoPenChord.Rmb, PenMode.Remove) == PenGesture.Remove,
+        "plain RMB with the dropdown on Remove must run REMOVE — under the old absolute "
+      ~ "table it stayed a move-loop regardless");
+    assert(press(TopoPenChord.Rmb, PenMode.Smooth) == PenGesture.SmoothLoop,
+        "plain RMB with the dropdown on Smoothing is smooth+loop — its forced loop meets "
+      ~ "the dropdown's mode");
+
+    // --- the forced loop cannot be switched off by the user's flag...
+    assert(press(TopoPenChord.Rmb, PenMode.Move, /*loop=*/false) == PenGesture.MoveLoop);
+    assert(press(TopoPenChord.Rmb, PenMode.Move, /*loop=*/true)  == PenGesture.MoveLoop,
+        "and the flag being on changes nothing for a chord that already forces it");
+
+    // --- ...while a chord that does NOT force it reads the user's flag.
+    assert(press(TopoPenChord.Lmb, PenMode.Move, /*loop=*/false) == PenGesture.PlaceOrMove);
+    assert(press(TopoPenChord.Lmb, PenMode.Move, /*loop=*/true)  == PenGesture.MoveLoop,
+        "the base slot honours Edge Loop — that is what FlagOv.FromUser means");
+
+    // --- Ctrl+LMB forces Edge Slide; plain LMB honours the user's flag.
+    assert(press(TopoPenChord.CtrlLmb, PenMode.Move) == PenGesture.Slide,
+        "Ctrl+LMB forces Edge Slide on top of the dropdown's mode");
+    assert(press(TopoPenChord.Lmb, PenMode.Move, false, /*slide=*/true) == PenGesture.Slide,
+        "and the user's own Edge Slide reaches the base slot");
+
+    // --- the gesture is booked against the chord's OWN button, so a MIDDLE
+    //     chord cannot redirect a LEFT release.
+    {
+        auto t = new TopologyPenTool();
+        t.meshSrc_ = () => &m;
+        t.penMode_ = PenMode.Move;
+        t.onToolAction(TopoPenChord.Lmb,    InputPhase.Down, e, vts);
+        t.onToolAction(TopoPenChord.CtrlMmb, InputPhase.Down, e, vts);
+        assert(t.gestureOn_[InputButton.Left]   == PenGesture.PlaceOrMove,
+            "the LEFT booking must survive a MIDDLE chord fired during the drag");
+        assert(t.gestureOn_[InputButton.Middle] == PenGesture.Remove,
+            "and the MIDDLE booking is its own");
     }
 }
 
@@ -11109,7 +11350,7 @@ unittest {
     t.penMode_ = PenMode.Split;
     assert(t.onPlainLmbDown(e, vts), "a Split-mode press on a vertex must arm");
     assert(t.splitArmed_ && t.splitSourceVert_ == 0, "Split must arm at the pressed vertex");
-    assert(t.lmbAction_ == TopoPenAction.Split, "the press must record the Split gesture");
+    assert(t.gestureOn_[InputButton.Left] == PenGesture.Split, "the press must record the Split gesture");
 
     // The dropdown moves mid-drag (this is reachable over HTTP at any time).
     t.penMode_ = PenMode.Move;
