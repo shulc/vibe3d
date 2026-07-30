@@ -6937,6 +6937,89 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// commitAddLoop — T7: an OPEN SPAN through the TOOL path, against the frozen
+// reference row `grid3x2_edge_third_click_0149`
+// (tests/fixtures/topopen_addloop.json; the whole 8-case golden runs against
+// the KERNEL in tests/test_topopen_addloop_conformance.d — this is the one
+// case driven through the tool's own commit leg, which that test cannot reach
+// because `commitAddLoop`/`history_`/`meshSrc_` are private).
+//
+// A flat 3x2 quad grid seeded on the BORDER edge 0-1: the ring terminates at
+// the mesh boundary at both ends, so the measured delta is the OPEN-SPAN
+// formula +(N+1) verts / +(2N+1) edges / +N faces with N=2 crossed quads —
+// 12/17/6 -> 15/22/8, NOT the closed ring's +2/+4/+2 — and all three crossed
+// rails carry the SAME fraction 0.498288683 from their lower-index endpoint.
+// Seed 0-1's only incident face is [0,1,5,4], whose dart is (0,1), so the
+// kernel's ratio sense already matches the fixture's and the ratio passes
+// unflipped.
+//
+// The undo assert pins OUR invariant, not parity: one Add Loop drag produces
+// exactly ONE history entry (`commitAddLoop` brackets the single
+// `insertEdgeLoops` in one before/after snapshot pair and records once; the
+// motion handler only updates the ratio and never mutates the mesh). What the
+// reference does with undo granularity for this gesture is still unmeasured.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import std.math : abs;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_            = history;
+    t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                      "mesh.topoPen_addloop", "Topology Add Loop",
+                                                      MeshEditScope.Geometry | MeshEditScope.Marks);
+
+    Mesh m;
+    static immutable float[3][12] P = [
+        [-0.5f,-0.5f,0], [-0.166667f,-0.5f,0], [0.166667f,-0.5f,0], [0.5f,-0.5f,0],
+        [-0.5f, 0.0f,0], [-0.166667f, 0.0f,0], [0.166667f, 0.0f,0], [0.5f, 0.0f,0],
+        [-0.5f, 0.5f,0], [-0.166667f, 0.5f,0], [0.166667f, 0.5f,0], [0.5f, 0.5f,0],
+    ];
+    foreach (p; P) m.vertices ~= Vec3(p[0], p[1], p[2]);
+    m.addFace([0u,1u,5u,4u]);  m.addFace([1u,2u,6u,5u]);  m.addFace([2u,3u,7u,6u]);
+    m.addFace([4u,5u,9u,8u]);  m.addFace([5u,6u,10u,9u]); m.addFace([6u,7u,11u,10u]);
+    m.buildLoops();
+    t.meshSrc_ = () => &m;
+
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max);
+    assert(m.vertices.length == 12 && m.edges.length == 17 && m.faces.length == 6);
+
+    t.commitAddLoop(seed, 0.498288683f);
+
+    // Open-span delta: +3 verts / +5 edges / +2 faces (N=2), NOT the closed
+    // ring's +2/+4/+2.
+    assert(m.vertices.length == 15, "open-span Add Loop must add N+1 == 3 vertices");
+    assert(m.edges.length    == 22, "open-span Add Loop must add 2N+1 == 5 edges");
+    assert(m.faces.length    ==  8, "open-span Add Loop must add N == 2 faces");
+    foreach (const f; m.faces) assert(f.length == 4, "every face must stay a quad");
+
+    // One uniform scalar: all three new verts share the reference x, on the
+    // three rails y = -0.5 / 0.0 / +0.5.
+    enum float X = -0.3339039385318756f;
+    bool[3] seen;
+    foreach (i; 12 .. 15) {
+        assert(abs(m.vertices[i].x - X) < 1e-5f,
+            "every crossed rail must be cut at the SAME scalar fraction");
+        if (abs(m.vertices[i].y + 0.5f) < 1e-5f) seen[0] = true;
+        if (abs(m.vertices[i].y)        < 1e-5f) seen[1] = true;
+        if (abs(m.vertices[i].y - 0.5f) < 1e-5f) seen[2] = true;
+    }
+    assert(seen[0] && seen[1] && seen[2], "all three rails of the open span must be cut");
+
+    // One gesture, ONE undo entry — this pins OUR side of the granularity
+    // question; the reference's own answer is still unmeasured.
+    assert(history.canUndo(), "an Add Loop cut must be undoable");
+    history.undo();
+    assert(m.vertices.length == 12 && m.edges.length == 17 && m.faces.length == 6,
+        "one undo must restore the exact pre-cut grid");
+    assert(!history.canUndo(), "one Add Loop drag must produce exactly ONE undo entry");
+}
+
+// ---------------------------------------------------------------------------
 // addLoopUp — T6: the "at the Middle" option, driven through the REAL release
 // handler (doc/tasks/work/0480-topopen-addloop-middle.md). Armed manually
 // (mirroring the sibling direct-call convention), released at a pixel biased
