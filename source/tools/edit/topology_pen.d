@@ -13306,8 +13306,18 @@ unittest {
     assert(TopologyPenTool.projectPt(centroid, vp, cpix),
         "setup: the gap cell's centroid must project on-screen");
 
+    // The press pixel is the gap cell's own CENTROID -- as far from every
+    // element of the mesh as the cell allows, and well outside
+    // `topoPenPressPickPx`. That is deliberate and it is the load-bearing half
+    // of this assertion (task 0507): the reference drops its press-pick gather
+    // radius entirely in Fill mode, so a press at the bare centre of a gap
+    // still resolves the cell. Gating `findFillCell`/`fillDown` on
+    // `topoPenPressPickPx` to make Fill "consistent" with the other modes is
+    // the exact regression this line catches -- see `source/constraint.d`'s
+    // MODE-DEPENDENT paragraph.
     auto cell = t.findFillCell(cast(int)cpix.x, cast(int)cpix.y, vp);
-    assert(cell.length == 4, "findFillCell must resolve the one interior gap cell");
+    assert(cell.length == 4, "findFillCell must resolve the one interior gap cell "
+        ~ "from a press at its bare centroid -- Fill's press has NO reach radius");
     assert(fillCellSetEq(cell, cellVerts),
         "findFillCell must return exactly the gap cell's own 4 corners");
 

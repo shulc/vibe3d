@@ -393,8 +393,46 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 // TYPE-UNIFORM WITHIN each query, deliberately: the acceptance compare was
 // measured at 24.0 under both a vertex latch and an edge latch (14 samples,
 // one number), and the press pick's one printed limit is shared by vertex and
-// edge alike. So each query has exactly ONE threshold function and no per-type
-// threshold may be introduced.
+// edge alike. So each query has exactly ONE threshold function today.
+//
+// That uniformity is a statement about the CANDIDATE GATHER, and only about it
+// (task 0507). The reference's press pick gathers every type in one pass at one
+// radius -- the 8.0 above -- and then ARBITRATES between the surviving per-type
+// candidates with a tolerance that is NOT type-uniform: the vertex leg's
+// tolerance is twice the gather radius, the edge and polygon legs' is exactly
+// it. We ship no arbitration at all (we short-circuit vertex -> edge -> face at
+// the one radius) and every reference row measured so far agrees with our
+// order, so the difference is latent rather than live. It is written down
+// because the earlier wording here forbade a per-type threshold outright, and
+// that would have blocked the correct port of the arbitration if anyone ever
+// needs it. ONE GATHER RADIUS: still the law. One tolerance for all three
+// types: never was.
+//
+// MODE-DEPENDENT, and this is the one exemption (task 0507). The reach above
+// governs a press in every pen mode EXCEPT Fill. In Fill the reference drops
+// the gather radius entirely: the press takes the nearest qualifying element in
+// the whole mesh at ANY distance, which is how a press at the bare centre of a
+// gap -- 32px from the nearest border edge, 86px from the nearest vertex, where
+// an ordinary selection click resolves nothing -- still classifies as an edge
+// press and caps the cell. Our Fill press already matches, and matches by
+// construction rather than by luck: `fillDown` resolves its cell through
+// `findFillCell`, which is purely topological and consults NO radius. Do not
+// "unify" it onto `topoPenPressPickPx` -- that would be a real regression, and
+// the gap-centroid unittest in `tools/edit/topology_pen.d` is what catches it.
+// (The reference's Fill HOVER highlight is a separate matter and IS bounded by
+// the ordinary reach -- it reads the application's cached element hover rather
+// than running the press's own query -- so our Fill hover, which does gate at
+// `topoPenPressPickPx`, is right as it stands.)
+//
+// A PREFERENCE DEFAULT, not a tool constant. The 8.0 is the reference's
+// application-wide element-selection-size preference at its shipped default,
+// handed to the pen's press pick as the gather radius; the "twice" two
+// paragraphs up is a second preference (a point-selection scale, default 2.0).
+// A third preference -- a "lazy selection" toggle -- removes the gather radius
+// in EVERY mode when a user turns it on, exactly as Fill does unconditionally.
+// vibe3d models none of the three: we hardcode the two defaults and the un-lazy
+// behaviour. A deliberate, recorded simplification rather than an oversight,
+// and the place a future preference would plug in.
 // ---------------------------------------------------------------------------
 
 /// Nominal PRESS-PICK reach in "reference pixels" — the limit the reference
@@ -405,6 +443,11 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 /// both consistent with this one printed limit within the ~1.2px between the
 /// rig's geometry and the reference's own computed distance. Move this number
 /// only with a measurement that narrows those brackets.
+///
+/// SCOPE (task 0507): every mode but Fill, and only while the reference's
+/// "lazy selection" preference is off -- see the MODE-DEPENDENT and PREFERENCE
+/// DEFAULT paragraphs in the block comment above before wiring this into a new
+/// call site.
 enum float kTopoPenPressPickNominalPx = 8.0f;
 
 /// Nominal DRAG-SNAP acceptance radius — the distance compare that decides
@@ -510,14 +553,17 @@ unittest { // the THREE measured numbers, and the two refutations behind them
     assert(topoPenSnapGatherPx(vp) != 2.0f * topoPenSnapAcceptPx(vp),
         "the refuted 2.0 factor must not creep back in");
 
-    // Type-uniformity WITHIN a query is structural, not a value check: each
-    // query has exactly one threshold function, so a per-type radius cannot be
-    // expressed without adding one. These assertions document the invariant the
-    // measurement proved (one acceptance under both a vertex and an edge latch;
-    // one printed press limit shared by vertex and edge) so a future per-type
-    // "improvement" has to delete a stated law first.
+    // Type-uniformity of the GATHER is structural, not a value check: each
+    // query has exactly one threshold function, so a per-type gather radius
+    // cannot be expressed without adding one. These assertions document the
+    // invariant the measurement proved (one acceptance under both a vertex and
+    // an edge latch; one printed press limit shared by vertex and edge) so a
+    // future per-type "improvement" to the GATHER has to delete a stated law
+    // first. It says nothing about the reference's cross-type ARBITRATION,
+    // whose tolerance is per-type and which we do not implement -- see the
+    // block comment above (task 0507).
     assert(topoPenPressPickPx(vp) == topoPenPressPickPx(vp),
-        "one press-pick reach for vertex, edge and polygon candidates alike");
+        "one press-pick GATHER reach for vertex, edge and polygon candidates alike");
     assert(topoPenSnapAcceptPx(vp) == topoPenSnapAcceptPx(vp),
         "one drag-snap acceptance for every candidate type");
 }
