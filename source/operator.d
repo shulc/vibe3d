@@ -3,7 +3,7 @@ module operator;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,
-                          PathPacket, SnapHitPacket;
+                          PathPacket, SnapHitPacket, GesturePacket, GestureTrack;
 
 // ---------------------------------------------------------------------------
 // Operator architecture — Phase 0 of doc/operator_refactor_plan.md.
@@ -60,7 +60,8 @@ enum PacketKind : ubyte {
     Path          = 8,
     ConstrainHit  = 9,
     SnapHit       = 10,
-    Count         = 11
+    Gesture       = 11,
+    Count         = 12
 }
 
 /// Compile-time map T → PacketKind. Used by VectorStack.put!T/get!T to
@@ -78,6 +79,7 @@ template packetKindOf(T) {
     else static if (is(T == PathPacket))          enum packetKindOf = PacketKind.Path;
     else static if (is(T == ConstrainHitPacket))  enum packetKindOf = PacketKind.ConstrainHit;
     else static if (is(T == SnapHitPacket))       enum packetKindOf = PacketKind.SnapHit;
+    else static if (is(T == GesturePacket))       enum packetKindOf = PacketKind.Gesture;
     else                                          static assert(false,
         "packetKindOf: unregistered packet type " ~ T.stringof
         ~ " — add a branch in source/operator.d");
@@ -266,4 +268,67 @@ unittest {
     vts.put(&subj);
     assert(vts.get!PathPacket() is &pp);
     assert(vts.get!SubjectPacket() is &subj);
+}
+
+unittest {
+    // S3(a) — the cooked 2D event on the wire.
+    //
+    // This models `app.d`'s publication exactly as it is written: one slot
+    // that outlives the call (VectorStack stores POINTERS, and the caller
+    // holds its stack across the dispatch that follows), filled from a
+    // trailing parameter that defaults to `GesturePacket.init`. The mouse-
+    // event sites pass a cooked packet; every other call site passes
+    // nothing and therefore publishes the default.
+    //
+    // The limit of this test, stated rather than hidden: it models the
+    // publication, it does not reach into `app.d`. What it does pin is the
+    // part that could silently rot — that the packet has its OWN slot (an
+    // aliased PacketKind would make one packet clobber another and would
+    // not be caught by any consumer, since nothing consumes this one yet).
+    static void publish(ref VectorStack vts, ref GesturePacket slot,
+                        GesturePacket gest = GesturePacket.init) {
+        slot = gest;
+        vts.put(&slot);
+    }
+
+    // A non-mouse call site: no gesture argument.
+    {
+        VectorStack vts;
+        GesturePacket slot;
+        publish(vts, slot);
+        auto got = vts.get!GesturePacket();
+        assert(got !is null, "S3: the packet is published on every path");
+        assert(!got.valid,
+               "S3: a caller that supplies no gesture publishes the invalid "
+               ~ "one — the same discipline SubjectPacket.cursorValid carries");
+    }
+
+    // A mouse-event call site: the handler's cooked packet, unchanged.
+    {
+        VectorStack vts;
+        GesturePacket slot;
+        GestureTrack tr;
+        auto cooked = tr.event(GesturePacket.Phase.Down, 64, 32);
+        publish(vts, slot, cooked);
+        auto got = vts.get!GesturePacket();
+        assert(got.valid && got.phase == GesturePacket.Phase.Down);
+        assert(got.pressX == 64 && got.pressY == 32);
+        assert(got.curX   == 64 && got.curY   == 32);
+    }
+
+    // Its own slot: publishing a gesture must not disturb any neighbour,
+    // and no neighbour must disturb it.
+    {
+        VectorStack vts;
+        GesturePacket slot;
+        SubjectPacket subj;
+        SnapPacket    snap;
+        vts.put(&subj);
+        publish(vts, slot, GestureTrack().event(GesturePacket.Phase.Move, 5, 6));
+        vts.put(&snap);
+        assert(vts.get!SubjectPacket()  is &subj);
+        assert(vts.get!SnapPacket()     is &snap);
+        assert(vts.get!GesturePacket()  is &slot);
+        assert(vts.get!GesturePacket().curX == 5);
+    }
 }

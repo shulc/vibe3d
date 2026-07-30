@@ -28,7 +28,7 @@ import editmode;
 import seltype;
 import toolpipe;
 import operator         : VectorStack;
-import toolpipe.packets : SubjectPacket;
+import toolpipe.packets : SubjectPacket, GesturePacket, GestureTrack;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
@@ -5582,6 +5582,23 @@ void main(string[] args) {
 
     int lastMouseX, lastMouseY;
 
+    // The cooked 2D event, and the bookkeeping behind it. `gestureTrack` is
+    // advanced once per SDL mouse event at the TOP of each of the three
+    // mouse handlers (see GestureTrack.event's doc for why the placement is
+    // load-bearing); `gestureSlot` is the storage buildToolVts publishes
+    // from, and it lives out here — not as a local inside buildToolVts —
+    // because VectorStack stores POINTERS and the stack it fills outlives
+    // the call (every caller holds its own `vts` across the dispatch that
+    // follows). main()'s frame lives for the whole run, exactly like the
+    // other bookkeeping above it.
+    //
+    // NOTHING READS THE PACKET. It is published so the shape exists at the
+    // one place a gesture's pixel state is known; migrating the tools that
+    // keep their own last-pixel bookkeeping onto it is a separate step, one
+    // tool per commit, each under its own drag test.
+    GestureTrack  gestureTrack;
+    GesturePacket gestureSlot;
+
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
     SDL_Event event;
@@ -5833,8 +5850,19 @@ void main(string[] args) {
     // HTTP-thread subject builder — leaves `curValid` at its default
     // `false`, so the raycast branch runs only once per real input
     // event, on the main thread, never off it and never every frame.
+    //
+    // `gest`: the cooked 2D event for THIS dispatch, on exactly the same
+    // terms as the cursor params above — the mouse-event call sites hand in
+    // the packet their handler cooked once at the top (GestureTrack.event),
+    // and every other caller takes the default `GesturePacket.init`, whose
+    // `valid` is false. So the seven mouse-event sites publish a valid
+    // gesture and nobody else does, mirroring `curValid` one for one. It is
+    // published into the stack BEFORE pipeline.evaluate so a stage could
+    // read it; none does, and that is the neutrality argument for the
+    // commit that introduced it.
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts,
-                      int curX = -1, int curY = -1, bool curValid = false) {
+                      int curX = -1, int curY = -1, bool curValid = false,
+                      GesturePacket gest = GesturePacket.init) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
         subj.viewport         = vpm.inputSnapshot();
@@ -5842,6 +5870,8 @@ void main(string[] args) {
         subj.cursorY          = curY;
         subj.cursorValid      = curValid;
         vts.put(&subj);
+        gestureSlot = gest;
+        vts.put(&gestureSlot);
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);
     }
@@ -5889,14 +5919,15 @@ void main(string[] args) {
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
     app.activateToolById     = cast(void delegate(string))&activateToolById;
     // NOT a bare same-arity cast like its neighbours above: buildToolVts
-    // grew 3 trailing-default cursor params (topology-pen P0, REV-1), but
-    // EditorApp.buildToolVts's field type (editor_app.d) is still the
+    // grew 3 trailing-default cursor params (topology-pen P0, REV-1) and
+    // later a 4th for the cooked 2D event, but EditorApp.buildToolVts's
+    // field type (editor_app.d) is still the
     // original 2-parameter delegate — every existing caller through that
     // field (ui/panels.d's renderViewportSceneToFbo, a per-frame render-
     // loop call) is exactly a "leave cursorValid=false" site anyway. A raw
     // `cast(void delegate(out SubjectPacket, ref VectorStack))&buildToolVts`
     // would silently reinterpret the pointer as a 2-arg ABI while the
-    // compiled callee still reads 5 argument slots — the caller's 2 real
+    // compiled callee still reads all 6 argument slots — the caller's 2 real
     // arguments land correctly but curX/curY/curValid read whatever
     // garbage was in the unpassed slots (a real, reproducible crash: a
     // segfault inside SubjectPacket's construction with curValid/curX/curY
@@ -6150,6 +6181,13 @@ void main(string[] args) {
     void delegate(int mx, int my) refreshHoverPickAt;
 
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
+        // Cook this event ONCE, before any dispatch: this handler reaches
+        // buildToolVts from four different branches (RMB-to-tool, the
+        // apply-and-continue re-arm, LMB-to-tool, the no-tool gizmo claim)
+        // and they must not disagree about what the event was. A press also
+        // re-anchors the gesture, which has to happen before the first
+        // branch that could consume the event and return.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Down, btn.x, btn.y);
         // Viewport click → drop ImGui keyboard focus. The viewport is
         // raw OpenGL drawn under ImGui, so SDL clicks here don't reach
         // ImGui at all — without this, a previously-focused text input
@@ -6193,7 +6231,7 @@ void main(string[] args) {
             // consumes the click, fall through to the RMB lasso select as before
             // (lasso runs with NO active tool, so it is unaffected).
             if (activeTool) {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
                 if (activeTool.onMouseButtonDown(btn, vts)) return;
             }
             rmbDragging = true;
@@ -6231,7 +6269,7 @@ void main(string[] args) {
                 SDL_Keymod savedMods = SDL_GetModState();
                 SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
                 scope(exit) SDL_SetModState(savedMods);
-                SubjectPacket subjR; VectorStack vtsR; buildToolVts(subjR, vtsR, btn.x, btn.y, true);
+                SubjectPacket subjR; VectorStack vtsR; buildToolVts(subjR, vtsR, btn.x, btn.y, true, gest);
                 activeTool.onMouseButtonDown(btn, vtsR);
                 return;
             }
@@ -6253,7 +6291,7 @@ void main(string[] args) {
                  || activeTool.wantsHoverForType(EditMode.Edges)
                  || activeTool.wantsHoverForType(EditMode.Polygons)))
                 refreshHoverPickAt(btn.x, btn.y);
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
             if (activeTool.onMouseButtonDown(btn, vts)) return;
         }
         // No tool, but the host's falloff gizmo may own this click (drag an
@@ -6262,7 +6300,7 @@ void main(string[] args) {
         if (activeTool is null && btn.button == SDL_BUTTON_LEFT
             && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
             import toolpipe.packets : FalloffPacket;
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
             Viewport vpg = vpm.originSnapshot();
@@ -6366,6 +6404,11 @@ void main(string[] args) {
     }
 
     void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
+        // Cooked once, before dispatch — see handleMouseButtonDown. A
+        // release does NOT re-anchor: the press pixel this packet carries is
+        // still the one the gesture started from, which is the whole point
+        // of the cumulative form.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Up, btn.x, btn.y);
         if (btn.button == SDL_BUTTON_RIGHT) {
             import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp,
                                      elementFalloffRMBUp;
@@ -6376,7 +6419,7 @@ void main(string[] args) {
             // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
             // false), let it finish its gesture (Slice bakes the final gap here).
             if (activeTool && !rmbDragging) {
-                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
+                SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
                 if (activeTool.onMouseButtonUp(btn, vts)) return;
             }
             if (rmbPath.length >= 3) {
@@ -6614,7 +6657,7 @@ void main(string[] args) {
             return;
         }
         if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
             activeTool.onMouseButtonUp(btn, vts);
         }
         // Release a host falloff-gizmo drag (no tool active). routeUp does NOT
@@ -6647,6 +6690,13 @@ void main(string[] args) {
     }
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
+        // Cooked once, before dispatch — see handleMouseButtonDown. This
+        // handler returns early from half a dozen branches (the three
+        // falloff RMB drags, a tool that consumed the motion, the gizmo
+        // drag, `dragMode == None`), so cooking here is also what keeps the
+        // previous-event pixel advancing on every event rather than only on
+        // the ones that reach the bottom.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Move, mot.x, mot.y);
         // Keep the queryMouse override in lockstep with the latest motion
         // event so picking in subsequent render frames reads the actual
         // cursor. Without this update, doSelectPickAt's setOverrideMouse
@@ -6677,7 +6727,7 @@ void main(string[] args) {
         if (rmbDragging)
             rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, mot.x, mot.y, true);
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, mot.x, mot.y, true, gest);
             if (activeTool.onMouseMotion(mot, vts)) return;
         }
         // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes

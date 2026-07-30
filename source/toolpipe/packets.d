@@ -59,6 +59,108 @@ struct SubjectPacket {
     bool cursorValid = false;
 }
 
+/// The cooked 2D event — the single place a gesture's pixel state is stated.
+///
+/// CALLER-SUPPLIED, exactly like `SubjectPacket` above, and for the same
+/// reason: it is not derived from anything a stage can see. The input event
+/// arrives in the vector stack; no slot computes it. `app.d`'s
+/// `buildToolVts` publishes it, and its trailing `GesturePacket` parameter
+/// defaults to `GesturePacket.init` — so the mouse-event dispatch sites
+/// (which cook one per SDL event, see `GestureTrack` below) publish a valid
+/// packet and EVERY other call site — the per-frame render loop, the
+/// key-down dispatch, the overlay-packet builders, any HTTP-thread subject
+/// builder — publishes the default, whose `valid` is false. That is the
+/// exact discipline `SubjectPacket.cursorValid` already carries, and a
+/// consumer must honour it the same way: when `valid` is false, NO other
+/// field of this packet means anything.
+///
+/// Both the incremental and the cumulative form are carried, deliberately.
+/// The cumulative offset (cursor minus the gesture's anchor pixel) is where
+/// this is going; the increment (cursor minus the previous event's pixel)
+/// is what every tool in this tree computes for itself today. Carrying both
+/// is a MIGRATION DEVICE, not a mirror of anything: it makes the eventual
+/// move to the cumulative convention a separate, named, behaviour-changing
+/// commit instead of a silent side effect of adopting the packet. Do not
+/// "tidy" one of the two away — deleting `increment*` presumes the switch
+/// already happened, and deleting `cumulative*` deletes the destination.
+///
+/// `phase` names the SDL event that produced this packet, nothing more. A
+/// hover motion with no button held is a `Move` like any other; the packet
+/// does not model button state, and a consumer that needs "is a button
+/// down" must read it from the event it was handed. `pressX/pressY` and
+/// `prevX/prevY` are only meaningful inside a gesture — between a press and
+/// its release they describe that gesture; outside one they describe the
+/// last press that happened, which is not a measurement of anything.
+struct GesturePacket {
+    enum Phase : ubyte { Idle, Down, Move, Up }
+    Phase phase   = Phase.Idle;
+    bool  valid   = false;
+
+    int pressX = -1, pressY = -1;   // the anchor pixel of this gesture
+    int curX   = -1, curY   = -1;   // this event's pixel
+    int prevX  = -1, prevY  = -1;   // the previous event's pixel
+
+    int cumulativeX() const { return curX - pressX; }
+    int cumulativeY() const { return curY - pressY; }
+    int incrementX()  const { return curX - prevX;  }
+    int incrementY()  const { return curY - prevY;  }
+
+    /// The press-time world anchor, when known. NOTHING SETS THESE TODAY —
+    /// the event dispatch that cooks this packet has pixels and no scene
+    /// query, and the tools that do hold a press-time world point keep it
+    /// in their own session state. The pair is declared here so the field
+    /// that a world-anchored consumer will need has one agreed name and one
+    /// agreed validity flag, instead of three tools inventing three. Read it
+    /// only through `anchorValid`, which is false until a producer exists.
+    Vec3 anchorWorld = Vec3(0, 0, 0);
+    bool anchorValid = false;
+}
+
+/// The caller's press/previous bookkeeping behind `GesturePacket`. NOT a
+/// packet: it never goes on the wire, it is per-event mutable state, and it
+/// lives here only so the stamping rule sits next to the thing it stamps and
+/// can be pinned by a unittest instead of hiding inside a nested function in
+/// `app.d`.
+///
+/// One instance per event source (`app.d` keeps a single one, on the main
+/// thread, alongside the other mouse bookkeeping).
+struct GestureTrack {
+    int pressX = -1, pressY = -1;
+    int prevX  = -1, prevY  = -1;
+
+    /// Cook ONE mouse event and advance the bookkeeping.
+    ///
+    /// Call this exactly once per SDL mouse event, at the TOP of the
+    /// handler, BEFORE any dispatch — two properties depend on that
+    /// placement and neither is cosmetic:
+    ///
+    ///  * every dispatch site inside one handler then publishes the SAME
+    ///    cooked event (a handler can reach `buildToolVts` from several
+    ///    branches; they must not disagree about what the event was), and
+    ///  * `prev` advances on EVERY event, including the handler's many
+    ///    early returns — otherwise a gesture that passes through a
+    ///    consumed branch would leave `prev` behind and the next
+    ///    `increment*` would silently span two events.
+    ///
+    /// A `Down` re-anchors: press and prev both become this pixel, so the
+    /// press event's own increment and cumulative offset are both zero,
+    /// which is what "the gesture has not moved yet" means.
+    GesturePacket event(GesturePacket.Phase ph, int x, int y) {
+        if (ph == GesturePacket.Phase.Down) {
+            pressX = x; pressY = y;
+            prevX  = x; prevY  = y;
+        }
+        GesturePacket g;
+        g.phase  = ph;
+        g.valid  = true;
+        g.pressX = pressX; g.pressY = pressY;
+        g.prevX  = prevX;  g.prevY  = prevY;
+        g.curX   = x;      g.curY   = y;
+        prevX = x; prevY = y;
+        return g;
+    }
+}
+
 /// Action-center packet — the action origin produced by ACEN stage in 7.2.
 /// Default = world origin so 7.0 callers see a sane value if they read
 /// it before any ACEN stage is registered.
@@ -816,4 +918,125 @@ struct PathPacket {
     float  start   = 0.0f;
     float  end     = 1.0f;
     float  slide   = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+// S3(a) — the cooked 2D event. These pin the two halves of the neutrality
+// claim that can be pinned in a unittest:
+//
+//   * what a NON-mouse call site publishes (the default argument), and
+//   * what the mouse call sites publish (GestureTrack's stamping rule).
+//
+// The half that cannot be pinned here is "nothing reads it" — that is a grep
+// over `source/` and `tests/` for `get!GesturePacket` / `has!GesturePacket`,
+// and it belongs in the commit message, not in an assert.
+// ---------------------------------------------------------------------------
+
+unittest {
+    // The default IS the publication of every non-mouse call site: the
+    // per-frame render loop, the key-down dispatch, the overlay-packet
+    // builders, any HTTP-thread subject builder. `app.d`'s buildToolVts
+    // gives its gesture parameter this exact value, so a consumer that is
+    // handed one of those stacks sees this packet and must reject it.
+    //
+    // If `valid` ever defaults to true, every one of those call sites starts
+    // publishing a gesture it never had — a press pixel of (-1,-1) and a
+    // cumulative offset measured from it. That is the neutrality break this
+    // block exists to catch.
+    GesturePacket g;
+    assert(!g.valid,
+           "S3: the default gesture is the INVALID one — every non-mouse "
+           ~ "buildToolVts call site publishes exactly this, so a true "
+           ~ "default hands every frame a gesture that never happened");
+    assert(g.phase == GesturePacket.Phase.Idle);
+    assert(g.pressX == -1 && g.pressY == -1);
+    assert(g.curX   == -1 && g.curY   == -1);
+    assert(g.prevX  == -1 && g.prevY  == -1);
+    assert(!g.anchorValid,
+           "S3: no producer sets the world anchor yet; a true default would "
+           ~ "read as a measurement");
+}
+
+unittest {
+    // The stamping rule, over one whole gesture: press at (100,50), two
+    // motions, release. This is the sequence `app.d` produces by calling
+    // GestureTrack.event once at the top of each of the three mouse
+    // handlers.
+    GestureTrack tr;
+
+    auto down = tr.event(GesturePacket.Phase.Down, 100, 50);
+    assert(down.valid && down.phase == GesturePacket.Phase.Down);
+    assert(down.pressX == 100 && down.pressY == 50);
+    // A press re-anchors BOTH forms to zero: the gesture has not moved yet.
+    assert(down.cumulativeX() == 0 && down.cumulativeY() == 0);
+    assert(down.incrementX()  == 0 && down.incrementY()  == 0,
+           "S3: the press event's own increment is zero — prev must be "
+           ~ "re-anchored at the press, not left over from the last gesture");
+
+    auto m1 = tr.event(GesturePacket.Phase.Move, 110, 47);
+    assert(m1.pressX == 100 && m1.pressY == 50,
+           "S3: the press anchor survives motion — it is what makes the "
+           ~ "cumulative form a different number from the incremental one");
+    assert(m1.incrementX()  ==  10 && m1.incrementY()  == -3);
+    assert(m1.cumulativeX() ==  10 && m1.cumulativeY() == -3);
+
+    auto m2 = tr.event(GesturePacket.Phase.Move, 106, 60);
+    assert(m2.prevX == 110 && m2.prevY == 47,
+           "S3: prev is the PREVIOUS EVENT's pixel — if the tracker is not "
+           ~ "advanced on every event, this increment silently spans two");
+    assert(m2.incrementX()  ==  -4 && m2.incrementY()  == 13);
+    assert(m2.cumulativeX() ==   6 && m2.cumulativeY() == 10);
+
+    auto up = tr.event(GesturePacket.Phase.Up, 106, 62);
+    assert(up.phase == GesturePacket.Phase.Up);
+    assert(up.pressX == 100 && up.pressY == 50,
+           "S3: a release does NOT re-anchor — the committed gesture is "
+           ~ "measured from where the press was");
+    assert(up.incrementX()  == 0 && up.incrementY()  ==  2);
+    assert(up.cumulativeX() == 6 && up.cumulativeY() == 12);
+
+    // The migration device, stated as an invariant rather than a comment:
+    // over one gesture the cumulative offset is the sum of the increments.
+    // That equality is exactly why switching a tool from one form to the
+    // other is a REAL behaviour change and not a rename — it holds on the
+    // ideal event stream and stops holding the moment anything (a dropped
+    // event, a warp, a re-anchor) perturbs it. Keep both forms until the
+    // switch is made deliberately.
+    assert(down.incrementX() + m1.incrementX() + m2.incrementX()
+           + up.incrementX() == up.cumulativeX());
+    assert(down.incrementY() + m1.incrementY() + m2.incrementY()
+           + up.incrementY() == up.cumulativeY());
+}
+
+unittest {
+    // A second press re-anchors the gesture. Without this the cumulative
+    // form of gesture N+1 would be measured from gesture N's press, which
+    // is the single most damaging way to get this wrong: it is invisible on
+    // the first drag of a session and wrong on every one after it.
+    GestureTrack tr;
+    tr.event(GesturePacket.Phase.Down, 10, 10);
+    tr.event(GesturePacket.Phase.Move, 40, 10);
+    tr.event(GesturePacket.Phase.Up,   40, 10);
+
+    auto d2 = tr.event(GesturePacket.Phase.Down, 200, 200);
+    assert(d2.pressX == 200 && d2.pressY == 200);
+    assert(d2.cumulativeX() == 0 && d2.cumulativeY() == 0,
+           "S3: a new press re-anchors — otherwise the second gesture is "
+           ~ "measured from the first one's press pixel");
+    auto m = tr.event(GesturePacket.Phase.Move, 205, 200);
+    assert(m.cumulativeX() == 5 && m.incrementX() == 5);
+}
+
+unittest {
+    // Motion with no button held is a Move like any other, and the packet
+    // does not pretend otherwise. This is stated as a test because the
+    // tempting "fix" — inventing a button-state field the event dispatch
+    // does not actually track — would be an invention, not a measurement.
+    // A consumer that needs button state reads it from the event it was
+    // handed.
+    GestureTrack tr;
+    auto hover = tr.event(GesturePacket.Phase.Move, 7, 9);
+    assert(hover.valid && hover.phase == GesturePacket.Phase.Move);
+    assert(hover.pressX == -1 && hover.pressY == -1,
+           "S3: a hover before any press has no anchor, and says so");
 }
