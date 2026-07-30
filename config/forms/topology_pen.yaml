@@ -43,6 +43,15 @@
 # parity, doc/tasks/work/0478-topopen-smooth-kernel.md). Scales the per-iteration
 # relaxation force as `F = smoothStrength / 20`; the default 1.0 matches the
 # reference. Affects the Smooth gesture only; every other mode ignores it.
+#
+# NOT here, on purpose: an iteration/pass-count row. The reference exposes an
+# iteration-count attribute for its Smooth gesture, but that attribute and its
+# gesture counter are the same storage, and its press handler overwrites it
+# with 1 at the start of every Smooth press — so setting it cannot affect the
+# gesture that follows. The count comes from the drag alone
+# (`smoothPassesForDragDx`, source/tools/edit/topology_pen.d). Adding a row
+# here would CREATE a divergence, not close one — same resolution as the
+# reference's boundary/corner lock attributes, which are equally absent.
 
 forms:
   - id: topopen.main

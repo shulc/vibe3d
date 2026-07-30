@@ -993,18 +993,25 @@ private:
     // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
     // (`onShiftCtrlLmbDown`) — NO source-vertex pick (whole-primary-mesh
     // scope, unlike every other gesture above) and NO mutation on down;
-    // `smoothDragPx_` accumulates cursor travel on every subsequent motion
-    // event (`onMouseMotion`) and is converted to a pass count at release
-    // (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`) — the only
-    // read of `smoothDragPx_` (REV1 MINOR: the plan's original
+    // `smoothDragDx_` is the SIGNED horizontal displacement of the cursor
+    // from the press pixel, recomputed (never accumulated) on every
+    // subsequent motion event (`onMouseMotion`) and converted to a pass
+    // count at release (`onMouseButtonUp`'s Smooth branch,
+    // `applySmoothPasses`) through the one shared law helper
+    // `smoothPassesForDragDx` — the only read of `smoothDragDx_` besides
+    // `toolStateJson()`'s live readback (REV1 MINOR: the plan's original
     // `smoothPassCount_` field is dropped since it was never assigned;
-    // both `onMouseButtonUp` and `toolStateJson()` recompute `N` from
-    // `smoothDragPx_` directly). Cleared by `onMouseButtonUp` on
-    // commit/no-op and by `resyncSession` on an external history
-    // navigation, exactly like the P3/P4/P6/P7 arm state above.
+    // both `onMouseButtonUp` and `toolStateJson()` derive `N` from
+    // `smoothDragDx_` directly). `smoothLastX_`/`_Y_` now track ONLY the
+    // live cursor for `draw()`'s armed-ring affordance — the pass count no
+    // longer measures anything against them (see `kSmoothPassStridePx`:
+    // path length and vertical motion are both measured to be ignored).
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession`
+    // on an external history navigation, exactly like the P3/P4/P6/P7 arm
+    // state above.
     bool  smoothArmed_ = false;
     int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
-    float smoothDragPx_ = 0.0f;
+    int   smoothDragDx_ = 0;
 
     // --- P9 Split session state (topology_pen.d,
     // doc/topopen_p9_split_plan.md). Armed on a plain-MMB press that lands
@@ -1189,14 +1196,15 @@ private:
     // after an external undo mid-drag is handled by `resyncSession` clearing
     // all of this instead. `smoothLoopStartX_`/`_Y_` is the press pixel;
     // `smoothLoopCurX_`/`_Y_` doubles as BOTH the running "last motion
-    // position" the drag-distance accumulator measures against (mirroring
-    // the whole-mesh Smooth gesture's own `smoothLastX_`/`_Y_`) AND the live
+    // position" the drag-distance accumulator measures against AND the live
     // cursor `draw()`'s ghost ring previews at (mirroring Move Loop's
     // `moveLoopCurX_`/`_Y_`) — one field serves both roles since after every
     // motion event it IS the live cursor. `smoothLoopDragPx_` accumulates
-    // cursor travel exactly like the whole-mesh Smooth gesture's
-    // `smoothDragPx_` — the only read of it is at release, to derive the
-    // pass count (`onMouseButtonUp`'s Smooth+Loop branch). Cleared by
+    // cursor TRAVEL — the whole-mesh Smooth gesture used to do the same, but
+    // its pacing has since been measured and replaced (`kSmoothPassStridePx`)
+    // while this path's was never sampled, so the two are deliberately forked
+    // (`kSmoothLoopPassStridePx`). The only read of it is at release, to
+    // derive the pass count (`onMouseButtonUp`'s Smooth+Loop branch). Cleared by
     // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
     // external history navigation, exactly like the P3-P11 arm state above.
     bool   smoothLoopArmed_   = false;
@@ -1206,30 +1214,68 @@ private:
     int    smoothLoopCurX_,   smoothLoopCurY_;
     float  smoothLoopDragPx_ = 0.0f;
 
-    // P8 (doc/topopen_p8_smooth_plan.md "Passes: click = 1, drag = N",
-    // vibe3d-divergence, throttle constant UNMEASURED — pacing only, the
-    // per-pass relax+re-snap LAW itself is measured): a drag of
-    // `kSmoothPassStridePx` screen pixels adds one more pass beyond the
-    // click's own floor of 1. `MAX_TOPOPEN_SMOOTH_PASSES` is the two-layer
-    // DoS backstop (mirrors `MeshSmooth`'s own `MAX_SMOOTH_ITER`,
-    // `commands/mesh/smooth.d`) — this is a DERIVED count (drag distance),
-    // not a user `Param`, so it needs the kernel cap + floor, not an
-    // `enforceBounds()`.
-    private enum float kSmoothPassStridePx      = 20.0f;
-    private enum int   MAX_TOPOPEN_SMOOTH_PASSES = 256;
+    // P8 pass count — the MEASURED law (task 0490; superseded the earlier
+    // "unmeasured throttle" guess of one pass per 20px of cursor TRAVEL):
+    //
+    //     N = max(1, 1 + (xCurrent - xPress) / kSmoothPassStridePx)
+    //
+    // Three things are measured here and each one of them contradicts the
+    // guess it replaces:
+    //   * the stride is 5 screen pixels, not 20;
+    //   * the input is the SIGNED HORIZONTAL displacement from the press
+    //     pixel — so dragging back toward (and past) the press pixel makes
+    //     the count FALL again, and it is bounded by the floor of 1, never
+    //     by how far the cursor has been;
+    //   * vertical motion contributes NOTHING (a purely vertical drag is
+    //     one pass, exactly like a stationary click) and neither does the
+    //     accumulated PATH length — only where the cursor is now, relative
+    //     to where the press was.
+    // The division is signed and truncates toward zero, matching the
+    // reference's own integer divide.
+    //
+    // `MAX_TOPOPEN_SMOOTH_PASSES` stays the two-layer DoS backstop (mirrors
+    // `MeshSmooth`'s own `MAX_SMOOTH_ITER`, `commands/mesh/smooth.d`) — this
+    // is a DERIVED count (drag geometry), not a user `Param`, so it needs
+    // the kernel cap + floor, not an `enforceBounds()`. At a 5px stride the
+    // cap is first reached at a +1275px horizontal drag, i.e. beyond any
+    // real viewport-width gesture: it is a runaway guard, NOT a silent clamp
+    // inside the working range.
+    private enum int kSmoothPassStridePx        = 5;
+    private enum int MAX_TOPOPEN_SMOOTH_PASSES  = 256;
 
-    // UNMEASURED, DELIBERATELY UNCHANGED (reference parity task): the
-    // drag→iteration-count MAPPING above is *not* established. What IS
-    // measured about the reference: a click yields exactly 1 iteration, a
-    // ~40px drag yielded 1/2/7/15/23 across its evaluations and a ~160px drag
-    // 1/6/25/57, and setting the reference's own iteration ATTRIBUTE to 3
-    // still left the count at 1 — so the count is driven by the drag, not by
-    // an attribute. The exact function of drag distance was never captured
-    // (an early linear fit was retracted), and `1 + dragPx/20` here is
-    // equally unmeasured. It is kept AS-IS on purpose: replacing one
-    // unmeasured mapping with another would add no parity and would churn
-    // `smoothPassCount`'s HTTP contract and its tests. Close it with a
-    // capture, not a guess.
+    // FORKED, DELIBERATELY UNMEASURED: the Smooth+LOOP path
+    // (`applySmoothLoopPasses`) keeps the ORIGINAL guessed pacing — one pass
+    // per 20px of accumulated cursor travel. The law above was measured on
+    // the whole-mesh Smooth path only; the loop variant was never sampled,
+    // and silently generalizing a measurement from one path to another is
+    // exactly what `inverseEdgeLenRelax`'s own doc comment warns against.
+    // Close it with a capture of THAT path, not by deleting this fork.
+    private enum float kSmoothLoopPassStridePx = 20.0f;
+
+    // The one place the measured pass-count law above is evaluated: both the
+    // release path (`smoothUp` -> `applySmoothPasses`) and the live state
+    // readback (`toolStateJson`'s `smoothPassCount`) go through it, so the
+    // count a test observes mid-drag is by construction the count a release
+    // would apply. Returns the FULLY clamped value (floor 1, cap
+    // MAX_TOPOPEN_SMOOTH_PASSES) — `applySmoothPasses` re-applies the same
+    // clamp for its direct (headless / unit-test) callers.
+    //
+    // NO USER PARAM, ON PURPOSE (task 0490 — do not "fix" this by adding
+    // one): the reference exposes an iteration-count attribute of its own,
+    // but that attribute and this gesture counter are the SAME storage cell
+    // in it, and its press handler overwrites that cell with 1 at the start
+    // of EVERY Smooth press. Setting the attribute therefore cannot affect
+    // the gesture that follows — which is why a captured run that set it to
+    // 3 still relaxed exactly once. Exposing it as a `Param` here would
+    // CREATE a divergence rather than close one, the same resolution already
+    // taken for the reference's boundary/corner lock attributes (see
+    // `applySmoothPasses`).
+    private static int smoothPassesForDragDx(int dragDx) {
+        int n = 1 + dragDx / kSmoothPassStridePx;   // signed, truncating toward zero
+        if (n < 1) n = 1;
+        if (n > MAX_TOPOPEN_SMOOTH_PASSES) n = MAX_TOPOPEN_SMOOTH_PASSES;
+        return n;
+    }
 
     // Smooth relaxation force factor (measured): `F = strength / 20`, with a
     // reference default `strength` of 1.0 → F = 0.05. The divisor is a
@@ -1716,15 +1762,18 @@ public:
             return true;
         }
 
-        // P8 (doc/topopen_p8_smooth_plan.md Phase 3): while a Smooth
-        // gesture is armed, accumulate cursor travel — click=1 pass, a
-        // longer drag = more passes (`onMouseButtonUp`'s Smooth branch
-        // derives the pass count from THIS running total). No mid-drag
-        // mutation/preview beyond `draw()`'s cheap affordance (deferred
+        // P8 (doc/topopen_p8_smooth_plan.md Phase 3, re-based on the measured
+        // pass-count law — see `kSmoothPassStridePx`): while a Smooth gesture
+        // is armed, recompute the ONE signed scalar the law reads off THIS
+        // motion event's cursor, press->current in x (NOT accumulated — the
+        // count follows where the cursor IS, so a backtrack lowers it again,
+        // and y is ignored outright). `smoothLastX_`/`_Y_` keep tracking the
+        // live cursor purely for `draw()`'s armed-ring affordance. No
+        // mid-drag mutation/preview beyond that cheap affordance (deferred
         // commit, same rationale as every other armed gesture above).
         // Consumes, mirroring the Add Loop/Slide branches above.
         if (smoothArmed_) {
-            smoothDragPx_ += hypot(cast(float)(e.x - smoothLastX_), cast(float)(e.y - smoothLastY_));
+            smoothDragDx_ = e.x - smoothStartX_;
             smoothLastX_ = e.x;
             smoothLastY_ = e.y;
             return true;
@@ -1782,8 +1831,10 @@ public:
 
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 2): while a
         // Smooth+Loop gesture is armed, accumulate cursor travel off the
-        // RUNNING last position (mirrors the whole-mesh Smooth branch's
-        // `smoothDragPx_` accumulation, P8) — click=1 pass, a longer drag =
+        // RUNNING last position — the ORIGINAL, unmeasured pacing the
+        // whole-mesh Smooth branch (P8) used before its law was measured, and
+        // deliberately forked here rather than followed (see
+        // `kSmoothLoopPassStridePx`) — click=1 pass, a longer drag =
         // more passes (`onMouseButtonUp`'s Smooth+Loop branch derives the
         // pass count from THIS running total) — and update
         // `smoothLoopCurX_`/`_Y_` to the SAME running position for
@@ -2239,7 +2290,7 @@ public:
         slideDeltaK_ = 0.0f;
         // P8 Smooth (doc/topopen_p8_smooth_plan.md)
         smoothArmed_  = false;
-        smoothDragPx_ = 0.0f;
+        smoothDragDx_ = 0;
         // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
         // LEFT-button trio's own reset closes a stray split arm too (e.g. an
         // external history navigation via `resyncSession`, below); the
@@ -3823,7 +3874,9 @@ public:
     // is scope-free: it relaxes the ENTIRE primary mesh, not a
     // press-selected element) and NO mutation on down. Commit is deferred
     // to release (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`),
-    // reading the accumulated drag distance to derive the pass count.
+    // deriving the pass count from the cursor's signed horizontal offset from
+    // THIS press pixel (`smoothStartX_`, the law's anchor — see
+    // `kSmoothPassStridePx`).
     // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
     // the full symmetric close (same LEFT-button discipline as
     // `onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`) is now guaranteed by
@@ -3837,7 +3890,7 @@ public:
         smoothArmed_  = true;
         smoothStartX_ = smoothLastX_ = e.x;
         smoothStartY_ = smoothLastY_ = e.y;
-        smoothDragPx_ = 0.0f;
+        smoothDragDx_ = 0;
         return true;
     }
 
@@ -3968,17 +4021,23 @@ public:
     }
 
     // P8 (doc/topopen_p8_smooth_plan.md Phase 3): commits the armed Smooth
-    // gesture — click (zero/near-zero drag) applies exactly ONE pass, a drag
-    // applies N (derived from the accumulated cursor travel). Risk 5 (plan):
+    // gesture — a click, and equally a drag that ends back at the press
+    // pixel's own column, applies exactly ONE pass; a rightward drag applies
+    // N per the measured law (`smoothPassesForDragDx`). Risk 5 (plan):
     // UNLIKE every other gesture, this one is NOT gated by `kMinDragPx` — a
     // stationary click must still apply its one pass (`applySmoothPasses`
     // itself carries the REV1 FIX-2 no-op-undo guard for the case where that
     // one pass genuinely changes nothing).
+    //
+    // Reads the LAST MOTION EVENT's displacement (`smoothDragDx_`), not this
+    // release event's own pixel — matching the reference, which likewise
+    // recomputes the count only while moving and consumes the last value it
+    // published at release. This also keeps the release and the live
+    // `smoothPassCount` readback exactly in step by construction.
     private bool smoothUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!smoothArmed_) return false;
         smoothArmed_ = false;
-        int n = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
-        applySmoothPasses(n);
+        applySmoothPasses(smoothPassesForDragDx(smoothDragDx_));
         return true;
     }
 
@@ -4135,7 +4194,7 @@ public:
     private bool smoothLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!smoothLoopArmed_) return false;
         smoothLoopArmed_ = false;
-        int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
+        int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothLoopPassStridePx);
         applySmoothLoopPasses(n);
         smoothLoopSeed_   = -1;
         smoothLoopVerts_  = null;
@@ -4591,6 +4650,14 @@ public:
     // directly). Implementing them as vertex-holding here would therefore
     // CREATE a divergence, not close one. They become real only on the
     // falloff / edge-loop path, if that is ever ported.
+    //
+    // The ITERATION COUNT likewise has no user knob, for the same
+    // "implementing it would create the divergence" reason and NOT by
+    // omission — the reference's own iteration attribute shares storage with
+    // its gesture counter and is overwritten at every Smooth press, so it
+    // cannot influence a gesture. Full reasoning at
+    // `smoothPassesForDragDx`; `passCount` here therefore only ever arrives
+    // from that law (or from a direct unit-test caller).
     //
     // REV1 FIX-2 (PRIORITY, not hedged/unconditional — opponent obj-2): a
     // Smooth gesture that produces NO net vertex change — 0-neighbor
@@ -6029,17 +6096,15 @@ public:
 
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
         // gesture's state, for Tier-C tests to assert click-vs-drag pass
-        // counts without driving a full release. `smoothPassCount` reports
-        // the SAME `1 + floor(smoothDragPx_ / kSmoothPassStridePx)`,
-        // clamped to `MAX_TOPOPEN_SMOOTH_PASSES` exactly like
-        // `applySmoothPasses`'s own clamp, that `onMouseButtonUp`'s Smooth
-        // branch will apply if released now (NIT-3: reporting the
-        // unclamped value here would make that "will apply" doc-comment
-        // false for an extreme drag).
+        // counts without driving a full release. `smoothPassCount` goes
+        // through the SAME law helper (`smoothPassesForDragDx`, fully
+        // clamped) that `onMouseButtonUp`'s Smooth branch will apply if
+        // released now — one function, so this readback cannot drift from
+        // the committed count (NIT-3: reporting an unclamped value here
+        // would make that "will apply" doc-comment false for an extreme
+        // drag).
         root["smoothArmed"]     = JSONValue(smoothArmed_);
-        int smoothPassCount = 1 + cast(int)(smoothDragPx_ / kSmoothPassStridePx);
-        if (smoothPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
-        root["smoothPassCount"] = JSONValue(smoothPassCount);
+        root["smoothPassCount"] = JSONValue(smoothPassesForDragDx(smoothDragDx_));
 
         // P9 (doc/topopen_p9_split_plan.md Phase 4): the armed Split
         // gesture's state, for Tier-C tests to assert the picked source
@@ -6072,14 +6137,15 @@ public:
         // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the armed
         // Smooth+Loop gesture's state, for Tier-C tests to assert the
         // picked seed edge and gathered moving-set size without driving a
-        // full release. `smoothLoopPassCount` mirrors the whole-mesh
-        // Smooth's own `smoothPassCount` derivation exactly (NIT-3 parity:
-        // reports the CLAMPED value `onMouseButtonUp`'s Smooth+Loop branch
-        // will actually apply if released now).
+        // full release. NIT-3 parity with the whole-mesh Smooth's own
+        // `smoothPassCount`: reports the CLAMPED value
+        // `onMouseButtonUp`'s Smooth+Loop branch will actually apply if
+        // released now. It is NOT the same LAW, though — this path keeps the
+        // forked, unmeasured travel-based pacing (`kSmoothLoopPassStridePx`).
         root["smoothLoopArmed"]     = JSONValue(smoothLoopArmed_);
         root["smoothLoopSeed"]      = JSONValue(smoothLoopSeed_);
         root["smoothLoopVertCount"] = JSONValue(cast(int)smoothLoopVerts_.length);
-        int smoothLoopPassCount = 1 + cast(int)(smoothLoopDragPx_ / kSmoothPassStridePx);
+        int smoothLoopPassCount = 1 + cast(int)(smoothLoopDragPx_ / kSmoothLoopPassStridePx);
         if (smoothLoopPassCount > MAX_TOPOPEN_SMOOTH_PASSES) smoothLoopPassCount = MAX_TOPOPEN_SMOOTH_PASSES;
         root["smoothLoopPassCount"] = JSONValue(smoothLoopPassCount);
 
@@ -8250,6 +8316,133 @@ unittest {
         format("the Smooth kernel must reproduce every captured reference relaxation target "
              ~ "to 1e-9 (a correct port lands near 1e-16); worst over all %d cases = %.4e%s",
                cases.length, overallWorst, report));
+}
+
+// ---------------------------------------------------------------------------
+// smoothPassesForDragDx — the MEASURED pass-count law (task 0490):
+//
+//     N = max(1, 1 + (xCurrent - xPress) / 5)
+//
+// x-only, SIGNED, truncating toward zero, floored at 1 and capped at the
+// runaway backstop. Pinned as a table so the three separable claims are each
+// asserted on their own row: the stride is 5px (not 20), the direction is
+// signed (leftward lowers the count to its floor instead of raising it), and
+// the cap sits far outside the working range.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+
+    static struct PassCase { int dx; int want; string why; }
+    static immutable PassCase[] cases = [
+        PassCase(    0,   1, "a press with no horizontal travel is exactly one pass"),
+        PassCase(    1,   1, "sub-stride travel cannot add a pass"),
+        PassCase(    4,   1, "still inside the first 5px stride"),
+        PassCase(    5,   2, "the first full stride adds the second pass"),
+        PassCase(    9,   2, "the second stride is not complete yet"),
+        PassCase(   10,   3, "one extra pass per 5px, exactly"),
+        PassCase(   40,   9, "the stride is 5px, not 20: a 40px drag is 9 passes"),
+        PassCase(  100,  21, "and a 100px drag is 21, not 6"),
+        PassCase( 1275, 256, "the runaway cap is first reached only at +1275px"),
+        PassCase( 5000, 256, "and clamps there, never above"),
+        PassCase(   -1,   1, "leftward travel floors at 1 — never 0, never negative"),
+        PassCase(   -5,   1, "one stride left of the press column is still one pass"),
+        PassCase( -100,   1, "and so is a long leftward drag: distance alone adds nothing"),
+    ];
+
+    foreach (c; cases) {
+        int got = TopologyPenTool.smoothPassesForDragDx(c.dx);
+        assert(got == c.want,
+            format("dx=%+d must give %d pass(es) — %s; got %d", c.dx, c.want, c.why, got));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Smooth gesture FEEDS that law with the right quantity (task 0490):
+// the signed horizontal offset of the live cursor from THIS press pixel —
+// so vertical motion contributes nothing at all, the accumulated path is
+// never consulted (an out-and-back ends where it started, at one pass), and
+// nothing survives into the next press. Driven through the REAL dispatch
+// (`onMouseButtonDown`/`onMouseMotion`/`onMouseButtonUp`) and observed
+// through the same `/api/tool/state` field a Tier-C test reads.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)(KMOD_SHIFT | KMOD_CTRL));
+    scope(exit) SDL_SetModState(cast(SDL_Keymod)0);   // don't leak into later dub-test unittests
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 200, 200);
+    Mesh m    = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = view.viewport();
+    VectorStack vts;
+    vts.put(&subj);
+
+    // `history_`/`smoothEditFactory_` are deliberately left null: this case is
+    // about the COUNT the gesture derives, so the release must not mutate the
+    // mesh (`applySmoothPasses` returns immediately without them).
+    enum int px = 100, py = 100;
+
+    SDL_MouseButtonEvent eDown;
+    eDown.button = SDL_BUTTON_LEFT;
+    eDown.x = px; eDown.y = py;
+    assert(t.onMouseButtonDown(eDown, vts), "Shift+Ctrl+LMB must be consumed by the real dispatch");
+    assert(t.smoothArmed_, "Shift+Ctrl+LMB must arm the whole-mesh Smooth gesture");
+    assert(cast(int)t.toolStateJson()["smoothPassCount"].integer == 1,
+        "a stationary armed press must report exactly one pass");
+
+    int passesAt(int x, int y) {
+        SDL_MouseMotionEvent e;
+        e.x = x; e.y = y;
+        assert(t.onMouseMotion(e, vts), "motion while Smooth is armed must be consumed");
+        return cast(int)t.toolStateJson()["smoothPassCount"].integer;
+    }
+
+    // Pure VERTICAL motion: 300px straight down is still the click's one pass.
+    assert(passesAt(px, py + 300) == 1,
+        format("pure vertical motion must contribute NO passes; got %d", passesAt(px, py + 300)));
+
+    // Horizontal offset is the whole input — and the same offset gives the
+    // same count whatever y does.
+    assert(passesAt(px + 40, py + 300) == 9, "a +40px horizontal offset is 9 passes");
+    assert(passesAt(px + 40, py) == 9, "the count must not depend on y at all");
+
+    // Left of the press column: floored at 1, and the ~400px of path already
+    // walked to get here contributes nothing.
+    assert(passesAt(px - 40, py) == 1,
+        format("a cursor left of the press column must floor at one pass; got %d",
+               passesAt(px - 40, py)));
+
+    // Out and back: rising on the way out, and back to a single pass once the
+    // cursor returns to the press column — the count follows the CURRENT
+    // offset, never the distance travelled.
+    assert(passesAt(px + 100, py) == 21, "a +100px offset is 21 passes");
+    assert(passesAt(px, py) == 1, "returning to the press column returns to one pass");
+
+    SDL_MouseButtonEvent eUp;
+    eUp.button = SDL_BUTTON_LEFT;
+    eUp.x = px; eUp.y = py;
+    assert(t.onMouseButtonUp(eUp, vts), "LMB-up must be consumed");
+    assert(!t.smoothArmed_, "release must disarm Smooth");
+
+    // A fresh press re-anchors: the offset is measured from the NEW press
+    // pixel, so nothing accumulates across gestures.
+    SDL_MouseButtonEvent eDown2;
+    eDown2.button = SDL_BUTTON_LEFT;
+    eDown2.x = px + 500; eDown2.y = py;
+    assert(t.onMouseButtonDown(eDown2, vts), "a second Shift+Ctrl+LMB press must arm again");
+    assert(cast(int)t.toolStateJson()["smoothPassCount"].integer == 1,
+        "a fresh press must start over at one pass — the count never survives a gesture");
+
+    SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }
 
 // ---------------------------------------------------------------------------

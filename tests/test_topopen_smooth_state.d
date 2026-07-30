@@ -4,9 +4,10 @@
 // A Shift+Ctrl+LMB press must arm the Smooth gesture regardless of what is
 // under the cursor (no source pick — whole-primary-mesh scope, unlike
 // every other gesture) and expose the click-vs-drag pass count over
-// /api/tool/state: smoothPassCount==1 while stationary, >1 once the
-// cursor has traveled past kSmoothPassStridePx (20px, V1-divergence
-// throttle constant).
+// /api/tool/state: smoothPassCount==1 while stationary, and thereafter the
+// measured law N = max(1, 1 + dx/5) on the SIGNED HORIZONTAL offset from the
+// press pixel (task 0490) — so a +100px drag is exactly 21 passes, and a
+// purely vertical drag of the same length is still 1.
 //
 // Run via: ./run_test.d topopen_smooth_state
 
@@ -68,8 +69,8 @@ unittest {
     auto s2 = getJson("/api/tool/state");
     assert(s2["smoothArmed"].type == JSONType.false_, "release must disarm Smooth");
 
-    // A real drag (further than kSmoothPassStridePx=20px) must report >1
-    // passes WHILE still armed.
+    // A real rightward drag: the measured law is one extra pass per 5px of
+    // SIGNED horizontal offset from the press pixel, so +100px is exactly 21.
     postJson("/api/play-events", downOnlyLog(c.vpX, c.vpY, c.width, c.height, cx, cy));
     waitPlayerIdle();
     postJson("/api/play-events", motionLog(c.vpX, c.vpY, c.width, c.height, cx + 100, cy));
@@ -77,11 +78,22 @@ unittest {
 
     auto s3 = getJson("/api/tool/state");
     assert(s3["smoothArmed"].type == JSONType.true_, "must still be armed mid-drag");
-    assert(cast(int)s3["smoothPassCount"].integer > 1,
-        format("a 100px drag must report >1 passes; got %s", s3["smoothPassCount"].toString));
+    assert(cast(int)s3["smoothPassCount"].integer == 21,
+        format("a +100px horizontal drag must report exactly 21 passes (1 + 100/5); got %s",
+               s3["smoothPassCount"].toString));
+
+    // Same cursor distance, purely VERTICAL: the law ignores y outright, so
+    // this must still be the click's single pass.
+    postJson("/api/play-events", motionLog(c.vpX, c.vpY, c.width, c.height, cx, cy + 100));
+    waitPlayerIdle();
+
+    auto s3b = getJson("/api/tool/state");
+    assert(cast(int)s3b["smoothPassCount"].integer == 1,
+        format("a purely vertical drag must report exactly 1 pass; got %s",
+               s3b["smoothPassCount"].toString));
 
     // Cleanup release, leaving the gesture disarmed.
-    postJson("/api/play-events", upOnlyLog(c.vpX, c.vpY, c.width, c.height, cx + 100, cy));
+    postJson("/api/play-events", upOnlyLog(c.vpX, c.vpY, c.width, c.height, cx, cy + 100));
     waitPlayerIdle();
 
     auto s4 = getJson("/api/tool/state");
