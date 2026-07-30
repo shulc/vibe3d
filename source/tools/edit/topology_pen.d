@@ -5370,14 +5370,23 @@ public:
 
     // ---- Remove's other two primitives (task 0494) ------------------------
 
-    /// How many polygons border edge `ei`, counted up to `cap`. The three
-    /// answers that matter here are exact and small: 0 = a bare wire edge,
-    /// 1 = a border edge, 2 = interior. Deliberately NOT `isEdgeInterior`
-    /// (which is `>= 2`): the measured filter is EXACTLY two, so a
-    /// non-manifold edge is out, not in.
-    private static int edgePolyCount(Mesh* m, uint ei, int cap = 3) {
-        int n = 0;
-        foreach (fi; m.facesAroundEdge(ei)) { ++n; if (n >= cap) break; }
+    /// How many polygons border each edge, BY EDGE INDEX — counted straight off
+    /// `faces[]`, once per gesture.
+    ///
+    /// Deliberately not `facesAroundEdge`, and not `isEdgeInterior` (which is
+    /// `>= 2`). The measured filter here is EXACTLY TWO, so the count has to be
+    /// exact in both directions, and the half-edge rings cannot deliver that:
+    /// probed on three quads sharing one edge, `facesAroundEdge` yields ONE —
+    /// the rings have no representation for a non-manifold fan. Counting off
+    /// the faces, 3 is 3, so such an edge is excluded by the rule rather than
+    /// by an undercount that happens to land on the same answer.
+    private static int[] edgePolyCounts(Mesh* m) {
+        auto n = new int[](m.edges.length);
+        foreach (ref f; m.faces)
+            foreach (k; 0 .. f.length) {
+                immutable uint ei = m.edgeIndex(f[k], f[(k + 1) % f.length]);
+                if (ei < n.length) ++n[ei];
+            }
         return n;
     }
 
@@ -5421,13 +5430,13 @@ public:
         Vec3[2][] wires;
     }
 
-    private static LooseGeometry captureLooseGeometry(Mesh* m) {
+    private static LooseGeometry captureLooseGeometry(Mesh* m, in int[] polyCount) {
         LooseGeometry g;
         auto referenced = m.computeReferencedVertexMask();
         foreach (i, r; referenced)
             if (!r) g.verts ~= m.vertices[i];
         foreach (ei; 0 .. m.edges.length) {
-            if (edgePolyCount(m, cast(uint)ei, 1) != 0) continue;
+            if (ei < polyCount.length && polyCount[ei] != 0) continue;
             auto e = m.edges[ei];
             if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) continue;
             g.wires ~= [m.vertices[e[0]], m.vertices[e[1]]];
@@ -5488,18 +5497,19 @@ public:
         if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
 
         // C-3: the seed gate, before the gather.
-        if (edgePolyCount(m, cast(uint)edgeIdx) != 2) return;
+        auto polyCount = edgePolyCounts(m);
+        if (polyCount[edgeIdx] != 2) return;
 
         auto mask = new bool[](m.edges.length);
         if (loop)
             foreach (ei; m.selectLoopEdges(cast(uint)edgeIdx)) {
                 if (ei < 0 || ei >= cast(int)m.edges.length) continue;
-                if (edgePolyCount(m, cast(uint)ei) != 2) continue;
+                if (polyCount[ei] != 2) continue;
                 mask[ei] = true;
             }
         mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
 
-        auto loose = captureLooseGeometry(m);
+        auto loose = captureLooseGeometry(m, polyCount);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
@@ -5562,17 +5572,18 @@ public:
         if (!hasFan) return;
 
         immutable Vec3 pos = m.vertices[vertIdx];
+        auto polyCount = edgePolyCounts(m);
         auto mask = new bool[](m.edges.length);
         size_t nMerge = 0;
         foreach (ei; 0 .. m.edges.length) {
             auto e = m.edges[ei];
             if (e[0] != cast(uint)vertIdx && e[1] != cast(uint)vertIdx) continue;
-            if (edgePolyCount(m, cast(uint)ei) != 2) continue;   // border/wire: nothing to merge across
+            if (polyCount[ei] != 2) continue;   // border/wire: nothing to merge across
             mask[ei] = true;
             ++nMerge;
         }
 
-        auto loose = captureLooseGeometry(m);
+        auto loose = captureLooseGeometry(m, polyCount);
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         // Merge the fan, KEEPING every consumed vertex — the one the press
@@ -14504,10 +14515,49 @@ unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
         auto after = MeshSnapshot.capture(m);
         assert(after.vertices == before.vertices && after.edges == before.edges
             && after.faces == before.faces,
-            "16/24/9 and not one vertex moved — the gate is on the SEED and runs "
-          ~ "BEFORE the gather, so 'just filter the gathered set' is not the same law");
+            "16/24/9 and not one vertex moved");
         assert(!h.canUndo(), "and no undo entry is recorded");
     }
+}
+
+unittest { // ...and the seed gate is a GATE, not the kernel's per-edge skip
+    // Honest note on the block above: it does NOT discriminate. On a border
+    // seed the dissolve kernel skips the edge anyway, so deleting the seed gate
+    // outright leaves every assertion there green — verified by mutation. No
+    // BORDER fixture can separate the two, either: a border seed's loop gather
+    // walks the open boundary, so everything it returns is a border edge too.
+    //
+    // A NON-MANIFOLD seed does separate them, and it is the case the measured
+    // rule actually names — the gate is "exactly two incident polygons", not
+    // "not a border". Three quads share edge 0-1 here. The gate declines it;
+    // the kernel would NOT, because its own adjacency keeps the first two
+    // distinct faces per edge and would merrily merge those two.
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(0,-1,0), Vec3(1,-1,0)])
+        m.addVertex(p);
+    m.addFace([0u, 1u, 3u, 2u]);
+    m.addFace([0u, 1u, 5u, 4u]);
+    m.addFace([0u, 1u, 7u, 6u]);
+    m.buildLoops();
+
+    immutable uint seed = m.edgeIndex(0, 1);
+    assert(TopologyPenTool.edgePolyCounts(&m)[seed] == 3,
+        "setup: the count must SEE all three — the half-edge rings report 1 here, "
+      ~ "which is why this tool counts off the faces instead");
+
+    auto h = new CommandHistory();
+    auto t = makeRemoveTestTool(&m, h);
+    auto before = MeshSnapshot.capture(m);
+    foreach (loop; [false, true]) {
+        t.edgeLoop_ = loop;
+        t.removeEdgeAt(cast(int)seed, loop);
+    }
+    auto after = MeshSnapshot.capture(m);
+    assert(after.vertices == before.vertices && after.edges == before.edges
+        && after.faces == before.faces,
+        "a seed with other than exactly two incident polygons is a TOTAL no-op");
+    assert(!h.canUndo(), "and records nothing");
 }
 
 unittest { // one undo restores counts AND positions, for all three primitives
