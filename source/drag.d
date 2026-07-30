@@ -1,6 +1,6 @@
 module drag;
 
-import std.math : sqrt, isNaN;
+import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import tools.create.create_common : mostFacingAxis;
@@ -22,18 +22,30 @@ import tools.create.create_common : mostFacingAxis;
 //     from the caller's chosen reference pixel (some callers pass the press
 //     pixel, some the previous event's).
 //
-//   LAW B — plane difference.       `planeDragDelta`. Two ray/plane
-//     intersections per event, differenced. Exact per event rather than
-//     linearised, and the plane is chosen by a camera-facing heuristic.
+//   LAW B — anchored inverse screen Jacobian. `planeDragDelta`, over the
+//     core `planeJacobian` / `PlaneJacobian.apply`. Resolve the drag on the
+//     two in-plane world axes of the chosen plane: finite-difference the 2x2
+//     screen Jacobian AT THE ANCHOR, invert it, and multiply the pixel
+//     offset by the inverse. A pure function of (anchor, plane, viewport), so
+//     a caller that holds its press anchor and press pixel fixed gets the
+//     same matrix on every event of the gesture — "frozen at the press" is
+//     the caller's freeze, not hidden state in here.
 //
 //   LAW C — anchored pixel scalar.  `haulWorldPerPixel`. One scalar, the
 //     world length of a pixel at an anchor, frozen by the caller at the press.
 //     For hauls that have no axis to project: the tool multiplies raw pixels
 //     by it.
 //
-// LAW-CHANGE POINT: `screenAxisWorldDelta` below. It is the single body a
-// future task rewrites to put us on a press-frozen conversion; LAW B and LAW C
-// are then re-pointed at it from here, without any caller being touched.
+// LAW-CHANGE POINT — CONSUMED for LAW B (task 0520), still open for LAW A.
+// The seam's original note named `screenAxisWorldDelta` as the one body a
+// future task would rewrite. What the measurement actually describes is the
+// FREE/plane conversion, and that is what LAW B now is. LAW A is deliberately
+// NOT re-pointed at it: on the reference side the axis-handle drag runs the
+// same free conversion and then applies its own post-projection arithmetic to
+// restrict the result to the handle — and that post-projection step was
+// located but never read. Porting LAW A would mean inventing it. LAW A
+// therefore keeps its exact per-event axis projection until that term is
+// measured, and this comment is the record of why.
 //
 // Deliberately NOT in this module, because they are a different quantity and a
 // separate lane: the scale tool's screen projection
@@ -176,8 +188,145 @@ Vec3 screenAxisDelta(int mx,     int my,
 }
 
 // ===========================================================================
-// LAW B — plane difference
+// LAW B — anchored inverse screen Jacobian
 // ===========================================================================
+
+// The 2x2 linear map from screen pixels to the two in-plane world axes,
+// finite-differenced at one anchor and inverted.
+//
+// `apply` is the whole conversion: `(u, v) = Minv * (dpx, dpy)` and then
+// `axisU*u + axisV*v`. Nothing else multiplies it — in particular no
+// "world units per pixel" scalar. The gain IS this matrix: local (it is
+// evaluated at one anchor), anisotropic (a horizontal drag and a vertical
+// drag of the same length are different world lengths) and plane-restricted.
+// Any single number quoted as "the" pixel/world ratio for a plane drag is
+// this matrix evaluated at one anchor in one direction.
+struct PlaneJacobian {
+    bool  valid = false;
+    Vec3  axisU = Vec3(1, 0, 0);   // first in-plane world axis
+    Vec3  axisV = Vec3(0, 1, 0);   // second in-plane world axis
+    // Minv, row-major: u = i00*dpx + i01*dpy, v = i10*dpx + i11*dpy
+    float i00 = 0, i01 = 0, i10 = 0, i11 = 0;
+
+    Vec3 apply(float dpx, float dpy) const {
+        float u = i00 * dpx + i01 * dpy;
+        float v = i10 * dpx + i11 * dpy;
+        return axisU * u + axisV * v;
+    }
+}
+
+// The finite-difference step, in world units, for the Jacobian below.
+//
+// It is ONLY a step. The Jacobian divides the projected difference by the
+// same value, so it cancels to first order and the conversion's gain does
+// not depend on it (`unittest` below sweeps four decades and pins that).
+// It is taken from the view so that it stays a sane fraction of the anchor's
+// depth at any camera distance — too small and the projected difference is
+// float noise, too large and the perspective curvature over the step leaks
+// into the derivative.
+private float jacobianStep(Vec3 anchor, const ref Viewport vp) {
+    float k = 10.0f * haulWorldPerPixel(anchor, vp);
+    if (!(k > 0.0f) || isNaN(k)) return 1e-3f;
+    return k;
+}
+
+// `projectToWindowFull` in double precision, for the finite difference only.
+//
+// The difference of two projections a few pixels apart cancels most of the
+// mantissa: in float the surviving digits are noise, and the Jacobian then
+// depends on the step it is supposed to be independent of. The reference does
+// this arithmetic in double, and so does this. Nothing else in the module
+// changes precision — the result is handed back as float, exactly like every
+// other law here.
+private bool projectToWindowD(Vec3 world, const ref Viewport vp,
+                              out double px, out double py)
+{
+    const double x = world.x, y = world.y, z = world.z;
+    const double vx = vp.view[0]*x + vp.view[4]*y + vp.view[ 8]*z + vp.view[12];
+    const double vy = vp.view[1]*x + vp.view[5]*y + vp.view[ 9]*z + vp.view[13];
+    const double vz = vp.view[2]*x + vp.view[6]*y + vp.view[10]*z + vp.view[14];
+    const double vw = vp.view[3]*x + vp.view[7]*y + vp.view[11]*z + vp.view[15];
+    const double cx = vp.proj[0]*vx + vp.proj[4]*vy + vp.proj[ 8]*vz + vp.proj[12]*vw;
+    const double cy = vp.proj[1]*vx + vp.proj[5]*vy + vp.proj[ 9]*vz + vp.proj[13]*vw;
+    const double cw = vp.proj[3]*vx + vp.proj[7]*vy + vp.proj[11]*vz + vp.proj[15]*vw;
+    if (!(cw > 0.0)) return false;   // rejects NaN and behind-camera, as the float twin does
+    px = (cx / cw * 0.5 + 0.5)          * vp.width  + vp.x;
+    py = (1.0 - (cy / cw * 0.5 + 0.5))  * vp.height + vp.y;
+    return true;
+}
+
+// Two in-plane world axes spanning the plane with unit normal `n`.
+//
+// When `n` is one of the basis axes the pair is the other two, in the
+// cyclic order (X,Y,Z) -> normal Z gives (X,Y), normal X gives (Y,Z),
+// normal Y gives (Z,X). Otherwise the pair is an orthonormal completion of
+// `n` built from the basis axis least aligned with it.
+//
+// The choice does not change the conversion's result — `Minv` is the matrix
+// of one linear map expressed in whatever basis it is handed, so
+// `axisU*u + axisV*v` is basis-independent for any two independent spanning
+// vectors. It changes only the conditioning of the 2x2 inverse, which is why
+// the completion is orthonormal.
+private void inPlaneAxes(Vec3 n, Vec3 axisX, Vec3 axisY, Vec3 axisZ,
+                         out Vec3 u, out Vec3 v)
+{
+    enum float PARALLEL = 0.999999f;
+    float dx = dot(n, axisX), dy = dot(n, axisY), dz = dot(n, axisZ);
+    if (dx * dx > PARALLEL) { u = axisY; v = axisZ; return; }
+    if (dy * dy > PARALLEL) { u = axisZ; v = axisX; return; }
+    if (dz * dz > PARALLEL) { u = axisX; v = axisY; return; }
+
+    // Arbitrary normal (a caller-supplied plane that is not a basis axis):
+    // complete an orthonormal in-plane pair from the least-aligned basis axis.
+    Vec3 seed = (dx * dx <= dy * dy && dx * dx <= dz * dz) ? axisX
+              : (dy * dy <= dz * dz)                       ? axisY
+                                                           : axisZ;
+    Vec3 uu = seed - n * dot(seed, n);
+    float ul = sqrt(uu.x * uu.x + uu.y * uu.y + uu.z * uu.z);
+    if (!(ul > 1e-9f)) { u = axisX; v = axisY; return; }
+    u = uu / ul;
+    v = cross(n, u);
+}
+
+// Finite-difference the screen Jacobian at `anchor` on the plane spanned by
+// (`axisU`, `axisV`) and invert it.
+//
+// PURE — no cached state, no gesture identity. "Frozen at the press" is the
+// caller holding `anchor` fixed for the gesture: same anchor and same view
+// give a bit-identical matrix on every event, so the freeze is visible in the
+// caller's own bookkeeping rather than hidden here.
+// `step` overrides the finite-difference step; NaN (the default) derives it
+// from the view. It exists so the cancellation can be tested rather than
+// asserted — no shipping caller passes it.
+PlaneJacobian planeJacobian(Vec3 anchor, Vec3 axisU, Vec3 axisV,
+                            const ref Viewport vp, float step = float.nan)
+{
+    PlaneJacobian j;
+    j.axisU = axisU;
+    j.axisV = axisV;
+
+    const double k = isNaN(step) ? jacobianStep(anchor, vp) : step;
+
+    double sx, sy, ux, uy, vx, vy;
+    if (!projectToWindowD(anchor,                          vp, sx, sy) ||
+        !projectToWindowD(anchor + axisU * cast(float)k,   vp, ux, uy) ||
+        !projectToWindowD(anchor + axisV * cast(float)k,   vp, vx, vy))
+        return j;   // invalid: something is behind the camera
+
+    // M = d(screen px) / d(world along the in-plane axes)
+    const double m00 = (ux - sx) / k, m01 = (vx - sx) / k;
+    const double m10 = (uy - sy) / k, m11 = (vy - sy) / k;
+
+    const double det = m00 * m11 - m01 * m10;
+    if (isNaN(det) || det * det < 1e-24)
+        return j;   // invalid: the plane is edge-on, the map is not invertible
+
+    const double inv = 1.0 / det;
+    j.i00 = cast(float)( m11 * inv);  j.i01 = cast(float)(-m01 * inv);
+    j.i10 = cast(float)(-m10 * inv);  j.i11 = cast(float)( m00 * inv);
+    j.valid = true;
+    return j;
+}
 
 // Plane drag (dragAxis 3/4/5/6).
 //   3 = most-facing plane (normal derived from view matrix vs basis)
@@ -196,10 +345,23 @@ Vec3 screenAxisDelta(int mx,     int my,
 // so a future explicit-plane caller that also happens to pass a normal
 // can't silently lose its requested plane.
 //
-// Kept as its OWN law, not folded into LAW A: per-event-exact versus
-// linearised-at-the-press is exactly the difference a measurement is about,
-// so unifying the two would be a behaviour change, not a deduplication. See
-// the module header's law-change point.
+// The conversion is `Minv * (pixel offset)` on the plane's two in-plane
+// world axes, with `Minv` finite-differenced at `center` (task 0520). It
+// replaced a pair of ray/plane intersections differenced per event.
+//
+// `(mx - lastMX, my - lastMY)` is the pixel offset the caller hands in. A
+// caller that passes its PRESS pixel and its PRESS anchor gets the measured
+// law exactly: one matrix for the whole gesture, applied to the cumulative
+// offset. A caller that passes the previous event's pixel gets the same total
+// for the same total displacement AS LONG AS its anchor is frozen too —
+// `Minv` does not depend on the pixels, so summing increments through a fixed
+// matrix equals one multiply of the sum. Only a caller whose anchor MOVES
+// during the drag re-linearises per event, and that is a residual named in
+// each such call site rather than a property of this function.
+//
+// Kept as its OWN law, not folded into LAW A: LAW A's reference-side
+// counterpart adds a post-projection step that was located but never read.
+// See the module header's law-change point.
 Vec3 planeDragDelta(int mx,     int my,
                     int lastMX, int lastMY,
                     int dragAxis,
@@ -229,16 +391,17 @@ Vec3 planeDragDelta(int mx,     int my,
         }
     }
 
-    Vec3 origCurr, dirCurr, origPrev, dirPrev;
-    screenPointToRay(cast(float)mx,     cast(float)my,     vp, origCurr, dirCurr);
-    screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, origPrev, dirPrev);
+    float nl = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+    if (!(nl > 1e-9f)) { skip = true; return Vec3(0,0,0); }
+    n = n / nl;
 
-    Vec3 hitCurr, hitPrev;
-    if (!rayPlaneIntersect(origCurr, dirCurr, center, n, hitCurr) ||
-        !rayPlaneIntersect(origPrev, dirPrev, center, n, hitPrev))
-    { skip = true; return Vec3(0,0,0); }
+    Vec3 axisU, axisV;
+    inPlaneAxes(n, axisX, axisY, axisZ, axisU, axisV);
 
-    return hitCurr - hitPrev;
+    auto j = planeJacobian(center, axisU, axisV, vp);
+    if (!j.valid) { skip = true; return Vec3(0,0,0); }
+
+    return j.apply(cast(float)(mx - lastMX), cast(float)(my - lastMY));
 }
 
 // ===========================================================================
@@ -261,4 +424,234 @@ float haulWorldPerPixel(Vec3 anchor, const ref Viewport vp) {
     float px = getGizmoPixels();
     if (px < 1e-6f) px = 90.0f;
     return gizmoSize(anchor, vp, 1.0f) / px;
+}
+
+// ===========================================================================
+// LAW B — the ported conversion, pinned (task 0520)
+// ===========================================================================
+//
+// Every assert below is about the LAW, not about a magic number someone liked:
+// the step cancels, the map is linear (so the same total displacement gives the
+// same world result at any event count), it reduces to the pre-0520 exact
+// solve wherever the projection is affine, and it is a stated distance from it
+// where the projection is not.
+version (unittest) {
+    import std.math : PI, sin, cos, tan;
+
+    // The cameras the cross-engine drag corpus actually runs, in our own
+    // terms. `az`/`el`/`dist` came out of the corpus harness's own camera
+    // conversion, applied to the reference's recorded state for the named
+    // case; they are inputs here, not fits.
+    private struct Cam { string name; float az, el, dist; int w, h; }
+
+    private immutable Cam[] corpusCams = [
+        Cam("real_perspective", -0.159244f, 0.265694f,  1.560178f, 1426, 966),
+        Cam("reported_topview",  0.0f,      1.570796f,  0.5f,      1219, 966),
+        Cam("far_perspective",  -0.159244f, 0.265694f, 12.559432f, 1426, 966),
+        Cam("side_camera",       0.97397f,  0.359541f,  3.142141f, 1227, 966),
+    ];
+
+    private Viewport corpusViewport(Cam c, Vec3 focus = Vec3(0, 0, 0)) {
+        Vec3 back = Vec3(cos(c.el) * sin(c.az), sin(c.el), cos(c.el) * cos(c.az));
+        Vec3 eye  = focus + back * c.dist;
+        Viewport vp;
+        vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
+        vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f,
+                                      cast(float)c.w / c.h, 0.001f, 100.0f);
+        vp.width  = c.w;
+        vp.height = c.h;
+        vp.eye    = eye;
+        vp.focus  = focus;
+        return vp;
+    }
+
+    // The pre-0520 body of `planeDragDelta`'s tail, verbatim: two ray/plane
+    // intersections differenced. The oracle the port is measured AGAINST, kept
+    // here rather than described.
+    private Vec3 exactPlaneDelta(int mx, int my, int lastMX, int lastMY,
+                                 Vec3 center, Vec3 n, const ref Viewport vp,
+                                 out bool skip)
+    {
+        skip = false;
+        Vec3 origCurr, dirCurr, origPrev, dirPrev;
+        screenPointToRay(cast(float)mx,     cast(float)my,     vp, origCurr, dirCurr);
+        screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, origPrev, dirPrev);
+        Vec3 hitCurr, hitPrev;
+        if (!rayPlaneIntersect(origCurr, dirCurr, center, n, hitCurr) ||
+            !rayPlaneIntersect(origPrev, dirPrev, center, n, hitPrev))
+        { skip = true; return Vec3(0, 0, 0); }
+        return hitCurr - hitPrev;
+    }
+
+    private float vlen(Vec3 v) { return sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
+}
+
+unittest {  // LAW B: the finite-difference step is a STEP, not a gain.
+    // The matrix divides by the same step it differenced with, so the step
+    // cancels to first order and a four-decade sweep of it must move the answer
+    // by percent, not by decades. This is the assert that catches a port which
+    // has started treating a view pixel scale as the GAIN — the single most
+    // likely way to mis-read this law, and the shape of every fitted "1.53x"
+    // that circulated before it was read.
+    //
+    // What is left over is the forward difference's own O(step) bias, which the
+    // reference carries too (it differences forward at ten pixels' worth of
+    // world, and so do we).
+    foreach (c; corpusCams[0 .. 1] ~ corpusCams[2 .. 4]) {
+        auto vp = corpusViewport(c);
+        Vec3 anchor = Vec3(0.1f, 0.5f, -0.2f);
+
+        auto def = planeJacobian(anchor, Vec3(1,0,0), Vec3(0,1,0), vp);
+        assert(def.valid);
+        Vec3 want = def.apply(100.0f, 40.0f);
+        assert(vlen(want) > 1e-6f);
+
+        foreach (step; [1e-5f, 1e-4f, 1e-3f, 1e-2f, 1e-1f]) {
+            auto j = planeJacobian(anchor, Vec3(1,0,0), Vec3(0,1,0), vp, step);
+            assert(j.valid);
+            float err = vlen(j.apply(100.0f, 40.0f) - want) / vlen(want);
+            assert(err < 2.5e-2f,
+                   "a 10000x change of finite-difference step must not change "
+                   ~ "the conversion by more than a couple of percent");
+        }
+
+        // …and as the step shrinks the difference quotient must SETTLE on the
+        // derivative. It only settles if the projection difference is taken at
+        // more than float precision: two pixel values that differ in their last
+        // few bits carry no derivative at all, and the quotient then grows like
+        // 1/step instead of converging. This is the assert that holds the
+        // double-precision finite difference in place.
+        auto tiny  = planeJacobian(anchor, Vec3(1,0,0), Vec3(0,1,0), vp, 1e-6f);
+        auto small = planeJacobian(anchor, Vec3(1,0,0), Vec3(0,1,0), vp, 1e-5f);
+        assert(tiny.valid && small.valid);
+        Vec3 a = tiny.apply(100.0f, 40.0f), b = small.apply(100.0f, 40.0f);
+        assert(vlen(a - b) <= 5e-3f * vlen(b),
+               "the difference quotient must converge as the step shrinks");
+    }
+}
+
+unittest {  // LAW B: linear in the pixel offset => invariant in the event count.
+    // The harness asserts this across the process boundary (same total
+    // displacement at N = 1, 5, 20 must give the same world result). It holds
+    // here for the same reason it holds there: the matrix does not depend on
+    // the pixels, so summing increments through a frozen matrix equals one
+    // multiply of the summed offset.
+    auto vp = corpusViewport(corpusCams[0]);
+    Vec3 anchor = Vec3(0, 0.5f, 0);
+    auto j = planeJacobian(anchor, Vec3(1,0,0), Vec3(0,1,0), vp);
+    assert(j.valid);
+
+    Vec3 one = j.apply(100.0f, -60.0f);
+    foreach (n; [1, 5, 20]) {
+        Vec3 acc = Vec3(0, 0, 0);
+        foreach (i; 0 .. n)
+            acc = acc + j.apply(100.0f / n, -60.0f / n);
+        assert(vlen(acc - one) <= 1e-5f * vlen(one),
+               "N events of D/N must equal one event of D");
+    }
+}
+
+unittest {  // LAW B: under an affine projection the port IS the exact solve.
+    // Orthographic projection has no perspective divide, so the screen map is
+    // affine and its first-order linearisation is exact. Agreement here is what
+    // says the change is a LINEARISATION and not a change of gain: no scalar
+    // was introduced anywhere.
+    Viewport vp;
+    Vec3 eye = Vec3(3, 4, 9), focus = Vec3(0, 0, 0);
+    vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
+    vp.proj   = orthographicMatrix(2.0f, 1426.0f / 966.0f, 0.001f, 100.0f);
+    vp.width  = 1426; vp.height = 966;
+    vp.eye    = eye;  vp.focus  = focus;
+
+    Vec3 center = Vec3(0.1f, 0.2f, -0.3f);
+    bool skipNew, skipOld;
+    Vec3 got  = planeDragDelta(760, 500, 660, 560, 3, center, vp, skipNew);
+    Vec3 want = exactPlaneDelta(760, 500, 660, 560, center,
+                                Vec3(0, 0, 1), vp, skipOld);   // Z-dominant view
+    assert(!skipNew && !skipOld);
+    assert(vlen(got - want) <= 1e-4f * vlen(want),
+           "under an affine projection the frozen linearisation must reproduce "
+           ~ "the exact ray/plane difference");
+}
+
+unittest {  // LAW B: how far the frozen linearisation is from the exact solve.
+    // The behaviour a user can feel, stated as a number rather than as "it
+    // drifts". Same camera, same anchor, one press, drags of growing length:
+    // the frozen matrix is exact at the press and falls behind the exact solve
+    // as the cursor leaves the anchor's neighbourhood, because a perspective
+    // screen map is not affine.
+    auto vp = corpusViewport(corpusCams[2]);       // the corpus far camera
+    Vec3 center = Vec3(0, 0.5f, 0);
+    Vec3 n = Vec3(0, 0, 1);
+    float ax, ay, az;
+    assert(projectToWindowFull(center, vp, ax, ay, az));
+    int px = cast(int)ax, py = cast(int)ay;        // press ON the anchor
+
+    // Measured on this camera, frozen against exact, dragging horizontally
+    // from the anchor's own pixel:
+    //     10 px   0.007 %      100 px   1.27 %
+    //     50 px   0.56  %      300 px   4.10 %      500 px  6.92 %
+    // The frozen matrix is always the SHORTER of the two: the plane recedes as
+    // the cursor leaves the anchor, so the exact solve keeps buying more world
+    // per pixel while the linearisation keeps the press-time rate.
+    struct Row { int dpx; float lo, hi; }
+    immutable Row[] rows = [ Row( 10, 0.0f,    0.001f),
+                             Row( 50, 0.002f,  0.010f),
+                             Row(100, 0.006f,  0.020f),
+                             Row(300, 0.025f,  0.060f) ];
+    foreach (r; rows) {
+        bool s1, s2;
+        Vec3 frozen = planeDragDelta(px + r.dpx, py, px, py, 3, center, vp, s1);
+        Vec3 exact  = exactPlaneDelta(px + r.dpx, py, px, py, center, n, vp, s2);
+        assert(!s1 && !s2);
+        float rel = vlen(frozen - exact) / vlen(exact);
+        assert(rel >= r.lo && rel <= r.hi,
+               "frozen-vs-exact divergence must stay first-order in drag length");
+        assert(vlen(frozen) <= vlen(exact) * 1.0005f,
+               "the frozen linearisation is the shorter of the two");
+    }
+}
+
+unittest {  // LAW B: the result stays in the plane, whatever the in-plane basis.
+    auto vp = corpusViewport(corpusCams[3]);   // side camera, X-dominant
+    Vec3 center = Vec3(0.2f, -0.1f, 0.4f);
+    bool skip;
+    Vec3 d = planeDragDelta(700, 380, 600, 500, 3, center, vp, skip);
+    assert(!skip);
+    assert(abs(d.x) <= 1e-6f * (vlen(d) + 1e-6f),
+           "an X-normal plane drag must have no X component");
+
+    // An arbitrary (non-basis) plane normal handed in by a caller: the result
+    // must still lie in that plane, which is what the orthonormal completion
+    // in `inPlaneAxes` is for.
+    Vec3 oblique = normalize(Vec3(0.3f, 0.6f, 0.74f));
+    Vec3 od = planeDragDelta(700, 380, 600, 500, 3, center, vp, skip,
+                             Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1), oblique);
+    assert(!skip);
+    assert(abs(dot(od, oblique)) <= 1e-5f * (vlen(od) + 1e-6f),
+           "an oblique plane drag must have no component along its normal");
+}
+
+unittest {  // LAW B: degenerate views skip instead of exploding.
+    // Edge-on: the camera looks along the plane, the 2x2 collapses, and the
+    // caller must be told to leave its bookkeeping alone rather than handed a
+    // huge or NaN delta. The old law failed the same case on a parallel ray.
+    Viewport vp;
+    Vec3 eye = Vec3(0, 0, 6), focus = Vec3(0, 0, 0);
+    vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    vp.width  = 800; vp.height = 800;
+    vp.eye    = eye; vp.focus = focus;
+
+    bool skip;
+    // Force the XZ plane (normal Y) — the camera lies in it.
+    Vec3 d = planeDragDelta(500, 400, 400, 400, 6, Vec3(0,0,0), vp, skip);
+    assert(skip, "an edge-on plane must skip");
+    assert(d == Vec3(0, 0, 0));
+
+    // A zero normal is a caller bug, not a crash.
+    Vec3 z = planeDragDelta(500, 400, 400, 400, 3, Vec3(0,0,0), vp, skip,
+                            Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                            Vec3(0, 0, 0));
+    assert(skip && z == Vec3(0, 0, 0));
 }
