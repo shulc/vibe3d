@@ -2571,11 +2571,40 @@ public:
     // phrasing of the rule: that boundary turns 45 degrees at every vertex and
     // still survives whole. The predicate is topological.
     //
-    // FLAGGED, not guessed: on every rig measured, "one incident polygon" and
-    // "valence 2" select the same vertices, so this capture does not separate
-    // the two phrasings. The polygon-count phrasing is used because the
-    // reference's own branching is on the polygon count. A case where the two
-    // disagree needs a re-measure, not a re-reading of this comment.
+    // "One incident polygon" and "valence 2" are the SAME test here, and that
+    // is a structural fact, not a property of the rigs the capture happened to
+    // use. The trim only ever evaluates a vertex it reached ALONG A BORDER EDGE
+    // (the seed is border-gated by `armDuplicateOnEdge` /
+    // `onDupLoopShiftRmbDown`, and every hop below is filtered by
+    // `isEdgeBorder`), so that vertex's dart fan is OPEN — and an open fan
+    // yields corners+1 edges (`VertexEdgeRange` emits the extra open-end edge)
+    // against corners faces (`VertexFaceRange`):
+    //
+    //     vertexValence(v) == polyCount(v) + 1     for every vertex the walk
+    //                                              can reach
+    //
+    // so `polyCount <= 1` and `vertexValence == 2` coincide identically.
+    // Combinatorially (this also covers an unordered-fan enumerator): every
+    // polygon at v occupies exactly two of v's edge slots, so
+    // 2*polyCount(v) == sum over e at v of |faces(e)|; at valence 2 each
+    // incident polygon must use BOTH of v's edges, hence
+    // |faces(e1)| == |faces(e2)| == polyCount(v), and the edge the walk
+    // arrived on is a border edge with exactly one face, so polyCount == 1.
+    // The converse is immediate. The polygon-count phrasing is the one coded
+    // because the reference's own branching is on the polygon count.
+    //
+    // CAVEAT, and it is a real one: the equivalence holds for the DART-FAN
+    // degree only. A degree read off the raw `edges[]` array
+    // (`Mesh.edgeNeighbors`) separates the two phrasings, because a face-less
+    // edge is listed in `edges[]` but owns no dart — and this tool creates
+    // face-less edges itself (`BuildCase.Edge` in `buildFromSource`). A wire
+    // spur on a patch corner reads raw degree 3 while the fan reads valence 2.
+    // Wire is not even needed to separate them: two quads meeting at ONE
+    // vertex read raw degree 4 there against fan valence 2, because the fan
+    // sees only one of the two fans. Do NOT "simplify" the stop test onto that
+    // enumerator: the reference behaviour on either shape is unmeasured. The
+    // equivalence and both separating shapes are pinned by the unittest below
+    // this class.
     private int[] trimBorderRunAroundSeed(const(int)[] gathered, int seed) {
         auto m = mesh;
         if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return null;
@@ -6190,6 +6219,205 @@ unittest {
             "CASE-QUAD degenerate release must restore the ORIGINAL triangle, not a partial mutation");
         assert(!history.canUndo(),
             "CASE-QUAD degenerate release must record NO undo entry");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// trimBorderRunAroundSeed — the stop predicate's two phrasings are ONE set.
+// The trim only ever evaluates a vertex it reached ALONG A BORDER EDGE, so
+// that vertex's dart fan is OPEN, and an open fan yields corners+1 edges
+// (`VertexEdgeRange` emits the extra open-end edge) against corners faces
+// (`VertexFaceRange`):
+//
+//     vertexValence(v) == polyCount(v) + 1     for every border-reachable v
+//
+// so "polyCount <= 1" and "valence == 2" are the same test there. Case A
+// pins that on representative rigs; case B pins the identity that CAUSES it,
+// so a failure localises. Case D pins the ONE phrasing that is NOT
+// equivalent: a degree read off the raw `edges[]` array
+// (`Mesh.edgeNeighbors`) instead of the dart fan. Face-less edges — which
+// this tool creates itself (`BuildCase.Edge`, see `buildFromSource`) — are in
+// `edges[]` but own no dart, so a wire spur on a patch corner reads raw
+// degree 3 while the fan reads valence 2. Do not "simplify" the stop test
+// onto that enumerator; see the comment on `trimBorderRunAroundSeed` itself.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : sort;
+    import std.math      : cos, sin, PI;
+
+    auto t = new TopologyPenTool();
+
+    static size_t polyCountOf(const ref Mesh m, uint v) {
+        size_t n = 0;
+        foreach (fi; m.facesAroundVertex(v)) ++n;
+        return n;
+    }
+    static int[] sortedDup(const(int)[] a) { auto b = a.dup; b.sort(); return b; }
+
+    // A parameterised copy of the trim's walk. Case A asserts
+    // walkWith(polygon-count) == trimBorderRunAroundSeed(...), which pins
+    // this copy to the shipped function so it cannot drift unnoticed.
+    static int[] walkWith(Mesh* m, const(int)[] gathered, int seed,
+                          bool delegate(uint) stopAt)
+    {
+        bool[int] inSet;
+        foreach (ei; gathered) inSet[ei] = true;
+        if ((seed in inSet) is null) return [seed];
+
+        int[] run = [seed];
+        bool[int] taken;
+        taken[seed] = true;
+        foreach (endpoint; [m.edges[seed][0], m.edges[seed][1]]) {
+            uint cur  = endpoint;
+            int  came = seed;
+            while (true) {
+                if (stopAt(cur)) break;
+                int next = -1;
+                foreach (ei; m.edgesAroundVertex(cur)) {
+                    immutable int e2 = cast(int) ei;
+                    if (e2 == came) continue;
+                    if ((e2 in inSet) is null) continue;
+                    if ((e2 in taken) !is null) continue;
+                    if (!m.isEdgeBorder(cast(uint) e2)) continue;
+                    next = e2;
+                    break;
+                }
+                if (next < 0) break;
+                taken[next] = true;
+                run ~= next;
+                auto ep = m.edges[next];
+                cur  = (ep[0] == cur) ? ep[1] : ep[0];
+                came = next;
+            }
+        }
+        return run;
+    }
+
+    // ---- rigs ----------------------------------------------------------
+    static void buildGrid(Mesh* m, uint nx, uint ny) {       // nx*ny quads
+        foreach (j; 0 .. ny + 1) foreach (i; 0 .. nx + 1)
+            m.addVertex(Vec3(cast(float) i, 0, cast(float) j));
+        foreach (j; 0 .. ny) foreach (i; 0 .. nx) {
+            immutable uint a = j * (nx + 1) + i;
+            m.makePolygonFromVerts([a, a + 1, a + nx + 2, a + nx + 1], false);
+        }
+        m.buildLoops();
+    }
+    static void buildAnnulus(Mesh* m, uint n) {              // closed band
+        foreach (i; 0 .. n) {
+            immutable float a = cast(float)(2.0 * PI * i / n);
+            m.addVertex(Vec3(cast(float) cos(a), 0, cast(float) sin(a)));
+        }
+        foreach (i; 0 .. n) {
+            immutable float a = cast(float)(2.0 * PI * i / n);
+            m.addVertex(Vec3(2.0f * cast(float) cos(a), 0, 2.0f * cast(float) sin(a)));
+        }
+        foreach (i; 0 .. n) {
+            immutable uint i2 = (i + 1) % n;
+            m.makePolygonFromVerts([i, i2, n + i2, n + i], false);
+        }
+        m.buildLoops();
+    }
+    static void buildFan(Mesh* m, uint n) {                  // open triangle fan
+        m.addVertex(Vec3(0, 0, 0));
+        foreach (i; 0 .. n + 1) {
+            immutable float a = cast(float)(PI * i / n);
+            m.addVertex(Vec3(cast(float) cos(a), 0, cast(float) sin(a)));
+        }
+        foreach (i; 0 .. n) m.makePolygonFromVerts([0u, 1u + i, 2u + i], false);
+        m.buildLoops();
+    }
+    static void buildEll(Mesh* m) {   // 3 of a 2x2 grid's quads: a REFLEX border
+        foreach (j; 0 .. 3) foreach (i; 0 .. 3)
+            m.addVertex(Vec3(cast(float) i, 0, cast(float) j));
+        m.makePolygonFromVerts([0u, 1u, 4u, 3u], false);
+        m.makePolygonFromVerts([1u, 2u, 5u, 4u], false);
+        m.makePolygonFromVerts([3u, 4u, 7u, 6u], false);
+        m.buildLoops();
+    }
+    static void buildButterfly(Mesh* m) {   // two quads sharing ONE vertex
+        foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1),
+                     Vec3(-1,0,0), Vec3(-1,0,-1), Vec3(0,0,-1)])
+            m.addVertex(p);
+        m.makePolygonFromVerts([0u, 1u, 2u, 3u], false);
+        m.makePolygonFromVerts([0u, 6u, 5u, 4u], false);
+        m.buildLoops();
+    }
+
+    // ---- cases A + B ---------------------------------------------------
+    // `fanIdentity` is false only for the butterfly, whose shared vertex is
+    // TWO fans: both enumerators may see one fan or both, but they always
+    // see the SAME one, so the equivalence still holds while the
+    // valence == polyCount + 1 identity (a single-fan statement) need not.
+    void sweep(string rig, Mesh* m, bool fanIdentity) {
+        if (fanIdentity)
+            foreach (v; 0 .. cast(uint) m.vertices.length) {
+                if (!m.isVertexBorder(v)) continue;
+                assert(m.vertexValence(v) == cast(uint) polyCountOf(*m, v) + 1,
+                    rig ~ ": a border-reachable vertex must have an OPEN dart fan "
+                        ~ "(valence == incident-polygon count + 1) — this identity "
+                        ~ "is WHY the two stop phrasings coincide");
+            }
+
+        t.meshSrc_ = () => m;
+        foreach (ei; 0 .. cast(int) m.edges.length) {
+            if (!m.isEdgeBorder(cast(uint) ei)) continue;   // the only seeds the trim sees
+            auto gathered = m.selectLoopEdges(cast(uint) ei);
+
+            auto shipped = sortedDup(t.trimBorderRunAroundSeed(gathered, ei));
+            auto byPoly  = sortedDup(walkWith(m, gathered, ei,
+                               (uint v) => polyCountOf(*m, v) <= 1));
+            auto byVal   = sortedDup(walkWith(m, gathered, ei,
+                               (uint v) => m.vertexValence(v) == 2));
+
+            assert(shipped == byPoly,
+                rig ~ ": the shipped trim IS the incident-polygon-count phrasing");
+            assert(shipped == byVal,
+                rig ~ ": the valence-2 phrasing must select the SAME run — if this "
+                    ~ "fires, the two phrasings have been separated and the "
+                    ~ "reference behaviour on that shape is UNMEASURED");
+        }
+    }
+
+    { Mesh m; buildGrid(&m, 3, 3);   sweep("grid3x3",   &m, true);  }
+    { Mesh m; buildGrid(&m, 3, 1);   sweep("strip3",    &m, true);  }
+    { Mesh m; buildGrid(&m, 1, 1);   sweep("loneQuad",  &m, true);  }
+    { Mesh m; buildAnnulus(&m, 8);   sweep("annulus8",  &m, true);  }
+    { Mesh m; buildFan(&m, 4);       sweep("triFan4",   &m, true);  }
+    { Mesh m; buildEll(&m);          sweep("ellReflex", &m, true);  }
+    { Mesh m; buildButterfly(&m);    sweep("butterfly", &m, false); }
+
+    // ---- case D: the ONE phrasing that is NOT equivalent ----------------
+    {
+        Mesh m;
+        foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)])
+            m.addVertex(p);
+        immutable uint spur = m.addVertex(Vec3(-1, 0, -1));
+        m.makePolygonFromVerts([0u, 1u, 2u, 3u], false);
+        m.addEdge(0u, spur);            // a BARE edge: in edges[], owns no dart
+        m.buildLoops();
+
+        assert(polyCountOf(m, 0u) == 1,
+            "the spur is face-less, so the corner still has ONE incident polygon");
+        assert(m.vertexValence(0u) == 2,
+            "the dart fan cannot see the spur, so the FAN valence is still 2");
+        assert(m.edgeNeighbors(0u).length == 3,
+            "...but the RAW edges[] degree is 3 — the two phrasings part here");
+
+        immutable int seed = cast(int) m.edgeIndex(0u, 1u);
+        assert(seed >= 0 && m.isEdgeBorder(cast(uint) seed));
+        auto gathered = m.selectLoopEdges(cast(uint) seed);
+        t.meshSrc_ = () => &m;
+
+        auto shipped = sortedDup(t.trimBorderRunAroundSeed(gathered, seed));
+        auto byRaw   = sortedDup(walkWith(&m, gathered, seed,
+                           (uint v) => m.edgeNeighbors(v).length == 2));
+
+        assert(shipped.length == 1,
+            "the shipped predicate stops at BOTH ends of a lone quad's border edge");
+        assert(byRaw != shipped,
+            "a raw edges[]-degree phrasing selects a DIFFERENT run — do NOT "
+            ~ "refactor the stop test onto Mesh.edgeNeighbors");
     }
 }
 
