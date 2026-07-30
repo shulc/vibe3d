@@ -2457,6 +2457,13 @@ public:
         return snapGuide_;
     }
 
+    /// The primary mesh, or null when this tool has no source bound yet —
+    /// `mesh` itself CALLS the delegate and would fault on one. Every query
+    /// path already guards `meshSrc_ is null` before touching it; the guide
+    /// paths run BEFORE those guards (they aim the guide, then query), so
+    /// they need the guarded form.
+    private Mesh* meshOrNull() { return meshSrc_ is null ? null : meshSrc_(); }
+
     /// The SNAP stage of the live pipeline, or null when there is none —
     /// every direct-construction unittest, and every headless path. Mirrors
     /// `XfrmToolBase.snapStageForHooks`, same lookup, same null discipline.
@@ -2472,7 +2479,7 @@ public:
     /// strand one.
     private void registerSnapGuide() {
         auto g = snapGuide();
-        g.retarget(mesh, innerSnap_);
+        g.retarget(meshOrNull(), innerSnap_);
         if (auto st = snapStageForGesture()) st.addGuide(g);
     }
 
@@ -2535,7 +2542,7 @@ public:
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
         if (!dragSnap_.enabled) return -1;
         auto g = snapGuide();
-        g.retarget(mesh, innerSnap_);
+        g.retarget(meshOrNull(), innerSnap_);
         g.aimAt(vp, mx, my);
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
                                 &g.admits);
@@ -16050,6 +16057,16 @@ unittest {
     auto blank = new TopologyPenTool.PenSnapGuide();
     assert(!blank.admits(SnapType.Vertex, 0, 0),
         "a guide with no mesh admits nothing; it must not answer from a null");
+
+    // (5) and the tool must be able to reach that state without faulting: a
+    // press on a tool whose mesh source is not bound yet still registers a
+    // guide, and registering aims it at the mesh. `mesh` CALLS the delegate.
+    auto bare = new TopologyPenTool();
+    bare.registerSnapGuide();
+    assert(bare.snapGuide_ !is null && !bare.snapGuide_.admits(SnapType.Vertex, 0, 0),
+        "a press with no mesh source bound must register a guide that admits nothing, "
+      ~ "not fault on a null delegate");
+    bare.unregisterSnapGuide();   // and the mirror must be safe with no pipeline
 }
 
 // ---------------------------------------------------------------------------
