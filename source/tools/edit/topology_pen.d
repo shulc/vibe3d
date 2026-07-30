@@ -1572,34 +1572,40 @@ private:
     bool showVertex_ = true;
     bool showEdge_   = true;
 
-    // Fill mode hover preview (task 0477 continuation,
-    // doc/topopen_fill_plan.md Phase 5): the ONE candidate gap-cell's 4
-    // corner verts (any rotation) under the cursor, or `null` when the mode
-    // isn't Fill / no cell is under the cursor / a gesture is armed. A
-    // passive display cache — like `hoverNearestVert_` above — NOT part of
+    // Fill mode hover preview: the ring `findFillRing` resolves under the
+    // cursor — 4 corners, or 3 when `quadOnly` is off — in the ORDER the
+    // build would use, or `null` when the mode isn't Fill / the search
+    // refuses / a gesture is armed. A passive display cache — like
+    // `hoverNearestVert_` above — NOT part of
     // `resetAllGestureArms()`/`anyGestureArmed()`. Computed unconditionally
     // in `onMouseMotion`'s not-armed branch (its own sibling gate, NOT
     // nested inside the `hoverOverMesh_` block above — see the plan's
     // mandatory opponent fix #2: `hoverOverMesh_` requires a pick within
     // `topoPenPressPickPx`, which is false when hovering the CENTER of an empty
     // gap cell, exactly the defining Fill-mode case).
-    uint[] fillCell_;
+    //
+    // ONE SEARCH, shared with the commit (task 0488): the reference's own
+    // draw path runs the identical candidate search the press does, so the
+    // highlight is not an approximation of the outcome — it IS the outcome.
+    // Anything that changes the rule therefore changes this preview in the
+    // same breath; they cannot be ported apart.
+    uint[] fillRing_;
 
     // Fill mode hover-reach RADIUS overlay (task 0477 continuation, a
     // derived law — full provenance/disassembly kept in the PRIVATE
     // toolcard, toolcards/topology_pen/fill_radius_law_capture.md): a
     // cosmetic screen-space circle, centered on the live cursor pixel,
     // sized to the farther endpoint of whichever BORDER edge the cursor is
-    // nearest. `fillRadiusPx_` is computed alongside `fillCell_` above, in
+    // nearest. `fillRadiusPx_` is computed alongside `fillRing_` above, in
     // `onMouseMotion`'s Fill-mode branch (its own sibling gate, same
-    // rationale `fillCell_` isn't nested in `hoverOverMesh_`: hovering the
+    // rationale `fillRing_` isn't nested in `hoverOverMesh_`: hovering the
     // open middle of a gap is nowhere near any vertex/edge/face within
     // `topoPenPressPickPx`, yet a nearby border edge still legitimately sizes
     // the circle). `fillRadiusValid_` is false whenever a non-Fill mode is
     // active, a gesture is armed, or no border edge is within tolerance of
     // the cursor (this also covers the vertex-only-hover case the toolcard
     // leaves unresolved as an honest gap — no circle rather than a guessed
-    // one). Overlay-only: never read by `findFillCell`/`commitFill`, so it
+    // one). Overlay-only: never read by `findFillRing`/`commitFill`, so it
     // cannot affect the fill kernel, undo, or any other mode.
     bool  fillRadiusValid_ = false;
     float fillRadiusPx_    = 0.0f;
@@ -1974,7 +1980,7 @@ public:
             hoverOverMesh_   = false;   // gesture ghosts take precedence
             hoverGrabElem_   = MoveElem.None;
             hoverGrabIndex_  = -1;
-            fillCell_        = null;   // Fill mode continuation: same precedence rule
+            fillRing_        = null;   // Fill mode continuation: same precedence rule
             fillRadiusValid_ = false;  // Fill radius overlay: same precedence rule
         } else {
             Viewport vp;
@@ -2002,11 +2008,11 @@ public:
             // exactly the defining Fill-mode case (no vertex/edge/face is
             // anywhere near the cursor). Nesting it in that block would
             // make the preview never render for that scenario.
-            fillCell_ = (penMode_ == PenMode.Fill) ? findFillCell(e.x, e.y, vp) : null;
+            fillRing_ = (penMode_ == PenMode.Fill) ? findFillRing(e.x, e.y, vp) : null;
 
             // Fill mode radius overlay (task 0477 continuation, derived
             // law — see `fillRadiusPx_`'s own doc comment for provenance):
-            // resolved alongside `fillCell_` above, same unconditional
+            // resolved alongside `fillRing_` above, same unconditional
             // sibling gate and the same rationale — an empty-gap hover has
             // no vertex/edge/face within `topoPenPressPickPx`, yet a nearby
             // border edge still legitimately sizes the circle. Recomputed
@@ -2014,9 +2020,20 @@ public:
             // `draw()` re-polls the LIVE cursor pixel for the circle's
             // CENTER (not this event's cached (e.x,e.y)), matching the
             // law's "re-polled every redraw" cursor semantics.
+            //
+            // TASK 0488: the seed is now `fillSeedEdge` — the SAME border
+            // edge the candidate search runs from — instead of a separate
+            // press-pick-bounded nearest-border-edge query. Two queries for
+            // one gesture could disagree, and did: at the bare centre of a
+            // gap the search resolved a ring while the circle silently
+            // refused to draw, because the old seed was gated at
+            // `topoPenPressPickPx` and Fill's press has no reach at all. The
+            // circle's ARITHMETIC is untouched (the measured hover radius,
+            // not the `range`-multiplied gather radius) — only which edge
+            // sizes it.
             fillRadiusValid_ = false;
             if (penMode_ == PenMode.Fill) {
-                int bre = findNearestBorderEdge(e.x, e.y, vp);
+                int bre = fillSeedEdge(e.x, e.y, vp);
                 auto m  = mesh;
                 if (bre >= 0 && m !is null && bre < cast(int)m.edges.length) {
                     ImVec2 pa, pb;
@@ -2389,156 +2406,374 @@ public:
         return -1;
     }
 
-    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md Phase
-    // 3): pure, GL-free detection of the ONE quad gap-cell under the
-    // cursor — reconstructed from BORDER-edge adjacency, never a
-    // whole-boundary-loop trace (owner decision 2: "one cell per click").
-    // Returns the 4 corner verts (any rotation — `commitFill`'s
-    // `makePolygonFromVerts(autoOrient:true)` fixes winding), or `null`
-    // when no gap cell contains the cursor (over a solid face, empty area,
-    // or every candidate quad misses).
+    // ------------------------------------------------------------------
+    // FILL — the candidate rule (task 0488). Ported, not invented: every
+    // clause below is a MEASURED clause of the reference's own candidate
+    // search, taken from two independent readings (a live run that armed 13
+    // of 13 cells and produced the first observed Fill commit, and a
+    // recording off which the enumerator itself was read across 316
+    // candidate searches). Provenance, addresses and the per-cell tables
+    // live in the PRIVATE toolcard, never in this tracked source.
     //
-    // Algorithm:
-    //   1. Scan every border edge (`isEdgeBorder`, n==1 EXACTLY) once,
-    //      building a border-vertex adjacency map — each border vert's
-    //      OTHER border-edge neighbour(s).
-    //   2. For every border edge E=(a,b): for every border-neighbour a' of
-    //      a (a' != b) and every border-neighbour b' of b (b' != a), form
-    //      the candidate quad cycle [a', a, b, b'] (three consecutive cell
-    //      sides a'->a->b->b'). Skip unless all 4 verts are distinct.
-    //      Seeding from BORDER edges guarantees the candidate lies on the
-    //      face-FREE side of E (E's one incident face sits on the OTHER
-    //      side), so a candidate can never coincide with an existing face
-    //      — `commitFill` still self-guards via `makePolygonFromVerts`'s
-    //      own `-1` reject regardless.
-    //   3. MANDATORY guard (post-e6ca77a review): the fourth side, closing
-    //      b'->a', must itself be a REAL mesh edge (`m.edgeIndex(b',a') !=
-    //      ~0u`) — reject otherwise. Every GENUINE single cell has all 4
-    //      sides as existing edges: an interior gap has 4 border edges; a
-    //      tool-made notch has 3 border edges + the mouth, which is a KEPT
-    //      floating (0-face) edge, never truly absent (`deleteFacesByMask`'s
-    //      `keepFloatingEdges` contract — see `commitFill`'s own doc). Only
-    //      a cross-gap "skip-through" candidate spanning two MUTUALLY
-    //      ADJACENT missing cells closes on a diagonal that is not a real
-    //      edge at all; `makePolygonFromVerts` would otherwise happily
-    //      accept that bogus cycle (it creates any missing edge
-    //      unconditionally), silently filling the WRONG shape rather than
-    //      declining. This guard is what makes an adjacent-2-cell gap a
-    //      clean `[]` no-op instead of a wrong fill (and incidentally kills
-    //      the latent area-TIE this shape is prone to, by removing the
-    //      bogus competitor outright rather than relying on area to
-    //      discriminate it away).
-    //   4. Project all 4 verts (skip a candidate with any vertex behind
-    //      the camera) and even-odd point-in-polygon test against
-    //      (mx,my) — winding-agnostic.
-    //   5. Pick the SMALLEST-screen-area candidate that contains the
-    //      cursor — the load-bearing tiebreak that implements "nearest
-    //      cell to the cursor" among any remaining (real-edge-closed)
-    //      candidates, and rejects the outer perimeter (a
-    //      perimeter-seeded candidate is huge or does not contain an
-    //      interior cursor).
+    // This REPLACES the V1 rule (border-edge cell reconstruction with a
+    // mandatory real fourth side, picking the smallest screen-area
+    // cursor-containing cell). V1 was not a near-miss — it was a different
+    // algorithm, and it is refuted on the vertex SET by two rigs at once:
+    // the reference built a quad BRIDGING two topologically disconnected
+    // bars (a closing side that is not a mesh edge at all), and it put an
+    // ISOLATED vertex — one on no polygon whatsoever — in as a corner.
+    // V1's construction can produce neither.
     //
-    // Known V1 limitation (vibe3d-divergence, not a blocker — owner
-    // pinned the behavior): highly irregular / non-planar hole boundaries
-    // could in principle let a bogus (but real-edge-closed) candidate be
-    // both smaller AND cursor-containing than the true cell. Grid-like
-    // retopo meshes (this tool's domain) are robust to this. Two MUTUALLY
-    // ADJACENT missing cells sharing a now-fully-gone middle edge (a
-    // perimeter notch 2+ cells wide) still resolve to `[]` rather than
-    // either individual true cell — step 3's guard makes this a safe
-    // no-op (never a wrong fill), but does not make the true cell
-    // discoverable there; that would need a genuinely different
-    // reconstruction strategy, out of scope for V1.
-    private uint[] findFillCell(int mx, int my, const ref Viewport vp) {
-        if (meshSrc_ is null) return null;
-        auto m = mesh;
-        if (m is null) return null;
+    // THE RULE, clause by clause:
+    //
+    //   SEEDS.  The pressed border edge's two endpoints occupy slots 0 and
+    //     1 and are NEVER distance-tested (0.0 in every measured row, 0
+    //     exceptions in 316 searches). "Pinned" is not a ranking special
+    //     case here and must not be implemented as one: the seeds are not
+    //     candidates at all, so eviction simply never looks at them.
+    //
+    //   GATHER RADIUS.  `range` × the hovered edge's own hover radius
+    //     (`fillHoverRadiusPx`), in screen pixels, centred on the CURSOR.
+    //     Read directly: the product is what the enumerator receives as its
+    //     radius argument. It is a GATHER radius and nothing else — it
+    //     never enters the ranking, which is why more reach changes nothing
+    //     once the four-nearest cap absorbs it.
+    //
+    //     ONE OPERATIONAL FACT, because it explains three sessions of
+    //     failure: the hover radius is max(dA, dB) over the edge's two
+    //     endpoints, so it is MINIMISED at the edge's MIDPOINT. Pressing an
+    //     edge in the middle — by far the most natural aim — gives this
+    //     gesture its smallest possible reach, and is the worst aim for it.
+    //     Aim near an ENDPOINT to reach more candidates.
+    //
+    //   QUALIFIER.  A vertex qualifies if it is ISOLATED (on no polygon at
+    //     all), or belongs to exactly one DEGENERATE polygon (≤ 2 corners),
+    //     or carries at least one BORDER edge. Read on 3135 evaluations
+    //     with ZERO candidates dropped at this gate. The isolated clause is
+    //     load-bearing: an isolated vertex is a legal corner, and V1 could
+    //     never produce one.
+    //
+    //   SCREEN-CROSSING REJECT.  For each SEED vertex, for each polygon
+    //     incident to that seed, for each edge of that polygon: reject the
+    //     candidate when the OPEN screen segment from the CURSOR to the
+    //     CANDIDATE properly crosses that edge (both intersection
+    //     parameters strictly inside (0,1)). This is NOT a footnote — the
+    //     recording has it firing on 73 % of qualified candidates and
+    //     changing the outcome of 77 % of searches. A distance ranking
+    //     without it picks different corners on three quarters of them.
+    //
+    //   RANKING.  The four nearest in 3-SPACE among the reject's SURVIVORS.
+    //     An eviction replaces the FARTHEST non-seed entry and only with
+    //     something strictly nearer; the count never grows past four. Both
+    //     the eviction rule and "never a seed" are read, not reasoned.
+    //
+    //   COUNT GATE.  Exactly four — or exactly three when `quadOnly` is
+    //     off, and the three-path runs NO shape test at all.
+    //
+    //   SHAPE TEST AND ORDER.  Exactly two cyclic orders are ever tried,
+    //     (0,1,2,3) then (0,1,3,2), so the pressed edge is ALWAYS a side of
+    //     the built polygon. The first that is convex IN SCREEN SPACE wins;
+    //     when the second wins the code SWAPS slots 2 and 3 IN PLACE, and
+    //     it is that array — verbatim — that becomes the polygon. The array
+    //     is ARRIVAL order mutated by eviction, never a sort (139 of 240
+    //     four-slot searches have slot 2 farther than slot 3), so a port
+    //     that sorts winds a different polygon.
+    //
+    // TWO THINGS THIS PORT DELIBERATELY DROPS, both of them ours:
+    //
+    //   * the mandatory real fourth side. The reference has no such
+    //     requirement and demonstrably bridges a gap with no closing edge.
+    //   * the clean no-op on a miss. A refusal in the reference is
+    //     DESTRUCTIVE — see `fillDown`.
+    //
+    // WHAT IS NOT PORTED, AND IS NOT INVENTED EITHER — there is one more
+    // gate AFTER the convexity test in the reference, and it is strict: it
+    // accepted only 76 of 270 formed rings on the recording. Its predicate
+    // is UNREAD. Empirically the rings it refuses INCLUDE every ring whose
+    // vertex set is an already-existing polygon, which our own
+    // `makePolygonFromVerts` duplicate-face guard already declines, so
+    // `commitFill` keeps exactly today's behaviour there and nothing is
+    // guessed for the rest. Marked here, in `commitFill`, and in the task
+    // file as an UNREAD GATE — the single most valuable next reading.
+    //
+    // THE ONE MODELLED TERM, named so it is not mistaken for a measurement:
+    // the ranking's 3-space distance is measured against the reference's own
+    // internal cursor MODEL point, which is not a quantity we can read. We
+    // use this tool's OWN established screen→world mapping for it
+    // (`shiftedWorldPoint` — unproject the cursor onto the constant-view-
+    // depth plane through the seed edge's midpoint), reusing the convention
+    // every other gesture here already drags on rather than inventing a
+    // second one. It is exact for the fronto-parallel planar rigs the rule
+    // was measured on, and it is the term to revisit if a future reading
+    // ever exposes the reference's own point.
+    //
+    // ENUMERATION ORDER is ours (ascending vertex index); the reference's
+    // is a spatial structure's and was not read. It cannot change the
+    // ANSWER: the eviction rule leaves the same SET whatever the order, and
+    // the two-cyclic-order shape test then fixes the ring, so arrival order
+    // survives into the result only as which of the two non-seed corners
+    // sits in slot 2 before that test.
+    // ------------------------------------------------------------------
 
-        uint[][uint] borderNbrs;
-        foreach (ei; 0 .. m.edges.length) {
-            if (!m.isEdgeBorder(cast(uint)ei)) continue;
-            auto e = m.edges[ei];
-            uint a = e[0], b = e[1];
-            borderNbrs[a] ~= b;
-            borderNbrs[b] ~= a;
+    // Does the OPEN segment p1→p2 properly cross the OPEN segment q1→q2 —
+    // both parameters strictly inside (0,1)? Pure screen-space arithmetic,
+    // extracted so the reject's own predicate is unit-testable on hand
+    // numbers. Touching at an endpoint, collinear overlap and parallel are
+    // all FALSE: "properly" is the measured word, and it is what lets a
+    // candidate that is itself a corner of the tested polygon survive.
+    static bool segmentsProperlyCross(ImVec2 p1, ImVec2 p2, ImVec2 q1, ImVec2 q2) {
+        immutable float rx = p2.x - p1.x, ry = p2.y - p1.y;
+        immutable float sx = q2.x - q1.x, sy = q2.y - q1.y;
+        immutable float denom = rx * sy - ry * sx;
+        if (denom == 0.0f) return false;          // parallel or degenerate
+        immutable float wx = q1.x - p1.x, wy = q1.y - p1.y;
+        immutable float t = (wx * sy - wy * sx) / denom;
+        immutable float u = (wx * ry - wy * rx) / denom;
+        return t > 0.0f && t < 1.0f && u > 0.0f && u < 1.0f;
+    }
+
+    // The shape test: is the screen-space cycle a→b→c→d CONVEX? The four
+    // corner cross products must all carry the SAME sign. A zero corner
+    // (three collinear points) is neither sign and fails — which also keeps
+    // a degenerate cycle out of the build.
+    static bool screenQuadConvex(ImVec2 a, ImVec2 b, ImVec2 c, ImVec2 d) {
+        ImVec2[4] p = [a, b, c, d];
+        bool pos = false, neg = false;
+        foreach (i; 0 .. 4) {
+            immutable float ux = p[(i + 1) % 4].x - p[i].x;
+            immutable float uy = p[(i + 1) % 4].y - p[i].y;
+            immutable float vx = p[(i + 2) % 4].x - p[(i + 1) % 4].x;
+            immutable float vy = p[(i + 2) % 4].y - p[(i + 1) % 4].y;
+            immutable float cr = ux * vy - uy * vx;
+            if      (cr > 0.0f) pos = true;
+            else if (cr < 0.0f) neg = true;
+            else return false;                    // collinear corner
+        }
+        return pos != neg;
+    }
+
+    // The SEED: which border edge this cursor pixel presses/hovers, or -1.
+    //
+    // Fill's press has NO reach radius — measured (task 0507), and it is why
+    // a press at the bare centre of a gap, 32 px from the nearest border
+    // edge where an ordinary selection click resolves nothing at all, still
+    // classifies as an edge press and caps the cell. So the scan below is
+    // unbounded on purpose; do NOT "unify" it onto `topoPenPressPickPx`.
+    //
+    // It is bounded by something else, and that too is measured: whatever
+    // ELSE is nearer wins the press, and only an EDGE press can fill.
+    //
+    //   * a VERTEX nearer than every border edge makes this a vertex press,
+    //     from which the reference's fill build is structurally unreachable
+    //     — read statically AND observed live (a press at a hole's centre
+    //     resolved an isolated vertex sitting inside the hole, and nothing
+    //     happened). Ties go to the vertex, matching both this tool's own
+    //     vertex→edge→face pick precedence and the reference's own
+    //     vertex-favouring arbitration.
+    //   * a POLYGON under the cursor likewise wins (a face the cursor is
+    //     inside is at distance zero), and Fill has no polygon path. Needs
+    //     `gpu_`'s BVH, so under a bare `dub test` this term is inert and
+    //     the vertex term carries the same cases — the identical limitation
+    //     `overPrimaryEdgeOrFace` documents.
+    //
+    // NOT PORTED, and named rather than guessed: the reference's press pick
+    // also classifies INTERIOR edges, and an interior-edge press in Fill
+    // mode would take the same destructive refusal path `fillDown`
+    // implements for a border edge. No cell ever pressed an interior edge in
+    // Fill mode, so that case is unmeasured and this scan simply does not
+    // consider interior edges.
+    private int fillSeedEdge(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (pickPrimaryFace(mx, my, vp) >= 0) return -1;   // POLYGON press
+
+        immutable float cx = cast(float)mx, cy = cast(float)my;
+
+        float bestVertD = float.infinity;
+        foreach (vi; 0 .. m.vertices.length) {
+            ImVec2 pv;
+            if (!projectPt(m.vertices[vi], vp, pv)) continue;
+            immutable float d = hypot(pv.x - cx, pv.y - cy);
+            if (d < bestVertD) bestVertD = d;
         }
 
-        uint[] bestCell;
-        float  bestArea = float.infinity;
+        // `edgePolygonCounts` rather than `isEdgeBorder`: the same predicate
+        // (exactly one incident polygon) off the counter that cannot
+        // undercount a non-manifold fan, hoisted once for the whole scan.
+        const int[] polyCount = m.edgePolygonCounts();
+        int   bestEdge  = -1;
+        float bestEdgeD = float.infinity;
+        foreach (ei, e; m.edges) {
+            if (ei >= polyCount.length || polyCount[ei] != 1) continue;
+            ImVec2 pa, pb;
+            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
+            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
+            float t;
+            immutable float d = closestOnSegment2D(cx, cy, pa.x, pa.y, pb.x, pb.y, t);
+            if (d < bestEdgeD) { bestEdgeD = d; bestEdge = cast(int)ei; }
+        }
+        if (bestEdge < 0) return -1;
+        if (bestVertD <= bestEdgeD) return -1;   // VERTEX press — no fill path
+        return bestEdge;
+    }
 
-        foreach (ei; 0 .. m.edges.length) {
-            if (!m.isEdgeBorder(cast(uint)ei)) continue;
-            auto e = m.edges[ei];
-            uint a = e[0], b = e[1];
-            auto pnbrA = a in borderNbrs;
-            auto pnbrB = b in borderNbrs;
-            if (pnbrA is null || pnbrB is null) continue;
+    // The candidate search itself, run from the seed `fillSeedEdge` resolved.
+    // Returns the ring VERBATIM in the order the shape test accepted (4
+    // corners, or 3 when `quadOnly` is off), or `null` when any gate refuses.
+    // The hover preview and the commit both call this — the reference's own
+    // draw path runs the identical search, so the highlight and the build
+    // obey ONE rule and can never disagree.
+    private uint[] findFillRing(int mx, int my, const ref Viewport vp) {
+        immutable int seedEi = fillSeedEdge(mx, my, vp);
+        if (seedEi < 0) return null;
+        return fillRingFromSeed(cast(uint)seedEi, mx, my, vp);
+    }
 
-            foreach (ap; *pnbrA) {
-                if (ap == b) continue;
-                foreach (bp; *pnbrB) {
-                    if (bp == a) continue;
-                    // Must be 4 DISTINCT verts (a != b already, both are a
-                    // real edge's endpoints; ap != a/b and bp != a/b are
-                    // guaranteed by the neighbour-map/skip above — only
-                    // ap == bp remains to check).
-                    if (ap == bp) continue;
+    private uint[] fillRingFromSeed(uint seedEi, int mx, int my, const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null || seedEi >= m.edges.length) return null;
+        immutable uint seedA = m.edges[seedEi][0];
+        immutable uint seedB = m.edges[seedEi][1];
+        if (seedA >= m.vertices.length || seedB >= m.vertices.length) return null;
 
-                    // MANDATORY review fix (post-e6ca77a): the candidate's
-                    // 4th side — closing bp back to ap — is the ONE side
-                    // this construction never verifies against the mesh
-                    // (ap-a and b-bp are real by construction, being border
-                    // neighbours; a-b is the seed border edge itself). Every
-                    // GENUINE single cell has all 4 sides as EXISTING mesh
-                    // edges: an interior gap has 4 border edges; a
-                    // tool-made notch has 3 border edges + the KEPT
-                    // floating mouth edge (`deleteFacesByMask`'s
-                    // `keepFloatingEdges` contract — see `commitFill`'s own
-                    // doc). A cross-gap "skip-through" bogus candidate
-                    // (spanning two mutually-adjacent missing cells) closes
-                    // on a diagonal that is NOT a real edge at all —
-                    // `makePolygonFromVerts` would happily accept it anyway
-                    // (it creates any missing edge unconditionally), so this
-                    // guard is the ONLY thing standing between "the wrong
-                    // cell" and "no cell". Also kills the latent
-                    // area-tie this construction is prone to (every
-                    // cursor-containing candidate tends to land at the same
-                    // screen area on a regular grid) by removing the bogus
-                    // competitor outright, rather than relying on area
-                    // comparison to discriminate it away.
-                    if (m.edgeIndex(bp, ap) == ~0u) continue;
+        immutable float cx = cast(float)mx, cy = cast(float)my;
+        ImVec2 pSeedA, pSeedB;
+        if (!projectPt(m.vertices[seedA], vp, pSeedA)) return null;
+        if (!projectPt(m.vertices[seedB], vp, pSeedB)) return null;
 
-                    ImVec2 p0, p1, p2, p3;
-                    if (!projectPt(m.vertices[ap], vp, p0)) continue;
-                    if (!projectPt(m.vertices[a],  vp, p1)) continue;
-                    if (!projectPt(m.vertices[b],  vp, p2)) continue;
-                    if (!projectPt(m.vertices[bp], vp, p3)) continue;
+        // GATHER radius = range × the hover radius. `range` 0 leaves nothing
+        // but the seeds reachable, so the count gate refuses — the measured
+        // "below the threshold the gesture refuses" branch, at its extreme.
+        immutable float reachPx =
+            fillRange_ * fillHoverRadiusPx(cx, cy, pSeedA, pSeedB);
 
-                    float[4] xs = [p0.x, p1.x, p2.x, p3.x];
-                    float[4] ys = [p0.y, p1.y, p2.y, p3.y];
-                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs[], ys[])) continue;
+        // The cursor's 3-space point — the ONE modelled term, see the block
+        // comment above.
+        immutable Vec3 seedMid = (m.vertices[seedA] + m.vertices[seedB]) * 0.5f;
+        immutable Vec3 cursorPt = shiftedWorldPoint(seedMid, mx, my, vp);
 
-                    // Shoelace area (screen space, sign-agnostic — the
-                    // candidate's own winding is not yet known/relevant).
-                    float area2 = 0.0f;
-                    foreach (k; 0 .. 4)
-                        area2 += xs[k] * ys[(k + 1) % 4] - xs[(k + 1) % 4] * ys[k];
-                    float area = area2 < 0 ? -area2 * 0.5f : area2 * 0.5f;
-
-                    if (area < bestArea) {
-                        bestArea = area;
-                        bestCell = [ap, a, b, bp];
-                    }
-                }
+        // The screen segments the crossing reject tests against: every edge
+        // of every polygon incident to EITHER seed, gathered once. The
+        // reference walks seed → polygon → edge and marks polygons visited;
+        // what that marking changes is UNREAD, but it cannot change this
+        // boolean — testing one polygon twice yields the same answer — so the
+        // union is equivalent for the predicate's purposes.
+        ImVec2[2][] barriers;
+        foreach (fi, const ref f; m.faces) {
+            bool touchesSeed = false;
+            foreach (v; f) if (v == seedA || v == seedB) { touchesSeed = true; break; }
+            if (!touchesSeed || f.length < 2) continue;
+            foreach (k; 0 .. f.length) {
+                immutable uint u0 = f[k], u1 = f[(k + 1) % f.length];
+                if (u0 >= m.vertices.length || u1 >= m.vertices.length) continue;
+                ImVec2 q0, q1;
+                if (!projectPt(m.vertices[u0], vp, q0)) continue;
+                if (!projectPt(m.vertices[u1], vp, q1)) continue;
+                barriers ~= [q0, q1];
             }
         }
-        return bestCell;
+
+        // Per-vertex polygon count + the single incident polygon when there
+        // is exactly one — the qualifier's first two clauses read straight
+        // off `faces[]`, hoisted once (never re-walked per candidate).
+        auto npoly    = new uint[](m.vertices.length);
+        auto onlyFace = new int[](m.vertices.length);
+        onlyFace[] = -1;
+        foreach (fi, const ref f; m.faces)
+            foreach (v; f)
+                if (v < npoly.length) {
+                    if (npoly[v] == 0) onlyFace[v] = cast(int)fi;
+                    ++npoly[v];
+                }
+
+        // The qualifier's third clause: carries at least one BORDER edge.
+        const int[] polyCount = m.edgePolygonCounts();
+        auto borderVert = new bool[](m.vertices.length);
+        foreach (ei, e; m.edges)
+            if (ei < polyCount.length && polyCount[ei] == 1) {
+                if (e[0] < borderVert.length) borderVert[e[0]] = true;
+                if (e[1] < borderVert.length) borderVert[e[1]] = true;
+            }
+
+        uint[4]  slot;
+        float[4] dist;
+        slot[0] = seedA; slot[1] = seedB;
+        dist[0] = 0.0f;  dist[1] = 0.0f;
+        enum size_t kSeedCount = 2;
+        size_t n = kSeedCount;
+
+        foreach (vi; 0 .. m.vertices.length) {
+            immutable uint v = cast(uint)vi;
+
+            // Already in the list — the enumerator re-offers the seeds, and
+            // this drop is what the reference does with them, BEFORE the
+            // qualifier ever runs.
+            bool already = false;
+            foreach (k; 0 .. n) if (slot[k] == v) { already = true; break; }
+            if (already) continue;
+
+            ImVec2 pv;
+            if (!projectPt(m.vertices[v], vp, pv)) continue;
+            if (hypot(pv.x - cx, pv.y - cy) > reachPx) continue;
+
+            // QUALIFIER — isolated, or degenerate-polygon-only, or border.
+            bool qualifies = false;
+            if (npoly[v] == 0) qualifies = true;
+            else if (npoly[v] == 1 && onlyFace[v] >= 0
+                     && m.faces[onlyFace[v]].length <= 2) qualifies = true;
+            else qualifies = borderVert[v];
+            if (!qualifies) continue;
+
+            // SCREEN-CROSSING REJECT.
+            bool blocked = false;
+            foreach (ref seg; barriers)
+                if (segmentsProperlyCross(ImVec2(cx, cy), pv, seg[0], seg[1])) {
+                    blocked = true;
+                    break;
+                }
+            if (blocked) continue;
+
+            // RANKING — four nearest in 3-space among the survivors.
+            immutable float d = (m.vertices[v] - cursorPt).length;
+            if (n < 4) {
+                slot[n] = v; dist[n] = d; ++n;
+            } else {
+                // Replace the FARTHEST non-seed entry, and only with
+                // something strictly nearer. Seeds are never scanned, which
+                // is the whole of "pinned".
+                size_t worst = size_t.max;
+                float  worstD = d;
+                foreach (k; kSeedCount .. 4)
+                    if (dist[k] > worstD) { worstD = dist[k]; worst = k; }
+                if (worst != size_t.max) { slot[worst] = v; dist[worst] = d; }
+            }
+        }
+
+        // COUNT GATE.
+        if (fillQuadOnly_) { if (n != 4) return null; }
+        else               { if (n != 4 && n != 3) return null; }
+
+        // n == 3 runs NO shape test at all — measured on two independent
+        // rigs, two boots, two cameras.
+        if (n == 3) return slot[0 .. 3].dup;
+
+        ImVec2[4] sp;
+        foreach (k; 0 .. 4)
+            if (!projectPt(m.vertices[slot[k]], vp, sp[k])) return null;
+
+        if (screenQuadConvex(sp[0], sp[1], sp[2], sp[3])) return slot[0 .. 4].dup;
+        if (screenQuadConvex(sp[0], sp[1], sp[3], sp[2])) {
+            immutable uint tmp = slot[2]; slot[2] = slot[3]; slot[3] = tmp;
+            return slot[0 .. 4].dup;
+        }
+        return null;
     }
 
     // Fill mode radius overlay (task 0477 continuation): screen-nearest
     // BORDER edge to the cursor, gated at `thresholdPx` — feeds the
     // hover-reach circle's endpoints in `onMouseMotion` below, NOT cell
-    // reconstruction (`findFillCell` above stays the sole source of truth
+    // reconstruction (`findFillRing` above stays the sole source of truth
     // there; this is a read-only companion query over the SAME
     // `isEdgeBorder`/`projectPt` primitives). Mirrors `findRingSeedEdge`'s
     // point-to-segment scan (same `closestOnSegment2D` call), filtered to
@@ -2894,22 +3129,47 @@ public:
         return consumed;
     }
 
-    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
-    // Phase 4): Fill OWNS the plain-LMB slot and NEVER falls through to
-    // place/move. Commit-on-DOWN (like Remove): the cell is fully
-    // determined by the DOWN pixel, there is no drag to defer. A miss
-    // (cursor over a solid face / empty area / no gap cell under it)
-    // is a clean no-op — still consumed, so no other mode's place/move can
-    // fire underneath an active Fill-mode click. No arm bool, no
-    // `resyncSession`/`resetAllGestureArms` entry needed — Fill is a click
-    // op, like Remove.
+    // Fill OWNS the plain-LMB slot and NEVER falls through to place. The
+    // build commits on DOWN (like Remove): the ring is fully determined by
+    // the DOWN pixel, there is no drag to defer.
+    //
+    // A REFUSAL IS DESTRUCTIVE (task 0488, measured — and this is the single
+    // most surprising thing this port changes). vibe3d shipped a clean no-op
+    // on a miss. The reference does not: when the candidate search refuses,
+    // the press falls through to GRABBING THE PRESSED BORDER EDGE and moving
+    // it — the measured refusals displaced the edge's two vertices onto the
+    // background-constraint plane, to within 0.05 % of that plane's own
+    // offset, undone in a single step. That retroactively explains a run of
+    // earlier observations filed as "the nearest vertex moved but no facet
+    // appeared": they were not failures to reach the engine, they were this
+    // branch.
+    //
+    // Ported as an ARM, not as an immediate write: the miss arms this tool's
+    // own Move gesture on the pressed border edge, so the drag and the
+    // release run the Move law already measured for an edge grab (one shared
+    // screen delta, per-vertex nearest-foot re-snap to the background, ONE
+    // undo entry at release, and Move's own 3px click-vs-drag gate). That
+    // reuses a measured law instead of inventing a second one for this
+    // branch, and it keeps the refusal undoable in exactly one step, which
+    // the measurement also reports.
+    //
+    // Still always consumed, either way — no other mode's place/move may
+    // fire underneath an active Fill-mode click.
     private bool fillDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
                           InputButton btn) {
-        stamp(true, PenGesture.PlaceOrMove, btn);   // no UP leg — nothing was armed
+        // `PlaceOrMove` is also the slot whose UP leg runs `finishMove`, so
+        // the destructive-refusal arm below needs no new gesture tag.
+        stamp(true, PenGesture.PlaceOrMove, btn);
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-        auto cell = findFillCell(e.x, e.y, vp);
-        if (cell.length == 4) commitFill(cell);
+
+        immutable int seedEi = fillSeedEdge(e.x, e.y, vp);
+        if (seedEi < 0) return true;   // no border-edge press at all — nothing to fill OR move
+
+        auto ring = fillRingFromSeed(cast(uint)seedEi, e.x, e.y, vp);
+        if (ring.length >= 3) { commitFill(ring); return true; }
+
+        armMoveOnEdge(cast(uint)seedEi, e);
         return true;
     }
 
@@ -3218,13 +3478,39 @@ public:
         int index;
         immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index);
         if (kind == MoveElem.None) return false;
+        return armMoveOn(kind, index, e);
+    }
+
+    // Fill's destructive refusal (task 0488) grabs a border edge the search
+    // ALREADY resolved, not one a fresh pick would find, so the arm is
+    // factored out of `armMoveElement` above rather than duplicated: one
+    // definition of what "the Move gesture is now armed on this element"
+    // means, so the two entry points can never drift.
+    private bool armMoveOnEdge(uint ei, ref const SDL_MouseButtonEvent e) {
+        auto m = mesh;
+        if (m is null || ei >= m.edges.length) return false;
+        return armMoveOn(MoveElem.Edge, cast(int)ei, e);
+    }
+
+    private bool armMoveOn(MoveElem kind, int index, ref const SDL_MouseButtonEvent e) {
+        auto m = mesh;
+        if (m is null) return false;
 
         uint[] verts;
         final switch (kind) {
-        case MoveElem.Vertex: verts = [cast(uint) index];                     break;
-        case MoveElem.Edge:   verts = [m.edges[index][0], m.edges[index][1]]; break;
-        case MoveElem.Face:   verts = m.faces[index].dup;                     break;
-        case MoveElem.None:   return false;   // unreachable, guarded above
+        case MoveElem.Vertex:
+            if (index < 0 || index >= cast(int)m.vertices.length) return false;
+            verts = [cast(uint) index];
+            break;
+        case MoveElem.Edge:
+            if (index < 0 || index >= cast(int)m.edges.length) return false;
+            verts = [m.edges[index][0], m.edges[index][1]];
+            break;
+        case MoveElem.Face:
+            if (index < 0 || index >= cast(int)m.faces.length) return false;
+            verts = m.faces[index].dup;
+            break;
+        case MoveElem.None: return false;
         }
         if (verts.length == 0) return false;
 
@@ -5853,22 +6139,41 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
-    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md Phase
-    // 2): commit the ONE gap cell `findFillCell` resolved — FULL KERNEL
-    // REUSE, zero kernel change. Mirrors `commitSplit`/`commitAddLoop`
-    // above: bracket the ONE kernel call in a single before/after
-    // `MeshSnapshot` pair, record through the DEDICATED `fillEditFactory_`
-    // (never `splitEditFactory_`/`removeEditFactory_`, which would bake the
-    // wrong wire name onto a fill).
+    // Commit the ring `findFillRing` resolved — FULL KERNEL REUSE, zero
+    // kernel change. Mirrors `commitSplit`/`commitAddLoop` above: bracket
+    // the ONE kernel call in a single before/after `MeshSnapshot` pair,
+    // record through the DEDICATED `fillEditFactory_` (never
+    // `splitEditFactory_`/`removeEditFactory_`, which would bake the wrong
+    // wire name onto a fill).
     //
-    // `cellVerts` reuses the 4 EXISTING corner verts (Δv=0);
-    // `makePolygonFromVerts(autoOrient:true)` creates any missing edge (a
-    // notch's mouth), majority-vote auto-orients winding consistent with
-    // the neighbouring faces, and rejects dup-face/non-manifold/degenerate
-    // with a `-1` no-op — the mesh stays byte-unchanged and NO undo entry
-    // is recorded (the final backstop for a stray already-faced or
-    // otherwise invalid candidate; `findFillCell`'s own border-edge
-    // seeding already makes this the uncommon path).
+    // `ringVerts` reuses EXISTING verts (Δv=0) and arrives in the ORDER the
+    // shape test accepted — 4 corners, or 3 when `quadOnly` is off. It is
+    // passed through verbatim: the reference hands its own candidate array,
+    // in exactly that order, to its polygon build, so re-sorting here would
+    // wind a different polygon (measured — 139 of 240 four-slot searches
+    // have slot 2 farther from the cursor than slot 3, so "the four nearest"
+    // describes the SET and never the order). `autoOrient:true` only
+    // REVERSES a winding, it never re-sorts, so it leaves the ring's own
+    // adjacency intact while keeping the new face consistent with its
+    // neighbours — the one degree of freedom the capture explicitly does not
+    // score.
+    //
+    // `makePolygonFromVerts` creates any missing edge (a notch's mouth, or
+    // the closing side of a bridge across a gap that has no edge at all —
+    // the reference has NO real-fourth-side requirement and that guard is
+    // dropped in this port), and rejects dup-face/non-manifold/degenerate
+    // with a `-1` no-op — the mesh stays byte-unchanged and NO undo entry is
+    // recorded.
+    //
+    // THE UNREAD GATE (task 0488). The reference runs one MORE gate after
+    // the convexity test, and it is strict: 76 of 270 formed rings survived
+    // it on the recording. Its predicate is UNREAD, so nothing is invented
+    // for it here. What IS known is that the rings it refuses include every
+    // ring whose vertex set is an already-existing polygon — which the
+    // duplicate-face guard below already declines — so on that subset our
+    // behaviour and the reference's agree by construction. Everywhere else
+    // this port BUILDS where the reference might refuse; that is today's
+    // behaviour kept deliberately rather than a guess dressed as a port.
     //
     // Single mutation, unlike `commitSplitOnEdge`'s two-kernel composition
     // — no partial-mutation rollback is needed here.
@@ -5880,16 +6185,18 @@ public:
     // on SUCCESS, in the SAME position every sibling commit calls it (the
     // tool never overrides `isDragging()`, so a Fill click CAN fire
     // mid-build/mid-move/mid-slide on a different button).
-    private void commitFill(const(uint)[] cellVerts) {
+    private void commitFill(const(uint)[] ringVerts) {
         if (meshSrc_ is null || history_ is null || fillEditFactory_ is null) return;
         auto m = mesh;
         if (m is null) return;
-        if (cellVerts.length != 4) return;
+        if (ringVerts.length != 4 && ringVerts.length != 3) return;
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
-        int fi = m.makePolygonFromVerts(cellVerts, false, true);
+        int fi = m.makePolygonFromVerts(ringVerts, false, true);
         if (fi < 0) return;   // dup-face / non-manifold / degenerate -> clean no-op, no mutation
+
+        consumeDegeneratePolysOnRing(m, ringVerts);
 
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = fillEditFactory_();
@@ -5902,6 +6209,46 @@ public:
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
+    // The reference's own post-build cleanup contract, ported (task 0488):
+    // immediately after the polygon is created it walks the NEW ring once and
+    // deletes any LINE polygon (2 corners) lying along a new side, and any
+    // POINT polygon (1 corner) sitting at a new corner. A fill CONSUMES the
+    // degenerate polygons it swallows.
+    //
+    // INERT ON TODAY'S vibe3d, and that is a statement about our substrate,
+    // not about the clause: nothing in this codebase creates a polygon with
+    // fewer than three corners (`makePolygonFromVerts` rejects them outright),
+    // and we model loose retopo geometry as bare EDGES and orphan VERTICES
+    // instead — neither of which is a polygon, so neither is touched here.
+    // The clause is ported anyway because it is measured, it is cheap, and a
+    // mesh that arrives from an importer that does carry point/line polygons
+    // must behave the same as the reference on it.
+    //
+    // `keepOrphans` + `keepFloatingEdges` both true: consuming the degenerate
+    // polygon must not additionally eat its vertices or its edge — those are
+    // corners and sides of the face we just built.
+    private static void consumeDegeneratePolysOnRing(Mesh* m, const(uint)[] ring) {
+        if (m is null || ring.length < 3) return;
+        bool[] mask;
+        bool any = false;
+        foreach (fi, const ref f; m.faces) {
+            bool hit = false;
+            if (f.length == 1) {
+                foreach (v; ring) if (f[0] == v) { hit = true; break; }
+            } else if (f.length == 2) {
+                foreach (k; 0 .. ring.length) {
+                    immutable uint a = ring[k], b = ring[(k + 1) % ring.length];
+                    if ((f[0] == a && f[1] == b) || (f[0] == b && f[1] == a)) { hit = true; break; }
+                }
+            }
+            if (!hit) continue;
+            if (mask.length == 0) mask = new bool[](m.faces.length);
+            mask[fi] = true;
+            any = true;
+        }
+        if (any) m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
     }
 
     // P10 (doc/topopen_p10_moveloop_plan.md "Commit"): commit the armed Move
@@ -6096,7 +6443,7 @@ public:
         // undo/redo with no subsequent motion event must not leave a stale
         // cell (possibly referencing verts the navigation deleted)
         // dangling into the next `draw()` call.
-        fillCell_ = null;
+        fillRing_ = null;
         // Fill mode radius overlay (task 0477 continuation): same
         // rationale — an external undo/redo with no subsequent motion
         // event must not leave a stale radius (possibly sized off a
@@ -6520,10 +6867,11 @@ public:
             }
         }
 
-        // Fill mode V1 candidate-cell preview (task 0477 continuation,
-        // doc/topopen_fill_plan.md Phase 5, MANDATORY opponent fix #2): its
-        // OWN sibling gate — `penMode_ == Fill && fillCell_.length == 4` —
+        // Fill candidate-ring preview (MANDATORY opponent fix #2): its
+        // OWN sibling gate — `penMode_ == Fill && fillRing_.length >= 3` —
         // deliberately NOT folded into the `hoverOverMesh_` block above.
+        // Three corners as readily as four, because `quadOnly` off is a
+        // measured build (task 0488).
         // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`, which is
         // FALSE when hovering the center of an empty gap cell (the defining
         // Fill-mode case: no vertex/edge/face is anywhere near the
@@ -6531,20 +6879,22 @@ public:
         // for that scenario. Still gated on `!anyGestureArmed()` (mode
         // ghosts win when armed, same precedent as every other ghost).
         if (!anyGestureArmed() && penMode_ == PenMode.Fill
-                                && fillCell_.length == 4 && meshSrc_ !is null) {
+                                && fillRing_.length >= 3 && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null) {
                 immutable size_t vlen2 = m.vertices.length;
                 bool ok = true;
-                ImVec2[4] pts;
-                foreach (k, vi; fillCell_) {
+                ImVec2[] pts;
+                pts.length = fillRing_.length;
+                foreach (k, vi; fillRing_) {
                     if (vi >= vlen2 || !projectPt(m.vertices[vi], vp, pts[k])) { ok = false; break; }
                 }
                 if (ok) {
-                    hatchScreenPolygon(dl, pts[], kFillPreviewCol,
+                    hatchScreenPolygon(dl, pts, kFillPreviewCol,
                                       kHoverHatchSpacingPx, kHoverHatchWidthPx, vp);
-                    foreach (k; 0 .. 4)
-                        dl.AddLine(pts[k], pts[(k + 1) % 4], kFillPreviewCol, kHoverEdgeWidthPx);
+                    foreach (k; 0 .. pts.length)
+                        dl.AddLine(pts[k], pts[(k + 1) % pts.length],
+                                   kFillPreviewCol, kHoverEdgeWidthPx);
                 }
             }
         }
@@ -12611,11 +12961,19 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 9, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+    assert(ps.length == 11, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
                           ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483), the Smooth "
                           ~ "strength, the two display toggles (task 0499), the Inner Snap "
-                          ~ "flag (task 0496) and the Keep Vertices flag (task 0494) — every "
-                          ~ "later Param is APPENDED, never a full-replace");
+                          ~ "flag (task 0496), the Keep Vertices flag (task 0494) and the two "
+                          ~ "Fill attributes (task 0488) — every later Param is APPENDED, "
+                          ~ "never a full-replace");
+    assert(ps[$ - 2].name == "range" && ps[$ - 1].name == "quadOnly",
+        "the two Fill attributes must be APPENDED LAST, in that order");
+    assert(ps[$ - 2].hints.hasMinF && ps[$ - 2].hints.minF == 0.0f && !ps[$ - 2].hints.hasMaxF,
+        "`range`'s bounds are the MEASURED ones: min 0.0 and NO upper bound — not a "
+      ~ "sane-looking pair invented at the call site");
+    assert(ps[$ - 1].kind == Param.Kind.Bool && ps[$ - 1].default_.b == true,
+        "`quadOnly` is the measured boolean count gate, default ON");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
     assert(ps[0].default_.b == false, "`middle` must default OFF — the shipped click-derived "
@@ -13363,7 +13721,7 @@ unittest {
 // tests. The `params()`/`mode` schema round-trip is already pinned right
 // after the Add Loop `middle` option schema block above (mirroring
 // `addLoopMiddle_`'s own precedent); everything below exercises
-// `findFillCell`/`commitFill`/the dropdown-routed dispatch/the hover
+// `findFillRing`/`commitFill`/the dropdown-routed dispatch/the hover
 // preview.
 //
 // Shared test idiom: every rig captures the target cell's OWN vertex array
@@ -13382,7 +13740,7 @@ version (unittest) private bool fillCellSetEq(const(uint)[] a, const(uint)[] b) 
 
 // F1 — interior single-cell gap: `makeGridPlane(3)` (16v, 9f, 24e) minus
 // its CENTER face (i=1,j=1 — fully interior, all 4 sides border after
-// removal). `findFillCell` must resolve exactly that cell from a cursor at
+// removal). `findFillRing` must resolve exactly that cell from a cursor at
 // its centroid; `commitFill` must cap it with ONE quad, reusing the 4
 // existing corner verts (Δv=0), winding consistent with a neighbour (never
 // a hardcoded axis — `makeGridPlane`'s cells wind -Y despite the source
@@ -13426,15 +13784,15 @@ unittest {
     // `topoPenPressPickPx`. That is deliberate and it is the load-bearing half
     // of this assertion (task 0507): the reference drops its press-pick gather
     // radius entirely in Fill mode, so a press at the bare centre of a gap
-    // still resolves the cell. Gating `findFillCell`/`fillDown` on
+    // still resolves the cell. Gating `findFillRing`/`fillDown` on
     // `topoPenPressPickPx` to make Fill "consistent" with the other modes is
     // the exact regression this line catches -- see `source/constraint.d`'s
     // MODE-DEPENDENT paragraph.
-    auto cell = t.findFillCell(cast(int)cpix.x, cast(int)cpix.y, vp);
-    assert(cell.length == 4, "findFillCell must resolve the one interior gap cell "
+    auto cell = t.findFillRing(cast(int)cpix.x, cast(int)cpix.y, vp);
+    assert(cell.length == 4, "findFillRing must resolve the one interior gap cell "
         ~ "from a press at its bare centroid -- Fill's press has NO reach radius");
     assert(fillCellSetEq(cell, cellVerts),
-        "findFillCell must return exactly the gap cell's own 4 corners");
+        "findFillRing must return exactly the gap cell's own 4 corners");
 
     t.commitFill(cell);
 
@@ -13486,7 +13844,7 @@ unittest {
 // `deleteFacesByMask(keepFloatingEdges:true)` -- the SAME contract the
 // tool's own `removeFaceAt` always uses, so this is the FAITHFUL shape of
 // a notch this tool itself would ever produce; not counted by
-// `isEdgeBorder`'s n==1 predicate). `findFillCell` must still resolve the
+// `isEdgeBorder`'s n==1 predicate). `findFillRing` must still resolve the
 // correct 4-vertex cell from the 3 surviving border edges, and
 // `commitFill` must attach the new face to that already-present floating
 // mouth edge (0 incident faces -> 1 -- Δe=0, the edge record itself is
@@ -13547,10 +13905,10 @@ unittest {
     assert(TopologyPenTool.projectPt(centroid, vp, cpix),
         "setup: the notch cell's centroid must project on-screen");
 
-    auto cell = t.findFillCell(cast(int)cpix.x, cast(int)cpix.y, vp);
-    assert(cell.length == 4, "findFillCell must resolve the notch cell from its 3 border edges");
+    auto cell = t.findFillRing(cast(int)cpix.x, cast(int)cpix.y, vp);
+    assert(cell.length == 4, "findFillRing must resolve the notch cell from its 3 border edges");
     assert(fillCellSetEq(cell, cellVerts),
-        "findFillCell must return exactly the notch cell's own 4 corners");
+        "findFillRing must return exactly the notch cell's own 4 corners");
 
     t.commitFill(cell);
 
@@ -13578,7 +13936,7 @@ unittest {
 //     draft of THIS comment claimed the interior case also failed; that
 //     was an incomplete-enumeration mistake in hand analysis, not a real
 //     limitation — a full seed-edge enumeration finds a valid seed for
-//     EACH true cell, and `findFillCell`'s closing-edge guard
+//     EACH true cell, and `findFillRing`'s closing-edge guard
 //     — `m.edgeIndex(bp,ap) != ~0u` — is exactly what lets each true cell's
 //     candidate win: the true cell closes on the shared middle edge, which
 //     still EXISTS as a floating (0-face) edge, while the bogus
@@ -13590,7 +13948,7 @@ unittest {
 //     unittest right after this one. Root cause: the shared "waist" vertex
 //     between the two missing cells has ZERO border-edge incidences at all
 //     (both its own mouth-facing side and the shared middle edge are
-//     non-border), so it never even enters `findFillCell`'s
+//     non-border), so it never even enters `findFillRing`'s
 //     border-adjacency graph — no candidate mentioning it is EVER
 //     generated, closing-edge guard or not. This is a real, acceptable V1
 //     gap (falls under doc/topopen_fill_plan.md's own AF-1 "known
@@ -13636,12 +13994,12 @@ unittest {
     assert(TopologyPenTool.projectPt(centA, vp, pixA));
     assert(TopologyPenTool.projectPt(centB, vp, pixB));
 
-    auto foundA = t.findFillCell(cast(int)pixA.x, cast(int)pixA.y, vp);
+    auto foundA = t.findFillRing(cast(int)pixA.x, cast(int)pixA.y, vp);
     assert(foundA.length == 4, "a cursor over gap A must resolve exactly that cell");
     assert(fillCellSetEq(foundA, cellA),
         "must resolve ONLY gap A's own 4 corners, never gap B's");
 
-    auto foundB = t.findFillCell(cast(int)pixB.x, cast(int)pixB.y, vp);
+    auto foundB = t.findFillRing(cast(int)pixB.x, cast(int)pixB.y, vp);
     assert(foundB.length == 4, "a cursor over gap B must resolve exactly that cell");
     assert(fillCellSetEq(foundB, cellB),
         "must resolve ONLY gap B's own 4 corners, never gap A's");
@@ -13651,7 +14009,7 @@ unittest {
     t.commitFill(foundA);
     assert(m.faces.length == 24, "commitFill must add exactly ONE face for gap A");
 
-    auto foundBAfter = t.findFillCell(cast(int)pixB.x, cast(int)pixB.y, vp);
+    auto foundBAfter = t.findFillRing(cast(int)pixB.x, cast(int)pixB.y, vp);
     assert(foundBAfter.length == 4, "gap B must still be found as a gap after gap A alone was filled");
     assert(fillCellSetEq(foundBAfter, cellB));
 
@@ -13661,21 +14019,25 @@ unittest {
     assert(history.canUndo());
 }
 
-// F3-PERIMETER — the case that used to WRONG-FILL before the post-e6ca77a
-// review fix: two MUTUALLY-ADJACENT cells removed from the SAME mesh
+// F3-PERIMETER — two MUTUALLY-ADJACENT cells removed from the SAME mesh
 // perimeter side (a 2-row x 4-col grid, middle row-0 cells at indices 1
-// and 2, asymmetric widths 1 / 3 -- same rig the review's diagnosis was
-// built on). Before the `m.edgeIndex(bp,ap) != ~0u` closing-edge guard,
-// `findFillCell` returned a bogus "skip-through" candidate spanning BOTH
-// missing cells (verified: `[8,7,6,1]`, a real quad `makePolygonFromVerts`
-// would have happily accepted) instead of declining. The shared "waist"
-// vertex between the two cells has ZERO border-edge incidences at all
-// (its own mouth-facing side AND the shared middle edge are both
-// non-border), so no candidate mentioning it is ever generated in the
-// first place -- this is a real, accepted V1 gap (AF-1) -- but with the
-// guard, EVERY candidate the border-edge scan does produce here fails to
-// close on a real edge and is rejected, so the net result is now a SAFE
-// no-op, never a wrong fill.
+// and 2, asymmetric widths 1 / 3).
+//
+// FIXTURE CHANGED BY TASK 0488, and this is the reviewed reason. The old
+// expectation here was `[]` -- a deliberate no-op produced by V1's mandatory
+// real-fourth-side guard, on a rig V1's border-edge-adjacency construction
+// could not resolve at all (the shared "waist" vertex carries no border edge,
+// so no V1 candidate ever mentioned it). The measured rule has NO
+// fourth-side requirement and does not reconstruct cells from adjacency: it
+// seeds on the pressed border edge and takes the nearest qualifying vertices,
+// and the waist vertex qualifies here through the ISOLATED clause (both its
+// remaining sides lost their last polygon, so it is on no polygon at all).
+// The left cell's own four corners are exactly what the search returns, and
+// the fill lands on the cell the cursor is in.
+//
+// So the change is a strict improvement in outcome, but it is NOT why it was
+// made: it is what dropping a guard the reference does not have produces on
+// this rig. Recorded as a changed fixture, not as a fix.
 unittest {
     import view : View;
     import editmode : EditMode;
@@ -13717,18 +14079,22 @@ unittest {
     ImVec2 leftPix;
     assert(TopologyPenTool.projectPt(leftC, vp, leftPix));
 
-    auto cell = t.findFillCell(cast(int)leftPix.x, cast(int)leftPix.y, vp);
-    assert(cell.length == 0,
-        "a perimeter 2-cell-wide gap must resolve to [] -- the shared waist vertex has zero "
-      ~ "border-edge incidences, so no candidate (bogus OR true) is ever generated there");
+    auto cell = t.findFillRing(cast(int)leftPix.x, cast(int)leftPix.y, vp);
+    assert(cell.length == 4,
+        "the measured rule resolves the LEFT cell of a perimeter 2-cell gap -- the waist "
+      ~ "vertex qualifies as ISOLATED, and no fourth-side guard stands in the way");
+    assert(fillCellSetEq(cell, leftVerts),
+        "it must be the cell the CURSOR is in, never a span of both missing cells");
 
     t.commitFill(cell);
     auto after = MeshSnapshot.capture(m);
-    assert(after.vertices == before.vertices && after.edges == before.edges
-        && after.faces == before.faces,
-        "commitFill on the [] result must leave the mesh byte-identical");
-    assert(!history.canUndo(), "a perimeter 2-cell gap must record NO undo entry -- a safe "
-                              ~ "no-op, never the wrong bogus fill");
+    assert(m.faces.length == 7, "exactly ONE face is added -- one cell per press");
+    assert(m.vertices.length == before.vertices.length, "Dv=0 -- every corner is reused");
+    assert(m.edges.length == before.edges.length,
+        "De=0 here -- the left cell's fourth side survived the deletion as a floating edge");
+    assert(history.canUndo(), "a real fill records one undo entry");
+    assert(after.vertices == before.vertices,
+        "a fill moves no vertex -- positions are byte-identical");
 }
 
 // F3-INTERIOR — the companion case: two MUTUALLY-ADJACENT cells removed
@@ -13774,21 +14140,21 @@ unittest {
     assert(TopologyPenTool.projectPt(leftC,  vp, leftPix));
     assert(TopologyPenTool.projectPt(rightC, vp, rightPix));
 
-    auto leftCell = t.findFillCell(cast(int)leftPix.x, cast(int)leftPix.y, vp);
+    auto leftCell = t.findFillRing(cast(int)leftPix.x, cast(int)leftPix.y, vp);
     assert(leftCell.length == 4,
         "an interior adjacent-2-cell gap must still resolve the LEFT cell (the closing-edge "
       ~ "guard rejects the bogus span, but the true cell's own candidate survives)");
     assert(fillCellSetEq(leftCell, leftVerts),
         "must resolve ONLY the left cell's own 4 corners, never a span of both cells");
 
-    auto rightCell = t.findFillCell(cast(int)rightPix.x, cast(int)rightPix.y, vp);
+    auto rightCell = t.findFillRing(cast(int)rightPix.x, cast(int)rightPix.y, vp);
     assert(rightCell.length == 4, "must likewise resolve the RIGHT cell under its own cursor");
     assert(fillCellSetEq(rightCell, rightVerts),
         "must resolve ONLY the right cell's own 4 corners, never a span of both cells");
 
     t.commitFill(leftCell);
     assert(m.faces.length == 15, "commitFill must add exactly ONE face for the left cell");
-    auto rightCellAfter = t.findFillCell(cast(int)rightPix.x, cast(int)rightPix.y, vp);
+    auto rightCellAfter = t.findFillRing(cast(int)rightPix.x, cast(int)rightPix.y, vp);
     assert(rightCellAfter.length == 4 && fillCellSetEq(rightCellAfter, rightVerts),
         "the right cell must still resolve correctly after the left cell alone was filled");
     t.commitFill(rightCellAfter);
@@ -13829,14 +14195,14 @@ unittest {
                          + m.vertices[solidVerts[2]] + m.vertices[solidVerts[3]]) * 0.25f;
     ImVec2 spix;
     assert(TopologyPenTool.projectPt(solidCentroid, vp, spix));
-    auto cellOverFace = t.findFillCell(cast(int)spix.x, cast(int)spix.y, vp);
+    auto cellOverFace = t.findFillRing(cast(int)spix.x, cast(int)spix.y, vp);
     assert(cellOverFace.length == 0,
-        "findFillCell must return [] over an already-faced INTERIOR cell (no border edges "
+        "findFillRing must return [] over an already-faced INTERIOR cell (no border edges "
       ~ "nearby to seed a candidate from)");
 
     // (b) cursor far outside the mesh entirely.
-    auto cellOverEmpty = t.findFillCell(-99999, -99999, vp);
-    assert(cellOverEmpty.length == 0, "findFillCell must return [] over empty area");
+    auto cellOverEmpty = t.findFillRing(-99999, -99999, vp);
+    assert(cellOverEmpty.length == 0, "findFillRing must return [] over empty area");
 
     // (c) commitFill([]) / a miss must be a clean no-op.
     t.commitFill(cellOverFace);
@@ -13910,7 +14276,7 @@ unittest {
     assert(history.canUndo());
 }
 
-// F8 — hover preview state: `fillCell_` equals the cell (as a set) after
+// F8 — hover preview state: `fillRing_` equals the cell (as a set) after
 // the Fill-mode motion compute; `null` in every other mode, off any gap, and when
 // ANY gesture is armed (mode ghosts win, mirroring `hoverOverMesh_`'s own
 // precedence rule -- MANDATORY opponent fix #2's sibling gate, not nested
@@ -13945,25 +14311,25 @@ unittest {
     // Move mode (the default): the preview must stay empty even directly over
     // a gap cell -- Fill's hatch is gated on the mode.
     t.onMouseMotion(e, vts);
-    assert(t.fillCell_.length == 0, "a non-Fill mode must never populate the Fill preview");
+    assert(t.fillRing_.length == 0, "a non-Fill mode must never populate the Fill preview");
 
     // Fill mode: the SAME motion must resolve exactly the gap cell.
     t.penMode_ = PenMode.Fill;
     t.onMouseMotion(e, vts);
-    assert(t.fillCell_.length == 4, "Fill mode must resolve the gap cell under the cursor");
-    assert(fillCellSetEq(t.fillCell_, cellVerts));
+    assert(t.fillRing_.length == 4, "Fill mode must resolve the gap cell under the cursor");
+    assert(fillCellSetEq(t.fillRing_, cellVerts));
 
     // A gesture armed on ANY button must clear the preview even in Fill mode.
     t.dragArmed_ = true;
     t.onMouseMotion(e, vts);
-    assert(t.fillCell_.length == 0, "an armed gesture must take precedence over the Fill preview");
+    assert(t.fillRing_.length == 0, "an armed gesture must take precedence over the Fill preview");
     t.dragArmed_ = false;
 
     // Off any gap (far away) -> null, even in Fill mode.
     SDL_MouseMotionEvent eFar;
     eFar.x = -99999; eFar.y = -99999;
     t.onMouseMotion(eFar, vts);
-    assert(t.fillCell_.length == 0, "a cursor far from every gap must clear the preview");
+    assert(t.fillRing_.length == 0, "a cursor far from every gap must clear the preview");
 }
 
 // Fill mode radius overlay -- pure LAW arithmetic (task 0477 continuation,
@@ -14001,10 +14367,10 @@ unittest {
 
 // Fill mode radius overlay -- hover-time integration (task 0477
 // continuation): `fillRadiusValid_`/`fillRadiusPx_` populate alongside
-// `fillCell_` in `onMouseMotion`'s Fill-mode branch, off the screen-nearest
+// `fillRing_` in `onMouseMotion`'s Fill-mode branch, off the screen-nearest
 // BORDER EDGE (not the candidate cell's corners). False/unset in Draw
 // mode, off any border edge, and when ANY gesture is armed -- mirrors the
-// F8 `fillCell_` test above, same precedence rules.
+// F8 `fillRing_` test above, same precedence rules.
 unittest {
     import mesh : makeGridPlane;
     import toolpipe.packets : SubjectPacket;

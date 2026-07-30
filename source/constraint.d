@@ -445,15 +445,27 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 // the whole mesh at ANY distance, which is how a press at the bare centre of a
 // gap -- 32px from the nearest border edge, 86px from the nearest vertex, where
 // an ordinary selection click resolves nothing -- still classifies as an edge
-// press and caps the cell. Our Fill press already matches, and matches by
-// construction rather than by luck: `fillDown` resolves its cell through
-// `findFillCell`, which is purely topological and consults NO radius. Do not
-// "unify" it onto `topoPenPressPickPx` -- that would be a real regression, and
-// the gap-centroid unittest in `tools/edit/topology_pen.d` is what catches it.
-// (The reference's Fill HOVER highlight is a separate matter and IS bounded by
-// the ordinary reach -- it reads the application's cached element hover rather
-// than running the press's own query -- so our Fill hover, which does gate at
-// `topoPenPressPickPx`, is right as it stands.)
+// press and caps the cell. Our Fill press matches: `fillSeedEdge`
+// (`tools/edit/topology_pen.d`) scans the WHOLE mesh with no radius at all. Do
+// not "unify" it onto `topoPenPressPickPx` -- that would be a real regression,
+// and the gap-centroid unittest in `tools/edit/topology_pen.d` is what catches
+// it.
+//
+// UNBOUNDED IS NOT UNARBITRATED (task 0488). Dropping the radius does not make
+// every press an edge press: whatever else is NEARER still wins the press, and
+// only an EDGE press can fill. A recording caught this directly -- a press at
+// the centre of a hole that had isolated vertices sitting inside it resolved a
+// VERTEX, not the hole's border edge, and nothing happened. `fillSeedEdge`
+// carries that arbitration (vertex wins ties, matching the pen's own
+// vertex->edge->face precedence and the reference's own vertex-favouring
+// tolerance).
+//
+// The reference's Fill HOVER highlight runs the IDENTICAL candidate search the
+// press runs -- read statically and confirmed live (the draw path fires the
+// search on every redraw, the build only on evaluate) -- so our hover now
+// shares `fillSeedEdge` with the press rather than gating at
+// `topoPenPressPickPx`. An earlier note here said the hover was bounded by the
+// ordinary reach; that reading is superseded.
 //
 // A PREFERENCE DEFAULT, not a tool constant. The 8.0 is the reference's
 // application-wide element-selection-size preference at its shipped default,
