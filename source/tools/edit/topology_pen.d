@@ -169,6 +169,22 @@ alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 /// app.d construction site, mirroring `topoPenSplitEditFactory`.
 alias TopoPenFillFactory = MeshSessionEdit delegate();
 
+/// Factories the tool calls ONCE PER REMOVE GESTURE THAT LATCHED AN EDGE /
+/// A VERTEX (task 0494) — a TWELFTH and THIRTEENTH dedicated factory. Remove
+/// is one gesture with THREE primitives, chosen by the class of the element
+/// the press latched, and they are three different mesh operations: a
+/// polygon-latched press deletes one face (`TopoPenRemoveFactory`), an
+/// edge-latched press DISSOLVES (merging the two incident polygons into one),
+/// a vertex-latched press merges the whole incident fan and drops the vertex.
+/// Same `MeshEditScope.Geometry` on all three, but reusing
+/// `topoPenRemoveEditFactory` for the other two would bake "a face was
+/// removed" onto an op that removed no face — the undo history, the event-log
+/// replay and any macro built on it would all describe the wrong edit. Wired
+/// with `wireName="mesh.topoPen_removeedge"` / `"mesh.topoPen_removevertex"`
+/// at the app.d construction site, mirroring `topoPenRemoveEditFactory`.
+alias TopoPenRemoveEdgeFactory   = MeshSessionEdit delegate();
+alias TopoPenRemoveVertexFactory = MeshSessionEdit delegate();
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -855,6 +871,12 @@ private:
     // KILLER-1) ---
     TopoPenRemoveFactory removeEditFactory_;
 
+    // --- Remove's OTHER two primitives (task 0494): the same gesture, but the
+    // press latched an edge / a vertex rather than a polygon. Own factories,
+    // own wire names — see their aliases. ---
+    TopoPenRemoveEdgeFactory   removeEdgeEditFactory_;
+    TopoPenRemoveVertexFactory removeVertexEditFactory_;
+
     // --- P6 Add Loop gesture deps (doc/topopen_p6_addloop_plan.md, REV1
     // opponent obj-1) ---
     TopoPenAddLoopFactory addLoopEditFactory_;
@@ -1136,11 +1158,17 @@ private:
     // as the reference's per-option `Desc` strings pair them: Move+loop is
     // the RMB gesture (`onMoveLoopRmbDown`), Duplicate+loop the Shift+RMB one
     // (`onDupLoopShiftRmbDown`), Smoothing+loop the Shift+Ctrl+RMB one
-    // (`onSmoothLoopRmbDown`). The other five modes have no loop variant
-    // implemented here and IGNORE the flag — including Remove, whose
-    // reference loop variant (documented, not ported) would be this tool's
-    // one remaining unwired input slot; a Remove press with Edge Loop on is
-    // deliberately a single-element remove, never a silent loop delete.
+    // (`onSmoothLoopRmbDown`), and Remove+loop dissolves the whole edge loop
+    // through the pressed edge (`removeEdgeAt`, task 0494 — this used to be
+    // the tool's one unwired input slot, and the note here used to claim the
+    // flag was deliberately ignored by Remove; it was measured, it is ported,
+    // and the claim is gone with it). The remaining four modes have no loop
+    // variant and ignore the flag.
+    //
+    // Remove reads it in ONE of its three primitives — the edge one. A Remove
+    // press that latches a polygon or a vertex behaves identically with the
+    // flag on or off, because the reference's dispatcher does not read it
+    // either.
     //
     // `edgeSlide_` ("Edge Slide") restricts a move to the neighbouring edge
     // rails — the reference documents it as doing exactly what holding Ctrl
@@ -1648,6 +1676,13 @@ public:
     // `spf`/`mlf`/`dlf`/`slf` MUST stay in their existing positions — every
     // existing positional caller (registration.d) stays byte-unchanged
     // through `slf`.
+    // Remove's edge / vertex primitives (task 0494): 14th and 15th positional
+    // params `ref`/`rvf` appended LAST (after `flf`) — same rationale as every
+    // prior addition, and it bites harder here than usual: all THREE Remove
+    // factories are structurally identical delegate aliases whose only
+    // difference is the wire name they were built with, so a mis-ordered
+    // argument would silently label an edge dissolve as a face removal rather
+    // than fail to compile.
     void setUndoBindings(CommandHistory h, VertexNewFactory f,
                         TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
@@ -1659,7 +1694,9 @@ public:
                         TopoPenMoveLoopFactory mlf = null,
                         TopoPenDupLoopFactory dlf = null,
                         TopoPenSmoothLoopFactory slf = null,
-                        TopoPenFillFactory flf = null) {
+                        TopoPenFillFactory flf = null,
+                        TopoPenRemoveEdgeFactory ref_ = null,
+                        TopoPenRemoveVertexFactory rvf = null) {
         history_           = h;
         addVertexFactory_  = f;
         buildEditFactory_  = bf;
@@ -1673,6 +1710,8 @@ public:
         dupLoopEditFactory_  = dlf;
         smoothLoopEditFactory_ = slf;
         fillEditFactory_     = flf;
+        removeEdgeEditFactory_   = ref_;
+        removeVertexEditFactory_ = rvf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -2639,12 +2678,17 @@ public:
     //     ----------- ----------------- ------------------- ----------------------
     //     Move        move (or slide)   move loop           LMB   / RMB
     //     Duplicate   build             dup loop            Shift+LMB / Shift+RMB
-    //     Remove      remove            remove (no variant) Ctrl+MMB
+    //     Remove      remove            remove (loop on an  Ctrl+MMB
+    //                                   edge-latched press)
     //     Split       split             split               MMB
     //     AddLoop     add loop          add loop            Shift+MMB
     //     Point       place-or-move     place-or-move-loop  (no chord)
     //     Fill        fill              fill                (no chord)
     //     Smooth      smooth            smooth loop         Shift+Ctrl+LMB / Shift+Ctrl+RMB
+    //
+    // Remove is the one row whose loop column is conditional, and the table
+    // cannot express why: the flag is read by the primitive Remove chooses
+    // from the PRESSED ELEMENT'S CLASS, not by the router. See `removeDown`.
     //
     // The chords themselves are untouched and remain ABSOLUTE: they resolve
     // through `kTopoPenBindings` to their own action whatever this dropdown
@@ -2694,11 +2738,13 @@ public:
             if (loop) return stamp(onDupLoopShiftRmbDown(e, vts), PenGesture.DupLoop, btn);
             return stamp(onShiftLmbDown(e, vts), PenGesture.Build, btn);
         case PenMode.Remove:
-            // No loop variant is implemented (see `edgeLoop_`'s own doc
-            // comment) — Edge Loop is deliberately IGNORED here rather than
-            // silently promoted to something this tool cannot do. Commits on
-            // DOWN and arms nothing.
-            return stamp(onCtrlMmbDown(e, vts), PenGesture.Remove, btn);
+            // ONE branch, and it is inside the handler rather than here (task
+            // 0494): the loop flag is read by the EDGE primitive alone, so a
+            // Remove press that latches a polygon or a vertex runs the same
+            // thing with the flag on or off. Stamping a separate
+            // "remove loop" gesture here would therefore mislabel two thirds of
+            // the presses. Commits on DOWN and arms nothing.
+            return stamp(removeDown(e, vts, loop), PenGesture.Remove, btn);
         case PenMode.Split:
             return stamp(onPlainMmbDown(e, vts), PenGesture.Split, btn);
         case PenMode.AddLoop:
@@ -3296,23 +3342,52 @@ public:
         return removePick_.pickFace(mx, my, vp, *m, *gpu_);
     }
 
-    // P5 (doc/topopen_p5_remove_plan.md D2), on the Ctrl+MMB "Remove" slot:
-    // remove-on-DOWN — one press deletes exactly the front-most
-    // primary-layer face under the cursor, capture-faithful (measured a
-    // click, down px == up px) and the simplest composition: no
-    // `onMouseButtonUp` involvement (that handler stays LEFT-only, so this
-    // is disjoint from the P3 build / P4 Move LMB arms above) and no armed
-    // state of its own, so it naturally caps at one face per press (a held
-    // drag emits no further removes — the drag-sweep extension is
-    // UNMEASURED and explicitly deferred, D2/scope). A miss (-1) is a clean
-    // no-op (D3) but the gesture is still CONSUMED (`return true`) either
-    // way — Ctrl+MMB is unambiguously the Remove gesture, so it should
-    // never fall through to camera/selection handling.
-    private bool onCtrlMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+    // The Remove mode's DOWN leg (P5, doc/topopen_p5_remove_plan.md D2;
+    // REWRITTEN by task 0494) — remove-on-DOWN: one press removes exactly one
+    // thing and commits it, with no `onMouseButtonUp` involvement (that handler
+    // stays LEFT-only, so this is disjoint from the P3 build / P4 Move LMB
+    // arms) and no armed state of its own, so it naturally caps at one removal
+    // per press. A held drag emits no further removes — drag-sweep Remove is
+    // UNMEASURED and stays deferred. A miss is a clean no-op but the gesture is
+    // still CONSUMED (`return true`) either way, so a Remove press never falls
+    // through to camera/selection handling.
+    //
+    // WHAT IT REMOVES IS THE CLASS OF THE ELEMENT THE PRESS LATCHED — task
+    // 0494's headline, and the thing this handler used to get wrong. It used to
+    // call `pickPrimaryFace` and delete a polygon whatever the cursor was over.
+    // Measured on one 4x4 rig, three presses, the element class read out of the
+    // engine on each:
+    //
+    //     latched   primitive                                       V/E/F
+    //     --------  ---------------------------------------------   --------
+    //     polygon   delete the polygon, keep the orphans            16/24/8
+    //     edge      DISSOLVE it (its two polygons merge into one)   16/23/8
+    //     vertex    merge its whole fan, then drop the vertex       15/20/6
+    //
+    // So an edge-latched press provably never removes a polygon, and neither
+    // does a vertex-latched one. There is no border precondition on any of the
+    // three (unlike Duplicate, which has one).
+    //
+    // The resolver is `resolveGrabTarget` — the SAME one the hover highlight
+    // paints from and the Move grab presses through. That is not a convenience:
+    // the highlight is how the user aims a destructive click, so the two must
+    // answer with one function or the highlight names one element and the press
+    // eats another.
+    //
+    // `loop` reaches only the edge primitive, because that is the only one that
+    // reads it (the dispatcher does not) — a Remove press with Edge Loop on
+    // that lands on a polygon still removes exactly that polygon.
+    private bool removeDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                            bool loop) {
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-        int fi = pickPrimaryFace(e.x, e.y, vp);
-        if (fi >= 0) removeFaceAt(fi);
+        int idx;
+        final switch (resolveGrabTarget(e.x, e.y, vp, idx)) {
+        case MoveElem.Vertex: removeVertexAt(idx);      break;
+        case MoveElem.Edge:   removeEdgeAt(idx, loop);  break;
+        case MoveElem.Face:   removeFaceAt(idx);        break;
+        case MoveElem.None:   break;   // resolved nothing — clean no-op
+        }
         return true;
     }
 
@@ -5287,6 +5362,222 @@ public:
 
         // Opponent KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been compacted out from under them.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
+    // ---- Remove's other two primitives (task 0494) ------------------------
+
+    /// How many polygons border edge `ei`, counted up to `cap`. The three
+    /// answers that matter here are exact and small: 0 = a bare wire edge,
+    /// 1 = a border edge, 2 = interior. Deliberately NOT `isEdgeInterior`
+    /// (which is `>= 2`): the measured filter is EXACTLY two, so a
+    /// non-manifold edge is out, not in.
+    private static int edgePolyCount(Mesh* m, uint ei, int cap = 3) {
+        int n = 0;
+        foreach (fi; m.facesAroundEdge(ei)) { ++n; if (n >= cap) break; }
+        return n;
+    }
+
+    /// The index of the vertex at exactly `p`, or -1. Positions survive the
+    /// dissolve kernels' vertex compaction by value (they are copied, never
+    /// re-derived), which is what makes this the way to carry a vertex
+    /// identity ACROSS one of them — the same technique, and the same
+    /// coincident-position caveat, as `Mesh.edgeDeleteRegion`.
+    private static int vertexAtPosition(Mesh* m, Vec3 p) {
+        foreach (i, ref v; m.vertices)
+            if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+        return -1;
+    }
+
+    /// Every BARE (face-less) edge, as an endpoint POSITION pair.
+    ///
+    /// This tool BUILDS bare edges as a normal intermediate retopo state (a
+    /// chain drawn before any polygon closes over it — `classifySource`'s
+    /// CASE-EDGE), and every kernel that re-derives `edges[]` from `faces[]`
+    /// wipes them mesh-wide, related to the edit or not.
+    /// `deleteFacesByMask` carries a `keepFloatingEdges` flag for exactly that
+    /// reason and `removeFaceAt` passes it; the two dissolve primitives below
+    /// cannot take that route (they reindex vertices, so the edge array cannot
+    /// simply be left alone), so they capture the wire edges here and re-add
+    /// the survivors afterwards.
+    ///
+    /// This is vibe3d-side CONTRACT PRESERVATION, not a ported behaviour: the
+    /// reference's own retopo never produces a face-less edge, so its removal
+    /// primitives have nothing to say about them. What IS measured — what
+    /// happens to the polygons — is identical either way.
+    private static Vec3[2][] captureWireEdges(Mesh* m) {
+        Vec3[2][] wire;
+        foreach (ei; 0 .. m.edges.length) {
+            if (edgePolyCount(m, cast(uint)ei, 1) != 0) continue;
+            auto e = m.edges[ei];
+            if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) continue;
+            wire ~= [m.vertices[e[0]], m.vertices[e[1]]];
+        }
+        return wire;
+    }
+
+    /// Re-add the wire edges of `wire` whose BOTH endpoints still exist. An
+    /// edge whose endpoint the removal deliberately took stays gone — this
+    /// restores unrelated wire geometry, it does not resurrect the edit.
+    private static void restoreWireEdges(Mesh* m, in Vec3[2][] wire) {
+        bool any = false;
+        foreach (ref w; wire) {
+            immutable int a = vertexAtPosition(m, w[0]);
+            immutable int b = vertexAtPosition(m, w[1]);
+            if (a < 0 || b < 0 || a == b) continue;
+            if (m.edgeIndex(cast(uint)a, cast(uint)b) != ~0u) continue;
+            m.addEdge(cast(uint)a, cast(uint)b);
+            any = true;
+        }
+        if (any) m.buildLoops();
+    }
+
+    /// Remove-on-an-EDGE (task 0494, contracts C-1/C-2/C-3/C-4): DISSOLVE the
+    /// pressed edge — its two incident polygons merge into one — through the
+    /// DEDICATED `removeEdgeEditFactory_`, as one atomic undo entry.
+    ///
+    /// A BORDER seed is a TOTAL no-op, in both variants (C-3). The guard is on
+    /// the SEED and it runs BEFORE the gather, which is what the measurement
+    /// showed: on a border press the reference's primitive returned without
+    /// reaching its loop branch at all, 0 edits, 0 moved vertices. Written as
+    /// its own early return, and tested as its own case, precisely because a
+    /// well-meaning "just filter the gathered set" refactor would still pass
+    /// every OTHER test here.
+    ///
+    /// `loop` promotes the seed to the vertex-continuation edge LOOP through
+    /// it (C-2) — `Mesh.selectLoopEdges`, the same gather every other loop
+    /// gesture in this tool uses, with NO border trim (Duplicate's trim was
+    /// measured NOT to apply to removal) and one filter: an edge joins the
+    /// doomed set only if it borders exactly two polygons.
+    ///
+    /// The flag is the EFFECTIVE one (C-1), never the button. A plain press
+    /// with Edge Loop on and the chord that forces the flag were measured
+    /// bit-identical, down to the removed-edge, new-edge and removed-vertex
+    /// sets, so keying this on the physical button would be keying it on the
+    /// one thing the measurement says is irrelevant.
+    ///
+    /// `keepVertex_` (C-4) is passed straight to the kernel: OFF (the measured
+    /// default) purges the vertices whose whole polygon fan the dissolve ate
+    /// and re-stitches their survivors; ON keeps them as corners of the merged
+    /// polygons. See `Mesh.consumedFanVertexMask` for the rule and for why it
+    /// is not the 2-valent one.
+    private void removeEdgeAt(int edgeIdx, bool loop) {
+        if (meshSrc_ is null || history_ is null || removeEdgeEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
+
+        // C-3: the seed gate, before the gather.
+        if (edgePolyCount(m, cast(uint)edgeIdx) != 2) return;
+
+        auto mask = new bool[](m.edges.length);
+        if (loop)
+            foreach (ei; m.selectLoopEdges(cast(uint)edgeIdx)) {
+                if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                if (edgePolyCount(m, cast(uint)ei) != 2) continue;
+                mask[ei] = true;
+            }
+        mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
+
+        auto wire = captureWireEdges(m);
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
+        restoreWireEdges(m, wire);
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = removeEdgeEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Remove Edge");
+        history_.record(cmd);
+
+        // Same reason `removeFaceAt` calls it: the kernel COMPACTS `faces[]`
+        // and `vertices[]`, so any sibling gesture armed on another button is
+        // holding stale indices.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+    }
+
+    /// Remove-on-a-VERTEX (task 0494, contract C-0): merge the pressed
+    /// vertex's WHOLE incident polygon fan into one polygon, then drop the
+    /// vertex — through the DEDICATED `removeVertexEditFactory_`, as one
+    /// atomic undo entry.
+    ///
+    /// This is its OWN law and is deliberately not expressed in terms of the
+    /// edge primitive's. Measured on an interior vertex of a 4x4 grid: the
+    /// four quads around it became ONE 8-gon and exactly that one vertex went
+    /// (15/20/6). Running the EDGE path's fan rule over the same four edges
+    /// would additionally have taken the two neighbours whose own fans are
+    /// fully consumed, giving 13/18/6 — a different mesh. Two primitives, two
+    /// laws, recorded as measured rather than generalised into one.
+    ///
+    /// Two consequences of that law worth stating, since neither is obvious:
+    ///
+    ///   * A CORNER vertex (one incident polygon) still works, and the merge
+    ///     is simply vacuous: measured, its quad collapses to a triangle and
+    ///     the vertex's two border edges go with it.
+    ///   * `keepVertex_` is NOT read here. It was captured OFF on this path
+    ///     and the reference's own vertex primitive reads the flag nowhere, so
+    ///     honouring it would be inventing a second meaning for it.
+    ///
+    /// A vertex with NO incident polygon is DECLINED. That case is outside
+    /// everything measured (the reference's retopo never builds face-less
+    /// geometry) and there is no fan to merge, so a press there changes
+    /// nothing rather than guessing — which also keeps a bare retopo chain out
+    /// of a kernel that would rebuild the edge array around it.
+    private void removeVertexAt(int vertIdx) {
+        if (meshSrc_ is null || history_ is null || removeVertexEditFactory_ is null) return;
+        auto m = mesh;
+        if (m is null || vertIdx < 0 || vertIdx >= cast(int)m.vertices.length) return;
+
+        // The fan, and the edges interior to it. Both by direct scan rather
+        // than through the half-edge rings: this runs right after arbitrary
+        // other mutations, and the scan cannot be stale.
+        bool hasFan = false;
+        foreach (ref f; m.faces) {
+            foreach (v; f) if (v == cast(uint)vertIdx) { hasFan = true; break; }
+            if (hasFan) break;
+        }
+        if (!hasFan) return;
+
+        immutable Vec3 pos = m.vertices[vertIdx];
+        auto mask = new bool[](m.edges.length);
+        size_t nMerge = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            auto e = m.edges[ei];
+            if (e[0] != cast(uint)vertIdx && e[1] != cast(uint)vertIdx) continue;
+            if (edgePolyCount(m, cast(uint)ei) != 2) continue;   // border/wire: nothing to merge across
+            mask[ei] = true;
+            ++nMerge;
+        }
+
+        auto wire = captureWireEdges(m);
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        // Merge the fan, KEEPING every consumed vertex — the one the press
+        // named is dropped below, and only it.
+        if (nMerge > 0) m.removeEdgesByMask(mask);
+
+        // Drop the pressed vertex. An interior fan merges to a polygon that no
+        // longer uses it, so the kernel's own tail compaction already took it
+        // and there is nothing left to find; a border fan leaves it a corner of
+        // the merged polygon, and this is what removes it.
+        immutable int vi = vertexAtPosition(m, pos);
+        if (vi >= 0) {
+            auto vmask = new bool[](m.vertices.length);
+            vmask[vi] = true;
+            m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
+        }
+        restoreWireEdges(m, wire);
+
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = removeVertexEditFactory_();
+        cmd.setSnapshots(before, after, "Topology Remove Vertex");
+        history_.record(cmd);
+
         resyncSession();
 
         m.syncSelection();
@@ -11795,11 +12086,11 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 8, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+    assert(ps.length == 9, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
                           ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483), the Smooth "
-                          ~ "strength, the two display toggles (task 0499) and the Inner Snap "
-                          ~ "flag (task 0496) — every later Param is APPENDED, never a "
-                          ~ "full-replace");
+                          ~ "strength, the two display toggles (task 0499), the Inner Snap "
+                          ~ "flag (task 0496) and the Keep Vertices flag (task 0494) — every "
+                          ~ "later Param is APPENDED, never a full-replace");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
     assert(ps[0].default_.b == false, "`middle` must default OFF — the shipped click-derived "
@@ -11997,7 +12288,7 @@ unittest {
         Row(PenMode.Duplicate, false, PenGesture.Build,          "Duplicate = the Shift+LMB gesture"),
         Row(PenMode.Duplicate, true,  PenGesture.DupLoop,        "Duplicate + Edge Loop = the loop variant (gather + trim), the same mode's other half"),
         Row(PenMode.Remove,    false, PenGesture.Remove,         "Remove = the Ctrl+MMB gesture"),
-        Row(PenMode.Remove,    true,  PenGesture.Remove,         "Remove has NO loop variant — the flag is ignored"),
+        Row(PenMode.Remove,    true,  PenGesture.Remove,         "Remove + Edge Loop is still the Remove gesture — the loop flag reaches its EDGE primitive, it does not select a different gesture (task 0494)"),
         Row(PenMode.Split,     false, PenGesture.Split,          "Split = the MMB gesture"),
         Row(PenMode.Split,     true,  PenGesture.Split,          "Split ignores Edge Loop"),
         Row(PenMode.AddLoop,   false, PenGesture.AddLoop,        "Add Loop = the Shift+MMB gesture"),

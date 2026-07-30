@@ -723,6 +723,16 @@ struct EditorApp {
     // editScope like Split/Remove, but must never bake any sibling's wire
     // name onto its own atomic undo entry).
     MeshSessionEdit delegate() topoPenFillEditFactory;
+    // Task 0494 (Remove's OTHER two primitives): Remove is one gesture with
+    // three mesh operations, chosen by the class of the element the press
+    // latched, so it carries three factories. wireName
+    // "mesh.topoPen_removeedge" / "mesh.topoPen_removevertex" — kept distinct
+    // from `topoPenRemoveEditFactory` (and from every sibling above) because
+    // all three are the same Geometry scope and differ ONLY by wire name, so
+    // reusing one would label a dissolve as a face removal in the undo
+    // history / event-log replay / any macro built on it.
+    MeshSessionEdit delegate() topoPenRemoveEdgeEditFactory;
+    MeshSessionEdit delegate() topoPenRemoveVertexEditFactory;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except

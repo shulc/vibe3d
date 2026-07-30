@@ -3123,6 +3123,18 @@ void main(string[] args) {
     // name.
     auto topoPenFillEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
                                                      "mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
+    // Topology Pen Remove's OTHER two primitives (task 0494): Remove picks its
+    // mesh operation from the CLASS of the element the press latched, and an
+    // edge-latched press dissolves (merging the two incident polygons) while a
+    // vertex-latched press merges the whole incident fan and drops the vertex —
+    // neither of which removes a face. Same Geometry editScope as
+    // `topoPenRemoveEditFactory`, so the wire name is the ONLY thing keeping
+    // the three apart in undo history / event-log replay / macros; that is
+    // exactly why each gets its own.
+    auto topoPenRemoveEdgeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
+    auto topoPenRemoveVertexEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                                     "mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3243,6 +3255,8 @@ void main(string[] args) {
     app.topoPenDupLoopEditFactory  = topoPenDupLoopEditFactory;
     app.topoPenSmoothLoopEditFactory = topoPenSmoothLoopEditFactory;
     app.topoPenFillEditFactory       = topoPenFillEditFactory;
+    app.topoPenRemoveEdgeEditFactory   = topoPenRemoveEdgeEditFactory;
+    app.topoPenRemoveVertexEditFactory = topoPenRemoveVertexEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
     app.switchToItemType     = cast(void delegate())&switchToItemType;

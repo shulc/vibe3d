@@ -489,7 +489,12 @@ void registerTools(EditorApp app) {
     // the Fill-mode dropdown-routed plain-LMB gesture's OWN generic
     // MeshSessionEdit factory (topoPenFillEditFactory, distinct wire name +
     // Geometry editScope) — appended LAST (13th param), never inserted
-    // mid-list, same rationale.
+    // mid-list, same rationale. Task 0494 adds Remove's OTHER two primitives'
+    // factories (topoPenRemoveEdgeEditFactory / topoPenRemoveVertexEditFactory,
+    // distinct wire names + Geometry editScope) — appended LAST (14th and 15th
+    // params), never inserted mid-list. Same rationale, sharpened: these three
+    // Remove factories differ ONLY by wire name, so a mis-ordered argument here
+    // would compile and silently label one op as another.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu(),
                                      &vertexCache(), &edgeCache(), &faceCache());
@@ -499,7 +504,8 @@ void registerTools(EditorApp app) {
                          topoPenSlideEditFactory, topoPenSmoothEditFactory,
                          topoPenSplitEditFactory, topoPenMoveLoopEditFactory,
                          topoPenDupLoopEditFactory, topoPenSmoothLoopEditFactory,
-                         topoPenFillEditFactory);
+                         topoPenFillEditFactory,
+                         topoPenRemoveEdgeEditFactory, topoPenRemoveVertexEditFactory);
         return cast(Tool)t;
     };
 
