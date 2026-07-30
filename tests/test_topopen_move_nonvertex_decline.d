@@ -62,10 +62,11 @@ enum float  R    = 2.0f;
 enum int    LON  = 96, LAT = 72;   // resolution rationale: topopen_place_helpers.d
 enum double TOL  = R * 0.04;
 
-// The tool's own screen-space pick tolerance (source/constraint.d's
-// `topoPenSnapPx`) — mirrored here so the preconditions below are stated in
-// the same units the code under test uses.
-enum float kSnapPx = 15.0f;
+// The tool's own screen-space PRESS-PICK reach (source/constraint.d's
+// `topoPenPressPickPx`) — mirrored here so the preconditions below are stated
+// in the same units the code under test uses. Task 0496: a press consults
+// this, not the wider drag-snap radius.
+enum float kSnapPx = 8.0f;
 
 // The primary quad: a 1.5x1.5 square in the world XY plane through the
 // origin, well inside the R=2 background sphere. At distance 8 with the

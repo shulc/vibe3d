@@ -39,9 +39,11 @@ void main() {}
 
 enum uint LCTRL = 0x0040;   // KMOD_LCTRL — the Slide gesture's own modifier
 
-// The tool's own screen-space pick tolerance (`topoPenSnapPx`), mirrored so
-// the "far from every edge" precondition is stated in the same units.
-enum float kSnapPx = 15.0f;
+// The tool's own screen-space PRESS-PICK reach (`topoPenPressPickPx`),
+// mirrored so the "far from every edge" precondition is stated in the same
+// units. Task 0496: the drag-time snap is a separate, wider query and is not
+// what a press consults.
+enum float kSnapPx = 8.0f;
 
 string dominoMeshBody() {
     return `{

@@ -1307,7 +1307,7 @@ void runSurfaceRaycastSuite(string fixtureJson) {
 ///                    "docLayer": 1                      // optional, default = response's own "layer"
 ///                  } } ] }
 /// `raycast.thresholdPx` is optional — omitted means "use the tool's own
-/// default" (the endpoint applies `topoPenSnapPx(vp)`). `targetKind`
+/// default" (the endpoint applies `topoPenPressPickPx(vp)`). `targetKind`
 /// "face"/"none" cases skip the targetVert/targetEdge check (there is no
 /// element to resolve — both are -1 by convention).
 void runHoverTargetSuite(string fixtureJson) {

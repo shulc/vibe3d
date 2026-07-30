@@ -32,7 +32,8 @@ void main() {}
 enum float R         = 2.0f;
 enum int   LON       = 96, LAT = 72;
 enum double TOL      = R * 0.04;
-enum float kSnapPx   = 12.0f;
+enum float kSnapPx   = 8.0f;     // the tool's own PRESS-PICK reach
+                                 // (`topoPenPressPickPx`, task 0496)
 enum float kQuadHalf = 0.75f;
 enum uint  LSHIFT    = 0x0001;   // KMOD_LSHIFT — the Duplicate slot's modifier
 

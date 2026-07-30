@@ -1,24 +1,34 @@
 // Topology Pen P4 — move_disambiguation (T4, doc/topopen_p4_plan.md "Test
 // enumeration").
 //
-// The regression class P4 introduces: a plain-LMB press within the pen's snap
-// gate (`topoPenSnapPx`, 15 nominal px x the view pixel scale — task 0496) of an
-// existing primary-layer vertex must ARM MOVE
-// (grab it — vertex count stays put), while a press just OUTSIDE the
-// threshold must ARM PLACE (a genuinely new vertex appears). The existing
-// multi-place fixtures (test_topopen_place_multi_accumulate.d) happen to
-// space clicks 70-150px apart — clear of the threshold — so they do
-// NOT exercise this boundary; hence this dedicated test.
+// The regression class P4 introduces: a plain-LMB press within the pen's
+// PRESS-PICK reach (`topoPenPressPickPx` — task 0496) of an existing
+// primary-layer vertex must ARM MOVE (grab it — vertex count stays put), while
+// a press just OUTSIDE that reach must ARM PLACE (a genuinely new vertex
+// appears). The existing multi-place fixtures
+// (test_topopen_place_multi_accumulate.d) happen to space clicks 70-150px
+// apart — clear of the reach — so they do NOT exercise this boundary; hence
+// this dedicated test.
 //
-// Review NIT-1 (P4 review): the original "outside" probe was pinned 70px
-// from vertex A's OWN screen position — clear of the gate, but so far clear that
-// a future accidental widening of the gate (e.g. to 50px) would still
-// pass this test unnoticed. Fixed by anchoring the outside probe on a
-// SEPARATE second vertex (B, placed fresh so its screen position is known
-// independently of the earlier grab-and-re-snap of A) and probing it from BOTH
-// sides of the gate — 14px (inside: must grab) and 19px (outside: must place).
-// The 14px probe is the one that moved when the gate did: it PLACED under the
-// old invented 12px threshold and GRABS under the measured 15px one.
+// Review NIT-1 (P4 review): the original "outside" probe was pinned 70px from
+// vertex A's OWN screen position — clear of the reach, but so far clear that a
+// future accidental widening (e.g. to 50px) would still pass this test
+// unnoticed. Fixed by anchoring the tight probes on a SEPARATE second vertex
+// (B, placed fresh so its screen position is known independently of the
+// earlier grab-and-re-snap of A) and probing it from BOTH sides.
+//
+// Task 0496, second wave — THIS FILE IS THE EVIDENCE OF THE FIX. Its probes
+// were 14px (grab) and 19px (place), pinning a 15px reach that was the fusion
+// of two different measured queries. Measured live, the press pick reaches
+// about 8px — brackets (7.07, 7.78] for a vertex, (7.00, 8.85] for an edge —
+// so the probes are now:
+//
+//   7px  — at the bracket's lower end: must GRAB. Green before and after; the
+//          in-reach half of the law did not move.
+//   14px — must PLACE. This is the annulus: the reference resolved the
+//          POLYGON here (its own `P_vert14` cell), we grabbed the vertex, and
+//          the hover highlight advertised our answer. Red on the shipped code,
+//          which counted 2 vertices where this now counts 3.
 //
 // Run via: ./run_test.d topopen_move_disambiguation
 
@@ -55,11 +65,12 @@ unittest {
     waitPlayerIdle();
     assert(vertexCountLayer(1) == 1, "setup click must place exactly 1 vertex");
 
-    // --- WITHIN threshold: (cx+5,cy+5) is sqrt(5^2+5^2)~=7.07px from A's own
-    // screen position, comfortably inside the snap gate. A
-    // stationary click there must ARM MOVE (grab A) — vertex count must
-    // stay 1, never grow to 2, even though the click lands off A's EXACT
-    // pixel.
+    // --- WITHIN the reach: (cx+5,cy+5) is sqrt(5^2+5^2)~=7.07px from A's own
+    // screen position — which is exactly the largest distance at which the
+    // reference was observed to enumerate a vertex candidate, i.e. the lower
+    // end of the measured bracket. A stationary click there must ARM MOVE
+    // (grab A) — vertex count must stay 1, never grow to 2, even though the
+    // click lands off A's EXACT pixel.
     int wx = cx + 5, wy = cy + 5;
     Vec3 expectedWithin;
     assert(expectedRayHitOnSphere(c, cast(float)wx, cast(float)wy, R, expectedWithin),
@@ -69,7 +80,8 @@ unittest {
     waitPlayerIdle();
 
     assert(vertexCountLayer(1) == 1,
-        "a press WITHIN the snap gate of the vertex must ARM MOVE, not place a second vertex");
+        "a press WITHIN the press-pick reach of the vertex must ARM MOVE, not place a second "
+      ~ "vertex");
 
     auto afterWithin = readVerticesLayer(1);
     assert(approxVec(expectedWithin, afterWithin[0], TOL),
@@ -90,7 +102,7 @@ unittest {
     waitPlayerIdle();
 
     assert(vertexCountLayer(1) == 2,
-        format("a press OUTSIDE the snap gate of A must ARM PLACE, adding vertex B; got %d",
+        format("a press OUTSIDE the press-pick reach of A must ARM PLACE, adding vertex B; got %d",
               vertexCountLayer(1)));
 
     auto afterB = readVerticesLayer(1);
@@ -99,28 +111,32 @@ unittest {
     assert(approxVec(expectedWithin, afterB[0], TOL),
         "A (already grabbed once) must be untouched by B's placement click");
 
-    // --- Tight outside-threshold probe, anchored on B's OWN projected screen
-    // position — THIS is what actually pins the gate: two probes, one on each
-    // side of it, so neither a narrowing nor a widening can pass unnoticed.
-    // `bScreenX/Y` is derived from `expectedB` (the independently-computed
-    // ray-sphere hit), not from the server's own reported vertex position —
-    // the probe's expectation stays independent of the tool's own output.
+    // --- Tight probes, anchored on B's OWN projected screen position — THIS
+    // is what actually pins the reach: two probes, one on each side of it, so
+    // neither a narrowing nor a widening can pass unnoticed. `bScreenX/Y` is
+    // derived from `expectedB` (the independently-computed ray-sphere hit),
+    // not from the server's own reported vertex position — the probe's
+    // expectation stays independent of the tool's own output.
     float bScreenX, bScreenY;
     assert(projectToWindow(expectedB, vp, bScreenX, bScreenY),
         "B's expected world position must project back onto the viewport");
 
-    // Task 0496 (the measured snap gate): the threshold is 15 nominal px x the
-    // view's pixel scale, not the old invented 12. THIS pair of probes is what
-    // pins that number from the outside, and each one fails on the other side
-    // of the change:
-    //   * kInsideProbePx  = 14px — INSIDE the measured 15px gate, so it must
-    //     GRAB B. Under the old 12px threshold this same probe PLACED a third
-    //     vertex (it was this test's "just outside" probe), so this assertion
-    //     is red on the pre-0496 code.
-    //   * kOutsideProbePx = 19px — outside the gate, so it must PLACE. Tight
-    //     enough that any further widening past ~19px would be caught here.
-    enum float kInsideProbePx  = 14.0f;
-    enum float kOutsideProbePx = 19.0f;
+    // Task 0496, second wave (the measured PRESS-PICK reach). The reference
+    // printed one press limit of 8.0 and delivered a reach bracketed at
+    // (7.07, 7.78] for vertices; the 15px this tool used to carry belonged to
+    // no query at all. This pair of probes pins that from the outside:
+    //   * kInsideProbePx  = 7px — the bracket's lower end, the largest
+    //     distance at which the reference was seen to enumerate a vertex, so
+    //     it must GRAB B.
+    //   * kOutsideProbePx = 14px — THE ANNULUS. Past the reach, and the exact
+    //     offset of the reference's own `P_vert14` cell, where it resolved the
+    //     POLYGON. Must PLACE a third vertex. This assertion is RED on the
+    //     shipped code, whose 15px gate grabbed B and left the count at 2.
+    // Deliberately NOT probed: anything between 7.8px and 8.9px. The
+    // measurement brackets the cut but does not locate it, and a test there
+    // would be inventing precision.
+    enum float kInsideProbePx  = 7.0f;
+    enum float kOutsideProbePx = 14.0f;
 
     int ix = cast(int) round(bScreenX + kInsideProbePx);
     int iy = cast(int) round(bScreenY);
@@ -133,9 +149,9 @@ unittest {
     waitPlayerIdle();
 
     assert(vertexCountLayer(1) == 2,
-        format("a press ~%.0fpx from B is INSIDE the measured %.0fpx snap gate and must GRAB B, "
-             ~ "not place a third vertex; got %d vertices (the pre-0496 12px threshold placed one "
-             ~ "here)", kInsideProbePx, kInsideProbePx + 1.0f, vertexCountLayer(1)));
+        format("a press ~%.0fpx from B is at the measured bracket's lower end (7.07px) and must "
+             ~ "GRAB B, not place a third vertex; got %d vertices",
+              kInsideProbePx, vertexCountLayer(1)));
 
     auto afterInside = readVerticesLayer(1);
     assert(approxVec(expectedInside, afterInside[1], TOL),
@@ -159,10 +175,10 @@ unittest {
     waitPlayerIdle();
 
     assert(vertexCountLayer(1) == 3,
-        format("a press ~%.0fpx from B (outside the measured 15px snap gate) must ARM PLACE, "
-             ~ "adding a THIRD vertex rather than grabbing B; got %d vertices (a further widened "
-             ~ "threshold would grab B instead and leave this at 2)",
-              kOutsideProbePx, vertexCountLayer(1)));
+        format("a press ~%.0fpx from B is in the ANNULUS — past the measured press-pick reach, "
+             ~ "where the reference resolved the polygon — and must ARM PLACE, adding a THIRD "
+             ~ "vertex rather than grabbing B; got %d vertices (the shipped 15px gate grabbed B "
+             ~ "and left this at 2)", kOutsideProbePx, vertexCountLayer(1)));
 
     auto afterProbe = readVerticesLayer(1);
     assert(approxVec(expectedProbe, afterProbe[2], TOL),
