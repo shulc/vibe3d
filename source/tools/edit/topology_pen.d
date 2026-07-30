@@ -16,7 +16,8 @@ import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
-import constraint           : resolveHoverTarget, topoPenSnapPx, topoPenGatherPx,
+import constraint           : resolveHoverTarget, topoPenPressPickPx,
+                              topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
 import snap                  : backgroundSourcesSnapshot;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
@@ -230,7 +231,7 @@ private enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smo
 private enum SlideDecline { None, NoEdge, NoContinuation }
 
 /// Which kind of element a Move-family press grabbed (task 0484). Resolved
-/// by PROXIMITY, in this order — vertex within `topoPenSnapPx`, else edge
+/// by PROXIMITY, in this order — vertex within `topoPenPressPickPx`, else edge
 /// within the same radius, else the face under the cursor — so the closest
 /// thing to the cursor is what moves, which is how the reference's Move mode
 /// reads to a user ("hover it, drag it").
@@ -703,7 +704,7 @@ unittest {
 // the dispatch backbone's base behavior, every modifier an overlay on top of
 // it (capture-verified, doc/topopen_p4_plan.md "The MEASURED mechanism").
 // Design A: BOTH Move and Place resolve at press time (`onPlainLmbDown`,
-// reusing P3's `findSourceVertex`, topoPenSnapPx threshold, over the PRIMARY
+// reusing P3's `findSourceVertex`, topoPenPressPickPx threshold, over the PRIMARY
 // layer only) and land at the RELEASE event's own CONS-snapped hit: landing
 // on geometry arms Move (`moveArmed_` + the moving set, `armMoveElement`);
 // landing on empty background arms Place (`placeArmed_`, the same P2
@@ -941,7 +942,7 @@ private:
     // around — useful in editing vertices, EDGES, and POLYGONS"):
     //
     //   1. WHAT can be grabbed. A press resolves the element under the
-    //      cursor by proximity — vertex within `topoPenSnapPx`, else edge
+    //      cursor by proximity — vertex within `topoPenPressPickPx`, else edge
     //      within the same radius, else the face under the cursor — and
     //      `moveVerts_` becomes THAT element's vertices (1 / 2 / N). Before
     //      this, an edge or face press was declined outright
@@ -1051,7 +1052,7 @@ private:
     // `onCtrlLmbDown` declines on two structurally DIFFERENT outcomes that were
     // indistinguishable from outside, because both leave `slideArmed_ == false`
     // and `slideSeed_ == -1` (the seed is only assigned once the gesture arms):
-    //   * NoEdge          — no primary edge within `topoPenSnapPx`: a genuine
+    //   * NoEdge          — no primary edge within `topoPenPressPickPx`: a genuine
     //                       pick miss.
     //   * NoContinuation  — an edge WAS resolved, but neither endpoint's rail
     //                       resolves, so the shipped hold-fixed contract leaves
@@ -1512,7 +1513,7 @@ private:
     // in `onMouseMotion`'s not-armed branch (its own sibling gate, NOT
     // nested inside the `hoverOverMesh_` block above — see the plan's
     // mandatory opponent fix #2: `hoverOverMesh_` requires a pick within
-    // `topoPenSnapPx`, which is false when hovering the CENTER of an empty
+    // `topoPenPressPickPx`, which is false when hovering the CENTER of an empty
     // gap cell, exactly the defining Fill-mode case).
     uint[] fillCell_;
 
@@ -1525,7 +1526,7 @@ private:
     // `onMouseMotion`'s Fill-mode branch (its own sibling gate, same
     // rationale `fillCell_` isn't nested in `hoverOverMesh_`: hovering the
     // open middle of a gap is nowhere near any vertex/edge/face within
-    // `topoPenSnapPx`, yet a nearby border edge still legitimately sizes
+    // `topoPenPressPickPx`, yet a nearby border edge still legitimately sizes
     // the circle). `fillRadiusValid_` is false whenever a non-Fill mode is
     // active, a gesture is armed, or no border edge is within tolerance of
     // the cursor (this also covers the vertex-only-hover case the toolcard
@@ -1571,7 +1572,7 @@ private:
             Viewport vp;
             if (auto s = vts.get!SubjectPacket())
                 vp = s.viewport;
-            lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenSnapPx(vp));
+            lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
         }
         // else: leave lastHit_/lastTarget_ unchanged — see class doc (the
         // per-frame render-loop's vts never carries the packet; only a
@@ -1910,7 +1911,7 @@ public:
             // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
             // Phase 5, MANDATORY opponent fix #2): computed UNCONDITIONALLY
             // here — NOT nested inside `if (hoverOverMesh_)` above — because
-            // `hoverOverMesh_` requires a pick within `topoPenSnapPx`,
+            // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`,
             // which is FALSE when hovering the CENTER of an empty gap cell:
             // exactly the defining Fill-mode case (no vertex/edge/face is
             // anywhere near the cursor). Nesting it in that block would
@@ -1921,7 +1922,7 @@ public:
             // law — see `fillRadiusPx_`'s own doc comment for provenance):
             // resolved alongside `fillCell_` above, same unconditional
             // sibling gate and the same rationale — an empty-gap hover has
-            // no vertex/edge/face within `topoPenSnapPx`, yet a nearby
+            // no vertex/edge/face within `topoPenPressPickPx`, yet a nearby
             // border edge still legitimately sizes the circle. Recomputed
             // every motion event, so the cached radius tracks the cursor;
             // `draw()` re-polls the LIVE cursor pixel for the circle's
@@ -2132,29 +2133,33 @@ public:
     }
 
     /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
-    /// does a drag land on. Same acceptance radius as every other pen
-    /// proximity test — the gate is type-uniform and there is exactly one of
-    /// it — but the candidate SET is the measured one: border-only unless
-    /// `innerSnap` opens the interior.
+    /// does a drag land on.
+    ///
+    /// A DIFFERENT QUERY from the press pick, with its own — much wider —
+    /// radius. Measured: the press pick reaches ~8px (`topoPenPressPickPx`),
+    /// this one accepts at 24px (`topoPenSnapAcceptPx`). They were once fused
+    /// behind a single 15px constant, which was simultaneously too wide for
+    /// the press and too narrow for the landing. The candidate SET is the
+    /// measured one too: border-only unless `innerSnap` opens the interior.
     ///
     /// The one caller today is the Split gesture, whose target vertex C is by
     /// its own definition the element the drag snaps to (and whose reference
     /// commit is gated on that snap succeeding). Future snap-target consumers
     /// (mid-drag Split feedback, Duplicate re-snap) must come through HERE
-    /// rather than call `findSourceVertex` directly, so the candidate set stays
-    /// stated in one place.
+    /// rather than call `findSourceVertex` directly, so the candidate set AND
+    /// the radius stay stated in one place.
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
-        return findSourceVertex(mx, my, vp, topoPenSnapPx(vp), !innerSnap_);
+        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp), !innerSnap_);
     }
 
     // P3 (doc/topopen_p3_plan.md): project every vertex of the PRIMARY
-    // layer's mesh and return the nearest within `topoPenSnapPx`, or -1.
+    // layer's mesh and return the nearest within `topoPenPressPickPx`, or -1.
     // O(V) per press — self-contained (no CONS, no new module), mirroring
     // `projectPt`'s own screen-space-only contract.
     //
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
     // item 4): `thresholdPx` defaults to `kTopoPenSnapAuto`, resolved to the
-    // view's own `topoPenSnapPx(vp)` below, so every existing
+    // view's own `topoPenPressPickPx(vp)` below, so every existing
     // gesture caller (`onPlainLmbDown`, `onShiftLmbDown`, `onCtrlLmbDown`,
     // the Split motion handler, etc. — none of which pass a 3rd argument)
     // stays BYTE-IDENTICAL. The hover-resolve path (`onMouseMotion`, below)
@@ -2173,7 +2178,7 @@ public:
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
-        if (thresholdPx < 0.0f) thresholdPx = topoPenSnapPx(vp);
+        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD2 = float.infinity;
         foreach (vi; 0 .. m.vertices.length) {
@@ -2427,7 +2432,7 @@ public:
     // `isEdgeBorder`/`projectPt` primitives). Mirrors `findRingSeedEdge`'s
     // point-to-segment scan (same `closestOnSegment2D` call), filtered to
     // border edges only — a gap's boundary is exactly its border edges.
-    // Reuses `topoPenSnapPx(vp)`, the same edge-pick tolerance every other
+    // Reuses `topoPenPressPickPx(vp)`, the same edge-pick tolerance every other
     // gesture in this tool already snaps at, rather than inventing a
     // second constant.
     private int findNearestBorderEdge(int mx, int my, const ref Viewport vp,
@@ -2435,7 +2440,7 @@ public:
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
-        if (thresholdPx < 0.0f) thresholdPx = topoPenSnapPx(vp);
+        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best  = -1;
         float bestD = float.infinity;
         foreach (ei, e; m.edges) {
@@ -2454,7 +2459,7 @@ public:
 
     // The NON-VERTEX half of the over-mesh GATE: true when the cursor is
     // over an EXISTING element of the primary layer that is NOT a vertex —
-    // an edge within `topoPenSnapPx` (`findRingSeedEdge`) or a face under
+    // an edge within `topoPenPressPickPx` (`findRingSeedEdge`) or a face under
     // the cursor (`pickPrimaryFace`, front-most BVH pick, which covers the
     // "middle of a big face, nowhere near its rim" case an edge scan alone
     // misses).
@@ -2476,7 +2481,7 @@ public:
     // (no GL, no `gpu_`) only the edge term is live — deliberate: the face
     // term is exercised by the HTTP tests, which have a real upload.
     private bool overPrimaryEdgeOrFace(int mx, int my, const ref Viewport vp) {
-        return findRingSeedEdge(mx, my, vp, topoPenSnapPx(vp)) >= 0
+        return findRingSeedEdge(mx, my, vp, topoPenPressPickPx(vp)) >= 0
             || pickPrimaryFace(mx, my, vp) >= 0;
     }
 
@@ -2488,7 +2493,7 @@ public:
     // `computeHoverIndicator`'s own `∞`-threshold RESOLUTION scan — this
     // decides WHETHER the cursor is over the mesh, that decides WHAT to draw.
     private bool overPrimaryMesh(int mx, int my, const ref Viewport vp) {
-        return findSourceVertex(mx, my, vp, topoPenSnapPx(vp)) >= 0
+        return findSourceVertex(mx, my, vp, topoPenPressPickPx(vp)) >= 0
             || overPrimaryEdgeOrFace(mx, my, vp);
     }
 
@@ -2788,7 +2793,7 @@ public:
     // press disambiguates HERE, at press time, between grabbing an existing
     // primary-layer vertex (Move) and placing a new one on the background
     // surface (Place) — reusing P3's `findSourceVertex` (the SAME
-    // `topoPenSnapPx` screen-space threshold, over the PRIMARY mesh only;
+    // `topoPenPressPickPx` screen-space threshold, over the PRIMARY mesh only;
     // the background is the snap reference, never grabbed). Neither outcome
     // commits here: both are armed only, and the actual mutation happens on
     // RELEASE (`onMouseButtonUp`) at THAT event's own CONS-snapped hit — a
@@ -2875,7 +2880,7 @@ public:
     // come from one function: a highlight that names a different element than
     // the press takes is worse than no highlight, because the user aims by it.
     //
-    // Proximity order — vertex within `topoPenSnapPx`, else edge within the
+    // Proximity order — vertex within `topoPenPressPickPx`, else edge within the
     // same radius, else the face under the cursor. `index` is the resolved
     // element's own index in its own array (vertex / edge / face), or -1.
     //
@@ -3392,7 +3397,7 @@ public:
     }
 
     // P6 (doc/topopen_p6_addloop_plan.md Phase 2): project every EDGE of the
-    // PRIMARY layer's mesh and return the nearest within `topoPenSnapPx`, or
+    // PRIMARY layer's mesh and return the nearest within `topoPenPressPickPx`, or
     // -1 — mirrors `findSourceVertex` above (same threshold, same
     // self-contained no-CONS/no-cache contract), but over edges: each
     // endpoint is projected (skipping the edge if either end is behind the
@@ -3401,7 +3406,7 @@ public:
     // press.
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
     // item 4): `thresholdPx` defaults to `kTopoPenSnapAuto` (resolved to the
-    // view's own `topoPenSnapPx(vp)` below), same rationale as
+    // view's own `topoPenPressPickPx(vp)` below), same rationale as
     // `findSourceVertex` above — every existing gesture caller stays
     // byte-identical (none pass a 3rd argument); the hover path passes
     // `float.infinity` for RESOLUTION and a finite value for the GATE.
@@ -3416,7 +3421,7 @@ public:
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
-        if (thresholdPx < 0.0f) thresholdPx = topoPenSnapPx(vp);
+        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
         int   best   = -1;
         float bestD  = float.infinity;
         foreach (ei, e; m.edges) {
@@ -4416,7 +4421,8 @@ public:
     //
     // Split is a VERTEX -> VERTEX chord split, and nothing else
     // (doc/tasks/work/0480-topopen-addloop-middle.md): a release that does
-    // NOT land on an existing vertex within `topoPenSnapPx` — mid-span over
+    // NOT land on an existing vertex within the drag-snap acceptance radius
+    // (`topoPenSnapAcceptPx`, via `resolveSnapTargetVert`) — mid-span over
     // an edge, or on empty space — is a clean no-op. Inserting a new vertex
     // partway along a crossed edge belongs to the Add Loop gesture
     // (`addLoopUp`/`addLoopFrac`), which owns both the fraction and the
@@ -6396,7 +6402,7 @@ public:
         // doc/topopen_fill_plan.md Phase 5, MANDATORY opponent fix #2): its
         // OWN sibling gate — `penMode_ == Fill && fillCell_.length == 4` —
         // deliberately NOT folded into the `hoverOverMesh_` block above.
-        // `hoverOverMesh_` requires a pick within `topoPenSnapPx`, which is
+        // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`, which is
         // FALSE when hovering the center of an empty gap cell (the defining
         // Fill-mode case: no vertex/edge/face is anywhere near the
         // cursor) — nesting this there would make the preview never render
@@ -6451,7 +6457,7 @@ public:
         // Re-resolve for THIS cell's camera — a multi-viewport draw may
         // run once per eligible cell, each with its own `vp`; the cached
         // `lastTarget_` (motion-time) stays what toolStateJson() reports.
-        auto ht = resolveHoverTarget(lastHit_, vp, topoPenSnapPx(vp));
+        auto ht = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
 
         enum uint markerCol = IM_COL32(255, 150, 0, 230);   // pen orange
         enum uint cyan      = IM_COL32(0, 220, 255, 230);   // snap highlight
@@ -11350,9 +11356,11 @@ unittest {
 
     // Task 0496: the grid-plane viewport (80px per grid cell), not the 100x100
     // `View` default this case used to build. Under that tiny viewport a grid
-    // half-edge projected to ~13px — inside the measured 15px snap gate, so the
-    // "midpoint resolves no vertex" precondition below could no longer hold.
-    // The precondition is the point of the case; the viewport was incidental.
+    // half-edge projected to ~13px, which the pen's press-pick reach could
+    // swallow, so the "midpoint resolves no vertex" precondition below could no
+    // longer hold. The precondition is the point of the case; the viewport was
+    // incidental. Asserted below, so the reach can move again without this
+    // case silently turning into a different test.
     auto vp = makeGridPlaneTestViewport();
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -12280,7 +12288,7 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // splitUp — Split Tier-B #2 (no-op): release on empty space (no vertex
-// within `topoPenSnapPx`) is a clean no-op — the release must not
+// within the drag-snap acceptance radius) is a clean no-op — the release must not
 // fabricate a target out of nothing.
 // ---------------------------------------------------------------------------
 unittest {
@@ -13021,9 +13029,11 @@ unittest {
     Mesh m;
     t.meshSrc_ = () => &m;
     // Scaled up from the shipped vertex e2e's -0.3..0.3 rig to keep the
-    // projected edge (2,3) comfortably longer than 2*topoPenSnapPx at this
-    // camera distance — its screen-space MIDPOINT must land clearly outside
-    // the vertex-snap radius of EITHER endpoint, so the release genuinely
+    // projected edge (2,3) comfortably longer than 2*topoPenSnapAcceptPx at
+    // this camera distance — its screen-space MIDPOINT must land clearly
+    // outside the DRAG-SNAP acceptance radius of EITHER endpoint (the release
+    // resolves through `resolveSnapTargetVert`, whose reach is wider than the
+    // press pick's — task 0496), so the release genuinely
     // resolves NO vertex (a snap to v2/v3 would turn this into an ordinary
     // vertex-target split and the no-op assertions below would be vacuous).
     m.addVertex(Vec3(-0.8f, 0, -0.8f));   // 0 A
@@ -13060,9 +13070,12 @@ unittest {
     assert(t.splitSourceVert_ == 0, "must arm the pressed vertex (0) as the split source");
 
     // Guard the rig itself: the release pixel must resolve NO vertex, or the
-    // no-op below would prove nothing about the removed edge branch.
-    assert(t.findSourceVertex(midX, midY, vp) < 0,
-        "setup: the edge midpoint pixel must be outside every vertex's snap radius");
+    // no-op below would prove nothing about the removed edge branch. Asked of
+    // the query the release ACTUALLY runs (`resolveSnapTargetVert`, 24px), not
+    // of the narrower press pick — a guard weaker than the code path it guards
+    // is not a guard.
+    assert(t.resolveSnapTargetVert(midX, midY, vp) < 0,
+        "setup: the edge midpoint pixel must be outside every vertex's drag-snap radius");
 
     auto before = MeshSnapshot.capture(m);
 
@@ -13803,9 +13816,9 @@ unittest {
 // Pixel = the SCREEN-SPACE midpoint of grid edge 0-1: distance 0 from that
 // projected segment by construction, while `makeGridPlane(3)`'s cell is ~53px
 // wide under `makeGridPlaneTestViewport` so both endpoints sit ~26px away —
-// outside the pen's snap radius (`topoPenSnapPx`, 15px at scale 1). Asserted
-// below rather than assumed, so a
-// future viewport/grid change cannot silently turn this into a Move test.
+// outside the pen's press-pick reach (`topoPenPressPickPx`, 8px at scale 1).
+// Asserted below rather than assumed, so a future viewport/grid change cannot
+// silently turn this into a Move test.
 // `pickPrimaryFace` answers -1 here (no `gpu_` under a bare `dub test`), so
 // this exercises the EDGE term of the gate in isolation.
 unittest {
@@ -13835,10 +13848,10 @@ unittest {
     // Setup precondition: the press pixel must be OUTSIDE snap range of every
     // vertex, or this would be testing Move, not the edge/face fall-through.
     assert(t.findSourceVertex(e.x, e.y, vp) < 0,
-        "setup: the edge-midpoint pixel must resolve NO vertex within topoPenSnapPx");
+        "setup: the edge-midpoint pixel must resolve NO vertex within topoPenPressPickPx");
     assert(t.findRingSeedEdge(e.x, e.y, vp) >= 0,
         "setup: the edge-midpoint pixel must resolve the edge itself");
-    assert(hypot(mid.x - p0.x, mid.y - p0.y) > topoPenSnapPx(vp),
+    assert(hypot(mid.x - p0.x, mid.y - p0.y) > topoPenPressPickPx(vp),
         "setup: the midpoint must be farther than the snap radius from endpoint 0");
 
     immutable size_t vBefore = m.vertices.length;
@@ -14008,7 +14021,7 @@ unittest {
     vts.put(&subj);
 
     // A pixel 70px from v0 (and farther still from v1, which projects on the
-    // opposite side of the grid) — clear of the 12px snap radius.
+    // opposite side of the grid) — clear of the press-pick reach.
     SDL_MouseButtonEvent e;
     e.x = cast(int)(p0.x + 70.0f); e.y = cast(int)p0.y;
     assert(t.findSourceVertex(e.x, e.y, vp) < 0,
@@ -14182,29 +14195,43 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0496 — the MEASURED snap gate: 15 nominal px x the view's pixel scale,
-// type-uniform, derived per view rather than baked.
+// Task 0496 — the MEASURED PRESS-PICK reach, pinned at its BRACKET ENDS.
 //
-// This block is the pen-side pin of the number. It is written against the
-// grid-plane viewport whose scale is hand-derivable (eye at y=5, fovY=90,
-// 800x800 => 80 px per world unit), so the probe pixels below are exact and
-// the assertions do not round-trip through the code under test.
+// This block is the pen-side pin of the press-pick query. It is written
+// against the grid-plane viewport whose scale is hand-derivable (eye at y=5,
+// fovY=90, 800x800 => 80 px per world unit, and `makeGridPlane`'s vertices sit
+// on whole world units), so the probe pixels below land exactly where the
+// comments say and the assertions do not round-trip through the code under
+// test.
 //
-// FAILS ON THE OLD BEHAVIOUR by construction: 13px was OUTSIDE the old
-// invented 12px threshold and is INSIDE the measured 15px one, for BOTH the
-// vertex and the edge resolver. The 17px probes pin the far side.
+// WHAT IS PINNED, and what deliberately is NOT. The reference printed ONE
+// press limit of 8.0, but the reach it delivered was only bracketed:
 //
-// Also pins the MEASURING POINT (task 0496's recorded divergence): both of
-// these resolvers measure from the RAW CURSOR pixel. The reference measures its
-// snap distance from the press position plus the drag offset, re-projected, and
-// `constraint.resolveHoverTarget` measures from the projected surface HIT —
-// three different origins behind one shared radius. Unifying them is deferred
-// (it changes what the pen resolves, not merely how far); this test makes our
-// two origins explicit so neither can drift silently.
+//     vertex : enumerated at 7.07px, not enumerated at 7.78px
+//     edge   : enumerated at 7.00px, not enumerated at 8.85px
+//
+// So the probes are 7px (at/below both brackets' lower ends => must resolve)
+// and 9px (above both brackets' upper ends => must not). Nothing here pins 8.0
+// as a behavioural edge: the measurement does not locate the cut to better
+// than a pixel, and a test that claimed otherwise would be inventing
+// precision. The 8.0 VALUE is asserted at the end as the number we chose to
+// carry, separately from the behaviour.
+//
+// FAILS ON THE SHIPPED BEHAVIOUR by construction: under the 15px gate this
+// module carried until now, the 9px probes resolved the vertex and the edge.
+// They are the near rim of the ~7px annulus in which our press disagreed with
+// the reference's; the far rim (14px) is pinned by the annulus test below.
+//
+// Also pins the MEASURING POINT (task 0496's recorded, NOT-isolated
+// divergence): both of these resolvers measure from the RAW CURSOR pixel,
+// while `constraint.resolveHoverTarget` measures from the projected surface
+// HIT. Unifying them is deferred (it changes what the pen resolves, not merely
+// how far); this test makes our two origins explicit so neither can drift.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeGridPlane;
-    import constraint : topoPenSnapPx, topoPenGatherPx;
+    import constraint : topoPenPressPickPx, topoPenSnapAcceptPx, topoPenSnapGatherPx;
+    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);          // 3x3 verts, 4 quads, 80px per cell here
@@ -14216,38 +14243,174 @@ unittest {
     assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
     assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
 
-    // --- vertex resolver, both sides of the gate ---
-    immutable int inX  = cast(int)(p0.x + 13.0f), inY  = cast(int)p0.y;
-    immutable int outX = cast(int)(p0.x + 17.0f), outY = cast(int)p0.y;
-    assert(t.findSourceVertex(inX, inY, vp) == 0,
-        "a cursor 13px from a vertex is INSIDE the measured 15px gate and must resolve it "
-      ~ "(the pre-0496 12px threshold rejected this)");
-    assert(t.findSourceVertex(outX, outY, vp) < 0,
-        "a cursor 17px from every vertex is outside the gate and must resolve nothing");
+    // --- vertex resolver, at both ends of the measured bracket ---
+    immutable int inX  = cast(int)(p0.x + 7.0f), inY  = cast(int)p0.y;
+    immutable int outX = cast(int)(p0.x + 9.0f), outY = cast(int)p0.y;
+    // The probe distances are ASSERTED, not assumed: integer truncation of a
+    // projected float could otherwise move a probe across the very bracket end
+    // it is meant to sit on.
+    assert(hypot(inX - p0.x, inY - p0.y) <= 7.07f,
+        "setup: the near probe must sit at or inside the brackets' LOWER ends (7.07px / 7.00px)");
+    assert(hypot(outX - p0.x, outY - p0.y) >= 8.85f,
+        "setup: the far probe must sit at or beyond the brackets' UPPER ends (7.78px / 8.85px)");
 
-    // --- edge resolver, same gate, no per-type threshold ---
-    // 13px PERPENDICULAR from edge 0-1's midpoint: 40px from either endpoint,
-    // and the next parallel grid edge is 80px away, so edge 0-1 is unambiguous.
+    assert(t.findSourceVertex(inX, inY, vp) == 0,
+        "a cursor 7px from a vertex is at the measured bracket's lower end and must resolve it");
+    assert(t.findSourceVertex(outX, outY, vp) < 0,
+        "a cursor 9px from every vertex is past the measured bracket and must resolve nothing "
+      ~ "(the pre-fix 15px reach grabbed it — this is the annulus's near rim)");
+
+    // --- edge resolver, same reach, no per-type threshold ---
+    // PERPENDICULAR from edge 0-1's midpoint: 40px from either endpoint, and
+    // the next parallel grid edge is 80px away, so edge 0-1 is unambiguous.
     ImVec2 mid = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
     immutable uint e01 = m.edgeIndex(0, 1);
     assert(e01 != uint.max, "setup: grid edge 0-1 must exist");
-    assert(t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 13.0f), vp) == cast(int)e01,
-        "a cursor 13px from an edge segment is INSIDE the same 15px gate and must resolve it "
-      ~ "(the pre-0496 12px threshold rejected this) — the gate is type-uniform");
-    assert(t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 17.0f), vp) < 0,
-        "a cursor 17px from every edge segment is outside the gate");
+    assert(t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 7.0f), vp) == cast(int)e01,
+        "a cursor 7px from an edge segment is inside the same measured reach and must resolve it "
+      ~ "— the press-pick reach is type-uniform");
+    assert(t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 9.0f), vp) < 0,
+        "a cursor 9px from every edge segment is past the measured bracket "
+      ~ "(the pre-fix 15px reach grabbed it)");
 
-    // --- the gate is one value, not a per-type family: the SAME distance
-    // decides for a vertex and for an edge. 13px in, 17px out, both types.
+    // --- the reach is one value, not a per-type family: the SAME distance
+    // decides for a vertex and for an edge. 7px in, 9px out, both types.
     assert((t.findSourceVertex(inX, inY, vp) >= 0)
-        == (t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 13.0f), vp) >= 0),
-        "vertex and edge candidates must share ONE threshold");
+        == (t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 7.0f), vp) >= 0),
+        "vertex and edge candidates must share ONE press-pick reach");
+    assert((t.findSourceVertex(outX, outY, vp) >= 0)
+        == (t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 9.0f), vp) >= 0),
+        "and they must fall out of it together too");
 
-    // The value itself, asserted LAST on purpose: the behaviour above is the
-    // claim, and it must be what breaks if the gate moves. A value check
+    // The values themselves, asserted LAST on purpose: the behaviour above is
+    // the claim, and it must be what breaks if the reach moves. A value check
     // placed first would mask the behavioural probes it is meant to explain.
-    assert(topoPenSnapPx(vp) == 15.0f, "the pen's acceptance gate is 15px at scale 1");
-    assert(topoPenGatherPx(vp) == 30.0f, "the gather range is twice the gate");
+    assert(topoPenPressPickPx(vp) == 8.0f,
+        "the press pick carries the one limit the reference printed, 8px at scale 1");
+    assert(topoPenSnapAcceptPx(vp) == 24.0f,
+        "the drag-snap acceptance is a separate, wider radius — 24px at scale 1");
+    assert(topoPenSnapGatherPx(vp) == 40.0f,
+        "and its gather is 40px, a ratio of 5/3 rather than the refuted 2x");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0496 — THE ANNULUS. The single case that was divergent on main.
+//
+// Between the press-pick reach (~8px) and the 15px this tool shipped lies a
+// ~7px annulus around every vertex and every edge in which our press took the
+// element and the reference took the FACE underneath. Two of the reference's
+// own cells sit squarely in it: a vertex at 14.0px and an edge at 9.0px, both
+// of which produced no candidate of that type at all and resolved POLY.
+//
+// This test is that pair, at this module's own resolvers. Every probe here
+// answered the OTHER way before this change — that is the point of the file.
+//
+// `pickPrimaryFace` needs `gpu_` and answers -1 under a bare `dub test`, so
+// the "and the FACE wins instead" half cannot be asserted here; it is asserted
+// through the HTTP path in tests/test_topopen_move_disambiguation.d, which has
+// a real upload. What IS asserted here is the load-bearing half: the vertex
+// and the edge are NOT candidates at those distances.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import std.math : hypot;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+
+    // --- the reference's own `P_vert14` cell: a vertex 14px away, nothing
+    // else nearby. We grabbed it; the reference resolved the polygon.
+    // The probe runs DIAGONALLY into the quad interior — 10px in each axis, so
+    // 14.1px from v0 and 10px from each of the two grid edges leaving it. Both
+    // of those are past the measured reach too, which is what makes this a
+    // pure vertex-annulus probe rather than an edge grab in disguise.
+    immutable int ax = cast(int)(p0.x + 10.0f), ay = cast(int)(p0.y + 10.0f);
+    immutable float dV14 = hypot(ax - p0.x, ay - p0.y);
+    assert(dV14 > 8.85f && dV14 < 20.0f,
+        "setup: the probe must sit in the annulus — past the measured reach, well short of the "
+      ~ "next vertex 80px along");
+    assert(t.findRingSeedEdge(ax, ay, vp) < 0,
+        "setup: no grid edge may be within the measured reach of the probe either, or this "
+      ~ "would be an edge case wearing a vertex's clothes");
+    assert(t.findSourceVertex(ax, ay, vp) < 0,
+        "a press 14px from a vertex must NOT grab it: that is outside the measured press-pick "
+      ~ "reach, and the reference resolved the polygon there. Before this fix our 15px gate "
+      ~ "grabbed the vertex — a straight divergence, advertised by the hover highlight because "
+      ~ "it shares this resolver");
+
+    // --- the reference's own `P_edge9` cell: an edge 9px away.
+    ImVec2 mid = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+    assert(t.findRingSeedEdge(cast(int)mid.x, cast(int)(mid.y + 9.0f), vp) < 0,
+        "a press 9px from an edge must NOT grab it either — same annulus, same divergence");
+
+    // --- and the hover highlight, which is the same answer by construction:
+    // whatever `resolveGrabTarget` says is what the indicator paints, so the
+    // annulus has to be closed on BOTH at once or the highlight lies.
+    int idx = -12345;
+    assert(t.resolveGrabTarget(ax, ay, vp, idx) == MoveElem.None,
+        "the grab target 14px from a vertex must be None (no face term without gpu_) — the "
+      ~ "highlight and the press must never name different elements");
+    assert(idx < 0, "and it must publish no index");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0496 — Vertex > Edge > Face is MEASURED-POSITIVE. The OPPOSITE test.
+//
+// An earlier reading of the reference held that it takes ONE closest candidate
+// across all types and applies the radius afterwards, which would make a
+// vertex at 14px lose to an edge at 2px. Task 0496's `## Открыто` item №1 asked
+// for a test pinning exactly that. The live run refuted it twice, on two
+// independent cells: a vertex at 5.83px beat an edge at 3.00px AND a polygon at
+// 0.00px, and a vertex at 7.07px beat an edge at 7.00px. Porting "one closest
+// across types" would have been a regression, so this is the test that item
+// asked for, INVERTED — and it is the guard against someone re-reading the old
+// note and "fixing" the short circuit.
+//
+// Rig: `makeGridPlane(2)` down -Y, 80px per cell, so grid edge 0-1 is a
+// horizontal screen segment from v0. The cursor sits 3px off that segment and
+// 6.7px from v0 — the edge is strictly NEARER, both are inside the press-pick
+// reach, and the VERTEX must win.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import std.math : hypot;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    assert(p0.y == p1.y && p1.x > p0.x,
+        "setup: grid edge 0-1 must be a horizontal screen segment running +x from v0");
+
+    immutable int cx = cast(int)(p0.x + 6.0f), cy = cast(int)(p0.y + 3.0f);
+
+    // The premise, measured on the fixture rather than assumed: the edge is
+    // NEARER than the vertex, and both are inside the press-pick reach.
+    immutable float dVert = hypot(cx - p0.x, cy - p0.y);
+    assert(dVert > 3.0f && dVert <= 7.07f,
+        "setup: the vertex must be FARTHER than the edge yet still inside the measured reach");
+    immutable uint e01 = m.edgeIndex(0, 1);
+    assert(e01 != uint.max, "setup: grid edge 0-1 must exist");
+    assert(t.findRingSeedEdge(cx, cy, vp) == cast(int)e01,
+        "setup: the nearest edge at this pixel must be 0-1, ~3px away");
+    assert(t.findSourceVertex(cx, cy, vp) == 0,
+        "setup: v0 must still be a candidate at this pixel");
+
+    int idx = -12345;
+    assert(t.resolveGrabTarget(cx, cy, vp, idx) == MoveElem.Vertex,
+        "a vertex inside the press-pick reach must beat a strictly NEARER edge — 'one closest "
+      ~ "candidate across types' was measured-negative and must not be ported");
+    assert(idx == 0, "and the resolved element must be v0 itself");
 }
 
 // ---------------------------------------------------------------------------
@@ -14413,6 +14576,106 @@ unittest {
     driveSplit(on, 0, 4);
     assert(mOn.faces.length == fBefore2 + 1,
         "with innerSnap on, the same corner-to-center drag must split the shared quad");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0496 — the DRAG-SNAP acceptance radius, measured at 24px, behaviourally.
+//
+// The press pick and the drag snap are two queries with two reaches, and this
+// is the pin of the SECOND one. It goes through the real Split dispatch,
+// because `resolveSnapTargetVert` is vibe3d's only "which existing element
+// does this drag land on" query and Split's target vertex C is its only
+// caller.
+//
+// Rig: `makeGridPlane(2)` down -Y, 80px per cell. Quad [1,2,5,4] has BORDER
+// vertices 1 and 5 on its diagonal — both border, so `innerSnap` is not in
+// play here and this case isolates the RADIUS. Vertex 5 projects with 80px of
+// clear space to every other vertex, so a release offset from it can be read
+// as a distance to v5 and nothing else.
+//
+//   release 20px from v5 -> INSIDE the measured 24px acceptance -> the drag
+//                           lands on v5 and the chord splits the quad.
+//   release 26px from v5 -> outside it -> clean no-op.
+//
+// FAILS ON THE SHIPPED BEHAVIOUR: this resolver used to share the press pick's
+// constant (15px, and ~8px after this change), under which the 20px release
+// resolved nothing and the split never happened.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+    import constraint : topoPenSnapAcceptPx;
+    import std.math : hypot;
+
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    // Split MUTATES on success, so each offset gets its own tool + mesh.
+    static bool splitLands(float offsetPx, Mesh* m, out size_t facesBefore) {
+        auto t       = new TopologyPenTool();
+        auto view    = new View(0, 0, 100, 100);
+        auto history = new CommandHistory();
+        *m = makeGridPlane(2);
+        t.meshSrc_          = () => m;
+        t.history_          = history;
+        t.innerSnap_        = false;         // the measured default, untouched
+        t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_split", "Topology Split",
+                                                       MeshEditScope.Geometry);
+        auto vp = makeGridPlaneTestViewport();
+        auto subj = new SubjectPacket();
+        subj.mesh     = m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(subj);
+
+        ImVec2 pa, pb;
+        assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: v1 must project");
+        assert(TopologyPenTool.projectPt(m.vertices[5], vp, pb), "setup: v5 must project");
+        assert(!TopologyPenTool.isVertexInterior(m, 1) && !TopologyPenTool.isVertexInterior(m, 5),
+            "setup: BOTH ends of this diagonal must be border vertices, so innerSnap is not the "
+          ~ "thing under test here");
+
+        facesBefore = m.faces.length;
+
+        SDL_MouseButtonEvent down;
+        down.button = SDL_BUTTON_MIDDLE;
+        down.x = cast(int)pa.x; down.y = cast(int)pa.y;
+        assert(t.onMouseButtonDown(down, vts), "a plain-MMB press on a vertex must consume");
+        assert(t.splitArmed_ && t.splitSourceVert_ == 1, "and it must arm Split on v1");
+
+        // Offset along +x from v5: the grid's next vertex in that direction is
+        // off the mesh entirely, and every other vertex is >= 80px away.
+        SDL_MouseButtonEvent up;
+        up.button = SDL_BUTTON_MIDDLE;
+        up.x = cast(int)(pb.x + offsetPx); up.y = cast(int)pb.y;
+        assert(hypot(up.x - pb.x, up.y - pb.y) > offsetPx - 1.0f,
+            "setup: the release must actually sit at the offset the case names");
+        assert(t.onMouseButtonUp(up, vts), "a plain-MMB release must consume");
+        return m.faces.length == facesBefore + 1;
+    }
+
+    Mesh mIn;
+    size_t fIn;
+    assert(splitLands(20.0f, &mIn, fIn),
+        "a release 20px from the target vertex is INSIDE the measured 24px drag-snap acceptance "
+      ~ "and must land on it, splitting the quad — before this fix the snap target shared the "
+      ~ "press pick's constant and this release resolved nothing");
+
+    Mesh mOut;
+    size_t fOut;
+    assert(!splitLands(26.0f, &mOut, fOut),
+        "a release 26px away is outside the acceptance and must be a clean no-op");
+    assert(mOut.faces.length == fOut && mOut.edges.length == 12,
+        "and it must leave the grid untouched, not merely un-split");
+
+    // The value last, as a label on the behaviour above rather than a
+    // substitute for it. Note it is deliberately NOT the press-pick reach.
+    auto vp = makeGridPlaneTestViewport();
+    assert(topoPenSnapAcceptPx(vp) == 24.0f,
+        "the drag-snap acceptance is 24px at scale 1, its own measured number");
 }
 
 version (unittest) private float projectedX(Mesh* m, uint vi, const ref Viewport vp) {

@@ -344,104 +344,185 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 }
 
 // ---------------------------------------------------------------------------
-// The Topology Pen's snap radius (reference parity, task 0496)
+// The Topology Pen's TWO proximity radii (reference parity, task 0496)
 //
-// MEASURED, and the measurement changed the KIND of the thing, not just its
-// value: the reference does not hold a snap radius at all, it DERIVES two of
-// them per view from one nominal pixel count and the view's own pixel scale.
+// The pen runs TWO closest-element queries, not one, and they have DIFFERENT
+// reaches. An earlier static reading FUSED them into a single 15px threshold;
+// the live run took that reading apart, and neither query is 15px.
 //
-//   acceptance = 15 * <view pixel scale>   — a resolved candidate farther
-//                                            than this is discarded
-//   gather     =  2 * acceptance           — how far the candidate
-//                                            enumeration looks in the first
-//                                            place (i.e. 30 * scale)
+//   PRESS PICK — "what does this press grab", and (because they share
+//     `resolveGrabTarget`) "what does the hover highlight name". One query,
+//     every element type enumerated at once. The reference printed ONE shared
+//     limit of 8.0 on every press it was watched on.
 //
-// The old `kTopoPenSnapPx = 12.0f` was therefore wrong twice over — wrong
-// magnitude AND wrong shape (a display-independent constant). Both radii now
-// come from ONE place, `topoPenSnapPx` / `topoPenGatherPx` below, so a future
-// HiDPI plumbing job is a one-line change in `viewPixelScale` instead of a
-// hunt for magic numbers.
+//     The reach it actually DELIVERED is a BRACKET, not a value, and this
+//     comment says so rather than pretending to a precision nobody has:
 //
-// TYPE-UNIFORM, deliberately: the reference's vertex / edge / polygon
-// candidates converge on ONE distance compare with no type discrimination, so
-// there are no per-type thresholds here and none may be introduced. Every
-// Topology Pen proximity test in the codebase reads the SAME function.
+//         vertex candidate : enumerated at 7.07px, NOT enumerated at 7.78px
+//                            => the cut lies in (7.07, 7.78]
+//         edge   candidate : enumerated at 7.00px, NOT enumerated at 8.85px
+//                            => the cut lies in (7.00, 8.85]
+//
+//     The rig's own geometry and the reference's computed distance were seen
+//     to differ by up to ~1.2px, which is wider than the gap between the two
+//     brackets — so both are consistent with the ONE printed limit of 8.0, and
+//     8.0 is the value taken here. Tests pin the bracket's ENDS (at/below
+//     7.0px must resolve, at/above 8.9px must not); no test pins 8.0 as a
+//     behavioural edge, because the measurement does not support one.
+//
+//   DRAG SNAP — "which existing element does a drag LAND on / weld to". A
+//     different query with its own radii: acceptance 24.0px, candidate gather
+//     40.0px. Neither number gates a press.
+//
+// TWO constants, therefore, wired to two consumers — see `topoPenPressPickPx`
+// and `topoPenSnapAcceptPx` below. One constant standing in for both was wrong
+// in BOTH directions at once: too wide for a press (a vertex 14px away, or an
+// edge 9px away, was ours to grab and the reference's to skip in favour of the
+// polygon — a ~7px annulus of disagreement around every vertex and edge) and
+// too narrow for the drag snap that decides whether a drag welds.
+//
+// PIXEL CONSTANTS, not scale-derived — and this is the second correction the
+// live run forced. A natural experiment settled it: a restart moved the
+// reference's own world-units-per-pixel by -4.7%, and the acceptance radius
+// stayed at EXACTLY 24.000 where a scale-derived law required 22.87. A
+// `15 x scale` product and its exact double do exist in the same struct slots,
+// but they are WORLD-space quantities; the gate is compared in pixels.
+// `viewPixelScale` below therefore survives as OUR seam for a future
+// device-pixel ratio, NOT as a port of anything the reference computes.
+//
+// TYPE-UNIFORM WITHIN each query, deliberately: the acceptance compare was
+// measured at 24.0 under both a vertex latch and an edge latch (14 samples,
+// one number), and the press pick's one printed limit is shared by vertex and
+// edge alike. So each query has exactly ONE threshold function and no per-type
+// threshold may be introduced.
 // ---------------------------------------------------------------------------
 
-/// Nominal acceptance radius in "reference pixels" — multiplied by the view's
-/// pixel scale to get the real threshold. Not to be used raw: call
-/// `topoPenSnapPx(vp)`.
-enum float kTopoPenSnapNominalPx = 15.0f;
+/// Nominal PRESS-PICK reach in "reference pixels" — the limit the reference
+/// printed on every press. Not to be used raw: call `topoPenPressPickPx(vp)`.
+///
+/// BRACKETED, not exact: the delivered reach was measured to lie in
+/// (7.07, 7.78] for a vertex candidate and (7.00, 8.85] for an edge candidate,
+/// both consistent with this one printed limit within the ~1.2px between the
+/// rig's geometry and the reference's own computed distance. Move this number
+/// only with a measurement that narrows those brackets.
+enum float kTopoPenPressPickNominalPx = 8.0f;
 
-/// The gather range is exactly twice the acceptance threshold (measured as a
-/// literal `2.0` multiply on the acceptance radius, not as a second nominal).
-enum float kTopoPenGatherFactor = 2.0f;
+/// Nominal DRAG-SNAP acceptance radius — the distance compare that decides
+/// whether a drag lands on (welds to) an existing element. Measured as a pixel
+/// constant, invariant under a 4.7% change of the reference's own pixel scale.
+/// Not to be used raw: call `topoPenSnapAcceptPx(vp)`.
+enum float kTopoPenSnapAcceptNominalPx = 24.0f;
+
+/// Nominal DRAG-SNAP gather range — how far the candidate enumeration looks
+/// before the acceptance compare runs. Measured alongside the acceptance in
+/// the same struct: 40.0 against 24.0, i.e. a ratio of 5/3.
+///
+/// It is a SECOND MEASURED NOMINAL, not a factor applied to the acceptance: an
+/// earlier `kTopoPenGatherFactor = 2.0f` was refuted by that pair (the 2.0
+/// multiply is real, but it multiplies the world-space quantity described in
+/// the block comment above, never the pixel radius).
+enum float kTopoPenSnapGatherNominalPx = 40.0f;
 
 /// Sentinel for the pen resolvers' `thresholdPx` parameter meaning "derive the
-/// threshold from the view" (`topoPenSnapPx`). Negative, so it can never be
-/// confused with a real pixel distance, and distinct from `float.infinity`,
+/// threshold from the view" (`topoPenPressPickPx`). Negative, so it can never
+/// be confused with a real pixel distance, and distinct from `float.infinity`,
 /// which those resolvers already use to mean "nearest at ANY distance".
 enum float kTopoPenSnapAuto = -1.0f;
 
-/// The view's pixel scale — the dimensionless factor between the nominal
-/// pixel counts above and the pixel space this codebase actually picks in.
+/// The view's pixel scale — the dimensionless factor between the nominal pixel
+/// counts above and the pixel space this codebase actually picks in.
 ///
-/// vibe3d picks in WINDOW-space points: SDL mouse coordinates, `Viewport.x/y/
+/// NOT a port. The reference's radii are pixel CONSTANTS (measured: a -4.7%
+/// change in its own world-units-per-pixel left the acceptance at exactly
+/// 24.000, where a scale-derived law required 22.87), so multiplying by 1.0
+/// here reproduces them exactly. The seam exists for OUR benefit, and only for
+/// the one thing the measurement leaves open:
+///
+/// vibe3d picks in WINDOW-space points — SDL mouse coordinates, `Viewport.x/y/
 /// width/height` and `projectToWindowFull`'s output are all the same space,
 /// and nothing on `Viewport` carries a device-pixel ratio. `app.d` does know
 /// one (`SDL_GL_GetDrawableSize` vs `SDL_GetWindowSize`, used for `glViewport`
-/// and the thick-line program) but it is never plumbed into the pick path, so
-/// the honest value here is 1.0 — a HiDPI window picks with the same numbers
-/// as a 1x one today.
+/// and the thick-line program) but it never reaches the pick path, so the
+/// honest value here is 1.0 — a HiDPI window picks with the same numbers as a
+/// 1x one today, and whether the reference's constants are in device pixels or
+/// in points is UNMEASURED.
 ///
-/// TODO (task 0496 follow-up): when a per-view device-pixel ratio reaches the
-/// pick path, return it HERE and every Topology Pen radius follows. Deliberately
-/// takes the viewport it scales, so that change needs no signature churn.
+/// TODO (task 0496 follow-up): if a per-view device-pixel ratio is ever wanted
+/// on the pick path, return it HERE and every Topology Pen radius follows.
+/// Deliberately takes the viewport it scales, so that needs no signature churn.
 float viewPixelScale(const ref Viewport vp) pure nothrow @nogc @safe {
     return 1.0f;
 }
 
-/// The Topology Pen's ACCEPTANCE radius for this view, in the pixel space the
-/// pick math uses. A candidate resolved farther than this is not accepted.
-float topoPenSnapPx(const ref Viewport vp) pure nothrow @nogc @safe {
-    return kTopoPenSnapNominalPx * viewPixelScale(vp);
+/// The Topology Pen's PRESS-PICK reach for this view, in the pixel space the
+/// pick math uses: how far a press (and therefore the hover highlight) reaches
+/// for a vertex or an edge before falling through to the face under the cursor.
+///
+/// Bracketed, not exact — see `kTopoPenPressPickNominalPx`.
+float topoPenPressPickPx(const ref Viewport vp) pure nothrow @nogc @safe {
+    return kTopoPenPressPickNominalPx * viewPixelScale(vp);
 }
 
-/// The Topology Pen's candidate GATHER range for this view — twice the
-/// acceptance radius.
+/// The Topology Pen's DRAG-SNAP acceptance radius for this view: how close a
+/// drag must come to an existing element for the drag to LAND on it. Three
+/// times the press-pick reach, and measured separately from it — a press and a
+/// drag-landing at the same pixel legitimately answer differently.
+float topoPenSnapAcceptPx(const ref Viewport vp) pure nothrow @nogc @safe {
+    return kTopoPenSnapAcceptNominalPx * viewPixelScale(vp);
+}
+
+/// The Topology Pen's drag-snap candidate GATHER range for this view.
 ///
 /// It bounds nothing today, and that is a property of OUR shape rather than a
-/// half-port: both pen resolvers (`findSourceVertex` / `findRingSeedEdge`)
-/// enumerate the whole primary mesh and keep the single closest candidate, so
-/// "closest within 2R" and "closest within infinity" accept and reject exactly
-/// the same set once the acceptance test at R runs. It is defined and pinned
-/// here because the law has two radii and the snap-target consumers that DO
-/// need the wider one (the pen's Fill radius work, and the drag-time
-/// snap/weld target) must read it from here rather than re-deriving it.
-float topoPenGatherPx(const ref Viewport vp) pure nothrow @nogc @safe {
-    return kTopoPenGatherFactor * topoPenSnapPx(vp);
+/// half-port: the snap-target resolver enumerates the whole primary mesh and
+/// keeps the single closest candidate, so "closest within the gather" and
+/// "closest within infinity" accept and reject exactly the same set once the
+/// acceptance test runs. It is defined and pinned here because the law has two
+/// radii on this query and any consumer that DOES need the wider one must read
+/// it from here rather than re-deriving it from the acceptance.
+float topoPenSnapGatherPx(const ref Viewport vp) pure nothrow @nogc @safe {
+    return kTopoPenSnapGatherNominalPx * viewPixelScale(vp);
 }
 
-unittest { // the two radii ARE the measured law, and the gather is 2x the gate
+unittest { // the THREE measured numbers, and the two refutations behind them
     auto vp = makeHoverTestViewport();
     assert(viewPixelScale(vp) == 1.0f,
-        "no per-view device-pixel ratio reaches the pick path yet — see the TODO");
-    assert(topoPenSnapPx(vp) == 15.0f,
-        "the acceptance gate is 15 nominal px times the view's pixel scale");
-    assert(topoPenGatherPx(vp) == 30.0f,
-        "the gather range is exactly 2x the acceptance gate");
-    assert(topoPenGatherPx(vp) == kTopoPenGatherFactor * topoPenSnapPx(vp),
-        "the gather must stay DERIVED from the gate, never a second literal");
-    // Type-uniformity is structural, not a value check: there is exactly one
-    // threshold function, so a per-type radius cannot be expressed without
-    // adding one. This assertion documents the invariant the reference proved
-    // (all three candidate types share one compare) so a future per-type
+        "the measured radii are pixel constants; the scale seam is ours, and it is 1.0 today");
+
+    assert(topoPenPressPickPx(vp) == 8.0f,
+        "the press pick reaches the one limit the reference printed on every press");
+    assert(topoPenSnapAcceptPx(vp) == 24.0f,
+        "the drag-snap acceptance is its own, separately measured radius");
+    assert(topoPenSnapGatherPx(vp) == 40.0f,
+        "the drag-snap gather is a second measured nominal, not a factor on the acceptance");
+
+    // The two queries are DIFFERENT reaches. This is the whole correction: a
+    // single constant cannot serve both, and the 15px that used to sit here
+    // was neither of them.
+    assert(topoPenPressPickPx(vp) < topoPenSnapAcceptPx(vp),
+        "press pick and drag snap are two queries with two reaches, not one shared gate");
+    assert(topoPenPressPickPx(vp) != 15.0f && topoPenSnapAcceptPx(vp) != 15.0f,
+        "15px was the fusion of the two queries and is neither of them");
+
+    // gather : acceptance is 5/3. A `2.0` factor here was refuted outright.
+    assert(topoPenSnapGatherPx(vp) / topoPenSnapAcceptPx(vp) == 5.0f / 3.0f,
+        "the gather:acceptance ratio is 5/3, not the 2.0 the static reading assumed");
+    assert(topoPenSnapGatherPx(vp) != 2.0f * topoPenSnapAcceptPx(vp),
+        "the refuted 2.0 factor must not creep back in");
+
+    // Type-uniformity WITHIN a query is structural, not a value check: each
+    // query has exactly one threshold function, so a per-type radius cannot be
+    // expressed without adding one. These assertions document the invariant the
+    // measurement proved (one acceptance under both a vertex and an edge latch;
+    // one printed press limit shared by vertex and edge) so a future per-type
     // "improvement" has to delete a stated law first.
-    assert(topoPenSnapPx(vp) == topoPenSnapPx(vp),
-        "one threshold for vertex, edge and polygon candidates alike");
+    assert(topoPenPressPickPx(vp) == topoPenPressPickPx(vp),
+        "one press-pick reach for vertex, edge and polygon candidates alike");
+    assert(topoPenSnapAcceptPx(vp) == topoPenSnapAcceptPx(vp),
+        "one drag-snap acceptance for every candidate type");
 }
 
-/// PINNED shape, PLACEHOLDER precedence: pure screen-space resolution of
+/// PINNED shape AND pinned precedence: pure screen-space resolution of
 /// the hover's place-target from an already-published `ConstrainHitPacket`
 /// (the CONS stage's background-surface raycast result — see
 /// `source/toolpipe/stages/constrain.d`'s `raycastBackground`). No mesh
@@ -452,23 +533,31 @@ unittest { // the two radii ARE the measured law, and the gather is 2x the gate
 /// `nearestFaceVertex`/`nearestFaceEdge` above, NOT in the CONS stage or
 /// the tool).
 ///
-/// The pixel radius `thPx` is MEASURED (task 0496 — callers pass
-/// `topoPenSnapPx(vp)`), and it is type-uniform by construction: the same
-/// `thPx` gates the vertex and the edge candidate, matching the reference's
-/// single distance compare. The PRECEDENCE around it (Vertex > Edge > Face,
-/// short-circuited) is still a PLACEHOLDER — the reference picks ONE closest
-/// candidate across types and only then applies the radius, so a vertex 14px
-/// away must not beat an edge 2px away. That half is decoded but NOT ported
-/// (task 0496 `## Открыто`): it needs its own owner call, because it changes
-/// which element every pen press resolves.
+/// This is the PRESS-PICK query, so `thPx` is the press-pick reach (task 0496
+/// — callers pass `topoPenPressPickPx(vp)`, NOT the wider drag-snap
+/// acceptance), and it is type-uniform by construction: the same `thPx` gates
+/// the vertex and the edge candidate, matching the reference's single printed
+/// press limit.
+///
+/// The PRECEDENCE around it (Vertex > Edge > Face, short-circuited) is
+/// MEASURED-POSITIVE, not a placeholder. The rival law — "take the one closest
+/// candidate across all types, apply the radius afterwards" — was refuted
+/// twice on the reference: a vertex at 5.83px beat an edge at 3.00px and a
+/// polygon at 0.00px, and a vertex at 7.07px beat an edge at 7.00px. Porting
+/// "one closest across types" would be a regression, and a test pins the
+/// vertex-beats-nearer-edge case so it cannot be "fixed" back.
 ///
 /// MEASURING POINT, recorded not fixed: this resolver measures from the
 /// projected surface HIT (`h.point`), while the pen's own primary-mesh
 /// resolvers measure from the RAW CURSOR pixel — two different origins behind
-/// one shared radius. The reference measures from a third thing again (the
-/// press position plus the drag offset, re-projected). Both of our origins are
-/// pinned by tests so the discrepancy cannot drift silently; unifying them is
-/// task 0496 `## Открыто`.
+/// one shared radius. On the reference's DRAG-SNAP query the compare distance
+/// was measured to track the re-projected drag position (press + drag offset)
+/// to better than 1.3px over a 32px sweep; that is a positive measurement of
+/// what it uses, but it does NOT isolate that origin from the cursor, because
+/// on the fronto-parallel rig the two track each other. So no divergence is
+/// claimed here and none may be coded on that evidence. Both of our origins are
+/// pinned by tests so they cannot drift silently; unifying them is task 0496
+/// `## Открыто`.
 ///
 /// `h.hit == false` (no surface hit at all) resolves to
 /// `HoverTargetKind.None`; a hit that is behind the camera when projected
@@ -1005,7 +1094,7 @@ version (unittest) private Viewport makeHoverTestViewport() {
 unittest { // resolveHoverTarget — no hit -> None (default packet)
     auto vp = makeHoverTestViewport();
     ConstrainHitPacket h;   // hit == false by default
-    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
+    auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
     assert(t.kind == HoverTargetKind.None, "no hit must resolve to None");
     assert(t.vert == -1 && t.edge == -1);
 }
@@ -1042,9 +1131,41 @@ unittest { // resolveHoverTarget — edge wins when the vertex candidate is far
     h.nearestEdgeA = Vec3(0,  0.1f, 0);       // projects to (400, 392)
     h.nearestEdgeB = Vec3(0, -0.1f, 0);       // projects to (400, 408)
 
-    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
+    auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
     assert(t.kind == HoverTargetKind.Edge, "vertex far / edge through the hit pixel must resolve to Edge");
     assert(t.edge == 5);
+}
+
+unittest { // resolveHoverTarget — a FARTHER vertex still beats a NEARER edge.
+           //
+           // Task 0496, the deliberately-opposite test. The rival law once
+           // written into this file's docstring — "take the one closest
+           // candidate across all types, apply the radius afterwards" — would
+           // resolve the EDGE here. It was refuted on the reference twice, on
+           // two independent cells (a vertex at 5.83px beat an edge at 3.00px
+           // and a polygon at 0.00px; a vertex at 7.07px beat an edge at
+           // 7.00px). This case is that shape, at this viewport's 80px per
+           // world unit: the vertex sits 5.6px from the hit pixel and the edge
+           // segment passes straight THROUGH it at 0px, with both inside the
+           // press-pick reach — and the vertex must win.
+           //
+           // Red under "one closest across types"; green under the measured
+           // vertex-first short circuit.
+    auto vp = makeHoverTestViewport();
+    ConstrainHitPacket h;
+    h.hit            = true;
+    h.point          = Vec3(0, 0, 0);          // projects to (400, 400)
+    h.nearestVert    = 2;
+    h.nearestVertPos = Vec3(0.07f, 0, 0);      // 5.6px away — farther than the edge
+    h.nearestEdge    = 9;
+    h.nearestEdgeA   = Vec3(0,  0.1f, 0);      // the segment straddles (400,400):
+    h.nearestEdgeB   = Vec3(0, -0.1f, 0);      // distance 0px, i.e. strictly nearer
+
+    auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
+    assert(t.kind == HoverTargetKind.Vertex,
+        "a vertex INSIDE the press-pick reach must win over a strictly nearer edge — the "
+      ~ "'one closest candidate across types' law was measured-negative and must not be ported");
+    assert(t.vert == 2, "and it must be that vertex");
 }
 
 unittest { // resolveHoverTarget — neither candidate in range -> Face
@@ -1059,7 +1180,7 @@ unittest { // resolveHoverTarget — neither candidate in range -> Face
     h.nearestEdgeA = Vec3(2.0f,  0.1f, 0);
     h.nearestEdgeB = Vec3(2.0f, -0.1f, 0);
 
-    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
+    auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
     assert(t.kind == HoverTargetKind.Face, "no candidate within the default radius must resolve to Face");
     assert(t.vert == -1 && t.edge == -1);
 }
@@ -1122,7 +1243,7 @@ unittest { // resolveHoverTarget — stale candidate reset to -1 by the
     h.nearestEdgeA   = Vec3(0, 0, 0);
     h.nearestEdgeB   = Vec3(0, 0, 0);
 
-    auto t = resolveHoverTarget(h, vp, topoPenSnapPx(vp));
+    auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
     assert(t.kind == HoverTargetKind.Face,
         "a reset (-1) candidate must never resolve to a phantom origin vertex/edge");
     assert(t.vert == -1 && t.edge == -1);
