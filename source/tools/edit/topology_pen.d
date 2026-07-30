@@ -14418,6 +14418,51 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// Task 0502 — the predicate above on a NON-MANIFOLD edge.
+//
+// The grid fixture cannot see this: there, "count off the faces" and "walk the
+// half-edge rings" agree on every edge, so a green grid test says nothing about
+// which one is under the predicate. Three quads sharing edge 0-1 separate them
+// — the rings yield ONE face (they have no representation for the fan), the
+// face scan yields three.
+//
+// The consequence was not academic. `isEdgeInterior` IS the border-only
+// snap-candidate filter (`findRingSeedEdge`/`findSourceVertex` with
+// `innerSnap` off), so a non-manifold edge — the most topologically suspect
+// edge in the mesh — read as a plain border edge and was offered as a snap
+// target, along with both its endpoints.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(0,-1,0), Vec3(1,-1,0)])
+        m.addVertex(p);
+    m.addFace([0u, 1u, 3u, 2u]);
+    m.addFace([0u, 1u, 5u, 4u]);
+    m.addFace([0u, 1u, 7u, 6u]);
+    m.buildLoops();
+    Mesh* mp = &m;
+
+    immutable uint fan = m.edgeIndex(0, 1);
+    assert(m.edgePolygonCounts()[fan] == 3, "setup: three quads really do border it");
+    assert(TopologyPenTool.isEdgeInterior(mp, fan),
+        "FAILS ON THE OLD BEHAVIOUR: the ring walk returned ONE face here, so a "
+      ~ "non-manifold edge classified as a BORDER edge and entered the "
+      ~ "border-only snap-candidate set");
+    assert(TopologyPenTool.isVertexInterior(mp, 0) == false,
+        "vertex 0 still touches genuine border edges, so it is not interior — the "
+      ~ "fix must not flip this by over-counting");
+
+    // The array overload the two scans hoist is the same predicate, not a
+    // second one that could drift.
+    auto counts = m.edgePolygonCounts();
+    foreach (uint ei; 0 .. cast(uint)m.edges.length)
+        assert(TopologyPenTool.isEdgeInterior(counts, ei)
+            == TopologyPenTool.isEdgeInterior(mp, ei),
+            "the hoisted overload and the one-off overload must agree edge for edge");
+}
+
+// ---------------------------------------------------------------------------
 // Task 0496, claim (2) + claim (3b): the Split snap target through the REAL
 // dispatch path, and the press-time pick left alone.
 //
