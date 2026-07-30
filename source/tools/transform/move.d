@@ -227,6 +227,16 @@ class MoveTool : TransformTool {
 
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
+    // LAW B state. The plane conversion is a linearisation about ONE point, so
+    // the point (`planeAnchor`) and the pixel the offset is measured from
+    // (`dragStartM*`) are frozen at the press and never touched again for the
+    // gesture. `planeApplied` is the PRE-SNAP world total already handed to the
+    // wrapper, so each motion event emits only the part of the cumulative
+    // conversion it has not delivered yet. All three are (re)armed at both
+    // drag-start sites: button-down on a handle, and `beginScreenPlaneDragAt`.
+    int      dragStartMX, dragStartMY;
+    Vec3     planeAnchor;
+    Vec3     planeApplied;
     // Set true at the two Ctrl-lock entry sites (button-down Ctrl path +
     // beginScreenPlaneDragAt Ctrl path); cleared at BOTH drag-end
     // (onMouseButtonUp) AND fresh button-DOWN reset so a following non-Ctrl
@@ -629,6 +639,7 @@ public:
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
+            armPlaneDrag(e.x, e.y);
             // Freeze the input-projection basis for the gesture (= the
             // current idle basis = the frozen rendered orientation today).
             currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
@@ -707,6 +718,9 @@ public:
             notifyAcenUserPlaced(hit);
         dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = mx; lastMY = my;
+        // The relocate has just moved the gizmo to `hit`; that relocated pivot
+        // is the anchor this drag linearises about, so arm AFTER setPosition.
+        armPlaneDrag(mx, my);
         // Freeze the input-projection basis for this relocate drag.
         currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
         buildVertexCacheIfNeeded();
@@ -715,6 +729,17 @@ public:
             ctrlLockActive = true;   // lock-entry site 2: beginScreenPlaneDragAt Ctrl path
             constrainStartMX = mx; constrainStartMY = my;
         }
+    }
+
+    // Freeze LAW B's linearisation point for one gesture: the press pixel and
+    // the gizmo pivot as it stands at the press, plus a zeroed running total.
+    // Called from BOTH drag-start sites so a relocate-then-drag and a
+    // handle-grab arm identically.
+    private void armPlaneDrag(int mx, int my) {
+        dragStartMX  = mx;
+        dragStartMY  = my;
+        planeAnchor  = handler.center;
+        planeApplied = Vec3(0, 0, 0);
     }
 
     // Re-push the (relocated) gizmo pivot into the ACEN stage after the
@@ -848,15 +873,37 @@ public:
         Vec3 mi0 = inAxisX(), mi1 = inAxisY(), mi2 = inAxisZ();
         Vec3 worldDelta;
         bool skip;
-        if (dragAxis <= 2)
+        if (dragAxis <= 2) {
+            // LAW A — incremental, per event, against the live gizmo. Unchanged.
             worldDelta = axisDragDelta(e.x, e.y, lastMX, lastMY,
                                        dragAxis, handler,
                                        mi0, mi1, mi2,
                                        cachedVp, skip);
-        else
-            worldDelta = planeDragDelta(e.x, e.y, lastMX, lastMY,
-                                        dragAxis, handler.center, cachedVp, skip,
+        } else {
+            // LAW B — CUMULATIVE, against the anchor frozen at the press.
+            //
+            // The conversion is a linearisation of the screen map about ONE
+            // point, so it says what it says only if that point and the pixel
+            // it is measured from both stay put for the gesture. Feeding it the
+            // previous event's pixel and the LIVE gizmo centre — which the
+            // wrapper walks along with the selection — would rebuild the matrix
+            // at a new anchor on every event and quietly restore the old
+            // per-event-exact behaviour under a new name.
+            //
+            // So: one matrix at `planeAnchor`, applied to the whole offset since
+            // the press, and this event's delta is what that total has not
+            // already delivered. `planeApplied` is the pre-snap total; snapping
+            // is a separate law downstream and must not feed back into the
+            // conversion's own bookkeeping, or a snapped event would be
+            // re-issued as a correction on the next one.
+            Vec3 total = planeDragDelta(e.x, e.y, dragStartMX, dragStartMY,
+                                        dragAxis, planeAnchor, cachedVp, skip,
                                         mi0, mi1, mi2);
+            if (!skip) {
+                worldDelta  = total - planeApplied;
+                planeApplied = total;
+            }
+        }
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Phase 7.3a: snap. Bend the would-be gizmo position towards a
