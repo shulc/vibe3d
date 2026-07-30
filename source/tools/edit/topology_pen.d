@@ -2644,6 +2644,7 @@ public:
         immutable uint seedA = m.edges[seedEi][0];
         immutable uint seedB = m.edges[seedEi][1];
         if (seedA >= m.vertices.length || seedB >= m.vertices.length) return null;
+        if (seedA == seedB) return null;   // malformed edge — two slots, one vertex
 
         immutable float cx = cast(float)mx, cy = cast(float)my;
         ImVec2 pSeedA, pSeedB;
@@ -2668,7 +2669,7 @@ public:
         // boolean — testing one polygon twice yields the same answer — so the
         // union is equivalent for the predicate's purposes.
         ImVec2[2][] barriers;
-        foreach (fi, const ref f; m.faces) {
+        foreach (const ref f; m.faces) {
             bool touchesSeed = false;
             foreach (v; f) if (v == seedA || v == seedB) { touchesSeed = true; break; }
             if (!touchesSeed || f.length < 2) continue;
@@ -2776,39 +2777,6 @@ public:
             return slot[0 .. 4].dup;
         }
         return null;
-    }
-
-    // Fill mode radius overlay (task 0477 continuation): screen-nearest
-    // BORDER edge to the cursor, gated at `thresholdPx` — feeds the
-    // hover-reach circle's endpoints in `onMouseMotion` below, NOT cell
-    // reconstruction (`findFillRing` above stays the sole source of truth
-    // there; this is a read-only companion query over the SAME
-    // `isEdgeBorder`/`projectPt` primitives). Mirrors `findRingSeedEdge`'s
-    // point-to-segment scan (same `closestOnSegment2D` call), filtered to
-    // border edges only — a gap's boundary is exactly its border edges.
-    // Reuses `topoPenPressPickPx(vp)`, the same edge-pick tolerance every other
-    // gesture in this tool already snaps at, rather than inventing a
-    // second constant.
-    private int findNearestBorderEdge(int mx, int my, const ref Viewport vp,
-                                      float thresholdPx = kTopoPenSnapAuto) {
-        if (meshSrc_ is null) return -1;
-        auto m = mesh;
-        if (m is null) return -1;
-        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
-        int   best  = -1;
-        float bestD = float.infinity;
-        foreach (ei, e; m.edges) {
-            if (!m.isEdgeBorder(cast(uint)ei)) continue;
-            ImVec2 pa, pb;
-            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
-            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
-            float t;
-            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                         pa.x, pa.y, pb.x, pb.y, t);
-            if (d < bestD) { bestD = d; best = cast(int)ei; }
-        }
-        if (best >= 0 && bestD <= thresholdPx) return best;
-        return -1;
     }
 
     // The NON-VERTEX half of the over-mesh GATE: true when the cursor is
