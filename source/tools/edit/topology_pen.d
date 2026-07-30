@@ -1175,6 +1175,25 @@ private:
     // contradict measurements we already hold. See the resolvers' own note.
     bool innerSnap_ = false;
 
+    // `keepVertex_` ("Keep Vertices") — the reference's own fourth
+    // dropdown-adjacent checkbox, default OFF (measured, task 0494), and it
+    // gates ORPHAN RETENTION on the Remove mode's EDGE path: with it off, a
+    // dissolve that eats a vertex's WHOLE polygon fan deletes that vertex and
+    // re-stitches its survivors; with it on the vertex stays as a corner of the
+    // merged polygon. See `removeEdgeAt`.
+    //
+    // Wiring this knob CHANGED this tool's default outcome: before task 0494
+    // the pen's only dissolve path kept consumed vertices unconditionally, i.e.
+    // it shipped the ON branch while the measured default is OFF.
+    //
+    // SCOPE, and it is narrow because that is what was measured: the flag was
+    // varied on the EDGE path only. The vertex and polygon primitives were both
+    // captured at OFF, and the reference's own code reads the flag in neither
+    // — so they ignore it here rather than guess a second meaning for it.
+    //
+    // Sticky across gestures, for the same reason `penMode_` is.
+    bool keepVertex_ = false;
+
     // Which gesture the LAST unmodified-LMB press actually resolved to
     // (task 0483). Written by `onPlainLmbDown`'s router at DOWN, read by
     // `lmbModeUp` at UP so the release reaches THAT gesture's commit leg —
@@ -1705,6 +1724,12 @@ public:
     // thing about them that is a vibe3d decision rather than a measurement (the
     // SCOPE of what they hide) and for why the face hatch stays ungated.
     //
+    // `keepVertex` (task 0494) — the Remove mode's orphan-retention gate,
+    // measured in BOTH directions on one cell pair and measured default OFF.
+    // APPENDED LAST, same reason as every row above. Note what publishing it
+    // did: our pre-0494 behaviour was its ON branch, so the row does not merely
+    // expose a knob, it moves the default. See the field's own doc comment.
+    //
     // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
     //
     // The reference tool carries 31 attributes; this list publishes 7. The gap
@@ -1755,6 +1780,7 @@ public:
             Param.bool_("showVertex", "Show Vertex", &showVertex_, true),
             Param.bool_("showEdge",   "Show Edge",   &showEdge_,   true),
             Param.bool_("innerSnap", "Inner Snap", &innerSnap_, false),
+            Param.bool_("keepVertex", "Keep Vertices", &keepVertex_, false),
         ];
     }
 
@@ -6446,6 +6472,12 @@ public:
         // snap target may resolve to — border-only when off, the interior
         // too when on.
         root["innerSnap"] = JSONValue(innerSnap_);
+        // The fourth sticky flag (task 0494): whether a Remove-mode edge
+        // dissolve KEEPS the vertices whose whole polygon fan it consumed.
+        // Observability matters more here than for the others — the flag
+        // changes what a click DESTROYS, so a run must be able to read back
+        // which branch it is about to take.
+        root["keepVertex"] = JSONValue(keepVertex_);
         root["lmbAction"] = JSONValue(penGestureTag(gestureOn_[InputButton.Left]));
 
         // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
@@ -11902,9 +11934,23 @@ unittest {
     assert(!ps[7].default_.b && !t.innerSnap_,
         "innerSnap must default OFF — border-only snap candidates is the measured default");
 
-    t.edgeLoop_ = t.edgeSlide_ = t.innerSnap_ = true;
+    // Keep Vertices (task 0494) — the fourth sticky flag, APPENDED last,
+    // default OFF (measured in both directions). Index 8 for the same reason
+    // innerSnap is 7: the module's rule is APPEND-never-replace, so a merge
+    // shifts the index and never the order.
+    //
+    // The default is the whole point of this row, not a formality: with it OFF
+    // a Remove press on an interior edge loop DELETES the vertices whose whole
+    // polygon fan the dissolve ate. Flipping this literal to `true` would
+    // silently restore the pre-0494 behaviour tool-wide.
+    assert(ps[8].name == "keepVertex" && ps[8].kind == Param.Kind.Bool);
+    assert(ps[8].bptr is &t.keepVertex_, "keepVertex must bind directly to keepVertex_");
+    assert(!ps[8].default_.b && !t.keepVertex_,
+        "keepVertex must default OFF — purging the consumed vertices is the measured default");
+
+    t.edgeLoop_ = t.edgeSlide_ = t.innerSnap_ = t.keepVertex_ = true;
     t.resyncSession();
-    assert(t.edgeLoop_ && t.edgeSlide_ && t.innerSnap_,
+    assert(t.edgeLoop_ && t.edgeSlide_ && t.innerSnap_ && t.keepVertex_,
         "the flags must survive resyncSession() — sticky options, not gesture state");
 }
 
@@ -13468,6 +13514,14 @@ unittest {
     auto s2 = t.toolStateJson();
     assert(s2["edgeLoop"].type == JSONType.true_ && s2["edgeSlide"].type == JSONType.true_,
         "the readback must track the flags");
+
+    // Keep Vertices (task 0494) is published too — it decides what a Remove
+    // click destroys, so a run has to be able to read the branch back.
+    assert(s1["keepVertex"].type == JSONType.false_,
+        "keepVertex must read back OFF on a fresh tool — the measured default");
+    t.keepVertex_ = true;
+    assert(t.toolStateJson()["keepVertex"].type == JSONType.true_,
+        "the readback must track keepVertex");
 }
 
 // ---------------------------------------------------------------------------

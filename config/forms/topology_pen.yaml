@@ -42,6 +42,14 @@
 # to the neighbouring edge rails — the same gesture Ctrl+LMB runs — and
 # applies to Move and Point only. Routing table: `onPlainLmbDown`.
 #
+# `keepVertex` — the reference's own "Keep Vertices" checkbox, default OFF
+# (measured in both directions, doc/tasks/work/0494-topopen-remove-loop-keepvertex.md).
+# It gates ORPHAN RETENTION on the Remove mode's edge path: off, a dissolve
+# that eats a vertex's whole polygon fan deletes that vertex and re-stitches
+# the survivors around it; on, the vertex stays as a corner of the merged
+# polygon. Affects the Remove mode's EDGE path only — that is the only path the
+# flag was varied on, and the reference reads it on no other.
+#
 # `innerSnap` — the reference's own "Inner Snap" checkbox, default OFF
 # (measured, doc/tasks/work/0496-topopen-snap-precedence-thresholds.md). It
 # selects WHICH existing elements the pen's snap target may resolve to: with it
@@ -87,6 +95,7 @@ forms:
       - { control: "tool.attr mesh.topoPen loop ?",           label: "Edge Loop" }
       - { control: "tool.attr mesh.topoPen slide ?",          label: "Edge Slide" }
       - { control: "tool.attr mesh.topoPen innerSnap ?",      label: "Inner Snap" }
+      - { control: "tool.attr mesh.topoPen keepVertex ?",     label: "Keep Vertices" }
       - { control: "tool.attr mesh.topoPen middle ?",         label: "Split at the Middle" }
       - { control: "tool.attr mesh.topoPen smoothStrength ?", label: Strength }
       - { control: "tool.attr mesh.topoPen showVertex ?",     label: "Show Vertex" }
