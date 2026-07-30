@@ -8,7 +8,7 @@ import tool;
 import mesh                : Mesh, GpuMesh;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
-                             pointInPolygon2D;
+                             pointInPolygon2D, rayPlaneIntersect;
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
@@ -22,7 +22,7 @@ import constraint           : resolveHoverTarget, topoPenPressPickPx,
 import snap                  : backgroundSourcesSnapshot;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
-import bvh_pick              : BvhPick, SurfaceHit;
+import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -1249,21 +1249,19 @@ private:
     // every subsequent motion event (`onMouseMotion`) purely for `draw()`'s
     // ghost preview — the shared screen-delta `commitMoveLoop` actually
     // applies is always computed from the RELEASE event's own pixel
-    // (`onMouseButtonUp`), never from this cached value. `loopBgBvh_` is
-    // this tool's OWN per-background-mesh `BvhPick` cache (mirrors P5's
-    // `removePick_`/CONS's own `_bgBvh`, `constrain.d:82`) — driven ONLY
-    // from the main thread (motion/up/draw), so no `cursorValid` gate is
-    // needed (plan Risk 3). Cleared by `onMouseButtonUp` on commit/no-op
-    // and by `resyncSession` on an external history navigation, exactly
-    // like the P3/P4/P6/P7/P9 arm state above; `loopBgBvh_` itself is a
-    // CACHE, not arm state, so it survives a reset (mirrors `removePick_`'s
-    // own lifetime).
+    // (`onMouseButtonUp`), never from this cached value. Cleared by
+    // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3/P4/P6/P7/P9 arm
+    // state above. (Task 0503 removed the per-background `BvhPick` cache
+    // that used to live here: the re-snap is no longer a ray, so there is
+    // no BVH to keep — `resnapToBackground` now calls the same
+    // `closestPointOnMeshes` P8/P12's Smooth does, which walks the source
+    // faces directly.)
     bool  moveLoopArmed_  = false;
     int   moveLoopSeed_   = -1;
     int   moveLoopStartX_, moveLoopStartY_;
     int   moveLoopCurX_,   moveLoopCurY_;
     uint[] moveLoopVerts_;
-    BvhPick[size_t] loopBgBvh_;
 
     // --- P11 Dup Loop session state (topology_pen.d,
     // doc/topopen_p11_duploop_plan.md). Armed on a Shift+RMB press that
@@ -1290,9 +1288,7 @@ private:
     // defer-to-release discipline for a topology-growing op — never a
     // mid-drag mutation. Cleared by `onMouseButtonUp` on commit/no-op and
     // by `resyncSession` on an external history navigation, exactly like
-    // the P3-P10 arm state above; `loopBgBvh_` (shared with P10, above) is
-    // reused verbatim — a gesture-agnostic per-background-mesh cache, no
-    // new field needed.
+    // the P3-P10 arm state above.
     bool  dupLoopArmed_   = false;
     int   dupLoopSeed_    = -1;
     int[] dupLoopEdges_;
@@ -2631,8 +2627,7 @@ public:
         // handler) does NOT call this helper (same RMB/MMB-button discipline
         // as `onShiftMmbDown`/`onPlainMmbDown` above — a RIGHT-button press
         // genuinely CAN be a two-button chord while a LEFT gesture is still
-        // held) and uses its own narrow self-reset instead. `loopBgBvh_` is a
-        // CACHE, not arm state, so it is deliberately left intact here.
+        // held) and uses its own narrow self-reset instead.
         moveLoopArmed_ = false;
         moveLoopSeed_  = -1;
         moveLoopVerts_ = null;
@@ -4165,53 +4160,116 @@ public:
         return true;   // consume; the relax+re-snap (if any) commits on release
     }
 
-    // P10 (doc/topopen_p10_moveloop_plan.md, plan §Re-snap): multi-background
-    // camera-ray re-snap at an ARBITRARY (shifted) pixel — the SAME
-    // primitive P4 Move's re-snap ultimately rests on (`BvhPick.pickSurface`,
-    // `bvh_pick.d:196`), scanned over every live background source and kept
-    // at the globally-nearest hit, mirroring CONS's own `bgSurfaceRayHit`
-    // scan (`constrain.d:159-192`) — a low-touch, TOOL-LOCAL port (plan
-    // §Phase 2 alternative (2)) rather than extracting a shared
-    // `constraint.d` helper, since MOVE-LOOP is the only caller that needs
-    // the scan at a pixel other than the live cursor (CONS's own Point/
-    // Screen-mode call sites are left untouched). `loopBgBvh_` is this
-    // tool's OWN per-background-mesh cache (mirrors P5's `removePick_`),
-    // pruned here exactly like CONS prunes `_bgBvh` so a removed/hidden
-    // background layer's BVH is freed. Driven ONLY from the main thread
-    // (onMouseMotion/onMouseButtonUp/draw), so no `cursorValid` gate is
-    // needed (plan Risk 3). Returns false (leaving `outPoint` untouched)
-    // when the ray misses every background source, or none exists.
-    private bool resnapToBackground(int px, int py, const ref Viewport vp, out Vec3 outPoint) {
+    // The world point a shared SCREEN drag puts `orig` at: unproject the
+    // shifted pixel onto the plane through `orig` parallel to the image
+    // plane — i.e. drag at CONSTANT view depth. Same pixel-CENTRE
+    // convention (`+0.5f`) the ray path used, so the screen→world mapping
+    // this tool has always applied is unchanged; only what happens to the
+    // resulting point (see `resnapToBackground`) is.
+    //
+    // TASK 0503, on the ONE clause of the measured law this does NOT port.
+    // The reference feeds its constraint `src_i + Δ` with a SINGLE 3D offset
+    // Δ shared by every moving vertex (identical to 1e-9 across them —
+    // dupedge cells `A0-FLAT`/`A1-TILT`/`A2-NOBG`). Shifting each vertex's
+    // OWN pixel by a shared screen delta is a DEPTH-DEPENDENT world delta,
+    // so the two laws agree exactly when the moving vertices share a view
+    // depth and diverge when they do not. Every rig either capture ran on
+    // has its moving set on one fronto-parallel plane, so both measurements
+    // are silent on the difference — and Δ's own law (which plane the drag
+    // unprojects onto, whether the drag point is itself constrained) is
+    // explicitly NOT established by either note. Porting the shared-Δ shape
+    // would therefore mean inventing Δ, so this keeps the existing
+    // per-vertex mapping and records the gap instead.
+    private static Vec3 shiftedWorldPoint(Vec3 orig, int px, int py,
+                                          const ref Viewport vp) {
+        Vec3 org, dir;
+        screenPointToRay(cast(float)px + 0.5f, cast(float)py + 0.5f, vp, org, dir);
+        // View matrix third ROW (column-major m[row + col*4]) = the
+        // camera-back direction; the plane through `orig` with that normal
+        // is the constant-view-depth plane. Same derivation `drag.d`'s
+        // `planeDragDelta` uses for its own camera-facing plane.
+        const ref float[16] v = vp.view;
+        Vec3 camBack = Vec3(v[2], v[6], v[10]);
+        Vec3 q;
+        if (!rayPlaneIntersect(org, dir, orig, camBack, q)) return orig;   // degenerate view
+        return q;
+    }
+
+    // TASK 0503 (measured port): re-snap `orig`, dragged to pixel (px,py),
+    // onto the background as the NEAREST POINT on the background facet,
+    // CLAMPED to that facet — NOT a camera ray through the pixel.
+    //
+    // This replaces the `BvhPick.pickSurface` ray P10 shipped. The ray was
+    // OUR divergence, and it is measured wrong twice over, on two gestures,
+    // by two independently built rigs:
+    //
+    //   * Duplicate, cells `A5-TILT30`/`A1-TILT`(×2 boots)/`A6-TILT60`
+    //     (toolcards/topology_pen/dupedge_resnap_capture.md, contract C-2):
+    //     |new edge| / |source edge| = cos(tilt) — 0.866025692 / 0.707106741 /
+    //     0.500000075, worst deviation 2.9e-7 — which is exactly the length a
+    //     PERPENDICULAR projection of a screen-horizontal segment onto a plane
+    //     tilted by θ leaves. A per-vertex ray predicts 1.804 / 2.484 / 4.369
+    //     on the same three cells: wrong by factors of 2 to 9. Cell `A0-FLAT`
+    //     rules out "exotic background" as an excuse — on the FLAT background
+    //     every earlier cell in this campaign used, the measurement is 1.000
+    //     and the ray law predicts 1.220.
+    //   * Add Loop, verdict V-1 (addloop_bgresnap_undo_capture.md, run g5,
+    //     cells `AL-BG-1`/`AL-BG-2`/`AL-BG-MID`/`AL-BG-RAY`): all four
+    //     inserted vertices land on the background plane to 1.1e-09…7.6e-09 D,
+    //     and their lateral profile matches the perpendicular-foot formula to
+    //     5.36e-09 D against 5.75e-03 D for the view ray — six orders.
+    //
+    // WHY THE PORT SURVIVED FOUR EARLIER CAPTURES: on a background PARALLEL
+    // to the plane the drag resolves on, the per-vertex correction is the
+    // IDENTITY, and every background before these two runs was parallel. A
+    // test on a flat/parallel background cannot see this law at all (it can
+    // still see the RATIO, 1.000 vs 1.220 — which is why the fixtures below
+    // use both a tilted and a flat background).
+    //
+    // Per-vertex, never anchor-plus-rigid: refuted three independent ways on
+    // Duplicate (the length ratio; a 4.8× spread of per-point displacement
+    // — 0.0651/0.0617/0.1886/0.3155 — inside ONE evaluation, where a rigid
+    // rest requires equality; and a zero hit count on the function a static
+    // read had blamed). The port's "one target per moving vertex" shape was
+    // already right and is unchanged.
+    //
+    // Reuses `constraint.closestPointOnMeshes` — the SAME nearest-foot
+    // primitive P8/P12's Smooth already re-snaps with (`applySmoothPasses`,
+    // `applySmoothLoopPasses`), so after this change every re-snap in the
+    // tool goes through one query instead of two rival ones. `dblSided =
+    // false` mirrors those call sites and CONS's Point-mode default.
+    //
+    // MISS SEMANTICS CHANGE, deliberately. A ray misses whenever the shifted
+    // pixel points at empty space; a nearest-foot query over a non-empty
+    // background never misses — it CLAMPS to the facet (that clamp is
+    // measured: cell `A3-CLIP` put both feet past a cut background edge and
+    // both landed exactly on the cut, β = -0.30000). So `false` here now
+    // means only "no background surface exists at all", which is still a
+    // measured case: with no background the gesture commits and translates
+    // rigidly (cell `A2-NOBG`, contract C-5), which is what the callers'
+    // keep-the-original policy produces. What is NOT ported is the honest
+    // consequence of the clamp — the reference commits the DEGENERATE quad
+    // it produces, and "match the reference" vs "never emit a zero-area
+    // facet" is an owner call, not a capture verdict (contract C-4). No
+    // guard is added here either way.
+    //
+    // Returns false (leaving `outPoint` untouched) only when no live
+    // background source exists, or none has a usable face.
+    private bool resnapToBackground(Vec3 orig, int px, int py,
+                                    const ref Viewport vp, out Vec3 outPoint) {
         auto sources = backgroundSourcesSnapshot();
         if (sources.length == 0) return false;
 
-        bool[size_t] live;
-        foreach (src; sources)
-            if (src !is null) live[cast(size_t)src] = true;
-        size_t[] stale;
-        foreach (addr, bp; loopBgBvh_)
-            if ((addr in live) is null) stale ~= addr;
-        foreach (addr; stale) loopBgBvh_.remove(addr);
+        Vec3 query = shiftedWorldPoint(orig, px, py, vp);
 
-        float bestT = float.infinity;
-        bool  found = false;
-        Vec3  bestPt;
-        foreach (src; sources) {
-            if (src is null) continue;
-            size_t addr = cast(size_t)src;
-            auto pp = addr in loopBgBvh_;
-            BvhPick bp;
-            if (pp is null) { bp = new BvhPick(); loopBgBvh_[addr] = bp; }
-            else bp = *pp;
-            SurfaceHit sh;
-            if (!bp.pickSurface(px, py, vp, *src, sh)) continue;
-            if (sh.t >= bestT) continue;
-            bestT  = sh.t;
-            bestPt = sh.point;
-            found  = true;
-        }
-        if (found) outPoint = bestPt;
-        return found;
+        Vec3  hitPt, hitN;
+        int   si, fi;
+        float d2;
+        enum bool dblSided = false;   // matches P8/P12/CONS Point-mode's own default
+        if (!closestPointOnMeshes(query, sources, dblSided, hitPt, hitN, si, fi, d2))
+            return false;
+        outPoint = hitPt;
+        return true;
     }
 
     // P10 (doc/topopen_p10_moveloop_plan.md "The pinned drag-mapping"): the
@@ -4219,12 +4277,14 @@ public:
     // `(dx, dy)` — project each moving vertex's CURRENT (pre-commit)
     // position, shift by the shared delta, and re-snap
     // (`resnapToBackground`). A vertex that projects behind the camera, or
-    // whose shifted pixel misses every background surface, KEEPS its
-    // original position (the safe, no-fling miss policy — plan
-    // "Miss policy"; also the contract FIX-2's partial-miss test pins at
-    // the `commitMoveLoop` layer). Returns one target per entry of `verts`,
-    // same order — `verts.length == 0`/`m is null` yields an empty array
-    // (defensive; callers already guard this).
+    // for which NO background surface exists at all, KEEPS its original
+    // position (also the contract FIX-2's partial-miss test pins at the
+    // `commitMoveLoop` layer). TASK 0503 narrowed that branch: the re-snap
+    // is now a nearest-foot query, which cannot miss a non-empty background
+    // the way the old camera ray could — see `resnapToBackground`. Returns
+    // one target per entry of `verts`, same order — `verts.length == 0`/
+    // `m is null` yields an empty array (defensive; callers already guard
+    // this).
     private Vec3[] perVertexTargets(const(uint)[] verts, int dx, int dy,
                                     const ref Viewport vp) {
         Vec3[] base;
@@ -4259,7 +4319,7 @@ public:
             int px = cast(int)(pt.x + cast(float)dx);
             int py = cast(int)(pt.y + cast(float)dy);
             Vec3 hitPt;
-            if (resnapToBackground(px, py, vp, hitPt)) targets[i] = hitPt;
+            if (resnapToBackground(orig, px, py, vp, hitPt)) targets[i] = hitPt;
         }
         return targets;
     }
@@ -6198,7 +6258,7 @@ public:
                         int px = cast(int)(pt.x + cast(float)dx);
                         int py = cast(int)(pt.y + cast(float)dy);
                         Vec3 hitPt2;
-                        if (resnapToBackground(px, py, vp, hitPt2)) g = hitPt2;
+                        if (resnapToBackground(orig, px, py, vp, hitPt2)) g = hitPt2;
                     }
                     ghostPos[vi] = g;
                 }
@@ -6516,12 +6576,12 @@ public:
             ImVec2 pa, pb;
             if (projectPt(a, vp, pa)) {
                 Vec3 hitA;
-                if (resnapToBackground(cast(int)(pa.x + cast(float)dx),
+                if (resnapToBackground(a, cast(int)(pa.x + cast(float)dx),
                                        cast(int)(pa.y + cast(float)dy), vp, hitA)) aP = hitA;
             }
             if (projectPt(b, vp, pb)) {
                 Vec3 hitB;
-                if (resnapToBackground(cast(int)(pb.x + cast(float)dx),
+                if (resnapToBackground(b, cast(int)(pb.x + cast(float)dx),
                                        cast(int)(pb.y + cast(float)dy), vp, hitB)) bP = hitB;
             }
 
@@ -10413,17 +10473,132 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// resnapToBackground — HIT + MISS (doc/topopen_p10_moveloop_plan.md
-// §Re-snap): a camera-ray cast through an arbitrary pixel against a flat
-// background plane must match an INDEPENDENTLY-computed ray-plane
-// intersection (`screenPointToRay` — the same primitive `pickSurface`
-// itself calls — combined with a hand-derived `y = planeY` solve, never a
-// second call into `resnapToBackground`/`pickSurface`); a pixel whose ray
-// misses the (finite) background mesh entirely must return false.
+// resnapToBackground — TASK 0503, THE MEASURED LAW ON A TILTED BACKGROUND.
+//
+// This is the fixture the law needs. On a background PARALLEL to the plane
+// the drag resolves on, the per-vertex correction is the IDENTITY, which is
+// why four earlier captures (every one of them on a parallel background)
+// could not see the difference between the camera ray this tool used to cast
+// and the nearest foot the reference actually takes. The rig here is cell A's
+// own construction: the source edge runs SCREEN-HORIZONTALLY, the background
+// is tilted about the SCREEN-VERTICAL axis, so the two source vertices sit at
+// different depths on it.
+//
+// Three scored invariants, all computed here from scratch, never by a second
+// call into the code under test:
+//
+//   (a) each target lies ON the background plane (the capture's own
+//       `d(new, bg)` channel: 6.8e-10 … 8.4e-9);
+//   (b) |new edge| / |source edge| == cos(tilt) at 30/45/60 degrees — the
+//       capture measured 0.866025692 / 0.707106741 / 0.500000075 against
+//       cos to 2.9e-7. A per-vertex CAMERA RAY predicts 1.804 / 2.484 /
+//       4.369 on the same three cells, and every rigid law predicts 1.000,
+//       so this single number refutes both by 0.94-3.87 and 0.13-0.50;
+//   (c) each target equals the independently-derived PERPENDICULAR FOOT of
+//       its own source vertex — which refutes anchor-plus-rigid a second
+//       way (a rigid rest gives both vertices the same displacement; the
+//       capture measured a 4.8x spread inside one evaluation).
+//
+// Tolerances: the query pixel is an INT (`cast(int)` in the callers, `+0.5f`
+// pixel centre inside), so the query point carries up to ~1px of world
+// wobble — 0.0124 world units on this camera. Both bands below are set well
+// above that and still an order of magnitude under every refuted rival.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
-    import math : screenPointToRay;
+    import math : normalize, cross;
+    import snap : setBackgroundSnapSources;
+    import std.math : abs, cos, sin, PI;
+    import std.format : format;
+
+    auto t    = new TopologyPenTool();
+    auto view = new View(0, 0, 200, 200);
+    Viewport vp = view.viewport();
+    scope(exit) setBackgroundSnapSources(null);
+
+    // Camera basis straight off the view matrix (column-major m[row+col*4]),
+    // so the rig is stated in SCREEN terms exactly like the capture's was.
+    Vec3 camRight = Vec3( vp.view[0],  vp.view[4],  vp.view[8]);
+    Vec3 camUp    = Vec3( vp.view[1],  vp.view[5],  vp.view[9]);
+    Vec3 camFwd   = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+
+    enum float D = 3.0f;   // source depth = this View's own default distance
+    enum float L = 2.0f;   // source edge length, screen-horizontal
+    Vec3 srcMid = vp.eye + camFwd * D;
+    Vec3 v0 = srcMid - camRight * (L * 0.5f);
+    Vec3 v1 = srcMid + camRight * (L * 0.5f);
+
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(v0, vp, p0)
+        && TopologyPenTool.projectPt(v1, vp, p1),
+        "setup: both source verts must project on-screen");
+
+    foreach (degrees; [30.0f, 45.0f, 60.0f]) {
+        immutable float th = degrees * cast(float)PI / 180.0f;
+
+        // Tilt about the screen-vertical axis; place the facet 0.22 D behind
+        // the source plane (cell A's own separation).
+        Vec3 n     = normalize(camFwd * cos(th) + camRight * sin(th));
+        Vec3 bgPt  = vp.eye + camFwd * (D * 1.22f);
+        Vec3 inU   = normalize(cross(n, camUp));
+        Vec3 inW   = normalize(cross(n, inU));
+        enum float H = 40.0f;   // large enough that no foot is ever clamped here
+
+        auto bg = new Mesh();
+        bg.vertices = [bgPt - inU * H - inW * H, bgPt + inU * H - inW * H,
+                       bgPt + inU * H + inW * H, bgPt - inU * H + inW * H];
+        bg.faces    = [[0u, 1u, 2u, 3u]];
+        const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
+        setBackgroundSnapSources(srcs);
+
+        Vec3 got0, got1;
+        assert(t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, got0),
+            format("tilt %.0f: v0 must re-snap onto the background", degrees));
+        assert(t.resnapToBackground(v1, cast(int)p1.x, cast(int)p1.y, vp, got1),
+            format("tilt %.0f: v1 must re-snap onto the background", degrees));
+
+        // (a) ON the background plane.
+        assert(abs(dot(got0 - bgPt, n)) < 1e-4f && abs(dot(got1 - bgPt, n)) < 1e-4f,
+            format("tilt %.0f: both targets must lie ON the background plane; "
+                 ~ "d0=%g d1=%g", degrees, dot(got0 - bgPt, n), dot(got1 - bgPt, n)));
+
+        // (b) the capture's scored invariant.
+        immutable float ratio = (got1 - got0).length / L;
+        assert(abs(ratio - cos(th)) < 0.02f,
+            format("tilt %.0f: |new|/|src| must be cos(tilt)=%.6f (a camera-ray re-snap "
+                 ~ "gives ~1.8/2.5/4.4, every rigid law gives 1.000); got %.6f",
+                   degrees, cos(th), ratio));
+
+        // (c) the perpendicular foot, per vertex, derived here.
+        Vec3 foot0 = v0 - n * dot(v0 - bgPt, n);
+        Vec3 foot1 = v1 - n * dot(v1 - bgPt, n);
+        assert((got0 - foot0).length < 0.05f && (got1 - foot1).length < 0.05f,
+            format("tilt %.0f: each target must be its OWN source vertex's perpendicular "
+                 ~ "foot; got %s/%s expected %s/%s", degrees, got0, got1, foot0, foot1));
+    }
+
+    // No background at all -> must report a miss cleanly, and the callers'
+    // keep-the-original policy then leaves the gesture a rigid translate
+    // (cell A2-NOBG: the duplicate is still created and moved rigidly).
+    setBackgroundSnapSources(null);
+    Vec3 gotNone;
+    assert(!t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, gotNone),
+        "resnapToBackground must return false with no background source at all");
+}
+
+// ---------------------------------------------------------------------------
+// resnapToBackground — TASK 0503, THE SAME LAW ON A FLAT BACKGROUND.
+//
+// Cell A0-FLAT exists because the divergence is NOT an exotic-background
+// corner case: on the flat background every earlier cell in this campaign
+// used, the reference measured |new|/|src| = 0.999999851 while a camera-ray
+// re-snap onto a plane 0.22 D behind the source plane scales the edge by
+// exactly that depth ratio — 1.220. This fixture reproduces those two
+// numbers, so the ray law is refuted by 0.22 on the friendliest possible
+// geometry.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -10431,102 +10606,124 @@ unittest {
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 200, 200);
     Viewport vp = view.viewport();
+    scope(exit) setBackgroundSnapSources(null);
 
-    enum float planeY = -1.5f;
+    Vec3 camRight = Vec3( vp.view[0],  vp.view[4],  vp.view[8]);
+    Vec3 camUp    = Vec3( vp.view[1],  vp.view[5],  vp.view[9]);
+    Vec3 camFwd   = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+
+    enum float D = 3.0f, L = 2.0f;
+    Vec3 srcMid = vp.eye + camFwd * D;
+    Vec3 v0 = srcMid - camRight * (L * 0.5f);
+    Vec3 v1 = srcMid + camRight * (L * 0.5f);
+
+    Vec3 bgPt = vp.eye + camFwd * (D * 1.22f);   // parallel to the image plane
+    enum float H = 40.0f;
     auto bg = new Mesh();
-    bg.vertices = [Vec3(-10, planeY, -10), Vec3(10, planeY, -10),
-                   Vec3(10, planeY, 10),   Vec3(-10, planeY, 10)];
+    bg.vertices = [bgPt - camRight * H - camUp * H, bgPt + camRight * H - camUp * H,
+                   bgPt + camRight * H + camUp * H, bgPt - camRight * H + camUp * H];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
     setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
 
-    int px = 100, py = 100;   // viewport center
-    Vec3 org, dir;
-    screenPointToRay(cast(float)px + 0.5f, cast(float)py + 0.5f, vp, org, dir);
-    assert(abs(dir.y) > 1e-6f, "setup: the ray must not be parallel to the bg plane");
-    float ty = (planeY - org.y) / dir.y;
-    assert(ty > 0, "setup: the bg plane must be in FRONT of the camera at this pixel");
-    Vec3 expected = org + dir * ty;
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectPt(v0, vp, p0)
+        && TopologyPenTool.projectPt(v1, vp, p1), "setup: both verts must project on-screen");
 
-    Vec3 got;
-    bool hit = t.resnapToBackground(px, py, vp, got);
-    assert(hit, "resnapToBackground must hit the (large, in-front) background plane");
-    assert((got - expected).length < 1e-3f,
-        format("resnapToBackground must match the independently-computed ray-plane hit; "
-             ~ "got %s expected %s", got, expected));
+    Vec3 got0, got1;
+    assert(t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, got0));
+    assert(t.resnapToBackground(v1, cast(int)p1.x, cast(int)p1.y, vp, got1));
 
-    // No background at all -> must miss cleanly.
-    setBackgroundSnapSources(null);
-    Vec3 gotNone;
-    bool hitNone = t.resnapToBackground(px, py, vp, gotNone);
-    assert(!hitNone, "resnapToBackground must return false with no background source at all");
+    immutable float ratio = (got1 - got0).length / L;
+    assert(abs(ratio - 1.0f) < 0.02f,
+        format("on a flat background the edge length must be PRESERVED (reference 1.000); "
+             ~ "a camera-ray re-snap onto a plane 0.22 D behind scales it to 1.220; got %.6f",
+               ratio));
+
+    // And the displacement is a PURE depth shift: no lateral component (the
+    // ray law spreads the pair apart by 0.22*L/2 = 0.22 per vertex).
+    assert(abs(dot(got0 - v0, camRight)) < 0.05f && abs(dot(got1 - v1, camRight)) < 0.05f,
+        format("the flat-background correction must be perpendicular (no lateral slide); "
+             ~ "got %g / %g", dot(got0 - v0, camRight), dot(got1 - v1, camRight)));
 }
 
 // ---------------------------------------------------------------------------
-// perVertexTargets — SHIFT + PER-VERTEX MISS POLICY
-// (doc/topopen_p10_moveloop_plan.md "The pinned drag-mapping"): a shared
-// screen-delta is applied to EACH vertex's own screen projection before
-// re-snapping; a vertex whose shifted pixel hits the background lands
-// (approximately) ON it, while a vertex whose shifted pixel misses (here,
-// simply because it is far from the small background's footprint) keeps
-// its EXACT original position — the miss policy this function is
-// responsible for (REV1 FIX-2's contract is pinned at the commit layer
-// above; this pins the same contract one layer up, where the miss is
-// actually decided).
+// perVertexTargets — SHIFT + THE MISS POLICY AFTER TASK 0503.
+//
+// A shared screen-delta is still applied to EACH vertex's own screen
+// projection before re-snapping (the shared-3D-offset shape the reference
+// uses is recorded as an open divergence — see `shiftedWorldPoint`). What
+// changed is what a vertex pointing at empty space does: a camera ray MISSED
+// and the vertex kept its original position; a nearest-foot query over a
+// bounded facet does not miss, it CLAMPS to the facet edge. That clamp is
+// measured — cell A3-CLIP shortened the background so both feet fell past
+// its edge and both new vertices landed exactly on the cut (beta = -0.30000),
+// which refutes "keep the original" (they had moved 0.913 and 0.943), "fall
+// back to the drag plane" and "refuse the gesture" in one row.
+//
+// So this pins BOTH halves: a vertex over the patch lands on it, a vertex far
+// outside the patch's footprint lands on the patch BOUNDARY (not back at its
+// original position), and the keep-the-original branch survives only for the
+// no-background case.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
-    import math  : screenPointToRay;
-    import snap  : setBackgroundSnapSources;
+    import snap : setBackgroundSnapSources;
     import std.math : abs;
+    import std.format : format;
 
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 200, 200);
     Viewport vp = view.viewport();
+    scope(exit) setBackgroundSnapSources(null);
 
-    Vec3 vA = Vec3(0, 0, 0);
-    Vec3 vB = Vec3(8, 0, 8);   // far away -> its shifted ray will land far from a small bg patch
+    Vec3 camRight = Vec3( vp.view[0],  vp.view[4],  vp.view[8]);
+    Vec3 camUp    = Vec3( vp.view[1],  vp.view[5],  vp.view[9]);
+    Vec3 camFwd   = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+
+    enum float D = 3.0f;
+    Vec3 vA = vp.eye + camFwd * D;                        // on the patch's axis
+    Vec3 vB = vA + camRight * 4.0f;                       // far outside its footprint
 
     Mesh m;
     m.addVertex(vA);
     m.addVertex(vB);
     t.meshSrc_ = () => &m;
 
-    int dx = 10, dy = -6;
-
-    // Determine (via the SAME pixel-rounding perVertexTargets itself uses)
-    // exactly where vA's shifted ray lands on the y=-1.5 plane, so the small
-    // background patch below can be centered there — SETUP ONLY, not the
-    // assertion itself (the assertion below re-derives the same value from
-    // scratch via `screenPointToRay`, never by reading this back).
-    ImVec2 ptA;
-    assert(TopologyPenTool.projectPt(vA, vp, ptA), "setup: vA must project on-screen");
-    int pxA = cast(int)(ptA.x + cast(float)dx);
-    int pyA = cast(int)(ptA.y + cast(float)dy);
-    Vec3 orgA, dirA;
-    screenPointToRay(cast(float)pxA + 0.5f, cast(float)pyA + 0.5f, vp, orgA, dirA);
-    enum float planeY = -1.5f;
-    assert(abs(dirA.y) > 1e-6f);
-    float tyA = (planeY - orgA.y) / dirA.y;
-    assert(tyA > 0, "setup: vA's shifted ray must hit the plane in front of the camera");
-    Vec3 hitA = orgA + dirA * tyA;
-
-    auto bg = new Mesh();
+    // A SMALL patch, parallel to the image plane, 0.5 behind vA.
+    Vec3 bgPt = vA + camFwd * 0.5f;
     enum float half = 0.6f;
-    bg.vertices = [Vec3(hitA.x - half, planeY, hitA.z - half), Vec3(hitA.x + half, planeY, hitA.z - half),
-                   Vec3(hitA.x + half, planeY, hitA.z + half), Vec3(hitA.x - half, planeY, hitA.z + half)];
+    auto bg = new Mesh();
+    bg.vertices = [bgPt - camRight * half - camUp * half, bgPt + camRight * half - camUp * half,
+                   bgPt + camRight * half + camUp * half, bgPt - camRight * half + camUp * half];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
     setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
 
-    auto targets = t.perVertexTargets([0u, 1u], dx, dy, vp);
+    auto targets = t.perVertexTargets([0u, 1u], 0, 0, vp);
     assert(targets.length == 2);
-    assert((targets[0] - hitA).length < 1e-3f,
-        "vA's shifted-and-resnapped target must match the small bg patch's own ray-plane hit");
-    assert((targets[1] - vB).length < 1e-6f,
-        "vB (far outside the small bg patch's footprint) must keep its EXACT original position");
+
+    // vA: straight onto the patch, a pure depth shift.
+    assert(abs(dot(targets[0] - bgPt, camFwd)) < 1e-4f
+        && abs(dot(targets[0] - vA, camRight)) < 0.05f,
+        format("vA must land ON the patch, perpendicular to it; got %s", targets[0]));
+
+    // vB: CLAMPED to the patch's own boundary, NOT left where it started.
+    assert((targets[1] - vB).length > 1.0f,
+        format("vB must NOT keep its original position — a nearest-foot query clamps to the "
+             ~ "facet instead of missing (cell A3-CLIP); got %s vs original %s",
+               targets[1], vB));
+    assert(abs(dot(targets[1] - bgPt, camFwd)) < 1e-4f,
+        "vB's clamped target must still lie in the patch's own plane");
+    assert(abs(abs(dot(targets[1] - bgPt, camRight)) - half) < 1e-4f,
+        format("vB must land exactly on the patch's near EDGE (|lateral| == %.2f); got %g",
+               half, dot(targets[1] - bgPt, camRight)));
+
+    // With NO background at all, both keep their exact original positions.
+    setBackgroundSnapSources(null);
+    auto none = t.perVertexTargets([0u, 1u], 0, 0, vp);
+    assert((none[0] - vA).length < 1e-6f && (none[1] - vB).length < 1e-6f,
+        "with no background source the keep-the-original branch must still hold");
 }
 
 // ---------------------------------------------------------------------------
