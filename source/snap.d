@@ -243,17 +243,47 @@ const(int)[] backgroundSourceLayerIndices() {
     }
 }
 
+/// A client's per-candidate admission rule. Returns false to REJECT the
+/// candidate before the distance compare — the client's policy layered over
+/// the service's enumeration.
+///
+/// This is the seam that keeps "which elements are eligible" out of
+/// `snapCursor`. The enumeration (which grids to query, how a candidate
+/// projects, how the winner is ranked) belongs to this module and is shared
+/// by every caller; the *admission* rule is the caller's, and differs
+/// between them — a tool that welds only to border vertices and a tool that
+/// welds to any vertex want the same walk and different eligibility.
+/// Without this parameter such a rule has nowhere to live but a
+/// reimplemented candidate loop inside the tool.
+///
+/// Arguments are the candidate's discrete `type`, its source-local element
+/// index (`idx`; -1 where the candidate is not a mesh element — Grid,
+/// Workplane, and every constraint candidate) and its source `slot`
+/// (0 = active mesh, 1..N = background source, as `SnapResult.targetSource`).
+///
+/// `nothrow`: the walk runs inside a `synchronized`-adjacent hot path and
+/// must not unwind through it; a predicate that needs to fail should reject.
+alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
 /// indices, so a single-vert drag doesn't snap to itself (zero
 /// distance). Returns the input pass-through when `cfg.enabled` is
 /// false (no candidates considered).
+///
+/// `admit`, when non-null, is consulted once per enumerated candidate and
+/// rejects it BEFORE the projection + distance compare — a rejected
+/// candidate cannot win, cannot highlight, and cannot shrink the accumulator
+/// that a later candidate must beat. A null `admit` (the default) admits
+/// everything, so every call site that does not pass one takes exactly the
+/// pre-existing path.
 SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                       const ref Viewport vp,
                       const ref Mesh mesh,
                       const ref SnapPacket cfg,
-                      const(uint)[] excludeVerts = null)
+                      const(uint)[] excludeVerts = null,
+                      scope SnapAdmit admit = null)
 {
     // One coarse scope per call — snapCursor is invoked once per drag
     // frame (not per vertex), so this captures the WHOLE geometric
@@ -302,6 +332,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // highlight renderer can resolve the element against the right mesh — a
     // source-local index alone is ambiguous across layers (layers Stage 5).
     void consider(Vec3 candWorld, int idx, SnapType type, int slot) {
+        // The client's admission rule runs FIRST — before the projection and
+        // before the distance compare. Order is load-bearing, not stylistic:
+        // rejecting after the compare would let an inadmissible candidate
+        // lower `bestDist` and so silently veto an admissible one further
+        // away. A rejected candidate must be as if it were never enumerated.
+        if (admit !is null && !admit(type, idx, slot)) return;
         float pxs, pys, ndcZ;
         // projectToWindowFull rejects behind-camera (w<=0) but does NOT
         // clip to the screen rectangle, which is exactly what we want
@@ -326,6 +362,11 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // separate accumulator. Constraints own POSITION only; targetType/
     // targetIndex/highlightPos stay the discrete tier's (Stage 2 merge rule).
     void considerConstraint(Vec3 candWorld, SnapType type) {
+        // Same admission seam, same order (see `consider`). A constraint
+        // candidate is a line/plane hit, not a mesh element, so it carries no
+        // element index and no source: the predicate sees (type, -1, 0), the
+        // same pair `SnapResult` would report for it.
+        if (admit !is null && !admit(type, -1, 0)) return;
         float pxs, pys, ndcZ;
         if (!projectToWindowFull(candWorld, vp, pxs, pys, ndcZ)) return;
         float dx = pxs - cast(float)sx;
@@ -1315,4 +1356,253 @@ unittest {
         ~ "mesh's mutationVersion (that counter's version-silence on a "
         ~ "position edit is the intentional contract this fix works "
         ~ "around, not papers over)");
+}
+
+// ---------------------------------------------------------------------------
+// The client admission predicate: neutral when absent, and load-bearing in
+// the one order that matters.
+//
+// `snapCursor`'s trailing `admit` is the seam between the SERVICE (which grids
+// to query, how a candidate projects, how the winner is ranked — this module's,
+// shared by every caller) and the CLIENT'S POLICY (which candidates are
+// eligible at all — the caller's, and different between callers). Three
+// obligations, one assertion block each:
+//
+//   1. NEUTRALITY. The same query with `admit` absent and with a permissive
+//      `admit` must agree field-for-field. That is what makes this parameter a
+//      no-op for every existing call site: none of them pass a predicate, so
+//      all of them take the `admit is null` branch, which is the pre-existing
+//      walk verbatim.
+//   2. REJECTION. A predicate that admits nothing must produce the clean
+//      pass-through — asserted here to be the SAME result a disabled snap
+//      produces, field-for-field, which is the strongest available statement
+//      of "as if no candidate had been enumerated".
+//   3. ORDER. The rejection happens before the distance compare, not after the
+//      winner is picked. Rejecting the nearest candidate must PROMOTE the
+//      runner-up, never veto the snap: a rejected candidate that could still
+//      lower the accumulator would silently suppress an admissible candidate
+//      standing behind it. This is the assertion that would fail if the check
+//      were moved past the `d < bestDist` accumulator.
+//
+// The fixture is four collinear vertices with NO faces, so `needVis` is false
+// and no visibility gate can reorder the ranking: what the assertions observe
+// is pure screen distance, which is the property under test.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI;
+
+    // This module's other unittests populate the slot-0 grids from their own
+    // meshes; a fresh local Mesh can land on a recycled stack address with the
+    // same (zero) mutationVersion, so drop the grids rather than rely on the
+    // staleness key noticing.
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    Mesh m;
+    m.vertices = [
+        Vec3( 0.00f, 0, 0),   // 0 — directly under the cursor pixel
+        Vec3( 0.25f, 0, 0),   // 1 — the runner-up, still inside acceptance
+        Vec3( 0.50f, 0, 0),   // 2 — inside the gather range, outside acceptance
+        Vec3(-3.00f, 0, 0),   // 3 — outside the gather range entirely
+    ];
+
+    // The cursor pixel is vertex 0's own projection, so its screen distance is
+    // exactly zero and the ranking below is unambiguous.
+    float px0, py0, ndc0;
+    assert(projectToWindowFull(m.vertices[0], vp, px0, py0, ndc0),
+        "fixture: vertex 0 must project on-screen");
+    immutable int sx = cast(int)round(px0);
+    immutable int sy = cast(int)round(py0);
+
+    float pixDist(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every candidate must project on-screen");
+        immutable float dx = qx - cast(float)sx;
+        immutable float dy = qy - cast(float)sy;
+        return sqrt(dx * dx + dy * dy);
+    }
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex;   // discrete tier only, one type
+    cfg.snapScope    = SnapMode.Global;
+    cfg.innerRangePx = 30.0f;
+    cfg.outerRangePx = 100.0f;
+
+    // State the fixture's premises rather than trusting the arithmetic above:
+    // strictly increasing distances, with the acceptance boundary falling
+    // between vertex 1 and vertex 2 and the gather boundary between 2 and 3.
+    immutable float d0 = pixDist(m.vertices[0]);
+    immutable float d1 = pixDist(m.vertices[1]);
+    immutable float d2 = pixDist(m.vertices[2]);
+    immutable float d3 = pixDist(m.vertices[3]);
+    assert(d0 < d1 && d1 < d2 && d2 < d3,
+        "fixture: the four candidates must rank strictly by screen distance");
+    assert(d1 < cfg.innerRangePx,
+        "fixture: vertex 1 must be close enough to SNAP once 0 is rejected");
+    assert(d2 > cfg.innerRangePx && d2 < cfg.outerRangePx,
+        "fixture: vertex 2 must HIGHLIGHT but not snap once 0 and 1 are rejected");
+    assert(d3 > cfg.outerRangePx,
+        "fixture: vertex 3 must be out of the gather range in every case");
+
+    // Deliberately not any vertex position: the pass-through assertions below
+    // are only meaningful if the input is distinguishable from every candidate.
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    static bool sameVec(Vec3 a, Vec3 b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    }
+    // Field-for-field, spelled out rather than `a == b`, so a failure names
+    // WHICH field diverged and so a later field added to SnapResult shows up
+    // here as a compile-time-visible omission rather than silently unchecked.
+    static bool sameResult(SnapResult a, SnapResult b) {
+        return sameVec(a.worldPos, b.worldPos)
+            && sameVec(a.highlightPos, b.highlightPos)
+            && a.snapped        == b.snapped
+            && a.highlighted    == b.highlighted
+            && a.targetType     == b.targetType
+            && a.targetIndex    == b.targetIndex
+            && a.targetSource   == b.targetSource
+            && a.constraintType == b.constraintType;
+    }
+
+    // --- baseline: no predicate at all, i.e. every existing call site --------
+    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(bare.snapped,        "baseline: vertex 0 sits under the cursor");
+    assert(bare.targetType  == SnapType.Vertex);
+    assert(bare.targetIndex == 0);
+    assert(bare.targetSource == 0);
+    assert(sameVec(bare.worldPos, m.vertices[0]));
+
+    // --- 1. NEUTRALITY: permissive predicate == no predicate ----------------
+    // The predicate doubles as an observation channel: it sees exactly what
+    // the enumeration offered, which is how the count below is known.
+    int offered;
+    SnapResult permissive = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+        (SnapType t, int i, int s) { ++offered; return true; });
+    assert(sameResult(bare, permissive),
+        "S1 neutrality: a predicate that admits everything must reproduce the "
+        ~ "no-predicate result field-for-field");
+    assert(offered >= 3,
+        "the ordering assertions below are only meaningful if the enumeration "
+        ~ "actually offered the runner-ups");
+
+    // --- 2. REJECTION: admitting nothing == snapping switched off -----------
+    SnapResult admitNone = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+        (SnapType t, int i, int s) => false);
+    SnapPacket offCfg = cfg;
+    offCfg.enabled = false;
+    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, offCfg);
+    assert(sameResult(admitNone, disabled),
+        "S1 rejection: a predicate that admits nothing must be the same clean "
+        ~ "pass-through as `cfg.enabled == false`");
+    assert(sameVec(admitNone.worldPos, cursorWorld));
+    assert(!admitNone.snapped && !admitNone.highlighted);
+    assert(admitNone.targetIndex == -1);
+    assert(admitNone.targetType == SnapType.None);
+
+    // --- 3. ORDER: rejecting the winner promotes the runner-up --------------
+    SnapResult noV0 = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+        (SnapType t, int i, int s) => !(t == SnapType.Vertex && i == 0 && s == 0));
+    assert(noV0.snapped,
+        "S1 order: rejecting the nearest candidate must hand the snap to the "
+        ~ "runner-up, not cancel it — a rejected candidate must not be able to "
+        ~ "lower the accumulator it was rejected from");
+    assert(noV0.targetIndex == 1);
+    assert(sameVec(noV0.worldPos, m.vertices[1]));
+
+    // ...and rejecting BOTH accepted candidates leaves the third, which is
+    // inside the gather range and outside acceptance: highlight, no snap. The
+    // accumulator was genuinely re-ranked, not merely filtered at the end.
+    SnapResult noV01 = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+        (SnapType t, int i, int s) =>
+            !(t == SnapType.Vertex && (i == 0 || i == 1)));
+    assert(!noV01.snapped && noV01.highlighted);
+    assert(noV01.targetIndex == 2);
+    assert(sameVec(noV01.highlightPos, m.vertices[2]));
+    assert(sameVec(noV01.worldPos, cursorWorld),
+        "a highlight-only result still passes the input position through");
+
+    // --- the tie-break is part of "the same result" -------------------------
+    // Two candidates at an exactly equal screen distance: `consider`'s strict
+    // `<` gives the win to the first VISITED, and the grid hands candidates
+    // over in ascending index order, so the lower index takes it. That rule is
+    // as much a part of the result as the position is, so it gets stated on
+    // both sides of the seam rather than left to the general equality above
+    // (which the ranked fixture can never exercise).
+    // Coincident vertices, not a mirrored pair: a mirrored pair is only a tie
+    // up to floating-point luck in the projection, while two candidates at the
+    // SAME world point tie by construction. It is also the honest case — an
+    // unwelded duplicate is exactly where "which of these two wins" decides
+    // what a weld does.
+    Mesh tie;
+    tie.vertices = [
+        Vec3(0.25f, 0, 0),   // 0 — wins the tie by index
+        Vec3(0.25f, 0, 0),   // 1 — the unwelded duplicate
+    ];
+    invalidateSnapGrids();
+    assert(pixDist(tie.vertices[0]) == pixDist(tie.vertices[1]),
+        "fixture: the two candidates must be an EXACT screen-distance tie, "
+        ~ "otherwise this block tests ranking, not tie-breaking");
+    assert(pixDist(tie.vertices[0]) < cfg.innerRangePx,
+        "fixture: the tied pair must be close enough to snap");
+
+    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, cfg);
+    assert(tieBare.snapped && tieBare.targetIndex == 0,
+        "the tie goes to the lower index");
+    SnapResult tiePermissive = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+        (SnapType t, int i, int s) => true);
+    assert(sameResult(tieBare, tiePermissive),
+        "S1 neutrality: a tie must break the same way with a permissive "
+        ~ "predicate as with none");
+
+    SnapResult tieNoV0 = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+        (SnapType t, int i, int s) => !(t == SnapType.Vertex && i == 0));
+    assert(tieNoV0.snapped && tieNoV0.targetIndex == 1,
+        "rejecting the side of the tie that won hands it to the other side");
+
+    invalidateSnapGrids();
+
+    // --- the constraint tier carries the same seam --------------------------
+    // Constraint candidates are line/plane hits, not mesh elements, so the
+    // predicate sees (type, -1, 0). Aimed at a pixel where a world axis is
+    // exactly under the cursor and the view ray is not parallel to it.
+    float pxa, pya, ndca;
+    assert(projectToWindowFull(Vec3(1, 0, 0), vp, pxa, pya, ndca));
+    immutable int ax = cast(int)round(pxa);
+    immutable int ay = cast(int)round(pya);
+
+    SnapPacket ccfg = cfg;
+    ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
+
+    SnapResult cBare = snapCursor(cursorWorld, ax, ay, vp, m, ccfg);
+    assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
+        "fixture: a world-axis constraint must fire at this pixel, otherwise "
+        ~ "the constraint-tier assertions below are vacuous");
+
+    SnapResult cPermissive = snapCursor(cursorWorld, ax, ay, vp, m, ccfg, null,
+        (SnapType t, int i, int s) => true);
+    assert(sameResult(cBare, cPermissive),
+        "S1 neutrality holds in the constraint tier too");
+
+    int constraintOffered;
+    SnapResult cNone = snapCursor(cursorWorld, ax, ay, vp, m, ccfg, null,
+        (SnapType t, int i, int s) {
+            ++constraintOffered;
+            assert(i == -1 && s == 0,
+                "a constraint candidate has no element index and no source");
+            return false;
+        });
+    assert(constraintOffered >= 1, "fixture: the axis lines must be offered");
+    assert(!cNone.snapped);
+    assert(cNone.constraintType == SnapType.None);
+    assert(sameVec(cNone.worldPos, cursorWorld));
 }
