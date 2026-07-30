@@ -767,7 +767,7 @@ version (unittest) {
 
         void limits(float i, float o) { innerPx = i; outerPx = o; ++pushes; }
         bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                       out float distPx, out int priority)
+                       out float distPx, ref int priority)
         {
             ++queries;
             return false;   // admits nothing: this guide is here to be counted

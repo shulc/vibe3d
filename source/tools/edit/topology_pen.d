@@ -17,7 +17,7 @@ import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
 import toolpipe.stages.snap : SnapStage;
-import toolpipe.guide       : SnapGuide, GuideDrawState;
+import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
@@ -2421,7 +2421,7 @@ public:
         }
 
         bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                       out float distPx, out int priority)
+                       out float distPx, ref int priority)
         {
             if (!admits(type, idx, slot)) return false;
             if (!aimed_) return false;
@@ -16103,7 +16103,10 @@ unittest {
     g.retarget(mp, false);
 
     float d;
-    int   prio;
+    // Seeded exactly as the arbitration seeds it, so what the assertions below
+    // observe is the pen ANSWERING 2 and not the pen staying silent while a
+    // default happens to be near it.
+    int   prio = kGuidePrioritySeed;
 
     // Un-aimed: a guide that has never been told where the cursor is cannot
     // answer a distance, and answering one anyway would be indistinguishable
@@ -16131,7 +16134,7 @@ unittest {
         "vertex 0 is a border vertex and is admitted");
     assert(d < 1.0f,
         "the candidate under the aim reports ~0 px; it is a screen distance, not a world one");
-    float dFar; int prioFar;
+    float dFar; int prioFar = kGuidePrioritySeed;
     assert(g.proximity(m.vertices[2], SnapType.Vertex, 2, 0, dFar, prioFar),
         "the far corner is a border vertex too");
     assert(dFar > d, "and it must rank farther — the ordering is the aim's, not the index's");

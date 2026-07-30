@@ -51,6 +51,19 @@ import toolpipe.packets : SnapType;
 // because that equivalence is what makes phase (b) safe.
 // ---------------------------------------------------------------------------
 
+/// The value the environment puts in a guide's priority slot BEFORE it asks
+/// for proximity, so a guide that ignores the parameter answers with this
+/// rather than with zero or with whatever was there.
+///
+/// MEASURED, and it is one of three things about the arbitration that the
+/// header does not carry. Its consequence is small and exact: "did not say"
+/// and "said 0" are different answers, and only the seed makes them so. The
+/// other two are recorded where they bite — the acceptance range in
+/// `snap.snapCursor`'s `consider`, and the per-axis write mask in its
+/// `arbitrate`, which we do not have because our guides never supply a
+/// position for a mask to select from.
+enum int kGuidePrioritySeed = 1;
+
 /// How a registered guide should draw itself.
 ///
 /// U2 — HEADER-DERIVED AND UNMEASURED, both the states and the fact that there
@@ -88,13 +101,16 @@ interface SnapGuide {
     ///
     /// `distPx` is the distance the arbitration will RANK this candidate by,
     /// which need not be its screen distance from the cursor — that is the
-    /// point of asking the guide rather than measuring. `priority` breaks ties
-    /// between guides that both admit the same candidate; higher wins.
+    /// point of asking the guide rather than measuring. `priority` settles
+    /// which of several guides answers for the candidate: higher wins
+    /// OUTRIGHT, at any distance, and distance decides only between guides
+    /// that named the same priority.
     ///
-    /// U2 — HEADER-DERIVED. The argument list and the `priority` return have
-    /// never been observed; they are read off a declaration. The arbitration
-    /// rule this tree builds on `priority` (see `snap.snapCursor`) is
-    /// therefore unmeasured too, and phase (a) keeps it unreachable.
+    /// `priority` is `ref`, not `out`, and that is load-bearing: the caller
+    /// seeds it with `kGuidePrioritySeed` before every call, so a guide that
+    /// does not assign it has said "the default", not "zero". The argument
+    /// list is still header-derived; the arbitration rule built on `priority`
+    /// no longer is.
     ///
     /// `candWorld` is the candidate's world position, `type` its discrete snap
     /// type, `idx` its source-local element index (-1 where the candidate is
@@ -112,7 +128,7 @@ interface SnapGuide {
     /// `synchronized` block in `snap.d` is closed before a candidate reaches
     /// `consider`, so an unwinding guide cannot strand the lock.
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, out int priority);
+                   out float distPx, ref int priority);
 
     /// Off / Suggest / Chosen — the draw protocol.
     ///

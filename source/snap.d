@@ -9,7 +9,7 @@ import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
               closestPointOnLineToRay;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
-import toolpipe.guide   : SnapGuide;
+import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
@@ -368,21 +368,30 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // distance and the priority; equal priorities are settled by registration
     // order (strict `>`), which is the only tie-break the registry can offer.
     //
-    // U2 — the whole rule is header-derived. The `priority` return has never
-    // been observed on a wire, so neither has anything built on it. Phase (a)
-    // keeps this unreachable: nothing registers a guide.
+    // The rule is now READ rather than header-derived: priority strictly
+    // dominates, distance breaks ties only WITHIN one priority, and the
+    // environment PRE-SEEDS the priority slot before every call — see
+    // `kGuidePrioritySeed`, which is why `gp` below is seeded and not left to
+    // the zero an `out` parameter would have supplied.
     //
     // The guide re-RANKS a candidate; it never introduces one. `candWorld`,
     // `type`, `idx` and `slot` are the enumeration's, and the winner's world
     // position is still the candidate's own — a guide that answers with a
     // different distance changes WHICH candidate wins, never WHERE it is.
+    // This is also the one arbitration detail we know about and have NOT
+    // adopted: the reference's proximity answer is a per-axis write mask,
+    // naming which of x/y/z the winning guide may overwrite. A mask needs a
+    // guide that supplies a POSITION to mask, and ours supplies only a
+    // ranking — so there is nothing here for the bits to select. If a guide
+    // ever answers with a point of its own, that is when the mask becomes a
+    // thing we are missing rather than a thing we have no use for.
     bool arbitrate(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int prio)
     {
         bool admitted = false;
         foreach (g; guides) {
             float gd;
-            int   gp;
+            int   gp = kGuidePrioritySeed;
             if (!g.proximity(candWorld, type, idx, slot, gd, gp)) continue;
             if (!admitted || gp > prio) {
                 admitted = true;
@@ -421,6 +430,15 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // no guide could have been offered anyway, and applying the cutoff to
         // a guide-supplied distance would let the ranking value masquerade as
         // a range test.
+        //
+        // KNOWN DIFFERENCE, deliberate. The reference's guide loop drops a
+        // candidate at the INNER range, not the outer one — it is a
+        // position-snapping loop with no notion of "highlighted but not
+        // snapped", so for it inner IS the only range that can reject. We
+        // gather at outer so a candidate can highlight without winning, and
+        // then apply inner at the merge, which is the same acceptance with an
+        // extra state in front of it. A guide sees candidates ours would only
+        // highlight; none of them can snap.
         //
         // UNREACHABLE in phase (a): `guides` is empty at every call site, so
         // `prio` stays 0 and the comparison below is the historical one.
@@ -1772,6 +1790,9 @@ version (unittest) {
         // neighbours is what tells them apart.
         int elevateIdx  = -1;
         int elevatePrio = 1;
+        // When true this guide never touches the priority slot at all, which
+        // is how "did not say" is told apart from "said 0".
+        bool silent = false;
 
         this(Viewport v, int x, int y) { vp = v; sx = x; sy = y; }
 
@@ -1784,7 +1805,7 @@ version (unittest) {
         void limits(float i, float o) { innerPx = i; outerPx = o; }
 
         bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                       out float distPx, out int priority)
+                       out float distPx, ref int priority)
         {
             if (seenCount < seen.length) seen[seenCount++] = key(type, idx, slot);
             if (!admitAll) return false;
@@ -1794,7 +1815,9 @@ version (unittest) {
             immutable float dy = qy - cast(float)sy;
             immutable float d  = sqrt(dx * dx + dy * dy);
             distPx   = invert ? (invertBase - d) : d;
-            priority = (idx == elevateIdx) ? elevatePrio : answerPrio;
+            // `silent` leaves the slot exactly as the caller seeded it — the
+            // only way to observe that the seed exists.
+            if (!silent) priority = (idx == elevateIdx) ? elevatePrio : answerPrio;
             return true;
         }
 
@@ -2049,6 +2072,30 @@ unittest {
         "and the same two guides in the other order give the other answer — "
         ~ "which is what makes the previous assertion about ORDER and not "
         ~ "about which guide happens to be right");
+
+    // --- the PRE-SEEDED priority: "did not say" is not "said 0" -------------
+    // MEASURED (kGuidePrioritySeed). A guide that never touches the priority
+    // slot answers with the seed, so it OUTRANKS a guide that explicitly says
+    // zero — and it does so from second place in the registry, where a
+    // same-priority peer could not have overruled the first.
+    //
+    // FAILS ON AN `out` PARAMETER, which is what this used to be: the silent
+    // guide's answer would zero itself, the two priorities would tie, and
+    // registration order would hand the result to `saysZero` instead.
+    invalidateSnapGrids();
+    auto saysZero = new MirrorGuide(vp, sx, sy);
+    assert(saysZero.answerPrio == 0, "fixture: the loud guide names zero");
+    auto saysNothing = new MirrorGuide(vp, sx, sy);
+    saysNothing.silent     = true;
+    saysNothing.invert     = true;
+    saysNothing.invertBase = invertBase;
+    assert(kGuidePrioritySeed > saysZero.answerPrio,
+        "fixture: the seed must outrank an explicit zero, or this proves nothing");
+    SnapResult seeded = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                   [saysZero, saysNothing]);
+    assert(seeded.snapped && seeded.targetIndex == 2,
+        "S4: the priority slot is PRE-SEEDED, so a guide that ignores it is heard at the "
+        ~ "seed's rank and not at zero");
 
     // --- the tie-break survives the guide path ------------------------------
     // Two coincident vertices: a tie by construction (a mirrored ±x pair only
