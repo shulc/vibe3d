@@ -8,8 +8,8 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize, getGizmoPixels;
-import drag : screenAxisDelta;
+import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
+import drag : screenAxisDelta, haulWorldPerPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -255,7 +255,7 @@ public:
         dragPart          = PART_FREE;
         freeCtrl          = (mods & KMOD_CTRL) != 0;
         freeLockAxis      = -1;
-        freeWorldPerPixel = haulWorldPerPixel();
+        freeWorldPerPixel = haulWorldPerPixel(anchor, cachedVp);
         return true;
     }
 
@@ -353,14 +353,6 @@ private:
             return m;
         }
         return mesh.selectedFaces;
-    }
-
-    // World units per screen pixel at the gizmo anchor — the free 2D drag's
-    // pixel→world scale (mirrors PolyInsetTool.haulWorldPerPixel).
-    float haulWorldPerPixel() {
-        float px = getGizmoPixels();
-        if (px < 1e-6f) px = 90.0f;
-        return gizmoSize(anchor, cachedVp, 1.0f) / px;
     }
 
     void computeGizmoFrame() {

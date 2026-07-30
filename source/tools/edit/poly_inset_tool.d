@@ -8,7 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : gizmoSize, getGizmoPixels;
+import drag : haulWorldPerPixel;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -210,7 +210,7 @@ public:
         dragLastMX     = e.x;
         dragLastMY     = e.y;
         dragBaseInset  = inset_;
-        worldPerPixel  = haulWorldPerPixel();
+        worldPerPixel  = haulWorldPerPixel(haulAnchor(), cachedVp);
         return true;
     }
 
@@ -252,11 +252,10 @@ private:
         return mesh.selectedFaces;
     }
 
-    // World units per screen pixel at the selected faces' centroid — the
-    // same perspective/zoom-correct scale poly_bevel.d uses for its arrow
-    // handles (gizmoSize(pos, vp, 1.0) is the world length of a
-    // getGizmoPixels()-pixel span at `pos`).
-    float haulWorldPerPixel() {
+    // The selected faces' centroid — this tool's anchor for the pixel→world
+    // haul scale. The scale itself is `drag.haulWorldPerPixel` (LAW C of the
+    // conversion seam); only the anchor is ours.
+    Vec3 haulAnchor() {
         Vec3 anchor = Vec3(0, 0, 0);
         bool any = mesh.hasAnySelectedFaces();
         int cnt = 0;
@@ -266,9 +265,7 @@ private:
             ++cnt;
         }
         if (cnt > 0) anchor = anchor * (1.0f / cast(float)cnt);
-        float px = getGizmoPixels();
-        if (px < 1e-6f) px = 90.0f;
-        return gizmoSize(anchor, cachedVp, 1.0f) / px;
+        return anchor;
     }
 
     // Revert to the pre-inset cage + selection, then re-run the kernel from

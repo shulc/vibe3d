@@ -8,7 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : gizmoSize, getGizmoPixels;
+import drag : haulWorldPerPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -203,7 +203,7 @@ public:
         dragLastMX    = e.x;
         dragLastMY    = e.y;
         dragBaseDist  = dist_;
-        worldPerPixel = haulWorldPerPixel();
+        worldPerPixel = haulWorldPerPixel(mesh.selectionCentroidVertices(), cachedVp);
         return true;
     }
 
@@ -236,16 +236,6 @@ public:
     }
 
 private:
-    // World units per screen pixel at the selected vertices' centroid —
-    // the same perspective/zoom-correct scale poly_bevel.d/poly_inset_tool.d
-    // use for their handles/haul.
-    float haulWorldPerPixel() {
-        Vec3 anchor = mesh.selectionCentroidVertices();
-        float px = getGizmoPixels();
-        if (px < 1e-6f) px = 90.0f;
-        return gizmoSize(anchor, cachedVp, 1.0f) / px;
-    }
-
     // Revert to the pre-merge cage + selection, then re-run the kernel from
     // the current `dist_`. Per-tick re-evaluate: WRITE the param + RE-RUN,
     // never incrementally mutate the already-welded mesh.
