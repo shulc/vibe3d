@@ -1764,6 +1764,14 @@ version (unittest) {
         float invertBase = 0;
         // Types this guide refuses outright.
         bool admitAll = true;
+        // One candidate promoted above the rest. This is the ONLY way to
+        // exercise the accumulator's priority term: `arbitrate` settles which
+        // GUIDE answers for a candidate, and if every candidate then comes
+        // back at the same priority, "(priority, distance)" and "distance" are
+        // the same rule. A guide that ranks one candidate above its
+        // neighbours is what tells them apart.
+        int elevateIdx  = -1;
+        int elevatePrio = 1;
 
         this(Viewport v, int x, int y) { vp = v; sx = x; sy = y; }
 
@@ -1786,7 +1794,7 @@ version (unittest) {
             immutable float dy = qy - cast(float)sy;
             immutable float d  = sqrt(dx * dx + dy * dy);
             distPx   = invert ? (invertBase - d) : d;
-            priority = answerPrio;
+            priority = (idx == elevateIdx) ? elevatePrio : answerPrio;
             return true;
         }
 
@@ -1949,6 +1957,39 @@ unittest {
         "S4: a guide that admits nothing must be the same clean pass-through "
         ~ "as `cfg.enabled == false` — a rejected candidate must be as if it "
         ~ "had never been enumerated");
+
+    // --- 4a. RANKING: priority outranks distance BETWEEN CANDIDATES ---------
+    // One guide, mirroring the distance rule, that promotes the FARTHEST
+    // candidate by one priority level. The promoted candidate must win even
+    // though two nearer ones were offered first and were admitted.
+    //
+    // This is the block that separates "(priority, distance) wins" from
+    // "nearest wins", and it is the only shape that can: `arbitrate` settles
+    // which GUIDE answers for a candidate, so a fixture where every candidate
+    // comes back at the same priority leaves the accumulator's priority term
+    // dead and unobserved. Deleting the term must fail HERE.
+    invalidateSnapGrids();
+    auto elevator = new MirrorGuide(vp, sx, sy);
+    elevator.elevateIdx  = 2;
+    elevator.elevatePrio = 1;
+    SnapResult elevated = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+                                     null, [elevator]);
+    assert(elevated.snapped && elevated.targetIndex == 2,
+        "S4 ranking: a candidate at a higher priority beats a nearer one at a "
+        ~ "lower priority — priority is the first term of the key, distance "
+        ~ "only the second");
+    assert(sameVec(elevated.worldPos, m.vertices[2]));
+
+    // ...and the promotion must not be order-dependent: promoting the NEAREST
+    // candidate changes nothing, because it already won on distance.
+    invalidateSnapGrids();
+    auto elevateNear = new MirrorGuide(vp, sx, sy);
+    elevateNear.elevateIdx = 0;
+    SnapResult elevatedNear = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+                                         null, [elevateNear]);
+    assert(sameResult(bare, elevatedNear),
+        "promoting the candidate that already won on distance is a no-op — "
+        ~ "the priority term must not reorder anything by itself");
 
     // --- 4. ARBITRATION: priority outranks distance --------------------------
     // Two guides over the same candidates. `low` mirrors the distance rule at
