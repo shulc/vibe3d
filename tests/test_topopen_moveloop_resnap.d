@@ -5,13 +5,30 @@
 // (sphere) background: the drag gathers the classic in-line edge-loop chain
 // through the seed edge (REV1 FIX-1 — `Mesh.selectLoopEdges`, the middle
 // ROW of the grid), then re-snaps EACH loop vertex onto the sphere surface
-// at that vertex's own SHARED-screen-delta-shifted pixel (camera-ray, the
-// SAME primitive P4 Move's re-snap ultimately rests on) — independently
-// verified via `expectedRayHitOnSphere` (ray-sphere intersection computed
-// from scratch, never a second call into the code under test). Every
-// OTHER grid vertex (outside the loop) must stay byte-unchanged, and the
-// primary layer's topology (vertex/edge/face counts) must not change
-// (δ=0).
+// independently. Every OTHER grid vertex (outside the loop) must stay
+// byte-unchanged, and the primary layer's topology (vertex/edge/face counts)
+// must not change (δ=0).
+//
+// TASK 0503 — WHAT THE RE-SNAP IS. This file used to assert the camera-ray
+// hit at each vertex's own shifted pixel, which was the port's law and is
+// measured wrong. The reference takes the NEAREST POINT on the background
+// facet, clamped to that facet:
+//
+//   * dupedge_resnap_capture.md, contract C-2, cells A5-TILT30 / A1-TILT
+//     (two boots) / A6-TILT60 — |new edge|/|source edge| = cos(tilt) to
+//     2.9e-7, where a per-vertex ray predicts 1.804 / 2.484 / 4.369;
+//     cell A0-FLAT — 1.000 against the ray law's 1.220 on a FLAT background;
+//   * addloop_bgresnap_undo_capture.md, verdict V-1, cells AL-BG-1/2/MID/RAY
+//     — every inserted vertex on the background plane to 1.1e-09…7.6e-09 D,
+//     matching the perpendicular foot to 5.36e-09 D against 5.75e-03 D for
+//     the ray.
+//
+// So the expectation here is `expectedNearestOnSphere` — this suite's own
+// nearest-foot solve against the sphere's OWN FACETS, computed from scratch,
+// never a second call into the code under test. (The facets, not the ideal
+// sphere: see that helper's own note.) The tilted-background fixture that
+// makes the two laws differ loudly lives in `source/tools/edit/topology_pen.d`'s
+// own unittests — a sphere background cannot show a cos(tilt) ratio.
 //
 // Run via: ./run_test.d topopen_moveloop_resnap
 
@@ -93,17 +110,15 @@ unittest {
     auto post = readVerticesLayer(1);
 
     // The 3 loop vertices (3, 4, 5 — the middle row) must each land at the
-    // INDEPENDENTLY-computed camera-ray hit for THEIR OWN shifted pixel.
+    // INDEPENDENTLY-computed NEAREST POINT on the sphere's facets, taken
+    // from THEIR OWN drag-shifted world point.
     foreach (vi; [3, 4, 5]) {
-        float sx, sy;
-        assert(projectToWindow(gridPos[vi], vp, sx, sy),
-            format("setup: v%d must project on-screen", vi));
         Vec3 expected;
-        assert(expectedRayHitOnSphere(c, sx + dx, sy + dy, R, expected),
-            format("v%d's shifted-pixel camera-ray must hit the sphere", vi));
+        assert(expectedNearestOnSphere(c, gridPos[vi], dx, dy, R, LON, LAT, expected),
+            format("setup: v%d must project on-screen to have a shifted point at all", vi));
         assert(approxVec(expected, post[vi], TOL),
-            format("loop vertex %d %s should match the independently-computed camera-ray hit "
-                 ~ "at its OWN shifted pixel (%f,%f,%f)",
+            format("loop vertex %d %s should match the independently-computed nearest point "
+                 ~ "on the background facets (%f,%f,%f)",
                    vi, post[vi], expected.x, expected.y, expected.z));
 
         double dist = sqrt(post[vi][0]*post[vi][0] + post[vi][1]*post[vi][1] + post[vi][2]*post[vi][2]);
@@ -117,17 +132,28 @@ unittest {
         assert(approxVec(gridPos[vi], post[vi], 1e-5),
             format("non-loop vertex %d must stay exactly at its original position", vi));
 
-    // Consecutive loop-vertex spacing must not collapse toward a point.
+    // Consecutive loop-vertex spacing must not collapse toward a point —
+    // the failure mode this guards is an implementation that averaged or
+    // interpolated instead of writing every target verbatim.
+    //
+    // TASK 0503: the old UPPER band (3x pre-drag) was a property of the
+    // camera ray, not of the loop. A nearest-foot re-snap taken from INSIDE
+    // the sphere pushes each vertex out radially, magnifying every
+    // separation by roughly R/|q| — inherent geometry, not a defect, and the
+    // exact post-drag positions are already pinned per-vertex above. What
+    // replaces it is a real invariant rather than a calibrated one: two
+    // points that both lie on a sphere of radius R cannot be farther apart
+    // than its diameter.
     double preD01 = sqrt(cast(double)dot(gridPos[4] - gridPos[3], gridPos[4] - gridPos[3]));
     Vec3 p3 = toVec3(post[3]), p4 = toVec3(post[4]), p5 = toVec3(post[5]);
     double postD01 = sqrt(cast(double)dot(p4 - p3, p4 - p3));
     double postD12 = sqrt(cast(double)dot(p5 - p4, p5 - p4));
-    assert(postD01 > preD01 * 0.3 && postD01 < preD01 * 3.0,
-        format("consecutive spacing (3-4) must stay within a band of pre-drag; pre=%f post=%f",
-               preD01, postD01));
-    assert(postD12 > preD01 * 0.3 && postD12 < preD01 * 3.0,
-        format("consecutive spacing (4-5) must stay within a band of pre-drag; pre=%f post=%f",
-               preD01, postD12));
+    assert(postD01 > preD01 * 0.3 && postD01 < 2.0 * R,
+        format("consecutive spacing (3-4) must not collapse, and cannot exceed the sphere's "
+             ~ "diameter; pre=%f post=%f", preD01, postD01));
+    assert(postD12 > preD01 * 0.3 && postD12 < 2.0 * R,
+        format("consecutive spacing (4-5) must not collapse, and cannot exceed the sphere's "
+             ~ "diameter; pre=%f post=%f", preD01, postD12));
 }
 
 Vec3 toVec3(double[3] v) { return Vec3(cast(float)v[0], cast(float)v[1], cast(float)v[2]); }

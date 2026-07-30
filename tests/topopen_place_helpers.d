@@ -178,6 +178,118 @@ bool expectedRayHitOnAabb(CameraState c, float px, float py, float he,
 }
 
 // ---------------------------------------------------------------------------
+// TASK 0503 — the background RE-SNAP ground truth.
+//
+// The placement seed above is still a camera ray (a CLICK's CONS hit; that
+// path is untouched). The per-vertex re-snap a DRAG applies is not: it is the
+// NEAREST POINT on the background facet, clamped to that facet, measured on
+// two gestures by two independently built rigs (see
+// toolcards/topology_pen/dupedge_resnap_capture.md contract C-2 and
+// addloop_bgresnap_undo_capture.md verdict V-1). The functions below are this
+// suite's own reimplementation of that answer end to end: the drag's
+// screen→world mapping, then a brute-force nearest-foot over the sphere the
+// fixture actually posted.
+//
+// Against the FACETED sphere, deliberately, not the ideal one. A nearest foot
+// taken from a query point |r - R| away from the surface lands off the ideal
+// sphere by up to |r - R| * (facet half-angle) — 0.065 at this suite's
+// resolution and radius, which is most of its whole tolerance band. A ray hit
+// had no such term (it always lands ON the struck facet), which is why the
+// resolution note further down was safe under the old law and is not under
+// this one.
+// ---------------------------------------------------------------------------
+
+/// The world point a shared screen delta `(dx,dy)` moves `src` to under the
+/// tool's mapping: shift `src`'s OWN projected pixel by the delta, then
+/// unproject at CONSTANT view depth (the plane through `src` parallel to the
+/// image plane). The `cast(int)` truncation and the `+0.5f` pixel centre
+/// mirror the tool's own rounding, so the query point is reproduced exactly
+/// rather than approximately. PERSPECTIVE viewports only — every fixture in
+/// this suite posts a perspective camera.
+bool shiftedWorldPoint(const ref Viewport vp, Vec3 src, int dx, int dy, out Vec3 q) {
+    float sx, sy;
+    if (!projectToWindow(src, vp, sx, sy)) return false;
+    immutable int px = cast(int)(sx + cast(float)dx);
+    immutable int py = cast(int)(sy + cast(float)dy);
+    Vec3 dir = screenRay(cast(float)px + 0.5f, cast(float)py + 0.5f, vp);
+    // View matrix third ROW = the camera-back direction; the plane through
+    // `src` with that normal is the constant-view-depth plane.
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    float denom = dot(camBack, dir);
+    if (abs(denom) < 1e-6f) return false;
+    q = vp.eye + dir * (dot(camBack, src - vp.eye) / denom);
+    return true;
+}
+
+/// Closest point of triangle (a,b,c) to `p`, clamped to the triangle —
+/// the standard barycentric region walk, written out here so the expected
+/// value never comes from a call into source/constraint.d.
+Vec3 closestPointOnTri(Vec3 p, Vec3 a, Vec3 b, Vec3 c) {
+    Vec3 ab = b - a, ac = c - a, ap = p - a;
+    float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+
+    Vec3 bp = p - b;
+    float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+
+    Vec3 cp = p - c;
+    float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+
+    float denom = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
+/// Globally nearest point of a polygon soup to `p`. Fan-triangulates each
+/// polygon on vertex 0, the same fan the server rasterizes and constrains
+/// against, so the answer is exact for the non-planar quads a UV sphere is
+/// made of rather than merely close.
+bool closestPointOnPolySoup(Vec3 p, const Vec3[] verts, const int[][] faces,
+                            out Vec3 hit) {
+    bool  found  = false;
+    float bestD2 = float.max;
+    foreach (f; faces) {
+        if (f.length < 3) continue;
+        Vec3 a = verts[f[0]];
+        for (size_t i = 1; i + 1 < f.length; ++i) {
+            Vec3 cp = closestPointOnTri(p, a, verts[f[i]], verts[f[i + 1]]);
+            Vec3 d  = cp - p;
+            float d2 = dot(d, d);
+            if (d2 < bestD2) { bestD2 = d2; hit = cp; found = true; }
+        }
+    }
+    return found;
+}
+
+/// Where a vertex at `src` must land after a `(dx,dy)` pixel drag over the
+/// sphere background this suite posts: the nearest point of that sphere's own
+/// FACETS to the drag's constant-depth world point. `false` only when `src`
+/// does not project (the sphere is closed, so the foot itself never misses —
+/// which is the point: a camera ray could miss, a clamped nearest foot
+/// cannot).
+bool expectedNearestOnSphere(CameraState c, Vec3 src, int dx, int dy,
+                             float R, int lon, int lat, out Vec3 expected) {
+    auto vp = viewportFromCamera(c);
+    Vec3 q;
+    if (!shiftedWorldPoint(vp, src, dx, dy, q)) return false;
+    Vec3[]  verts;
+    int[][] faces;
+    sphereMeshData(R, lon, lat, verts, faces);
+    return closestPointOnPolySoup(q, verts, faces, expected);
+}
+
+// ---------------------------------------------------------------------------
 // Sphere background mesh generator — parametric UV sphere at the world
 // origin.
 //
@@ -197,6 +309,11 @@ bool expectedRayHitOnAabb(CameraState c, float px, float py, float he,
 // below, kept at its previously-calibrated resolution rather than relaxed
 // now that the error model shrank) keeps the facet sagitta comfortably
 // under 2% of R, safely inside the tests' tolerance band.
+//
+// TASK 0503: that reasoning still covers the PLACEMENT tests, which are
+// still a camera ray. It does NOT cover the re-snap a DRAG now applies —
+// see `expectedNearestOnSphere` above, which is why the re-snap ground
+// truth is taken against these facets rather than the ideal sphere.
 // ---------------------------------------------------------------------------
 
 /// Vertex count a `sphereMeshBody(R, lon, lat)` call will produce — lets a
@@ -204,10 +321,13 @@ bool expectedRayHitOnAabb(CameraState c, float px, float py, float he,
 /// placement click without re-deriving the arithmetic inline.
 int sphereVertexCount(int lon, int lat) { return (lat - 1) * lon + 2; }
 
-string sphereMeshBody(float R, int lon = 32, int lat = 24) {
+/// The sphere background's own vertex/face arrays — the exact geometry
+/// `sphereMeshBody` posts. Factored out (task 0503) so a test can compute a
+/// nearest-foot ground truth against the FACETS the server actually holds,
+/// not against an idealized sphere.
+void sphereMeshData(float R, int lon, int lat, out Vec3[] verts, out int[][] faces) {
     assert(lon >= 3 && lat >= 2, "degenerate sphere resolution");
 
-    Vec3[] verts;
     verts ~= Vec3(0, R, 0);   // 0: top pole
 
     foreach (i; 1 .. lat) {
@@ -223,8 +343,6 @@ string sphereMeshBody(float R, int lon = 32, int lat = 24) {
     verts ~= Vec3(0, -R, 0);  // bottom pole
 
     int ringStart(int ring) { return 1 + (ring - 1) * lon; }  // ring in [1, lat-1]
-
-    int[][] faces;
 
     // Top cap: triangles pole(0) -> ring 1.
     {
@@ -254,6 +372,12 @@ string sphereMeshBody(float R, int lon = 32, int lat = 24) {
             faces ~= [bottomIdx, b, a];
         }
     }
+}
+
+string sphereMeshBody(float R, int lon = 32, int lat = 24) {
+    Vec3[]  verts;
+    int[][] faces;
+    sphereMeshData(R, lon, lat, verts, faces);
 
     JSONValue[] vArr;
     foreach (v; verts)
