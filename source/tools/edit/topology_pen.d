@@ -2008,7 +2008,16 @@ public:
             // exactly the defining Fill-mode case (no vertex/edge/face is
             // anywhere near the cursor). Nesting it in that block would
             // make the preview never render for that scenario.
-            fillRing_ = (penMode_ == PenMode.Fill) ? findFillRing(e.x, e.y, vp) : null;
+            //
+            // TASK 0488: the seed is resolved ONCE for this event and shared
+            // with the radius overlay below. Two independent seed queries per
+            // motion could disagree, and each one is a full unbounded scan
+            // plus a BVH pick — so sharing is both the correctness argument
+            // and the cheap one.
+            immutable int fillSeed =
+                (penMode_ == PenMode.Fill) ? fillSeedEdge(e.x, e.y, vp) : -1;
+            fillRing_ = (fillSeed >= 0)
+                      ? fillRingFromSeed(cast(uint)fillSeed, e.x, e.y, vp) : null;
 
             // Fill mode radius overlay (task 0477 continuation, derived
             // law — see `fillRadiusPx_`'s own doc comment for provenance):
@@ -2032,13 +2041,12 @@ public:
             // not the `range`-multiplied gather radius) — only which edge
             // sizes it.
             fillRadiusValid_ = false;
-            if (penMode_ == PenMode.Fill) {
-                int bre = fillSeedEdge(e.x, e.y, vp);
-                auto m  = mesh;
-                if (bre >= 0 && m !is null && bre < cast(int)m.edges.length) {
+            {
+                auto m = mesh;
+                if (fillSeed >= 0 && m !is null && fillSeed < cast(int)m.edges.length) {
                     ImVec2 pa, pb;
-                    if (projectPt(m.vertices[m.edges[bre][0]], vp, pa)
-                     && projectPt(m.vertices[m.edges[bre][1]], vp, pb)) {
+                    if (projectPt(m.vertices[m.edges[fillSeed][0]], vp, pa)
+                     && projectPt(m.vertices[m.edges[fillSeed][1]], vp, pb)) {
                         fillRadiusPx_    = fillHoverRadiusPx(cast(float)e.x, cast(float)e.y, pa, pb);
                         fillRadiusValid_ = true;
                     }
