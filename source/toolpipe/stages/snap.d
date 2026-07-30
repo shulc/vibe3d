@@ -299,3 +299,51 @@ private:
         return s.length == 0 ? 0.0f : s.to!float;
     }
 }
+
+unittest { // ONE set of snap defaults — the packet's must equal the stage's
+    // `SnapPacket.init` is not a second opinion about the snap config: it is
+    // the FALLBACK four call sites serve when the pipeline has no SNAP packet
+    // (`tools/create/create_common.d` twice, `tools/transform/transform.d`
+    // twice), so it is read as if the stage had published it. The two sets
+    // disagreed — the packet carried inner 8 / outer 40's ancestor 24, the
+    // stage 24 / 40 — which made a packet-less consumer snap with a 3x
+    // narrower acceptance and a 1.67x narrower gather, silently. Nothing
+    // announced the divergence because no test compared them.
+    //
+    // This block is that comparison. It deliberately checks EVERY config field
+    // rather than only the two ranges: whichever default drifts next, the
+    // fallback is wrong in exactly the same silent way.
+    auto st = new SnapStage();
+
+    assert(st.innerRangePx == SnapPacket.init.innerRangePx,
+        "the SNAP stage owns innerRangePx; SnapPacket.init is the fallback four "
+        ~ "call sites serve for it, so the two defaults must be one number");
+    assert(st.outerRangePx == SnapPacket.init.outerRangePx,
+        "same for outerRangePx — a packet-less consumer must gather exactly as "
+        ~ "far as one holding the stage's packet");
+
+    assert(st.enabled       == SnapPacket.init.enabled,       "enabled default drifted");
+    assert(st.enabledTypes  == SnapPacket.init.enabledTypes,  "enabledTypes default drifted");
+    assert(st.snapScope     == SnapPacket.init.snapScope,     "snapScope default drifted");
+    assert(st.fixedGrid     == SnapPacket.init.fixedGrid,     "fixedGrid default drifted");
+    assert(st.fixedGridSize == SnapPacket.init.fixedGridSize, "fixedGridSize default drifted");
+
+    // Whole-struct form, and it is not redundant: `snapshotConfigToPacket`
+    // starts from `SnapPacket.init` and overwrites only the config fields, so
+    // a fresh stage's snapshot is bit-identical to the init packet iff every
+    // config default agrees. This catches a field ADDED to one side only.
+    assert(st.snapshotConfigToPacket() == SnapPacket.init,
+        "a fresh SNAP stage's config snapshot must BE the init packet — if a "
+        ~ "new config field lands on one side only, the fallback silently "
+        ~ "diverges again");
+
+    // `reset()` restates every initialiser by hand (SceneReset / /api/reset go
+    // through it), so it is a third copy of the same set and it drifts too.
+    st.innerRangePx = 1.0f;
+    st.outerRangePx = 2.0f;
+    st.enabled      = true;
+    st.reset();
+    assert(st.snapshotConfigToPacket() == SnapPacket.init,
+        "SnapStage.reset() must restore exactly the declaration initialisers, "
+        ~ "which are exactly SnapPacket.init's");
+}

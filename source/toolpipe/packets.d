@@ -722,8 +722,19 @@ struct SnapPacket {
     // Stage 1: snap scope (Global/Component/Item). Named `snapScope` because
     // `scope` is a D reserved keyword. Default Global = all types eligible.
     SnapMode snapScope     = SnapMode.Global;
-    float  innerRangePx  = 8.0f;       // snap fires when cursor within this
-    float  outerRangePx  = 24.0f;      // candidate highlights when within this
+    // THE ONE PAIR. These two defaults MUST equal SnapStage's declaration
+    // initialisers (`toolpipe/stages/snap.d`) — the stage owns the field, this
+    // struct only carries it, and four call sites serve `SnapPacket.init` as a
+    // silent fallback when the pipeline has no packet
+    // (`tools/create/create_common.d`, `tools/transform/transform.d`). They
+    // used to disagree (8 / 24 here against 24 / 40 there), so a fallback got a
+    // 3x narrower acceptance and a 1.67x narrower gather with no diagnostic —
+    // and the 8 was not even an acceptance radius, it was the unrelated
+    // press-pick reach sitting in this slot by coincidence. The unittest at the
+    // bottom of `toolpipe/stages/snap.d` pins the two sets together so they can
+    // never drift apart again; change them THERE and here in one edit.
+    float  innerRangePx  = 24.0f;      // snap fires when cursor within this
+    float  outerRangePx  = 40.0f;      // candidate highlights when within this
     bool   fixedGrid     = false;      // grid uses fixedGridSize, not dynamic
     float  fixedGridSize = 1.0f;       // world units per grid step (when fixedGrid)
     // Workplane snapshot (mirrors WorkplanePacket fields). Used by
