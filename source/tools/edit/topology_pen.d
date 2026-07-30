@@ -14432,6 +14432,485 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// FILL — the measured candidate rule (task 0488). Every block below pins a
+// clause that the SHIPPED rule got wrong, and every one of them FAILS on that
+// shipped rule. Provenance for each clause is the private toolcard, never
+// this file.
+//
+// Shared rig helpers keep the arithmetic hand-checkable: all rigs are planar
+// (y = 0) under `makeGridPlaneTestViewport`, which looks straight down, so a
+// world (x, z) offset is a screen offset and every distance quoted in a
+// comment can be read off the coordinates.
+// ---------------------------------------------------------------------------
+
+// The pure screen-space predicates the rule is built from, on hand numbers.
+unittest {
+    // segmentsProperlyCross — an X crosses; a T-junction does NOT (the
+    // measured word is "properly": both parameters strictly inside (0,1)),
+    // and neither do parallels, disjoint pairs, or a shared endpoint. The
+    // endpoint cases are load-bearing: a candidate that is itself a corner of
+    // the polygon being tested must survive, and it only does because
+    // touching is not crossing.
+    assert(TopologyPenTool.segmentsProperlyCross(
+               ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1)),
+           "an X must cross");
+    assert(!TopologyPenTool.segmentsProperlyCross(
+               ImVec2(0, 0), ImVec2(0, 1), ImVec2(-1, 0), ImVec2(1, 0)),
+           "a T-junction touching at a segment END is NOT a proper crossing");
+    assert(!TopologyPenTool.segmentsProperlyCross(
+               ImVec2(-1, 0), ImVec2(1, 0), ImVec2(-1, 1), ImVec2(1, 1)),
+           "parallels never cross");
+    assert(!TopologyPenTool.segmentsProperlyCross(
+               ImVec2(-1, 0), ImVec2(1, 0), ImVec2(5, -1), ImVec2(5, 1)),
+           "disjoint segments never cross");
+    assert(!TopologyPenTool.segmentsProperlyCross(
+               ImVec2(0, 0), ImVec2(1, 1), ImVec2(0, 0), ImVec2(1, -1)),
+           "a shared endpoint is not a crossing");
+    assert(!TopologyPenTool.segmentsProperlyCross(
+               ImVec2(0, 0), ImVec2(2, 0), ImVec2(1, 0), ImVec2(3, 0)),
+           "collinear overlap is not a PROPER crossing");
+
+    // screenQuadConvex — the shape test. A square passes either way round; a
+    // bowtie (the SAME four points in the other cyclic order) fails, which is
+    // exactly what makes the two-order search do real work; a collinear
+    // corner fails, keeping a degenerate cycle out of the build.
+    auto p00 = ImVec2(0, 0), p10 = ImVec2(1, 0), p11 = ImVec2(1, 1), p01 = ImVec2(0, 1);
+    assert(TopologyPenTool.screenQuadConvex(p00, p10, p11, p01), "a square is convex");
+    assert(TopologyPenTool.screenQuadConvex(p01, p11, p10, p00),
+           "convexity is winding-agnostic — all four corners same sign, either sign");
+    assert(!TopologyPenTool.screenQuadConvex(p00, p10, p01, p11),
+           "the bowtie order of the same four points must FAIL");
+    assert(!TopologyPenTool.screenQuadConvex(
+               ImVec2(0, 0), ImVec2(1, 0), ImVec2(2, 0), ImVec2(1, 1)),
+           "a collinear corner is neither sign — reject");
+    // A dart (one point inside the triangle of the other three) is convex in
+    // NO cyclic order, which is how the search refuses outright rather than
+    // building a self-overlapping facet.
+    auto inside = ImVec2(0.5f, 0.2f);
+    assert(!TopologyPenTool.screenQuadConvex(p00, p10, inside, p01));
+    assert(!TopologyPenTool.screenQuadConvex(p00, p10, p01, inside));
+}
+
+// The bridge: a quad across a gap whose closing side is NOT a mesh edge.
+//
+// FAILS ON THE OLD RULE, which is the point. The shipped rule reconstructed a
+// cell from BORDER-EDGE ADJACENCY and required the fourth side to be a real
+// mesh edge, so it could never leave the bar it seeded on: two topologically
+// disconnected bars had no candidate at all and the press was a no-op. The
+// reference has no such requirement and was measured building exactly this.
+//
+// Rig: two lone quads facing each other across a gap in x, both border on all
+// four sides. Cursor between them but nearer bar A, so A's facing edge is the
+// seed and both of B's facing corners are the only things in reach.
+version (unittest) private Mesh makeFillBridgeRig(out uint[4] barA, out uint[4] barB) {
+    Mesh m;
+    // Bar A (left), corners in cycle order.
+    barA[0] = m.addVertex(Vec3(-0.6f, 0, -0.2f));
+    barA[1] = m.addVertex(Vec3(-0.2f, 0, -0.2f));
+    barA[2] = m.addVertex(Vec3(-0.2f, 0,  0.2f));
+    barA[3] = m.addVertex(Vec3(-0.6f, 0,  0.2f));
+    // Bar B (right).
+    barB[0] = m.addVertex(Vec3( 0.2f, 0, -0.2f));
+    barB[1] = m.addVertex(Vec3( 0.6f, 0, -0.2f));
+    barB[2] = m.addVertex(Vec3( 0.6f, 0,  0.2f));
+    barB[3] = m.addVertex(Vec3( 0.2f, 0,  0.2f));
+    m.addFace([barA[0], barA[1], barA[2], barA[3]]);
+    m.addFace([barB[0], barB[1], barB[2], barB[3]]);
+    m.buildLoops();
+    return m;
+}
+
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import std.algorithm : canFind;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    uint[4] barA, barB;
+    Mesh m = makeFillBridgeRig(barA, barB);
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+
+    // The closing side does not exist as an edge before the fill — that is
+    // the whole premise, asserted rather than assumed.
+    assert(m.edgeIndex(barA[1], barB[0]) == ~0u, "setup: no closing edge may exist yet");
+    assert(m.edgeIndex(barA[2], barB[3]) == ~0u, "setup: nor the other one");
+    immutable size_t e0 = m.edges.length;
+
+    // The seed really is bar A's facing edge, not a vertex press.
+    immutable int seed = t.fillSeedEdge(cast(int)cur.x, cast(int)cur.y, vp);
+    assert(seed >= 0, "the press must classify as a BORDER-EDGE press");
+    assert((m.edges[seed][0] == barA[1] && m.edges[seed][1] == barA[2])
+        || (m.edges[seed][0] == barA[2] && m.edges[seed][1] == barA[1]),
+        "the seed must be bar A's facing edge");
+
+    auto ring = t.findFillRing(cast(int)cur.x, cast(int)cur.y, vp);
+    assert(ring.length == 4, "the measured rule bridges the gap — the old rule declined here");
+
+    // SEEDS OCCUPY SLOTS 0 AND 1, in the EDGE'S OWN STORED ORDER (measured:
+    // not sorted, not cursor-relative). The old rule put the seed edge's two
+    // endpoints in slots 1 and 2, so this line alone fails on it.
+    assert(ring[0] == m.edges[seed][0] && ring[1] == m.edges[seed][1],
+        "slots 0 and 1 are the pressed edge's endpoints, in the edge's own stored order");
+
+    assert(canFind(ring, barB[0]) && canFind(ring, barB[3]),
+        "the two corners of the OTHER, disconnected bar must be the other two slots");
+
+    t.commitFill(ring);
+    assert(m.faces.length == 3, "the bridge must be built as exactly one new facet");
+    assert(m.vertices.length == 8, "Dv=0 — a bridge reuses existing corners");
+    assert(m.edges.length == e0 + 2, "De=+2 — both closing sides are created by the build");
+    assert(history.canUndo(), "a real fill records one undo entry");
+}
+
+// `range` is a GATHER multiplier and nothing else: below the rig's own
+// threshold the press refuses, above it builds, and FURTHER above it builds
+// THE SAME THING — the four-nearest cap absorbs the extra reach. Measured as
+// a ratio, so it needs no camera model; here it needs no pixel arithmetic
+// either, only the same rig at three settings.
+//
+// FAILS ON THE OLD RULE, which had no reach of any kind (it was purely
+// topological) and therefore could not vary with this attribute at all.
+unittest {
+    import std.algorithm : canFind;
+
+    auto t = new TopologyPenTool();
+    uint[4] barA, barB;
+    Mesh m = makeFillBridgeRig(barA, barB);
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
+
+    // Below the threshold: the seeds are ~0.25 from the cursor and the far
+    // bar's corners ~0.32, so a multiplier of 1 cannot reach them.
+    t.fillRange_ = 1.0f;
+    assert(t.findFillRing(cx, cy, vp).length == 0,
+        "below the rig's own threshold the gesture refuses — only the two seeds are in reach");
+
+    t.fillRange_ = 1.5f;
+    auto atDefault = t.findFillRing(cx, cy, vp);
+    assert(atDefault.length == 4, "above the threshold it builds");
+
+    // Well above: bar A's far corners and bar B's far corners all come into
+    // reach, and the answer does not move. Two independent reasons, both
+    // measured — the reject discards anything on the far side of the seed's
+    // own polygon, and the nearest-four cap evicts whatever is left over.
+    t.fillRange_ = 3.0f;
+    auto atTriple = t.findFillRing(cx, cy, vp);
+    assert(atTriple == atDefault,
+        "more reach changes NOTHING once the cap absorbs it — same ring, same order");
+    assert(!canFind(atTriple, barA[0]) && !canFind(atTriple, barA[3]),
+        "the seed bar's own far corners are never picked up, however wide the reach");
+
+    // Zero reach is the extreme of the same law, not a special case.
+    t.fillRange_ = 0.0f;
+    assert(t.findFillRing(cx, cy, vp).length == 0, "range 0 gathers nothing — refuse");
+}
+
+// An ISOLATED vertex — one on no polygon at all — is a legal corner, and it
+// BEATS the gap's own far corners when it is nearer. Measured directly, with
+// the candidate's polygon count of 0 printed beside it, and built into armed
+// rings 150 times over.
+//
+// FAILS ON THE OLD RULE twice over: that rule enumerated candidates as
+// BORDER-EDGE NEIGHBOURS of the seed's endpoints, so a vertex with no
+// polygon (and therefore no border edge) could never be reached at all, and
+// on this rig it returns the hole's own four corners instead.
+//
+// Also pins the ORDER contract, which is a second thing the old rule got
+// wrong: the pressed edge's two endpoints are slots 0 and 1 IN THE EDGE'S OWN
+// STORED ORDER (the old rule put them in slots 1 and 2), and the returned
+// array is the cyclic order the shape test ACCEPTED — asserted as "this order
+// is screen-convex and the slot-2/3 swap of it is not", which pins the
+// two-order search without depending on which of the two won.
+unittest {
+    import mesh : makeGridPlane;
+    import view : View;
+    import editmode : EditMode;
+    import std.algorithm : canFind;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m = makeGridPlane(3);
+    uint[] holeVerts = m.faces[4].dup;          // the centre cell's own 4 corners
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+
+    // Two vertices INSIDE the hole, on no polygon whatsoever — nearer to the
+    // cursor than the hole's own far corners, and far enough from it that the
+    // press still resolves an EDGE and not a vertex.
+    immutable uint isoL = m.addVertex(Vec3(-0.28f, 0,  0.28f));
+    immutable uint isoR = m.addVertex(Vec3( 0.28f, 0,  0.28f));
+    assert(m.vertices.length == 18);
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.05f), vp, cur));
+    immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
+
+    immutable int seed = t.fillSeedEdge(cx, cy, vp);
+    assert(seed >= 0, "an isolated vertex sitting farther than the border edge must not "
+                    ~ "steal the press");
+
+    auto ring = t.findFillRing(cx, cy, vp);
+    assert(ring.length == 4);
+    assert(ring[0] == m.edges[seed][0] && ring[1] == m.edges[seed][1],
+        "slots 0 and 1 are the pressed edge's endpoints, in the edge's own stored order");
+    assert(canFind(ring, isoL) && canFind(ring, isoR),
+        "BOTH isolated vertices are corners — they are the two nearest survivors");
+
+    // The hole's own FAR corners lose to them, which is what makes this a
+    // ranking result and not merely "isolated vertices are allowed".
+    uint[] farCorners;
+    foreach (v; holeVerts)
+        if (v != ring[0] && v != ring[1]) farCorners ~= v;
+    assert(farCorners.length == 2, "setup: the seed edge accounts for two of the four corners");
+    foreach (v; farCorners)
+        assert(!canFind(ring, v),
+            "the gap's own far corners are FARTHER than the isolated pair and must be evicted");
+
+    // The returned array IS the accepted cyclic order: convex as returned,
+    // and not convex with slots 2 and 3 exchanged. Exactly one of the two
+    // orders the search tries can hold, so this pins the search's output
+    // without depending on which one won.
+    ImVec2[4] sp;
+    foreach (k; 0 .. 4) assert(TopologyPenTool.projectPt(m.vertices[ring[k]], vp, sp[k]));
+    assert(TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]),
+        "the returned order is the one the shape test accepted");
+    assert(!TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[3], sp[2]),
+        "and the other of the two tried orders is the one it rejected");
+
+    immutable size_t e0 = m.edges.length;
+    t.commitFill(ring);
+    assert(m.faces.length == 9, "exactly one facet is built");
+    assert(m.vertices.length == 18, "Dv=0 — the isolated vertices are REUSED as corners");
+    assert(m.edges.length == e0 + 3,
+        "De=+3 — three of the four sides did not exist, and a fill creates them");
+    assert(history.canUndo());
+}
+
+// THE SCREEN-CROSSING REJECT, isolated by the one experiment that isolates
+// it: the SAME rig, the SAME seed edge, the SAME two candidates in reach, and
+// the cursor moved across that edge. Outside the gap the candidates are on
+// the far side of the seed's own polygon and every one of them is rejected —
+// the press refuses. Inside the gap nothing is in the way and the same two
+// build the facet.
+//
+// The reach is asserted, not assumed, on the refusing side: the candidate IS
+// within the gather radius and is dropped anyway, so nothing but the reject
+// can account for it. Without this clause a distance ranking picks different
+// corners on three quarters of all searches, which is why it is tested as its
+// own contrast pair rather than folded into another rig.
+unittest {
+    import mesh : makeGridPlane;
+    import std.algorithm : canFind;
+    import std.math : hypot;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    auto mask = new bool[](m.faces.length);
+    mask[4] = true;
+    m.deleteFacesByMask(mask, true, true);
+
+    // Two isolated vertices just INSIDE the hole, near its bottom side.
+    immutable uint isoR = m.addVertex(Vec3( 0.15f, 0, -0.15f));
+    immutable uint isoL = m.addVertex(Vec3(-0.15f, 0, -0.15f));
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+    auto vp = makeGridPlaneTestViewport();
+
+    // OUTSIDE the gap, just past the hole's bottom border edge.
+    ImVec2 outside;
+    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.36f), vp, outside));
+    immutable int ox = cast(int)outside.x, oy = cast(int)outside.y;
+
+    immutable int seedOut = t.fillSeedEdge(ox, oy, vp);
+    assert(seedOut >= 0, "the press outside the gap still resolves the same border edge");
+
+    // The reach covers the candidates — so the refusal below is NOT a reach
+    // refusal. Computed from the very law the search uses.
+    ImVec2 pa, pb, pIso;
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[seedOut][0]], vp, pa));
+    assert(TopologyPenTool.projectPt(m.vertices[m.edges[seedOut][1]], vp, pb));
+    assert(TopologyPenTool.projectPt(m.vertices[isoR], vp, pIso));
+    immutable float reach =
+        1.5f * TopologyPenTool.fillHoverRadiusPx(cast(float)ox, cast(float)oy, pa, pb);
+    assert(hypot(pIso.x - ox, pIso.y - oy) < reach,
+        "setup: the candidate is comfortably INSIDE the gather radius");
+
+    assert(t.findFillRing(ox, oy, vp).length == 0,
+        "every candidate is on the far side of the seed's own polygon — all rejected, refuse");
+
+    // INSIDE the gap, 0.06 world units away, same seed edge, same reach.
+    ImVec2 inside;
+    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.30f), vp, inside));
+    immutable int ix = cast(int)inside.x, iy = cast(int)inside.y;
+    immutable int seedIn = t.fillSeedEdge(ix, iy, vp);
+    assert(seedIn == seedOut, "setup: the pair must differ ONLY in which side of the edge "
+                             ~ "the cursor is on");
+
+    auto ring = t.findFillRing(ix, iy, vp);
+    assert(ring.length == 4, "with nothing in the way the same two candidates build the facet");
+    assert(canFind(ring, isoR) && canFind(ring, isoL),
+        "and they are exactly the two that were rejected from the other side");
+
+    ImVec2[4] sp;
+    foreach (k; 0 .. 4) assert(TopologyPenTool.projectPt(m.vertices[ring[k]], vp, sp[k]));
+    assert(TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]),
+        "the returned order is the accepted one");
+}
+
+// THE COUNT GATE, and the triangle it lets through. A rig that reaches
+// exactly THREE: with `quadOnly` on the press refuses; with it off the same
+// press builds a TRIANGLE, and the three-path runs no shape test at all.
+//
+// FAILS ON THE OLD RULE, which had no count gate, no attribute, and could
+// only ever return four corners or nothing.
+version (unittest) private Mesh makeFillTripleRig(out uint[4] bar, out uint loose) {
+    Mesh m;
+    bar[0] = m.addVertex(Vec3(-0.6f, 0, -0.2f));
+    bar[1] = m.addVertex(Vec3(-0.2f, 0, -0.2f));
+    bar[2] = m.addVertex(Vec3(-0.2f, 0,  0.2f));
+    bar[3] = m.addVertex(Vec3(-0.6f, 0,  0.2f));
+    m.addFace([bar[0], bar[1], bar[2], bar[3]]);
+    loose  = m.addVertex(Vec3(0.2f, 0, 0));      // isolated, on no polygon
+    m.buildLoops();
+    return m;
+}
+
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import std.algorithm : canFind;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    uint[4] bar; uint loose;
+    Mesh m = makeFillTripleRig(bar, loose);
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
+
+    assert(t.fillQuadOnly_, "the measured default is ON");
+    assert(t.findFillRing(cx, cy, vp).length == 0,
+        "three in reach and quads-only: the count gate refuses");
+
+    t.fillQuadOnly_ = false;
+    auto tri = t.findFillRing(cx, cy, vp);
+    assert(tri.length == 3, "with the gate off, exactly three is a build");
+    immutable int seed = t.fillSeedEdge(cx, cy, vp);
+    assert(tri[0] == m.edges[seed][0] && tri[1] == m.edges[seed][1],
+        "the pressed edge is still slots 0 and 1 — and still a side of the facet");
+    assert(tri[2] == loose, "the third corner is the one candidate in reach");
+
+    immutable size_t e0 = m.edges.length;
+    t.commitFill(tri);
+    assert(m.faces.length == 2, "a TRIANGLE is built");
+    assert(m.faces[1].length == 3);
+    assert(m.vertices.length == 5, "Dv=0");
+    assert(m.edges.length == e0 + 2, "De=+2 — the two new sides");
+    assert(history.canUndo());
+}
+
+// A REFUSAL IS DESTRUCTIVE. The shipped behaviour was a clean no-op; the
+// measured one grabs the pressed border edge and moves it. Ported as an arm
+// of this tool's own Move gesture on that edge, so the drag and the release
+// run the already-measured Move law and the whole thing undoes in one step.
+//
+// FAILS ON THE OLD RULE, whose `fillDown` armed nothing whatsoever on a miss.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import toolpipe.packets : SubjectPacket;
+    import std.algorithm : canFind;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    uint[4] bar; uint loose;
+    Mesh m = makeFillTripleRig(bar, loose);
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)cur.x; e.y = cast(int)cur.y;
+
+    immutable int seed = t.fillSeedEdge(e.x, e.y, vp);
+    assert(seed >= 0);
+    immutable size_t f0 = m.faces.length;
+
+    // quads-only ON: the search refuses at three, and the press falls
+    // through to grabbing the pressed border edge.
+    assert(t.onPlainLmbDown(e, vts), "a Fill press is always consumed");
+    assert(t.moveArmed_, "the refusal must GRAB the pressed edge, not do nothing");
+    assert(t.moveElem_ == MoveElem.Edge, "and it grabs an EDGE, never a vertex or a face");
+    assert(t.moveVerts_.length == 2
+        && canFind(t.moveVerts_, m.edges[seed][0]) && canFind(t.moveVerts_, m.edges[seed][1]),
+        "the grabbed set is exactly the PRESSED border edge's two endpoints");
+    assert(m.faces.length == f0, "the press itself mutates nothing — the move writes on drag");
+    assert(!history.canUndo(), "and records nothing until the release");
+    assert(!t.placeArmed_, "Fill never falls through to PLACE");
+    t.resetAllGestureArms();
+
+    // quads-only OFF: the same press builds instead, and arms nothing.
+    t.fillQuadOnly_ = false;
+    assert(t.onPlainLmbDown(e, vts));
+    assert(m.faces.length == f0 + 1, "a resolved ring commits on DOWN");
+    assert(!t.moveArmed_, "a press that BUILT must not also grab the edge");
+}
+
+// ---------------------------------------------------------------------------
 // Plain-LMB press on an EDGE -> arms an EDGE move, and NEVER Place
 // (task 0484, superseding doc/tasks/done/0482-topopen-move-nonvertex.md).
 //
