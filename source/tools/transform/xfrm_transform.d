@@ -1726,7 +1726,23 @@ tryScaleBank:
             // → wrapper owns geometry via applyTRS (capture the drag
             // state). A falloff-handle grab or click-relocate leaves
             // dragAxis == -1 and starts no scale session.
+            // An off-handle press in a RELOCATING action-centre mode now
+            // relocates AND arms a plane-scale drag, so `dragAxis >= 0` no
+            // longer means "a handle was grabbed". The relocate is still a run
+            // boundary — an off-gizmo press splits the undo run in every mode —
+            // and that work used to happen only in the `else` arm below, which
+            // this press no longer reaches. Mirrors the Move arm's `wasRelocate`
+            // consume above and Rotate's off-ring arm, which have had exactly
+            // this shape since their own off-gizmo drags landed.
+            bool scaleWasRelocate = scaleSub.lastClickWasRelocate;
+            scaleSub.lastClickWasRelocate = false;   // consume
             if (scaleSub.dragAxis >= 0) {
+                if (scaleWasRelocate && history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                    currentRunBank = DragBank.None;
+                }
+                if (scaleWasRelocate) resetRun();
                 // Bank-switch run boundary (Q-c): a switch INTO Scale from a
                 // prior Move/Rotate run consolidates that run first. No-op when
                 // the prior run was already Scale. With Phase 2 R/S recording

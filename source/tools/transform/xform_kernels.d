@@ -21,7 +21,7 @@ module tools.transform.xform_kernels;
 // "snapshot at drag start" invariant the tools already maintain via
 // captureFalloffForDrag / captureSymmetryForDrag.
 
-import math    : Vec3, Viewport;
+import math    : Vec3, Viewport, dot;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
 import mesh    : Mesh;
@@ -603,4 +603,154 @@ void applyXformMatrix(
     // per-cluster path retain their own position-copy mirror at their call
     // sites (Stage 2b / Stage 4 scope). `dragSymmetry` / `toProcess` stay in
     // the signature: callers still pass them, and the kernel ignores symmetry.
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Off-handle PLANE scale — which axis each screen component drives.
+//
+// A press that misses every handle, in an action-centre mode that lets the
+// pivot relocate, scales in a PLANE rather than along one axis: the drag's
+// horizontal component drives one basis axis, its vertical component drives
+// another, and the third is left at exactly 1. Which axis takes which screen
+// component is a property of the CAMERA alone — a reference drag deliberately
+// aimed exactly along one axis's screen projection left THAT axis untouched
+// and scaled the other two, so the assignment cannot be a function of the drag
+// direction.
+//
+// The projection is DIRECTIONAL — the axis direction resolved through the view
+// basis — and NOT the difference of two projected points. The two readings
+// disagree on a camera orbited a few degrees off a three-quarter view, and the
+// directional one is the reading that matches the reference there (four cameras
+// whose two leading candidates differ by 0.0125 or more: all four agree).
+//
+// KNOWN LIMIT, measured rather than assumed: on a view where two axes' screen
+// projections are near-mirror images about the horizontal, the two candidates
+// tie. At the reference-comparison camera the margin is 0.00026 and the
+// reference elects the runner-up; every camera where the margin exceeds 0.0125
+// elects the same axis this function does. The switching surface is therefore
+// bracketed between those two numbers and its exact position is NOT determined.
+// No tie-break is applied here, because inventing one would be fitting a free
+// parameter to a single row.
+//
+// Returns false when a projection is degenerate (an axis edge-on to the eye).
+bool pickScreenPlaneAxes(Vec3 camRight, Vec3 camUp,
+                         Vec3 axisX, Vec3 axisY, Vec3 axisZ,
+                         out int hIdx, out int vIdx,
+                         out float hSign, out float vSign,
+                         out float hMargin)
+{
+    import std.math : abs, sqrt;
+    hIdx = vIdx = -1; hSign = vSign = 1.0f; hMargin = 0.0f;
+    Vec3[3] ax = [axisX, axisY, axisZ];
+    float[3] sx, sy;
+    foreach (i, a; ax) {
+        immutable float px =  dot(camRight, a);
+        immutable float py = -dot(camUp,    a);    // screen Y grows downward
+        immutable float m  = sqrt(px * px + py * py);
+        if (!(m > 1e-6f)) return false;
+        sx[i] = px / m; sy[i] = py / m;
+    }
+    static int argmaxAbs(ref float[3] v, int skip) {
+        int best = -1; float bv = -1.0f;
+        foreach (i; 0 .. 3) {
+            if (i == skip) continue;
+            import std.math : abs;
+            if (abs(v[i]) > bv) { bv = abs(v[i]); best = cast(int)i; }
+        }
+        return best;
+    }
+    hIdx = argmaxAbs(sx, -1);
+    vIdx = argmaxAbs(sy, -1);
+    if (hIdx == vIdx) {
+        // One axis fits both screen directions best. It goes to the one it fits
+        // BETTER; the other takes its own runner-up. The two are then always
+        // distinct and the third is untouched by construction.
+        if (abs(sx[hIdx]) >= abs(sy[vIdx])) vIdx = argmaxAbs(sy, hIdx);
+        else                                hIdx = argmaxAbs(sx, vIdx);
+    }
+    if (hIdx < 0 || vIdx < 0 || hIdx == vIdx) return false;
+    // How far the elected horizontal axis beat its nearest rival. Reported so a
+    // caller (and the tests) can say when the election was decided by a margin
+    // too small for the rule to be trusted at all.
+    {
+        float top = -1.0f, second = -1.0f;
+        foreach (i; 0 .. 3) {
+            immutable float v = abs(sx[i]);
+            if (v > top) { second = top; top = v; }
+            else if (v > second) second = v;
+        }
+        hMargin = top - second;
+    }
+    hSign = sx[hIdx] >= 0 ? 1.0f : -1.0f;
+    vSign = sy[vIdx] >= 0 ? 1.0f : -1.0f;
+    return true;
+}
+
+/// Gain on one of the plane's two axes for an accumulated drag component.
+/// Linear in the pixels and passing through zero — a long enough drag the other
+/// way MIRRORS rather than clamping.
+float screenPlaneScaleGain(float pixels, float sign, float pixelsPerUnit) {
+    return 1.0f + pixels * sign / pixelsPerUnit;
+}
+
+unittest {
+    import std.math : abs;
+    // The camera bases below are the reference engine's own view matrices,
+    // taken verbatim out of the drag captures, together with the axis it
+    // actually scaled under a horizontal drag. Four of the five decided their
+    // election by 0.0125 or more; the fifth is the near-tie named in
+    // `pickScreenPlaneAxes`'s docstring and is asserted as a KNOWN divergence,
+    // so that if it ever stops diverging the test says so instead of passing
+    // quietly.
+    static struct Cam {
+        string name; Vec3 right, up; int refAxis; bool ruleAgrees;
+    }
+    immutable Cam[5] cams = [
+        Cam("orbit -11deg", Vec3(0.8757562418f, -0.2667204598f, 0.4023819096f),
+                            Vec3(0.3813299601f,  0.8933330733f, -0.2377887333f),
+                            0, true),
+        Cam("orbit +11deg", Vec3(0.7348514819f, -0.1014420422f, 0.6705988456f),
+                            Vec3(0.3563143958f,  0.8990512830f, -0.2544540073f),
+                            2, true),
+        Cam("orbit +45deg", Vec3(0.8739288099f, -0.4584904913f, -0.1613533535f),
+                            Vec3(0.4240210914f,  0.8814365630f, -0.2080281216f),
+                            0, true),
+        Cam("orbit -45deg", Vec3(0.2907773420f,  0.1922549149f,  0.9372761520f),
+                            Vec3(0.3117943793f,  0.9070900236f, -0.2827931294f),
+                            2, true),
+        // The near-tie. The reference elects z; the rule elects x by 0.00026.
+        Cam("three-quarter", Vec3(0.8175685763f, -0.1868847946f, 0.5446610842f),
+                             Vec3(0.3688699304f,  0.8962929064f, -0.2461584864f),
+                             2, false),
+    ];
+    foreach (c; cams) {
+        int h, v; float hs, vs, margin;
+        assert(pickScreenPlaneAxes(c.right, c.up,
+                                   Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                   h, v, hs, vs, margin),
+               "projection must resolve on " ~ c.name);
+        // The vertical component drives world Y on every one of these views.
+        assert(v == 1, "vertical axis on " ~ c.name);
+        assert(h != v, "the two axes must differ on " ~ c.name);
+        if (c.ruleAgrees) {
+            assert(margin > 0.0125f, "margin must be decisive on " ~ c.name);
+            assert(h == c.refAxis, "horizontal axis on " ~ c.name);
+        } else {
+            assert(margin < 0.0003f, "the near-tie must read as a near-tie");
+            assert(h != c.refAxis,
+                   "the known divergence at the near-tie has CHANGED — "
+                   ~ "re-measure before editing this assertion");
+        }
+        // World Y points UP on screen in all five, so a downward drag SHRINKS.
+        assert(vs < 0.0f, "vertical sign on " ~ c.name);
+    }
+
+    // The gains the reference produced, to the pixel counts it was driven with.
+    // 200 px right on the horizontal axis, 200 px down on the vertical one.
+    assert(abs(screenPlaneScaleGain( 200.0f,  1.0f, 312.5f) - 1.64f) < 1e-6f);
+    assert(abs(screenPlaneScaleGain( 200.0f, -1.0f, 312.5f) - 0.36f) < 1e-6f);
+    assert(abs(screenPlaneScaleGain(-200.0f, -1.0f, 312.5f) - 1.64f) < 1e-6f);
+    assert(abs(screenPlaneScaleGain( 100.0f,  1.0f, 312.5f) - 1.32f) < 1e-6f);
+    // It passes through zero and goes negative rather than clamping.
+    assert(screenPlaneScaleGain(-400.0f, 1.0f, 312.5f) < 0.0f);
 }

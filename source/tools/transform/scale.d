@@ -94,6 +94,29 @@ private:
     SDL_bool preDragRelativeMouse = SDL_FALSE;
     bool     ownsRelativeMouse;
 
+    // ── the off-handle PLANE drag (dragAxis == PLANE_DRAG_AXIS) ─────────────
+    // A press that misses every handle, in an action-centre mode that lets the
+    // pivot relocate, scales in a PLANE: the two basis axes whose screen
+    // projections are the most horizontal and the most vertical, driven by the
+    // drag's horizontal and vertical components RESPECTIVELY. The third axis is
+    // untouched. Armed in `onMouseButtonDownWithResolvedAxis`, consumed in
+    // `onMouseMotion`, cleared on mouse-up with every other drag mode.
+    enum int   PLANE_DRAG_AXIS = 7;
+    // Screen pixels per unit of scale gain. The gain on each of the two axes is
+    // `1 + component / PLANE_DRAG_PIXELS`, i.e. linear in the pixels and passing
+    // through zero — a long enough drag the other way MIRRORS rather than
+    // clamping, which is why this shares `clampScaleFactor`'s negScale gate with
+    // the handle drags instead of flooring at 0 on its own.
+    enum float PLANE_DRAG_PIXELS = 312.5f;
+    // Read + cleared by the wrapper on the press that set it, exactly as the
+    // Move and Rotate banks' equivalents are. An off-handle press RELOCATES and
+    // then ARMS, so the wrapper can no longer infer "this press was a relocate"
+    // from `dragAxis == -1` the way it could while the relocate started no drag.
+    public bool lastClickWasRelocate = false;
+    int   planeAxisH = -1, planeAxisV = -1;   // basis-axis indices 0/1/2
+    float planeSignH = 1.0f, planeSignV = 1.0f;
+    float planeAccumX = 0.0f, planeAccumY = 0.0f;
+
     // Phase C.3: Tool Properties state at the start of the current edit
     // session, restored by hooks on undo of the matching MeshVertexEdit.
     // Standalone-only: the wrapped commit-hook restore is gated on
@@ -776,12 +799,70 @@ public:
         activationCenter   = hit;
         scaleAccum         = Vec3(1, 1, 1);
         propScale          = Vec3(1, 1, 1);
-        // Consume the click (no scale drag starts). The relocate
-        // already moved the ACEN pivot via notifyAcenUserPlaced above;
-        // returning true makes click-away-relocate behave uniformly
-        // with Move / Rotate (both relocate + consume the click in
-        // Auto), so a scale-tool click away from the gizmo can't fall
-        // through to selection-picking and drop the user's selection.
+        lastClickWasRelocate = true;
+        // The relocate already moved the ACEN pivot via notifyAcenUserPlaced
+        // above. It is ALSO the start of a scale gesture: an off-handle press
+        // in a relocating action-centre mode scales in the plane of the two
+        // basis axes that lie most nearly along the screen's own axes, one per
+        // drag component. Arming here mirrors Rotate's off-ring arcball, which
+        // relocates and then arms in exactly the same place.
+        //
+        // If the plane cannot be resolved (a degenerate projection — the pivot
+        // or an axis edge-on to the eye), the press still relocates and still
+        // consumes the click, exactly as it did before: returning true keeps a
+        // scale-tool click away from the gizmo from falling through to
+        // selection-picking and dropping the user's selection.
+        armPlaneDrag(e, vts);
+        return true;
+    }
+
+    // Choose the two basis axes the two screen components drive, and their
+    // signs. Delegates to the pure kernel so the law lives in exactly one
+    // place and is pinned by tests built from measured reference cameras.
+    // Returns false when the projection is degenerate.
+    private bool pickPlaneAxes(ref VectorStack vts,
+                               out int hIdx, out int vIdx,
+                               out float hSign, out float vSign)
+    {
+        import tools.transform.xform_kernels : pickScreenPlaneAxes;
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
+        Vec3 camUp    = Vec3(cachedVp.view[1], cachedVp.view[5], cachedVp.view[9]);
+        float margin;
+        return pickScreenPlaneAxes(camRight, camUp, bX, bY, bZ,
+                                   hIdx, vIdx, hSign, vSign, margin);
+    }
+
+    private bool armPlaneDrag(ref const SDL_MouseButtonEvent e,
+                              ref VectorStack vts)
+    {
+        if (!pickPlaneAxes(vts, planeAxisH, planeAxisV, planeSignH, planeSignV))
+            return false;
+        dragAxis = PLANE_DRAG_AXIS;
+        lastMX = e.x; lastMY = e.y;
+        planeAccumX = 0.0f; planeAccumY = 0.0f;
+        // Freeze the input-projection basis for the gesture, exactly as a
+        // handle drag does, so the drag direction cannot reverse if the
+        // rendered frame moves under it.
+        currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
+        dragStartScaleAccum  = scaleAccum;
+        dragScaleAccum       = Vec3(1, 1, 1);
+        dragScaleScalarDelta = 0.0f;
+        version(unittest) {
+            preDragRelativeMouse = SDL_FALSE;
+            ownsRelativeMouse = false;
+        } else {
+            preDragRelativeMouse = SDL_GetRelativeMouseMode();
+            ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
+        }
+        buildVertexCacheIfNeeded();
+        bool falloffActive = captureFalloffForDrag(vts);
+        bool symmActive    = captureSymmetryForDrag(vts);
+        wholeMeshDrag = !falloffActive && !symmActive
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
+        snapshotEditState();
+        beginEdit();
         return true;
     }
 
@@ -846,6 +927,25 @@ public:
             dragScaleScalarDelta += cast(float)dxRel / gizmoScreenPx;
             float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
             setDragAxisScale(true, true, true, scaleFactor);
+            publishScaleGesture();
+            lastMX = e.x; lastMY = e.y;
+            return true;
+        }
+
+        if (dragAxis == PLANE_DRAG_AXIS) {
+            // A PLANE scale: two axes, two DIFFERENT gains, one per screen
+            // component; the third axis is left at exactly 1. The gains are
+            // positional in the accumulated drag (not per-event), so the result
+            // is path-independent — the same property the handle drags have.
+            planeAccumX += cast(float)dxRel;
+            planeAccumY += cast(float)dyRel;
+            import tools.transform.xform_kernels : screenPlaneScaleGain;
+            immutable float fH = clampScaleFactor(screenPlaneScaleGain(
+                planeAccumX, planeSignH, PLANE_DRAG_PIXELS));
+            immutable float fV = clampScaleFactor(screenPlaneScaleGain(
+                planeAccumY, planeSignV, PLANE_DRAG_PIXELS));
+            setAxisScale(planeAxisH, fH);
+            setAxisScale(planeAxisV, fV);
             publishScaleGesture();
             lastMX = e.x; lastMY = e.y;
             return true;
@@ -934,6 +1034,16 @@ public:
         if (auto wrap = cast(XfrmTransformTool) wrapperRef)
             return wrap.negScaleEnabled();
         return false;
+    }
+
+    // Per-INDEX form of `setDragAxisScale`. The plane drag needs a DIFFERENT
+    // factor on each of its two axes, which the boolean form cannot express.
+    private void setAxisScale(int idx, float scaleFactor) {
+        final switch (idx) {
+            case 0: setDragAxisScale(true,  false, false, scaleFactor); break;
+            case 1: setDragAxisScale(false, true,  false, scaleFactor); break;
+            case 2: setDragAxisScale(false, false, true,  scaleFactor); break;
+        }
     }
 
     private void setDragAxisScale(bool scaleX, bool scaleY, bool scaleZ,
