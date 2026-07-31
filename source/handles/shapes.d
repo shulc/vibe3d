@@ -124,7 +124,7 @@ public:
 
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
-        return aiScreenDistance(mx, my, vp) < 8.0f;
+        return aiScreenDistance(mx, my, vp) < GIZMO_PICK_AXIS_PX;
     }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
@@ -189,8 +189,8 @@ class Arrow : ShaftedArrow {
         Vec3 right, up;
         localFrame(fwd, right, up);
 
-        float coneLen    = len * 0.25f;
-        float coneRadius = len * 0.05f;
+        float coneLen    = len * GIZMO_CONE_LEN_OF_LEN;
+        float coneRadius = len * GIZMO_CONE_RADIUS_OF_LEN;
         float shaftLen   = len - coneLen;
         Vec3  coneBase   = end - fwd * coneLen;
 
@@ -248,7 +248,7 @@ class CubicArrow : ShaftedArrow {
         Vec3 right, up;
         localFrame(fwd, right, up);
 
-        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
+        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * GIZMO_CUBE_HEAD_HALF_OF_LEN;
         Vec3  cubeCenter = end - fwd * cubeHalf;
 
         // When end is behind start (dot < 0), shaft goes from cube's back face to start.
@@ -295,7 +295,7 @@ class CubicArrow : ShaftedArrow {
         Vec3 right, up;
         localFrame(fwd, right, up);
 
-        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
+        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * GIZMO_CUBE_HEAD_HALF_OF_LEN;
         Vec3  cubeCenter = end - fwd * cubeHalf;
         Vec3 c = handleStateColor(state, color);
 
@@ -392,7 +392,7 @@ public:
     // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
-        return aiScreenDistance(mx, my, vp) < 8.0f;
+        return aiScreenDistance(mx, my, vp) < GIZMO_PICK_RING_PX;
     }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
@@ -491,7 +491,7 @@ public:
     // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
-        return aiScreenDistance(mx, my, vp) < 8.0f;
+        return aiScreenDistance(mx, my, vp) < GIZMO_PICK_RING_PX;
     }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
@@ -616,18 +616,18 @@ class MoveHandler : Handler {
         // Each axis is the world-space image of local X/Y/Z under the
         // gizmo orientation. arrowX always represents axisX, irrespective
         // of whether axisX = world-X (auto workplane) or workplane.axis1.
-        arrowX.start = center + axisX * (size/6);
-        arrowX.end   = center + axisX * size;
-        arrowY.start = center + axisY * (size/6);
-        arrowY.end   = center + axisY * size;
-        arrowZ.start = center + axisZ * (size/6);
-        arrowZ.end   = center + axisZ * size;
+        arrowX.start = center + axisX * (size/GIZMO_MOVE_SHAFT_INSET_DIV);
+        arrowX.end   = center + axisX * (size * GIZMO_MOVE_ARM);
+        arrowY.start = center + axisY * (size/GIZMO_MOVE_SHAFT_INSET_DIV);
+        arrowY.end   = center + axisY * (size * GIZMO_MOVE_ARM);
+        arrowZ.start = center + axisZ * (size/GIZMO_MOVE_SHAFT_INSET_DIV);
+        arrowZ.end   = center + axisZ * (size * GIZMO_MOVE_ARM);
 
         centerBox.pos  = center;
-        centerBox.size = size * 0.04f * centerBoxScale;
+        centerBox.size = size * GIZMO_CENTER_BOX_HALF * centerBoxScale;
 
-        float circR = size * 0.07f;
-        float cirOffset = size * 0.75f;
+        float circR = size * GIZMO_PLANE_RADIUS;
+        float cirOffset = size * GIZMO_PLANE_OFFSET;
         // Plane handles sit at the corners of the basis quads; their
         // normals are the basis axis perpendicular to the plane.
         circleXY.center = center + axisX * cirOffset + axisY * cirOffset;
@@ -708,7 +708,7 @@ class MoveHandler : Handler {
             if (!projectToWindowFull(arrow.end,   vp, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < 8.0f)
+                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
                 return cast(int)i;
         }
         return -1;
@@ -763,9 +763,9 @@ class RotateHandler : Handler {
     {
         size = gizmoSize(center, vp);
 
-        arcX.center = center; arcX.normal = axisX; arcX.radius = size;
-        arcY.center = center; arcY.normal = axisY; arcY.radius = size;
-        arcZ.center = center; arcZ.normal = axisZ; arcZ.radius = size;
+        arcX.center = center; arcX.normal = axisX; arcX.radius = size * GIZMO_RING_RADIUS;
+        arcY.center = center; arcY.normal = axisY; arcY.radius = size * GIZMO_RING_RADIUS;
+        arcZ.center = center; arcZ.normal = axisZ; arcZ.radius = size * GIZMO_RING_RADIUS;
 
         // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
@@ -773,12 +773,12 @@ class RotateHandler : Handler {
         // Decorative black ring: same plane and radius as X/Y/Z arcs, drawn first (behind)
         bgCircle.center = center;
         bgCircle.normal = camFwd;
-        bgCircle.radius = size;
+        bgCircle.radius = size * GIZMO_RING_RADIUS;
 
         // View-plane ring: normal = camera forward, radius slightly larger than axis arcs
         arcView.center = center;
         arcView.normal = camFwd;
-        arcView.radius = size * 1.1f;
+        arcView.radius = size * GIZMO_VIEW_RING_RADIUS;
 
         // For each arc, the start direction is the intersection of the arc plane
         // and the viewport plane: cross(arcNormal, camFwd).
@@ -1149,7 +1149,7 @@ private:
 // ---------------------------------------------------------------------------
 
 class ScaleHandler : Handler {
-    enum float AXIS_BOX_DISTANCE = 1.18f;
+    enum float AXIS_BOX_DISTANCE = GIZMO_SCALE_ARM;
 
     Vec3  center;
     float size;   // world-space gizmo length, updated each frame in draw()
@@ -1231,14 +1231,14 @@ class ScaleHandler : Handler {
     {
         size = gizmoSize(center, vp);
 
-        arrowX.start = center + axisX * (size/7);
+        arrowX.start = center + axisX * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
         arrowX.end   = center + axisX * (size * axisBoxDistance);
-        arrowY.start = center + axisY * (size/7);
+        arrowY.start = center + axisY * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
         arrowY.end   = center + axisY * (size * axisBoxDistance);
-        arrowZ.start = center + axisZ * (size/7);
+        arrowZ.start = center + axisZ * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
         arrowZ.end   = center + axisZ * (size * axisBoxDistance);
 
-        float cubeFixed = size * 0.03f;
+        float cubeFixed = size * GIZMO_SCALE_BOX_HALF;
         scaleArrowX.start         = arrowX.end;
         scaleArrowY.start         = arrowY.end;
         scaleArrowZ.start         = arrowZ.end;
@@ -1264,10 +1264,10 @@ class ScaleHandler : Handler {
 
         centerDisk.center = center;
         centerDisk.normal = camFwd;
-        centerDisk.radius = size * 0.08f;
+        centerDisk.radius = size * GIZMO_DISC_RADIUS;
 
-        float circR      = size * 0.07f;
-        float cirOffset  = size * 0.75f;
+        float circR      = size * GIZMO_PLANE_RADIUS;
+        float cirOffset  = size * GIZMO_PLANE_OFFSET;
         circleXY.center = center + axisX * cirOffset + axisY * cirOffset;
         circleXY.normal = axisZ; circleXY.radius = circR;
         circleYZ.center = center + axisY * cirOffset + axisZ * cirOffset;

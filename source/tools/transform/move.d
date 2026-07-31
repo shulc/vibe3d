@@ -604,7 +604,7 @@ public:
             if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < 8.0f)
+                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
                 return cast(int)i;
         }
         return -1;

@@ -43,7 +43,7 @@ private class ScaleHeadHandle : Handler {
     }
 
     override protected bool hitTest(int mx, int my, const ref Viewport vp) {
-        return aiScreenDistance(mx, my, vp) < 12.0f;
+        return aiScreenDistance(mx, my, vp) < GIZMO_PICK_SCALE_HEAD_PX;
     }
 
     override protected float aiScreenDistance(int mx, int my,
@@ -1210,7 +1210,7 @@ private:
             if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < 8.0f)
+                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
                 return cast(int)i;
         }
         return -1;
@@ -1224,7 +1224,7 @@ private:
             if (!projectToWindowFull(arrow.end, cachedVp, ex, ey, ndcZ)) continue;
             float dx = cast(float)mx - ex;
             float dy = cast(float)my - ey;
-            if (sqrt(dx*dx + dy*dy) < 12.0f)
+            if (sqrt(dx*dx + dy*dy) < GIZMO_PICK_SCALE_HEAD_PX)
                 return cast(int)i;
         }
         return -1;

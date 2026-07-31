@@ -42,6 +42,100 @@ private float g_gizmoPixels = 90.0f;  // ~90px gizmo arm at any vp height
 void  setGizmoPixels(float px)  { g_gizmoPixels = px; }
 float getGizmoPixels()          { return g_gizmoPixels; }
 
+// ---------------------------------------------------------------------------
+// Transform-gizmo handle geometry — one named place per quantity.
+//
+// `g_gizmoPixels` above already centralises the OVERALL gizmo scale; what it
+// did not centralise is the proportions. Every handle's length / radius /
+// offset used to be an inline literal at its own use site, and four of them
+// were duplicated across files that MUST agree (the arbiter's hit-test in
+// handles/shapes.d and the standalone `hitTestAxes` in tools/transform/*.d
+// resolve the same press, so a tolerance changed in one but not the other
+// makes the highlighted handle differ from the grabbed one — the exact class
+// of bug the ToolHandles arbiter exists to prevent).
+//
+// UNITS. `gizmoSize(pos, vp)` returns the world length of `getGizmoPixels()`
+// screen pixels at `pos` — i.e. the gizmo is SCREEN-constant, not
+// world-constant: its apparent size does not change with camera distance or
+// ortho zoom. So each RATIO below, multiplied by `getGizmoPixels()`, is that
+// quantity in screen pixels (the px figures in the comments assume the 90-px
+// default arm). The PICK_*_PX values are already window pixels.
+//
+// The two _DIV constants are divisors rather than ratios on purpose: the code
+// they replace divides (`size / 6`), and `size * (1.0f/6.0f)` is not
+// bit-identical to it. Naming them without changing a single resulting float
+// was worth the slightly awkward form.
+//
+// Values here are the pre-port defaults, restated verbatim from the literals
+// they replaced. Changing one is a deliberate geometry change and should be
+// backed by a measurement, not by making a test pass.
+// ---------------------------------------------------------------------------
+
+// -- Move bank: three axis arrows, centre box, three plane circles ----------
+/// Arrow tip, as a fraction of the arm. 1.0 = the arm itself → 90 px.
+enum float GIZMO_MOVE_ARM             = 1.00f;
+/// Arrow shaft start = arm / this. → 15 px out from the centre.
+enum float GIZMO_MOVE_SHAFT_INSET_DIV = 6.0f;
+/// Centre-box HALF-extent, fraction of the arm. → 3.6 px half / 7.2 px across.
+enum float GIZMO_CENTER_BOX_HALF      = 0.04f;
+/// Plane-circle centre offset along EACH of its two axes. → 67.5 px per axis.
+enum float GIZMO_PLANE_OFFSET         = 0.75f;
+/// Plane-circle radius, fraction of the arm. → 6.3 px.
+enum float GIZMO_PLANE_RADIUS         = 0.07f;
+
+// -- Rotate bank: three principal semicircles + the view-plane ring ---------
+/// Principal (X/Y/Z) ring radius, fraction of the arm. → 90 px.
+enum float GIZMO_RING_RADIUS          = 1.00f;
+/// View-plane ring radius, fraction of the arm. → 99 px.
+enum float GIZMO_VIEW_RING_RADIUS     = 1.10f;
+
+// -- Scale bank: three axis boxes on stems, centre disc, plane circles ------
+/// Axis box distance from the centre, fraction of the arm. → 106.2 px, i.e.
+/// 18 % FURTHER OUT than the move arrow tip, not co-located with it.
+enum float GIZMO_SCALE_ARM            = 1.18f;
+/// Scale stem start = arm / this. → 12.9 px out from the centre.
+enum float GIZMO_SCALE_SHAFT_INSET_DIV = 7.0f;
+/// Half-extent of the LIVE (drag-feedback) scale box, fraction of the arm.
+/// → 2.7 px. The STATIC axis box uses GIZMO_CUBE_HEAD_HALF_OF_LEN below,
+/// which is relative to the stem length, and lands at 2.80 px — the two are
+/// deliberately-looking but genuinely different quantities.
+enum float GIZMO_SCALE_BOX_HALF       = 0.03f;
+/// Centre-disc radius, fraction of the arm. → 7.2 px.
+enum float GIZMO_DISC_RADIUS          = 0.08f;
+
+// -- Arrow head proportions, relative to the ARROW's own length -------------
+// NOTE these are shared with every other Arrow/CubicArrow user (primitive
+// create-tool movers, falloff endpoint handles), not just the transform
+// gizmo — changing them moves those handles too.
+/// Cone head length as a fraction of the arrow's length. → 18.75 px on the
+/// move arrow (whose shaft is 75 px long).
+enum float GIZMO_CONE_LEN_OF_LEN      = 0.25f;
+/// Cone head base radius as a fraction of the arrow's length. → 3.75 px.
+enum float GIZMO_CONE_RADIUS_OF_LEN   = 0.05f;
+/// Default cube-head HALF-extent as a fraction of the arrow's length, used
+/// when `CubicArrow.fixedCubeHalf` is unset. → 2.80 px on the scale stem.
+enum float GIZMO_CUBE_HEAD_HALF_OF_LEN = 0.03f;
+
+// -- Pick regions (window pixels; NOT derived from the drawn shape) ---------
+/// Half-width of the capsule around an arrow's projected start→end segment
+/// that counts as a hit. Wider than anything drawn: the move arrow's shaft is
+/// 5 px thick and its cone 3.75 px in radius, so the grab band is ~2x the
+/// visible arrow and extends 8 px PAST the drawn tip. Shared by the move
+/// arrows, the scale stems and the falloff endpoint arrows.
+enum float GIZMO_PICK_AXIS_PX         = 8.0f;
+/// Same, for a rotate ring's projected polyline. The principal arcs are drawn
+/// 6 px thick and the view ring 4 px, so this is again wider than the ink.
+enum float GIZMO_PICK_RING_PX         = 8.0f;
+/// Radius of the disc around a scale axis box's projected tip that counts as
+/// a hit, in the `compact` (bare Transform) presentation only. 4.4x the drawn
+/// 2.7 px box half-extent.
+enum float GIZMO_PICK_SCALE_HEAD_PX   = 12.0f;
+
+// The remaining pick regions are the DRAWN shape exactly, with no tolerance
+// term to name: the centre box (point-in-projected-cube-silhouette), the
+// plane circles (point-in-projected-32-gon) and the scale centre disc
+// (point-within-projected-rim-radius).
+
 // World-space size for a gizmo element at `pos` so that it occupies a
 // constant pixel size on screen, regardless of FOV, camera distance, or
 // window size. `scale` lets callers produce smaller/larger variants
