@@ -2761,15 +2761,12 @@ public:
     //   * the clean no-op on a miss. A refusal in the reference is
     //     DESTRUCTIVE — see `fillDown`.
     //
-    // WHAT IS NOT PORTED, AND IS NOT INVENTED EITHER — there is one more
-    // gate AFTER the convexity test in the reference, and it is strict: it
-    // accepted only 76 of 270 formed rings on the recording. Its predicate
-    // is UNREAD. Empirically the rings it refuses INCLUDE every ring whose
-    // vertex set is an already-existing polygon, which our own
-    // `makePolygonFromVerts` duplicate-face guard already declines, so
-    // `commitFill` keeps exactly today's behaviour there and nothing is
-    // guessed for the rest. Marked here, in `commitFill`, and in the task
-    // file as an UNREAD GATE — the single most valuable next reading.
+    // THE GATE AFTER THE CONVEXITY TEST is now READ (task 0528) and PORTED
+    // (task 0532) — see `ringRefusedByIncidentPolygon` below for the rule,
+    // the scope, and which of its clauses this corpus never exercised. It
+    // accepted 76 of 270 formed rings on the recording, so it is the strictest
+    // thing in this search, and it runs on the hover preview as well as the
+    // press because the reference calls it from this same shared search.
     //
     // THE ONE MODELLED TERM, named so it is not mistaken for a measurement:
     // the ranking's 3-space distance is measured against the reference's own
@@ -2825,6 +2822,128 @@ public:
             else return false;                    // collinear corner
         }
         return pos != neg;
+    }
+
+    // Exact screen coincidence — x AND y, no epsilon. The measured word is
+    // "coincides", and the pairs it exempts are a polygon corner and a ring
+    // corner that are THE SAME VERTEX, which project bit-for-bit alike.
+    static bool samePixel(ImVec2 p, ImVec2 q) {
+        return p.x == q.x && p.y == q.y;
+    }
+
+    // THE RING GATE (task 0532; READ in task 0528, full provenance in the
+    // PRIVATE toolcard). It runs on the FORMED ring, after the convexity
+    // test, and it is the last word on whether the cell exists at all:
+    //
+    //   A ring is REFUSED if, for any polygon INCIDENT TO ONE OF THE RING'S
+    //   OWN VERTICES, either
+    //     (1) every ring vertex is a vertex of that polygon — a SUBSET test,
+    //         not an equality test; or
+    //     (2) a ring side PROPERLY crosses one of that polygon's edges in
+    //         screen space — both parameters strictly inside (0,1), with
+    //         endpoint-coincident pairs exempt.
+    //   Polygons of TWO OR FEWER corners are exempt from the whole gate.
+    //
+    // It accepted 76 of 270 formed rings on the recording; clause 1 accounts
+    // for all 194 refusals.
+    //
+    // SCOPE is load-bearing, and it is also the cheap reading: both clauses
+    // quantify over polygons incident to a ring vertex, NEVER over the whole
+    // mesh. A ring side may cross a distant face's edge freely.
+    //
+    // ORDER-FREE. Any eligible incident polygon that refuses short-circuits,
+    // and each is tested at most once, so the verdict is a pure OR over the
+    // eligible incident set — the traversal order below is ours and cannot
+    // change the answer.
+    //
+    // CLAUSE 1 IS NOT OUR DUPLICATE-FACE GUARD, and the difference is the
+    // whole point of porting this. `Mesh.makePolygonFromVerts`'s guard is
+    // length-gated (`f.length != idx.length` skips), so it fires only on
+    // ring == polygon. This fires on ring ⊆ polygon; the STRICT-subset rings
+    // are exactly what separates "subset" from "duplicate face" as the
+    // measured word (30 of the 194 recorded refusals, a 3-ring on a quad).
+    //
+    // DECODED-UNEXERCISED — named so none of it is read as confirmed:
+    //   * clause 2 fired ZERO times in the 270 recorded rings. It reached its
+    //     LAST comparison 133 times and every one of those crossings ran past
+    //     the incident edge's own extent. It is ported from the read, not
+    //     from a firing, and the sibling lane's lesson applies: the same
+    //     wording about the candidate-gather reject above became the dominant
+    //     filter one recording later.
+    //   * the ≤2-corner exemption never saw a line or point polygon on that
+    //     rig. Carried anyway because `commitFill` CREATES that situation on
+    //     our own substrate — `consumeDegeneratePolysOnRing` deletes exactly
+    //     such polygons off the new ring — so it is reachable here in a way
+    //     it was not there.
+    //   * a ring strictly CONTAINING a smaller face was never formed. Clause
+    //     1 as written cannot refuse one, and nothing is invented for it.
+    //
+    // NOT PORTED, named rather than guessed: the eligibility test also reads
+    // one bit of a per-polygon type word. That bit is decoded as a bit test
+    // only — never identified, and constant across all 2356 recorded
+    // evaluations — so only the corner-count half is carried.
+    //
+    // OURS, not the reference's: a vertex that fails to PROJECT has no screen
+    // position, so the sides through it drop out of clause 2. The reference's
+    // transform has no failure branch; ours does, and every other screen-space
+    // predicate in this tool skips on it. Clause 1 is purely topological and
+    // is unaffected either way.
+    static bool ringRefusedByIncidentPolygon(const(Mesh)* m, const(uint)[] ring,
+                                             const ref Viewport vp) {
+        if (m is null || ring.length == 0) return false;
+
+        // The ring's own screen corners, once.
+        auto ringPix = new ImVec2[](ring.length);
+        auto ringOk  = new bool[](ring.length);
+        foreach (i, v; ring)
+            if (v < m.vertices.length)
+                ringOk[i] = projectPt(m.vertices[v], vp, ringPix[i]);
+
+        foreach (const ref f; m.faces) {
+            if (f.length <= 2) continue;         // ELIGIBILITY (unexercised)
+
+            // INCIDENCE + clause 1's count in one walk: a polygon is tested
+            // only if it carries at least one of the ring's own vertices.
+            // The ring's entries are distinct by construction (the search
+            // drops a candidate already in the list), so this counts DISTINCT
+            // ring vertices.
+            bool   incident = false;
+            size_t matched  = 0;
+            foreach (v; ring) {
+                bool inFace = false;
+                foreach (u; f) if (u == v) { inFace = true; break; }
+                if (inFace) { incident = true; ++matched; }
+            }
+            if (!incident) continue;
+
+            if (matched == ring.length) return true;          // CLAUSE 1
+
+            // CLAUSE 2 — every polygon edge against every ring side, wrapped
+            // on both. Reuses `segmentsProperlyCross`, the SAME predicate the
+            // candidate-gather reject runs, rather than a second copy of the
+            // arithmetic; the explicit endpoint exemption in front of it is
+            // the reference's own, kept explicit rather than left to strict
+            // (0,1) to cover in floating point.
+            ImVec2 prev;
+            bool   prevOk = f[$ - 1] < m.vertices.length
+                         && projectPt(m.vertices[f[$ - 1]], vp, prev);
+            foreach (t; 0 .. f.length) {
+                ImVec2 cur;
+                immutable bool curOk = f[t] < m.vertices.length
+                                    && projectPt(m.vertices[f[t]], vp, cur);
+                if (prevOk && curOk)
+                    foreach (i; 0 .. ring.length) {
+                        immutable size_t j = (i + 1) % ring.length;
+                        if (!ringOk[i] || !ringOk[j]) continue;
+                        immutable ImVec2 a = ringPix[i], b = ringPix[j];
+                        if (samePixel(prev, a) || samePixel(prev, b)
+                         || samePixel(cur,  a) || samePixel(cur,  b)) continue;
+                        if (segmentsProperlyCross(a, b, prev, cur)) return true;
+                    }
+                prev = cur; prevOk = curOk;
+            }
+        }
+        return false;
     }
 
     // The SEED: which border edge this cursor pixel presses/hovers, or -1.
@@ -3031,19 +3150,38 @@ public:
         else               { if (n != 4 && n != 3) return null; }
 
         // n == 3 runs NO shape test at all — measured on two independent
-        // rigs, two boots, two cameras.
-        if (n == 3) return slot[0 .. 3].dup;
+        // rigs, two boots, two cameras. It does NOT skip the ring gate below:
+        // 30 of the recording's 194 refusals were a 3-ring.
+        uint[] ring;
+        if (n == 3) {
+            ring = slot[0 .. 3].dup;
+        } else {
+            ImVec2[4] sp;
+            foreach (k; 0 .. 4)
+                if (!projectPt(m.vertices[slot[k]], vp, sp[k])) return null;
 
-        ImVec2[4] sp;
-        foreach (k; 0 .. 4)
-            if (!projectPt(m.vertices[slot[k]], vp, sp[k])) return null;
-
-        if (screenQuadConvex(sp[0], sp[1], sp[2], sp[3])) return slot[0 .. 4].dup;
-        if (screenQuadConvex(sp[0], sp[1], sp[3], sp[2])) {
-            immutable uint tmp = slot[2]; slot[2] = slot[3]; slot[3] = tmp;
-            return slot[0 .. 4].dup;
+            if (screenQuadConvex(sp[0], sp[1], sp[2], sp[3])) {
+                ring = slot[0 .. 4].dup;
+            } else if (screenQuadConvex(sp[0], sp[1], sp[3], sp[2])) {
+                immutable uint tmp = slot[2]; slot[2] = slot[3]; slot[3] = tmp;
+                ring = slot[0 .. 4].dup;
+            } else {
+                return null;
+            }
         }
-        return null;
+
+        // THE RING GATE (task 0532) — the last gate, on the FORMED ring, in
+        // the order the build would use. It lives HERE and not in
+        // `commitFill` because the reference calls it from this shared search:
+        // 270 calls on the recording, at most 6 of them presses. So the HOVER
+        // PREVIEW (`fillRing_`) obeys the same verdict as the press, and the
+        // highlight can never offer a cell the press then refuses to build.
+        //
+        // A refusal returns `null`, which routes `fillDown` into the already-
+        // ported destructive fall-through (arm Move on the pressed edge) — the
+        // same fall-through the recording shows for a press that fails to arm.
+        if (ringRefusedByIncidentPolygon(m, ring, vp)) return null;
+        return ring;
     }
 
     // The NON-VERTEX half of the over-mesh GATE: true when the cursor is
@@ -6422,15 +6560,15 @@ public:
     // with a `-1` no-op — the mesh stays byte-unchanged and NO undo entry is
     // recorded.
     //
-    // THE UNREAD GATE (task 0488). The reference runs one MORE gate after
-    // the convexity test, and it is strict: 76 of 270 formed rings survived
-    // it on the recording. Its predicate is UNREAD, so nothing is invented
-    // for it here. What IS known is that the rings it refuses include every
-    // ring whose vertex set is an already-existing polygon — which the
-    // duplicate-face guard below already declines — so on that subset our
-    // behaviour and the reference's agree by construction. Everywhere else
-    // this port BUILDS where the reference might refuse; that is today's
-    // behaviour kept deliberately rather than a guess dressed as a port.
+    // THE RING GATE IS NOT HERE, AND THAT IS DELIBERATE (task 0532). The
+    // reference's last gate on a formed ring — read in task 0528 — lives in
+    // the shared candidate search (`ringRefusedByIncidentPolygon`), because
+    // that is where the reference calls it and it is therefore a HOVER
+    // quantity too. By the time a ring reaches `commitFill` it has already
+    // passed that gate, so this function keeps exactly the guards it always
+    // had. Anything that calls `commitFill` with a hand-built ring (the
+    // unit tests below do) bypasses the gate on purpose: that is what makes
+    // the two testable apart.
     //
     // Single mutation, unlike `commitSplitOnEdge`'s two-kernel composition
     // — no partial-mutation rollback is needed here.
@@ -15317,6 +15455,240 @@ unittest {
     assert(t.onPlainLmbDown(e, vts), "still consumed — Fill owns the slot");
     assert(m.faces.length == f0, "no facet");
     assert(!t.moveArmed_ && !t.placeArmed_, "and nothing armed");
+}
+
+// ---------------------------------------------------------------------------
+// THE RING GATE (task 0532) — the last gate on a FORMED ring, and the
+// strictest thing in the search (it accepted 76 of 270 formed rings on the
+// recording). Its two clauses, its scope, and its ≤2-corner exemption, on
+// hand-checkable planar rigs under `makeGridPlaneTestViewport` (looks straight
+// down, so a world (x, z) offset IS a screen offset).
+//
+// FAILS ON THE SHIPPED RULE, which had no gate here at all — every ring below
+// that must be refused was built.
+// ---------------------------------------------------------------------------
+
+// CLAUSE 2 (a ring side properly crossing an incident polygon's edge) and its
+// SCOPE. Both halves matter and they are tested against each other: the same
+// crossing refuses when the crossed polygon carries a ring vertex and is
+// ACCEPTED when it does not.
+//
+// DECODED-UNEXERCISED upstream: clause 2 fired zero times in the 270 recorded
+// rings (it reached its last comparison 133 times, always past the incident
+// edge's own extent). It is ported from the read; this block is the first
+// thing anywhere that makes it fire.
+unittest {
+    Mesh m;
+    // Q1 — the incident quad. `q0` is the ring's only shared corner, so the
+    // SUBSET clause can never be what refuses anything below.
+    immutable uint q0 = m.addVertex(Vec3(0, 0, 0));
+    immutable uint q1 = m.addVertex(Vec3(1, 0, 0));
+    immutable uint q2 = m.addVertex(Vec3(1, 0, 1));
+    immutable uint q3 = m.addVertex(Vec3(0, 0, 1));
+    m.addFace([q0, q1, q2, q3]);
+
+    // The crossing pair: the side a→b runs along z = 0.5 from x = 2 to
+    // x = 0.5, straight through Q1's right edge (x = 1, z in [0,1]) at
+    // (1, 0.5) — both parameters strictly inside.
+    immutable uint a = m.addVertex(Vec3(2.0f,  0, 0.5f));
+    immutable uint b = m.addVertex(Vec3(0.5f,  0, 0.5f));
+    // The clean pair: everything below z = 0, touching Q1 only at q0.
+    immutable uint c = m.addVertex(Vec3(2.0f,  0, -0.5f));
+    immutable uint d = m.addVertex(Vec3(2.0f,  0, -2.2f));
+    m.buildLoops();
+
+    auto vp = makeGridPlaneTestViewport();
+
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, a, b], vp),
+        "a ring side that properly crosses an INCIDENT polygon's edge is refused");
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vp),
+        "the same ring shape clear of every incident edge is accepted -- sharing a "
+        ~ "corner with a polygon is not by itself a refusal");
+
+    // SCOPE. Q2 carries NO ring vertex, so it is outside the gate however
+    // squarely a ring side cuts it: the side c→d (x = 2, z from -0.5 to -2.2)
+    // crosses Q2's top edge at (2, -1) and its bottom edge at (2, -1.5), both
+    // strictly inside, and the verdict must not move.
+    immutable uint r0 = m.addVertex(Vec3(1.5f, 0, -1.5f));
+    immutable uint r1 = m.addVertex(Vec3(2.5f, 0, -1.5f));
+    immutable uint r2 = m.addVertex(Vec3(2.5f, 0, -1.0f));
+    immutable uint r3 = m.addVertex(Vec3(1.5f, 0, -1.0f));
+    m.addFace([r0, r1, r2, r3]);
+    m.buildLoops();
+
+    ImVec2 pc, pd, pr2, pr3;
+    assert(TopologyPenTool.projectPt(m.vertices[c],  vp, pc));
+    assert(TopologyPenTool.projectPt(m.vertices[d],  vp, pd));
+    assert(TopologyPenTool.projectPt(m.vertices[r2], vp, pr2));
+    assert(TopologyPenTool.projectPt(m.vertices[r3], vp, pr3));
+    assert(TopologyPenTool.segmentsProperlyCross(pc, pd, pr3, pr2),
+        "setup: the ring side really does cut the non-incident polygon's edge");
+
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vp),
+        "the gate never looks past the polygons incident to a ring vertex -- a ring "
+        ~ "side may cross a distant face's edge freely");
+}
+
+// The ≤2-CORNER EXEMPTION, and it is exactly clause 2 that it exempts (a
+// polygon with two corners or fewer can never contain a whole ring, so the
+// subset clause cannot reach it either way).
+//
+// DECODED-UNEXERCISED upstream: the recorded rig had no line or point
+// polygons. It is carried because `commitFill` CREATES that situation here —
+// `consumeDegeneratePolysOnRing` deletes exactly such polygons off the new
+// ring — so on this substrate it is reachable in a way it was not there.
+//
+// The two halves differ ONLY in the corner count of the polygon carrying the
+// crossed segment, so nothing else can explain the flip.
+version (unittest)
+private Mesh makeRingGateLinePolyRig(out uint[3] ring, out uint cutA, out uint cutB) {
+    Mesh m;
+    immutable uint q0 = m.addVertex(Vec3(0, 0, 0));
+    immutable uint q1 = m.addVertex(Vec3(1, 0, 0));
+    immutable uint q2 = m.addVertex(Vec3(1, 0, 1));
+    immutable uint q3 = m.addVertex(Vec3(0, 0, 1));
+    m.addFace([q0, q1, q2, q3]);
+    immutable uint c = m.addVertex(Vec3(2.0f, 0, -0.5f));
+    immutable uint d = m.addVertex(Vec3(2.0f, 0, -2.2f));
+    // The segment c→e (z = -0.5, x from 2 to 0) cuts the ring side d→q0
+    // (z = -1.1x) at x ≈ 0.4545 — both parameters ≈ 0.773, strictly inside.
+    immutable uint e = m.addVertex(Vec3(0.0f, 0, -0.5f));
+    ring = [q0, c, d];
+    cutA = c; cutB = e;
+    return m;
+}
+
+unittest {
+    auto vp = makeGridPlaneTestViewport();
+
+    uint[3] ring; uint cutA, cutB;
+    Mesh line = makeRingGateLinePolyRig(ring, cutA, cutB);
+    line.addFace([cutA, cutB]);                 // a LINE polygon: two corners
+    line.buildLoops();
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&line, ring[], vp),
+        "a polygon of two corners is exempt from the whole gate, crossing or not");
+
+    uint[3] ring2; uint cutA2, cutB2;
+    Mesh tri = makeRingGateLinePolyRig(ring2, cutA2, cutB2);
+    immutable uint apex = tri.addVertex(Vec3(1.0f, 0, -0.2f));
+    tri.addFace([cutA2, cutB2, apex]);          // the SAME segment, now eligible
+    tri.buildLoops();
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&tri, ring2[], vp),
+        "give that identical segment a third corner and the crossing clause bites");
+}
+
+// CLAUSE 1 (SUBSET), EXECUTED END TO END — and the point of this block is that
+// it separates the GATE from the guard that has been masking it.
+//
+// The 270-row corpus shows NO observable divergence: on that rig our own
+// manifold guard happens to decline the strict-subset rings anyway. So a test
+// that only showed the same outcome would prove nothing. This one builds the
+// structural counterexample instead — a ring the measured gate REFUSES and
+// `Mesh.makePolygonFromVerts` ACCEPTS — and asserts those two facts SEPARATELY:
+//
+//   * the search, gate and all, returns nothing;
+//   * `commitFill` handed that very ring BUILDS the polygon, because the
+//     duplicate-face guard is length-gated (4 corners vs 6) and no ring side
+//     yet carries two faces.
+//
+// A single hexagonal face does it. The press at the midpoint of side 0–1 walks
+// the whole real search: the seed resolves, exactly two more corners are in
+// reach, the count gate passes at four, the shape test accepts — and the ring
+// is a STRICT subset of the hexagon, which is the whole difference between
+// "subset" and "duplicate face" as the measured word.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import std.math : cos, sin, PI;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_fill", "Topology Fill",
+                                                   MeshEditScope.Geometry);
+
+    Mesh m;
+    uint[6] h;
+    foreach (k; 0 .. 6) {
+        immutable float ang = cast(float)k * cast(float)(PI / 3.0);
+        h[k] = m.addVertex(Vec3(cos(ang), 0, sin(ang)));
+    }
+    m.addFace([h[0], h[1], h[2], h[3], h[4], h[5]]);
+    m.buildLoops();
+    assert(m.faces.length == 1 && m.faces[0].length == 6, "setup: one hexagonal face");
+
+    t.meshSrc_ = () => &m;
+    t.penMode_ = PenMode.Fill;
+    t.fillRange_ = 3.0f;      // reach 1.5 world units: h2/h5 in (1.323), h3/h4 out (1.803)
+
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 cur;
+    assert(TopologyPenTool.projectPt((m.vertices[h[0]] + m.vertices[h[1]]) * 0.5f, vp, cur));
+    immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
+
+    // (1) the seed is side 0–1.
+    immutable int seed = t.fillSeedEdge(cx, cy, vp);
+    assert(seed >= 0, "the midpoint of a hexagon side is a border-EDGE press");
+    immutable uint sa = m.edges[seed][0], sb = m.edges[seed][1];
+    assert((sa == h[0] && sb == h[1]) || (sa == h[1] && sb == h[0]),
+        "setup: and it is the side the cursor sits on");
+
+    // (2) exactly two more corners are in reach, so the count gate passes at
+    // four with no eviction at all — read off the search's own radius law.
+    ImVec2 pa, pb;
+    assert(TopologyPenTool.projectPt(m.vertices[sa], vp, pa));
+    assert(TopologyPenTool.projectPt(m.vertices[sb], vp, pb));
+    immutable float reach =
+        3.0f * TopologyPenTool.fillHoverRadiusPx(cast(float)cx, cast(float)cy, pa, pb);
+    size_t inReach = 0;
+    foreach (k; 2 .. 6) {
+        ImVec2 pk;
+        assert(TopologyPenTool.projectPt(m.vertices[h[k]], vp, pk));
+        if (hypot(pk.x - cx, pk.y - cy) <= reach) ++inReach;
+    }
+    assert(inReach == 2, "setup: h2 and h5 are in reach, h3 and h4 are not");
+
+    // (3) the shape test would accept — one of the two cyclic orders the
+    // search tries is convex, exactly as the search asks it.
+    ImVec2[4] sp;
+    assert(TopologyPenTool.projectPt(m.vertices[sa],   vp, sp[0]));
+    assert(TopologyPenTool.projectPt(m.vertices[sb],   vp, sp[1]));
+    assert(TopologyPenTool.projectPt(m.vertices[h[2]], vp, sp[2]));
+    assert(TopologyPenTool.projectPt(m.vertices[h[5]], vp, sp[3]));
+    uint[] ring;
+    if (TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]))
+        ring = [sa, sb, h[2], h[5]];
+    else {
+        assert(TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[3], sp[2]),
+            "setup: the shape test accepts one of its two cyclic orders");
+        ring = [sa, sb, h[5], h[2]];
+    }
+
+    // (4) the gate refuses it, and the reason is the SUBSET clause: all four
+    // corners are corners of the hexagon, and it has six.
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, ring, vp),
+        "every ring corner is a corner of the incident hexagon -- a STRICT subset, "
+        ~ "and the gate refuses subsets, not just duplicates");
+
+    // (5) so the search returns nothing. With (1)-(3) established, the gate is
+    // the only stage left that can have refused.
+    assert(t.findFillRing(cx, cy, vp).length == 0,
+        "the search forms the ring and the gate then refuses it");
+
+    // (6) THE MASKING TEST, and the reason this block exists. Hand the very
+    // same ring to the commit and BOTH of our own guards wave it through --
+    // so the gate is doing real work here, not agreeing with something we
+    // already had.
+    assert(m.faces.length == 1);
+    t.commitFill(ring);
+    assert(m.faces.length == 2,
+        "our own guards ACCEPT this ring: the duplicate-face guard is length-gated "
+        ~ "(4 vs 6) and no ring side yet carries two faces");
+    assert(m.faces[1].length == 4 && m.vertices.length == 6,
+        "and what they build is a quad lying inside the existing face, reusing its corners");
+    assert(history.canUndo());
 }
 
 // ---------------------------------------------------------------------------
