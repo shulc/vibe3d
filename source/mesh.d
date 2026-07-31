@@ -14305,19 +14305,27 @@ struct Mesh {
     /// vertices and non-manifold edges, while the reference's incidence
     /// cache always returns the complete star. Fuzz repro
     /// fz_sloop_v_pole_tri2_hole2_0021 (a bowtie seed vertex) pinned this.
+    /// `wantVertexStars = false` builds ONLY `edgeFaces` and leaves the two
+    /// per-vertex stars null — the polygon walk reads neither, and they are
+    /// the larger two thirds of the build (one appended slice per vertex of
+    /// every face, plus one per edge endpoint). Use `buildLoopEdgeFaces`.
     private void buildLoopIncidence(out uint[][] vertEdges, out uint[][] edgeFaces,
-                                    out uint[][] vertFaces) const {
-        vertEdges = new uint[][](vertices.length);
-        foreach (ei; 0 .. edges.length) {
-            vertEdges[edges[ei][0]] ~= cast(uint)ei;
-            vertEdges[edges[ei][1]] ~= cast(uint)ei;
+                                    out uint[][] vertFaces,
+                                    bool wantVertexStars = true) const {
+        if (wantVertexStars) {
+            vertEdges = new uint[][](vertices.length);
+            foreach (ei; 0 .. edges.length) {
+                vertEdges[edges[ei][0]] ~= cast(uint)ei;
+                vertEdges[edges[ei][1]] ~= cast(uint)ei;
+            }
+            vertFaces = new uint[][](vertices.length);
         }
         edgeFaces = new uint[][](edges.length);
-        vertFaces = new uint[][](vertices.length);
         foreach (fi; 0 .. faces.length) {
             const f = faces[fi];
-            foreach (fv; f)
-                if (fv < vertices.length) vertFaces[fv] ~= cast(uint)fi;
+            if (wantVertexStars)
+                foreach (fv; f)
+                    if (fv < vertices.length) vertFaces[fv] ~= cast(uint)fi;
             foreach (j; 0 .. f.length) {
                 uint ei = edgeIndex(f[j], f[(j + 1) % f.length]);
                 if (ei == ~0u) continue;
@@ -14325,6 +14333,13 @@ struct Mesh {
                     edgeFaces[ei] ~= cast(uint)fi;
             }
         }
+    }
+
+    /// The edge→faces half of `buildLoopIncidence` — all the polygon
+    /// select.loop walk consumes.
+    private void buildLoopEdgeFaces(out uint[][] edgeFaces) const {
+        uint[][] ve, vf;
+        buildLoopIncidence(ve, edgeFaces, vf, /*wantVertexStars*/ false);
     }
 
     /// Return a face from `edgeFaces[ei]` whose winding contains the
@@ -14659,10 +14674,11 @@ struct Mesh {
             return ox != oy ? ox < oy : x < y;
         });
 
-        // Full incidence star (reference semantics — complete star,
-        // not the truncated half-edge fan walk).
-        uint[][] vertEdges, edgeFaces, vertFaces;
-        buildLoopIncidence(vertEdges, edgeFaces, vertFaces);
+        // Only the edge→faces incidence is read below (the partner scan and
+        // every band hop cross an EDGE); the two per-vertex stars used to be
+        // built here and never read.
+        uint[][] edgeFaces;
+        buildLoopEdgeFaces(edgeFaces);
 
         // Multi-group loop: each pass consumes one seed group; visited and
         // seeded marks are shared across groups and make this monotone.
