@@ -14525,10 +14525,56 @@ struct Mesh {
         buildLoopIncidence(vertEdges, edgeFaces, vertFaces);
 
         // Multi-pair seed scan (the reference re-scans from the head after
-        // each consumed pair; marks make that monotone).
+        // each consumed pair; marks make that monotone). Two devices keep the
+        // pass sequence from being O(passes x selected) — which is O(V^2) once
+        // the mesh has many small components, one pass each:
+        //
+        //  * `sCur`, a forward-only cursor over the LEADING run of consumed
+        //    vertices. `vMark` is only ever set, never cleared, so a vertex
+        //    the scan once skipped for that reason can never seed later.
+        //
+        //  * `burns`, a memo of the pass prefix past that cursor. A pass that
+        //    reaches an already-consumed EDGE drops its `vA` and resumes after
+        //    the partner (`vA = vB = ~0u` below) — a "burn". Replaying a
+        //    recorded burn is exact while BOTH its endpoints are still
+        //    unconsumed: everything the scan skipped between them was either
+        //    already `vMark`ed (monotone) or rejected on topology (fixed), and
+        //    the blocking edge's `eMark` is monotone too, so the pass would
+        //    make the identical decisions again. So the next pass starts right
+        //    after the last replayable burn instead of at the head. Marking a
+        //    burn endpoint (only the seed pair and the extra-seed block do
+        //    that) invalidates that burn and every burn after it, and the scan
+        //    falls back to the cursor for the rest — `markVert` records the
+        //    earliest such index.
+        size_t sCur = 0;
+        static struct SeedBurn { uint t, u; size_t uPos; }
+        SeedBurn[] burns;
+        size_t[] burnOf = new size_t[](vertices.length); // vertex → burn index
+        burnOf[] = size_t.max;
+        size_t minInvalid = size_t.max;
+
+        void markVert(uint v) {
+            vMark[v] = true;
+            const b = burnOf[v];
+            if (b < minInvalid) minInvalid = b;
+        }
+
         while (true) {
+            if (minInvalid < burns.length) {
+                foreach (ref b; burns[minInvalid .. $]) {
+                    burnOf[b.t] = size_t.max;
+                    burnOf[b.u] = size_t.max;
+                }
+                burns.length = minInvalid;
+            }
+            minInvalid = size_t.max;
+
+            while (sCur < selVerts.length && vMark[selVerts[sCur]]) ++sCur;
             uint vA = ~0u, vB = ~0u, seedE = ~0u;
-            foreach (v; selVerts) {
+            for (size_t k = burns.length ? burns[$ - 1].uPos + 1 : sCur;
+                 k < selVerts.length; ++k) {
+                version (unittest) ++gSelectLoopSeedScanSteps;
+                const v = selVerts[k];
                 if (vMark[v]) continue;
                 if (vA == ~0u) { vA = v; continue; }
                 vB = v;
@@ -14541,13 +14587,17 @@ struct Mesh {
                 if (!adj) { vB = ~0u; continue; }
                 uint e = edgeIndex(vA, vB);
                 if (e == ~0u) { vB = ~0u; continue; }
-                if (eMark[e]) { vA = ~0u; vB = ~0u; continue; } // consumed edge: reset pair
+                if (eMark[e]) {                                // consumed edge: reset pair
+                    burnOf[vA] = burnOf[vB] = burns.length;
+                    burns ~= SeedBurn(vA, vB, k);
+                    vA = ~0u; vB = ~0u; continue;
+                }
                 seedE = e;
                 break;
             }
             if (seedE == ~0u) break;
 
-            vMark[vA] = vMark[vB] = true;
+            markVert(vA); markVert(vB);
             eMark[seedE] = true;
             resultV[vA] = resultV[vB] = true;
 
@@ -14566,7 +14616,7 @@ struct Mesh {
                             uint pv = f[(j + f.length - 1) % f.length];
                             uint nx = f[(j + 1) % f.length];
                             if (pv == vA || pv == vB || nx == vA || nx == vB) {
-                                foreach (fv; f) { vMark[fv] = true; resultV[fv] = true; }
+                                foreach (fv; f) { markVert(fv); resultV[fv] = true; }
                                 pulled = true;
                             }
                             break;
