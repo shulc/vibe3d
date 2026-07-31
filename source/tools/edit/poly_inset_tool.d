@@ -8,7 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import drag : haulWorldPerPixel;
+import drag : haulWorldPerPixel, gesturePrevPixel;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -226,7 +226,15 @@ public:
         // Vertical screen delta → world inset delta. Drag UP (screen Y
         // decreases) increases inset. See the class doc-comment for why this
         // particular law was picked (drag calibration is uncaptured).
-        float dyPixels = cast(float)(dragLastMY - e.y);
+        // The previous pixel comes from the cooked gesture, not from this
+        // tool's own pair. Same integer subtraction, sourced one level up;
+        // `dragLastMX/MY` stay written as the fallback when no gesture is
+        // published and as the other half of the debug agreement check.
+        import toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         dragLastMX, dragLastMY, prevMX, prevMY);
+        float dyPixels = cast(float)(prevMY - e.y);
         inset_ = dragBaseInset + dyPixels * worldPerPixel;
         dragLastMX = e.x;
         dragLastMY = e.y;
