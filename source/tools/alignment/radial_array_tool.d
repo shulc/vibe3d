@@ -9,7 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, BoxHandler, ToolHandles, gizmoSize;
-import drag : screenAxisDelta;
+import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -306,10 +306,22 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || mesh is null) return false;
 
+        // Both branches below are per-event increments — the offset arrow
+        // projects the pixel delta onto the axis, the angle handle differences
+        // two ray/plane hits taken at the previous and current pixel — so both
+        // take their previous pixel from the cooked gesture rather than from
+        // this tool's own pair. `lastMX/MY` stay written as the fallback when
+        // no gesture is published and as the other half of the debug agreement
+        // check.
+        import toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         lastMX, lastMY, prevMX, prevMY);
+
         if (dragPart == PART_OFFSET) {
             bool skip;
             Vec3 au = axisUnit();
-            Vec3 delta = screenAxisDelta(e.x, e.y, lastMX, lastMY, center_, au, cachedVp, skip);
+            Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY, center_, au, cachedVp, skip);
             if (!skip) {
                 offset_ += dot(delta, au);
                 rebuildPreview();
@@ -323,7 +335,7 @@ public:
             Vec3 au = axisUnit();
             Vec3 originC, dirC, originP, dirP;
             screenPointToRay(cast(float)e.x,     cast(float)e.y,     cachedVp, originC, dirC);
-            screenPointToRay(cast(float)lastMX,  cast(float)lastMY,  cachedVp, originP, dirP);
+            screenPointToRay(cast(float)prevMX,  cast(float)prevMY,  cachedVp, originP, dirP);
             Vec3 hitC, hitP;
             if (rayPlaneIntersect(originC, dirC, center_, au, hitC) &&
                 rayPlaneIntersect(originP, dirP, center_, au, hitP)) {
