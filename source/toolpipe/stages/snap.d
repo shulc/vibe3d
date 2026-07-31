@@ -337,10 +337,10 @@ class SnapStage : Stage, Operator {
     private bool[snapTypeRows.length] _typeMirror;
 
     bool     enabled       = false;
-    uint     enabledTypes  = SnapType.Vertex
-                           | SnapType.EdgeCenter
-                           | SnapType.PolyCenter
-                           | SnapType.Grid;
+    // Vertex alone — see `SnapPacket.enabledTypes` for why the extra three
+    // bits were a broken default rather than a generous one. The unittest at
+    // the bottom of this file pins this to the packet's copy.
+    uint     enabledTypes  = SnapType.Vertex;
     SnapMode snapScope     = SnapMode.Global;
     float    innerRangePx  = 24.0f;
     float    outerRangePx  = 40.0f;
@@ -435,10 +435,7 @@ class SnapStage : Stage, Operator {
     /// invoked via Stage.reset() by SceneReset / `/api/reset`.
     override void reset() {
         enabled       = false;
-        enabledTypes  = SnapType.Vertex
-                      | SnapType.EdgeCenter
-                      | SnapType.PolyCenter
-                      | SnapType.Grid;
+        enabledTypes  = SnapType.Vertex;
         snapScope     = SnapMode.Global;
         innerRangePx  = 24.0f;
         outerRangePx  = 40.0f;
@@ -1308,11 +1305,24 @@ unittest {
     }
 
     // --- 5. TYPE MIRROR ROUND-TRIP ------------------------------------------
-    // PolyCenter is on by default; turning it OFF from the panel must clear
-    // exactly its bit and leave every other type alone.
+    // Turning a type OFF from the panel must clear exactly its bit and leave
+    // every other type alone.
+    //
+    // The fixture sets its OWN multi-bit mask rather than borrowing whatever
+    // the factory default happens to be. Two reasons, and the second is why
+    // this is not merely tidiness: the default is Vertex alone, so a test
+    // riding on it would have no OTHER bits for "exactly one bit moved" to
+    // protect and that assertion would pass vacuously. Owning the mask keeps
+    // the round-trip claim at full strength and decouples it from a default
+    // it does not test.
     {
+        st.enabledTypes = SnapType.Vertex | SnapType.EdgeCenter
+                        | SnapType.PolyCenter | SnapType.Grid;
         immutable uint before = st.enabledTypes;
-        assert((before & SnapType.PolyCenter) != 0, "fixture: default is on");
+        assert((before & SnapType.PolyCenter) != 0, "fixture: PolyCenter is on");
+        assert((before & ~cast(uint)SnapType.PolyCenter) != 0,
+            "fixture: at least one OTHER bit must be set, or the 'exactly one "
+            ~ "bit moved' assertion below has nothing to protect");
 
         Param* row;
         foreach (ref p; st.params()) if (p.name == "typePolyCenter") row = &p;
@@ -1337,6 +1347,52 @@ unittest {
         *row.bptr = true;
         st.onParamChanged("typePolyCenter");
         assert(st.enabledTypes == before, "round-trip is exact");
+    }
+
+    // --- 5b. THE STALE MIRROR, ACTUALLY MADE STALE --------------------------
+    // The "exactly one bit moved" assertion above names the defect it guards:
+    // folding must not rebuild the whole mask "from a mirror that may hold
+    // slots written since the last sync". But nothing above ever makes a slot
+    // stale — `params()` re-syncs the mirror from the bitmask on entry, so at
+    // every point above the mirror already agrees with the mask and a
+    // rebuild-the-world implementation computes the same answer and passes.
+    // That assertion is therefore vacuous on its own; this block is what makes
+    // the claim bite.
+    //
+    // The staleness is not hypothetical. `setAttr("types", ...)` — the HTTP /
+    // script path — assigns `enabledTypes` directly and never touches
+    // `_typeMirror`. So a script write followed by a panel click is a real
+    // sequence in which the mirror holds values from before the write.
+    {
+        // Capture the checkbox's write target from a params() call made BEFORE
+        // the script write, and deliberately do NOT call params() again: a
+        // re-sync would repair the mirror and destroy the very staleness under
+        // test. The pointer stays valid across calls because it addresses the
+        // stage's own `_typeMirror` slot, not the returned array.
+        bool* pcMirror;
+        foreach (ref p; st.params())
+            if (p.name == "typePolyCenter") pcMirror = p.bptr;
+        assert(pcMirror !is null, "fixture: the PolyCenter row must exist");
+
+        // The script write. `edge` is a bit the mirror has never seen set;
+        // Grid / EdgeCenter are bits the mirror still believes are set.
+        assert(st.setAttr("types", "vertex,edge,polyCenter"),
+            "fixture: the script path must accept this type list");
+        assert(st.enabledTypes ==
+               (SnapType.Vertex | SnapType.Edge | SnapType.PolyCenter),
+            "fixture: the script write lands whole");
+
+        // Now the panel click, on the stale mirror.
+        *pcMirror = false;
+        st.onParamChanged("typePolyCenter");
+
+        assert(st.enabledTypes == (SnapType.Vertex | SnapType.Edge),
+            "a panel click must clear ONLY the bit it names, folding into the "
+            ~ "mask as it stands NOW. Rebuilding the mask from the mirror "
+            ~ "would resurrect Grid and EdgeCenter (which the stale mirror "
+            ~ "still shows set) and would drop Edge (which the script set and "
+            ~ "the mirror has never seen) — silently undoing a script write "
+            ~ "because the user touched an unrelated checkbox");
     }
 
     // --- 6. WIRE PARITY -----------------------------------------------------

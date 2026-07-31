@@ -817,10 +817,26 @@ enum SnapMode { Global, Component, Item }
 /// generators don't need to walk the pipeline themselves.
 struct SnapPacket {
     bool     enabled       = false;     // master on/off (X key)
-    uint     enabledTypes  = SnapType.Vertex
-                           | SnapType.EdgeCenter
-                           | SnapType.PolyCenter
-                           | SnapType.Grid;
+    // ONE TYPE ON BY DEFAULT, AND IT IS VERTEX. The reference ships a
+    // per-type boolean SET exactly like this mask (twelve types x three
+    // scopes, each independently togglable), so the SHAPE here is right and
+    // must stay a set — what was wrong was the factory contents. Its shipped
+    // factory set is `{vertex}` alone, and the three extra bits we used to
+    // light up were not a richer default but a broken one, because candidates
+    // compete on raw screen distance with no per-type priority (`snap.d`'s
+    // `consider`: strict `d < bestDist`, nothing else). Grid is the fatal one
+    // — it is a continuous lattice projected onto the workplane, so a grid
+    // point sits within half a cell of the cursor ALWAYS and wins almost
+    // every contest. The user-visible result was that dragging a vertex
+    // appeared not to stick to nearby geometry at all: the vertex candidate
+    // was generated, highlighted, and then silently outranked by a grid point
+    // nobody asked for. EdgeCenter / PolyCenter lose less often but lose the
+    // same way, stealing a snap from the real vertex beside them.
+    //
+    // So this is a DEFAULT change, not a model change: every bit remains
+    // reachable from the Snap panel and from `snap.toggleType`, and turning
+    // Grid back on restores the old behaviour exactly.
+    uint     enabledTypes  = SnapType.Vertex;
     // Stage 1: snap scope (Global/Component/Item). Named `snapScope` because
     // `scope` is a D reserved keyword. Default Global = all types eligible.
     SnapMode snapScope     = SnapMode.Global;

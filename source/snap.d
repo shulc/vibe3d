@@ -2433,3 +2433,108 @@ unittest {
 
     invalidateSnapGrids();
 }
+
+// ---------------------------------------------------------------------------
+// THE SHIPPED DEFAULT SNAPS TO A VERTEX, AND IT DOES SO BECAUSE VERTEX IS THE
+// ONLY TYPE ON.
+//
+// This is the behavioural half of the default change; the arithmetic half (the
+// stage's field agreeing with the packet's) is pinned in
+// `toolpipe/stages/snap.d`. What is asserted here is the thing a user actually
+// reported: a drag near a vertex must stick to THAT VERTEX.
+//
+// The fixture is built so the assertion cannot pass by luck. A grid point is
+// placed STRICTLY NEARER the cursor than the vertex is — 1.6 px against 6.4 px
+// — so if Grid were in the default set it would win on `consider`'s bare
+// `d < bestDist` ranking, which has no per-type priority to save the vertex.
+// That is exactly how the old default (Vertex|EdgeCenter|PolyCenter|Grid)
+// failed in the field: the vertex candidate was generated and then silently
+// outranked by a lattice point that is never further than half a cell away.
+//
+// The second half of the test is the claim that this was a DEFAULT change and
+// not a MODEL change: turning Grid back on explicitly must restore the old
+// outcome. If someone ever "simplifies" `enabledTypes` from a set to a
+// single-valued enum, that half stops compiling or stops passing — which is
+// the intent, because the reference's own UI is a per-type boolean set
+// (twelve types x three scopes) and the set shape is the part we match.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, round, abs;
+
+    invalidateSnapGrids();
+
+    // Looking straight down the +Y axis at the y=0 workplane, so the default
+    // workplane (centre origin, normal +Y, axes X / Z) is seen face-on and
+    // screen distance is a clean multiple of world distance.
+    Viewport vp;
+    vp.eye    = Vec3(0, 5, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    // One vertex, deliberately OFF the lattice: 0.1 world units from the grid
+    // point at (2,0,0). No faces, so no visibility gate can reorder anything.
+    Mesh m;
+    m.vertices = [ Vec3(2.1f, 0, 0) ];
+
+    float pixDist(Vec3 a, Vec3 b) {
+        float ax, ay, az, bx, by, bz;
+        assert(projectToWindowFull(a, vp, ax, ay, az)
+            && projectToWindowFull(b, vp, bx, by, bz),
+            "fixture: both points must project on-screen");
+        return sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
+    }
+
+    // The cursor sits between the grid point and the vertex, but NEARER the
+    // grid point — the whole point of the fixture.
+    immutable Vec3 cursorWorld = Vec3(2.02f, 0, 0);
+    immutable Vec3 gridWorld   = Vec3(2.0f,  0, 0);
+    float cx, cy, cz;
+    assert(projectToWindowFull(cursorWorld, vp, cx, cy, cz),
+        "fixture: the cursor point must project on-screen");
+    immutable int sx = cast(int)round(cx);
+    immutable int sy = cast(int)round(cy);
+
+    // THE SHIPPED DEFAULT, taken from the packet rather than hand-written, so
+    // this test tracks the default instead of restating it.
+    SnapPacket cfg;
+    cfg.enabled = true;
+    assert(cfg.enabledTypes == SnapType.Vertex,
+        "the shipped default target set is Vertex and nothing else — if this "
+        ~ "fails the default changed, and the two assertions below are no "
+        ~ "longer testing what they claim");
+
+    // State the fixture's premises rather than trusting the arithmetic.
+    immutable float dGrid = pixDist(gridWorld,     cursorWorld);
+    immutable float dVert = pixDist(m.vertices[0], cursorWorld);
+    assert(dGrid < dVert,
+        "fixture: the grid point must be STRICTLY NEARER than the vertex, or "
+        ~ "the vertex would win even with Grid enabled and the test would "
+        ~ "prove nothing");
+    assert(dVert < cfg.innerRangePx,
+        "fixture: the vertex must be inside the acceptance radius, or it "
+        ~ "could not snap under any configuration");
+
+    // 1. THE DEFAULT. Vertex wins despite being the FURTHER candidate,
+    //    because the nearer one is a type nobody turned on.
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null);
+    assert(r.snapped && r.targetType == SnapType.Vertex && r.targetIndex == 0,
+        "under the shipped default a drag near a vertex must stick to that "
+        ~ "vertex — a nearer grid point must not be able to steal it, because "
+        ~ "Grid is not in the default set");
+
+    // 2. THE BIT IS STILL REACHABLE. This was a default change, not a model
+    //    change: the set still has a Grid bit and turning it on still works.
+    SnapPacket withGrid = cfg;
+    withGrid.enabledTypes = SnapType.Vertex | SnapType.Grid;
+    invalidateSnapGrids();
+    SnapResult g = snapCursor(cursorWorld, sx, sy, vp, m, withGrid, null);
+    assert(g.snapped && g.targetType == SnapType.Grid,
+        "enabling Grid explicitly must restore the old outcome — the nearer "
+        ~ "lattice point wins. `enabledTypes` is a SET and every bit stays "
+        ~ "reachable; only the factory contents changed");
+
+    invalidateSnapGrids();
+}
