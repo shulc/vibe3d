@@ -968,13 +968,28 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 //
 // EXCLUDE IS QUERY-TIME, NOT KEY: every element is indexed at build
 // time; the dragged set (excludeVerts) is applied at QUERY time. An
-// element is excluded iff ALL its incident verts are dragged — for
-// points: the source vert (Vertex) / both edge endpoints (EdgeCenter) /
-// all face verts (PolyCenter); for extents: both endpoints (Edge) / all
-// face verts (Polygon) — matching the original linear loops' skip rule
-// exactly. The moving elements' stored projections go stale as they
-// move, but they are excluded from results anyway, so the cache stays
-// valid across the whole drag.
+// element is excluded iff ANY of its incident verts is dragged — the
+// source vert (Vertex) / either edge endpoint (EdgeCenter, Edge) / any
+// face vert (PolyCenter, Polygon). See `kindExcluded` for why ANY and
+// not ALL.
+//
+// THAT RULE IS ALSO WHAT KEEPS THIS CACHE HONEST, and it is the reason the
+// two paragraphs sit together. The key holds `mesh.mutationVersion`, which an
+// interactive drag deliberately does NOT bump (see mesh.d's uploadVersion
+// note), so the grid built at drag start is reused for the whole gesture while
+// the dragged verts move underneath it — every dragged element's stored
+// projection is stale from the second frame on. That is sound for exactly one
+// reason: a stale entry is an entry the query drops before the caller ever
+// sees it. Under ANY, "moves with the drag" and "excluded" are the SAME
+// predicate, so no stale entry can survive into a result and no result can be
+// stale. (Under the previous ALL rule they were different predicates, and
+// every partially-dragged element — an edge with one moving endpoint, a face
+// with one moving corner — was both stale AND returned.) A future change that
+// narrows the exclusion narrows this guarantee with it.
+//
+// The non-active sources cannot go stale at all: background layers are never
+// being dragged, so they pass an empty exclude and their projections stay
+// valid by construction (`walkSource(*src, i+1, null)`).
 //
 // THREAD SAFETY: snapCursor's drag callers run on the main thread, but
 // the `/api/snap` test bridge (app.d) calls snapCursor directly on the
@@ -1219,12 +1234,37 @@ private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
     g.valid = true;
 }
 
-// Is element `idx` of kind `k` fully part of the dragged (excluded) set?
-// Mirrors the original per-type linear loop skip rule exactly, but uses
-// an O(1) per-vertex membership bitset (`ex`, indexed by vertex id) so a
-// whole-mesh drag's huge exclude list doesn't turn each test into an
-// O(exclude) scan — which would reintroduce the very O(n²) blowup the
-// grid removes (esp. for edge/polygon, where many candidates are tested).
+// Does element `idx` of kind `k` MOVE with the drag — i.e. is ANY of its
+// incident verts in the dragged (excluded) set?
+//
+// ANY, not ALL, and the difference is the whole point. The exclusion exists
+// so a drag cannot snap to its own geometry ("a single-vert drag always snaps
+// to its own (zero-distance) projected pixel", `move.d:applySnapToDelta`). An
+// ALL rule delivers that for exactly one type — Vertex, where "all incident
+// verts" IS the vertex — and delivers nothing for any other:
+//
+//   • a single-vertex drag left the CENTROIDS of every incident edge and face
+//     live as candidates, and those centroids are recomputed from the MOVING
+//     coordinates on every frame, so they chase the drag at 1/2 and 1/n of its
+//     speed and the gizmo is pulled after its own tail;
+//   • with `Edge` enabled the closest point on an incident edge IS the dragged
+//     endpoint, at ~0 px, so the snap answered with the drag's own anchor and
+//     the drag froze.
+//
+// An element with one dragged vert is not a rigid neighbour that happens to be
+// near — it is part of the thing being dragged, deformed rather than
+// translated, and it is self-reference either way. So: any incident vert
+// dragged ⇒ the element is not a candidate.
+//
+// The cost shape is unchanged: an O(1) per-vertex membership bitset (`ex`,
+// indexed by vertex id) so a whole-mesh drag's huge exclude list doesn't turn
+// each test into an O(exclude) scan — which would reintroduce the very O(n²)
+// blowup the grid removes (esp. for edge/polygon, where many candidates are
+// tested). ANY is in fact the cheaper of the two: it short-circuits on the
+// FIRST dragged vert rather than having to prove every one of them.
+//
+// The whole-mesh case is unaffected: an empty selection makes the moving set
+// every vertex (`mesh.selectedVertexIndices*`), where ANY and ALL agree.
 private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
                           const bool[] ex) {
     if (ex.length == 0) return false;
@@ -1234,14 +1274,13 @@ private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
             return exV(cast(uint)idx);
         case Kind.EdgeCenter: case Kind.Edge: {
             auto e = mesh.edges[idx];
-            return exV(e[0]) && exV(e[1]);
+            return exV(e[0]) || exV(e[1]);
         }
         case Kind.PolyCenter: case Kind.Polygon: {
             auto f = mesh.faces[idx];
-            if (f.length == 0) return false;
             foreach (vi; f)
-                if (!exV(vi)) return false;
-            return true;
+                if (exV(vi)) return true;
+            return false;
         }
     }
 }
@@ -2158,6 +2197,239 @@ unittest {
         "S4: a guide that rejects must be able to veto a CONSTRAINT too — "
         ~ "otherwise a guide whose whole job is an admission rule would "
         ~ "reject every element and then watch a constraint hit sail past it");
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// THE SELF-REFERENCE RULE: no element that MOVES with the drag may be a snap
+// candidate for it (`kindExcluded`, and the exclusion `move.d` builds at
+// `applySnapToDelta`).
+//
+// The exclusion was written to stop one thing — "a single-vert drag always
+// snaps to its own (zero-distance) projected pixel" — and the rule it was
+// written as, "excluded iff ALL its incident verts are dragged", delivers that
+// for the Vertex type ALONE. Everything below is a candidate the OLD rule kept
+// live during a single-vertex drag, and every one of them is the same defect
+// the exclusion exists to prevent, wearing a different type tag:
+//
+//   1. EDGE CENTRE of an incident edge — recomputed from the MOVING endpoint
+//      every frame, so it trails the drag at half speed.
+//   2. EDGE, as a segment — its closest point to the cursor IS the dragged
+//      endpoint at ~0 px, so the snap answers with the drag's own anchor and
+//      the drag freezes. `PolyCenter` is on by DEFAULT, so (1) ships; `Edge`
+//      is a checkbox away, so (2) is one click from a user.
+//   3. POLYGON CENTRE of an incident face — the default type set, at 1/n of
+//      the drag speed.
+//   4. POLYGON, as a surface — closest point on a face one of whose corners is
+//      being dragged.
+//
+// Each block below is written to fail on the ALL rule and pass on ANY, and
+// each carries its own positive control: the SAME query with an empty
+// exclusion must still find the candidate. Without that control a block would
+// also "pass" if the fixture simply never reached the candidate.
+//
+// The fixture keeps ONE type enabled at a time so a single candidate walk
+// decides each assertion, and gives the excluded element a far-away sibling
+// that is deliberately OUTSIDE the gather range — so "did not snap" means the
+// exclusion dropped it, not that something else won.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    // Not any candidate's position: a pass-through `worldPos` must be
+    // distinguishable from a snapped one.
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    // The drag moves vertex 0 and nothing else — the single-vertex drag the
+    // exclusion comment names.
+    immutable uint[] dragged = [0u];
+
+    int[2] pixelOf(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: the probe point must project on-screen");
+        return [cast(int)round(qx), cast(int)round(qy)];
+    }
+
+    // --- 1 + 2: EDGE CENTRE and EDGE, on a face-less wire ------------------
+    // No faces ⇒ `needVis` is false ⇒ ranking is pure screen distance and the
+    // occlusion gate cannot silently do the excluding for us.
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(0.0f, 0, 0),   // 0 — dragged
+            Vec3(1.0f, 0, 0),   // 1
+            Vec3(3.0f, 0, 0),   // 2
+        ];
+        m.edges = [[0u, 1u], [1u, 2u]];
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.innerRangePx = 40.0f;
+        cfg.outerRangePx = 40.0f;
+
+        // --- 1. EDGE CENTRE ------------------------------------------------
+        cfg.enabledTypes = SnapType.EdgeCenter;
+        immutable Vec3 c01 = Vec3(0.5f, 0, 0);          // edge 0's centre
+        auto pc = pixelOf(c01);
+
+        invalidateSnapGrids();
+        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        assert(ctl.snapped && ctl.targetType == SnapType.EdgeCenter
+            && ctl.targetIndex == 0,
+            "positive control: with NOTHING excluded the cursor sits on edge "
+            ~ "0's centre and must snap to it — otherwise the exclusion "
+            ~ "assertion below would pass for the wrong reason");
+        assert(pixelOf(Vec3(2.0f, 0, 0))[0] - pc[0] > cfg.outerRangePx,
+            "fixture: edge 1's centre must be OUTSIDE the gather range, so a "
+            ~ "miss below means the exclusion fired and not that a sibling won");
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        assert(!r.snapped,
+            "an edge with ONE dragged endpoint moves with the drag: its centre "
+            ~ "is recomputed from the moving coordinate every frame and trails "
+            ~ "the gizmo at half speed. It is the drag's own geometry and must "
+            ~ "not be a candidate for it");
+        assert(r.targetType == SnapType.None && r.targetIndex == -1,
+            "...and it must not be offered as a HIGHLIGHT either: a rejected "
+            ~ "candidate is as if it were never enumerated");
+
+        // --- 2. EDGE as a segment — the freeze ------------------------------
+        cfg.enabledTypes = SnapType.Edge;
+        auto pv = pixelOf(m.vertices[0]);   // the cursor is ON the dragged vert
+
+        invalidateSnapGrids();
+        SnapResult ectl = snapCursor(cursorWorld, pv[0], pv[1], vp, m, cfg);
+        assert(ectl.snapped && ectl.targetType == SnapType.Edge
+            && ectl.targetIndex == 0
+            && ectl.worldPos.x == m.vertices[0].x
+            && ectl.worldPos.y == m.vertices[0].y
+            && ectl.worldPos.z == m.vertices[0].z,
+            "positive control, and the defect stated as a measurement: the "
+            ~ "closest point on the incident edge IS the dragged vertex, so an "
+            ~ "unexcluded edge answers the query with the drag's own anchor — "
+            ~ "delta becomes zero and the drag freezes");
+
+        invalidateSnapGrids();
+        SnapResult er = snapCursor(cursorWorld, pv[0], pv[1], vp, m, cfg, dragged);
+        assert(!er.snapped,
+            "the freeze is what the exclusion is FOR: an edge incident to the "
+            ~ "dragged vertex must not be able to hand the drag its own anchor "
+            ~ "back");
+        assert(er.worldPos.x == cursorWorld.x && er.worldPos.y == cursorWorld.y
+            && er.worldPos.z == cursorWorld.z,
+            "...and a miss passes the input through unchanged, so the caller's "
+            ~ "delta survives");
+    }
+
+    // --- 3 + 4: POLYGON CENTRE and POLYGON, on a quad ----------------------
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(-1, -1, 0),   // 0 — dragged
+            Vec3( 1, -1, 0),   // 1
+            Vec3( 1,  1, 0),   // 2
+            Vec3(-1,  1, 0),   // 3
+        ];
+        m.addFace([0u, 1u, 2u, 3u]);
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.innerRangePx = 40.0f;
+        cfg.outerRangePx = 40.0f;
+
+        // The quad's centroid, i.e. the polygon centre AND a point on the
+        // polygon surface — one cursor pixel serves both blocks.
+        auto pc = pixelOf(Vec3(0, 0, 0));
+
+        // --- 3. POLYGON CENTRE ---------------------------------------------
+        cfg.enabledTypes = SnapType.PolyCenter;
+
+        invalidateSnapGrids();
+        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        assert(ctl.snapped && ctl.targetType == SnapType.PolyCenter
+            && ctl.targetIndex == 0,
+            "positive control: the face is front-facing and unoccluded, so its "
+            ~ "centre is a live candidate with nothing excluded");
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        assert(!r.snapped,
+            "PolyCenter is ON BY DEFAULT, so this is the case a user meets "
+            ~ "without changing a setting: a face with one dragged corner has "
+            ~ "a centroid that follows the drag at 1/n of its speed, and the "
+            ~ "gizmo is pulled after its own tail");
+
+        // --- 4. POLYGON as a surface ---------------------------------------
+        cfg.enabledTypes = SnapType.Polygon;
+
+        invalidateSnapGrids();
+        SnapResult pctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        assert(pctl.snapped && pctl.targetType == SnapType.Polygon
+            && pctl.targetIndex == 0,
+            "positive control: the cursor is over the face's interior");
+
+        invalidateSnapGrids();
+        SnapResult pr = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        assert(!pr.snapped,
+            "the surface of a face being deformed by the drag is the drag's "
+            ~ "own geometry too — the rule is about MOVING, not about which "
+            ~ "type tag the candidate carries");
+    }
+
+    // --- 5. …and the rule still admits everything that does NOT move -------
+    // The exclusion must be a scalpel, not a curtain: dropping the whole mesh
+    // whenever anything is dragged would also pass every assertion above.
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(0.0f, 0, 0),   // 0 — dragged
+            Vec3(0.2f, 0, 0),   // 1 — shares edge 0 with the dragged vert
+            Vec3(0.4f, 0, 0),   // 2 — shares NOTHING with it
+            Vec3(0.6f, 0, 0),   // 3
+        ];
+        m.edges = [[0u, 1u], [2u, 3u]];
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.innerRangePx = 200.0f;
+        cfg.outerRangePx = 200.0f;
+        cfg.enabledTypes = SnapType.EdgeCenter;
+
+        auto pc = pixelOf(Vec3(0.1f, 0, 0));   // edge 0's centre: excluded
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        assert(r.snapped && r.targetType == SnapType.EdgeCenter
+            && r.targetIndex == 1,
+            "edge 1 shares no vertex with the drag, so it does not move with "
+            ~ "it and stays a candidate — the exclusion removes the drag's own "
+            ~ "geometry and nothing else");
+
+        // And a lone vertex that is not dragged is still a vertex candidate.
+        cfg.enabledTypes = SnapType.Vertex;
+        invalidateSnapGrids();
+        SnapResult v = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        assert(v.snapped && v.targetType == SnapType.Vertex && v.targetIndex == 1,
+            "the Vertex type is the one the old rule already protected, and it "
+            ~ "must keep behaving exactly as it did: vertex 0 excluded, vertex "
+            ~ "1 (the nearest survivor) wins");
+    }
 
     invalidateSnapGrids();
 }
