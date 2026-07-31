@@ -13533,11 +13533,13 @@ struct Mesh {
     /// (dot(normal, face[0] - eye) < 0). Occlusion is tested by ray-casting
     /// from the eye through each candidate vertex against every other
     /// front-facing face: if the ray crosses a face's plane inside its
-    /// polygon at a smaller t than the vertex distance, the vertex is hidden
-    /// behind that face. Used by pickVertices / pickEdges and the RMB lasso
-    /// path so neither picks elements behind opaque geometry — including
-    /// disjoint mesh components in the same Mesh struct (cube + cube,
-    /// cube + cylinder, etc.).
+    /// polygon strictly nearer the eye than the vertex, the vertex is hidden
+    /// behind that face — unless it sits ON the crossing, within a tolerance
+    /// relative to its own coordinates. The exact clauses, and which of them
+    /// is a static read, are spelled out at the depth gate in pass 2 below.
+    /// Used by the snap service so it never cements to elements behind opaque
+    /// geometry — including disjoint mesh components in the same Mesh struct
+    /// (cube + cube, cube + cylinder, etc.).
     ///
     /// `vp` is used to prune occluder candidates by screen-space bbox: a face
     /// can occlude a vertex only if the vertex's projected pixel falls inside
@@ -13549,7 +13551,7 @@ struct Mesh {
     /// implementation.
     bool[] visibleVertices(Vec3 eye, const ref Viewport vp) const {
         import math : pointInPolygon2D, projectToWindowFull;
-        import std.math : abs;
+        import std.math : abs, sqrt;
 
         bool[] vis = new bool[](vertices.length);
         if (vertices.length == 0 || faces.length == 0) return vis;
@@ -13570,19 +13572,41 @@ struct Mesh {
 
         // Pass 1: collect front-facing faces with cached screen polygons +
         // bboxes, and seed the visibility mask.
+        // The plane normal and the front-facing dot are carried in DOUBLE.
+        // The depth half of this gate compares against a coincidence tolerance
+        // of ~2.98e-7 RELATIVE to the candidate's largest coordinate (see
+        // below) — about 2.5 float32 ulps. In float arithmetic the ray-plane
+        // solve's own rounding is the same size as that tolerance, so the
+        // exemption would be decided by noise; positions stay float (the
+        // reference's candidate positions arrive on a float32 grid too), only
+        // the arithmetic is widened.
         struct FrontFace {
-            uint    fi;
-            Vec3    n;             // face plane normal (un-normalised, fine for ray-plane)
-            float   minX, maxX, minY, maxY;
-            float[] sxs, sys;      // screen-space corner positions
+            uint      fi;
+            double[3] n;           // face plane normal (un-normalised, fine for ray-plane)
+            float     minX, maxX, minY, maxY;
+            float[]   sxs, sys;    // screen-space corner positions
+        }
+        static double[3] planeNormal(Vec3 a, Vec3 b, Vec3 c) {
+            const double ux = cast(double)b.x - a.x, uy = cast(double)b.y - a.y,
+                         uz = cast(double)b.z - a.z;
+            const double vx = cast(double)c.x - a.x, vy = cast(double)c.y - a.y,
+                         vz = cast(double)c.z - a.z;
+            return [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+        }
+        static double dotD(const double[3] n, double x, double y, double z) {
+            return n[0] * x + n[1] * y + n[2] * z;
         }
         FrontFace[] front;
         front.reserve(faces.length);
         foreach (fi, ref face; faces) {
             if (face.length < 3) continue;
-            Vec3 fn = cross(vertices[face[1]] - vertices[face[0]],
-                            vertices[face[2]] - vertices[face[0]]);
-            if (dot(fn, vertices[face[0]] - eye) >= 0) continue;
+            double[3] fn = planeNormal(vertices[face[0]], vertices[face[1]],
+                                       vertices[face[2]]);
+            {
+                Vec3 p0 = vertices[face[0]];
+                if (dotD(fn, cast(double)p0.x - eye.x, cast(double)p0.y - eye.y,
+                             cast(double)p0.z - eye.z) >= 0) continue;
+            }
             foreach (vi; face) vis[vi] = true;
 
             float mnx = float.infinity, mxx = -float.infinity;
@@ -13612,16 +13636,67 @@ struct Mesh {
 
         // Pass 2: per candidate vertex, walk only those front faces whose
         // screen bbox contains the vertex's projected pixel; do screen-space
-        // point-in-polygon, then a 3D ray-plane depth test to confirm the
-        // face is actually closer to the eye. Faces that own the vertex are
-        // skipped (their plane passes through the vertex; FP noise near t=1
-        // is also handled by the (1 - ε) cutoff).
-        enum float OCCL_EPS = 1e-4f;
+        // point-in-polygon, then the depth gate below. Faces that own the
+        // vertex are skipped — their plane passes through it.
+        //
+        // ---------------------------------------------------------------
+        // The depth gate. Ported from the reference, which was measured
+        // bit-exactly over 501 candidate evaluations with zero violations
+        // (task 0534). Naming the three clauses in its own terms:
+        //
+        //   O = the eye, C = the candidate, H = where the pick ray meets the
+        //   occluder's surface.
+        //
+        //   1. COINCIDENCE EXEMPTION — keep when |H - C| <= tol(C), where
+        //      tol(C) = max(maxabs(C) / 3_360_000, 1e-10). The tolerance is
+        //      RELATIVE to the candidate's own largest coordinate (≈ 2.976e-7
+        //      of it, ≈ 2.5 float32 ulps) — NOT to the camera distance — and
+        //      it SHORT-CIRCUITS the depth compare. It answers "is this
+        //      candidate the very point the ray hit", nothing else.
+        //   2. DEPTH COMPARE — cull iff |O - C| > |O - H|, strictly. Euclidean
+        //      along the ray, with NO epsilon of its own.
+        //   3. Equality keeps: at |O - C| == |O - H| the candidate is offered.
+        //
+        // Clause 3 is the ONE clause with no live confirmation, and that is a
+        // property of the measurement rather than a gap to close: the
+        // reference's candidate positions arrive on a float32 grid 1.4e6
+        // times coarser than the ulp of the double they are compared against,
+        // so an exact tie cannot be constructed by placing geometry at all.
+        // The DIRECTION is confirmed (501 evaluations, 0 violations); only the
+        // last ulp is a static read. Here it is doubly unobservable: our ray
+        // is cast THROUGH the candidate, so |O - C| == |O - H| implies H == C
+        // and clause 1 always fires first. It is written as `>= 0` anyway, so
+        // the boundary sits where the reference puts it.
+        //
+        // What this replaced: a `1e-4` relative epsilon ON THE DEPTH COMPARE
+        // ITSELF (`t >= 1 - OCCL_EPS` kept). That was the wrong quantity — the
+        // reference puts no tolerance on the compare — and, read even as a
+        // relative tolerance, ~300x looser than the coincidence constant.
+        //
+        // NOT ported here, and deliberately: the occluder SET. This walk still
+        // occludes only within one mesh, and skips per-FACE ownership; the
+        // reference occludes across every visible non-marked item and exempts
+        // per-ITEM. That is a separate and much wider behaviour change (it
+        // moves what every snap client sees); see task 0539.
+        // ---------------------------------------------------------------
+        enum double COINCIDENCE_DIVISOR = 3_360_000.0;
+        enum double COINCIDENCE_FLOOR   = 1e-10;
         foreach (vi; 0 .. vertices.length) {
             if (!vis[vi] || !vsValid[vi]) continue;
             float vsxi = vsx[vi], vsyi = vsy[vi];
             Vec3  vpos = vertices[vi];
-            Vec3  dir  = vpos - eye;
+            const double cx = vpos.x, cy = vpos.y, cz = vpos.z;
+            const double dirX = cx - eye.x, dirY = cy - eye.y, dirZ = cz - eye.z;
+            const double lenDir = sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+
+            // tol(C) = max(maxabs(C) / 3_360_000, 1e-10) — relative to the
+            // CANDIDATE's largest coordinate, so it is a constant of this
+            // vertex and is hoisted out of the occluder walk.
+            double maxAbsC = abs(cx);
+            if (abs(cy) > maxAbsC) maxAbsC = abs(cy);
+            if (abs(cz) > maxAbsC) maxAbsC = abs(cz);
+            double tol = maxAbsC / COINCIDENCE_DIVISOR;
+            if (tol < COINCIDENCE_FLOOR) tol = COINCIDENCE_FLOOR;
 
             foreach (ref ff; front) {
                 if (vsxi < ff.minX || vsxi > ff.maxX ||
@@ -13634,10 +13709,24 @@ struct Mesh {
 
                 if (!pointInPolygon2D(vsxi, vsyi, ff.sxs, ff.sys)) continue;
 
-                float denom = dot(ff.n, dir);
-                if (abs(denom) < 1e-9f) continue;
-                float t = dot(ff.n, vertices[face[0]] - eye) / denom;
-                if (t <= 0.0f || t >= 1.0f - OCCL_EPS) continue;
+                const double denom = dotD(ff.n, dirX, dirY, dirZ);
+                if (abs(denom) < 1e-9) continue;   // ray parallel to the plane
+                Vec3 p0 = vertices[face[0]];
+                const double t = dotD(ff.n, cast(double)p0.x - eye.x,
+                                            cast(double)p0.y - eye.y,
+                                            cast(double)p0.z - eye.z) / denom;
+                if (t <= 0.0) continue;            // no hit in front of the eye
+
+                // t - 1, formed as dot(n, p0 - C)/denom rather than by
+                // subtracting 1 from t: the subtraction cancels catastrophically
+                // exactly where the exemption is decided (t within 1e-8 of 1).
+                const double tm1 = dotD(ff.n, cast(double)p0.x - cx,
+                                              cast(double)p0.y - cy,
+                                              cast(double)p0.z - cz) / denom;
+
+                // |H - C| = |t - 1| * |C - O|, since H = O + t*(C - O).
+                if (abs(tm1) * lenDir <= tol) continue;   // clause 1
+                if (tm1 >= 0.0) continue;                 // clauses 2 + 3
 
                 vis[vi] = false;
                 break;
