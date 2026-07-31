@@ -173,9 +173,12 @@ class SnapStage : Stage, Operator {
     // one full `snapCursor` per cursor-valid pipeline evaluation, and
     // `SubjectPacket.cursorValid` is stamped on every mouse-motion event that
     // reaches an armed tool — there is no button-down term in it. So with
-    // snapping switched on at this stage's own default type set, a plain hover
-    // over a 100k-vertex mesh paid an extra element-class candidate walk per
-    // motion event: the pipeline evaluation went from 0.09 ms to 4.6 ms per
+    // snapping switched on and FOUR element classes enabled (which was this
+    // stage's default when the number below was measured, tasks 0526/0531 — the
+    // default is one class now, so a default run walks roughly a quarter of
+    // this), a plain hover over a 100k-vertex mesh paid an extra element-class
+    // candidate walk per motion event: the pipeline evaluation went from
+    // 0.09 ms to 4.6 ms per
     // event, 28 % of a 60 fps frame added to moving the mouse. The numbers and
     // the driver are in task 0526; task 0531 re-ran them with this gate in.
     //

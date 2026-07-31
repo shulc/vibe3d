@@ -2217,10 +2217,8 @@ unittest {
 //      every frame, so it trails the drag at half speed.
 //   2. EDGE, as a segment — its closest point to the cursor IS the dragged
 //      endpoint at ~0 px, so the snap answers with the drag's own anchor and
-//      the drag freezes. `PolyCenter` is on by DEFAULT, so (1) ships; `Edge`
-//      is a checkbox away, so (2) is one click from a user.
-//   3. POLYGON CENTRE of an incident face — the default type set, at 1/n of
-//      the drag speed.
+//      the drag freezes.
+//   3. POLYGON CENTRE of an incident face, at 1/n of the drag speed.
 //   4. POLYGON, as a surface — closest point on a face one of whose corners is
 //      being dragged.
 //

@@ -833,9 +833,26 @@ struct SnapPacket {
     // nobody asked for. EdgeCenter / PolyCenter lose less often but lose the
     // same way, stealing a snap from the real vertex beside them.
     //
-    // So this is a DEFAULT change, not a model change: every bit remains
-    // reachable from the Snap panel and from `snap.toggleType`, and turning
-    // Grid back on restores the old behaviour exactly.
+    // The CHANGE here is a default: every bit remains reachable from the Snap
+    // panel and from `snap.toggleType`, and turning Grid back on restores the
+    // old behaviour exactly.
+    //
+    // BUT DO NOT READ THAT AS "THE MODEL IS FINE" — it is not, and this
+    // default CONCEALS the model gap rather than closing it. The reference's
+    // own guide interface ranks candidates by (priority, distance); we rank by
+    // distance alone, with no priority term anywhere. Narrowing the default to
+    // one class simply removes the contests in which that difference shows.
+    //
+    // The proof that it is only concealed: our Edge candidate is the closest
+    // point on the projected segment, so for ANY edge incident to a target
+    // vertex its pixel distance is <= that vertex's, with equality only when
+    // the cursor sits exactly on the vertex pixel. Vertex is enumerated first
+    // and later candidates use strict `d < bestDist`, so ties go to Vertex and
+    // everything else goes to Edge. Tick Edge — which is one click, and is
+    // what the reference profile this was read from actually has ticked
+    // alongside Vertex — and a point partway along the neighbour's edge wins
+    // over the vertex again. Closing that needs the priority term, and what
+    // the priorities ARE is not known from any document we hold.
     uint     enabledTypes  = SnapType.Vertex;
     // Stage 1: snap scope (Global/Component/Item). Named `snapScope` because
     // `scope` is a D reserved keyword. Default Global = all types eligible.
