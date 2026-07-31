@@ -86,16 +86,50 @@ unittest { // SNAP stage present
 }
 
 // -------------------------------------------------------------------------
-// 7.3a: default attrs.
+// 7.3a: THE SHIPPED DEFAULTS — with nothing written in front of them.
+//
+// This must NOT use `resetCube()`. That helper writes `enabled`, `types`,
+// `innerRange` and `outerRange` itself, so a test that calls it and then
+// asserts those four values is reading back its own fixture and would agree
+// with ANY default the product shipped. It was written that way, and when the
+// default type set changed it went on passing without comment.
+//
+// `/api/reset` alone is the right fixture: `SceneReset.apply` calls `reset()`
+// on every registered stage, and `SnapStage.reset()` restates each field's
+// declaration initialiser by hand. So what this reads back is the shipped
+// configuration and nothing else.
 // -------------------------------------------------------------------------
 
-unittest { // defaults
+unittest { // the shipped defaults
+    postJson("/api/reset", `{"primitive":"cube"}`);
+    auto a = getSnapAttrs();
+    assert(a["enabled"] == "false",
+        "snapping ships OFF, got " ~ a["enabled"]);
+    assert(a["types"] == "vertex",
+        "the shipped target set is Vertex ALONE. Candidates compete on raw "
+        ~ "screen distance with no per-type priority, so a dense extra type "
+        ~ "(Grid above all — a lattice point is never more than half a cell "
+        ~ "from the cursor) does not enrich the default, it silently wins "
+        ~ "every contest and hides the vertex snap. Got: " ~ a["types"]);
+    assert(a["innerRange"] == "24", "innerRange: " ~ a["innerRange"]);
+    assert(a["outerRange"] == "40", "outerRange: " ~ a["outerRange"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.3a: the fixture's OWN round-trip. Same four attributes, but here the
+// point is that `resetCube()`'s writes land — which is worth pinning because
+// every other test in this file trusts that fixture to have put the stage in
+// the state it names. Distinct from the test above: this one asserts what the
+// helper WROTE, that one asserts what the product SHIPS.
+// -------------------------------------------------------------------------
+
+unittest { // resetCube() puts the stage where it claims
     resetCube();
     auto a = getSnapAttrs();
     assert(a["enabled"] == "false",
-        "default enabled expected false, got " ~ a["enabled"]);
+        "fixture enabled expected false, got " ~ a["enabled"]);
     assert(a["types"] == "vertex,edgeCenter,polyCenter,grid",
-        "default types: " ~ a["types"]);
+        "fixture types: " ~ a["types"]);
     assert(a["innerRange"] == "24", "innerRange: " ~ a["innerRange"]);
     assert(a["outerRange"] == "40", "outerRange: " ~ a["outerRange"]);
 }
@@ -624,5 +658,7 @@ unittest { // every snap TYPE is an addressable row, and it drives `types`
     postJson("/api/command", "tool.pipe.attr snap typeEdge false");
     auto a3 = getSnapAttrs();
     assert(a3["types"] == "vertex,edgeCenter,polyCenter,grid",
-        "the rows round-trip back to the default set: " ~ a3["types"]);
+        "the rows round-trip back to the set `resetCube()` established — the "
+        ~ "FIXTURE's set, which is not the shipped default (that is Vertex "
+        ~ "alone, pinned by the shipped-defaults test above): " ~ a3["types"]);
 }
