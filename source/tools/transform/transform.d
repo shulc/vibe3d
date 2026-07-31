@@ -8,8 +8,7 @@ import change_bus : MeshEditScope;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
-import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket,
-                          SnapHitPacket, SubjectPacket;
+import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
@@ -347,11 +346,6 @@ protected:
     override void activate() {
         active = true;
         resetTransientState();
-        // S2(b): from here until deactivate(), this tool reads the SNAP
-        // stage's per-cursor result (see `evaluateSnap`). The demand must be
-        // up BEFORE the first event, because the packet is produced by the
-        // pipeline evaluation that runs ahead of the handler that reads it.
-        demandSnapHit();
     }
 
     // Transient cache/gizmo reset shared by activate() and resyncSession()
@@ -383,15 +377,6 @@ protected:
     }
 
     override void deactivate() {
-        // Paired with activate()'s demand, and FIRST in this body — the GPU
-        // upload below can throw, and a demand stranded by an exception is a
-        // full snap query per motion event, forever, for a tool that is gone.
-        // A subclass that does work of its own BEFORE chaining here has to
-        // release before that work: `XfrmTransformTool.deactivate` commits an
-        // open edit first, so it drops its own and its sub-tools' demands up
-        // front. `releaseSnapHit` is a no-op when nothing is held, which is
-        // what makes that safe to do twice.
-        releaseSnapHit();
         if (wholeMeshDrag || propsDragging) {
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -1106,152 +1091,15 @@ protected:
     // appropriate for click-relocate / live-preview paths (no drag
     // active, so no "moving set" to exclude); MoveTool's drag-time
     // path inlines its own snapCursor call with proper exclusions.
-    //
-    // S2 phase (b), the FIRST migrated consumer. The SNAP stage already ran
-    // this exact query one step earlier in the same event — `buildToolVts`
-    // evaluates the pipeline before the mouse handler that reaches here — so
-    // running it again is the duplicate work the result packet exists to
-    // remove. This reads the packet instead, but only when the packet's
-    // PROVENANCE matches the query this function would otherwise have made
-    // (`hitPacketIsOurQuery`); anything else falls back to the direct call,
-    // unchanged. Under `debug` both run and the answers are compared, which
-    // is how the substitution is proved case by case on the existing suite
-    // rather than argued in prose.
     protected SnapResult evaluateSnap(Vec3 rawHit, int sx, int sy,
                                        ref VectorStack vts) {
-        import toolpipe.packets : SnapPacket, SnapHitPacket;
+        import toolpipe.packets : SnapPacket;
         import snap             : snapCursor;
         SnapResult sr;
         auto snapPkt = vts.get!SnapPacket();
         if (snapPkt is null || !snapPkt.enabled) return sr;
-        if (auto hit = vts.get!SnapHitPacket())
-            if (hitPacketIsOurQuery(*hit, vts, sx, sy)) {
-                SnapResult fromPkt = snapResultFromHit(*hit, rawHit);
-                debug {
-                    SnapResult own = snapCursor(rawHit, sx, sy, cachedVp,
-                                                *mesh, *snapPkt, []);
-                    assert(own == fromPkt,
-                        "S2(b): the published snap result and this tool's own "
-                        ~ "query disagree at a cursor where the packet's "
-                        ~ "provenance says they are the same query — the "
-                        ~ "substitution is only sound while they do");
-                }
-                return fromPkt;
-            }
-
         return snapCursor(rawHit, sx, sy, cachedVp, *mesh, *snapPkt, []);
     }
-
-    /// Is this published result the answer to the query THIS tool would run?
-    ///
-    /// Substituting the packet for the direct call is byte-identical only
-    /// when every argument the two queries would differ in is the same one.
-    /// The seed is not among them — `snapCursor` never compares it, it only
-    /// reappears as the pass-through position on a miss, and
-    /// `snapResultFromHit` puts our own seed back there. What is left:
-    ///
-    ///   * PIXEL. The stage queried `SubjectPacket.cursorX/Y`; we query the
-    ///     pixel our caller handed us. They coincide on the mouse-event
-    ///     dispatch and nowhere else is guaranteed.
-    ///   * VIEWPORT. The stage used `SubjectPacket.viewport`
-    ///     (`vpm.inputSnapshot()`, the cell the EVENT landed in); we use
-    ///     `cachedVp`, pinned by the owner cell's last interactive draw. In a
-    ///     single-cell layout those are the same value; in Quad/Split, hovering
-    ///     a foreign cell makes them different projections, and a snap ranked
-    ///     in the wrong projection is a different winner.
-    ///   * MESH. The stage snapped against `SubjectPacket.mesh`; we snap
-    ///     against ours. Same address in every wired path, and a divergence
-    ///     here would be a snap against another layer.
-    ///   * GUIDES. The stage consults the S4 registry; `snapCursor` called
-    ///     from a tool does not. With a guide registered the two rank
-    ///     candidates differently BY DESIGN, so a non-zero `guideCount` is a
-    ///     refusal, not a warning. Moving this consumer onto guide-aware
-    ///     ranking is S4 phase (b)'s declared behaviour change, and it will be
-    ///     the deletion of this one term.
-    ///
-    /// Not checked, because it cannot differ: the config. The stage published
-    /// `SnapPacket` into this very stack from the same evaluation, and that is
-    /// the `snapPkt` the caller read.
-    private bool hitPacketIsOurQuery(const ref SnapHitPacket hit,
-                                     ref VectorStack vts, int sx, int sy) {
-        import toolpipe.packets : SubjectPacket;
-        if (hit.guideCount != 0) return false;
-        auto subj = vts.get!SubjectPacket();
-        if (subj is null || !subj.cursorValid)  return false;
-        if (subj.cursorX != sx || subj.cursorY != sy) return false;
-        if (subj.mesh !is mesh)                 return false;
-        if (subj.viewport != cachedVp)          return false;
-        return true;
-    }
-
-    /// Rebuild the `SnapResult` shape the callers already speak from the
-    /// published packet, putting our own seed back into the two pass-through
-    /// slots the producer deliberately leaves empty (it has no gesture and so
-    /// no seed worth publishing — see the packet's contract). Every other
-    /// field is a straight copy: the packet carries all of `SnapResult`.
-    private static SnapResult snapResultFromHit(const ref SnapHitPacket hit,
-                                                Vec3 seed) {
-        SnapResult sr;
-        sr.snapped        = hit.snapped;
-        sr.highlighted    = hit.highlighted;
-        sr.targetType     = hit.targetType;
-        sr.targetIndex    = hit.targetIndex;
-        sr.targetSource   = hit.targetSource;
-        sr.constraintType = hit.constraintType;
-        sr.worldPos       = hit.snapped     ? hit.worldPos     : seed;
-        sr.highlightPos   = hit.highlighted ? hit.highlightPos : seed;
-        return sr;
-    }
-
-    // ---- the SNAP stage's demand for the per-cursor result ------------------
-    //
-    // The publication is gated on a demand counter that defaults to zero
-    // (task 0531), because ungated it cost 28 % of a 60 fps frame on every
-    // mouse movement with no reader at all. A consumer that forgets to raise
-    // it is a consumer that reads nothing — `evaluateSnap` above would simply
-    // never find a packet and would fall back to its own query forever, which
-    // is silent, correct and useless.
-    //
-    // Held for the tool's ACTIVATION, not for a gesture: the live preview runs
-    // on plain hover, before any press. `held_` makes both ends idempotent, so
-    // a double activate cannot leak a demand and a deactivate without a
-    // matching activate (a flag flipped mid-session on the composing wrapper,
-    // a tool dropped before it ever came up) cannot release someone else's.
-    // The counter's other property matters here too: `XfrmTransformTool`
-    // activates itself AND its Move sub-tool, so two demands from one tool
-    // switch is the ordinary case, and the first release must not close the
-    // gate under the second reader.
-    private bool snapHitDemandHeld_;
-
-    private SnapStage snapStageOrNull() {
-        import toolpipe.pipeline : g_pipeCtx;
-        import toolpipe.stage    : TaskCode;
-        if (g_pipeCtx is null) return null;
-        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
-    }
-
-    // The three below are explicitly `public` — this region of the class is
-    // under a `protected:` label (line 40), and the demand is LIFECYCLE: a
-    // composing wrapper drops its sub-tools' demands from outside their
-    // inheritance branch, and the pairing is pinned from a module-level
-    // unittest. Both are outside what `protected` reaches.
-    public final void demandSnapHit() {
-        if (snapHitDemandHeld_) return;
-        auto st = snapStageOrNull();
-        if (st is null) return;          // no pipeline (unit tests): nothing to hold
-        st.demandHit();
-        snapHitDemandHeld_ = true;
-    }
-
-    public final void releaseSnapHit() {
-        if (!snapHitDemandHeld_) return;
-        snapHitDemandHeld_ = false;      // cleared FIRST: a stage that went away
-        auto st = snapStageOrNull();     // must not leave us holding a phantom
-        if (st !is null) st.releaseHit();
-    }
-
-    /// Whether this tool currently holds a demand. Test seam.
-    public bool snapHitDemandHeld() const { return snapHitDemandHeld_; }
 
     // Mirror a SnapResult onto both the tool's local lastSnap and the
     // global publish channel (drives /api/snap/last and the cyan
