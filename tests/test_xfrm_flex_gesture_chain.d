@@ -369,18 +369,34 @@ unittest {
         t, mx1, my1));
 
     // ---- selection change clears the chain → re-derive fresh world basis ----
+    // What this step needs is only a DIFFERENT, non-empty selection — the
+    // assertion below is about the persisted frame being cleared, not about
+    // which faces are picked. So the split is taken at the mesh's CURRENT x
+    // midpoint rather than a fixed world threshold: the drag above translates
+    // the patch, and a fixed `cx > 0.1` silently depends on how far it moved.
+    // (Measured: before the pinned-mode off-gizmo drag landed, the "move
+    // Z-arrow shaft" press above engaged NOTHING — dragAxis -1, zero verts
+    // moved — so the mesh sat still here and the fixed threshold happened to
+    // work. The press now starts a real drag, which is the point of the case.)
     auto model = getJson("/api/model");
     auto verts = model["vertices"].array;
     auto faces = model["faces"].array;
-    int[] sel2;
-    foreach (fi, f; faces) {
+    double[] cxs;
+    foreach (f; faces) {
         auto idx = f.array;
         double cx = 0;
         foreach (vi; idx) cx += verts[cast(size_t)vi.integer].array[0].floating;
-        cx /= idx.length;
-        if (cx > 0.1) sel2 ~= cast(int)fi;
+        cxs ~= cx / idx.length;
     }
-    assert(sel2.length > 10, "expected a right-side patch for the re-derive check");
+    double loX = cxs[0], hiX = cxs[0];
+    foreach (c; cxs) { if (c < loX) loX = c; if (c > hiX) hiX = c; }
+    immutable double midX = 0.5 * (loX + hiX);
+    int[] sel2;
+    foreach (fi, c; cxs) if (c > midX) sel2 ~= cast(int) fi;
+    assert(sel2.length > 10,
+        "expected a right-side patch for the re-derive check (midX="
+        ~ midX.to!string ~ ", got " ~ sel2.length.to!string ~ " of "
+        ~ faces.length.to!string ~ ")");
     string s2 = "[";
     foreach (i, v; sel2) s2 ~= (i ? "," : "") ~ v.to!string;
     s2 ~= "]";

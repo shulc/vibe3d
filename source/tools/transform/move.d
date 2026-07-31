@@ -120,6 +120,18 @@ class MoveTool : TransformTool {
     // latch, not a relocate marker, so it can't discriminate either.
     bool lastClickWasRelocate = false;
 
+    // Set on EVERY off-gizmo press this bank consumes — relocating or not —
+    // and read+cleared by the wrapper alongside `lastClickWasRelocate`.
+    //
+    // The wrapper needs BOTH facts because an off-gizmo press is a run boundary
+    // in every ACEN mode, but the boundary work differs: a relocate MOVED the
+    // pin and must re-stage the new one, a pinned-mode press left the pin alone
+    // and must re-stage it verbatim. Before the pinned modes started a drag at
+    // all, their boundary was handled where the unclaimed press fell through
+    // (`XfrmTransformTool.onMouseButtonDown`'s off-gizmo commit block); the
+    // press no longer reaches there, so the boundary travels on this flag.
+    bool lastClickWasOffGizmo = false;
+
     // Input-projection basis, captured ONCE at drag start (in
     // `onMouseButtonDown`, where `dragAxis` becomes >= 0) from the live
     // `currentBasis(...)`. This is the frame the screen→world input math
@@ -630,6 +642,7 @@ public:
         ctrlConstrain = false;
         ctrlLockActive = false;   // clear stale lock before re-deciding
         lastClickWasRelocate = false;
+        lastClickWasOffGizmo = false;
         dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
@@ -652,31 +665,57 @@ public:
             return true;
         }
 
-        // Click outside gizmo. Only Auto / None / Screen
-        // ACEN modes relocate the gizmo on click-outside; the others
-        // (Select / SelectAuto / Element / Local / Origin / Manual /
-        // Border) keep the gizmo pinned to a selection-derived or
-        // fixed point and ignore the click entirely.
+        // Click outside gizmo. TWO independent questions, which one
+        // predicate used to answer:
         //
-        //   Auto / None : project click onto the most-facing world-axis
-        //                 plane through (0,0,0).
-        //   Screen      : project click onto a camera-perpendicular
-        //                 plane through the current selection bbox
-        //                 centre.
+        //   (a) may this click MOVE the pivot?  Only Auto / None / Screen.
+        //       The others (Select / SelectAuto / Element / Local / Origin /
+        //       Manual / Border) derive the pivot from the selection or pin
+        //       it to a fixed point, and a click must not drag it off.
+        //   (b) may this click start a DRAG?  Always. A translation's
+        //       RESULT is pivot-independent — the pivot only says where the
+        //       screen->world conversion is linearised (LAW B's
+        //       `planeAnchor`), and a pinned mode has a perfectly good pivot
+        //       to linearise about.
         //
-        // After relocation the drag plane is the most-facing plane
-        // THROUGH the new gizmo center — drag projection feels natural
-        // across camera angles regardless of where the new center
-        // landed.
-        if (!acenAllowsClickRelocate())
+        // (b) used to be answered by (a)'s predicate, so under every pinned
+        // mode a press away from the gizmo returned false and the tool never
+        // engaged at all — no drag, no translation, nothing.
+        //
+        // Where the anchor comes from:
+        //   Auto / None : click projected onto the most-facing world-axis
+        //                 plane through the camera focus.
+        //   Screen      : click projected onto a camera-perpendicular
+        //                 plane through the current selection bbox centre.
+        //   pinned      : the pivot ACEN already computed (`handler.center`,
+        //                 refreshed from the stage by every idle `update()`),
+        //                 left exactly where it is.
+        //
+        // Either way the drag plane is the most-facing plane THROUGH the
+        // anchor — drag projection feels natural across camera angles
+        // regardless of where the anchor sits.
+        //
+        // Element is the one pinned mode that keeps the old answer to (b):
+        // there the click is already spoken for — it PICKS the anchor element,
+        // and the wrapper starts the drag from the picked centre in a branch
+        // that runs after this one. Claiming the press here would anchor the
+        // drag at the PRE-pick pivot and strand the pick.
+        immutable bool relocates = acenAllowsClickRelocate();
+        if (!relocates && acenClickPicksElement())
             return false;
-        Vec3 hit;
-        if (!computeClickRelocateHit(e.x, e.y, hit, vts))
-            return false;
-        // Off-gizmo relocate: mark so the wrapper commits the prior run
-        // and re-stages this relocated pin before the new session opens.
-        lastClickWasRelocate = true;
-        beginScreenPlaneDragAt(e.x, e.y, hit, ctrl, /*notifyAcen=*/true, vts);
+        Vec3 anchor = handler.center;
+        if (relocates) {
+            if (!computeClickRelocateHit(e.x, e.y, anchor, vts))
+                return false;
+            // Off-gizmo relocate: mark so the wrapper commits the prior run
+            // and re-stages this relocated pin before the new session opens.
+            // A pinned-mode drag moves NO pin, so it is not a run boundary
+            // and this stays false there.
+            lastClickWasRelocate = true;
+        }
+        lastClickWasOffGizmo = true;
+        beginScreenPlaneDragAt(e.x, e.y, anchor, ctrl,
+                               /*notifyAcen=*/relocates, vts);
         return true;
     }
 

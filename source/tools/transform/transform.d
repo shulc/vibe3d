@@ -965,6 +965,31 @@ protected:
             || m == ActionCenterStage.Mode.Screen;
     }
 
+    /// True iff an off-gizmo click already MEANS something else in the current
+    /// ACEN mode, so the Move bank must not consume it as a screen-plane drag.
+    ///
+    /// Only Element does: there the click PICKS the anchor element, and the
+    /// wrapper (not the bank) then starts a drag from the picked centre — see
+    /// `XfrmTransformTool.onMouseButtonDown`'s `picked && flagT` branch, which
+    /// runs AFTER the bank dispatch and would never be reached if the bank had
+    /// already claimed the press. A click that misses every element in Element
+    /// mode is the no-drag commit boundary, likewise owned by the wrapper.
+    ///
+    /// Distinct from `acenAllowsClickRelocate()` on purpose: that predicate
+    /// answers "may this click move the pivot?", this one answers "is this
+    /// click already spoken for?". Element answers no to the first and yes to
+    /// the second, which is exactly why one predicate could not carry both.
+    bool acenClickPicksElement() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return false;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return false;
+        return ac.mode == ActionCenterStage.Mode.Element;
+    }
+
     /// Project a click pixel onto the appropriate relocation plane for
     /// the current ACEN mode:
     ///

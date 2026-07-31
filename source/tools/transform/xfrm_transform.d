@@ -1535,6 +1535,15 @@ public:
             // beginMoveDragSession → beginEdit (re-freezes relocated pin).
             bool wasRelocate = moveSub.lastClickWasRelocate;
             moveSub.lastClickWasRelocate = false;   // consume
+            // An off-gizmo press in a PINNED action-centre mode: the bank now
+            // starts a screen-plane drag from the pinned pivot instead of
+            // declining the press, so it no longer falls through to the
+            // off-gizmo commit boundary at the bottom of this method. That
+            // boundary still has to happen — an off-gizmo press splits the undo
+            // run in every mode; only the pin handling differs — so it runs
+            // here, with the pin re-staged VERBATIM (nothing relocated).
+            bool wasPinnedOffGizmo = moveSub.lastClickWasOffGizmo && !wasRelocate;
+            moveSub.lastClickWasOffGizmo = false;   // consume
             // Phase 1 addendum A1 — split session-close vs run-close at the
             // Move-arm relocate boundary. The three landed `if (wasRelocate ...)`
             // blocks merge into one, with each action gated on what it actually
@@ -1584,6 +1593,27 @@ public:
                 // pivot moved + the prior run committed) — re-capture the run
                 // baseline at the relocated mesh on the fresh Move gesture below.
                 resetRun();   // + P-F: relocate freezes a NEW run-frame (G8)
+            }
+            // The pinned-mode twin of the block above. Identical set of actions
+            // in an identical order — session-close for every open bank, pin
+            // re-stage, consolidate + nextRun, resetRun — with ONE difference:
+            // `stageCurrentActionCenterPin` (verbatim, no pin mutation) instead
+            // of `restageRelocatePin` (which re-fires notifyAcenUserPlaced and
+            // would force-place a pivot these modes must own themselves). It is
+            // the same pin call the off-gizmo boundary at the bottom of this
+            // method makes, for the same reason: the commit cleared the freeze,
+            // so the drag opening below must freeze the CURRENT pin, not a
+            // stale one.
+            if (wasPinnedOffGizmo) {
+                if (editIsOpen()) commitEdit("Move");
+                rotateSub.commitSessionIfOpen();
+                scaleSub.commitSessionIfOpen();
+                moveSub.stageCurrentActionCenterPin();
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                }
+                resetRun();
             }
             // Bank-switch run boundary (Q-c): a switch INTO Move from a prior
             // R/S run consolidates that run first. After a Move relocate above,
