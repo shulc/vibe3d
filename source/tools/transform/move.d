@@ -816,14 +816,21 @@ public:
             return worldDelta;
         }
 
-        // Exclude verts the drag is moving — same set
-        // buildVertexCacheIfNeeded already populated. Otherwise a
-        // single-vert drag always snaps to its own (zero-distance)
-        // projected pixel.
-        uint[] exclude;
-        exclude.length = vertexProcessCount;
-        foreach (i; 0 .. vertexProcessCount)
-            exclude[i] = cast(uint)vertexIndicesToProcess[i];
+        // Exclude verts the drag is moving. Otherwise a single-vert drag
+        // always snaps to its own (zero-distance) projected pixel.
+        //
+        // The set is NOT `vertexIndicesToProcess` alone: with symmetry live the
+        // apply's mirror pass writes the partner of every processed vert, and
+        // those indices lie outside the processed list. `movingVertexIndices`
+        // is the union — see its contract for the two things a missing partner
+        // costs (a mirrored candidate that chases the drag, and a candidate
+        // grid answering with where the partner was at drag start).
+        immutable int nProc = vertexProcessCount
+                            < cast(int)vertexIndicesToProcess.length
+                            ? vertexProcessCount
+                            : cast(int)vertexIndicesToProcess.length;
+        uint[] exclude = movingVertexIndices(vertexIndicesToProcess[0 .. nProc],
+                                             dragSymmetry, mesh.vertices.length);
 
         Vec3 desired = gizmoCenter + worldDelta;
         SnapResult sr = snapCursor(desired, sx, sy, cachedVp,

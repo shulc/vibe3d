@@ -21,6 +21,61 @@ import pipe_gizmo_host : PipeGizmoHost;
 // rather than knowing about ViewCache + GpuMesh + Mesh separately).
 alias VertexEditFactory = MeshVertexEdit delegate();
 
+// ---------------------------------------------------------------------------
+// Every vertex index a drag MOVES — which is exactly the set snapping must
+// refuse to offer that drag as a candidate (`snap.d`'s `kindExcluded`, and the
+// exclusion `move.d:applySnapToDelta` builds from it).
+//
+// It is NOT `vertexIndicesToProcess`. With a SYMM stage live, the apply's
+// mirror pass writes the `pairOf` PARTNER of every processed vert, and those
+// indices lie OUTSIDE the processed list by construction — `applyTRS`'s own
+// prologue says so in as many words, which is why it restores the whole
+// baseline instead of just the processed slice.
+//
+// Two things follow from a partner left out of the exclusion, and they are the
+// same two the exclusion exists to prevent:
+//
+//   1. SELF-REFERENCE. The partner moves with the gesture, so it — and every
+//      edge / face centre it drags along — chases the cursor at the mirrored
+//      rate. On a symmetric mesh the partner is often the nearest candidate
+//      there is.
+//   2. A STALE GRID. `snap.d`'s candidate grid is keyed on
+//      `mesh.mutationVersion`, which an interactive drag deliberately does not
+//      bump, so it is built once at drag start and reused for the whole
+//      gesture. That is sound for one reason only: every vertex whose cached
+//      projection goes stale is one the query drops before the caller sees it.
+//      A moving vertex that is not excluded is stale AND returned — the query
+//      answers with where the partner WAS at drag start.
+//
+// UNION, not the mirror pass's driver rule. The pass skips writing a partner
+// that is itself processed (each side then drives from its own base-side
+// vertex), so taking the union of processed ∪ partners costs nothing in
+// accuracy: a skipped partner was already in the list. Duplicates are left in
+// rather than filtered — `snap.d`'s `excludeMembership` sets and clears bits
+// idempotently, and de-duplicating would cost a vertex-count-sized mask on
+// every motion event to buy nothing.
+//
+// `pairOf[i] == -1` means "no mirror" and is dropped; `pairOf[i] == i` is an
+// on-plane vertex, which the pass projects in place and which is already in
+// the list.
+uint[] movingVertexIndices(const(int)[] processed, const ref SymmetryPacket sp,
+                           size_t vertCount)
+{
+    uint[] moving;
+    immutable bool mirrors = sp.enabled && sp.pairOf.length == vertCount;
+    moving.reserve(mirrors ? processed.length * 2 : processed.length);
+    foreach (vi; processed)
+        if (vi >= 0) moving ~= cast(uint)vi;
+    if (!mirrors) return moving;
+    foreach (vi; processed) {
+        if (vi < 0 || vi >= cast(int)sp.pairOf.length) continue;
+        immutable int mi = sp.pairOf[vi];
+        if (mi < 0 || mi == vi) continue;
+        moving ~= cast(uint)mi;
+    }
+    return moving;
+}
+
 class TransformTool : Tool {
 public:
     // app.d reads this every frame and sets u_model accordingly.
@@ -1229,5 +1284,182 @@ protected:
         if (*editMode == EditMode.Edges)    return mesh.selectionBBoxCenterEdges();
         if (*editMode == EditMode.Polygons) return mesh.selectionBBoxCenterFaces();
         return Vec3(0, 0, 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE MOVING SET IS THE EXCLUDED SET — `movingVertexIndices`.
+//
+// Snapping's exclusion has one job: a drag must not snap to its own geometry.
+// It was built from `vertexIndicesToProcess`, and that list is short by
+// exactly the mirror partners whenever a SYMM stage is live — `applyTRS`'s
+// prologue already states that the mirror "touches `dragSymmetry.pairOf`
+// indices OUTSIDE `vertexIndicesToProcess`", which is why it restores the
+// whole baseline. So the two lists disagreed, and the disagreement is the
+// defect: a partner moves with the gesture but was still offered to it.
+//
+// Three blocks, in the order the claim is built:
+//
+//   1. CROSS-CHECK against the mirror pass itself. Run `applySymmetryMirror`
+//      on a fixture and diff the mesh: every index the pass actually WROTE
+//      must be in `movingVertexIndices`. This is the invariant, and it is
+//      checked against the code that does the writing rather than against a
+//      hand-listed expectation that could drift with it.
+//   2. BEHAVIOUR. Feed the set to the query snapping actually runs. The
+//      mirror partner is the nearest candidate there is on a symmetric mesh,
+//      so with the short list it WINS — the drag snaps to its own reflection.
+//   3. SCALPEL. Symmetry off, or a vertex with no partner, must exclude
+//      nothing extra; and a genuinely static vertex must still be a candidate.
+// ---------------------------------------------------------------------------
+unittest {
+    import math             : lookAt, perspectiveMatrix, projectToWindowFull;
+    import snap             : snapCursor, SnapResult, invalidateSnapGrids;
+    import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+    import std.math         : PI, round;
+    import std.algorithm    : canFind;
+
+    // The fixture: four vertices, mirrored in pairs about the X = 0 plane.
+    //   0 <-> 1   the DRAGGED pair — vertex 0 is processed, 1 is its partner
+    //   2 <-> 3   a static pair, neither processed
+    static Mesh makeMesh() {
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.30f, 0, 0),   // 0 — processed by the drag
+            Vec3( 0.30f, 0, 0),   // 1 — its mirror partner: MOVES, unprocessed
+            Vec3(-0.90f, 0, 0),   // 2 — static
+            Vec3( 0.90f, 0, 0),   // 3 — static
+        ];
+        return m;
+    }
+
+    SymmetryPacket sym;
+    sym.enabled     = true;
+    sym.axisIndex   = 0;
+    sym.planePoint  = Vec3(0, 0, 0);
+    sym.planeNormal = Vec3(1, 0, 0);
+    sym.pairOf      = [1, 0, 3, 2];
+    sym.onPlane     = [false, false, false, false];
+    sym.vertSign    = [-1, +1, -1, +1];
+    sym.baseSide    = -1;          // the processed side drives
+
+    immutable int[] processed = [0];
+
+    // --- 1. CROSS-CHECK: every index the mirror pass writes is in the set ---
+    {
+        auto m   = makeMesh();
+        auto pre = m.vertices.dup;
+
+        // The drag has already moved vertex 0; the mirror pass now reflects it.
+        m.vertices[0] = Vec3(-0.45f, 0, 0);
+
+        bool[] procMask;
+        procMask.length = m.vertices.length;
+        foreach (vi; processed) procMask[vi] = true;
+        bool[] touched;
+        touched.length = m.vertices.length;
+        applySymmetryMirror(&m, sym, procMask, touched);
+
+        auto moving = movingVertexIndices(processed, sym, m.vertices.length);
+
+        bool wrote = false;
+        foreach (i; 0 .. m.vertices.length) {
+            immutable bool moved = m.vertices[i].x != pre[i].x
+                                || m.vertices[i].y != pre[i].y
+                                || m.vertices[i].z != pre[i].z;
+            if (!moved) continue;
+            wrote = true;
+            assert(moving.canFind(cast(uint)i),
+                "every vertex the drag's mirror pass MOVES must be in the set "
+                ~ "snapping excludes — otherwise the query is offered a "
+                ~ "candidate that is part of the gesture, and (because the "
+                ~ "candidate grid is keyed on a mutationVersion the drag does "
+                ~ "not bump) it is offered it at last frame's position");
+        }
+        assert(wrote,
+            "fixture: the mirror pass must actually have written something, or "
+            ~ "the loop above proves nothing");
+        assert(moving.canFind(1u),
+            "specifically: vertex 1 is vertex 0's partner. It is not in "
+            ~ "`vertexIndicesToProcess` — that is the whole point — and it "
+            ~ "moves on every frame of the drag");
+    }
+
+    // --- 2. BEHAVIOUR: the query must not offer the drag its own reflection -
+    {
+        invalidateSnapGrids();
+
+        Viewport vp;
+        vp.eye    = Vec3(0, 0, 5);
+        vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+        vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+        vp.width  = 800;
+        vp.height = 800;
+
+        auto m = makeMesh();
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.enabledTypes = SnapType.Vertex;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.innerRangePx = 200.0f;
+        cfg.outerRangePx = 200.0f;
+
+        // The cursor sits nearest the PARTNER — the case a symmetric drag
+        // meets as soon as the two halves approach each other.
+        float qx, qy, qz;
+        assert(projectToWindowFull(m.vertices[1], vp, qx, qy, qz),
+            "fixture: the partner must project on-screen");
+        immutable int sx = cast(int)round(qx), sy = cast(int)round(qy);
+
+        // The short list — what shipped. It reaches the partner, which is what
+        // makes the assertion after it meaningful rather than vacuous.
+        uint[] shortList;
+        foreach (vi; processed) shortList ~= cast(uint)vi;
+        invalidateSnapGrids();
+        SnapResult bad = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, cfg, shortList);
+        assert(bad.snapped && bad.targetIndex == 1,
+            "premise: excluding only the processed vert leaves the mirror "
+            ~ "partner the nearest candidate, so the drag snaps to its own "
+            ~ "reflection");
+
+        invalidateSnapGrids();
+        SnapResult good = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, cfg,
+                                     movingVertexIndices(processed, sym,
+                                                         m.vertices.length));
+        assert(good.targetIndex != 1 && good.targetIndex != 0,
+            "neither the dragged vertex nor the vertex the drag mirrors it "
+            ~ "onto may win: both move with the gesture");
+        assert(good.snapped && good.targetIndex == 3,
+            "...and the nearest vertex that does NOT move still wins — the "
+            ~ "exclusion removes the gesture's own geometry, not the mesh");
+
+        invalidateSnapGrids();
+    }
+
+    // --- 3. SCALPEL: no symmetry, no partner, no extra exclusion -----------
+    {
+        auto off = SymmetryPacket.init;                 // enabled == false
+        assert(movingVertexIndices(processed, off, 4) == [0u],
+            "with no SYMM stage live the set is the processed list verbatim — "
+            ~ "this path is every non-symmetric drag there is and must not "
+            ~ "acquire a partner lookup's cost or its behaviour");
+
+        auto stale = sym;
+        stale.pairOf = [1, 0];                          // shorter than the mesh
+        assert(movingVertexIndices(processed, stale, 4) == [0u],
+            "a pairing snapshot that does not match the mesh is the one the "
+            ~ "apply refuses to mirror with, so it must not drive an "
+            ~ "exclusion either — the two gates have to agree");
+
+        auto unpaired = sym;
+        unpaired.pairOf = [-1, -1, -1, -1];
+        assert(movingVertexIndices(processed, unpaired, 4) == [0u],
+            "`pairOf == -1` is 'no mirror within epsilon': nothing else moves");
+
+        auto onPlane = sym;
+        onPlane.pairOf = [0, 1, 2, 3];                  // each vert is its own
+        assert(movingVertexIndices(processed, onPlane, 4) == [0u],
+            "an on-plane vertex is projected in place, and it is already in "
+            ~ "the list — it must not be added twice under a different name");
     }
 }
