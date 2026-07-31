@@ -17,6 +17,8 @@ import std.math;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
+import tools.transform.arcball : ARCBALL_RADIUS_PX, arcballRotation,
+                                 arcballAxisToWorld;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
@@ -117,6 +119,23 @@ public:
     // The wrapper drains it into headlessRotateViewAxis and applies the
     // arbitrary-axis rotation through applyTRS. Meaningless for axes 0/1/2.
     Vec3  pendingRotateViewAxis = Vec3(0, 0, 0);
+
+    // ── the off-gizmo arcball (tools.transform.arcball) ──────────────────
+    // Set at a press that lands away from every ring, cleared at every other
+    // press and at mouse-up. While set, `dragAxis` is 3 (an arbitrary world
+    // axis, published with its angle) but the axis and angle come from the
+    // BALL, not from an arc plane.
+    bool  arcballDrag = false;
+    float arcballCx = 0, arcballCy = 0;          // ball centre, window pixels
+    float arcballPressX = 0, arcballPressY = 0;  // the gesture's fixed reference
+
+    // Read + cleared by the wrapper on the press that set them, exactly as the
+    // Move bank's pair are: `lastClickWasRelocate` says this press MOVED the
+    // pivot, `lastClickWasOffGizmo` says it missed every ring. An off-gizmo
+    // press is an undo-run boundary in every mode; only the pin handling
+    // differs between the two.
+    bool  lastClickWasRelocate = false;
+    bool  lastClickWasOffGizmo = false;
 
     // Back-pointer to the unified `XfrmTransformTool`, wired at the wrapper's
     // `activate()`. Typed as the base class to avoid a field-level circular
@@ -685,15 +704,39 @@ public:
             }
         }
         dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
+        arcballDrag = false;
         if (dragAxis < 0) {
-            // Click outside gizmo: relocate ACEN to the click projected
-            // onto the per-mode plane (most-facing world plane through
-            // origin for Auto/None; camera-perpendicular through
-            // selection center for Screen). Other ACEN modes keep the
-            // gizmo pinned and ignore the click.
-            if (!acenAllowsClickRelocate())
+            // A press away from every ring. TWO independent questions, and one
+            // predicate used to answer both — the same conflation the Move bank
+            // untangled:
+            //
+            //   (a) may this click MOVE the pivot?  Only Auto / None / Screen.
+            //       The rest derive it from the selection or pin it.
+            //   (b) may this click start a ROTATE DRAG?  Always. The off-gizmo
+            //       gesture is an arcball centred on the pivot's screen
+            //       projection (tools.transform.arcball), and a pinned mode has
+            //       a perfectly good pivot to centre it on.
+            //
+            // (b) used to be answered by (a)'s predicate, so under every pinned
+            // mode a press away from the rings returned false and the tool never
+            // engaged: no drag, no rotation, nothing, while the command that set
+            // the mode reported success. In the relocate modes it engaged only
+            // far enough to MOVE the pivot and then also did nothing.
+            //
+            // The two behaviours those modes show are one gesture: a relocate
+            // puts the pivot under the press, which is the arcball's trackball
+            // limit, and a pinned pivot leaves the press hundreds of pixels out,
+            // which is its rim limit. Same ball, same radius, same solve.
+            //
+            // Element keeps the old answer to (b): there an off-gizmo click is
+            // already spoken for — it PICKS the anchor element, in a wrapper
+            // branch that runs after the bank dispatch — so claiming the press
+            // here would strand the pick.
+            immutable bool relocates = acenAllowsClickRelocate();
+            if (!relocates && acenClickPicksElement())
                 return false;
             Vec3 hit;
+            if (relocates) {
             if (!computeClickRelocateHit(e.x, e.y, hit, vts))
                 return false;
             // Phase 7.5h: relocating to a new pivot is a new logical
@@ -722,9 +765,28 @@ public:
             propDeg    = Vec3(0, 0, 0);
             propsDragging = false;
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            return true;
+            lastClickWasRelocate = true;
+            }
+            lastClickWasOffGizmo = true;
+            // Centre the ball on the pivot AS IT NOW STANDS — after any
+            // relocate, so a relocate genuinely presses at the centre. A pivot
+            // that does not project (behind the eye, outside the frustum) has
+            // no ball to draw and no gesture: the relocate still happened, the
+            // drag does not start.
+            float ndcZ;
+            if (!projectToWindowFull(handler.center, cachedVp,
+                                     arcballCx, arcballCy, ndcZ))
+                return true;
+            arcballDrag  = true;
+            arcballPressX = cast(float)e.x;
+            arcballPressY = cast(float)e.y;
+            // The arcball rotates about an ARBITRARY world axis that moves with
+            // the cursor, which is the view-ring's own contract (dragAxis == 3
+            // publishes an axis alongside its angle) — so it arms as a view-ring
+            // drag and falls through to the shared setup below.
+            dragAxis = 3;
         }
-        // A gizmo arc was grabbed (dragAxis >= 0).
+        // A gizmo arc was grabbed (dragAxis >= 0), or the arcball just armed.
         lastMX = e.x; lastMY = e.y;
         totalAngle = 0;
         lastSnappedAngle = 0;
@@ -746,8 +808,12 @@ public:
         bool symmActive    = captureSymmetryForDrag(vts);
         wholeMeshDrag = !falloffActive && !symmActive
             && (vertexProcessCount == cast(int)mesh.vertices.length);
-        if (wholeMeshDrag) {
+        if (wholeMeshDrag || arcballDrag) {
             // Snapshot current vertex positions — GPU is in sync with these.
+            // The arcball takes one unconditionally: its rotation is ABSOLUTE
+            // since the press and its axis moves with the cursor, so there is
+            // no incremental delta to fold and every frame must re-apply from a
+            // fixed baseline.
             dragStartVertices = mesh.vertices.dup;
         }
         snapshotEditState();   // capture pre-drag Tool-Properties state.
@@ -765,6 +831,20 @@ public:
             dragAxisVec = dragAxis == 0 ? inputBasisX
                         : dragAxis == 1 ? inputBasisY
                                         : inputBasisZ;
+        }
+
+        // The arcball has no arc plane and no in-plane grab reference: its
+        // fixed reference is the PRESS PIXEL, already stored. Zero the
+        // plane-grab fields so nothing downstream reads a stale one, and skip
+        // the ray/plane solve that would only find the pivot's own plane.
+        // `dragStartDir` staying zero also suppresses the ring sector overlay,
+        // which draws an arc this gesture does not have.
+        if (arcballDrag) {
+            prevWrapped   = 0;
+            dragStartDir  = Vec3(0,0,0);
+            dragRefDir    = Vec3(0,0,0);
+            dragRefRadius = 0;
+            return true;
         }
 
         // Compute drag start direction in the arc plane.
@@ -913,6 +993,7 @@ public:
             }
         }
         wholeMeshDrag = false;
+        arcballDrag   = false;
 
         dragAxis   = -1;
         totalAngle = 0;
@@ -943,6 +1024,59 @@ public:
         }
 
         Vec3 center = handler.center;
+
+        // The off-gizmo gesture: read the ball, not an arc plane. Both pixels
+        // are offsets from the ball's centre — the pivot's screen projection,
+        // frozen at the press so the gesture cannot chase its own result — and
+        // the rotation is re-derived from the PRESS every frame, so it is
+        // absolute, path-independent and exactly reversible.
+        //
+        // `viewDragAxis` is overwritten each frame because the arcball's axis
+        // MOVES with the cursor (that is the trackball half of it). The mouse-up
+        // decomposition onto the panel's three slots reads the axis this leaves
+        // behind, which is the gesture's final axis — the right one to attribute
+        // the final angle to.
+        if (arcballDrag) {
+            Vec3 axisCam; float ang;
+            if (!arcballRotation(arcballPressX - arcballCx,
+                                 arcballPressY - arcballCy,
+                                 cast(float)e.x - arcballCx,
+                                 cast(float)e.y - arcballCy,
+                                 ARCBALL_RADIUS_PX, axisCam, ang))
+            { lastMX = e.x; lastMY = e.y; return true; }
+            Vec3 axisW = arcballAxisToWorld(axisCam, cachedVp);
+            dragAxisVec  = axisW;
+            viewDragAxis = axisW;
+            totalAngle   = ang;
+            import std.math : round;
+            enum float arcStep = PI / 12.0f;   // 15 deg, as every other ring
+            lastSnappedAngle = round(totalAngle / arcStep) * arcStep;
+            version(unittest) immutable bool arcCtrl = false;
+            else immutable bool arcCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+            immutable float arcAngle = arcCtrl ? lastSnappedAngle : totalAngle;
+            if (wrapperRef !is null) {
+                pendingRotateAxis     = 3;
+                pendingRotateAngle    = arcAngle;
+                pendingRotateViewAxis = axisW;
+            } else {
+                // STANDALONE (unit-test construction): no wrapper to drain the
+                // gesture scalar, so apply it here from the drag-start snapshot
+                // — absolute, like the published angle, not incremental.
+                if (wholeMeshDrag) {
+                    gpuMatrix = pivotRotationMatrix(center, axisW, arcAngle);
+                } else if (dragStartVertices.length == mesh.vertices.length) {
+                    auto cp = queryClusterPivots(vts);
+                    foreach (vi; vertexIndicesToProcess) {
+                        Vec3 pv = pivotFor(vi, cp, center);
+                        mesh.vertices[vi] =
+                            rotateVec(dragStartVertices[vi], pv, axisW, arcAngle);
+                    }
+                    needsGpuUpdate = true;
+                }
+            }
+            lastMX = e.x; lastMY = e.y;
+            return true;
+        }
 
         // Absolute-angle drag: the gesture angle is measured each frame as the
         // signed angle from the FIXED grab reference (dragRefDir) to the cursor's

@@ -1635,11 +1635,46 @@ tryRotateBank:
             if (!rotateSub.onMouseButtonDownWithResolvedAxis(e, vts,
                                                              resolvedRotateAxis))
                 goto tryScaleBank;
-            // Principal-axis ring (0/1/2) AND view-ring (3) → wrapper owns
-            // geometry via applyTRS (capture the drag state). Principal axes
-            // drain into headlessRotate (Euler); the view-ring drains into the
-            // transient applyTRS view-axis/angle params. A relocate / no-axis click
-            // (dragAxis == -1) starts no drag session.
+            // An off-gizmo press now ALSO starts a drag — the screen-space
+            // arcball — so it no longer falls through to the else-branch's run
+            // boundary below. That boundary still has to happen: an off-gizmo
+            // press splits the undo run in every action-centre mode, and only
+            // the PIN handling differs between a relocate (Auto/None/Screen —
+            // the press moved the pivot, re-stage the moved one) and a pinned
+            // mode (the press moved nothing, re-stage the current one VERBATIM).
+            // Both are the exact twins of the Move arm's pair above, in the same
+            // order, for the same reasons.
+            immutable bool rotWasRelocate = rotateSub.lastClickWasRelocate;
+            rotateSub.lastClickWasRelocate = false;   // consume
+            immutable bool rotWasPinnedOffGizmo =
+                rotateSub.lastClickWasOffGizmo && !rotWasRelocate;
+            rotateSub.lastClickWasOffGizmo = false;   // consume
+            if (rotWasRelocate || rotWasPinnedOffGizmo) {
+                // Session-close for every open bank. rotateSub's own relocate
+                // branch already committed ITS session and mirrored the Move
+                // commit; the pinned branch commits nothing, so both are done
+                // here and both are no-ops when already closed.
+                if (editIsOpen()) commitEdit("Move");
+                rotateSub.commitSessionIfOpen();
+                scaleSub.commitSessionIfOpen();
+                // Run-close: re-stage the pin the fresh gesture's beginEdit will
+                // freeze as its in-session-cancel baseline. A relocate moved the
+                // pin, so it is staged from the (already-pushed) userPlaced
+                // state; a pinned mode moved nothing, so it is staged verbatim.
+                if (rotWasRelocate) rotateSub.restageActionCenterPin();
+                else                rotateSub.stageCurrentActionCenterPin();
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                }
+                resetRun();
+            }
+            // Principal-axis ring (0/1/2), view-ring (3) AND the off-gizmo
+            // arcball (which arms as 3) → wrapper owns geometry via applyTRS
+            // (capture the drag state). Principal axes drain into headlessRotate
+            // (Euler); the view-ring and the arcball drain into the arbitrary-
+            // world-axis fold. A press that starts no drag at all (dragAxis == -1
+            // — a pivot that does not project) opens no session.
             if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3) {
                 // Bank-switch run boundary (Q-c): a switch INTO Rotate from a
                 // prior Move/Scale run consolidates that run first, before the
@@ -1649,7 +1684,7 @@ tryRotateBank:
                 // ended (Move, or a prior Rotate/Scale run after a relocate).
                 noteRunBank(DragBank.Rotate);
                 beginRotateDragSession(vts);
-            } else {
+            } else if (!rotWasRelocate && !rotWasPinnedOffGizmo) {
                 rotDragAxisIdx = -1;
                 // Relocate / no-axis click run boundary (Phase 2). rotateSub's
                 // own onMouseButtonDown relocate branch already committed any
@@ -1661,6 +1696,11 @@ tryRotateBank:
                 // Move-arm relocate boundary (A1). Gated on history.runOpen() (the
                 // single source of truth) so it splits even when the gesture
                 // already self-committed; a safe no-op on an empty/closed run.
+                //
+                // An off-gizmo press cannot reach here any more unless the pivot
+                // did not project and no drag armed — and in that case the block
+                // above has ALREADY closed the run, so it is excluded rather than
+                // allowed to close it twice.
                 if (history !is null && history.runOpen()) {
                     history.consolidate(history.currentRunId);
                     history.nextRun();
@@ -1669,6 +1709,8 @@ tryRotateBank:
                 // Apply-path Phase 2: relocate / no-axis click = geometry-run
                 // boundary; re-capture the run baseline on the next gesture.
                 resetRun();   // + P-F: this boundary freezes a NEW run-frame
+            } else {
+                rotDragAxisIdx = -1;
             }
             activeDrag = rotateSub; return true;
         }
