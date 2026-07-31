@@ -14276,6 +14276,459 @@ struct Mesh {
         return result;
     }
 
+    // -----------------------------------------------------------------------
+    // select.loop (vertex) — recovered-algorithm helper (task 0390)
+    // -----------------------------------------------------------------------
+    // The bare "select.loop" vertex command reproduces the reference's
+    // recovered behavior (toolcards/select.loop/findings_fv.md, private —
+    // rr/gdb live-validated). It shares edge mode's per-hop
+    // dispatch (odd-valence gate, quad fan step, triangle special case,
+    // n-gon failure) but with the two context flags the vertex path zeroes:
+    // there is NO boundary-adjacent-vertex early-exit (boundary endpoints
+    // are INCLUDED in the loop), and a hop whose current edge is a border
+    // edge routes into a border-chain continuation instead of the regular
+    // fan walk. The seed must be an adjacent selected vertex PAIR; a lone
+    // selected vertex (or none, or no adjacent pair) yields an empty
+    // result — the command REPLACES the selection wholesale (the reference
+    // purges unconditionally, then commits), which is exactly how "single
+    // vertex clears the selection" falls out. There is no fallback face in
+    // vertex mode (unlike edge mode). Hidden/locked elements are
+    // unmodelled (Marks.Hide/Lock are reserved/unused). Layered next to —
+    // not merged into — `walkVertexLoop`, which stays untouched for its
+    // ordered-walk consumers.
+
+    /// Full per-edge / per-vertex incidence for the select.loop recovered
+    /// algorithms (reference incidence-list semantics). Deliberately NOT
+    /// the half-edge
+    /// fan-walk helpers (`facesAroundVertex`/`edgesAroundVertex`/
+    /// `facesAroundEdge`): those truncate at non-manifold ("bowtie")
+    /// vertices and non-manifold edges, while the reference's incidence
+    /// cache always returns the complete star. Fuzz repro
+    /// fz_sloop_v_pole_tri2_hole2_0021 (a bowtie seed vertex) pinned this.
+    private void buildLoopIncidence(out uint[][] vertEdges, out uint[][] edgeFaces,
+                                    out uint[][] vertFaces) const {
+        vertEdges = new uint[][](vertices.length);
+        foreach (ei; 0 .. edges.length) {
+            vertEdges[edges[ei][0]] ~= cast(uint)ei;
+            vertEdges[edges[ei][1]] ~= cast(uint)ei;
+        }
+        edgeFaces = new uint[][](edges.length);
+        vertFaces = new uint[][](vertices.length);
+        foreach (fi; 0 .. faces.length) {
+            const f = faces[fi];
+            foreach (fv; f)
+                if (fv < vertices.length) vertFaces[fv] ~= cast(uint)fi;
+            foreach (j; 0 .. f.length) {
+                uint ei = edgeIndex(f[j], f[(j + 1) % f.length]);
+                if (ei == ~0u) continue;
+                if (edgeFaces[ei].length == 0 || edgeFaces[ei][$ - 1] != fi)
+                    edgeFaces[ei] ~= cast(uint)fi;
+            }
+        }
+    }
+
+    /// Return a face from `edgeFaces[ei]` whose winding contains the
+    /// directed edge `a`→`b` consecutively, or -1. Used to re-derive the
+    /// walking face after a border-chain/trivial hop (the reference
+    /// re-picks the face per hop from (edge, side) by winding).
+    private int windingFaceFor(const(uint)[] incFaces, uint a, uint b) const {
+        foreach (fi; incFaces) {
+            const f = faces[fi];
+            foreach (j; 0 .. f.length)
+                if (f[j] == a && f[(j + 1) % f.length] == b) return cast(int)fi;
+        }
+        return -1;
+    }
+
+    /// Fan walk around pivot `b` starting in `startFace`: each step takes
+    /// the spoke to the next (fwd) / previous vert of `b` in the current
+    /// face's winding, then crosses to the candidate's other flanking face.
+    /// An open fan (no face across) stops early keeping the last candidate.
+    /// Returns false (cand = ~0u) when the walk breaks structurally — pivot
+    /// missing from the face or no such edge; the reference fails the whole
+    /// hop in that case. (The reference picks the cross face by directed
+    /// winding — into the pivot when walking forward, out of it backward;
+    /// for consistently wound meshes that is simply the other flanking
+    /// face.)
+    private bool loopFanWalk(uint b, int startFace, bool fwd, uint iters,
+                             const(uint[][]) edgeFaces, out uint cand) const {
+        cand = ~0u;
+        int face = startFace;
+        foreach (_; 0 .. iters) {
+            const f = faces[face];
+            uint x = ~0u;
+            foreach (j; 0 .. f.length) {
+                if (f[j] != b) continue;
+                x = fwd ? f[(j + 1) % f.length]
+                        : f[(j + f.length - 1) % f.length];
+                break;
+            }
+            const ce = x == ~0u ? ~0u : edgeIndex(b, x);
+            if (ce == ~0u) { cand = ~0u; return false; }
+            cand = ce;
+            int nf = -1;
+            foreach (fi; edgeFaces[ce])
+                if (fi != face) { nf = cast(int)fi; break; }
+            if (nf < 0) return true; // open fan — keep the last candidate
+            face = nf;
+        }
+        return true;
+    }
+
+    /// One direction of the recovered vertex-loop walk: directed current
+    /// edge `a0`→`b0` (pivot `b0`). The hop is stateless — everything is
+    /// re-derived per step from (directed edge, pivot).
+    /// `eMark` is the invocation-shared visited-edge set: a candidate
+    /// already marked terminates the walk (this is ring closure; the seed
+    /// edge is pre-marked, and marks are shared across both directions and
+    /// all seed pairs). Accepted edges are marked and their endpoints added
+    /// to `resultV`. `vertEdges`/`edgeFaces` are the full incidence star
+    /// (see buildLoopIncidence).
+    private void selectLoopVertexWalk(uint a0, uint b0,
+                                      bool[] eMark, bool[] resultV,
+                                      const(uint[][]) vertEdges,
+                                      const(uint[][]) edgeFaces) const {
+        uint a = a0, b = b0;
+        while (true) {
+            uint curE = edgeIndex(a, b);
+            if (curE == ~0u) break;
+            const nPolys = edgeFaces[curE].length;
+            const vcount = cast(uint)vertEdges[b].length;
+            // gate: an odd-valence pivot is passable only along a border edge
+            if ((vcount & 1) != 0 && nPolys > 1) break;
+            // gate: more than two border edges at the pivot is a dead end
+            if (vcount > 3) {
+                uint nb = 0;
+                foreach (ei; vertEdges[b])
+                    if (edgeFaces[ei].length <= 1) ++nb;
+                if (nb > 2) break;
+            }
+            if (vcount < 2) break;
+
+            uint cand = ~0u;
+            bool angleGate = false;
+            if (vcount == 2) {
+                // trivial path: the OTHER edge at the pivot
+                cand = vertEdges[b][0] != curE ? vertEdges[b][0] : vertEdges[b][1];
+            } else {
+                if (nPolys <= 1) {
+                    // border-chain: the first OTHER border edge at the pivot
+                    foreach (ei; vertEdges[b]) {
+                        if (ei == curE) continue;
+                        if (edgeFaces[ei].length > 1) continue;
+                        cand = ei;
+                        break;
+                    }
+                }
+                if (cand == ~0u) {
+                    // winding faces of the directed current edge: F winds
+                    // INTO the pivot (contains a→b), G winds OUT (b→a)
+                    const int inF = windingFaceFor(edgeFaces[curE], a, b);
+                    const int outG = windingFaceFor(edgeFaces[curE], b, a);
+                    if (inF >= 0 && outG >= 0) {
+                        // regular fan: the spoke floor(V/2) steps away;
+                        // forward from F when G is not larger than F,
+                        // backward from G otherwise
+                        const bool fwd = faces[outG].length <= faces[inF].length;
+                        if (!loopFanWalk(b, fwd ? inF : outG, fwd, vcount / 2,
+                                         edgeFaces, cand)) break;
+                    } else if (inF >= 0) {
+                        // no out-face (border edge / inconsistent winding):
+                        // forward fan from F of V-1 steps + the angle gate
+                        if (!loopFanWalk(b, inF, true, vcount - 1,
+                                         edgeFaces, cand)) break;
+                        angleGate = true;
+                    } else if (outG >= 0) {
+                        // no in-face: a single backward step from G + gate
+                        const f = faces[outG];
+                        uint x = ~0u;
+                        foreach (j; 0 .. f.length) {
+                            if (f[j] != b) continue;
+                            x = f[(j + f.length - 1) % f.length];
+                            break;
+                        }
+                        cand = x == ~0u ? ~0u : edgeIndex(b, x);
+                        if (cand == ~0u) break;
+                        angleGate = true;
+                    } else break;
+                }
+            }
+
+            // Angle gate (paths without both winding faces): the
+            // candidate must bend away from the incoming direction by more
+            // than 90° at the pivot
+            if (angleGate) {
+                import std.math : acos, PI_2;
+                const d0 = edges[cand][0] == b ? edges[cand][1] : edges[cand][0];
+                const va = vertices[a] - vertices[b];
+                const vc = vertices[d0] - vertices[b];
+                const la = va.length, lc = vc.length;
+                if (la <= 0 || lc <= 0) break;
+                float cosA = dot(va, vc) / (la * lc);
+                cosA = cosA < -1 ? -1 : cosA > 1 ? 1 : cosA;
+                if (acos(cosA) <= PI_2) break;
+            }
+
+            // final validation: closure / revisit stops the walk
+            if (eMark[cand]) break;
+            eMark[cand] = true;
+            const d = edges[cand][0] == b ? edges[cand][1] : edges[cand][0];
+            resultV[b] = true;
+            resultV[d] = true;
+            a = b; b = d;
+        }
+    }
+
+    /// Recovered `select.loop` (vertex) algorithm — returns the NEW vertex
+    /// selection (purge-then-commit semantics: the reference clears the
+    /// previous vertex selection unconditionally and commits only the loop
+    /// result, so a lone selected vertex clears the selection). See
+    //  findings_fv.md (private) for per-rule provenance and validation.
+    bool[] selectLoopVertices() const {
+        bool[] resultV = new bool[](vertices.length);
+        bool[] vMark   = new bool[](vertices.length); // consumed as seed/in a loop
+        bool[] eMark   = new bool[](edges.length);    // walked/consumed edges
+
+        // Selected vertices in selection-history order (0/absent order
+        // falls back to index order among themselves).
+        uint[] selVerts;
+        foreach (i; 0 .. vertices.length)
+            if (i < vertexMarks.length && (vertexMarks[i] & Marks.Select) != 0)
+                selVerts ~= cast(uint)i;
+        static int vOrderOf(const int[] ord, size_t i) {
+            return (i < ord.length && ord[i] > 0) ? ord[i] : int.max;
+        }
+        import std.algorithm.sorting : sort;
+        selVerts.sort!((x, y) {
+            int ox = vOrderOf(vertexSelectionOrder, x), oy = vOrderOf(vertexSelectionOrder, y);
+            return ox != oy ? ox < oy : x < y;
+        });
+
+        // Full incidence star (reference semantics — complete star,
+        // not the truncated half-edge fan walk).
+        uint[][] vertEdges, edgeFaces, vertFaces;
+        buildLoopIncidence(vertEdges, edgeFaces, vertFaces);
+
+        // Multi-pair seed scan (the reference re-scans from the head after
+        // each consumed pair; marks make that monotone).
+        while (true) {
+            uint vA = ~0u, vB = ~0u, seedE = ~0u;
+            foreach (v; selVerts) {
+                if (vMark[v]) continue;
+                if (vA == ~0u) { vA = v; continue; }
+                vB = v;
+                bool adj = false;
+                foreach (fi; vertFaces[vA]) {
+                    const f = faces[fi];
+                    foreach (fv; f) if (fv == vB) { adj = true; break; }
+                    if (adj) break;
+                }
+                if (!adj) { vB = ~0u; continue; }
+                uint e = edgeIndex(vA, vB);
+                if (e == ~0u) { vB = ~0u; continue; }
+                if (eMark[e]) { vA = ~0u; vB = ~0u; continue; } // consumed edge: reset pair
+                seedE = e;
+                break;
+            }
+            if (seedE == ~0u) break;
+
+            vMark[vA] = vMark[vB] = true;
+            eMark[seedE] = true;
+            resultV[vA] = resultV[vB] = true;
+
+            // "Extra seed vertices" block: with >2 vertices selected and an
+            // interior (2-face) seed edge, any further selected vertex
+            // sitting next to a seed endpoint in one of the seed's faces
+            // pulls in that WHOLE face's vertices.
+            if (selVerts.length > 2 && edgeFaces[seedE].length == 2) {
+                foreach (w; selVerts) {
+                    if (w == vA || w == vB || vMark[w]) continue;
+                    bool pulled = false;
+                    foreach (fi; edgeFaces[seedE]) {
+                        const f = faces[fi];
+                        foreach (j; 0 .. f.length) {
+                            if (f[j] != w) continue;
+                            uint pv = f[(j + f.length - 1) % f.length];
+                            uint nx = f[(j + 1) % f.length];
+                            if (pv == vA || pv == vB || nx == vA || nx == vB) {
+                                foreach (fv; f) { vMark[fv] = true; resultV[fv] = true; }
+                                pulled = true;
+                            }
+                            break;
+                        }
+                        if (pulled) break;
+                    }
+                }
+            }
+
+            // Two-direction walk: one chain per seed endpoint (the reference
+            // calls the hop with side=0/1 on the seed edge; every hop then
+            // re-derives its winding faces from the directed current edge,
+            // so no per-face routing is needed at the seed either).
+            selectLoopVertexWalk(edges[seedE][0], edges[seedE][1], eMark, resultV,
+                                 vertEdges, edgeFaces);
+            selectLoopVertexWalk(edges[seedE][1], edges[seedE][0], eMark, resultV,
+                                 vertEdges, edgeFaces);
+        }
+        return resultV;
+    }
+
+    // -----------------------------------------------------------------------
+    // select.loop (polygon/face) — recovered-algorithm helper (task 0390)
+    // -----------------------------------------------------------------------
+    // The bare "select.loop" polygon command reproduces the reference's
+    // recovered band algorithm (findings_fv.md, private —
+    // rr/gdb live-validated): pure topology, no geometry anywhere.
+    //   * seeds are consumed in selection-history order, possibly several
+    //     disjoint groups per invocation (multi-group rescan);
+    //   * a seed A pairs with the first selected, unvisited, EVEN-sided
+    //     polygon sharing a directed (winding-reversed) edge with A; the
+    //     band axis is then perpendicular to the shared edge — each seed
+    //     exits through the edge nverts/2 away from it. Without a partner,
+    //     A walks alone across its own edges 0 and floor(nverts/2), the
+    //     axis dictated purely by the polygon's vertex order. A itself may
+    //     be odd-sided (only nverts>2 is required of it);
+    //   * each hop crosses the current directed exit edge into the polygon
+    //     on the other side, provided that polygon is even-sided, not
+    //     degenerate (nverts>2), and contains the exit edge's endpoints
+    //     consecutively in the reversed winding (covers open boundaries,
+    //     T-junctions where the neighbour's edge is subdivided, and
+    //     non-manifold gaps); an odd-sided neighbour is SKIPPED (never
+    //     entered, never selected); landing on an already-visited polygon
+    //     STOPS the walk (ring closure — seeds are pre-marked);
+    //   * visited marks are shared across both directions and all groups.
+    // The command REPLACES the face selection (purge-then-commit, same as
+    // vertex mode). Hidden/locked unmodelled (reserved/unused marks).
+    // `walkFaceLoop` stays untouched for its ordered-walk consumers.
+
+    /// One band-trace loop: repeatedly cross the directed exit edge
+    /// (`vA`→`vB` in the current polygon's winding, i.e. the reversed
+    /// winding `vB`,`vA` is what the candidate must contain) into the
+    /// even-sided polygon on the far side; stop on boundary, T-junction,
+    /// odd-only neighbours, or a visited polygon (closure). Accepted
+    /// polygons are marked and added to `resultF`.
+    private void selectBandTrace(uint vB0, uint vA0, ubyte[] mark, bool[] resultF,
+                                 const(uint[][]) edgeFaces) const {
+        uint vB = vB0, vA = vA0;
+        while (true) {
+            uint ei = edgeIndex(vA, vB);
+            if (ei == ~0u) break;
+            bool advanced = false, stop = false;
+            foreach (q; edgeFaces[ei]) {
+                const qf = faces[q];
+                immutable m = qf.length;
+                if (m <= 2 || (m & 1) != 0) continue;     // degenerate / odd-sided skip
+                uint j = ~0u;
+                foreach (jj; 0 .. m)
+                    if (qf[jj] == vB && qf[(jj + 1) % m] == vA) { j = cast(uint)jj; break; }
+                if (j == ~0u) continue;                    // directed-consecutive miss
+                if ((mark[q] & 1) != 0) { stop = true; break; } // visited → closure stop
+                mark[q] |= 1;
+                resultF[q] = true;
+                uint nvA = qf[(j + m / 2) % m];
+                uint nvB = qf[(j + m / 2 + 1) % m];
+                vA = nvA; vB = nvB;
+                advanced = true;
+                break;
+            }
+            if (stop || !advanced) break;
+        }
+    }
+
+    /// Recovered `select.loop` (polygon) algorithm — returns the NEW face
+    /// selection (purge-then-commit semantics). See findings_fv.md
+    /// (private) for per-rule provenance and validation.
+    bool[] selectLoopFaces() const {
+        bool[] resultF = new bool[](faces.length);
+        // bit0 = visited (in a band result this invocation, commit filter);
+        // bit1 = seeded (consumed as a group seed).
+        ubyte[] mark = new ubyte[](faces.length);
+
+        // Selected faces in selection-history order (0/absent order falls
+        // back to index order among themselves).
+        uint[] selFaces;
+        foreach (i; 0 .. faces.length)
+            if (i < faceMarks.length && (faceMarks[i] & Marks.Select) != 0)
+                selFaces ~= cast(uint)i;
+        static int fOrderOf(const int[] ord, size_t i) {
+            return (i < ord.length && ord[i] > 0) ? ord[i] : int.max;
+        }
+        import std.algorithm.sorting : sort;
+        selFaces.sort!((x, y) {
+            int ox = fOrderOf(faceSelectionOrder, x), oy = fOrderOf(faceSelectionOrder, y);
+            return ox != oy ? ox < oy : x < y;
+        });
+
+        // Full incidence star (reference semantics — complete star,
+        // not the truncated half-edge fan walk).
+        uint[][] vertEdges, edgeFaces, vertFaces;
+        buildLoopIncidence(vertEdges, edgeFaces, vertFaces);
+
+        // Multi-group loop: each pass consumes one seed group; visited and
+        // seeded marks are shared across groups and make this monotone.
+        while (true) {
+            // NEXT_GROUP: first selected, unconsumed polygon with nverts>2.
+            int A = -1;
+            foreach (fi; selFaces) {
+                if (faces[fi].length <= 2) continue;
+                if ((mark[fi] & 3) != 0) continue;
+                A = cast(int)fi;
+                break;
+            }
+            if (A < 0) break;
+            mark[A] = 3;
+            resultF[A] = true;
+            const af = faces[A];
+            immutable n = af.length;
+
+            // Partner scan: first selected, unvisited, EVEN-sided polygon
+            // sharing a winding-reversed edge with A (P outer in selection
+            // order, A's edges inner — the reference's scan shape).
+            int P = -1;
+            size_t pi, pj;
+        partnerScan:
+            foreach (pfi; selFaces) {
+                if (pfi == A) continue;
+                if ((mark[pfi] & 1) != 0) continue;
+                const pf = faces[pfi];
+                if (pf.length <= 2 || (pf.length & 1) != 0) continue;
+                foreach (i; 0 .. n) {
+                    uint va = af[i], vb = af[(i + 1) % n];
+                    uint ei = edgeIndex(va, vb);
+                    if (ei == ~0u) continue;
+                    foreach (q; edgeFaces[ei]) {
+                        if (q != pfi) continue;
+                        foreach (j; 0 .. pf.length) {
+                            if (pf[j] == vb && pf[(j + 1) % pf.length] == va) {
+                                P = cast(int)pfi; pi = i; pj = j;
+                                break partnerScan;
+                            }
+                        }
+                    }
+                }
+            }
+
+            uint vB0, vA0, vB1, vA1; // B-side exit, A-side exit
+            if (P >= 0) {
+                mark[P] |= 1;
+                resultF[P] = true;
+                const pf = faces[P];
+                immutable half  = n / 2, halfP = pf.length / 2;
+                vB0 = pf[(pj + halfP + 1) % pf.length]; vA0 = pf[(pj + halfP) % pf.length];
+                vB1 = af[(pi + half + 1) % n];          vA1 = af[(pi + half) % n];
+                selectBandTrace(vB0, vA0, mark, resultF, edgeFaces); // B-side from P
+                selectBandTrace(vB1, vA1, mark, resultF, edgeFaces); // A-side from A
+            } else {
+                immutable half = n / 2;
+                vB0 = af[1];                vA0 = af[0];         // edge 0, reversed
+                vB1 = af[(half + 1) % n];   vA1 = af[half % n];  // edge n/2, reversed
+                selectBandTrace(vB0, vA0, mark, resultF, edgeFaces);
+                selectBandTrace(vB1, vA1, mark, resultF, edgeFaces);
+            }
+        }
+        return resultF;
+    }
+
     // Loop-slice ring walk + insertion kernel family (loopSliceRingEdges /
     // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
     // — see source/mesh_ops/loop_slice.d (task 0417, 0407 §B.V2).

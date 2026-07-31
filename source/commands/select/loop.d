@@ -53,110 +53,27 @@ class SelectLoop : Command {
             if (mesh.selectedVertices.length < mesh.vertices.length)
                 mesh.resizeVertexSelection();
 
-            bool[] initVSel = mesh.selectedVertices.dup;
-            foreach (i; 0 .. mesh.edges.length) {
-                uint va = mesh.edges[i][0], vb = mesh.edges[i][1];
-                if (va >= initVSel.length || !initVSel[va]) continue;
-                if (vb >= initVSel.length || !initVSel[vb]) continue;
-                foreach (vi; mesh.walkVertexLoop(va, vb)) mesh.selectVertex(cast(int)vi);
-                foreach (vi; mesh.walkVertexLoop(vb, va)) mesh.selectVertex(cast(int)vi);
-            }
+            // Recovered-algorithm core (task 0390, mesh.selectLoopVertices):
+            // seed = adjacent selected vertex PAIR; result REPLACES the
+            // selection (reference purge-then-commit — a lone selected
+            // vertex therefore clears it).
+            mesh.setVerticesSelectedFrom(mesh.selectLoopVertices());
             return true;
         }
 
         // ------------------------------------------------------------------ //
         //  Polygon loop                                                        //
         // ------------------------------------------------------------------ //
-
-        // Squared cosine of angle between two edges (undirected).
-        float edgeCos2(ulong k1, ulong k2) {
-            uint a1 = cast(uint)(k1 >> 32), b1 = cast(uint)(k1 & 0xFFFF_FFFFu);
-            uint a2 = cast(uint)(k2 >> 32), b2 = cast(uint)(k2 & 0xFFFF_FFFFu);
-            float dx1 = mesh.vertices[b1].x - mesh.vertices[a1].x;
-            float dy1 = mesh.vertices[b1].y - mesh.vertices[a1].y;
-            float dz1 = mesh.vertices[b1].z - mesh.vertices[a1].z;
-            float dx2 = mesh.vertices[b2].x - mesh.vertices[a2].x;
-            float dy2 = mesh.vertices[b2].y - mesh.vertices[a2].y;
-            float dz2 = mesh.vertices[b2].z - mesh.vertices[a2].z;
-            float dot  = dx1*dx2 + dy1*dy2 + dz1*dz2;
-            float len2 = (dx1*dx1 + dy1*dy1 + dz1*dz1) * (dx2*dx2 + dy2*dy2 + dz2*dz2);
-            return len2 < 1e-12f ? 0f : dot*dot / len2;
-        }
-
-        int selOrder(int fi) {
-            if (fi < cast(int)mesh.faceSelectionOrder.length && mesh.faceSelectionOrder[fi] > 0)
-                return mesh.faceSelectionOrder[fi];
-            return int.max;
-        }
-
-        // Perf (task 0388): `mesh.selectedFaces` is a @property that rebuilds
-        // a whole `bool[]` per read — indexing it inside this doubly-nested
-        // loop (faces × facesAroundEdge) was O(mesh²) / worse. Replaced with
-        // the non-allocating, bounds-checked `isFaceSelected(i)` scalar
-        // accessor (identical to the old `i >= length || !arr[i]` / `i <
-        // length && arr[i]` guards).
-        struct Pair { int a, b; ulong key; }
-        Pair[] pairs;
-        foreach (fi, face; mesh.faces) {
-            if (!mesh.isFaceSelected(fi)) continue;
-            foreach (e; mesh.faceEdges(cast(uint)fi)) {
-                uint ei = mesh.edgeIndex(e.a, e.b);
-                if (ei == ~0u) continue;
-                ulong key = edgeKey(e.a, e.b);
-                foreach (adjFi; mesh.facesAroundEdge(ei)) {
-                    if (adjFi > fi && mesh.isFaceSelected(adjFi))
-                        pairs ~= Pair(cast(int)fi, cast(int)adjFi, key);
-                }
-            }
-        }
-
-        if (pairs.length == 0) return true;
-
-        struct Group { Pair[] pairs; ulong refKey; int score; }
-        Group[] groups;
-        foreach (ref pair; pairs) {
-            int ps = selOrder(pair.a) > selOrder(pair.b) ? selOrder(pair.a) : selOrder(pair.b);
-            bool added = false;
-            foreach (ref g; groups) {
-                if (edgeCos2(g.refKey, pair.key) >= 0.8f) {
-                    g.pairs ~= pair;
-                    if (ps < g.score) g.score = ps;
-                    added = true;
-                    break;
-                }
-            }
-            if (!added)
-                groups ~= Group([pair], pair.key, ps);
-        }
-
-        for (size_t i = 0; i < groups.length; i++) {
-            size_t best = i;
-            for (size_t j = i + 1; j < groups.length; j++)
-                if (groups[j].score < groups[best].score) best = j;
-            if (best != i) { auto tmp = groups[i]; groups[i] = groups[best]; groups[best] = tmp; }
-        }
-
-        bool[] origSel = mesh.selectedFaces.dup;
-        bool[] covered = new bool[](mesh.faces.length);
-
-        foreach (ref g; groups) {
-            bool hasUncovered = false;
-            foreach (ref pair; g.pairs) {
-                if ((pair.a < cast(int)origSel.length && origSel[pair.a] && !covered[pair.a]) ||
-                    (pair.b < cast(int)origSel.length && origSel[pair.b] && !covered[pair.b])) {
-                    hasUncovered = true;
-                    break;
-                }
-            }
-            if (!hasUncovered) continue;
-
-            foreach (ref pair; g.pairs) {
-                foreach (fi; mesh.walkFaceLoop(pair.a, pair.key)) mesh.selectFace(fi);
-                foreach (fi; mesh.walkFaceLoop(pair.b, pair.key)) mesh.selectFace(fi);
-                covered[pair.a] = true;
-                covered[pair.b] = true;
-            }
-        }
+        // Recovered-algorithm core (task 0390, mesh.selectLoopFaces): pure
+        // topological band — even-sided partner pairing across a directed
+        // shared edge (axis perpendicular to it), single-seed axis from the
+        // polygon's own vertex order (edges 0 and nverts/2), odd-sided
+        // neighbours skipped, visited polygons stop the trace, multi-group
+        // rescan over the remaining selected polygons. Result REPLACES the
+        // selection (reference purge-then-commit).
+        if (mesh.selectedFaces.length < mesh.faces.length)
+            mesh.resizeFaceSelection();
+        mesh.setFacesSelectedFrom(mesh.selectLoopFaces());
 
         return true;
     }
