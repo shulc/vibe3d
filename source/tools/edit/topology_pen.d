@@ -2921,9 +2921,20 @@ public:
             // CLAUSE 2 — every polygon edge against every ring side, wrapped
             // on both. Reuses `segmentsProperlyCross`, the SAME predicate the
             // candidate-gather reject runs, rather than a second copy of the
-            // arithmetic; the explicit endpoint exemption in front of it is
-            // the reference's own, kept explicit rather than left to strict
-            // (0,1) to cover in floating point.
+            // arithmetic.
+            //
+            // The endpoint exemption in front of it is the reference's own,
+            // and it is carried for faithfulness rather than for effect: it is
+            // REDUNDANT on our substrate and measured to be so. Deleting it
+            // moves no test in this file, because coincident corners project
+            // to bit-identical pixels here, and the resulting parameters come
+            // out exactly 0 or 1 (or the denominator exactly 0), which strict
+            // (0,1) already rejects. Kept because the read has it explicitly,
+            // because it is free, and because it is the one thing standing
+            // between a shared corner and a spurious refusal if a future
+            // projection path ever stops being bit-exact. Do not "simplify" it
+            // away on the grounds that no test fails — that is recorded here
+            // precisely so the next reader does not have to re-derive it.
             ImVec2 prev;
             bool   prevOk = f[$ - 1] < m.vertices.length
                          && projectPt(m.vertices[f[$ - 1]], vp, prev);
