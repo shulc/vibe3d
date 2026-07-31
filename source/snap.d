@@ -216,6 +216,122 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
     }
 }
 
+// ---------------------------------------------------------------------------
+// CROSS-TYPE CANDIDATE ARBITRATION — task 0551.
+//
+// Three of our discrete types do NOT compete on bare screen distance. The
+// reference keeps one nearest-candidate accumulator per CLASS — vertex, edge,
+// polygon — and merges them with a fixed cascade in that order, asking each
+// class in turn "do you win?" and returning the first that says yes. The
+// question is answered by `cascadeClassWins` below, which grants the class
+// under test a distance TOLERANCE; the vertex class's tolerance is twice the
+// other two's, which is what lets a vertex beat an edge that is geometrically
+// nearer.
+//
+// This is not the same mechanism as the `guides` registry further down. That
+// registry carries a per-GUIDE priority, and the reference's element-snap
+// guide answers with ONE priority for vertex, edge and polygon alike — an
+// immediate store with no branch on element type — so "vertex beats edge" is
+// not expressible on that channel at all. The registry stays empty here and
+// its behaviour is unchanged by this block; see the neutrality unittest.
+//
+// MEASURED (task 0551, static; corroborated independently by the press-pick
+// lane a day earlier, which decoded the same comparator in a different
+// consumer and reported the same two constants):
+//   * the comparator, clause for clause, including the sentinel distance an
+//     absent class carries and the order in which the three legs are asked;
+//   * both constants, as `.rodata` fallbacks of two application-wide element-
+//     picking preferences that the reporting user's saved profile does not
+//     override;
+//   * that the tolerance base is `min(callerRange, 8.0)`.
+//
+// NOT MEASURED, and therefore not modelled: where edge-centre / polygon-centre
+// candidates rank (the cascade has exactly three legs and neither is one of
+// them), and how these three rank against Grid / Workplane / Pivot / Box
+// (a different arbitration layer — see `arbitrate`). Those keep the bare
+// distance ranking they have always had.
+// ---------------------------------------------------------------------------
+
+/// Upper bound on the cross-type tolerance base, in pixels. The base itself is
+/// `min(acceptanceRange, this)`. MEASURED: it is the shipped default of an
+/// application-wide element-picking size setting in the reference, and the
+/// reporting user's saved configuration does not override it.
+enum float kCandidateToleranceBasePx = 8.0f;
+
+/// The vertex class's tolerance multiplier — the whole of "a vertex may beat a
+/// nearer edge" is this number being greater than 1. MEASURED, and the
+/// reference ships it as a user-visible setting whose own documentation
+/// describes exactly the cursor-near-a-polygon-corner case this fixes.
+enum float kVertexToleranceScale = 2.0f;
+
+/// The distance an ABSENT class carries into the comparator. Not "infinity":
+/// the comparator subtracts it (`d[i] - d[k]`), and the sentinel's finiteness
+/// is load-bearing there — a class with no candidate makes that clause
+/// vacuously true rather than NaN.
+enum float kAbsentClassDist = 1e12f;
+
+/// The three cascade classes, in the order the merge asks them.
+enum int kCascadeVertex  = 0;
+enum int kCascadeEdge    = 1;
+enum int kCascadePolygon = 2;
+
+/// Which cascade class a discrete snap type belongs to, or -1 for a type the
+/// cascade does not model (every centre type, Grid, Workplane, Pivot, Box,
+/// Intersection). A -1 type keeps the bare distance ranking.
+int cascadeClass(SnapType t) pure nothrow @nogc @safe
+{
+    if (t == SnapType.Vertex)  return kCascadeVertex;
+    if (t == SnapType.Edge)    return kCascadeEdge;
+    if (t == SnapType.Polygon) return kCascadePolygon;
+    return -1;
+}
+
+/// Does class `i` win the merge, given each class's nearest distance (`d`,
+/// `kAbsentClassDist` where the class has no candidate), which classes have a
+/// candidate at all (`has`), and class `i`'s own tolerance (`tol`)?
+///
+/// The clauses, and their order, are the measured ones:
+///
+///   1. no candidate of my class            -> lose
+///   2. I am the only class with one        -> win
+///   3. I am the nearest of the three       -> win
+///   4. I am inside my OWN tolerance        -> win   <-- the type priority
+///   5. I trail the next class by >= tol    -> lose
+///   6. I trail the last class by <  tol    -> win
+///   otherwise                              -> lose
+///
+/// Clauses 5 and 6 are the pair the reporting user is hitting: an edge
+/// incident to a vertex is never farther from the cursor than that vertex is,
+/// so under a bare "nearest wins" the vertex can only ever tie, never win.
+/// Here it wins as long as it does not TRAIL by its whole tolerance — and its
+/// tolerance is the doubled one.
+///
+/// Read as a whole, and given that our own distances are never negative and
+/// that an absent class carries a huge finite sentinel, the seven lines reduce
+/// to one sentence: **a class wins iff it trails each of the other two by less
+/// than its own tolerance.** Clauses 2, 3 and 4 are then early-outs rather
+/// than independent rules. They are ported verbatim anyway, for two reasons
+/// that are not stylistic: clause 2 is a null-guard in the original and the
+/// only clause that does not read a distance at all, and the reduction stops
+/// holding the moment a distance can be negative or an exact tie meets a zero
+/// tolerance — and a registered guide may answer with any `distPx` it likes,
+/// including a negative one (`snapCursor`'s inverting test guide does exactly
+/// that). A comparator that is correct only for the distances we happen to
+/// produce today is the kind of thing this file has been bitten by before.
+bool cascadeClassWins(int i, const ref bool[3] has, const ref float[3] d,
+                      float tol) pure nothrow @nogc @safe
+{
+    if (!has[i]) return false;                       // 1
+    immutable int j = (i + 1) % 3;
+    immutable int k = (i + 2) % 3;
+    if (!has[j] && !has[k]) return true;             // 2
+    if (d[j] >= d[i] && d[k] >= d[i]) return true;   // 3
+    if (tol >  d[i]) return true;                    // 4
+    if (tol <= d[i] - d[j]) return false;            // 5
+    if (tol >  d[i] - d[k]) return true;             // 6
+    return false;
+}
+
 /// Return a point-in-time copy of the background snap sources under the
 /// grid lock, for use by the CONS stage's post-pass projection loop
 /// (xfrm_transform.d::applyTRS). Reuses the same g_snapSources the snap
@@ -334,6 +450,47 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     int      bestSource = 0;
     SnapType bestType   = SnapType.None;
 
+    // -----------------------------------------------------------------------
+    // Task 0551: the discrete tier's accumulator is SPLIT, not replaced.
+    //
+    //   * `best*` above now collects only the types the cascade does not model
+    //     (`cascadeClass(t) < 0`) — every centre type, Grid, Workplane, Pivot,
+    //     Box, Intersection. Its rule is untouched.
+    //   * `clsBest[0..2]` collect the vertex / edge / polygon classes, one
+    //     nearest per class, under the SAME rule.
+    //
+    // After the walk the three class winners are merged by the measured
+    // cascade into one champion, and that champion is folded back into
+    // `best*` — so the final answer is still one accumulator's worth of state
+    // and the merge rule below is unchanged.
+    //
+    // NEUTRALITY, and it is an argument about the partition rather than about
+    // a fixture. The old accumulator is `argmin` over all candidates of
+    // `(-prio, dist, seq)` — the strict `<` means the earliest enumerated wins
+    // a tie, which is exactly a third key. `seq` below makes that key
+    // explicit, so splitting the candidates into disjoint sets, taking the
+    // argmin of each, and then the argmin of those, is the SAME element. When
+    // fewer than two cascade classes have a candidate the cascade returns its
+    // sole class's argmin (clause 2 of `cascadeClassWins`), so the whole
+    // construction collapses to the old one. The behaviour can only differ
+    // when at least two of vertex / edge / polygon are enabled AND both
+    // produced a candidate — which is precisely the contested case, and the
+    // only case anything was measured about.
+    // -----------------------------------------------------------------------
+    struct ClassBest {
+        bool     has;
+        float    dist  = kAbsentClassDist;
+        int      prio  = int.min;
+        long     seq   = long.max;
+        Vec3     world;
+        int      idx   = -1;
+        int      slot;
+        SnapType type  = SnapType.None;
+    }
+    ClassBest[3] clsBest;
+    long bestSeq  = long.max;   // enumeration order of `best*`'s current holder
+    long seqNext  = 0;          // monotonic per accepted candidate
+
     // Constraint tier accumulator (Stage 2).
     float    cBestDist  = float.infinity;
     Vec3     cBestWorld = cursorWorld;
@@ -445,13 +602,76 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         int prio = 0;
         if (guides.length != 0 && !arbitrate(candWorld, type, idx, slot, d, prio))
             return;
+        immutable long seq = seqNext++;
+
+        // Task 0551: a cascade class goes to its own slot, everything else to
+        // the shared one. Both use the identical (prio, dist, seq) rule.
+        immutable int cls = cascadeClass(type);
+        if (cls >= 0) {
+            auto cb = &clsBest[cls];
+            if (prio > cb.prio || (prio == cb.prio && d < cb.dist)) {
+                cb.has   = true;
+                cb.dist  = d;
+                cb.prio  = prio;
+                cb.seq   = seq;
+                cb.world = candWorld;
+                cb.idx   = idx;
+                cb.slot  = slot;
+                cb.type  = type;
+            }
+            return;
+        }
+
         if (prio > bestPrio || (prio == bestPrio && d < bestDist)) {
             bestDist   = d;
             bestPrio   = prio;
+            bestSeq    = seq;
             bestWorld  = candWorld;
             bestIdx    = idx;
             bestSource = slot;
             bestType   = type;
+        }
+    }
+
+    // Merge the three class winners by the measured cascade and fold the
+    // champion back into `best*`. Called ONCE, after every candidate has been
+    // enumerated; the `(prio, dist, seq)` fold is order-independent, so it
+    // does not matter that the champion arrives after Grid / Workplane / Pivot
+    // / Box have already been considered.
+    void foldCascadeChampion() {
+        bool[3]  has;
+        float[3] dist = [kAbsentClassDist, kAbsentClassDist, kAbsentClassDist];
+        foreach (i, ref cb; clsBest) {
+            has[i]  = cb.has;
+            if (cb.has) dist[i] = cb.dist;
+        }
+
+        // The tolerance base. The reference builds it as `min(callerRange,
+        // hitSize)` — where callerRange is the ONE range its snap query
+        // carries. Ours is the acceptance range: `outerRangePx` is the extra
+        // "highlighted but not snapped" state in front of it, which the
+        // reference has no analogue of (same reading `consider` above already
+        // records for the guide loop's range).
+        immutable float base = cfg.innerRangePx < kCandidateToleranceBasePx
+                             ? cfg.innerRangePx : kCandidateToleranceBasePx;
+        immutable float[3] tol = [kVertexToleranceScale * base, base, base];
+
+        foreach (i; 0 .. 3) {
+            if (!cascadeClassWins(cast(int)i, has, dist, tol[i])) continue;
+            auto cb = clsBest[i];
+            if (cb.prio > bestPrio
+                || (cb.prio == bestPrio
+                    && (cb.dist < bestDist
+                        || (cb.dist == bestDist && cb.seq < bestSeq)))) {
+                bestDist   = cb.dist;
+                bestPrio   = cb.prio;
+                bestSeq    = cb.seq;
+                bestWorld  = cb.world;
+                bestIdx    = cb.idx;
+                bestSource = cb.slot;
+                bestType   = cb.type;
+            }
+            return;
         }
     }
 
@@ -805,6 +1025,11 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // Workplane (always-wins by ~0 screen distance) is in the discrete tier
     // so it keeps its existing behaviour unchanged.
     // -----------------------------------------------------------------------
+    // Task 0551: resolve vertex / edge / polygon against each other by the
+    // measured cascade, then let the champion compete with the types the
+    // cascade does not model. Must run before the merge rule reads `bestDist`.
+    foldCascadeChampion();
+
     bool discreteSnapped     = bestDist  <= cfg.innerRangePx;
     bool discreteHighlighted = bestDist  <= cfg.outerRangePx;
     bool constraintSnapped   = cBestDist <= cfg.innerRangePx;
@@ -2533,6 +2758,207 @@ unittest {
         "enabling Grid explicitly must restore the old outcome — the nearer "
         ~ "lattice point wins. `enabledTypes` is a SET and every bit stays "
         ~ "reachable; only the factory contents changed");
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// TASK 0551 — THE CROSS-TYPE CASCADE, CLAUSE BY CLAUSE.
+//
+// The comparator is the whole of the type priority, so it is pinned directly
+// rather than only through `snapCursor`. Each case below names the BEHAVIOUR
+// it pins, not the clause it happens to exit through — as the function's own
+// docstring records, clauses 2, 3 and 4 are early-outs that the last two
+// subsume for any non-negative distance, so "this case proves clause 4 exists"
+// would be a claim the fixture cannot support.
+//
+// The distances are the ones the behavioural test below actually produces, so
+// the two halves cannot drift apart: 16.49 px to the vertex, 4.00 px to the
+// incident edge, and an 8.0 px base.
+// ---------------------------------------------------------------------------
+unittest {
+    immutable float base = kCandidateToleranceBasePx;          // 8
+    immutable float tolV = kVertexToleranceScale * base;  // 16
+    immutable float A    = kAbsentClassDist;
+
+    // No candidate of my class — nothing else can rescue it.
+    {
+        bool[3]  has  = [false, true, true];
+        float[3] d    = [A, 1.0f, 2.0f];
+        assert(!cascadeClassWins(kCascadeVertex, has, d, tolV),
+            "a class with no candidate cannot win, however generous its "
+            ~ "tolerance");
+    }
+
+    // Sole class. This is what every single-type configuration resolves to,
+    // and it is what makes the split accumulator neutral.
+    {
+        bool[3]  has  = [true, false, false];
+        float[3] d    = [37.0f, A, A];
+        assert(cascadeClassWins(kCascadeVertex, has, d, tolV),
+            "the only class with a candidate wins at ANY distance — the "
+            ~ "acceptance range is applied later, by the merge, not here");
+        assert(!cascadeClassWins(kCascadeEdge, has, d, base));
+        assert(!cascadeClassWins(kCascadePolygon, has, d, base));
+    }
+
+    // Nearest of the three — wins with no help from the tolerance at all.
+    {
+        bool[3]  has  = [true, true, true];
+        float[3] d    = [1.0f, 2.0f, 3.0f];
+        assert(cascadeClassWins(kCascadeVertex, has, d, 0.0f),
+            "the nearest class wins even with a ZERO tolerance");
+    }
+
+    // THE REPORTED CASE, and the one place the 2x multiplier is observable.
+    //
+    // With no polygon candidate the last clause is vacuously true (that is
+    // what the finite sentinel buys), so the vertex loses ONLY through clause
+    // 5: it must trail the edge by at least its own tolerance. 12.49 px of
+    // trail is more than the single base and less than the doubled one.
+    {
+        bool[3]  has  = [true, true, false];
+        float[3] d    = [16.4924f, 4.0f, A];
+        immutable float trail = d[kCascadeVertex] - d[kCascadeEdge];
+        assert(trail > base && trail < tolV,
+            "fixture: the vertex must trail by MORE than one base and LESS "
+            ~ "than the doubled tolerance, or this case cannot tell the "
+            ~ "multiplier from 1.0");
+        assert(cascadeClassWins(kCascadeVertex, has, d, tolV),
+            "at the doubled tolerance the farther vertex wins — this is the "
+            ~ "type priority, and the reported behaviour");
+        assert(!cascadeClassWins(kCascadeVertex, has, d, base),
+            "at a SINGLE base it loses. The multiplier is not decoration: "
+            ~ "these two lines differ only by it");
+    }
+
+    // The third class stops being vacuous the moment a polygon candidate
+    // exists, and the answer flips back to the edge. This is why the absent-
+    // class distance is a finite sentinel and not infinity: `d[i] - d[k]`
+    // must come out hugely negative, not NaN.
+    {
+        bool[3]  has  = [true, true, true];
+        float[3] d    = [16.4924f, 4.0f, 0.0f];
+        assert(!cascadeClassWins(kCascadeVertex, has, d, tolV),
+            "with a polygon under the cursor the vertex now trails one of the "
+            ~ "other two by more than its tolerance, and loses");
+        assert(cascadeClassWins(kCascadeEdge, has, d, base),
+            "and the edge takes it on its own tolerance");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TASK 0551 — THE BEHAVIOUR A USER REPORTED: A VERTEX MUST BEAT THE EDGE THAT
+// RUNS THROUGH IT.
+//
+// The geometry is the complaint's geometry and it is not incidental. Our edge
+// candidate is the closest point on the projected SEGMENT, so for any edge
+// incident to the target vertex that point is never FARTHER from the cursor
+// than the vertex is — with equality only when the cursor sits exactly on the
+// vertex pixel. Under the bare "nearest wins" that used to rank the discrete
+// tier, the vertex therefore could not win: it could only tie, and it won the
+// tie by being enumerated first. Every cursor position that is not exactly on
+// the vertex went to the edge.
+//
+// This test is RED before the cascade (it resolves to Edge) and green after.
+//
+// The reporting user runs with vertex AND edge both enabled, which is why the
+// shipped single-type default does not conceal this — the fixture turns both
+// on explicitly, exactly as their configuration does.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, round, abs;
+
+    invalidateSnapGrids();
+
+    // 80 px per world unit at z = 0: screen = (400 + 80x, 400 - 80y).
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    // One edge along +X. Vertex 0 is the target; the edge runs out of it.
+    Mesh m;
+    m.vertices = [ Vec3(0, 0, 0), Vec3(1, 0, 0) ];
+    m.edges    = [ [0u, 1u] ];
+
+    float[2] pixelOf(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return [qx, qy];
+    }
+
+    // The cursor is off the vertex along the edge AND off the edge line, so
+    // the two candidates are at genuinely different distances.
+    immutable Vec3 cursorWorld = Vec3(0.2f, 0.05f, 0);
+    auto cpix = pixelOf(cursorWorld);
+    immutable int sx = cast(int)round(cpix[0]);
+    immutable int sy = cast(int)round(cpix[1]);
+
+    // State the premises instead of trusting them.
+    auto vpix = pixelOf(m.vertices[0]);
+    immutable float dVert = sqrt((vpix[0] - sx) * (vpix[0] - sx)
+                               + (vpix[1] - sy) * (vpix[1] - sy));
+    auto epixA = pixelOf(m.vertices[0]);
+    auto epixB = pixelOf(m.vertices[1]);
+    float t;
+    immutable float dEdge = sqrt(closestOnSegment2DSquared(
+        cast(float)sx, cast(float)sy, epixA[0], epixA[1], epixB[0], epixB[1], t));
+
+    assert(dEdge < dVert,
+        "fixture: the edge must be STRICTLY nearer, or the vertex would win "
+        ~ "under the old distance rule too and this test would prove nothing");
+
+    immutable float base  = kCandidateToleranceBasePx;
+    immutable float trail = dVert - dEdge;
+    assert(trail > base,
+        "fixture: the vertex must trail by more than ONE base, or a scale of "
+        ~ "1.0 would resolve it the same way and the multiplier would be "
+        ~ "untested here");
+    assert(trail < kVertexToleranceScale * base,
+        "fixture: and by less than the DOUBLED tolerance, or nothing could "
+        ~ "save the vertex");
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex | SnapType.Edge;   // the user's pair
+    assert(dVert <= cfg.innerRangePx,
+        "fixture: the vertex must be inside the acceptance range, or the "
+        ~ "cascade could name it and the merge would still refuse to snap");
+    assert(cfg.innerRangePx >= base,
+        "fixture: the tolerance base is min(acceptance, hit size), and this "
+        ~ "case assumes the hit size is the smaller");
+
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(r.snapped, "something must snap here — both candidates are in range");
+    assert(r.targetType == SnapType.Vertex && r.targetIndex == 0,
+        "a vertex inside its tolerance must beat the edge that runs through "
+        ~ "it, even though that edge's nearest point is closer to the cursor. "
+        ~ "Resolving Edge here is the bare nearest-wins rule this task "
+        ~ "replaced");
+    assert(r.worldPos.x == m.vertices[0].x
+        && r.worldPos.y == m.vertices[0].y
+        && r.worldPos.z == m.vertices[0].z,
+        "and the snapped position must be the vertex itself");
+
+    // NEUTRALITY, on this very fixture: with the vertex class switched off
+    // there is no contest, the cascade's sole-class leg returns the edge's own
+    // nearest, and the answer is the pre-cascade one at the pre-cascade
+    // distance. A cascade that changed single-type configurations would fail
+    // here, and every single-type test in this module is a further witness.
+    SnapPacket edgeOnly = cfg;
+    edgeOnly.enabledTypes = SnapType.Edge;
+    invalidateSnapGrids();
+    SnapResult e = snapCursor(cursorWorld, sx, sy, vp, m, edgeOnly);
+    assert(e.snapped && e.targetType == SnapType.Edge && e.targetIndex == 0,
+        "with only one cascade class enabled the merge must be exactly what "
+        ~ "it always was");
+    assert(abs(e.worldPos.y - 0.0f) < 1e-6f,
+        "and the edge's snapped point is the closest point ON the segment");
 
     invalidateSnapGrids();
 }
