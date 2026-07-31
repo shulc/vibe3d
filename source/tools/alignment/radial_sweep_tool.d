@@ -15,7 +15,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
-import drag : planeDragDelta, screenAxisDelta;
+import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 
 version (unittest) import std.conv : to;
@@ -588,6 +588,17 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (dragPart < 0) return false;
 
+        // Both branches below are per-event increments — the axis endpoints
+        // run the plane conversion, the angle handles project onto the live
+        // rotational tangent — so both take their previous pixel from the
+        // cooked gesture rather than from this tool's own pair. `lastMX/MY`
+        // stay written as the fallback when no gesture is published and as
+        // the other half of the debug agreement check.
+        import toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         lastMX, lastMY, prevMX, prevMY);
+
         if (dragPart == 0 || dragPart == 1) {
             // Axis endpoint drag: the DRAGGED end moves on a screen-facing
             // plane through its current position; the OTHER end stays
@@ -597,7 +608,7 @@ public:
             Vec3 anchor = dragPart == 0 ? curS : curE;
 
             bool skip;
-            Vec3 delta = planeDragDelta(e.x, e.y, lastMX, lastMY, 3, anchor, cachedVp, skip);
+            Vec3 delta = planeDragDelta(e.x, e.y, prevMX, prevMY, 3, anchor, cachedVp, skip);
             if (!skip) {
                 if (dragPart == 0) {
                     Vec3 newS = curS + delta;
@@ -639,7 +650,7 @@ public:
         Vec3 liveTangent = normalize(cross(axisDirUnit, handlePos - params_.center));
 
         bool skip;
-        Vec3 delta = screenAxisDelta(e.x, e.y, lastMX, lastMY, handlePos, liveTangent, cachedVp, skip);
+        Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY, handlePos, liveTangent, cachedVp, skip);
         if (!skip && armAngle > 1e-6f) {
             float d = dot(delta, liveTangent);
             *angleDeg += (d / armAngle) * (180.0f / PI);
