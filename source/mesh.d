@@ -14616,6 +14616,13 @@ struct Mesh {
     // vertex mode). Hidden/locked unmodelled (reserved/unused marks).
     // `walkFaceLoop` stays untouched for its ordered-walk consumers.
 
+    /// Seed-scan step counter for the select.loop seed loops (both modes) —
+    /// the gate that keeps those scans linear in the selected-element count.
+    /// Unittest-only: the scans are hot and this must not cost a thing in a
+    /// release build. Reset it, run the walk, read it; see the scaling
+    /// unittests at the bottom of this module.
+    version (unittest) static size_t gSelectLoopSeedScanSteps;
+
     /// One band-trace loop: repeatedly cross the directed exit edge
     /// (`vA`→`vB` in the current polygon's winding, i.e. the reversed
     /// winding `vB`,`vA` is what the candidate must contain) into the
@@ -14650,6 +14657,50 @@ struct Mesh {
         }
     }
 
+    /// The band partner for seed polygon `A`: among the selected, unvisited,
+    /// even-sided polygons that contain one of A's edges in the REVERSED
+    /// winding, the one that comes first in `partnerRank` order (= selection
+    /// order restricted to the static partner filter). Returns -1 when there
+    /// is none, else the polygon index with `pi` = the index of A's edge and
+    /// `pj` = the partner's matching corner.
+    ///
+    /// Equivalent to scanning the whole selection in order and taking the
+    /// first entry that shares such an edge, but bounded by A's own valence:
+    /// only a face incident to one of A's edges can ever match, and a strict
+    /// `rank < best` keeps the FIRST (i, j) found for the winner, which is
+    /// what the selection-order-outer / A's-edges-inner scan produced. The
+    /// `mark & 1` test also covers `q == A` (the caller seeds `mark[A] = 3`
+    /// before calling).
+    private int findLoopPartner(uint A, const(ubyte[]) mark,
+                                const(uint[][]) edgeFaces,
+                                const(size_t[]) partnerRank,
+                                out size_t pi, out size_t pj) const {
+        const af = faces[A];
+        immutable n = af.length;
+        int P = -1;
+        size_t best = size_t.max;
+        pi = 0; pj = 0;
+        foreach (i; 0 .. n) {
+            uint va = af[i], vb = af[(i + 1) % n];
+            uint ei = edgeIndex(va, vb);
+            if (ei == ~0u) continue;
+            foreach (q; edgeFaces[ei]) {
+                version (unittest) ++gSelectLoopSeedScanSteps;
+                const rank = partnerRank[q];
+                if (rank >= best) continue;      // not a candidate, or already beaten
+                if ((mark[q] & 1) != 0) continue; // visited (covers q == A)
+                const qf = faces[q];
+                foreach (j; 0 .. qf.length) {
+                    if (qf[j] == vb && qf[(j + 1) % qf.length] == va) {
+                        P = cast(int)q; best = rank; pi = i; pj = j;
+                        break;
+                    }
+                }
+            }
+        }
+        return P;
+    }
+
     /// Recovered `select.loop` (polygon) algorithm — returns the NEW face
     /// selection (purge-then-commit semantics). See findings_fv.md
     /// (private) for per-rule provenance and validation.
@@ -14680,12 +14731,39 @@ struct Mesh {
         uint[][] edgeFaces;
         buildLoopEdgeFaces(edgeFaces);
 
+        // Rank of each polygon in the partner-candidate order: the selection
+        // order restricted to the STATIC half of the partner filter
+        // (even-sided, nverts>2). `size_t.max` = not a candidate. Lifting
+        // that filter out of the group loop is what lets the scan below run
+        // outward from A's edges instead of over the whole selection.
+        size_t[] partnerRank = new size_t[](faces.length);
+        partnerRank[] = size_t.max;
+        {
+            size_t rank = 0;
+            foreach (fi; selFaces) {
+                immutable L = faces[fi].length;
+                if (L <= 2 || (L & 1) != 0) continue;
+                partnerRank[fi] = rank++;
+            }
+        }
+
         // Multi-group loop: each pass consumes one seed group; visited and
         // seeded marks are shared across groups and make this monotone.
+        // `gCur` is a forward-only cursor into `selFaces`: BOTH reasons the
+        // scan below skips an entry are permanent — a polygon's vertex count
+        // never changes here, and marks are only ever set, never cleared — so
+        // an entry the scan once walked past can never become a seed later.
+        // Restarting from the head instead made the pass sequence O(groups x
+        // selected), and the group count equals the selected count on a
+        // triangulated mesh (selectBandTrace skips odd-sided neighbours, so a
+        // triangle never advances and is always a group of one).
+        size_t gCur = 0;
         while (true) {
             // NEXT_GROUP: first selected, unconsumed polygon with nverts>2.
             int A = -1;
-            foreach (fi; selFaces) {
+            for (; gCur < selFaces.length; ++gCur) {
+                version (unittest) ++gSelectLoopSeedScanSteps;
+                const fi = selFaces[gCur];
                 if (faces[fi].length <= 2) continue;
                 if ((mark[fi] & 3) != 0) continue;
                 A = cast(int)fi;
@@ -14697,32 +14775,13 @@ struct Mesh {
             const af = faces[A];
             immutable n = af.length;
 
-            // Partner scan: first selected, unvisited, EVEN-sided polygon
-            // sharing a winding-reversed edge with A (P outer in selection
-            // order, A's edges inner — the reference's scan shape).
-            int P = -1;
+            // Partner: the selected, unvisited, EVEN-sided polygon sharing a
+            // winding-reversed edge with A that comes FIRST in selection
+            // order. Only a face incident to one of A's edges can qualify, so
+            // this walks A's edges and ranks the hits instead of walking the
+            // whole selection per group — same winner, same `pi`/`pj`.
             size_t pi, pj;
-        partnerScan:
-            foreach (pfi; selFaces) {
-                if (pfi == A) continue;
-                if ((mark[pfi] & 1) != 0) continue;
-                const pf = faces[pfi];
-                if (pf.length <= 2 || (pf.length & 1) != 0) continue;
-                foreach (i; 0 .. n) {
-                    uint va = af[i], vb = af[(i + 1) % n];
-                    uint ei = edgeIndex(va, vb);
-                    if (ei == ~0u) continue;
-                    foreach (q; edgeFaces[ei]) {
-                        if (q != pfi) continue;
-                        foreach (j; 0 .. pf.length) {
-                            if (pf[j] == vb && pf[(j + 1) % pf.length] == va) {
-                                P = cast(int)pfi; pi = i; pj = j;
-                                break partnerScan;
-                            }
-                        }
-                    }
-                }
-            }
+            const int P = findLoopPartner(A, mark, edgeFaces, partnerRank, pi, pj);
 
             uint vB0, vA0, vB1, vA1; // B-side exit, A-side exit
             if (P >= 0) {
