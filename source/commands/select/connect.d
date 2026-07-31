@@ -59,13 +59,19 @@ class SelectConnect : Command {
                     vertAdj[vi] ~= cast(int)ni;
             auto sel = mesh.selectedVertices;
             bfsSelect(sel, vertAdj, -1);
-            mesh.setVerticesSelectedFrom(sel);
+            // selectXFrom, not setXSelectedFrom: the flood fill selects on the
+            // user's behalf, so what it adds must carry a history value (see
+            // the primitive's doc comment in mesh.d). Note mesh.makePolygon
+            // derives face WINDING from vertex click order, so an unstamped
+            // vertex selection is a geometry consequence here, not just a
+            // selection one.
+            mesh.selectVerticesFrom(sel);
         } else if (editMode == EditMode.Edges) {
             // Build edge → adjacent edges map via shared vertices
             auto edgeAdj = mesh.edgeAdjacencySharingVertex();
             auto sel = mesh.selectedEdges;
             bfsSelect(sel, edgeAdj, -1);
-            mesh.setEdgesSelectedFrom(sel);
+            mesh.selectEdgesFrom(sel);
         } else if (editMode == EditMode.Polygons) {
             // Edge-adjacent faces (mesh.adjacentFaces) — a DIFFERENT relation
             // from the shared-vertex adjacency (mesh.faceAdjacencySharingVertex)
@@ -77,7 +83,7 @@ class SelectConnect : Command {
                     faceAdj[fi] ~= cast(int)adjFi;
             auto sel = mesh.selectedFaces;
             bfsSelect(sel, faceAdj, -1);
-            mesh.setFacesSelectedFrom(sel);
+            mesh.selectFacesFrom(sel);
         }
         return true;
     }

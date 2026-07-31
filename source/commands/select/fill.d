@@ -35,7 +35,12 @@ class SelectFillHoles : Command {
         snap = SelectionSnapshot.capture(*mesh);
         mesh.syncSelection();
         auto filled = mesh.fillSelectionHoles(mesh.selectedFaces);
-        mesh.setFacesSelectedFrom(filled);
+        // selectFacesFrom, not setFacesSelectedFrom: the swallowed hole faces
+        // are selected on the user's behalf and must carry a history value, or
+        // they sort behind the clicks that preceded them (see the primitive's
+        // doc comment in mesh.d). Without it select.less after a fill drops a
+        // user click instead of the fill's own newest face.
+        mesh.selectFacesFrom(filled);
         return true;
     }
 }
@@ -189,7 +194,14 @@ class SelectFillInsideLoop : Command {
         foreach (fi; regions[chosen]) faceSel[fi] = true;
 
         mesh.clearEdgeSelection();
-        mesh.setFacesSelectedFrom(faceSel);
+        // selectFacesFrom, not setFacesSelectedFrom. This command is the
+        // sharpest case in the family: the region is computed from the EDGE
+        // barrier, not grown from a prior face selection, so with no
+        // pre-existing face selection EVERY committed face used to land with
+        // order 0 — leaving select.less with nothing to drop (a silent no-op)
+        // and select.loop / select.between seeding off index order instead of
+        // history. See the primitive's doc comment in mesh.d.
+        mesh.selectFacesFrom(faceSel);
 
         modeSwitched = true;
         if (editModePtr !is null) {
