@@ -242,11 +242,23 @@ class SnapStage : Stage, Operator {
                                    null, null, _guides);
 
         SnapHitPacket hit;   // every field at its documented default
-        hit.snapped      = sr.snapped;
-        hit.highlighted  = sr.highlighted;
-        hit.targetType   = sr.targetType;
-        hit.targetIndex  = sr.targetIndex;
-        hit.targetSource = sr.targetSource;
+        hit.snapped        = sr.snapped;
+        hit.highlighted    = sr.highlighted;
+        hit.targetType     = sr.targetType;
+        hit.targetIndex    = sr.targetIndex;
+        hit.targetSource   = sr.targetSource;
+        hit.constraintType = sr.constraintType;
+        // PROVENANCE, not a result: how many guides re-ranked the walk above.
+        // A consumer migrating off its own `snapCursor` (which passes no
+        // registry) must refuse this packet when it is non-zero — see the
+        // packet's own contract, and the note further up about the four
+        // tool-side call sites that do not consult the registry.
+        hit.guideCount     = cast(int)_guides.length;
+
+        // Paired with `highlighted` exactly as `worldPos` is paired with
+        // `snapped`: on a miss the query's `highlightPos` is the pass-through
+        // seed, and this stage has no seed worth publishing.
+        if (sr.highlighted) hit.highlightPos = sr.highlightPos;
 
         if (sr.snapped) {
             hit.worldPos = sr.worldPos;
@@ -626,10 +638,16 @@ unittest {
     vp.height = 800;
 
     Mesh m;
+    // Deliberately OFF the world origin. A fixture whose winning vertex sits
+    // at (0,0,0) makes every "the packet published no position" assertion
+    // agree with every "the packet published the winner's position" one, and
+    // a producer that dropped a position field would pass both. The offset is
+    // in Y only, so the collinear X spacing — and every distance below — is
+    // unchanged.
     m.vertices = [
-        Vec3(0.00f, 0, 0),   // 0 — directly under the cursor pixel
-        Vec3(0.50f, 0, 0),   // 1 — inside the gather range, outside acceptance
-        Vec3(3.00f, 0, 0),   // 2 — outside the gather range entirely
+        Vec3(0.00f, 0.25f, 0),   // 0 — directly under the cursor pixel
+        Vec3(0.50f, 0.25f, 0),   // 1 — inside the gather range, outside acceptance
+        Vec3(3.00f, 0.25f, 0),   // 2 — outside the gather range entirely
     ];
 
     float pixDist(Vec3 w, int sx, int sy) {
@@ -757,14 +775,26 @@ unittest {
     assert(hit.targetType   == ref_.targetType,   "targetType diverged");
     assert(hit.targetIndex  == ref_.targetIndex,  "targetIndex diverged");
     assert(hit.targetSource == ref_.targetSource, "targetSource diverged");
+    assert(hit.constraintType == ref_.constraintType, "constraintType diverged");
     assert(hit.worldPos.x == ref_.worldPos.x
         && hit.worldPos.y == ref_.worldPos.y
         && hit.worldPos.z == ref_.worldPos.z,
         "S2 equivalence: the published position must be the query's own, "
         ~ "bit for bit — not a re-derivation of it");
+    assert(hit.highlightPos.x == ref_.highlightPos.x
+        && hit.highlightPos.y == ref_.highlightPos.y
+        && hit.highlightPos.z == ref_.highlightPos.z,
+        "S2 equivalence: `highlightPos` is the query's own too — it is a "
+        ~ "SEPARATE point from `worldPos` whenever a constraint placed the "
+        ~ "position, and the pre-snap ring is drawn at it");
     assert(hit.layer == -1,
         "the winner came from the active mesh (slot 0), whose Document-layer "
         ~ "index the snap service does not hold");
+    assert(hit.guideCount == 0,
+        "S2 provenance: no guide is registered on this stage, so the walk "
+        ~ "ranked by nearest pixel — the same ranking a tool-side snapCursor "
+        ~ "would have produced, which is what makes the packet substitutable "
+        ~ "for it");
 
     // --- 3. DERIVATION: the screen point is the WINNER's own pixel ----------
     float wx, wy, wz;
@@ -801,6 +831,16 @@ unittest {
             ~ "stage's query seed must never reach the wire");
         assert(p.distPx == float.infinity && p.screenX == 0 && p.screenY == 0,
             "S2 contract: the screen fields are paired with `snapped`");
+        // ...but the HIGHLIGHT point is published, because it is paired with
+        // `highlighted`, not with `snapped`. This is the one field that makes
+        // the packet usable by the overlay renderer at all: the pre-snap ring
+        // is drawn HERE, at the candidate, not at the cursor.
+        assert(p.highlightPos.x == m.vertices[0].x
+            && p.highlightPos.y == m.vertices[0].y
+            && p.highlightPos.z == m.vertices[0].z,
+            "S2 contract: a highlight publishes its own point — this is the "
+            ~ "pixel `snap_render.drawCursorMarker` draws the pre-snap ring "
+            ~ "at, and `worldPos` (still default here) is not it");
     }
 
     // --- ...and an outright miss is the packet's own `.init` -----------------

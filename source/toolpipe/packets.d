@@ -865,9 +865,21 @@ struct SnapPacket {
 /// meaningful only when the flag / index it is paired with says so).
 ///
 /// Field-by-field this is `snap.SnapResult` — same names, same meanings —
-/// plus the screen point and pixel distance of the winner and the
-/// Document-layer index behind `targetSource`. Nothing here is computed
-/// that the snap query did not already compute.
+/// plus the screen point and pixel distance of the winner, the
+/// Document-layer index behind `targetSource`, and the query's guide
+/// provenance. Nothing here is computed that the snap query did not
+/// already compute.
+///
+/// WHY IT CARRIES ALL OF `SnapResult` and not the subset S2 first proposed
+/// (plan §F5, "how far do we take the field list?"): the first attempt to
+/// migrate a consumer measured the answer. `highlightPos` and
+/// `constraintType` were omitted as header-derived fields nothing was known
+/// to need — and every one of the existing consumers needs at least one of
+/// them. `highlightPos` alone has two live readers today
+/// (`snap_render.drawCursorMarker`, which projects it to place the pre-snap
+/// ring, and `/api/snap/last`, which reports it), so a packet without it
+/// cannot serve a single consumer byte-identically. The omission was a
+/// guess; this is the measurement that replaced it.
 ///
 /// What a consumer must know before reading it:
 ///
@@ -880,26 +892,43 @@ struct SnapPacket {
 ///   — an element can highlight without snapping (inside the outer gather
 ///   range, outside the inner acceptance range).
 /// * When a LINE / PLANE constraint supplied the position while a discrete
-///   element only highlighted, `worldPos` is the constrained point and
-///   `targetIndex` is that element — the same split `SnapResult` itself
-///   carries between `worldPos` and `highlightPos`.
+///   element only highlighted, `worldPos` is the constrained point,
+///   `constraintType` names what constrained it, and `highlightPos` /
+///   `targetIndex` are the discrete element's — the same split
+///   `SnapResult` itself carries between `worldPos` and `highlightPos`.
+/// * `highlightPos` is meaningful ONLY when `highlighted`, on the same terms
+///   as `worldPos` is paired with `snapped`.
 /// * The query behind this packet has NO moving set: the stage has no
 ///   gesture and cannot know which vertices are being dragged, so nothing
 ///   is excluded. A consumer that drags geometry must still keep its own
 ///   exclusion (else it can read a snap onto the very element it moves).
+/// * `guideCount` is the packet's PROVENANCE, not a result. It says how many
+///   S4 guides re-ranked the walk that produced this answer. Zero means the
+///   ranking is the historical "nearest pixel wins" — the same ranking a
+///   tool-side `snapCursor` (which passes no registry) would have produced.
+///   Non-zero means it is NOT, and a consumer migrating off its own query
+///   under S2 phase (b) must refuse the packet there rather than silently
+///   inherit a different winner. Migrating a consumer ONTO guide-aware
+///   ranking is a declared behaviour change and belongs to S4 phase (b).
 struct SnapHitPacket {
     bool     snapped      = false;
     bool     highlighted  = false;   // a candidate inside the OUTER range
     Vec3     worldPos     = Vec3(0, 0, 0);
+    Vec3     highlightPos = Vec3(0, 0, 0);   // the highlighted candidate's point
     float    screenX      = 0, screenY = 0;   // the snapped point's own pixel
     float    distPx       = float.infinity;   // its distance from the cursor
     SnapType targetType   = SnapType.None;
+    SnapType constraintType = SnapType.None; // the LINE/PLANE that placed
+                                     // `worldPos`, when the discrete tier did
+                                     // not snap; None when it did
     int      targetIndex  = -1;      // element index within the source's mesh
     int      targetSource = 0;       // 0 = active mesh, 1..N = background slot
     int      layer        = -1;      // Document-layer index, as ConstrainHitPacket;
                                      // -1 when the winner came from the active
                                      // mesh (whose layer the snap service does
                                      // not hold) or from no source at all
+    int      guideCount   = 0;       // S4 guides that re-ranked this walk; 0 ==
+                                     // the historical nearest-wins ranking
 }
 
 /// Path packet — published by the PATH stage. Carries the resolved
