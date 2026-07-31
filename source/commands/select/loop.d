@@ -49,6 +49,37 @@ class SelectLoop : Command {
             return true;
         }
 
+        // --- Selection-order stamping (task 0554), both branches below -------
+        // Both walks pick their SEED from the selection in selection-history
+        // order: selectLoopVertices / selectLoopFaces sort the selected
+        // elements by vertex/faceSelectionOrder, mapping "0 or absent" to
+        // int.max so an UNSTAMPED element sorts LAST. But the commit setters
+        // setVerticesSelectedFrom / setFacesSelectedFrom are state-RESTORE
+        // setters — they write the Select bit and nothing else. So an element
+        // the walk ADDED came out with order 0 and sorted behind anything the
+        // user clicked AFTERWARDS, even though the walk had selected it first.
+        // That inverts the oldest-first rule the walk documents for itself,
+        // and it changes the result: on a 5x5 grid, click 2 polygons →
+        // select.loop → shift-add a 3rd → select.loop lands on a different
+        // band than the same history with the order preserved.
+        //
+        // Every other derived-selection command in this family stamps its
+        // output through Mesh.selectVertex/selectEdge/selectFace (select.ring,
+        // select.expand, select.between, select.more) — and so does THIS
+        // command's own Edges branch above. That primitive's contract is: an
+        // element that was NOT already selected takes the next counter value,
+        // an already-selected one keeps the order it had. The two branches
+        // below reproduce exactly that contract on top of the bulk commit —
+        // surviving seeds keep the order of the click that made them, newly
+        // walked elements take fresh increasing values in index order, and
+        // dropped elements are cleared by the setter itself.
+        //
+        // The stamp is deliberately NOT pushed down into the shared setters:
+        // their other callers are state restores and internal re-selects
+        // (SelectionSnapshot.restore, select.connect, select.fill, and the
+        // post-topology reselects in mesh.d) where minting new order values
+        // would be wrong.
+
         // ------------------------------------------------------------------ //
         //  Vertex loop                                                         //
         // ------------------------------------------------------------------ //
@@ -64,7 +95,17 @@ class SelectLoop : Command {
             // seed = adjacent selected vertex PAIR; result REPLACES the
             // selection (reference purge-then-commit — a lone selected
             // vertex therefore clears it).
-            mesh.setVerticesSelectedFrom(mesh.selectLoopVertices());
+            bool[] loopSel = mesh.selectLoopVertices();
+            // Which vertices the walk ADDS — must be read BEFORE the commit
+            // marks them selected (see the stamping note above).
+            bool[] added = new bool[](loopSel.length);
+            foreach (i; 0 .. loopSel.length)
+                added[i] = loopSel[i] && !mesh.isVertexSelected(i);
+            mesh.setVerticesSelectedFrom(loopSel);
+            // The commit setter grew vertexSelectionOrder to loopSel.length.
+            foreach (i; 0 .. added.length)
+                if (added[i])
+                    mesh.vertexSelectionOrder[i] = ++mesh.vertexSelectionOrderCounter;
             return true;
         }
 
@@ -83,7 +124,15 @@ class SelectLoop : Command {
         // it (and grows faceSelectionOrder too, which resizeFaceSelection
         // does not) — so the guard was redundant, and reading it through the
         // allocating `mesh.selectedFaces` @property cost a whole-mesh bool[].
-        mesh.setFacesSelectedFrom(mesh.selectLoopFaces());
+        bool[] loopSel = mesh.selectLoopFaces();
+        bool[] added   = new bool[](loopSel.length);
+        foreach (i; 0 .. loopSel.length)
+            added[i] = loopSel[i] && !mesh.isFaceSelected(cast(int)i);
+        mesh.setFacesSelectedFrom(loopSel);
+        // The commit setter grew faceSelectionOrder to loopSel.length.
+        foreach (i; 0 .. added.length)
+            if (added[i])
+                mesh.faceSelectionOrder[i] = ++mesh.faceSelectionOrderCounter;
 
         return true;
     }
