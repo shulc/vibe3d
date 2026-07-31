@@ -1243,6 +1243,45 @@ private:
     // contradict measurements we already hold. See the resolvers' own note.
     bool innerSnap_ = false;
 
+    // `backFace_` ("Backface") — the SECOND HALF of the same admission policy
+    // `innerSnap_` is the first half of, default OFF (measured live, task
+    // 0497). Where `innerSnap` picks WHICH TOPOLOGY may be a snap candidate,
+    // this one picks WHICH ORIENTATION may: with it OFF a candidate whose own
+    // normal points away from the viewer is refused; with it ON the
+    // orientation test is skipped entirely and a back-facing element is as
+    // good a target as a front-facing one. Sticky across gestures, for the
+    // same reason `penMode_` is.
+    //
+    // WHY IT IS A PEN ATTRIBUTE AND NOT A SERVICE SETTING, which is the whole
+    // point of the row: the reference reads this flag in the tool's own
+    // candidate-FILTER callbacks — the same callbacks that carry `innerSnap`
+    // — and nowhere else. The orientation gate is therefore the CLIENT'S, an
+    // option the tool may decline; it is not a law the snapping service
+    // applies to everybody. Our snap service does apply a front-facing (plus
+    // occlusion) gate unconditionally to every one of its clients
+    // (`Mesh.visibleVertices`, consulted from `snap.snapCursor`), and that
+    // gate is deliberately NOT touched here: this row gives the PEN the
+    // ownership the measurement puts on it, and re-scoping the service's own
+    // gate for its other clients is a separate decision with its own blast
+    // radius.
+    //
+    // SCOPE, narrow because that is what was measured: the flag gates the
+    // pen's own snap-candidate admission (`PenSnapGuide.admits`) and nothing
+    // else. In particular it does NOT gate the press-time element PICK, does
+    // not touch the background placement ray — which was separately measured
+    // to be TWO-SIDED on both sides, so culling there would CREATE a
+    // divergence rather than close one — and does not switch any depth test
+    // on or off. The reference reads it on the VERTEX and EDGE candidate
+    // branches only; its polygon branch never reads it, and our guide admits
+    // vertices only, so the vertex branch is the whole of what is reachable
+    // here.
+    //
+    // Wiring this knob CHANGES this tool's default outcome, exactly as
+    // `keepVertex_` did: before it the pen's snap target was a pure
+    // screen-nearest with no orientation test at all, i.e. we shipped the ON
+    // branch while the measured default is OFF.
+    bool backFace_ = false;
+
     // `keepVertex_` ("Keep Vertices") — the reference's own fourth
     // dropdown-adjacent checkbox, default OFF (measured, task 0494), and it
     // gates ORPHAN RETENTION on the Remove mode's EDGE path: with it off, a
@@ -1849,6 +1888,16 @@ public:
     // did: our pre-0494 behaviour was its ON branch, so the row does not merely
     // expose a knob, it moves the default. See the field's own doc comment.
     //
+    // `backFace` (task 0538) — the orientation half of the pen's snap
+    // admission policy, APPENDED LAST, same reason as every row above,
+    // measured default OFF. It leaves the "awaiting measurement" bucket below
+    // on the same terms `innerSnap` did: its BEHAVIOUR is measured (at OFF a
+    // candidate whose own normal faces away from the viewer is refused; at ON
+    // the orientation test is skipped), its BOUNDS are a plain boolean, and it
+    // is a load-bearing input to the ported admission rule rather than a knob
+    // for its own sake. See the field's own doc comment for the scope, and for
+    // why publishing it MOVES the default rather than merely exposing a knob.
+    //
     // `range` / `quadOnly` (task 0488) — the two FILL attributes, APPENDED
     // LAST, same reason as every row above. They leave the "awaiting
     // measurement" bucket below because the Fill candidate rule is now
@@ -1862,7 +1911,7 @@ public:
     //
     // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
     //
-    // The reference tool carries 31 attributes; this list publishes 7. The gap
+    // The reference tool carries 31 attributes; this list publishes 12. The gap
     // is deliberate and sorted into three buckets. A knob whose BEHAVIOR is not
     // measured is not "approximately right" — it does something else and the
     // user cannot tell. A knob with GUESSED BOUNDS is the same class of error,
@@ -1914,6 +1963,7 @@ public:
             Param.float_("range", "Range", &fillRange_, kFillRangeDefault)
                  .min(0.0f).enforceBounds(),
             Param.bool_("quadOnly", "Quads Only", &fillQuadOnly_, true),
+            Param.bool_("backFace", "Backface", &backFace_, false),
         ];
     }
 
@@ -2334,12 +2384,29 @@ public:
         /// through a back-pointer — a guide answers from what it was told.
         private bool interiorOk_;
 
+        /// `backFace`: when set, the ORIENTATION test below is skipped and a
+        /// back-facing candidate is admitted. Mirrored here for the same
+        /// reason `interiorOk_` is. MEASURED, including the polarity: the
+        /// reference reads its flag in the same candidate-filter callbacks it
+        /// reads the border rule in, and a non-zero value is what makes the
+        /// filter accept without testing.
+        private bool backFaceOk_;
+
         // The aim. `aimed_` is deliberately NOT defaulted true: a guide that
         // has never been aimed must reject rather than answer against a
         // zero viewport, because a wrong distance is a wrong winner and would
         // be indistinguishable from a near miss.
+        //
+        // `aimDir_` is the world-space ray through the aimed pixel, computed
+        // once per aim and shared by every candidate — which is the measured
+        // shape of the orientation test, not an optimisation: the reference
+        // writes ONE screen ray into the tool before it runs the candidate
+        // search and every filter call dots against that one direction. A
+        // per-candidate eye→candidate direction would be a different test at
+        // wide FOV.
         private Viewport aimVp_;
         private int      aimX_, aimY_;
+        private Vec3     aimDir_ = Vec3(0, 0, 0);
         private bool     aimed_;
 
         // What the service pushed in. Recorded, not consumed: the pen's own
@@ -2358,18 +2425,32 @@ public:
         /// `borderOnly` negation the scan parameter used to carry. Stated
         /// because the flip is one character and the two spellings coexisted
         /// during this move; the 0496 Split cases below are what catch it.
-        void retarget(Mesh* m, bool interiorOk) {
+        ///
+        /// `backFaceOk` is `backFace`, likewise in the SAME polarity: TRUE
+        /// opens back-facing candidates. It defaults to the MEASURED default
+        /// (OFF, i.e. the orientation test runs) so a caller that forgets it
+        /// gets the reference's behaviour rather than the permissive one.
+        void retarget(Mesh* m, bool interiorOk, bool backFaceOk = false) {
             mesh_       = m;
             interiorOk_ = interiorOk;
+            backFaceOk_ = backFaceOk;
             polyKey_.invalidate();
         }
 
         /// Aim the guide at the query that is about to run. See the block
         /// comment: OURS, because the interface pushes ranges but not a cursor.
+        ///
+        /// Also derives this query's one screen ray (`aimDir_`), which the
+        /// orientation test in `admits` dots every candidate normal against.
+        /// `screenPointToRay` rather than `screenRay` so an ORTHOGRAPHIC
+        /// viewport answers with its view forward instead of an inverted
+        /// perspective matrix it does not have.
         void aimAt(const ref Viewport vp, int mx, int my) {
             aimVp_ = vp;
             aimX_  = mx;
             aimY_  = my;
+            Vec3 org;
+            screenPointToRay(cast(float)mx, cast(float)my, vp, org, aimDir_);
             aimed_ = true;
         }
 
@@ -2391,6 +2472,8 @@ public:
         /// * BORDER vertices only, unless `innerSnap` opens the interior. A
         ///   vertex with no incident edges at all is NOT interior and stays a
         ///   candidate, exactly as the scan this replaces had it.
+        /// * FRONT-FACING vertices only, unless `backFace` opens the other
+        ///   side. See `orientationAdmits` for the test and its provenance.
         ///
         /// `nothrow` by the `SnapAdmit` contract. The count refresh allocates
         /// and is therefore not `nothrow` itself; a failure REJECTS, which is
@@ -2401,16 +2484,71 @@ public:
             if (slot != 0)               return false;
             if (mesh_ is null || idx < 0) return false;
             if (idx >= cast(int)mesh_.vertices.length) return false;
-            if (interiorOk_) return true;
             try {
-                if (!polyKey_.matches(*mesh_)) {
-                    polyCount_ = mesh_.edgePolygonCounts();
-                    polyKey_.stamp(*mesh_);
+                if (!interiorOk_) {
+                    if (!polyKey_.matches(*mesh_)) {
+                        polyCount_ = mesh_.edgePolygonCounts();
+                        polyKey_.stamp(*mesh_);
+                    }
+                    if (isVertexInterior(mesh_, polyCount_, cast(uint)idx))
+                        return false;
                 }
-                return !isVertexInterior(mesh_, polyCount_, cast(uint)idx);
+                return orientationAdmits(cast(uint)idx);
             } catch (Exception) {
                 return false;
             }
+        }
+
+        /// The ORIENTATION half of the admission rule — `backFace`, task 0538.
+        ///
+        /// MEASURED, law and polarity both. At `backFace` OFF the reference
+        /// takes the CANDIDATE'S OWN normal, brings it into the space of the
+        /// screen ray, and dots the two: a positive dot — the normal pointing
+        /// the same way the ray travels, i.e. away from the viewer — REJECTS.
+        /// At `backFace` ON the test is skipped and the candidate is accepted
+        /// unconditionally. A ZERO normal is never rejected (its dot is 0, and
+        /// the reject is strict `> 0`); that clause is the reference's own,
+        /// not a robustness flourish of ours.
+        ///
+        /// The normal is the UNIFORM (unweighted) average of the incident face
+        /// normals — the reference's own default vertex-normal convention,
+        /// documented as such and separately confirmed against it on a
+        /// deform-tool fixture. `Mesh.faceNormal` returns a UNIT vector, so
+        /// summing it is that average and not the area-weighted one a raw
+        /// Newell sum would give. A vertex with no incident faces sums to zero
+        /// and is therefore admitted, which is the same answer the border half
+        /// gives face-less geometry.
+        ///
+        /// No transform is applied to the normal where the reference applies
+        /// its view matrix: it needs one because the ray it holds and the mesh
+        /// it filters are in different spaces, and ours are both in world
+        /// space (`Document` has no per-layer transform yet). If that ever
+        /// changes, this is the line that has to learn about it.
+        ///
+        /// OURS, and unmeasured — the UN-AIMED case. The reference has no such
+        /// state: it writes its screen ray immediately before the candidate
+        /// search, so the ray is always there when the filter runs. Ours can
+        /// be asked before an aim (`admits` is a public seam), and there the
+        /// orientation test is SKIPPED rather than inverted into a rejection.
+        /// Skipping is what the measured predicate itself does with a
+        /// degenerate operand — a zero normal is admitted — while rejecting
+        /// would be a policy no measurement carries. The one production caller
+        /// (`resolveSnapTargetVert`) aims before it asks.
+        ///
+        /// NOT cached, deliberately. A per-vertex normal array keyed on
+        /// `MeshCacheKey` would go stale under a position-only edit, because
+        /// that key is a mutation COUNTER and this tree has transform paths
+        /// that move vertices without bumping it — and a stale normal is a
+        /// silently wrong admission. Recomputing costs one walk of the
+        /// candidate's own face fan, which the border half's
+        /// `edgePolygonCounts()` already dwarfs.
+        private bool orientationAdmits(uint vi) {
+            if (backFaceOk_) return true;   // the test is not run at all
+            if (!aimed_)     return true;   // no ray to test against — see above
+            Vec3 n = Vec3(0, 0, 0);
+            foreach (fi; mesh_.facesAroundVertex(vi))
+                n = n + mesh_.faceNormal(cast(uint)fi);
+            return !(dot(n, aimDir_) > 0.0f);
         }
 
         // ---- SnapGuide ----------------------------------------------------
@@ -2479,7 +2617,7 @@ public:
     /// strand one.
     private void registerSnapGuide() {
         auto g = snapGuide();
-        g.retarget(meshOrNull(), innerSnap_);
+        g.retarget(meshOrNull(), innerSnap_, backFace_);
         if (auto st = snapStageForGesture()) st.addGuide(g);
     }
 
@@ -2542,7 +2680,7 @@ public:
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
         if (!dragSnap_.enabled) return -1;
         auto g = snapGuide();
-        g.retarget(meshOrNull(), innerSnap_);
+        g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
                                 &g.admits);
@@ -7676,6 +7814,12 @@ public:
         // snap target may resolve to — border-only when off, the interior
         // too when on.
         root["innerSnap"] = JSONValue(innerSnap_);
+        // The ORIENTATION half of that same admission policy (task 0538):
+        // whether a candidate whose own normal faces away from the viewer may
+        // still be the pen's snap target. Published for the same reason
+        // `innerSnap` is — the flag changes which element a drag lands on, so
+        // an automated run has to be able to read back which branch it set.
+        root["backFace"] = JSONValue(backFace_);
         // The fourth sticky flag (task 0494): whether a Remove-mode edge
         // dissolve KEEPS the vertices whose whole polygon fan it consumed.
         // Observability matters more here than for the others — the flag
@@ -10967,7 +11111,14 @@ unittest {
     m.addVertex(Vec3( 0.3f, 0, -0.3f));   // 1
     m.addVertex(Vec3( 0.3f, 0,  0.3f));   // 2
     m.addVertex(Vec3(-0.3f, 0,  0.3f));   // 3
-    m.addFace([0u, 1u, 2u, 3u]);
+    // Wound [0,3,2,1] and not [0,1,2,3]: this rig's camera is the default
+    // View's, which sits ABOVE the XZ plane, and [0,1,2,3] gives a -Y normal
+    // — the quad would face AWAY from it. Split lands on a snap target, and a
+    // back-facing candidate is not one at `backFace`'s measured default (task
+    // 0538), so the wrong winding would turn the whole case into a no-op that
+    // passes nothing. The undirected edge set, the vertex indices and the
+    // 0→2 diagonal are all identical either way.
+    m.addFace([0u, 3u, 2u, 1u]);
     m.buildLoops();
 
     Viewport vp = view.viewport();
@@ -11895,6 +12046,44 @@ version (unittest) private Viewport makeGridPlaneTestViewport() {
     import std.math : PI;
     Viewport vp;
     vp.eye    = Vec3(0, 5, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    vp.x = 0;
+    vp.y = 0;
+    return vp;
+}
+
+/// The same camera on the OTHER side of the plane — eye at -Y, everything
+/// else identical (same distance, same FOV, same 800x800, so a grid cell is
+/// still 80 px).
+///
+/// It exists because of a measured fact about `makeGridPlane` that is easy to
+/// get backwards: the quads that factory emits have a normal of **-Y**. The
+/// traversal `(i,j) → (i,j+1) → (i+1,j+1) → (i+1,j)` gives a Newell (and
+/// first-triangle cross) normal of exactly `(0, -2, 0)` on a `makeGridPlane(2)`
+/// cell — computed, not assumed. So `makeGridPlaneTestViewport` above, at +Y,
+/// looks at the BACK of that plane.
+///
+/// That did not matter while nothing in the pen tested orientation. It matters
+/// now: `backFace` (task 0538) refuses a back-facing snap candidate at its
+/// measured default, so a snap-target rig on the +Y camera would produce its
+/// expected no-op for the WRONG reason and its expected landing not at all.
+/// Rigs whose subject is the snap target therefore look from the side the
+/// polygons face. Rigs whose subject is something else (hover resolution,
+/// dispatch routing) keep the +Y camera — they never reach this gate.
+///
+/// The alternative — reversing `makeGridPlane`'s winding — was rejected on
+/// purpose: that factory is production code with 200+ call sites (scene reset,
+/// the perf meshes, falloff and symmetry fixtures), and flipping its normals
+/// to fix a test camera would be a mesh-wide behaviour change smuggled in as a
+/// test edit.
+version (unittest) private Viewport makeGridPlaneFrontViewport() {
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+    Viewport vp;
+    vp.eye    = Vec3(0, -5, 0);
     vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
     vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
     vp.width  = 800;
@@ -13395,18 +13584,20 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 11, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+    assert(ps.length == 12, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
                           ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483), the Smooth "
                           ~ "strength, the two display toggles (task 0499), the Inner Snap "
-                          ~ "flag (task 0496), the Keep Vertices flag (task 0494) and the two "
-                          ~ "Fill attributes (task 0488) — every later Param is APPENDED, "
-                          ~ "never a full-replace");
-    assert(ps[$ - 2].name == "range" && ps[$ - 1].name == "quadOnly",
-        "the two Fill attributes must be APPENDED LAST, in that order");
-    assert(ps[$ - 2].hints.hasMinF && ps[$ - 2].hints.minF == 0.0f && !ps[$ - 2].hints.hasMaxF,
+                          ~ "flag (task 0496), the Keep Vertices flag (task 0494), the two "
+                          ~ "Fill attributes (task 0488) and the Backface flag (task 0538) — "
+                          ~ "every later Param is APPENDED, never a full-replace");
+    assert(ps[$ - 1].name == "backFace",
+        "the Backface flag must be APPENDED LAST (task 0538)");
+    assert(ps[$ - 3].name == "range" && ps[$ - 2].name == "quadOnly",
+        "the two Fill attributes must keep their positions, in that order");
+    assert(ps[$ - 3].hints.hasMinF && ps[$ - 3].hints.minF == 0.0f && !ps[$ - 3].hints.hasMaxF,
         "`range`'s bounds are the MEASURED ones: min 0.0 and NO upper bound — not a "
       ~ "sane-looking pair invented at the call site");
-    assert(ps[$ - 1].kind == Param.Kind.Bool && ps[$ - 1].default_.b == true,
+    assert(ps[$ - 2].kind == Param.Kind.Bool && ps[$ - 2].default_.b == true,
         "`quadOnly` is the measured boolean count gate, default ON");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
@@ -13418,10 +13609,20 @@ unittest {
     assert(s0["addLoopMiddle"].type == JSONType.false_, "must start OFF");
     assert("splitAtMiddle" !in s0,
         "the option is no longer attached to Split — the old key must be gone, not aliased");
+    // Task 0538: the flag has to be READABLE from outside, not merely settable.
+    // Without the readback an automated run cannot tell "I set Backface and the
+    // candidate was still refused" from "my set never landed" — the exact
+    // failure mode that has manufactured false divergences before.
+    assert(s0["backFace"].type == JSONType.false_,
+        "/api/tool/state must publish `backFace`, starting at its measured default OFF");
 
     t.addLoopMiddle_ = true;
+    t.backFace_      = true;
     auto s1 = t.toolStateJson();
     assert(s1["addLoopMiddle"].type == JSONType.true_, "must report a live toggle");
+    assert(s1["backFace"].type == JSONType.true_,
+        "and `backFace` must report a live toggle too, not a snapshot of the default");
+    t.backFace_ = false;
 
     t.resyncSession();
     assert(t.addLoopMiddle_,
@@ -13556,9 +13757,38 @@ unittest {
     assert(!ps[8].default_.b && !t.keepVertex_,
         "keepVertex must default OFF — purging the consumed vertices is the measured default");
 
-    t.edgeLoop_ = t.edgeSlide_ = t.innerSnap_ = t.keepVertex_ = true;
+    // Backface (task 0538) — the ORIENTATION half of the admission policy
+    // `innerSnap` is the topology half of, APPENDED last, default OFF
+    // (measured). Index 11 for the same reason innerSnap is 7 and keepVertex
+    // is 8: APPEND-never-replace, so a merge shifts the index, never the order.
+    //
+    // The default is the whole point of this row too: with it OFF the pen's
+    // snap target refuses a candidate whose own normal faces away from the
+    // viewer. Flipping this literal to `true` would silently restore the
+    // pre-0538 behaviour, which was the ON branch tool-wide.
+    assert(ps[11].name == "backFace" && ps[11].kind == Param.Kind.Bool);
+    assert(ps[11].bptr is &t.backFace_, "backFace must bind directly to backFace_");
+    assert(!ps[11].default_.b && !t.backFace_,
+        "backFace must default OFF — refusing back-facing snap candidates is the measured "
+      ~ "default, and it is the branch we did NOT ship before");
+
+    // Every attr the form file names has to exist here, and every attr here has
+    // to be reachable by its wire name — `validateForms` enforces that at boot,
+    // so a typo in either direction is a startup failure and not a silent
+    // no-op. Pinned by NAME, so a rename is a deliberate edit in both places.
+    static immutable string[12] wantNames = [
+        "middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
+        "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace",
+    ];
+    assert(ps.length == wantNames.length,
+        "the published attribute list changed size — add the row to `wantNames` deliberately");
+    foreach (i, want; wantNames)
+        assert(ps[i].name == want,
+            "published attr " ~ want ~ " must keep its wire name and its position");
+
+    t.edgeLoop_ = t.edgeSlide_ = t.innerSnap_ = t.keepVertex_ = t.backFace_ = true;
     t.resyncSession();
-    assert(t.edgeLoop_ && t.edgeSlide_ && t.innerSnap_ && t.keepVertex_,
+    assert(t.edgeLoop_ && t.edgeSlide_ && t.innerSnap_ && t.keepVertex_ && t.backFace_,
         "the flags must survive resyncSession() — sticky options, not gesture state");
 }
 
@@ -14091,7 +14321,12 @@ unittest {
     m.addVertex(Vec3( 0.8f, 0, -0.8f));   // 1
     m.addVertex(Vec3( 0.8f, 0,  0.8f));   // 2
     m.addVertex(Vec3(-0.8f, 0,  0.8f));   // 3
-    m.addFace([0u, 1u, 2u, 3u]);
+    // Wound toward the default View camera (above the XZ plane) for the same
+    // reason the e2e Split rig is (task 0538): this block's rig GUARD asserts
+    // that the midpoint pixel resolves no vertex, and on a back-facing quad
+    // that guard would hold because NOTHING resolves — the guard, and every
+    // no-op assertion it protects, would be vacuous.
+    m.addFace([0u, 3u, 2u, 1u]);
     m.buildLoops();
 
     Viewport vp = view.viewport();
@@ -16453,6 +16688,172 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// Task 0538 — `backFace`: the ORIENTATION half of the pen's admission rule.
+//
+// MEASURED: at the default (OFF) a candidate whose own normal points away from
+// the viewer is refused; at ON the orientation test is not run at all. The
+// normal is the candidate's own — the uniform average of its incident face
+// normals — and the reject is a strict `dot > 0` against the ONE screen ray of
+// the query, so a zero normal survives.
+//
+// The rig is one quad, driven from BOTH sides of itself, so each claim is a
+// pair of cells that differ in exactly one thing. Nothing here reads a
+// hand-computed pixel: the aim is the candidate's own projection.
+//
+// FAILS ON THE OLD BEHAVIOUR: before this task the pen's snap admission had no
+// orientation test at all — i.e. it shipped the ON branch while the measured
+// default is OFF — so every "refused" assertion below was an "admitted".
+// ---------------------------------------------------------------------------
+unittest {
+    // One quad on the XZ plane wound to a +Y normal (`[0,3,2,1]`; the
+    // `[0,1,2,3]` order gives -Y — see `makeGridPlaneFrontViewport`).
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1));
+    m.addVertex(Vec3( 1, 0, -1));
+    m.addVertex(Vec3( 1, 0,  1));
+    m.addVertex(Vec3(-1, 0,  1));
+    m.addFace([0u, 3u, 2u, 1u]);
+    m.buildLoops();
+    Mesh* mp = &m;
+    assert(m.faceNormal(0).y > 0.9f,
+        "setup: the quad must face +Y, or the two cameras below are not on the sides "
+      ~ "this case names");
+
+    Viewport above = makeGridPlaneTestViewport();       // eye +Y — the FRONT here
+    Viewport below = makeGridPlaneFrontViewport();      // eye -Y — the BACK here
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+
+    // (1) The law, both directions, at the measured default. Every vertex of
+    // this quad is a border vertex, so the border half admits all four and
+    // whatever difference the two cells show is the orientation half's.
+    g.retarget(mp, /*innerSnap*/false);                 // backFace defaults OFF
+    foreach (vi; 0 .. m.vertices.length) {
+        g.aimAt(above, cast(int)projectedX(mp, cast(uint)vi, above),
+                       cast(int)projectedY(mp, cast(uint)vi, above));
+        assert(g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "a FRONT-facing vertex is admitted at the measured default");
+        g.aimAt(below, cast(int)projectedX(mp, cast(uint)vi, below),
+                       cast(int)projectedY(mp, cast(uint)vi, below));
+        assert(!g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "and the very same vertex, seen from the other side, is REFUSED — this is the "
+          ~ "whole of what `backFace` at its default does");
+    }
+
+    // (2) `backFace` ON skips the test: the back-facing cell now admits, and
+    // the front-facing one is unchanged (the flag OPENS, it never closes).
+    g.retarget(mp, /*innerSnap*/false, /*backFace*/true);
+    foreach (vi; 0 .. m.vertices.length) {
+        g.aimAt(below, cast(int)projectedX(mp, cast(uint)vi, below),
+                       cast(int)projectedY(mp, cast(uint)vi, below));
+        assert(g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "backFace ON admits the back side");
+        g.aimAt(above, cast(int)projectedX(mp, cast(uint)vi, above),
+                       cast(int)projectedY(mp, cast(uint)vi, above));
+        assert(g.admits(SnapType.Vertex, cast(int)vi, 0),
+            "and still admits the front side — the flag opens a set, it does not swap one");
+    }
+
+    // (3) The two halves are INDEPENDENT: `backFace` must not smuggle the
+    // interior open. A 3x3 grid seen from its own front, with backFace ON and
+    // innerSnap at its default, still refuses the interior vertex.
+    {
+        import mesh : makeGridPlane;
+        Mesh grid = makeGridPlane(2);
+        Mesh* gp  = &grid;
+        Viewport front = makeGridPlaneFrontViewport();
+        auto g2 = new TopologyPenTool.PenSnapGuide();
+        g2.retarget(gp, /*innerSnap*/false, /*backFace*/true);
+        g2.aimAt(front, cast(int)projectedX(gp, 4, front), cast(int)projectedY(gp, 4, front));
+        assert(!g2.admits(SnapType.Vertex, 4, 0),
+            "backFace opens the ORIENTATION, never the topology — the interior vertex stays "
+          ~ "refused while innerSnap is off");
+        g2.retarget(gp, /*innerSnap*/true, /*backFace*/false);
+        assert(g2.admits(SnapType.Vertex, 4, 0),
+            "and the converse: innerSnap opens the interior of a FRONT-facing mesh without "
+          ~ "needing backFace at all");
+    }
+
+    // (4) A ZERO normal is never rejected — the reference's own clause, and
+    // ours by the same strict `> 0`. Wire geometry has no incident face, so its
+    // accumulated normal is exactly zero from every camera.
+    {
+        Mesh w;
+        w.addVertex(Vec3(0, 0, 0));
+        w.addVertex(Vec3(1, 0, 0));
+        w.addEdge(0, 1);
+        w.buildLoops();
+        Mesh* wp = &w;
+        auto g3 = new TopologyPenTool.PenSnapGuide();
+        g3.retarget(wp, /*innerSnap*/false);            // backFace at its default
+        foreach (ref Viewport cam; [above, below]) {
+            g3.aimAt(cam, cast(int)projectedX(wp, 0, cam), cast(int)projectedY(wp, 0, cam));
+            assert(g3.admits(SnapType.Vertex, 0, 0),
+                "a vertex with no incident face has a zero normal, and a zero normal is not "
+              ~ "back-facing from anywhere");
+        }
+    }
+
+    // (5) The UN-AIMED case, which is OURS and not the reference's (it has no
+    // such state). The test is skipped rather than inverted into a rejection —
+    // pinned because "an unaimed guide silently rejects everything" would be a
+    // policy nobody measured, and would be indistinguishable from a bug.
+    auto g4 = new TopologyPenTool.PenSnapGuide();
+    g4.retarget(mp, /*innerSnap*/false);
+    assert(!g4.isAimed(), "setup: a fresh guide is not aimed");
+    foreach (vi; 0 .. m.vertices.length)
+        assert(g4.admits(SnapType.Vertex, cast(int)vi, 0),
+            "an un-aimed guide has no ray to test against, so the orientation half does not "
+          ~ "run — the border half still answers on its own");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0538 — the attribute reaches the guide through the REAL registration,
+// and it is sticky.
+//
+// The field, the Param and `/api/tool/state` are one thing; that a press
+// carries the CURRENT value of the flag into the object the service holds is
+// another, and it is the one a user notices. Driven through
+// `registerSnapGuide`, the same call the press makes.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, -1));
+    m.addVertex(Vec3( 1, 0, -1));
+    m.addVertex(Vec3( 1, 0,  1));
+    m.addVertex(Vec3(-1, 0,  1));
+    m.addFace([0u, 3u, 2u, 1u]);          // +Y normal
+    m.buildLoops();
+    Mesh* mp = &m;
+
+    Viewport back = makeGridPlaneFrontViewport();   // eye -Y: this quad's BACK
+
+    auto t = new TopologyPenTool();
+    t.meshSrc_ = () => mp;
+
+    assert(!t.backFace_, "a fresh tool must start at the measured default, OFF");
+
+    t.registerSnapGuide();
+    auto g = t.snapGuide_;
+    g.aimAt(back, cast(int)projectedX(mp, 0, back), cast(int)projectedY(mp, 0, back));
+    assert(!g.admits(SnapType.Vertex, 0, 0),
+        "with the tool's flag at its default the registered guide refuses the back side");
+
+    t.backFace_ = true;
+    t.registerSnapGuide();               // the same object, re-pointed
+    assert(t.snapGuide_ is g, "the tool keeps ONE guide and re-points it; the registration is "
+                            ~ "what is per-gesture");
+    g.aimAt(back, cast(int)projectedX(mp, 0, back), cast(int)projectedY(mp, 0, back));
+    assert(g.admits(SnapType.Vertex, 0, 0),
+        "and a press taken with the flag ON carries it into the guide — a value that never "
+      ~ "reaches the admission rule is a dead toggle");
+
+    t.resyncSession();
+    assert(t.backFace_,
+        "sticky across resyncSession(), like every other dropdown-adjacent option on this tool");
+}
+
+// ---------------------------------------------------------------------------
 // Task 0523 — the guide's border classification follows the mesh it guards.
 //
 // The scan this replaces recounted the whole mesh on every call, so staleness
@@ -16497,7 +16898,11 @@ unittest {
 
     Mesh m = makeGridPlane(2);
     Mesh* mp = &m;
-    Viewport vp = makeGridPlaneTestViewport();
+    // The FRONT camera: this block AIMS the guide, and an aimed guide runs the
+    // orientation test (task 0538). The grid's quads face -Y, so from the +Y
+    // camera every candidate here would be refused for being back-facing and
+    // the priority/distance assertions below would never be reached.
+    Viewport vp = makeGridPlaneFrontViewport();
 
     auto g = new TopologyPenTool.PenSnapGuide();
     g.retarget(mp, false);
@@ -16737,7 +17142,12 @@ unittest {
         Rig r;
         r.t    = t;
         r.m    = m;
-        r.vp   = makeGridPlaneTestViewport();
+        // The FRONT camera (task 0538): the grid's quads face -Y, and this
+        // case's innerSnap-off leg expects a NO-OP. From the +Y camera that
+        // no-op would arrive through the `backFace` gate instead of through
+        // the border rule, i.e. it would pass while testing nothing — the
+        // same argument this rig already makes for keeping snapping on.
+        r.vp   = makeGridPlaneFrontViewport();
         r.subj = new SubjectPacket();
         r.subj.mesh     = m;
         r.subj.viewport = r.vp;
@@ -16825,7 +17235,8 @@ unittest {
 // does this drag land on" query and Split's target vertex C is its only
 // caller.
 //
-// Rig: `makeGridPlane(2)` down -Y, 80px per cell. Quad [1,2,5,4] has BORDER
+// Rig: `makeGridPlane(2)` seen from -Y (the side its quads face — task 0538,
+// `makeGridPlaneFrontViewport`), 80px per cell. Quad [1,2,5,4] has BORDER
 // vertices 1 and 5 on its diagonal — both border, so `innerSnap` is not in
 // play here and this case isolates the RADIUS. Vertex 5 projects with 80px of
 // clear space to every other vertex, so a release offset from it can be read
@@ -16873,7 +17284,10 @@ unittest {
         t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_split", "Topology Split",
                                                        MeshEditScope.Geometry);
-        auto vp = makeGridPlaneTestViewport();
+        // The FRONT camera (task 0538) — this case's subject is the RADIUS, so
+        // the geometry has to be on the side the pen will accept at all. See
+        // `makeGridPlaneFrontViewport`.
+        auto vp = makeGridPlaneFrontViewport();
         auto subj = new SubjectPacket();
         subj.mesh     = m;
         subj.viewport = vp;
@@ -16896,8 +17310,10 @@ unittest {
         assert(t.onMouseButtonDown(down, vts), "a plain-MMB press on a vertex must consume");
         assert(t.splitArmed_ && t.splitSourceVert_ == 1, "and it must arm Split on v1");
 
-        // Offset along +x from v5: the grid's next vertex in that direction is
-        // off the mesh entirely, and every other vertex is >= 80px away.
+        // Offset along +x from v5. On this camera screen-+x runs toward the
+        // grid's centre, so the nearest OTHER vertex on that line is v4, one
+        // full cell — 80px — away: every offset this block uses (20, 26) is
+        // still unambiguously a distance to v5 and to nothing else.
         SDL_MouseButtonEvent up;
         up.button = SDL_BUTTON_MIDDLE;
         up.x = cast(int)(pb.x + offsetPx); up.y = cast(int)pb.y;
@@ -16923,7 +17339,7 @@ unittest {
 
     // The value last, as a label on the behaviour above rather than a
     // substitute for it. Note it is deliberately NOT the press-pick reach.
-    auto vp = makeGridPlaneTestViewport();
+    auto vp = makeGridPlaneFrontViewport();
     assert(topoPenSnapAcceptPx(vp, SnapPacket.init) == 24.0f,
         "the drag-snap acceptance is 24px at scale 1, its own measured number — "
         ~ "and it is the snap service's default inner range, not a constant the "
