@@ -36,6 +36,7 @@ module fixture_helpers;
 
 import std.json;
 import std.net.curl : get, post;
+import std.conv : to;
 import std.math : fabs, PI;
 import std.format : format;
 import std.algorithm : sort;
@@ -1133,6 +1134,61 @@ void runSelectLoopSuite(string fixtureJson) {
         foreach (k, _; got)
             assert((k in want) !is null,
                 format("%s: unexpected extra edge (key %d) in selection", cn, k));
+    }
+}
+
+/// select.loop face/vertex parity (task 0390) — polygon/vertex-mode
+/// counterpart of runSelectLoopSuite. Cases carry `mode` ("vertex" |
+/// "polygon"), a `seed` (vertex indices for vertex mode, polygon indices for
+/// polygon mode — 1 or 2 entries) and `expected` (the frozen reference
+/// selection as vertex/polygon indices, verbatim from the capture).
+void runSelectLoopFvSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<select-loop-fv-suite>";
+    requireProvenance(fx, suite);
+
+    foreach (cs; fx["cases"].array) {
+        string cn   = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        string mode = cs["mode"].str;
+        bool isVert = mode == "vertex";
+
+        post(BASE ~ "/api/reset?empty=true", "");
+        auto lr = parseJSON(cast(string) post(BASE ~ "/api/load-mesh", cs["mesh"].toString));
+        if ("status" in lr) assert(lr["status"].str == "ok",
+            format("%s: load-mesh failed: %s", cn, lr.toString));
+
+        string indices;
+        foreach (i, s; cs["seed"].array) {
+            if (i) indices ~= ",";
+            indices ~= s.integer.to!string;
+        }
+        auto selR = parseJSON(cast(string) post(BASE ~ "/api/select",
+            format(`{"mode":"%s","indices":[%s]}`,
+                   isVert ? "vertices" : "polygons", indices)));
+        if ("status" in selR) assert(selR["status"].str == "ok",
+            format("%s: seed select failed: %s", cn, selR.toString));
+
+        auto cmdR = parseJSON(cast(string) post(BASE ~ "/api/command", `{"id":"select.loop"}`));
+        if ("status" in cmdR) assert(cmdR["status"].str == "ok",
+            format("%s: select.loop command failed: %s", cn, cmdR.toString));
+
+        auto sel = parseJSON(cast(string) get(BASE ~ "/api/selection"));
+        string key = isVert ? "selectedVertices" : "selectedFaces";
+
+        bool[long] got;
+        foreach (si; sel[key].array) got[si.integer] = true;
+        bool[long] want;
+        foreach (si; cs["expected"].array) want[si.integer] = true;
+
+        assert(got.length == want.length,
+            format("%s: selection-count mismatch — expected %d, got %d",
+                   cn, want.length, got.length));
+        foreach (k, _; want)
+            assert((k in got) !is null,
+                format("%s: expected %s %d missing from selection", cn, mode, k));
+        foreach (k, _; got)
+            assert((k in want) !is null,
+                format("%s: unexpected extra %s %d in selection", cn, mode, k));
     }
 }
 
