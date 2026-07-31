@@ -9,7 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
-import drag : screenAxisDelta;
+import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -298,9 +298,17 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || !gizmoValid) return false;
+        // The previous pixel comes from the cooked gesture, not from this
+        // tool's own pair — same integer subtraction, sourced one level up.
+        // `dragLastMX/MY` stay written as the fallback when no gesture is
+        // published and as the other half of the debug agreement check.
+        import toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         dragLastMX, dragLastMY, prevMX, prevMY);
         Vec3 axis = (dragPart == PART_OFFSET) ? offsetAxis : scaleAxis;
         bool skip;
-        Vec3 delta = screenAxisDelta(e.x, e.y, dragLastMX, dragLastMY,
+        Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
                                      anchor, axis, cachedVp, skip);
         if (!skip) {
             float d = dot(delta, axis);
