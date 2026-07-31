@@ -34,7 +34,10 @@ class SelectLoop : Command {
         //  Edge loop                                                           //
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Edges) {
-            if (mesh.selectedEdges.length < mesh.edges.length)
+            // Read the marks array's length directly: `mesh.selectedEdges` is
+            // a @property that materializes a whole-mesh bool[] per read, and
+            // `.length` was the only thing wanted from it.
+            if (mesh.edgeMarks.length < mesh.edges.length)
                 mesh.resizeEdgeSelection();
 
             bool[] initSel = mesh.selectedEdges.dup;
@@ -50,7 +53,11 @@ class SelectLoop : Command {
         //  Vertex loop                                                         //
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Vertices) {
-            if (mesh.selectedVertices.length < mesh.vertices.length)
+            // Same non-allocating length read as the edge branch above. The
+            // resize itself STAYS: unlike the polygon branch below,
+            // resizeVertexSelection() also resizes the Point-domain mesh maps,
+            // which setVerticesSelectedFrom() does not do.
+            if (mesh.vertexMarks.length < mesh.vertices.length)
                 mesh.resizeVertexSelection();
 
             // Recovered-algorithm core (task 0390, mesh.selectLoopVertices):
@@ -71,8 +78,11 @@ class SelectLoop : Command {
         // neighbours skipped, visited polygons stop the trace, multi-group
         // rescan over the remaining selected polygons. Result REPLACES the
         // selection (reference purge-then-commit).
-        if (mesh.selectedFaces.length < mesh.faces.length)
-            mesh.resizeFaceSelection();
+        // No resizeFaceSelection() guard here: selectLoopFaces() returns a
+        // faces.length array and setFacesSelectedFrom() resizes faceMarks to
+        // it (and grows faceSelectionOrder too, which resizeFaceSelection
+        // does not) — so the guard was redundant, and reading it through the
+        // allocating `mesh.selectedFaces` @property cost a whole-mesh bool[].
         mesh.setFacesSelectedFrom(mesh.selectLoopFaces());
 
         return true;
