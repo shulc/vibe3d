@@ -43,6 +43,9 @@ class SnapStage : Stage, Operator {
     // The guide registry (S4(a) of doc/toolpipe_architecture_plan.md). Empty
     // in this phase and in every existing code path: nothing registers.
     private SnapGuide[] _guides;
+    // How many live consumers have asked for the per-cursor RESULT. Zero here
+    // and everywhere in this tree — see `demandHit` for what that buys.
+    private int _hitDemand;
 
     Task task() const { return Task.Snap; }
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
@@ -126,6 +129,59 @@ class SnapStage : Stage, Operator {
         foreach (g; _guides) g.limits(innerRangePx, outerRangePx);
     }
 
+    // ---- the DEMAND gate on the per-cursor RESULT --------------------------
+    //
+    // MEASURED COST, and it is why this gate exists. The publication below is
+    // one full `snapCursor` per cursor-valid pipeline evaluation, and
+    // `SubjectPacket.cursorValid` is stamped on every mouse-motion event that
+    // reaches an armed tool — there is no button-down term in it. So with
+    // snapping switched on at this stage's own default type set, a plain hover
+    // over a 100k-vertex mesh paid an extra element-class candidate walk per
+    // motion event: the pipeline evaluation went from 0.09 ms to 4.6 ms per
+    // event, 28 % of a 60 fps frame added to moving the mouse. The numbers and
+    // the driver are in task 0526; task 0531 re-ran them with this gate in.
+    //
+    // NOBODY READS THE PACKET. Outside this stage, its own unittests and the
+    // `PacketKind` registration in `operator.d`, `SnapHitPacket` does not
+    // appear in the tree — so 100 % of that work was speculative. The gate is
+    // therefore behaviour-neutral by construction: the only observable
+    // difference is the absence of a packet no code path consults.
+    //
+    // A COUNTER, not a bool, and the reason is in S2's own phase (b): six
+    // consumers migrate onto this packet ONE COMMIT AT A TIME, so two of them
+    // are live at once for most of that phase. A bool would let the first one
+    // to release starve the rest. An unpaired release is reported rather than
+    // wrapped, because a demand stuck ON costs time while a demand wrongly
+    // OFF is a consumer reading nothing.
+    //
+    // NOT CLEARED BY `reset()`, deliberately, and unlike the guide registry
+    // above: a guide is scoped to a GESTURE and a scene reset ends every
+    // gesture there was, but a demand is scoped to a CONSUMER, and
+    // `/api/reset` resets the scene, not the wiring. Clearing it would
+    // silently starve a consumer that is still alive and still reading —
+    // failure in the direction that changes behaviour rather than the one
+    // that only costs time.
+
+    /// Ask for the per-cursor RESULT packet to be published. Pair with
+    /// `releaseHit` for the consumer's own lifetime — for a permanent
+    /// consumer (an overlay renderer, say) that pairing is app start / app
+    /// exit, and for a gesture-scoped one it is press / release.
+    void demandHit() { ++_hitDemand; }
+
+    /// Withdraw one demand. Returns false — WITHOUT going negative — when
+    /// there was none to withdraw, which is an unpaired release in the caller.
+    bool releaseHit() {
+        if (_hitDemand <= 0) return false;
+        --_hitDemand;
+        return true;
+    }
+
+    /// Whether any consumer currently wants the result packet.
+    bool hitDemanded() const { return _hitDemand > 0; }
+
+    /// How many demands are outstanding. 0 in this tree, always.
+    int hitDemandCount() const { return _hitDemand; }
+
     // ---- the per-cursor RESULT (S2 of doc/toolpipe_architecture_plan.md) ---
     //
     // The snap query is the one thing this stage never published: it shipped
@@ -147,6 +203,10 @@ class SnapStage : Stage, Operator {
     // ConstrainHitPacket does. A published packet with `snapped == false`
     // means the query ran and found nothing.
     private void publishSnapHit(ref VectorStack vts, const ref SnapPacket cfg) {
+        // DEMAND first, before the cursor gate and before the query — this is
+        // the whole of the fix for the cost measured in task 0526. A query
+        // whose answer nobody asked for is not run at all.
+        if (_hitDemand <= 0) return;
         import toolpipe.packets : SubjectPacket;
         import snap             : snapCursor, SnapResult,
                                   backgroundSourceLayerIndices;
@@ -594,6 +654,10 @@ unittest {
     st.enabledTypes = SnapType.Vertex;   // one type: no grid / workplane traffic
     st.innerRangePx = 20.0f;
     st.outerRangePx = 120.0f;
+    // This block is the stage's own consumer, so it says so. Everything below
+    // describes what a DEMANDED publication does; the undemanded case has its
+    // own block (0, further down) and its own assertion.
+    st.demandHit();
 
     // Fixture premises, stated rather than assumed.
     assert(pixDist(m.vertices[0], ax, ay) < st.innerRangePx,
@@ -629,6 +693,28 @@ unittest {
     subj.cursorX     = ax;
     subj.cursorY     = ay;
     subj.cursorValid = true;
+
+    // --- 0. DEMAND: a cursor-valid evaluation with no consumer runs nothing --
+    // The cursor gate above bounds WHEN the query may run; this one bounds
+    // WHETHER it runs at all. Without it the stage spent a full element-class
+    // candidate walk on every mouse-motion event that reached an armed tool,
+    // for a packet with no reader (task 0526's measurement, task 0531's fix).
+    {
+        assert(st.releaseHit(), "the block raised a demand above, so it holds one");
+        assert(!st.hitDemanded && st.hitDemandCount == 0);
+        VectorStack vts;
+        vts.put(&subj);
+        assert(st.evaluate(vts), "the stage is enabled: the CONFIG still ships");
+        assert(vts.get!SnapPacket() !is null,
+            "the demand gate is on the RESULT only — the config packet is what "
+            ~ "the six existing snap consumers read, and it is unconditional");
+        assert(vts.get!SnapHitPacket() is null,
+            "S2 demand gate: with no consumer asking, the stage must publish no "
+            ~ "result — and, the point of the gate, must not run the query to "
+            ~ "produce one");
+        st.demandHit();
+        assert(st.hitDemanded && st.hitDemandCount == 1);
+    }
 
     // --- ...and no packet at all while the stage is disabled ----------------
     {
@@ -733,6 +819,138 @@ unittest {
         assert(*p == SnapHitPacket.init,
             "S2 contract: a miss is the packet's own defaults, field for field");
     }
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// The DEMAND gate on the per-cursor RESULT — task 0531, closing the cost that
+// task 0526 measured.
+//
+// The block above pins WHAT is published. This one pins that the publication
+// does not HAPPEN unasked, and it pins it the only way that is worth pinning:
+// by counting candidate enumerations, not packets. "No packet" would still
+// pass if the stage ran the whole query and then threw the answer away, and
+// the whole point of the gate is the query — an element-class walk over every
+// vertex, edge centre and polygon centre near the cursor, on every mouse-
+// motion event that reaches an armed tool.
+//
+// The counter is a registered guide, used as an instrument rather than as a
+// ranking policy: `RecordingGuide.proximity` is called once per candidate that
+// survives the gather range, and it counts. It admits nothing, so it cannot
+// influence what the block asserts about publication.
+//
+//   1. UNASKED. No demand — no candidate is enumerated, and no packet exists.
+//   2. ASKED. One demand — candidates are enumerated and the packet appears.
+//   3. COUNTER. Two consumers need two releases; one leaving does not starve
+//      the other. This is S2 phase (b)'s shape: six consumers migrate one
+//      commit at a time, so overlapping demands are the normal case.
+//   4. UNPAIRED RELEASE. Reported, not wrapped past zero.
+//   5. RESET. A scene reset does NOT withdraw a demand — see the contract at
+//      `demandHit`. This assertion exists because the neighbouring registry
+//      IS cleared there, and the difference has to be deliberate.
+// ---------------------------------------------------------------------------
+unittest {
+    import math             : Vec3, Viewport, lookAt, perspectiveMatrix,
+                              projectToWindowFull;
+    import mesh             : Mesh;
+    import toolpipe.packets : SubjectPacket;
+    import snap             : invalidateSnapGrids;
+    import editmode         : EditMode;
+    import std.math         : PI, round;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0)];      // one candidate, right under the cursor
+
+    float p0x, p0y, p0z;
+    assert(projectToWindowFull(m.vertices[0], vp, p0x, p0y, p0z));
+
+    auto st = new SnapStage();
+    st.enabled      = true;
+    st.enabledTypes = SnapType.Vertex;   // one type: one candidate walk
+    st.innerRangePx = 20.0f;
+    st.outerRangePx = 120.0f;
+
+    auto probe = new RecordingGuide();
+    st.addGuide(probe);
+
+    SubjectPacket subj;
+    subj.mesh        = &m;
+    subj.editMode    = EditMode.Vertices;
+    subj.viewport    = vp;
+    subj.cursorX     = cast(int)round(p0x);
+    subj.cursorY     = cast(int)round(p0y);
+    subj.cursorValid = true;            // the cursor gate is WIDE OPEN here
+
+    size_t evaluateOnce() {
+        invalidateSnapGrids();
+        immutable size_t before = probe.queries;
+        VectorStack vts;
+        vts.put(&subj);
+        assert(st.evaluate(vts), "an enabled stage always publishes its config");
+        assert(vts.get!SnapPacket() !is null,
+            "the demand gate governs the RESULT only; the CONFIG is what every "
+            ~ "existing consumer reads and it must keep shipping");
+        immutable bool published = vts.get!SnapHitPacket() !is null;
+        immutable size_t walked  = probe.queries - before;
+        assert(published == (walked > 0),
+            "the packet and the walk are the same event: a published packet "
+            ~ "means the query ran, an absent one means it did not");
+        return walked;
+    }
+
+    // --- 1. UNASKED ---------------------------------------------------------
+    assert(st.hitDemandCount == 0, "a fresh stage has no consumer");
+    assert(evaluateOnce() == 0,
+        "0531: with no consumer asking, a cursor-valid evaluation must not "
+        ~ "enumerate a single candidate — that walk, once per mouse-motion "
+        ~ "event, is the whole of the cost measured in task 0526");
+
+    // --- 2. ASKED -----------------------------------------------------------
+    st.demandHit();
+    assert(st.hitDemanded && st.hitDemandCount == 1);
+    assert(evaluateOnce() == 1,
+        "one consumer, one candidate in range, one enumeration — the gate "
+        ~ "withholds the query, it does not break it");
+
+    // --- 3. COUNTER: two consumers, two releases ----------------------------
+    st.demandHit();
+    assert(st.hitDemandCount == 2);
+    assert(st.releaseHit() && st.hitDemandCount == 1);
+    assert(evaluateOnce() == 1,
+        "one consumer leaving must not starve the one still reading — S2 "
+        ~ "phase (b) migrates six of them one commit at a time, so two live "
+        ~ "demands is the ordinary state, not an edge case");
+    assert(st.releaseHit() && st.hitDemandCount == 0);
+    assert(evaluateOnce() == 0, "the last consumer leaving closes the gate again");
+
+    // --- 4. UNPAIRED RELEASE ------------------------------------------------
+    assert(!st.releaseHit(),
+        "a release with no matching demand is a caller bug and is reported as "
+        ~ "one");
+    assert(st.hitDemandCount == 0,
+        "...and it must not go negative: a demand counter that wrapped would "
+        ~ "wedge the gate open for the life of the process");
+
+    // --- 5. RESET leaves the demand alone -----------------------------------
+    st.demandHit();
+    st.reset();
+    assert(st.hitDemandCount == 1,
+        "a demand is scoped to a CONSUMER, not to a gesture or a scene: "
+        ~ "`/api/reset` resets the scene, and a consumer that is still alive "
+        ~ "is still reading. The guide registry beside it IS cleared there, "
+        ~ "for the opposite reason (a guide IS gesture-scoped), and this "
+        ~ "assertion is what keeps the two from being confused for each other");
+    assert(st.guideCount == 0, "...while the registry did clear, as it must");
 
     invalidateSnapGrids();
 }
