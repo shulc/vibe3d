@@ -66,19 +66,10 @@ class SelectLoop : Command {
         // Every other derived-selection command in this family stamps its
         // output through Mesh.selectVertex/selectEdge/selectFace (select.ring,
         // select.expand, select.between, select.more) — and so does THIS
-        // command's own Edges branch above. That primitive's contract is: an
-        // element that was NOT already selected takes the next counter value,
-        // an already-selected one keeps the order it had. The two branches
-        // below reproduce exactly that contract on top of the bulk commit —
-        // surviving seeds keep the order of the click that made them, newly
-        // walked elements take fresh increasing values in index order, and
-        // dropped elements are cleared by the setter itself.
-        //
-        // The stamp is deliberately NOT pushed down into the shared setters:
-        // their other callers are state restores and internal re-selects
-        // (SelectionSnapshot.restore, select.connect, select.fill, and the
-        // post-topology reselects in mesh.d) where minting new order values
-        // would be wrong.
+        // command's own Edges branch above. `Mesh.selectVerticesFrom` /
+        // `selectFacesFrom` are the bulk form of that primitive: commit the
+        // selection AND stamp what it newly selects. See their doc comment in
+        // mesh.d for why the restore setters must NOT do this themselves.
 
         // ------------------------------------------------------------------ //
         //  Vertex loop                                                         //
@@ -95,17 +86,7 @@ class SelectLoop : Command {
             // seed = adjacent selected vertex PAIR; result REPLACES the
             // selection (reference purge-then-commit — a lone selected
             // vertex therefore clears it).
-            bool[] loopSel = mesh.selectLoopVertices();
-            // Which vertices the walk ADDS — must be read BEFORE the commit
-            // marks them selected (see the stamping note above).
-            bool[] added = new bool[](loopSel.length);
-            foreach (i; 0 .. loopSel.length)
-                added[i] = loopSel[i] && !mesh.isVertexSelected(i);
-            mesh.setVerticesSelectedFrom(loopSel);
-            // The commit setter grew vertexSelectionOrder to loopSel.length.
-            foreach (i; 0 .. added.length)
-                if (added[i])
-                    mesh.vertexSelectionOrder[i] = ++mesh.vertexSelectionOrderCounter;
+            mesh.selectVerticesFrom(mesh.selectLoopVertices());
             return true;
         }
 
@@ -120,19 +101,11 @@ class SelectLoop : Command {
         // rescan over the remaining selected polygons. Result REPLACES the
         // selection (reference purge-then-commit).
         // No resizeFaceSelection() guard here: selectLoopFaces() returns a
-        // faces.length array and setFacesSelectedFrom() resizes faceMarks to
-        // it (and grows faceSelectionOrder too, which resizeFaceSelection
-        // does not) — so the guard was redundant, and reading it through the
+        // faces.length array and the commit setter resizes faceMarks to it
+        // (and grows faceSelectionOrder too, which resizeFaceSelection does
+        // not) — so the guard was redundant, and reading it through the
         // allocating `mesh.selectedFaces` @property cost a whole-mesh bool[].
-        bool[] loopSel = mesh.selectLoopFaces();
-        bool[] added   = new bool[](loopSel.length);
-        foreach (i; 0 .. loopSel.length)
-            added[i] = loopSel[i] && !mesh.isFaceSelected(cast(int)i);
-        mesh.setFacesSelectedFrom(loopSel);
-        // The commit setter grew faceSelectionOrder to loopSel.length.
-        foreach (i; 0 .. added.length)
-            if (added[i])
-                mesh.faceSelectionOrder[i] = ++mesh.faceSelectionOrderCounter;
+        mesh.selectFacesFrom(mesh.selectLoopFaces());
 
         return true;
     }

@@ -8598,6 +8598,54 @@ struct Mesh {
         }
     }
 
+    // --- Bulk SELECT (as opposed to bulk RESTORE) --------------------------
+    // `setXSelectedFrom` above is a state-RESTORE setter: it writes the Select
+    // bit and NOTHING else, which is exactly right for undo/redo snapshot
+    // replay and for the post-topology re-selects that carry a rebuilt
+    // `XSelectionOrder` array alongside the new Select bits.
+    //
+    // It is the WRONG primitive for a command that COMPUTES a new selection
+    // (a loop walk, a flood fill, a region fill). Such a command is selecting
+    // elements on the user's behalf, and every consumer of selection history
+    // — select.loop's seed scan, select.more / select.less / select.between,
+    // and mesh.makePolygon, which derives face WINDING from vertex click order
+    // — reads `XSelectionOrder` with the convention "0 = not manually
+    // selected, sorts last". An element committed through the restore setter
+    // lands with order 0, so it sorts behind anything clicked afterwards even
+    // though it was selected first.
+    //
+    // `selectXFrom` is that missing primitive: commit the selection AND stamp
+    // the elements it newly selects, reproducing `selectX`'s own contract
+    // (an element that was not already selected takes the next counter value;
+    // an already-selected one keeps the order it had; a dropped one is
+    // cleared by the setter). The `bool[]` carries no traversal order, so the
+    // stamp runs in ascending index order — which is also the tie-break the
+    // consumers' sorts already apply among equal-order elements.
+    //
+    // Rule of thumb: restoring remembered state -> `setXSelectedFrom`;
+    // selecting on the user's behalf -> `selectXFrom`.
+    void selectVerticesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isVertexSelected(i);
+        setVerticesSelectedFrom(src);   // also grows vertexSelectionOrder
+        foreach (i, a; added)
+            if (a) vertexSelectionOrder[i] = ++vertexSelectionOrderCounter;
+    }
+    void selectEdgesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isEdgeSelected(i);
+        setEdgesSelectedFrom(src);      // also grows edgeSelectionOrder
+        foreach (i, a; added)
+            if (a) edgeSelectionOrder[i] = ++edgeSelectionOrderCounter;
+    }
+    void selectFacesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isFaceSelected(i);
+        setFacesSelectedFrom(src);      // also grows faceSelectionOrder
+        foreach (i, a; added)
+            if (a) faceSelectionOrder[i] = ++faceSelectionOrderCounter;
+    }
+
     void selectVertex(int idx) {
         if ((vertexMarks[idx] & Marks.Select) == 0)
             vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
