@@ -203,6 +203,15 @@ import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
+
+// Which page of the Tool Properties panel is showing. 0 = "Main" (the active
+// tool's properties plus every pipe stage's collapsible section, exactly the
+// single column this panel has always been); 1 = "Snapping". Module scope
+// because the panel is rebuilt from scratch every frame and the choice has to
+// outlive the frame that made it.
+private enum int kToolPropsTabMain      = 0;
+private enum int kToolPropsTabSnapping  = 1;
+private __gshared int g_toolPropsTab = kToolPropsTabMain;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
@@ -7916,128 +7925,205 @@ void main(string[] args) {
         // section must still be reachable to read/edit Start/End etc.).
         if ((activeTool !is null || anyFalloffActive())
             && (!command.g_testMode || g_toolPropertiesShown)) {
+            import toolpipe.stage : Stage, TaskCode;
+            // The BODY of a pipe stage's Tool Properties section: the
+            // config-driven form when one is registered for the stage family,
+            // the legacy provider panel otherwise, then the stage's own custom
+            // block. Extracted (task 0544) so the per-stage collapsing headers
+            // and the Snapping tab below render through ONE path and cannot
+            // drift into two behaviours for the same rows.
+            //
+            // Phase 6: prefer a config-driven stage form (bound to the stage
+            // via whenStage:, looked up by the stage's id()) over the legacy
+            // drawProvider path — same gating + kill switch as the tool-level
+            // form integration below. The stage IS a ParamProvider, so
+            // FormsPanel queries its live (type-filtered) params() per frame
+            // and hides rows whose attr the active type doesn't expose. Stages
+            // without a matching form fall back to the unchanged drawProvider.
+            // stage.drawProperties() still runs in both cases (shape popup /
+            // auto-size buttons aren't form rows).
+            // Look the form up by the stage FAMILY id (not the unique id), so
+            // stacked falloff instances ("falloff#1", …) all resolve the one
+            // "falloff" form; FormsPanel filters its rows against this
+            // instance's params() and the stage.id() passed below rebinds the
+            // write to the right instance.
+            void drawStageBody(Stage stage) {
+                import forms : g_formsPanelEnabled, formByStage;
+                auto stageForm = g_formsPanelEnabled
+                               ? formByStage(stage.formFamilyId()) : null;
+                if (stageForm !is null) {
+                    // A malformed row must degrade to the legacy panel, NOT
+                    // throw mid-ImGui-frame (an escaping exception would leave
+                    // ImGui's stack unbalanced and abort the frame). Fall back
+                    // to drawProvider on any failure; warn ONCE per stage so a
+                    // broken form doesn't spam stderr every frame.
+                    try {
+                        formsPanel.draw(*stageForm, stage,
+                                        commandHandlerDelegate,
+                                        formsInteractiveDispatch,
+                                        /*activeToolId=*/"",
+                                        /*stageId=*/stage.id());
+                    } catch (Exception e) {
+                        warnStageFormOnce(stage.id(), e.msg);
+                        propertyPanel.drawProvider(stage);
+                    }
+                } else
+                    propertyPanel.drawProvider(stage);
+                stage.drawProperties();
+            }
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             // Default tall enough to show a typical tool form (e.g. the box's
             // Position/Size/Segments/Radius groups) plus the per-stage sections
-            // (Falloff, Snap, ...) without manual resizing. FirstUseEver keeps
+            // (Falloff, ACEN, ...) without manual resizing. FirstUseEver keeps
             // the user's own resize sticky in a normal run.
             ImGui.SetNextWindowSize(ImVec2(260, 520), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties")) {
-                // Config-driven forms (Phase 4/5): when the forms panel is
-                // enabled (default; disable with VIBE3D_FORMS=0) AND a loaded form matches the active
-                // tool, render it through FormsPanel — which queries the live
-                // params() per frame and dispatches writes through the same
-                // command path the HTTP API uses (value rows marked interactive
-                // so the reEvaluate() seam opens a coalesced undo session).
-                // Otherwise fall back to the unchanged PropertyPanel +
-                // drawProperties() path for every un-migrated tool.
-                // Tool-level form / properties only when a tool is active. When
-                // the panel is open ONLY because a falloff is active (no tool),
-                // skip straight to the per-stage sections below.
-                if (activeTool !is null) {
-                import forms : g_formsPanelEnabled, formsForTool;
-                auto matchingForms = g_formsPanelEnabled
-                                   ? formsForTool(activeToolId) : null;
-                if (matchingForms.length) {
-                    // Pass activeToolId so FormsPanel rebinds a tool-namespace
-                    // write (the form line carries the canonical family id
-                    // `xfrm.transform`) to whichever XfrmTransformTool activation
-                    // id is live — move / rotate / scale / a transform preset —
-                    // satisfying ToolAttrCommand's active-id guard.
-                    foreach (ref fm; matchingForms)
-                        formsPanel.draw(fm, activeTool,
-                                        commandHandlerDelegate,
-                                        formsInteractiveDispatch,
-                                        activeToolId);
-
-                    // The transform form now owns ALL the TRS value rows —
-                    // Position (TX/TY/TZ), Rotate (RX/RY/RZ) and Scale (SX/SY/SZ),
-                    // all driven through the reEvaluate() seam. The legacy
-                    // moveSub/rotateSub/scaleSub sliders would duplicate every row
-                    // (and fight the form's live widgets), so suppress them while
-                    // the form rendered. For any other formed tool the latch is
-                    // harmless (it only gates the transform tool's TRS sliders); we
-                    // still call drawProperties() so a formed tool's custom non-row
-                    // UI (if any) renders. The schema panel is NOT drawn: the
-                    // transform tool sets renderParamsAsPanel()==false
-                    // (PropertyPanel.draw early-returns), and formed tools render
-                    // values via the form.
-                    import tools.transform.xfrm_transform : XfrmTransformTool;
-                    if (auto xf = cast(XfrmTransformTool) activeTool) {
-                        xf.suppressTRSProperties = true;
-                        scope(exit) xf.suppressTRSProperties = false;
-                        xf.drawProperties();
+                // ---- Tabs (task 0544) ------------------------------------
+                // The panel had none: the active tool's properties and every
+                // pipe stage's section shared one column, and snapping was not
+                // even in that column — SnapStage shipped without a params()
+                // schema, so the per-stage loop below skipped it in silence and
+                // the master toggle, the type set and the two pixel ranges that
+                // decide whether a drag sticks had no panel at all.
+                //
+                // It has a schema now, and it gets a TAB rather than one more
+                // collapsing header, because two independent sources say the
+                // same thing. The owner reports snapping as its own tab from
+                // using the reference; the reference's own layout config says
+                // it structurally — `toolprops:general` is four PEER container
+                // sheets, labelled "Tool Properties (Main)" / "(Action
+                // Centres)" / "(Falloffs)" / "(Snapping)", and snapping is one
+                // of the four, not a member of the first.
+                //
+                // We ship two of those four. Everything that was in the column
+                // stays in the column, in its old order, under "Main" —
+                // promoting the action-centre and falloff sections to peers of
+                // their own is a change to a surface that already works, and
+                // this is not that change. The only thing that moves is the
+                // thing that had nowhere to be.
+                //
+                // Built from Selectable + SameLine rather than a tab-bar
+                // widget: the ImGui binding this build links exposes no
+                // BeginTabBar/BeginTabItem. Same behaviour — a strip of
+                // mutually exclusive pages, one visible at a time — and no
+                // Begin/End pairing to leave unbalanced if a page throws.
+                {
+                    static immutable string[] kTabs = ["Main", "Snapping"];
+                    foreach (i, name; kTabs) {
+                        if (i) ImGui.SameLine();
+                        immutable float w = ImGui.CalcTextSize(name).x + 16.0f;
+                        if (ImGui.Selectable(name,
+                                             g_toolPropsTab == cast(int)i,
+                                             0, ImVec2(w, 0)))
+                            g_toolPropsTab = cast(int)i;
                     }
-                } else {
-                    propertyPanel.draw(activeTool);   // schema-driven params first
-                    activeTool.drawProperties();      // tool-specific custom UI after
+                    ImGui.Separator();
                 }
-                } // if (activeTool !is null)
+                immutable bool inMain = g_toolPropsTab != kToolPropsTabSnapping;
+                if (inMain) {
+                    // Config-driven forms (Phase 4/5): when the forms panel is
+                    // enabled (default; disable with VIBE3D_FORMS=0) AND a loaded form matches the active
+                    // tool, render it through FormsPanel — which queries the live
+                    // params() per frame and dispatches writes through the same
+                    // command path the HTTP API uses (value rows marked interactive
+                    // so the reEvaluate() seam opens a coalesced undo session).
+                    // Otherwise fall back to the unchanged PropertyPanel +
+                    // drawProperties() path for every un-migrated tool.
+                    // Tool-level form / properties only when a tool is active. When
+                    // the panel is open ONLY because a falloff is active (no tool),
+                    // skip straight to the per-stage sections below.
+                    if (activeTool !is null) {
+                    import forms : g_formsPanelEnabled, formsForTool;
+                    auto matchingForms = g_formsPanelEnabled
+                                       ? formsForTool(activeToolId) : null;
+                    if (matchingForms.length) {
+                        // Pass activeToolId so FormsPanel rebinds a tool-namespace
+                        // write (the form line carries the canonical family id
+                        // `xfrm.transform`) to whichever XfrmTransformTool activation
+                        // id is live — move / rotate / scale / a transform preset —
+                        // satisfying ToolAttrCommand's active-id guard.
+                        foreach (ref fm; matchingForms)
+                            formsPanel.draw(fm, activeTool,
+                                            commandHandlerDelegate,
+                                            formsInteractiveDispatch,
+                                            activeToolId);
 
-                // Phase 7.9: each enabled tool-pipe stage with a params()
-                // schema gets its own collapsible section below the
-                // active tool's properties — data-driven composition
-                // where the same Tool Properties window
-                // surfaces both the active tool AND the stages that
-                // modulate it (Workplane, ACEN, AXIS, Snap, Falloff).
-                // Stages without a schema (e.g. NopStage placeholders,
-                // or older stages that haven't been migrated yet)
-                // collapse to nothing.
-                if (g_pipeCtx !is null) {
-                    import toolpipe.stage : Stage;
-                    import forms : g_formsPanelEnabled, formByStage;
+                        // The transform form now owns ALL the TRS value rows —
+                        // Position (TX/TY/TZ), Rotate (RX/RY/RZ) and Scale (SX/SY/SZ),
+                        // all driven through the reEvaluate() seam. The legacy
+                        // moveSub/rotateSub/scaleSub sliders would duplicate every row
+                        // (and fight the form's live widgets), so suppress them while
+                        // the form rendered. For any other formed tool the latch is
+                        // harmless (it only gates the transform tool's TRS sliders); we
+                        // still call drawProperties() so a formed tool's custom non-row
+                        // UI (if any) renders. The schema panel is NOT drawn: the
+                        // transform tool sets renderParamsAsPanel()==false
+                        // (PropertyPanel.draw early-returns), and formed tools render
+                        // values via the form.
+                        import tools.transform.xfrm_transform : XfrmTransformTool;
+                        if (auto xf = cast(XfrmTransformTool) activeTool) {
+                            xf.suppressTRSProperties = true;
+                            scope(exit) xf.suppressTRSProperties = false;
+                            xf.drawProperties();
+                        }
+                    } else {
+                        propertyPanel.draw(activeTool);   // schema-driven params first
+                        activeTool.drawProperties();      // tool-specific custom UI after
+                    }
+                    } // if (activeTool !is null)
+
+                    // Phase 7.9: each enabled tool-pipe stage with a params()
+                    // schema gets its own collapsible section below the
+                    // active tool's properties — data-driven composition
+                    // where the same Tool Properties window
+                    // surfaces both the active tool AND the stages that
+                    // modulate it (Workplane, ACEN, AXIS, Falloff — Snap is a
+                    // tab of its own, skipped below).
+                    // Stages without a schema (e.g. NopStage placeholders,
+                    // or older stages that haven't been migrated yet)
+                    // collapse to nothing.
+                    if (g_pipeCtx !is null) {
+                        foreach (s; g_pipeCtx.pipeline.all()) {
+                            if (!s.enabled) continue;
+                            auto stage = cast(Stage)s;
+                            if (stage is null) continue;
+                            if (stage.params().length == 0) continue;
+                            // Snapping renders on its own tab (see below), not as
+                            // one more header in this column — so it is skipped
+                            // here rather than appearing in both places.
+                            if (stage.taskCode() == TaskCode.Snap)
+                                continue;
+                            // Default-open so the extra stage sections (Action
+                            // Center, Falloff, ...) are expanded without a
+                            // click; the user can still collapse any of them.
+                            if (ImGui.CollapsingHeader(stage.displayName(),
+                                                       ImGuiTreeNodeFlags.DefaultOpen)) {
+                                drawStageBody(stage);
+                            }
+                        }
+                    }
+                } // if (inMain)
+
+                // ---- Snapping ---------------------------------------------
+                // Drawn through `drawStageBody`, the same path the per-stage
+                // sections take, so the rows, their write path and their HTTP
+                // twins are the section's — only the location differs.
+                //
+                // Drawn whether or not the SNAP stage's master toggle is on:
+                // that toggle is the FIRST row, and a page that emptied itself
+                // when you switched snapping off would leave no way to switch
+                // it back on. (The loop above gates on `Stage.enabled`, the
+                // pipe REGISTRATION flag, which SnapStage's own `enabled`
+                // field shadows rather than replaces — two different booleans
+                // that have to stay told apart.)
+                if (!inMain && g_pipeCtx !is null) {
                     foreach (s; g_pipeCtx.pipeline.all()) {
                         if (!s.enabled) continue;
                         auto stage = cast(Stage)s;
                         if (stage is null) continue;
-                        if (stage.params().length == 0) continue;
-                        // Default-open so the extra stage sections (Action
-                        // Center, Falloff, Snap, ...) are expanded without a
-                        // click; the user can still collapse any of them.
-                        if (ImGui.CollapsingHeader(stage.displayName(),
-                                                   ImGuiTreeNodeFlags.DefaultOpen)) {
-                            // Phase 6: prefer a config-driven stage form (bound
-                            // to the stage via whenStage:, looked up by the
-                            // stage's id()) over the legacy drawProvider path —
-                            // same gating + kill switch as the tool-level form
-                            // integration above. The stage IS a ParamProvider,
-                            // so FormsPanel queries its live (type-filtered)
-                            // params() per frame and hides rows whose attr the
-                            // active type doesn't expose. Stages without a
-                            // matching form fall back to the unchanged
-                            // drawProvider. stage.drawProperties() still runs in
-                            // both cases (shape popup / auto-size buttons aren't
-                            // form rows).
-                            // Look the form up by the stage FAMILY id (not the
-                            // unique id), so stacked falloff instances
-                            // ("falloff#1", …) all resolve the one "falloff"
-                            // form; FormsPanel filters its rows against this
-                            // instance's params() and the stage.id() passed
-                            // below rebinds the write to the right instance.
-                            auto stageForm = g_formsPanelEnabled
-                                           ? formByStage(stage.formFamilyId()) : null;
-                            if (stageForm !is null) {
-                                // A malformed row must degrade to the legacy
-                                // panel, NOT throw mid-ImGui-frame (an escaping
-                                // exception would leave ImGui's stack unbalanced
-                                // and abort the frame). Fall back to drawProvider
-                                // on any failure; warn ONCE per stage so a broken
-                                // form doesn't spam stderr every frame.
-                                try {
-                                    formsPanel.draw(*stageForm, stage,
-                                                    commandHandlerDelegate,
-                                                    formsInteractiveDispatch,
-                                                    /*activeToolId=*/"",
-                                                    /*stageId=*/stage.id());
-                                } catch (Exception e) {
-                                    warnStageFormOnce(stage.id(), e.msg);
-                                    propertyPanel.drawProvider(stage);
-                                }
-                            } else
-                                propertyPanel.drawProvider(stage);
-                            stage.drawProperties();
-                        }
+                        if (stage.taskCode() != TaskCode.Snap) continue;
+                        drawStageBody(stage);
                     }
                 }
             }

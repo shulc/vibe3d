@@ -560,3 +560,69 @@ unittest { // multi-type combo picks closest across types
     assert(t == 1 || t == 4 || t == 16,
         "targetType expected 1 / 4 / 16, got " ~ t.to!string);
 }
+
+// -------------------------------------------------------------------------
+// 0544: snapping HAS a Tool Properties surface.
+//
+// `SnapStage` shipped without a `params()` schema, and two things followed
+// from that on the wire — both of them checkable here, because
+// `tool.pipe.attr <stage> <attr> "?"` resolves the READ through the live
+// `params()` (see commands/tool/pipe.d's query leg) exactly as the panel
+// resolves the ROW. A stage with no schema has no readable attribute and no
+// panel row; the two are the same absence.
+//
+// So this is not a UI test standing in for a UI: it drives the identical
+// lookup the panel does, over HTTP.
+// -------------------------------------------------------------------------
+
+unittest { // every panel row is readable — before, `?` resolved nothing
+    resetCube();
+    foreach (attr; ["enabled", "snapMode", "innerRange", "outerRange",
+                    "fixedGrid", "fixedGridSize"]) {
+        auto r = postJson("/api/command",
+                          `tool.pipe.attr snap ` ~ attr ~ ` "?"`);
+        assert(r["status"].str == "ok",
+            "`" ~ attr ~ "` must resolve through the SNAP stage's params(): "
+            ~ "the panel's per-stage loop and this query read the same "
+            ~ "schema, and the stage had none. " ~ r.toString);
+    }
+}
+
+unittest { // the two pixel ranges read back the measured service defaults
+    resetCube();
+    auto ri = postJson("/api/command", `tool.pipe.attr snap innerRange "?"`);
+    auto ro = postJson("/api/command", `tool.pipe.attr snap outerRange "?"`);
+    assert(ri["status"].str == "ok" && ro["status"].str == "ok",
+        "the ranges are the two numbers that decide whether a drag sticks, "
+        ~ "and they had no panel row at all: " ~ ri.toString ~ ro.toString);
+    assert(ri.toString.indexOf("24") >= 0,
+        "Inner Range must read the SNAP service's own 24 px, not a tool's "
+        ~ "private copy: " ~ ri.toString);
+    assert(ro.toString.indexOf("40") >= 0,
+        "Outer Range must read the service's own 40 px: " ~ ro.toString);
+}
+
+unittest { // every snap TYPE is an addressable row, and it drives `types`
+    resetCube();
+    // PolyCenter is ON by default — the panel checkbox clears exactly it.
+    postJson("/api/command", "tool.pipe.attr snap typePolyCenter false");
+    auto a1 = getSnapAttrs();
+    assert(a1["types"].indexOf("polyCenter") < 0,
+        "clearing the Polygon Center row must clear the bit: " ~ a1["types"]);
+    assert(a1["types"].indexOf("vertex") >= 0
+        && a1["types"].indexOf("edgeCenter") >= 0
+        && a1["types"].indexOf("grid") >= 0,
+        "...and must disturb no other type: " ~ a1["types"]);
+
+    // Edge is OFF by default — the row turns it on.
+    postJson("/api/command", "tool.pipe.attr snap typeEdge true");
+    auto a2 = getSnapAttrs();
+    assert(a2["types"].indexOf("edge") >= 0,
+        "setting the Edge row must set the bit: " ~ a2["types"]);
+
+    postJson("/api/command", "tool.pipe.attr snap typePolyCenter true");
+    postJson("/api/command", "tool.pipe.attr snap typeEdge false");
+    auto a3 = getSnapAttrs();
+    assert(a3["types"] == "vertex,edgeCenter,polyCenter,grid",
+        "the rows round-trip back to the default set: " ~ a3["types"]);
+}

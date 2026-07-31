@@ -11,6 +11,44 @@ import toolpipe.packets  : SnapPacket, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
+import params            : Param, IntEnumEntry;
+
+// ---------------------------------------------------------------------------
+// The snap TYPE table — one row per candidate class, single-sourced.
+//
+// Read by `params()` (one checkbox per row, in this order), by `setAttr`
+// (the per-type wire keys), and by `knownAttrs()`. Order and labels follow
+// the reference's own snap-type list, which is what a user who knows the
+// other editor will be looking for; `workplane` has no counterpart there and
+// is ours, so it sits at the end rather than pretending to a position.
+private struct SnapTypeRow {
+    SnapType bit;
+    string   attr;    // wire key: `tool.pipe.attr snap <attr> true|false`
+    string   token;   // token in the `types` CSV / `typeToggle`
+    string   label;   // UI
+}
+
+private static immutable SnapTypeRow[] snapTypeRows = [
+    SnapTypeRow(SnapType.Grid,         "typeGrid",         "grid",         "Grid"),
+    SnapTypeRow(SnapType.Vertex,       "typeVertex",       "vertex",       "Vertex"),
+    SnapTypeRow(SnapType.Edge,         "typeEdge",         "edge",         "Edge"),
+    SnapTypeRow(SnapType.EdgeCenter,   "typeEdgeCenter",   "edgeCenter",   "Edge Center"),
+    SnapTypeRow(SnapType.Polygon,      "typePolygon",      "polygon",      "Polygon"),
+    SnapTypeRow(SnapType.PolyCenter,   "typePolyCenter",   "polyCenter",   "Polygon Center"),
+    SnapTypeRow(SnapType.Pivot,        "typePivot",        "pivot",        "Pivot"),
+    SnapTypeRow(SnapType.WorldAxis,    "typeWorldAxis",    "worldAxis",    "World Axis"),
+    SnapTypeRow(SnapType.StraightLine, "typeStraightLine", "straightLine", "Straight Line"),
+    SnapTypeRow(SnapType.RightAngle,   "typeRightAngle",   "rightAngle",   "Right Angle"),
+    SnapTypeRow(SnapType.Intersection, "typeIntersection", "intersection", "Intersection"),
+    SnapTypeRow(SnapType.Box,          "typeBox",          "box",          "Box"),
+    SnapTypeRow(SnapType.Workplane,    "typeWorkplane",    "workplane",    "Workplane"),
+];
+
+private static immutable IntEnumEntry[] snapModeEntries = [
+    IntEnumEntry(cast(int)SnapMode.Global,    "global",    "Global"),
+    IntEnumEntry(cast(int)SnapMode.Component, "component", "Component"),
+    IntEnumEntry(cast(int)SnapMode.Item,      "item",      "Item"),
+];
 
 // ---------------------------------------------------------------------------
 // SnapStage — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
@@ -293,6 +331,11 @@ class SnapStage : Stage, Operator {
         vts.put(&_hitPkt);
     }
 
+    // Panel-side mirror of `enabledTypes`, one slot per `snapTypeRows` entry.
+    // Written by `params()` (re-synced from the bitmask every call) and read
+    // back by `onParamChanged`. NOT state: `enabledTypes` is.
+    private bool[snapTypeRows.length] _typeMirror;
+
     bool     enabled       = false;
     uint     enabledTypes  = SnapType.Vertex
                            | SnapType.EdgeCenter
@@ -309,6 +352,84 @@ class SnapStage : Stage, Operator {
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Snap; }
     override string   id()       const                          { return "snap"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSnap; }
+    override string   displayName() const                       { return "Snapping"; }
+
+    // ------------------------------------------------------------------
+    // Tool Properties schema.
+    //
+    // This stage shipped without one. Every other pipe stage — action
+    // centre, falloff, symmetry, path, constrain — overrides `params()`,
+    // and the panel loop skips any stage whose schema is empty, so snapping
+    // had NO Tool Properties surface at all: the master toggle and the type
+    // set were reachable only from the status line, and the two pixel ranges
+    // that decide whether anything sticks were reachable only over HTTP.
+    //
+    // The rows and their order follow the reference's own snapping form
+    // (master toggle, mode, the type set, the fixed-grid pair, then the two
+    // ranges). Two honesty notes that belong in the source and not just in a
+    // task file:
+    //
+    //   * PLACEMENT IS OURS for the ranges. In the reference the inner /
+    //     outer pixel ranges are a USER PREFERENCE ("Inner Range (pixels)" /
+    //     "Outer Range (pixels)"), not a tool attribute. Putting them on a
+    //     tool-side panel is our choice, made because they are the two
+    //     numbers that decide whether a drag sticks and they had no UI at
+    //     all. The LABELS are the reference's; the location is not.
+    //   * THE VALUES 24 / 40 ARE THE SERVICE'S. They live on this stage and
+    //     nowhere else — no tool keeps a private copy — and these rows read
+    //     and write those very fields rather than a per-tool shadow.
+    //
+    // The per-type rows are backed by `_typeMirror`, re-synced from
+    // `enabledTypes` on every `params()` call (which the panel makes once a
+    // frame) and folded back by `onParamChanged`. The bitmask stays the one
+    // source of truth; the mirror is never authoritative for longer than the
+    // frame it is drawn in.
+    // ------------------------------------------------------------------
+    override Param[] params() {
+        foreach (i, ref row; snapTypeRows)
+            _typeMirror[i] = (enabledTypes & row.bit) != 0;
+
+        Param[] ps;
+        ps ~= Param.bool_("enabled", "Snapping", &enabled, false);
+        ps ~= Param.intEnum_("snapMode", "Mode", cast(int*)&snapScope,
+                             snapModeEntries, cast(int)SnapMode.Global);
+        foreach (i, ref row; snapTypeRows)
+            ps ~= Param.bool_(row.attr, row.label, &_typeMirror[i],
+                              (SnapPacket.init.enabledTypes & row.bit) != 0);
+        ps ~= Param.bool_ ("fixedGrid",     "Use Fixed Grid",       &fixedGrid,     false);
+        ps ~= Param.float_("fixedGridSize", "Grid Size",            &fixedGridSize, 1.0f);
+        ps ~= Param.float_("innerRange",    "Inner Range (pixels)", &innerRangePx,  24.0f);
+        ps ~= Param.float_("outerRange",    "Outer Range (pixels)", &outerRangePx,  40.0f);
+        return ps;
+    }
+
+    /// The panel writes straight through a Param's pointer, so a per-type row
+    /// lands in `_typeMirror` and has to be folded back into the bitmask that
+    /// every reader consults. Only the named bit is folded — reconstructing
+    /// the whole mask from the mirror would let a stale slot (one written by
+    /// HTTP since the last `params()`) overwrite a bit nobody touched.
+    override void onParamChanged(string name) {
+        foreach (i, ref row; snapTypeRows) {
+            if (row.attr != name) continue;
+            if (_typeMirror[i]) enabledTypes |=  row.bit;
+            else                enabledTypes &= ~row.bit;
+            break;
+        }
+        publishState();
+    }
+
+    /// The authoritative wire universe. `params()` cannot supply it: the
+    /// `types` CSV, `typeToggle` and `fixedGridToggle` have no Param row (they
+    /// are set-shaped and action-shaped, not value-shaped), while the per-type
+    /// rows are Params that `params()` DOES expose. Same reason ACEN and
+    /// falloff override this — see Stage.knownAttrs().
+    override string[] knownAttrs() {
+        string[] names = ["enabled", "types", "snapMode", "innerRange",
+                          "outerRange", "fixedGrid", "fixedGridSize",
+                          "fixedGridToggle", "typeToggle"];
+        foreach (ref row; snapTypeRows) names ~= row.attr;
+        return names;
+    }
 
     /// Match every default field initialiser at declaration time —
     /// invoked via Stage.reset() by SceneReset / `/api/reset`.
@@ -444,27 +565,31 @@ private:
                 enabledTypes ^= bit;
                 return true;
             }
-            default: return false;
+            // Per-type wire keys — the same rows `params()` renders as
+            // checkboxes. The panel writes them through the Param pointer, so
+            // this leg exists for the HTTP / script surface: a test that
+            // drives the panel's row must be able to drive it by name, and
+            // `knownAttrs()` promises these names anyway.
+            default: {
+                foreach (i, ref row; snapTypeRows) {
+                    if (row.attr != name) continue;
+                    if      (value == "true"  || value == "1")
+                        { enabledTypes |=  row.bit; return true; }
+                    else if (value == "false" || value == "0")
+                        { enabledTypes &= ~row.bit; return true; }
+                    return false;
+                }
+                return false;
+            }
         }
     }
 
+    // Token -> bit, off the one table `params()` / `setAttr` / `knownAttrs`
+    // all read, so a type added there cannot be missing here.
     static uint typeBit(string name) {
-        switch (name) {
-            case "vertex":       return SnapType.Vertex;
-            case "edge":         return SnapType.Edge;
-            case "edgeCenter":   return SnapType.EdgeCenter;
-            case "polygon":      return SnapType.Polygon;
-            case "polyCenter":   return SnapType.PolyCenter;
-            case "grid":         return SnapType.Grid;
-            case "workplane":    return SnapType.Workplane;
-            case "pivot":        return SnapType.Pivot;
-            case "intersection": return SnapType.Intersection;
-            case "worldAxis":    return SnapType.WorldAxis;
-            case "straightLine": return SnapType.StraightLine;
-            case "rightAngle":   return SnapType.RightAngle;
-            case "box":          return SnapType.Box;
-            default:             return 0;
-        }
+        foreach (ref row; snapTypeRows)
+            if (row.token == name) return row.bit;
+        return 0;
     }
 
     string typesLabel() const {
@@ -1101,4 +1226,150 @@ unittest {
         "a scene reset ends every gesture there was, so it can leave no guide "
         ~ "registered — a guide outliving the tool that owns it is the one "
         ~ "lifecycle error the measured add/remove pair rules out");
+}
+
+// ---------------------------------------------------------------------------
+// SNAPPING HAS A TOOL PROPERTIES SURFACE — `params()`.
+//
+// It had none. The panel's per-stage loop is literally
+//
+//     if (stage.params().length == 0) continue;
+//
+// and `SnapStage` was the one pipe stage that never overrode `params()` — the
+// loop's own comment lists "Action Center, Falloff, Snap, ..." as the sections
+// it expects, so the section was intended and simply never got a schema. The
+// consequence was not cosmetic: the master toggle and the type set lived only
+// in the status line, and `innerRangePx` / `outerRangePx` — the two numbers
+// that decide whether a drag sticks to anything at all — were reachable ONLY
+// over HTTP.
+//
+//   1. NON-EMPTY. The one condition the panel loop tests.
+//   2. COVERAGE. Every field the brief named is a row: master enable, scope
+//      mode, the whole type set, the two pixel ranges, the fixed-grid pair.
+//   3. THE ROWS ARE THE STAGE'S OWN FIELDS. A panel row that wrote a private
+//      copy of a range would be the very defect the campaign spent a task
+//      naming (`constraint.d`'s duplicated 24/40). Checked by writing through
+//      the Param pointer and reading the field.
+//   4. DEFAULTS ARE THE MEASURED ONES. 24 / 40, and they are the SERVICE's.
+//   5. TYPE MIRROR ROUND-TRIP. `enabledTypes` stays the single source of
+//      truth: `params()` syncs the mirror from it, `onParamChanged` folds one
+//      bit back, and nothing else is disturbed.
+//   6. WIRE PARITY. Every per-type row is also a `setAttr` key, and
+//      `knownAttrs()` names every key `setAttr` accepts — so a panel row and
+//      a script can drive the same control by the same name.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : canFind, map;
+    import std.array     : array;
+
+    auto st = new SnapStage();
+
+    // --- 1. NON-EMPTY -------------------------------------------------------
+    assert(st.params().length != 0,
+        "the Tool Properties per-stage loop skips any stage whose params() is "
+        ~ "empty, and SnapStage was that stage — snapping had no panel at all");
+
+    auto names = st.params().map!(p => p.name).array;
+
+    // --- 2. COVERAGE --------------------------------------------------------
+    foreach (n; ["enabled", "snapMode", "fixedGrid", "fixedGridSize",
+                 "innerRange", "outerRange"])
+        assert(names.canFind(n),
+            "the panel must expose `" ~ n ~ "`: the master enable, the scope "
+            ~ "mode, the fixed-grid pair and the two ranges are the whole of "
+            ~ "what this stage already has and already measured");
+    foreach (ref row; snapTypeRows)
+        assert(names.canFind(row.attr),
+            "every snap TYPE must be a row (`" ~ row.attr ~ "` missing) — the "
+            ~ "type set decides which candidates exist, and it was reachable "
+            ~ "only from the status line");
+
+    // --- 3 + 4. THE ROWS ARE THE STAGE'S FIELDS, at the measured defaults ---
+    foreach (ref p; st.params()) {
+        if (p.name == "innerRange") {
+            assert(p.fptr is &st.innerRangePx,
+                "the Inner Range row must write the SNAP SERVICE's own field. "
+                ~ "A private per-tool copy of this number is the defect the "
+                ~ "campaign already named once; the panel must not add a "
+                ~ "second one");
+            assert(*p.fptr == 24.0f && p.default_.f == 24.0f,
+                "24 px is the measured acceptance and it belongs to the "
+                ~ "service — the row reads it rather than restating it");
+        }
+        if (p.name == "outerRange") {
+            assert(p.fptr is &st.outerRangePx, "same for the Outer Range row");
+            assert(*p.fptr == 40.0f && p.default_.f == 40.0f,
+                "40 px is the measured gather range");
+        }
+        if (p.name == "enabled")
+            assert(p.bptr is &st.enabled,
+                "the master toggle must be the stage's own `enabled`, the one "
+                ~ "`evaluate` gates on — not a second boolean the panel keeps");
+    }
+
+    // --- 5. TYPE MIRROR ROUND-TRIP ------------------------------------------
+    // PolyCenter is on by default; turning it OFF from the panel must clear
+    // exactly its bit and leave every other type alone.
+    {
+        immutable uint before = st.enabledTypes;
+        assert((before & SnapType.PolyCenter) != 0, "fixture: default is on");
+
+        Param* row;
+        foreach (ref p; st.params()) if (p.name == "typePolyCenter") row = &p;
+        assert(row !is null && row.bptr !is null);
+        assert(*row.bptr,
+            "params() must SYNC the mirror from the bitmask on every call — a "
+            ~ "row that showed a stale value would let the next click write "
+            ~ "back a bit the user never saw");
+
+        *row.bptr = false;                   // what the checkbox does
+        st.onParamChanged("typePolyCenter");
+        assert((st.enabledTypes & SnapType.PolyCenter) == 0,
+            "...and onParamChanged must fold the row back into `enabledTypes`, "
+            ~ "which stays the one thing every reader consults");
+        assert((st.enabledTypes | SnapType.PolyCenter) == before,
+            "exactly one bit moved: folding must not rebuild the whole mask "
+            ~ "from a mirror that may hold slots written since the last sync");
+
+        // ...and back on again, through the same path.
+        foreach (ref p; st.params()) if (p.name == "typePolyCenter") row = &p;
+        assert(!*row.bptr, "the re-sync must show the cleared bit");
+        *row.bptr = true;
+        st.onParamChanged("typePolyCenter");
+        assert(st.enabledTypes == before, "round-trip is exact");
+    }
+
+    // --- 6. WIRE PARITY -----------------------------------------------------
+    {
+        auto known = st.knownAttrs();
+        foreach (n; ["enabled", "types", "snapMode", "innerRange", "outerRange",
+                     "fixedGrid", "fixedGridSize", "fixedGridToggle",
+                     "typeToggle"])
+            assert(known.canFind(n),
+                "knownAttrs() is the forms validator's universe and must name "
+                ~ "every key setAttr accepts — `" ~ n ~ "` is missing");
+
+        foreach (ref row; snapTypeRows) {
+            assert(known.canFind(row.attr),
+                "a per-type row that params() renders but knownAttrs() does "
+                ~ "not name is a control the panel can drive and a script "
+                ~ "cannot");
+            assert(st.setAttr(row.attr, "false"),
+                "`" ~ row.attr ~ "` must be settable by name");
+            assert((st.enabledTypes & row.bit) == 0);
+            assert(st.setAttr(row.attr, "true"));
+            assert((st.enabledTypes & row.bit) != 0);
+            assert(!st.setAttr(row.attr, "maybe"),
+                "a non-boolean value is refused rather than silently taken");
+        }
+        assert(!st.setAttr("typeNoSuchThing", "true"),
+            "an unknown per-type key must still be refused — the new default "
+            ~ "leg in applySetAttr must not swallow every name");
+    }
+
+    // A fresh stage's schema must not have disturbed the config it reports.
+    st.reset();
+    assert(st.snapshotConfigToPacket() == SnapPacket.init,
+        "reading params() / folding a row must leave `reset()` restoring the "
+        ~ "same defaults it always did");
 }
