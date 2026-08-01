@@ -24,7 +24,7 @@
 import std.net.curl;
 import std.json;
 import std.conv  : to;
-import std.math  : abs, sqrt;
+import std.math  : abs, sqrt, floor, ceil;
 import std.format : format;
 import core.thread : Thread;
 import core.time   : msecs;
@@ -34,6 +34,54 @@ import drag_helpers;
 void main() {}
 
 string baseUrl = "http://localhost:8080";
+
+// ---------------------------------------------------------------------------
+// Task 0570: the out-of-plane coordinate is QUANTISED, and this file used to
+// pin its absence.
+//
+// The relocate plane passes through the camera focus, but the focus's
+// out-of-plane coordinate is first rounded to a multiple of TEN GRID STEPS.
+// The grid step used to be a fixed 1.0 world unit with no zoom in it, so the
+// term had no number to round to and shipped dormant; the comment before the
+// focus-far-from-origin block below said so in as many words and named the
+// expected values as "the raw focus component (1.6 / 2.15), not a rounded one
+// (2.0)". The step is now the world length of 25 screen pixels on a mantissa
+// ladder, and the term is live.
+//
+// So the expectations here move from the raw focus to the quantised focus.
+// The DISCRIMINATOR each of these tests was written for — the plane follows
+// the camera focus rather than the world origin, and follows the camera's
+// dominant axis rather than a fixed ground plane — is untouched and still
+// separates the two answers by more than half a world unit. What changed is a
+// number this file explicitly recorded as a known gap.
+//
+// The quantum itself is pinned in tests/test_relocate_grid_quantum.d; here it
+// only has to be applied, so the expectations stay honest.
+// ---------------------------------------------------------------------------
+
+/// Round half AWAY from zero.
+double acenDnint(double x) { return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5); }
+
+/// A JSON number of whichever kind std.json chose (the grid step prints with
+/// `%.9g`, so a step of exactly 1 arrives as an INTEGER).
+double acenJsonNum(JSONValue v) {
+    switch (v.type) {
+        case JSONType.float_:   return v.floating;
+        case JSONType.integer:  return cast(double)v.integer;
+        case JSONType.uinteger: return cast(double)v.uinteger;
+        default: throw new Exception("not a number: " ~ v.toString);
+    }
+}
+
+/// `comp` rounded to a multiple of ten grid steps, at the ACTIVE cell's
+/// current zoom. Reads the step from the endpoint rather than assuming one,
+/// so these tests keep working at any camera distance.
+float quantisedFocusComp(float comp) {
+    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+    immutable double q = 10.0 * acenJsonNum(g["size"]);
+    if (!(q > 0)) return comp;
+    return cast(float)(acenDnint(cast(double)comp / q) * q);
+}
 
 JSONValue getJson(string path) {
     return parseJSON(cast(string) get(baseUrl ~ path));
@@ -485,10 +533,11 @@ unittest { // Auto relocate plane passes through the camera FOCUS, not the ORIGI
     // NEW behaviour (task 0066): lands on the FOCUS plane Y=focus.y, NOT the
     // origin plane Y=0. The out-of-plane Y coordinate is the decisive check
     // (tight tolerance); X/Z are in-plane PROVISIONAL (0058), loose tolerance.
-    assert(abs(cen.y - focusHit.y) < 1e-2f,
-        format("cenY expected ≈%.4f (focusHit, through-focus plane) but got %.4f "
-               ~ "(diff %.4f — still on origin plane?)",
-               focusHit.y, cen.y, abs(cen.y - focusHit.y)));
+    immutable float wantY488 = quantisedFocusComp(focusHit.y);
+    assert(abs(cen.y - wantY488) < 1e-2f,
+        format("cenY expected ≈%.4f (the focus plane's Y, quantised to ten "
+               ~ "grid steps) but got %.4f (diff %.4f — still on origin plane?)",
+               wantY488, cen.y, abs(cen.y - wantY488)));
     // Guard: must NOT be on the old origin plane.
     assert(abs(cen.y - originHit.y) > 0.4f,
         format("cenY ≈ originHit.y (%.4f) — plane is still through the world origin, "
@@ -605,6 +654,7 @@ unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tra
         originHitOnNormal  = originHit.z;
     }
 
+    focusHitOnNormal = quantisedFocusComp(focusHitOnNormal);
     assert(abs(cenOnNormal - focusHitOnNormal) < 1e-2f,
         format("Focus-tracking: cenOnNormal=%.4f expected ≈%.4f (focus plane); "
                ~ "diff=%.4f (still on origin plane?)",
@@ -634,11 +684,14 @@ unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tra
 // that coordinate equal to focus[axis], independent of the ray), for
 // whichever axis (X or Z here) the camera happens to face.
 //
-// No grid-snap is applied — vibe3d projects to the raw focus (the
-// reference editor grid-snaps the focus on the normal axis; that gap is
-// a documented, deferred minor residual — see doc/acen_auto_port_plan.md
-// and doc/acen_auto_formula_findings.md). So the expected value here is
-// the raw focus component (1.6 / 2.15), not a rounded one (2.0).
+// THE GRID-SNAP GAP THIS BLOCK USED TO NAME IS CLOSED (task 0570). It
+// read: "No grid-snap is applied — vibe3d projects to the raw focus ...
+// that gap is a documented, deferred minor residual ... So the expected
+// value here is the raw focus component (1.6 / 2.15), not a rounded one
+// (2.0)." The rounding was deferred because the step it rounds to had no
+// definition here; the step is now the grid's, and the grid is now a
+// screen length. The expectations below are `quantisedFocusComp(...)` —
+// and at this camera they are indeed 2.0, exactly as anticipated.
 // -------------------------------------------------------------------------
 
 unittest { // Focus-far-from-origin discriminator: X-dominant camera
@@ -703,9 +756,10 @@ unittest { // Focus-far-from-origin discriminator: X-dominant camera
     // (a) The dominant (X) axis lands EXACTLY on the raw focus — tight tol,
     //     distinguishes focus (1.6) from both the origin (0) and the old
     //     fixed-ground-plane landing (oldHit.x, generically far from 1.6).
-    assert(abs(cen.x - cam.focus.x) < 1e-2f,
-        format("cenX expected ≈%.4f (raw focus.x, camera-facing plane) but got %.4f",
-               cam.focus.x, cen.x));
+    immutable float wantX = quantisedFocusComp(cam.focus.x);
+    assert(abs(cen.x - wantX) < 1e-2f,
+        format("cenX expected ≈%.4f (focus.x quantised to ten grid steps, "
+               ~ "camera-facing plane) but got %.4f", wantX, cen.x));
     // (b) Guard: must NOT be on the old fixed-ground-plane landing.
     assert(abs(cen.x - oldHit.x) > 0.4f,
         format("cenX ≈ oldHit.x (%.4f) — still projecting onto the fixed ground plane",
@@ -773,7 +827,8 @@ unittest { // Focus-far-from-origin discriminator: Z-dominant camera
     Vec3 cen = evalPivotLocal();
 
     // (a) The dominant (Z) axis lands EXACTLY on the raw focus.
-    assert(abs(cen.z - cam.focus.z) < 1e-2f,
+    immutable float wantZ = quantisedFocusComp(cam.focus.z);
+    assert(abs(cen.z - wantZ) < 1e-2f,
         format("cenZ expected ≈%.4f (raw focus.z, camera-facing plane) but got %.4f",
                cam.focus.z, cen.z));
     // (b) Guard: must NOT be on the old fixed-ground-plane landing.

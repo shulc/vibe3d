@@ -1096,6 +1096,7 @@ protected:
         import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis;
         import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter,
                                                     lockedViewAxis;
+        import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
@@ -1213,7 +1214,22 @@ protected:
                                     cachedVp.view[10]);
                 immutable int argmaxAxis =
                     mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
-                RelocatePlanePrefs prefs;   // every field defaults to "off"
+                RelocatePlanePrefs prefs;
+                // THE OUT-OF-PLANE QUANTUM, SWITCHED ON (task 0570).
+                //
+                // The law rounds the plane point's out-of-plane coordinate to
+                // a multiple of ten grid steps. It shipped dormant because
+                // the step was unknown and two rigs appeared to demand
+                // incompatible constants — see `RelocatePlanePrefs.quantumStep`
+                // for how that turned out to be an axis-indexing mistake
+                // rather than a real disagreement. The step is now a derived
+                // quantity, not a constant, and the two rigs are two zooms of
+                // it.
+                //
+                // It is a pure function of this view's pixel size, so it needs
+                // no state and follows the camera automatically.
+                prefs.quantumStep = relocateQuantum(viewWorldPerPixel(cachedVp),
+                                                    g_viewGrid);
                 int usedAxis;
                 return principalPlaneCenter(cachedVp, crHitOrig, dir,
                                             argmaxAxis, prefs,

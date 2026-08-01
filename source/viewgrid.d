@@ -141,9 +141,17 @@ double niceStep(int mask, bool roundUp, double x) @safe pure nothrow @nogc {
     // what it does not have is our requirement that an exact rung be a fixed
     // point, which is what the ladder's `x10` closure and the relocate
     // quantum's two spellings both rest on. 1e-12 in log space is a relative
-    // 2.3e-12 in value — twelve orders of magnitude tighter than the smallest
-    // gap on any ladder (2 -> 2.5), so it cannot merge two rungs.
-    enum double kLogTol = 1e-12;
+    // 2.3e-7 in value.
+    //
+    // WHY 1e-7 AND NOT SOMETHING TINY. The inputs are `float`s: a pixel size,
+    // a step. The `float` nearest to 0.002 is 0.0020000000949949, which is
+    // ABOVE the double 0.002 — so with a 1e-12 tolerance the ceiling of a
+    // value that is a rung in the precision it arrived in jumps a whole rung.
+    // The tolerance has to cover a float's ~6e-8 relative spacing, and 2.3e-7
+    // does with room to spare while staying six orders of magnitude tighter
+    // than the smallest gap on any ladder (2 -> 2.5, i.e. 25%). It cannot
+    // merge two rungs; it can only stop one from being missed by an ulp.
+    enum double kLogTol = 1e-7;
 
     int down = -1, up = -1;
     foreach (i, m; rungs) {
@@ -421,16 +429,25 @@ unittest {
     // ---- niceCeil is a CEILING on the ladder ---------------------------
     enum int m5 = kGridMaskDefault;
     // Exact rungs are fixed points, in several decades and both signs of the
-    // exponent. This is the property a tolerance-based implementation loses.
+    // exponent — as doubles AND as the floats the product actually passes in.
+    // The float half is the one that caught `kLogTol` being ten orders too
+    // tight: `cast(double)0.002f` is above the double 0.002, so a bare
+    // comparison ceils it to the next rung.
     foreach (double v; [0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
                         0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 100.0]) {
         assert(fabs(niceCeil(m5, v) - v) <= 1e-9 * v,
                "an exact rung must be its own ceiling");
+        immutable double vf = cast(double)cast(float)v;
+        assert(fabs(niceCeil(m5, vf) - v) <= 1e-6 * v,
+               "a rung that arrived as a float must still be its own ceiling");
     }
-    // Strictly above a rung goes to the NEXT rung.
-    assert(fabs(niceCeil(m5, 2.0000001) - 5.0) < 1e-9);
-    assert(fabs(niceCeil(m5, 5.0000001) - 10.0) < 1e-9);
-    assert(fabs(niceCeil(m5, 1.0000001) - 2.0) < 1e-9);
+    // Strictly above a rung goes to the NEXT rung. The probes sit 5e-4 above
+    // rather than 1e-7 above, because the log tolerance deliberately absorbs
+    // a float ulp — see `kLogTol`. 5e-4 is still three orders inside the
+    // smallest ladder gap, so this is a real discrimination, not slack.
+    assert(fabs(niceCeil(m5, 2.001) - 5.0) < 1e-9);
+    assert(fabs(niceCeil(m5, 5.001) - 10.0) < 1e-9);
+    assert(fabs(niceCeil(m5, 1.001) - 2.0) < 1e-9);
     assert(fabs(niceCeil(m5, 0.0300000) - 0.05) < 1e-9);
     assert(fabs(niceCeil(m5, 0.1176000) - 0.2) < 1e-9);
     assert(fabs(niceCeil(m5, 11.0) - 20.0) < 1e-9);

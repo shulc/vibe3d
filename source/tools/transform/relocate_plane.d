@@ -202,38 +202,34 @@ struct RelocatePlanePrefs {
     /// The out-of-plane quantum: the plane point's coordinate along the
     /// principal axis is rounded to a multiple of this. Zero disables it.
     ///
-    /// DEFAULTED OFF BECAUSE THE STEP IS NOT PINNED, AND THAT IS A FINDING,
-    /// NOT A GAP. The reference's rounding is real and read instruction by
-    /// instruction; what is unknown is the number it rounds to. It computes
-    /// that as `10 x <its own grid sub-division>`, and that function was
-    /// never disassembled. Two independent rigs in this tree demand
-    /// INCOMPATIBLE values for it:
+    /// STILL DEFAULTED OFF HERE, but no longer because the step is unknown:
+    /// this module is pure and has no view to derive it from. The CALL SITE
+    /// supplies it (`XfrmTransformTool.computeClickRelocateHitRaw`, task
+    /// 0570) as `10 * viewgrid.viewGridSize(pixelSize)` — ten grid steps,
+    /// where the grid step is itself the world length of 25 screen pixels
+    /// rounded up onto a mantissa ladder. It is a pure function of the view's
+    /// pixel size and needs no state.
     ///
-    ///   * the plane-offset sweep — a focus of 1.8255 came back as 2.0, and
-    ///     one of -0.3551 as 0.0. Together those admit a step of 1.0 or 2.0
-    ///     and nothing else between 0.05 and 20;
-    ///   * the big-pan work-plane probe — a focus of -1.0291 on the SAME
-    ///     out-of-plane axis came back as -1.03, which admits only steps at
-    ///     or below ~0.26, two orders of magnitude away.
+    /// THE "CONTRADICTION" THIS FIELD USED TO DOCUMENT WAS AN ARTEFACT, and
+    /// it is worth keeping the correction visible because the wrong version
+    /// was persuasive. Two rigs appeared to demand incompatible constants:
     ///
-    /// No constant satisfies both. Either the step really is camera-dependent
-    /// (the grid sub-division is a zoom-decade quantity, which would explain
-    /// the spread and is the reading the cards infer) or one of the two rigs
-    /// is not measuring this term — the second probe also returned an
-    /// IN-PLANE coordinate of 0.5 against a focus of 0.3437, which the law
-    /// does not predict at all and which coincides with that capture's
-    /// selection centroid.
+    ///   * the plane-offset sweep — a focus of 1.8255 came back as 2.0 and
+    ///     one of -0.3551 as 0.0, which admit a step of 1.0 or 2.0 and
+    ///     nothing else between 0.05 and 20;
+    ///   * the big-pan probe — a focus component of -1.0291 came back as
+    ///     -1.03, which admits only steps at or below ~0.26.
     ///
-    /// vibe3d cannot settle it from here: our grid is a single fixed 1.0-unit
-    /// lattice with no zoom decade to follow, so there is no quantity to
-    /// derive the step FROM even if the dependence were known. Shipping a
-    /// constant would fit one rig and contradict the other, and would move
-    /// every panned camera's relocate by up to half of a number we guessed.
+    /// The intersection is empty only if both rows are the QUANTISED axis. On
+    /// the second rig it is not: its out-of-plane axis is Y, not X. The
+    /// -1.0291 -> -1.03 row is the in-plane component-wise snap (see
+    /// `viewSnapStep`), and the row that IS the quantum on that rig is
+    /// 0.3437 -> 0.5, i.e. a step of 0.5. With the step derived from zoom
+    /// rather than fixed, 1.0/2.0 and 0.5 are two ordinary modelling zooms
+    /// about a factor of two apart, and both rigs reproduce exactly.
     ///
-    /// So: the rounding is implemented, tested, and reachable — pass a step
-    /// and it runs, exactly as measured on the sweep rig. It is simply not
-    /// switched on by default, and turning it on needs the grid-size read,
-    /// not another fit.
+    /// The lesson, since it cost two rounds: an "empty intersection" argument
+    /// is only as good as the axis index under each row.
     float quantumStep = 0.0f;
 }
 

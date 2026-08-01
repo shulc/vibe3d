@@ -102,50 +102,104 @@ unittest {
     }
 }
 
-// THE CONTRADICTION, PINNED. `theQuantumStepIsContradictedAcrossRigs`.
+// THE "CONTRADICTION" WAS AN AXIS-INDEX MISTAKE, AND BOTH RIGS REPRODUCE.
 //
-// Two rigs in this tree measured this term, and no single step satisfies
-// both. This test asserts that, so a later reader who wants to switch the
-// quantum on has to confront it rather than rediscover it:
+// This block used to assert the opposite: that no single step satisfied both
+// rigs, and that the quantum therefore had to stay dormant. That assertion
+// was sound arithmetic on a wrong premise — it read the second rig's
+// out-of-plane axis as X when it is Y — so it is replaced here rather than
+// deleted, because the wrong version was persuasive and the correction is
+// the useful artefact.
 //
-//   * SWEEP rig — focus 1.8255 came back as 2.0 (and -0.3551 as 0.0). That
-//     pair admits 1.0 and 2.0, and nothing else in 0.05..20.
-//   * BIG-PAN probe — focus -1.0291, on the out-of-plane axis, came back as
-//     -1.03. That admits only steps at or below ~0.26.
+// What the two rigs actually measured:
 //
-// The intersection is EMPTY. Hence `RelocatePlanePrefs.quantumStep` defaults
-// to 0 and the law's rounding is dormant until the grid-size question is
-// answered by a read rather than by a fit.
+//   * SWEEP rig, sub-step 0.005 -> its pixel size is in (0.002, 0.005], so
+//     25 pixels is in (0.05, 0.125] and the grid step is 0.1 or 0.2 — a
+//     quantum of 1.0 or 2.0. Its two rows need exactly that.
+//   * BIG-PAN rig, sub-step 0.002 -> pixel size in (0.001, 0.002], 25 pixels
+//     in (0.025, 0.05], grid step 0.05 — a quantum of 0.5. Its quantised
+//     row is 0.3437 -> 0.5 on axis Y. The -1.0291 -> -1.03 row that used to
+//     be read as the quantum is the IN-PLANE component snap, at 0.002.
+//
+// Two ordinary modelling zooms about a factor of two apart. The step is
+// derived, not constant, so there was never anything to contradict.
+//
+// The assertions below are the two rigs, component by component, under
+// `viewgrid`'s law — and, crucially, under a step DERIVED from each rig's own
+// measured sub-step rather than hand-picked to fit. That is what makes this a
+// test of the law and not a restatement of four numbers.
 unittest {
-    immutable Vec3 sweepFocus  = Vec3(0.6836f, 1.8255f, 2.0027f);
-    immutable Vec3 sweepFocus2 = Vec3(0.3426f, 0.0571f, -0.3551f);
-    immutable float bigPanFocusOop = -1.0291f;
-    immutable float bigPanEngine   = -1.03f;
+    import viewgrid : ViewGridPrefs, viewGridSubStep, relocateQuantum,
+                      viewGridSize;
 
-    // The sweep rig is reproduced by 1.0 ...
-    assert(near(niceOrigin(sweepFocus,  1, 1.0f, 0.005f).y, 2.0f, 1e-5f),
-           "the sweep's pan row must be reproduced by a 1.0 step");
-    assert(near(niceOrigin(sweepFocus2, 2, 1.0f, 0.005f).z, 0.0f, 1e-5f),
-           "the sweep's control row must be reproduced by a 1.0 step");
+    ViewGridPrefs g;                       // the shipped ladder, {1, 2, 5, 10}
 
-    // ... and 1.0 is REFUTED by the big-pan probe, which the same step sends
-    // to -1.0 instead of the -1.03 the engine returned.
-    immutable float atOne = niceOrigin(Vec3(bigPanFocusOop, 0, 0), 0, 1.0f, 0.0f).x;
-    assert(near(atOne, -1.0f, 1e-5f) && !near(atOne, bigPanEngine, 1e-3f),
-           format("a 1.0 step must send the big-pan focus to -1.0, not to the "
-                  ~ "measured -1.03 — got %.6f", atOne));
-
-    // And every step that DOES reproduce the big-pan probe fails the sweep.
-    foreach (i; 1 .. 521) {          // 0.0005 .. 0.2605
-        immutable float s = i * 0.0005f;
-        if (!near(niceOrigin(Vec3(bigPanFocusOop, 0, 0), 0, s, 0.0f).x,
-                  bigPanEngine, 5e-5f)) continue;
-        immutable float y = niceOrigin(sweepFocus, 1, s, 0.0f).y;
-        assert(!near(y, 2.0f, 1e-3f),
-               format("step %.4f reproduces BOTH rigs (big-pan -1.03 and sweep "
-                      ~ "2.0) — the contradiction this test pins has been "
-                      ~ "resolved and the default should be revisited", s));
+    // For each rig, its measured SUB-STEP constrains the pixel size, and the
+    // pixel size determines the quantum. So the quantum a rig may have had is
+    // a derived SET, not a fitted number — and that set is what is asserted.
+    //
+    // The interval is derived by SELECTION rather than hand-computed: sweep a
+    // wide range of pixel sizes, keep the ones whose sub-step is the value
+    // that rig measured, and collect the quanta over exactly those. Nothing
+    // here encodes an endpoint someone worked out on paper.
+    struct Rig { string name; float subStep; float[] quanta; }
+    foreach (r; [Rig("sweep",   0.005f, [1.0f, 2.0f]),
+                 Rig("big-pan", 0.002f, [0.5f])]) {
+        float[] seen;
+        int matched = 0;
+        enum int N = 4000;
+        foreach (i; 0 .. N + 1) {
+            // 1e-4 .. 1e-2, geometric.
+            immutable float px = cast(float)(1e-4 * (100.0 ^^ (cast(double)i / N)));
+            if (!near(viewGridSubStep(px, viewGridSize(px, g), g), r.subStep, 1e-7f))
+                continue;
+            ++matched;
+            immutable float q = relocateQuantum(px, g);
+            bool known = false;
+            foreach (v; seen) if (near(v, q, 1e-6f)) known = true;
+            if (!known) seen ~= q;
+        }
+        assert(matched > 100,
+               format("%s: no pixel size in the sweep produces its measured "
+                      ~ "sub-step %.4f — the selection is empty and this rig "
+                      ~ "would assert nothing", r.name, r.subStep));
+        assert(seen.length == r.quanta.length,
+               format("%s: a sub-step of %.4f admits %d quantum value(s), got "
+                      ~ "%d", r.name, r.subStep, r.quanta.length, seen.length));
+        foreach (want; r.quanta) {
+            bool found = false;
+            foreach (v; seen) if (near(v, want, 1e-6f)) found = true;
+            assert(found, format("%s: %.4f must be an admissible quantum",
+                                 r.name, want));
+        }
     }
+
+    // SWEEP rig, both rows, all three components.
+    immutable Vec3 sweepPan  = Vec3(0.6836f, 1.8255f, 2.0027f);   // axis Y
+    immutable Vec3 sweepCtl  = Vec3(0.3426f, 0.0571f, -0.3551f);  // axis Z
+    assert(nearV(niceOrigin(sweepPan, 1, 1.0f, 0.005f),
+                 Vec3(0.685f, 2.0f, 2.005f), 1e-5f),
+           "the sweep's pan row must reproduce on ALL THREE components");
+    assert(nearV(niceOrigin(sweepCtl, 2, 1.0f, 0.005f),
+                 Vec3(0.345f, 0.055f, 0.0f), 1e-5f),
+           "the sweep's control row must reproduce on ALL THREE components");
+
+    // BIG-PAN rig: out-of-plane axis Y, quantum 0.5, in-plane snap 0.002.
+    // The row the old test misread is the FIRST component here, and it comes
+    // out right precisely because it is NOT the quantised one.
+    immutable Vec3 bigPan = Vec3(-1.0291f, 0.3437f, -1.0939f);
+    assert(nearV(niceOrigin(bigPan, 1, 0.5f, 0.002f),
+                 Vec3(-1.03f, 0.5f, -1.094f), 1e-5f),
+           "the big-pan rig must reproduce on all three components with the "
+           ~ "out-of-plane axis read as Y");
+
+    // The refutation, stated as a test: reading that rig's axis as X is what
+    // produced the empty intersection, and it visibly does NOT reproduce.
+    assert(!nearV(niceOrigin(bigPan, 0, 0.5f, 0.002f),
+                  Vec3(-1.03f, 0.5f, -1.094f), 1e-3f),
+           "reading the big-pan rig's out-of-plane axis as X must NOT "
+           ~ "reproduce it — that mistake is the whole of the old "
+           ~ "'contradiction' and this assertion is what keeps it refuted");
 }
 
 // The default is OFF, and that is a decision, not an oversight: with it off
