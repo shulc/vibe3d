@@ -820,6 +820,19 @@ public:
     // signs. Delegates to the pure kernel so the law lives in exactly one
     // place and is pinned by tests built from measured reference cameras.
     // Returns false when the projection is degenerate.
+    //
+    // THE BASIS THIS SUPPLIES IS OUR OWN, AND IT IS NOT THE REFERENCE'S.
+    // `cachedVp.view` rows 0/1 come from `view.d`'s
+    // `lookAt(eye, focus, Vec3(0,1,0))`, so our right row is perpendicular to
+    // +Y and our screen carries no roll. The reference's does (6.4 to 27.5 deg
+    // across the measured cameras, sign-changing), and the same rule on the
+    // two screens elects the same axis on 4 of the 7 measured cameras and a
+    // different one on 3. That is recorded and asserted camera by camera in
+    // `pickScreenPlaneAxes`'s unittest, which runs BOTH bases; read its
+    // docstring before treating a corpus divergence here as a bug in the law.
+    // Regenerate the numbers with the election scorer in the private
+    // reference-comparison toolkit; it prints its table and its inclusion
+    // rule.
     private bool pickPlaneAxes(ref VectorStack vts,
                                out int hIdx, out int vIdx,
                                out float hSign, out float vSign)
