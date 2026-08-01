@@ -4322,6 +4322,12 @@ public:
     // new targets — the tool-switch path (`deactivate`), which has no event
     // and therefore no pixel to compute them for. Disarms afterwards, so a
     // reactivation starts clean.
+    //
+    // And therefore NO destructive landing either (task 0555): the landing is
+    // part of committing a RELEASE, and this path has no release — it is the
+    // salvage of a drag the user abandoned by switching tools. It records the
+    // positions as they stand. Deliberate, and the same shape as the rest of
+    // this path: it computes nothing new, it only keeps what is already there.
     private void commitLiveMoveIfDirty() {
         if (!moveArmed_) return;
         scope(exit) clearMoveArm();
