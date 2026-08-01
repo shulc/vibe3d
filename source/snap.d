@@ -258,11 +258,17 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 //     override;
 //   * that the tolerance base is `min(callerRange, 8.0)`.
 //
-// NOT MEASURED, and therefore not modelled: where edge-centre / polygon-centre
-// candidates rank (the cascade has exactly three legs and neither is one of
-// them), and how these three rank against Grid / Workplane / Pivot / Box
-// (a different arbitration layer — see `arbitrate`). Those keep the bare
-// distance ranking they have always had.
+// MEASURED SINCE (task 0560, static, same disassembly lane): where the CENTRE
+// types sit. The question "where do they rank" had a false premise — they do
+// not rank. A centre never opens a candidate of its own; it refines the point
+// on a leg the cascade has ALREADY elected. See `refineElectedLeg` in
+// `snapCursor` for the rule and `cascadeClass` below for the consequence: a
+// centre type carries its ELEMENT's class, because the leg it refines is the
+// only thing that was ever ranked.
+//
+// STILL NOT MEASURED, and therefore not modelled: how these three rank against
+// Grid / Workplane / Pivot / Box (a different arbitration layer — see
+// `arbitrate`). Those keep the bare distance ranking they have always had.
 // ---------------------------------------------------------------------------
 
 /// Upper bound on the cross-type tolerance base, in pixels. The base itself is
@@ -289,13 +295,28 @@ enum int kCascadeEdge    = 1;
 enum int kCascadePolygon = 2;
 
 /// Which cascade class a discrete snap type belongs to, or -1 for a type the
-/// cascade does not model (every centre type, Grid, Workplane, Pivot, Box,
-/// Intersection). A -1 type keeps the bare distance ranking.
+/// cascade does not model (Grid, Workplane, Pivot, Box, Intersection). A -1
+/// type keeps the bare distance ranking.
+///
+/// A CENTRE TYPE CARRIES ITS ELEMENT'S CLASS, and that is the whole of the
+/// measured model showing up in one place. `EdgeCenter` is not a fourth leg
+/// competing with Vertex / Edge / Polygon on screen distance — it is the EDGE
+/// leg, elected by the on-edge distance like any edge, whose point is then
+/// moved to the midpoint (`refineElectedLeg`). The type tag is what the walk
+/// reports to the caller; the class is what the cascade ranks. `PolyCenter` is
+/// the same one leg over.
+///
+/// The distinction matters exactly where the two disagree, and they disagree
+/// in the direction that was the reported defect: with the centre as its own
+/// competitor, a centre on edge E2 could out-rank a Vertex candidate outright,
+/// which no arrangement of the reference's code can produce.
 int cascadeClass(SnapType t) pure nothrow @nogc @safe
 {
-    if (t == SnapType.Vertex)  return kCascadeVertex;
-    if (t == SnapType.Edge)    return kCascadeEdge;
-    if (t == SnapType.Polygon) return kCascadePolygon;
+    if (t == SnapType.Vertex)     return kCascadeVertex;
+    if (t == SnapType.Edge)       return kCascadeEdge;
+    if (t == SnapType.EdgeCenter) return kCascadeEdge;
+    if (t == SnapType.Polygon)    return kCascadePolygon;
+    if (t == SnapType.PolyCenter) return kCascadePolygon;
     return -1;
 }
 
@@ -511,6 +532,66 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     long bestSeq  = long.max;   // enumeration order of `best*`'s current holder
     long seqNext  = 0;          // monotonic per accepted candidate
 
+    // The background snap sources, snapshotted ONCE under the grid lock and
+    // then read without it. Hoisted above the walk (it used to be taken just
+    // before the background loop) because the CENTRE refinement and the vertex
+    // veto both run AFTER the walk and both need to resolve a winner's source
+    // slot back to the mesh it came from — see `sourceMesh`.
+    //
+    // Snapshot-then-walk, not walk-under-lock: queryCandidateGrid re-acquires
+    // g_vgridMutex (non-recursive), so holding it across the walk deadlocks.
+    // Empty in the single-layer common case ⇒ no extra work and no allocation.
+    const(Mesh)*[] bgSources;
+    synchronized (g_vgridMutex) {
+        if (g_snapSources.length > 0)
+            bgSources = g_snapSources.dup;
+    }
+
+    /// Resolve a candidate's source slot to the mesh it was enumerated from:
+    /// slot 0 is the `mesh` argument (the active layer), 1..N index
+    /// `bgSources`. Returns null for a slot with no mesh — a candidate whose
+    /// source vanished cannot be refined, and the caller leaves it alone
+    /// rather than guessing.
+    const(Mesh)* sourceMesh(int slot) {
+        if (slot == 0) return &mesh;
+        immutable size_t i = cast(size_t)(slot - 1);
+        return i < bgSources.length ? bgSources[i] : null;
+    }
+
+    /// Screen distance in pixels from the cursor to a world point, or -1 when
+    /// the point does not project (behind camera). Same projection and same
+    /// metric `consider` ranks with, so a distance produced here is directly
+    /// comparable with a `ClassBest.dist`.
+    float screenDistPx(Vec3 w) {
+        float pxs, pys, ndcZ;
+        if (!projectToWindowFull(w, vp, pxs, pys, ndcZ)) return -1.0f;
+        immutable float dx = pxs - cast(float)sx;
+        immutable float dy = pys - cast(float)sy;
+        return sqrt(dx * dx + dy * dy);
+    }
+
+    /// The CENTRE point of an elected leg: an edge's midpoint (parameter 0.5
+    /// exactly, which is what the reference evaluates) or a face's centroid.
+    /// False when the leg cannot be resolved (missing source, stale index,
+    /// empty face) — the caller then leaves the elected point alone.
+    bool legCenterPoint(int cls, int idx, int slot, out Vec3 p) {
+        if (idx < 0) return false;
+        const(Mesh)* m = sourceMesh(slot);
+        if (m is null) return false;
+        if (cls == kCascadeEdge) {
+            if (cast(size_t)idx >= m.edges.length) return false;
+            auto e = m.edges[idx];
+            if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) return false;
+            p = (m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f;
+            return true;
+        }
+        if (cls != kCascadePolygon) return false;
+        if (cast(size_t)idx >= m.faces.length) return false;
+        if (m.faces[idx].length == 0) return false;
+        p = m.faceCentroid(cast(uint)idx);
+        return true;
+    }
+
     // Constraint tier accumulator (Stage 2).
     float    cBestDist  = float.infinity;
     Vec3     cBestWorld = cursorWorld;
@@ -653,6 +734,112 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
 
+    // ------------------------------------------------------------------
+    // THE CENTRE TYPES REFINE AN ELECTED LEG (task 0560, measured static).
+    //
+    // `EdgeCenter` / `PolyCenter` are NOT candidates. The reference queries
+    // them only INSIDE the branch that already holds a hit edge / hit polygon,
+    // and it queries them after the cascade has run; there is no centre entry
+    // in the element enumerator's vocabulary at all, so a centre can never be
+    // an element and can never compete across legs. What it does is move the
+    // elected leg's POINT:
+    //
+    //   * centre type off              -> the on-element point stands;
+    //   * centre on, element type off  -> the centre REPLACES it, no contest;
+    //   * both on                      -> a bare screen-distance contest
+    //                                     between the on-element point and the
+    //                                     centre, no tolerance, no cascade
+    //                                     clause, TIES TO THE CENTRE (the
+    //                                     element keeps the point only when it
+    //                                     is STRICTLY nearer).
+    //
+    // The leg's RANK is untouched by all of this — the centre inherits it.
+    // That is why acceptance (`bestDist <= innerRangePx`, below) still reads
+    // the ON-ELEMENT distance after a replacement: the element is what was
+    // elected and what was found to be in range, and the centre is where that
+    // election points. A centre far outside the range can therefore be
+    // snapped to, on the strength of its edge being inside it — which is the
+    // reference's behaviour and is the half of this model our old one had
+    // backwards (ours could snap to a centre whose own element lost).
+    //
+    // KNOWN SEAM, ours: with a guide registered, `cb.dist` is the guide's
+    // ranking answer rather than a screen distance, so the both-on contest
+    // compares a guide distance against a raw one. Every call site registers
+    // an empty registry, where the two are the same number; a guide that
+    // wanted to rank the centre would need to be offered the centre, and the
+    // enumeration has no centre to offer it.
+    void refineElectedLeg(int cls, ref ClassBest cb) {
+        SnapType centreT, elemT;
+        if      (cls == kCascadeEdge)    { centreT = SnapType.EdgeCenter;
+                                           elemT   = SnapType.Edge; }
+        else if (cls == kCascadePolygon) { centreT = SnapType.PolyCenter;
+                                           elemT   = SnapType.Polygon; }
+        else return;                     // the vertex leg has no centre twin
+
+        if (!(cfg.enabledTypes & centreT)) return;
+        if (!typeEligible(centreT, cfg.snapScope)) return;
+
+        Vec3 c;
+        if (!legCenterPoint(cls, cb.idx, cb.slot, c)) return;
+
+        immutable bool elemOn = (cfg.enabledTypes & elemT) != 0
+                             && typeEligible(elemT, cfg.snapScope);
+        if (!elemOn) {                   // replaces outright
+            cb.world = c;
+            cb.type  = centreT;
+            return;
+        }
+        immutable float dC = screenDistPx(c);
+        if (dC < 0) return;              // centre behind the camera: element stands
+        if (cb.dist < dC) return;        // element STRICTLY nearer: it keeps the point
+        cb.world = c;                    // ties included
+        cb.type  = centreT;
+    }
+
+    // ------------------------------------------------------------------
+    // THE VERTEX VETO (task 0560, measured static) — a SEPARATE mechanism
+    // that happens to be built from the same number.
+    //
+    // Same quantity as the refinement above (the winning edge's midpoint) at a
+    // different site, with different gating and a different effect. It lives
+    // in the element enumerator, not the snap arbitration: it is
+    // UNCONDITIONAL — no snap type, no mode and no mask is consulted anywhere
+    // above it — it runs BEFORE the cascade rather than after, it REMOVES the
+    // vertex candidate rather than moving a point, and it has no polygon twin.
+    //
+    // Modelling it as "EdgeCenter snapping" would be wrong in a user-visible
+    // way: it would then switch off with the EdgeCenter preference, and in the
+    // reference it does not. It is not gated here either.
+    //
+    // The rule: the vertex slot is CLEARED whenever the cursor is nearer to
+    // the winning edge's midpoint than to the best vertex, provided that
+    // midpoint is inside the caller's acceptance range. The reference's two
+    // null tests — a vertex candidate and an edge candidate must both exist —
+    // are the CALLER's precondition here, because after the priority mask
+    // "exists" and "is in the election" are different questions (see the call
+    // site for which one this gets asked about, and why).
+    //
+    // OURS, and the one place our shape forces a narrower rule than the
+    // reference's: the reference's enumerator produces an edge hit whether or
+    // not any edge-ish snap type is on, because its element classes come from
+    // the pick mode. Our walk enumerates a leg only when a type asks for it,
+    // so the veto can only fire when the Edge or the EdgeCenter type is also
+    // on. With the shipped default (Vertex alone) it never fires. That is a
+    // limit of where the enumeration lives, not a gate we added: the veto
+    // itself asks no type anything.
+    //
+    // Returns true when the vertex slot must be treated as EMPTY.
+    bool vertexSlotVetoed() {
+        Vec3 mid;
+        if (!legCenterPoint(kCascadeEdge, clsBest[kCascadeEdge].idx,
+                            clsBest[kCascadeEdge].slot, mid))
+            return false;
+        immutable float dMid = screenDistPx(mid);
+        if (dMid < 0) return false;                          // does not project
+        if (dMid >= cfg.innerRangePx) return false;          // outside caller range
+        return dMid < clsBest[kCascadeVertex].dist;
+    }
+
     // Merge the three class winners by the measured cascade and fold the
     // champion back into `best*`. Called ONCE, after every candidate has been
     // enumerated; the `(prio, dist, seq)` fold is order-independent, so it
@@ -700,6 +887,46 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             dist[i] = cb.dist;
         }
 
+        // THE VERTEX VETO, and it goes here — inside the top-priority set,
+        // between the priority mask and the cascade.
+        //
+        // The reference has it upstream of both, in the element enumerator.
+        // We cannot copy that placement literally, because the thing it would
+        // run upstream of is not the reference's structure: the reference's
+        // element guide answers ONE priority for vertex, edge and polygon
+        // alike (recorded in this file's cascade header), so a priority
+        // difference BETWEEN two classes of one source is not a state it can
+        // reach, and "veto before priority" versus "veto after priority" is a
+        // question its code never has to answer. Ours can reach that state,
+        // because our guides are asked per candidate.
+        //
+        // So the ordering is decided by our own contract, and the contract is
+        // already written down two paragraphs up: priority decides BETWEEN
+        // classes, and everything else decides WITHIN one priority. The veto
+        // is an "everything else". A guide that outranks the vertex class has
+        // removed the edge from the election, and an edge that is not in the
+        // election has no midpoint to veto with; a guide that outranks the
+        // edge class has removed the vertex, and there is nothing left to
+        // veto. Either way the registry's rule — higher priority wins
+        // outright, at any distance — survives intact, which is what its own
+        // two-direction unittest asserts.
+        //
+        // NEUTRAL WHERE IT MATTERS: with an empty registry — every call site —
+        // every class carries priority 0, nothing is masked, and this set is
+        // exactly the enumerated one. The ordering is observable ONLY through
+        // a guide that splits priorities across cascade classes, i.e. only in
+        // the case the reference cannot express.
+        //
+        // A VETOED VERTEX IS ABSENT BUT STILL VOTES. That asymmetry with the
+        // priority mask above is measured, not an oversight: the reference's
+        // comparator null-tests only the slot array and reads the distance
+        // array unconditionally, and the veto clears the slot while leaving
+        // the distance behind. So a vetoed vertex still casts its distance
+        // into the edge's and the polygon's tolerance clauses. Only `has` is
+        // cleared here; `dist` is deliberately left standing.
+        if (has[kCascadeVertex] && has[kCascadeEdge] && vertexSlotVetoed())
+            has[kCascadeVertex] = false;
+
         // The tolerance base. The reference builds it as `min(callerRange,
         // hitSize)` — where callerRange is the ONE range its snap query
         // carries. Ours is the acceptance range: `outerRangePx` is the extra
@@ -713,6 +940,11 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         foreach (i; 0 .. 3) {
             if (!cascadeClassWins(cast(int)i, has, dist, tol[i])) continue;
             auto cb = clsBest[i];
+            // The leg is elected. NOW the centre type gets to move its point —
+            // after the cascade, never inside it, and without touching
+            // `cb.dist`, which is the rank the leg won on and the rank the
+            // fold below and the acceptance test further down both read.
+            refineElectedLeg(cast(int)i, cb);
             if (cb.prio > bestPrio
                 || (cb.prio == bestPrio
                     && (cb.dist < bestDist
@@ -818,8 +1050,35 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                     consider(m.vertices[vi], cast(int)vi, SnapType.Vertex, slot);
         }
 
-        if ((cfg.enabledTypes & SnapType.Edge)
-                && typeEligible(SnapType.Edge, cfg.snapScope)) {
+        // ------------------------------------------------------------------
+        // THE EDGE LEG — enumerated when EITHER the Edge type or the
+        // EdgeCenter type is on, and enumerated exactly once either way.
+        //
+        // A centre never opens a candidate of its own (see `refineElectedLeg`),
+        // so the EdgeCenter type does not get a walk; what it gets is an edge
+        // walk, because the leg it will refine has to be elected first. The
+        // candidate offered to `consider` is the ON-EDGE point in both cases —
+        // that is the point the leg is ranked on, and it is never farther from
+        // the cursor than the midpoint is, so ranking on it is also what makes
+        // the grid's gather a superset.
+        //
+        // `legType` is what the walk REPORTS (it reaches the `admit`
+        // predicate, and it is the `SnapResult.targetType` when no refinement
+        // fires). With EdgeCenter alone it is EdgeCenter, so a client that
+        // admits by type sees exactly the type it asked for, as before. With
+        // both on it is Edge, and the contest inside `refineElectedLeg`
+        // decides which of the two the result finally carries.
+        //
+        // `cascadeClass` maps both tags onto the edge class, so which tag is
+        // used here never changes what is ranked against what.
+        // ------------------------------------------------------------------
+        immutable bool edgeTypeOn = (cfg.enabledTypes & SnapType.Edge) != 0
+                                 && typeEligible(SnapType.Edge, cfg.snapScope);
+        immutable bool edgeCtrOn  = (cfg.enabledTypes & SnapType.EdgeCenter) != 0
+                                 && typeEligible(SnapType.EdgeCenter, cfg.snapScope);
+        if (edgeTypeOn || edgeCtrOn) {
+            immutable SnapType legType = edgeTypeOn ? SnapType.Edge
+                                                    : SnapType.EdgeCenter;
             auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (ei; cands) {
@@ -833,24 +1092,22 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 float t;
                 closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
                                            px0, py0, px1, py1, t);
-                consider(a + (b - a) * t, cast(int)ei, SnapType.Edge, slot);
+                consider(a + (b - a) * t, cast(int)ei, legType, slot);
             }
         }
 
-        if ((cfg.enabledTypes & SnapType.EdgeCenter)
-                && typeEligible(SnapType.EdgeCenter, cfg.snapScope)) {
-            auto cands = queryCandidateGrid(Kind.EdgeCenter, slot, m, vp, sx, sy,
-                                            cfg.outerRangePx, exclude);
-            foreach (ei; cands) {
-                auto edge = m.edges[ei];
-                if (!edgeVisible(edge[0], edge[1])) continue;
-                Vec3 mid = (m.vertices[edge[0]] + m.vertices[edge[1]]) * 0.5f;
-                consider(mid, cast(int)ei, SnapType.EdgeCenter, slot);
-            }
-        }
-
-        if ((cfg.enabledTypes & SnapType.Polygon)
-                && typeEligible(SnapType.Polygon, cfg.snapScope)) {
+        // The POLYGON leg — the edge leg's rule one leg over, and the
+        // reference's shape there is the same shape (a polygonCenter query
+        // that only ever happens inside a branch already holding a polygon).
+        // The candidate is the closest point on the face SURFACE; the centroid
+        // arrives, if at all, in `refineElectedLeg`.
+        immutable bool polyTypeOn = (cfg.enabledTypes & SnapType.Polygon) != 0
+                                 && typeEligible(SnapType.Polygon, cfg.snapScope);
+        immutable bool polyCtrOn  = (cfg.enabledTypes & SnapType.PolyCenter) != 0
+                                 && typeEligible(SnapType.PolyCenter, cfg.snapScope);
+        if (polyTypeOn || polyCtrOn) {
+            immutable SnapType legType = polyTypeOn ? SnapType.Polygon
+                                                    : SnapType.PolyCenter;
             auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (fi; cands) {
@@ -858,19 +1115,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 if (!faceVisible(face)) continue;
                 Vec3 hit;
                 if (closestOnPolygonSurface(face, m, sx, sy, vp, hit))
-                    consider(hit, cast(int)fi, SnapType.Polygon, slot);
-            }
-        }
-
-        if ((cfg.enabledTypes & SnapType.PolyCenter)
-                && typeEligible(SnapType.PolyCenter, cfg.snapScope)) {
-            auto cands = queryCandidateGrid(Kind.PolyCenter, slot, m, vp, sx, sy,
-                                            cfg.outerRangePx, exclude);
-            foreach (fi; cands) {
-                auto face = m.faces[fi];
-                if (face.length == 0) continue;
-                if (!faceVisible(face)) continue;
-                consider(m.faceCentroid(cast(uint)fi), cast(int)fi, SnapType.PolyCenter, slot);
+                    consider(hit, cast(int)fi, legType, slot);
             }
         }
 
@@ -932,17 +1177,9 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 
     // Sources 1..N = the visible background layers (layers Stage 5). A
     // background layer is never being dragged, so it carries no exclusion; its
-    // grids live in slots 1.. so they never alias the active grid.
-    //
-    // Snapshot the source-list under the lock into a local, then walk OUTSIDE
-    // the lock: queryCandidateGrid re-acquires g_vgridMutex (a non-recursive
-    // Mutex), so calling walkSource while holding it would deadlock. The
-    // snapshot is empty in the single-layer common case ⇒ no extra work.
-    const(Mesh)*[] bgSources;
-    synchronized (g_vgridMutex) {
-        if (g_snapSources.length > 0)
-            bgSources = g_snapSources.dup;
-    }
+    // grids live in slots 1.. so they never alias the active grid. `bgSources`
+    // is the snapshot taken at the top of the function (it has to be taken
+    // before the walk now, because the post-walk refinement reads it too).
     foreach (i, src; bgSources)
         if (src !is null)
             walkSource(*src, cast(int)(i + 1), null);
@@ -1204,9 +1441,8 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 //
 // ONE GENERIC GRID, FIVE KINDS: `Kind` selects which per-element
 // projection feeds the grid:
-//   - Vertex / EdgeCenter / PolyCenter — POINT candidates: one projected
-//     screen point per element. Bucketed into the single cell that point
-//     falls in.
+//   - Vertex — POINT candidates: one projected screen point per element.
+//     Bucketed into the single cell that point falls in.
 //   - Edge / Polygon — EXTENT candidates: the element's PROJECTED
 //     screen-space bounding box (edge = both endpoints; face = all
 //     verts). Bucketed into EVERY cell its bbox overlaps, so a long edge
@@ -1248,9 +1484,8 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // EXCLUDE IS QUERY-TIME, NOT KEY: every element is indexed at build
 // time; the dragged set (excludeVerts) is applied at QUERY time. An
 // element is excluded iff ANY of its incident verts is dragged — the
-// source vert (Vertex) / either edge endpoint (EdgeCenter, Edge) / any
-// face vert (PolyCenter, Polygon). See `kindExcluded` for why ANY and
-// not ALL.
+// source vert (Vertex) / either edge endpoint (Edge) / any face vert
+// (Polygon). See `kindExcluded` for why ANY and not ALL.
 //
 // THAT RULE IS ALSO WHAT KEEPS THIS CACHE HONEST, and it is the reason the
 // two paragraphs sit together. The key holds `mesh.mutationVersion`, which an
@@ -1281,18 +1516,25 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // caller's exact walk is a full — but still correct — linear scan; only
 // ever reached for pathological configs.
 
-private enum Kind { Vertex, EdgeCenter, PolyCenter, Edge, Polygon }
+// There is no EdgeCentre / PolyCentre kind, and its absence is the model
+// rather than an omission: a centre is never enumerated, so it never needs a
+// broad phase. The two grids that used to index midpoints and centroids were
+// built and maintained per frame purely to feed candidate walks that no longer
+// exist; a centre is now reached from its already-elected element, in O(1),
+// with no grid at all. (The reference's own element enumerator has no centre
+// entry in its type vocabulary either.)
+private enum Kind { Vertex, Edge, Polygon }
 
 private bool kindIsPoint(Kind k) {
-    return k == Kind.Vertex || k == Kind.EdgeCenter || k == Kind.PolyCenter;
+    return k == Kind.Vertex;
 }
 
 // Number of elements of a kind present in the mesh.
 private size_t kindCount(Kind k, const ref Mesh mesh) {
     final switch (k) {
-        case Kind.Vertex:                      return mesh.vertices.length;
-        case Kind.EdgeCenter: case Kind.Edge:  return mesh.edges.length;
-        case Kind.PolyCenter: case Kind.Polygon: return mesh.faces.length;
+        case Kind.Vertex:  return mesh.vertices.length;
+        case Kind.Edge:    return mesh.edges.length;
+        case Kind.Polygon: return mesh.faces.length;
     }
 }
 
@@ -1395,16 +1637,6 @@ private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
     final switch (k) {
         case Kind.Vertex:
             return accumulate(mesh.vertices[idx]);
-        case Kind.EdgeCenter: {
-            auto e = mesh.edges[idx];
-            Vec3 mid = (mesh.vertices[e[0]] + mesh.vertices[e[1]]) * 0.5f;
-            return accumulate(mid);
-        }
-        case Kind.PolyCenter: {
-            auto f = mesh.faces[idx];
-            if (f.length == 0) return false;
-            return accumulate(mesh.faceCentroid(cast(uint)idx));
-        }
         case Kind.Edge: {
             auto e = mesh.edges[idx];
             if (!accumulate(mesh.vertices[e[0]])) return false;
@@ -1535,6 +1767,14 @@ private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
 // translated, and it is self-reference either way. So: any incident vert
 // dragged ⇒ the element is not a candidate.
 //
+// The first bullet reads as history now and is still load-bearing as a rule.
+// A centre is no longer enumerated at all (task 0560 — it refines an elected
+// element instead), so the centroid of a deforming edge or face cannot be a
+// candidate on its own; what stops it is that its ELEMENT is excluded here and
+// so is never elected, which is the same protection reached one step earlier.
+// Deleting a case from this switch would restore the defect through the new
+// route as surely as through the old one.
+//
 // The cost shape is unchanged: an O(1) per-vertex membership bitset (`ex`,
 // indexed by vertex id) so a whole-mesh drag's huge exclude list doesn't turn
 // each test into an O(exclude) scan — which would reintroduce the very O(n²)
@@ -1551,11 +1791,11 @@ private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
     final switch (k) {
         case Kind.Vertex:
             return exV(cast(uint)idx);
-        case Kind.EdgeCenter: case Kind.Edge: {
+        case Kind.Edge: {
             auto e = mesh.edges[idx];
             return exV(e[0]) || exV(e[1]);
         }
-        case Kind.PolyCenter: case Kind.Polygon: {
+        case Kind.Polygon: {
             auto f = mesh.faces[idx];
             foreach (vi; f)
                 if (exV(vi)) return true;
@@ -2554,8 +2794,18 @@ unittest {
         SnapPacket cfg;
         cfg.enabled      = true;
         cfg.snapScope    = SnapMode.Global;
-        cfg.innerRangePx = 40.0f;
-        cfg.outerRangePx = 40.0f;
+        // 30, not 40, and the constant is the fixture's isolation rather than
+        // a taste: vertex 1 projects 40.0 px from the cursor these blocks use,
+        // so at 40 the sibling edge grazes the gather boundary from the inside
+        // (`d > outerRangePx` is false at exactly equal). That was harmless
+        // while a centre was its own candidate — edge 1's CENTRE is 120 px out
+        // — and stopped being harmless when the centre became a refinement of
+        // an elected EDGE, because it is the edge's near END that gets
+        // gathered. 30 puts the whole sibling outside, which is what the block
+        // header has always claimed the fixture does. The guard below now pins
+        // that quantity instead of the centre's.
+        cfg.innerRangePx = 30.0f;
+        cfg.outerRangePx = 30.0f;
 
         // --- 1. EDGE CENTRE ------------------------------------------------
         cfg.enabledTypes = SnapType.EdgeCenter;
@@ -2569,9 +2819,12 @@ unittest {
             "positive control: with NOTHING excluded the cursor sits on edge "
             ~ "0's centre and must snap to it — otherwise the exclusion "
             ~ "assertion below would pass for the wrong reason");
-        assert(pixelOf(Vec3(2.0f, 0, 0))[0] - pc[0] > cfg.outerRangePx,
-            "fixture: edge 1's centre must be OUTSIDE the gather range, so a "
-            ~ "miss below means the exclusion fired and not that a sibling won");
+        assert(pixelOf(m.vertices[1])[0] - pc[0] > cfg.outerRangePx,
+            "fixture: the sibling edge's NEAREST END must be outside the "
+            ~ "gather range — not merely its centre — so a miss below means "
+            ~ "the exclusion fired and not that a sibling won. The near end is "
+            ~ "the right quantity because the leg is elected on the ON-EDGE "
+            ~ "point and the centre only refines it afterwards");
 
         invalidateSnapGrids();
         SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
@@ -2646,10 +2899,9 @@ unittest {
         invalidateSnapGrids();
         SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
         assert(!r.snapped,
-            "PolyCenter is ON BY DEFAULT, so this is the case a user meets "
-            ~ "without changing a setting: a face with one dragged corner has "
-            ~ "a centroid that follows the drag at 1/n of its speed, and the "
-            ~ "gizmo is pulled after its own tail");
+            "a face with one dragged corner has a centroid that follows the "
+            ~ "drag at 1/n of its speed, and the gizmo is pulled after its own "
+            ~ "tail");
 
         // --- 4. POLYGON as a surface ---------------------------------------
         cfg.enabledTypes = SnapType.Polygon;
@@ -3194,6 +3446,427 @@ unittest {
             ~ "must win against the class the cascade prefers. The two "
             ~ "directions are asserted separately because a fold that reads no "
             ~ "priority at all breaks both, and neither one alone shows it");
+    }
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// THE CENTRE TYPES REFINE AN ELECTED LEG; THEY DO NOT COMPETE (task 0560).
+//
+// Four laws, one block each, and each block is written so that the OLD model —
+// EdgeCenter / PolyCenter as independent candidates ranked on bare screen
+// distance — produces a different, nameable answer:
+//
+//   A. a centre can only ever be the centre of the element the cascade
+//      ELECTED. Under the old model the nearest centre won outright, so a
+//      centre belonging to an element that lost could be the result.
+//   B. with the element type OFF the centre REPLACES the elected point, and
+//      it inherits the ELEMENT's rank — so a centre far outside the
+//      acceptance range is snapped to on the strength of its element being
+//      inside it. The old model ranked the centre on its own distance and
+//      could not reach that point at all.
+//   C. with BOTH on, the two points contest on bare screen distance, with
+//      TIES GOING TO THE CENTRE.
+//   D. the same one leg over, for the polygon.
+//
+// NONE OF THIS IS VISIBLE AT THE SHIPPED DEFAULT, which is Vertex alone. Every
+// block sets `enabledTypes` explicitly; a block that forgot to would assert
+// nothing at all, which is why each carries a positive control on the type it
+// expects to see.
+//
+// The viewport is the one the rest of this file's behavioural tests use:
+// 80 px per world unit at z = 0, screen = (400 + 80x, 400 - 80y).
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    // Never any candidate's position, so a pass-through is distinguishable.
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    float distPx(Vec3 w, int sx, int sy) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return sqrt((qx - sx) * (qx - sx) + (qy - sy) * (qy - sy));
+    }
+    bool near(Vec3 a, Vec3 b) {
+        return abs(a.x - b.x) < 1e-3f && abs(a.y - b.y) < 1e-3f
+            && abs(a.z - b.z) < 1e-3f;
+    }
+
+    // --- A. A CENTRE BELONGS TO THE ELECTED LEG, NOT TO THE NEAREST CENTRE --
+    // Two edges. E0 runs close past the cursor and away, so its ON-EDGE point
+    // is the nearest thing on the mesh and its MIDPOINT is the farthest. E1
+    // sits off to the side: its on-edge point is far, but its midpoint is much
+    // nearer than E0's. Ranking centres against each other therefore answers
+    // E1; ranking ELEMENTS and then taking the winner's centre answers E0.
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(0.1f, 0.0f, 0),   // 0 — E0 near end,  px (408, 400)
+            Vec3(2.1f, 0.0f, 0),   // 1 — E0 far end,   px (568, 400)
+            Vec3(0.3f, 0.3f, 0),   // 2 — E1,           px (424, 376)
+            Vec3(0.5f, 0.3f, 0),   // 3 — E1,           px (440, 376)
+        ];
+        m.edges = [[0u, 1u], [2u, 3u]];
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.EdgeCenter;
+        cfg.innerRangePx = 100.0f;
+        cfg.outerRangePx = 100.0f;
+
+        immutable int sx = 400, sy = 400;
+        immutable Vec3 mid0 = Vec3(1.1f, 0.0f, 0);
+        immutable Vec3 mid1 = Vec3(0.4f, 0.3f, 0);
+
+        assert(distPx(mid1, sx, sy) < distPx(mid0, sx, sy),
+            "fixture: E1's centre must be STRICTLY nearer than E0's, or "
+            ~ "'the nearest centre did not win' is not being asserted");
+        assert(distPx(mid0, sx, sy) <= cfg.outerRangePx,
+            "fixture: and E0's centre must be inside the gather range, so a "
+            ~ "centre-ranking model really could have offered both");
+        assert(distPx(m.vertices[0], sx, sy) < distPx(m.vertices[2], sx, sy),
+            "fixture: E0 must be the nearer ELEMENT, which is the leg the "
+            ~ "cascade elects");
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.EdgeCenter,
+            "positive control: EdgeCenter is the only type on and it must "
+            ~ "still be able to answer");
+        assert(r.targetIndex == 0 && near(r.worldPos, mid0),
+            "a centre is not a candidate: it is the centre of the element the "
+            ~ "cascade ELECTED. E1's centre is nearer the cursor than E0's and "
+            ~ "must lose anyway, because E1 is not the elected edge. Answering "
+            ~ "E1 here means centres are being ranked against each other, "
+            ~ "which is a contest the reference has no way to hold");
+    }
+
+    // --- B. ELEMENT OFF: THE CENTRE REPLACES, AND INHERITS THE LEG'S RANK ---
+    // One edge, its near end just inside the acceptance range and its midpoint
+    // far outside the HIGHLIGHT range. A model that ranks the centre on its
+    // own distance cannot produce that midpoint at all — it is not even
+    // gathered. A model that ranks the EDGE and then refines produces it,
+    // because the edge is what was found to be in range.
+    {
+        Mesh m;
+        m.vertices = [ Vec3(0.1f, 0, 0), Vec3(2.1f, 0, 0) ];
+        m.edges    = [ [0u, 1u] ];
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.EdgeCenter;
+        cfg.innerRangePx = 24.0f;
+        cfg.outerRangePx = 40.0f;
+
+        immutable int sx = 400, sy = 400;
+        immutable Vec3 mid = Vec3(1.1f, 0, 0);
+
+        assert(distPx(m.vertices[0], sx, sy) <= cfg.innerRangePx,
+            "fixture: the edge must be inside the ACCEPTANCE range");
+        assert(distPx(mid, sx, sy) > cfg.outerRangePx,
+            "fixture: and its centre must be outside the HIGHLIGHT range, so "
+            ~ "a centre ranked on its own distance could not even highlight");
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.EdgeCenter
+            && r.targetIndex == 0,
+            "with the element type off the centre replaces the elected point "
+            ~ "outright — there is no contest to lose");
+        assert(near(r.worldPos, mid),
+            "and it INHERITS the leg's rank rather than carrying its own: the "
+            ~ "edge is what was elected and what was found to be in range, so "
+            ~ "the snap lands on a point far outside that range. Refusing here "
+            ~ "means the centre is being re-ranked after the refinement, which "
+            ~ "re-introduces the contest this whole model removes");
+    }
+
+    // --- C. BOTH ON: BARE SCREEN DISTANCE, TIES TO THE CENTRE ---------------
+    {
+        Mesh m;
+        m.vertices = [ Vec3(-1, 0, 0), Vec3(1, 0, 0) ];
+        m.edges    = [ [0u, 1u] ];
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.Edge | SnapType.EdgeCenter;
+        cfg.innerRangePx = 100.0f;
+        cfg.outerRangePx = 100.0f;
+
+        // The cursor ON the midpoint's pixel: the closest point on the edge IS
+        // the midpoint, so the two distances are EQUAL and the tie rule is the
+        // only thing that can decide.
+        invalidateSnapGrids();
+        SnapResult tie = snapCursor(cursorWorld, 400, 400, vp, m, cfg);
+        assert(tie.snapped && near(tie.worldPos, Vec3(0, 0, 0)),
+            "positive control: both types on, and the edge answers at zero "
+            ~ "distance either way");
+        assert(tie.targetType == SnapType.EdgeCenter,
+            "the contest is a BARE screen distance with TIES TO THE CENTRE — "
+            ~ "the element keeps the point only when it is STRICTLY nearer. "
+            ~ "Reading Edge here is the tie going the wrong way; the position "
+            ~ "cannot show it because at a tie the two points coincide, so the "
+            ~ "type tag is the whole assertion");
+
+        // …and off the midpoint the element is strictly nearer and keeps it.
+        invalidateSnapGrids();
+        SnapResult off = snapCursor(cursorWorld, 460, 400, vp, m, cfg);
+        assert(off.snapped && off.targetType == SnapType.Edge
+            && near(off.worldPos, Vec3(0.75f, 0, 0)),
+            "and where the on-edge point is STRICTLY nearer it keeps the "
+            ~ "point: the centre refines the leg, it does not capture it");
+    }
+
+    // --- D. THE POLYGON LEG IS THE SAME LAW ONE LEG OVER --------------------
+    // A wide quad the cursor sits inside (surface distance 0) whose centroid
+    // is far outside the highlight range — B's shape for PolyCenter.
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(-0.05f, -2, 0), Vec3(3, -2, 0),
+            Vec3(3,       2, 0), Vec3(-0.05f, 2, 0),
+        ];
+        m.addFace([0u, 1u, 2u, 3u]);
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.PolyCenter;
+        cfg.innerRangePx = 24.0f;
+        cfg.outerRangePx = 40.0f;
+
+        immutable int sx = 400, sy = 400;
+        immutable Vec3 centroid = m.faceCentroid(0);
+
+        assert(distPx(centroid, sx, sy) > cfg.outerRangePx,
+            "fixture: the centroid must be outside the HIGHLIGHT range, so a "
+            ~ "centroid ranked on its own distance could not produce it");
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.PolyCenter
+            && r.targetIndex == 0,
+            "positive control: the face is front-facing, unoccluded and under "
+            ~ "the cursor");
+        assert(near(r.worldPos, centroid),
+            "the polygon leg refines exactly as the edge leg does: the face "
+            ~ "surface is what was elected and what was in range, and the "
+            ~ "centroid is where that election points");
+    }
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// THE VERTEX VETO IS A SEPARATE MECHANISM, AND IT IS NOT GATED ON ANY TYPE.
+//
+// Same geometric quantity as the refinement above — the winning edge's
+// midpoint — at a different site, doing a different thing. It CLEARS the
+// vertex candidate when the cursor is nearer that midpoint than the vertex,
+// and it consults no snap type at all: `EdgeCenter` is OFF in both blocks
+// below, and a port that modelled the veto as "edgeCenter snapping" would
+// therefore leave the vertex standing in the first one.
+//
+// The pair is built so the CASCADE INPUTS ARE IDENTICAL: the same vertex
+// distance and the same edge distance in both, chosen so the vertex trails by
+// less than its doubled tolerance and wins the cascade on that clause. The ONLY
+// difference is where the elected edge's midpoint lands — inside the vertex's
+// distance in the first, far outside it in the second. So an answer that
+// differs between the two blocks can only be the veto.
+//
+// WHAT THE VETO IS OBSERVABLY FOR, since it is not obvious from the rule: the
+// projected world midpoint of an edge lies ON that edge's projected segment, so
+// it is never nearer the cursor than the edge's own closest point. The veto can
+// therefore only fire when the EDGE is already nearer than the vertex — the
+// case where the vertex would otherwise win anyway, on its doubled tolerance.
+// The veto is exactly the withdrawal of that tolerance bonus once the cursor
+// has drifted past the midpoint.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+    immutable int  sx = 410, sy = 390;
+
+    float distPxAt(Vec3 w, int px, int py) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return sqrt((qx - px) * (qx - px) + (qy - py) * (qy - py));
+    }
+    float distPx(Vec3 w) { return distPxAt(w, sx, sy); }
+    bool near(Vec3 a, Vec3 b) {
+        return abs(a.x - b.x) < 1e-3f && abs(a.y - b.y) < 1e-3f
+            && abs(a.z - b.z) < 1e-3f;
+    }
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.enabledTypes = SnapType.Vertex | SnapType.Edge;   // EdgeCenter is OFF
+    cfg.innerRangePx = 24.0f;
+    cfg.outerRangePx = 40.0f;
+
+    immutable Vec3 theVertex = Vec3(0, 0.3125f, 0);    // px (400, 375)
+    immutable Vec3 onEdge    = Vec3(0.125f, 0, 0);     // px (410, 400)
+    immutable float base = kCandidateToleranceBasePx;
+    immutable float tolV = kVertexToleranceScale * base;
+
+    // Both meshes: the same contested vertex, and an edge running through the
+    // same point 10 px below the cursor. Only the edge's EXTENT differs, which
+    // moves only its midpoint.
+    Mesh vetoed;
+    vetoed.vertices = [ theVertex, Vec3(-0.5f, 0, 0), Vec3(0.5f, 0, 0) ];
+    vetoed.edges    = [ [1u, 2u] ];                    // midpoint px (400, 400)
+
+    Mesh spared;
+    spared.vertices = [ theVertex, Vec3(-0.25f, 0, 0), Vec3(1.25f, 0, 0) ];
+    spared.edges    = [ [1u, 2u] ];                    // midpoint px (440, 400)
+
+    immutable float dVert = distPx(theVertex);
+    immutable float dEdge = distPx(onEdge);
+    immutable float dMidV = distPx(Vec3(0.0f, 0, 0));   // vetoed mesh's midpoint
+    immutable float dMidS = distPx(Vec3(0.5f, 0, 0));   // spared mesh's midpoint
+
+    assert(dEdge < dVert && dVert - dEdge < tolV && dVert - dEdge > base,
+        "fixture: the vertex must trail the edge by more than one tolerance "
+        ~ "base and less than its own DOUBLED one, so the cascade prefers the "
+        ~ "vertex and does so on the tolerance clause the veto withdraws");
+    assert(dVert <= cfg.innerRangePx,
+        "fixture: and the vertex must be inside the acceptance range, or the "
+        ~ "difference would show as a highlight rather than a snap");
+    foreach (v; [vetoed.vertices[1], vetoed.vertices[2],
+                 spared.vertices[1], spared.vertices[2]])
+        assert(distPx(v) > dVert,
+            "fixture: an edge ENDPOINT is a vertex candidate too — every one "
+            ~ "of them must be farther than the contested vertex, or the "
+            ~ "vertex class would carry a distance the pair does not share");
+    assert(dMidV < dVert && dMidV < cfg.innerRangePx,
+        "fixture: block 1's midpoint must be nearer than the vertex AND "
+        ~ "inside the caller's range — both are preconditions of the veto");
+    assert(dMidS > dVert && dMidS > cfg.innerRangePx,
+        "fixture: block 2's midpoint must fail both, so its ONLY difference "
+        ~ "from block 1 is the thing the veto reads");
+
+    // --- 1. the veto fires, with EdgeCenter OFF ----------------------------
+    invalidateSnapGrids();
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, vetoed, cfg);
+    assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0
+        && near(r.worldPos, onEdge),
+        "the vertex slot is CLEARED when the cursor is nearer the winning "
+        ~ "edge's midpoint than the vertex, and nothing about that consults a "
+        ~ "snap type — EdgeCenter is off here. Answering Vertex means either "
+        ~ "the veto is missing or it was gated on the centre preference, and "
+        ~ "the reference gates it on neither");
+
+    // --- 2. …and it is the MIDPOINT that decides, not the edge -------------
+    invalidateSnapGrids();
+    SnapResult s = snapCursor(cursorWorld, sx, sy, vp, spared, cfg);
+    assert(s.snapped && s.targetType == SnapType.Vertex && s.targetIndex == 0
+        && near(s.worldPos, theVertex),
+        "with the SAME vertex distance and the SAME edge distance, moving "
+        ~ "only the midpoint out of range restores the vertex — which is what "
+        ~ "makes block 1 a statement about the veto and not about the cascade. "
+        ~ "Answering Edge here means the veto lost its preconditions and is "
+        ~ "firing whenever an edge is nearer, i.e. it has silently become "
+        ~ "'the vertex tolerance was deleted'");
+
+    // --- 3. turning the centre type ON changes nothing about the veto ------
+    cfg.enabledTypes = SnapType.Vertex | SnapType.Edge | SnapType.EdgeCenter;
+    invalidateSnapGrids();
+    SnapResult rc = snapCursor(cursorWorld, sx, sy, vp, vetoed, cfg);
+    assert(rc.snapped && rc.targetIndex == 0 && near(rc.worldPos, onEdge),
+        "the two mechanisms are independent in both directions: with the "
+        ~ "centre type ON the veto still fires the same way, and the centre "
+        ~ "contest still hands the point to the strictly-nearer on-edge point");
+    invalidateSnapGrids();
+    SnapResult sc = snapCursor(cursorWorld, sx, sy, vp, spared, cfg);
+    assert(sc.snapped && sc.targetType == SnapType.Vertex,
+        "and turning the centre type on does not manufacture a veto either");
+
+    // --- 4. the midpoint must be inside the CALLER'S RANGE ------------------
+    // The veto has two preconditions and blocks 1-3 defeat both at once, so
+    // they cannot tell them apart. This block isolates the range one, and it
+    // has to reach for the only geometry where that clause is observable at
+    // all: `dMid < dVert` with `dMid >= innerRange` forces `dVert > innerRange`
+    // too, i.e. a vertex that can HIGHLIGHT but not snap. So the difference the
+    // clause makes is a highlight surviving instead of a snap firing.
+    //
+    // Fresh cursor (the pixel above is built for the other preconditions) and
+    // a fresh mesh: a vertex 30 px out, an edge whose closest point is 20 px
+    // out — inside the vertex's doubled tolerance, so the cascade prefers the
+    // vertex — and that edge's midpoint at 26.9 px, nearer than the vertex but
+    // OUTSIDE the acceptance range. The edge's endpoints are pushed far enough
+    // out that they cannot displace the contested vertex in its own class.
+    {
+        immutable int rx = 400, ry = 400;
+
+        Mesh m;
+        m.vertices = [
+            Vec3( 0.0f,   0.375f, 0),   // 0 — the contested vertex, px (400, 370)
+            Vec3(-0.4f,  -0.25f,  0),   // 1 — edge end,             px (368, 420)
+            Vec3( 0.85f, -0.25f,  0),   // 2 — edge end,             px (468, 420)
+        ];
+        m.edges = [ [1u, 2u] ];
+
+        SnapPacket rcfg;
+        rcfg.enabled      = true;
+        rcfg.snapScope    = SnapMode.Global;
+        rcfg.enabledTypes = SnapType.Vertex | SnapType.Edge;
+        rcfg.innerRangePx = 24.0f;
+        rcfg.outerRangePx = 40.0f;
+
+        immutable float rVert = distPxAt(m.vertices[0], rx, ry);
+        immutable float rEdge = distPxAt(Vec3(0, -0.25f, 0), rx, ry);
+        immutable float rMid  = distPxAt(Vec3(0.225f, -0.25f, 0), rx, ry);
+
+        assert(rVert > rcfg.innerRangePx && rVert <= rcfg.outerRangePx,
+            "fixture: the vertex must be able to HIGHLIGHT and not to snap — "
+            ~ "that is forced by wanting the midpoint nearer than the vertex "
+            ~ "and outside the range at the same time");
+        assert(rEdge <= rcfg.innerRangePx && rVert - rEdge < kVertexToleranceScale
+                                                            * kCandidateToleranceBasePx,
+            "fixture: the edge must be able to snap, and the vertex must "
+            ~ "still beat it in the cascade, or the veto would change nothing");
+        assert(rMid < rVert && rMid >= rcfg.innerRangePx,
+            "fixture: and the midpoint must satisfy the NEARER precondition "
+            ~ "while failing the RANGE one — that pair is the whole point of "
+            ~ "this block");
+
+        invalidateSnapGrids();
+        SnapResult h = snapCursor(cursorWorld, rx, ry, vp, m, rcfg);
+        assert(!h.snapped && h.highlighted && h.targetType == SnapType.Vertex
+            && h.targetIndex == 0,
+            "the veto also asks whether the midpoint is inside the caller's "
+            ~ "range, and here it is not — so the vertex stands and answers "
+            ~ "with a highlight. Snapping to the edge here means the range "
+            ~ "clause was dropped and the veto now fires on proximity alone");
     }
 
     invalidateSnapGrids();

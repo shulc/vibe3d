@@ -830,8 +830,15 @@ struct SnapPacket {
     // every contest. The user-visible result was that dragging a vertex
     // appeared not to stick to nearby geometry at all: the vertex candidate
     // was generated, highlighted, and then silently outranked by a grid point
-    // nobody asked for. EdgeCenter / PolyCenter lose less often but lose the
+    // nobody asked for. EdgeCenter / PolyCenter lost less often but lost the
     // same way, stealing a snap from the real vertex beside them.
+    //
+    // THE CENTRE HALF OF THAT SENTENCE IS FIXED, and Grid's is not. A centre
+    // is no longer a candidate at all — it refines the point on an element the
+    // cross-type cascade has already elected (`snap.d`, `refineElectedLeg`),
+    // so it cannot out-rank a vertex and cannot be reached from an element
+    // that lost. Grid remains exactly as described, which is why it remains
+    // the reason this default is one bit and not three.
     //
     // The CHANGE here is a default: every bit remains reachable from the Snap
     // panel and from `snap.toggleType`, and turning Grid back on restores the
