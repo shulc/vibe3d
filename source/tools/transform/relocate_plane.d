@@ -36,8 +36,27 @@ module tools.transform.relocate_plane;
 // rounds to is contradicted between the two rigs that measured it. That is
 // written up at the field.
 //
-// SO WHAT ACTUALLY CHANGES BEHAVIOUR HERE is (2), the locked-axis arm, which
-// has no free parameter and is read at two independent sites.
+// WHAT THIS CHANGES IN THE PRODUCT TODAY: NOTHING. That is a claim about the
+// wiring, and it is checked in both directions:
+//
+//   * with every optional term at its default the ray arm is
+//     `t = (Q[k] - P0[k]) / D[k]` with `Q = focus`, which is a plane
+//     intersection against `x[k] = focus[k]` — the plane the relocate call
+//     site already built from `pickMostFacingPlane`, term for term;
+//   * the no-ray arm (2) fires only in an axis-locked orthographic view,
+//     where the ray is parallel to `e_k`, so replacing coordinate `k` is
+//     exactly what intersecting the camera-perpendicular plane through the
+//     focus already did.
+//
+// The port's gain is therefore structural, not numerical: the law is stated
+// where it was read, every term it has is named and testable, and the
+// parallel-ray degeneracy the old code dodged with a plane swap cannot arise
+// in an arm that never intersects anything. Nothing here is a licence to
+// change a landing; a term that would change one is dormant until a
+// measurement turns it on.
+//
+// THE LOCK ARM IS PORTED BUT NOT WIRED, and that is deliberate. See
+// `RelocatePlanePrefs.lock`.
 // ---------------------------------------------------------------------------
 
 import math : Vec3, Viewport, isOrtho, normalize, dot;
@@ -126,8 +145,54 @@ struct RelocatePlanePrefs {
     /// reference falls through to the argmax for any value outside {0,1,2}.
     int   preferredAxis = -1;
     /// Lock the work plane instead of letting it follow the view rotation.
+    ///
+    /// PORTED, TESTED, AND DELIBERATELY NOT WIRED TO ANYTHING. vibe3d's
+    /// pinned work plane is strictly MORE expressive than the state this arm
+    /// represents, so there is no lossless way to feed it:
+    ///
+    ///   * this arm's entire pinned state is one axis INDEX (`preferredAxis`)
+    ///     plus one SCALAR (`lockVal`) along it — in the reference those are
+    ///     two free user preferences, and the structure has no rotation and no
+    ///     other origin component anywhere;
+    ///   * ours is a full frame — `WorkplaneStage` carries `rotation` as
+    ///     extrinsic-XYZ Euler degrees and `center` as a full `Vec3`, both
+    ///     reachable from shipped commands.
+    ///
+    /// Mapping the frame onto the pair would discard the rotation and two
+    /// thirds of the origin without telling anyone: a user who tilted the
+    /// plane would silently get the pivot of an axis-aligned one. The relocate
+    /// call site therefore keeps a pinned plane on a full-frame plane
+    /// intersection and leaves `lock` false.
+    ///
+    /// It is kept here because it is a faithful restatement of a real arm and
+    /// a reader deserves to see what the reference's lock actually is before
+    /// concluding ours is the same thing.
     bool  lock = false;
     /// The position along the locked plane's axis. Read only when `lock`.
+    ///
+    /// NOTE THE ASYMMETRY, IT IS THE REFERENCE'S AND IT IS VERIFIED. When the
+    /// lock arm runs, the axis assignment `k := preferredAxis` is CONDITIONAL
+    /// (it is skipped when the view has a locked axis of its own) but the
+    /// write `Q[k] = lockVal` is UNCONDITIONAL — it lands on whatever `k` is,
+    /// which in that case is still the argmax. Disassembly of the arm, with
+    /// `k` in `r12d` and `&Q` in `r14`:
+    ///
+    ///     cmp    ebx, -1              ; preferredAxis == -1?
+    ///     je     .write               ;   -> skip the assignment, STILL write
+    ///     call   <view locked axis>
+    ///     test   eax, eax
+    ///     cmovl  r12d, ebx            ; k := preferredAxis IFF no locked axis
+    ///   .write:
+    ///     movsxd r12, r12d
+    ///     mov    r13, [r13+<lockVal>]
+    ///     mov    [r14 + r12*8], r13   ; Q[k] = lockVal  -- unconditional
+    ///
+    /// So both of the "obvious fixes" — assigning `k` first, or skipping the
+    /// write with it — would be a DEVIATION from the read, not a correction of
+    /// it. This module keeps the read. The place that was wrong was the caller
+    /// that manufactured a `lockVal` by reading one component of a work-plane
+    /// origin along a DIFFERENT axis than the one it would be written to; that
+    /// caller no longer exists (see `lock`).
     float lockVal = 0.0f;
     /// The view's own vector-snap step. Zero or less disables it, which is
     /// the reference's disabled value AND the state vibe3d is permanently in
@@ -243,6 +308,12 @@ PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
         }
     }
 
+    // The lock arm. The axis assignment is conditional, the value write is
+    // not — see `RelocatePlanePrefs.lockVal` for the instructions and for why
+    // that asymmetry is kept rather than "fixed". The reference skips the
+    // assignment only on the sentinel -1 and would happily index off the end
+    // of Q for any other out-of-range value; the `<= 2` here is a bounds guard
+    // on our side, not a difference in the rule.
     if (p.lock) {
         if (p.preferredAxis >= 0 && p.preferredAxis <= 2 && locked < 0)
             r.k = p.preferredAxis;
