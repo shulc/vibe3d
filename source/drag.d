@@ -14,11 +14,19 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 // pixels through one of the three laws below. Nothing outside this module may
 // grow a fourth.
 //
-//   LAW A — axis projection.        `screenAxisWorldDelta` (the core) and its
-//     three entry points `axisDragDelta` (handler), `axisDragDelta`
-//     (input-basis) and `screenAxisDelta`. Project the drag axis to screen,
-//     dot the pixel delta onto that screen segment, normalise by its squared
-//     length, scale by the axis's WORLD length. Recomputed per motion event
+//   LAW A — axis projection, and it is TWO conversions, because the reference
+//     has two. `axisArmDelta` is the ported one (task 0562); it runs for the
+//     transform gizmo's three axis arms and nothing else. The editor's own
+//     `screenAxisWorldDelta` (the core) and its three entry points
+//     `axisDragDelta` (handler), `axisDragDelta` (input-basis) and
+//     `screenAxisDelta` keep every OTHER axis handle in the editor. See the
+//     LAW-CHANGE POINT below for what separates them and why the boundary is
+//     drawn exactly there.
+//
+//     The editor's own conversion: project the drag axis to screen, dot the
+//     pixel delta onto that screen segment, normalise by its SQUARED length,
+//     scale by the axis's WORLD length. The gain is `axisLen/|s|` — the arrow
+//     tip tracks the cursor at any foreshortening. Recomputed per motion event
 //     from the caller's chosen reference pixel (some callers pass the press
 //     pixel, some the previous event's).
 //
@@ -36,16 +44,64 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //     For hauls that have no axis to project: the tool multiplies raw pixels
 //     by it.
 //
-// LAW-CHANGE POINT — CONSUMED for LAW B (task 0520), still open for LAW A.
-// The seam's original note named `screenAxisWorldDelta` as the one body a
-// future task would rewrite. What the measurement actually describes is the
-// FREE/plane conversion, and that is what LAW B now is. LAW A is deliberately
-// NOT re-pointed at it: on the reference side the axis-handle drag runs the
-// same free conversion and then applies its own post-projection arithmetic to
-// restrict the result to the handle — and that post-projection step was
-// located but never read. Porting LAW A would mean inventing it. LAW A
-// therefore keeps its exact per-event axis projection until that term is
-// measured, and this comment is the record of why.
+// LAW-CHANGE POINT — CONSUMED for LAW B (task 0520) and now for LAW A (0562).
+//
+// RETRACTION, IN PLACE. What stood here said: "on the reference side the
+// axis-handle drag runs the same free conversion and then applies its own
+// post-projection arithmetic to restrict the result to the handle — and that
+// post-projection step was located but never read. Porting LAW A would mean
+// inventing it."
+//
+// **That is wrong, and it is wrong about the mechanism, not about a
+// coefficient.** There is no post-projection step. Grabbing an axis arm puts
+// the reference's shared drag translator into a different MODE at the press —
+// a linear constraint — and the axis conversion is a body of its own that the
+// free conversion never enters. The free path was read first, saw that mode
+// never engaged in the one recording available, and the note above inferred a
+// missing step rather than a missing branch. It is the reason this law read as
+// unportable for months, so it is retracted here rather than deleted.
+//
+// The read (0562, static, `objdump` only — see `axisArmDelta`) is:
+//
+//     t = quantise( pixelScale * (Δpx · ŝ) )
+//
+// with `Δpx` the pixel offset FROM THE PRESS, `ŝ` the UNIT screen direction of
+// the drag axis taken at the handle base frozen at the press, and `pixelScale`
+// the view's ONE scalar pixel size. The whole matrix sandwich around it
+// collapses to `newT = T + t·eᵢ`: exactly one position attribute changes, by
+// exactly `t`.
+//
+// Four ways that is not the editor's own conversion, all four ported:
+//   1. GAIN. A flat `pixelScale` per projected pixel, with NO foreshortening
+//      compensation. `axisLen/|s|` and `pixelScale` agree only when the axis
+//      is broadside; ours also blows up as the axis goes edge-on (the gain is
+//      `axisLen` per pixel at the 1-px cutoff) where the ported one does not.
+//   2. REFERENCE PIXEL. Cumulative from the press, not incremental from the
+//      previous event.
+//   3. ANCHOR. Against a base frozen at the press, not the live gizmo centre.
+//   4. QUANTUM. The reference quantises the SCALAR `t`; ours quantises the
+//      world position. NOT ported and nothing was invented: our quantum on
+//      this path is element snap, which is a different reference service
+//      (`SnapPosition`, the guide path) from the one that acts on `t`
+//      (the view's grid snap). We have no grid quantum here to move.
+//
+// SCOPE, and it is narrow on purpose:
+//   * ONLY the transform gizmo's three axis arms. That is the one dispatch
+//     that was read. Every other axis handle in the editor (primitive movers,
+//     bevel/inset/extrude/shift hauls, the falloff and radial rigs) keeps
+//     `screenAxisWorldDelta`, because whether the reference's counterpart
+//     enters the constrained mode is a per-tool question and none of those
+//     tools' handle dispatches has been read.
+//   * NOT under the `Screen` action centre. That preset installs a DIFFERENT
+//     translator over the same vtable, so this law is not the one that runs
+//     there. Scoped out at the call site, not here.
+//
+// EVIDENCE LIMIT, stated where it ships. This is a static decode. The axis arm
+// has never executed in any recording we hold — 32 of 32 events in the one
+// replay that could have carried it landed on the free/centre handle instead —
+// so there is no end-to-end confirmation of the arithmetic, only of the
+// dispatch that selects it. The one term that IS confirmed on reference data
+// is `pixelScale`; see `viewPixelScale`.
 //
 // Deliberately NOT in this module, because they are a different quantity and a
 // separate lane: the scale tool's screen projection
@@ -257,6 +313,304 @@ Vec3 screenAxisDelta(int mx,     int my,
 
     return screenAxisWorldDelta(mx, my, lastMX, lastMY,
                                 origin, tip, axis, axisLen, vp, skip);
+}
+
+// ---------------------------------------------------------------------------
+// LAW A, the PORTED body — the transform gizmo's axis arm (task 0562)
+// ---------------------------------------------------------------------------
+
+// The view's ONE scalar pixel size — the whole gain of the ported conversion.
+//
+// The reference reads this off the view as a single number that does not
+// depend on the anchor, on the axis, or on the drag. It is a stored view state
+// variable there (the reciprocal of the view's "scale"), which our camera has
+// no field for; what it can be expressed in is the two quantities the
+// reference's own perspective initialiser derives FROM it, and that is what
+// this computes.
+//
+// The relation, read (not fitted) from two literals eleven instructions apart
+// in that initialiser: the eye distance is `500·Z / scale` and the focal
+// length in pixels is `400·Z`, for the same `Z`. Eliminating `Z` and `scale`:
+//
+//     pixelScale = (400/500) · eyeDistance / focalPx        [perspective]
+//     pixelScale =             1           / focalPx        [orthographic]
+//
+// The 4/5 is not a correction of ours and not a fit. It is the reference's own
+// ratio between the pixel size it reports and the pixel size its perspective
+// projection actually uses, and it is exactly 1 in an orthographic view
+// because there the same field IS the projection's scale. Consequence, and it
+// is the user-visible half: a perspective axis drag moves 0.8x as far as a
+// cursor-locked one would at the pivot's depth.
+//
+// CONFIRMED ON REFERENCE DATA, offline. Two captured cameras report
+// `distance / pixelSize` = 1255.9432 to ten digits — a constant, because it is
+// `500·Z` with the default zoom decade and carries no camera at all. The
+// unittest below drives one of those two camera rows through this function and
+// scores the answer against the pixel size the reference itself reported. That
+// is the only term of the ported law with a reference number behind it.
+//
+// `focalPx` is the VERTICAL focal length, which is also the convention the
+// cross-engine pane pin uses to make one of our pixels subtend one of theirs.
+float viewPixelScale(const ref Viewport vp) {
+    // Pixels per world unit at unit depth: proj[5] is 1/tan(fovY/2) for a
+    // perspective projection and 2/(top-bottom) for an orthographic one, and
+    // half the pane height converts the NDC half-extent into pixels.
+    const float focalPx = 0.5f * vp.height * vp.proj[5];
+    if (!(focalPx > 1e-9f) || isNaN(focalPx)) return 0.0f;
+
+    // proj[15] is the projection discriminator: 0 = perspective, 1 = ortho.
+    if (vp.proj[15] != 0.0f) return 1.0f / focalPx;
+
+    Vec3 d = vp.eye - vp.focus;
+    float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    if (!(dist > 1e-9f) || isNaN(dist)) return 0.0f;
+    return 0.8f * dist / focalPx;
+}
+
+// The ported conversion, returning `t` — the SCALAR, because that is what the
+// reference's arithmetic collapses to.
+//
+// The reference's axis arm arms a linear constraint at the press (point =
+// the handle's world origin, vector = the drag axis) and then, per motion
+// event, runs:
+//
+//     k  = 10 · pixelScale                       ; a finite-difference STEP
+//     dS = toScreen(base + axis·k) − toScreen(base)
+//     r  = |dS| > 0 ? 1/|dS| : 1
+//     t  = 0.1 · k · (Δpx · dS) · r              ; and 0.1·k ≡ pixelScale
+//
+// so `k` cancels out of the gain exactly as it does on the free/plane path,
+// and what is left is `pixelScale · (Δpx · ŝ)`. `k` survives only as the step
+// the screen direction is differenced over, which is why it is kept at the
+// reference's own `10 · pixelScale` rather than replaced by something tidier:
+// at a big enough step the perspective curvature over it would tilt `ŝ`.
+//
+// `Δpx` is measured from the PRESS and `base` is the handle origin AT the
+// press, both the caller's business — this function is pure, exactly like
+// `planeJacobian`, so the freeze is visible in the caller's own bookkeeping
+// instead of hidden here. A caller that hands it the previous event's pixel
+// and a live centre gets the old incremental behaviour back under a new name.
+//
+// Returns 0 with `skip = true` only when the base or the stepped point will
+// not project. A degenerate `|dS|` is NOT a skip: the reference's `r = 1`
+// fallback is reproduced verbatim, and it yields `t = 0` for an axis pointing
+// straight down the view ray.
+float axisArmDelta(int mx,     int my,
+                   int pressMX, int pressMY,
+                   Vec3 base, Vec3 axisDir,
+                   const ref Viewport vp,
+                   out bool skip)
+{
+    skip = false;
+
+    const float ps = viewPixelScale(vp);
+    if (!(ps > 0.0f)) { skip = true; return 0.0f; }
+
+    const double k = 10.0 * ps;
+    double bx, by, tx, ty;
+    if (!projectToWindowD(base,                                vp, bx, by) ||
+        !projectToWindowD(base + axisDir * cast(float)k,       vp, tx, ty))
+    { skip = true; return 0.0f; }
+
+    const double dsx = tx - bx, dsy = ty - by;
+    const double slen = sqrt(dsx*dsx + dsy*dsy);
+    const double r    = slen > 0.0 ? 1.0 / slen : 1.0;
+
+    const double dpx = cast(double)(mx - pressMX);
+    const double dpy = cast(double)(my - pressMY);
+    return cast(float)(ps * (dpx*dsx + dpy*dsy) * r);
+}
+
+// ---------------------------------------------------------------------------
+// LAW A, ported — the pins
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    // The two reference cameras of the pixel-size read, verbatim: each row is
+    // the eye distance and the pixel size the REFERENCE ITSELF reported for
+    // that view. They come from two different lanes, two panes and two camera
+    // orientations, and neither was taken for this port.
+    private struct RefCam { string name; double distance, pixelSize; }
+    private immutable RefCam[] refPixelCams = [
+        RefCam("corpus drag camera",  1.4863233322541896, 0.001183431952662722),
+        RefCam("ray lane camera",     1.6598368490151412, 0.0013215859030837  ),
+    ];
+
+    // The cross-engine pane pin, and the real number it rounds. The pin exists
+    // so one of our pixels subtends one of the reference's; it is
+    // `2·tan(fovY/2)·f_ref` with `f_ref = 400·10^0.4`, which is 832.36598 and
+    // ships as the integer 832. Everything downstream of the pin scales with
+    // 1/height, so that rounding is the ONLY residual the test below tolerates.
+    private enum int    PINNED_PANE_W = 1098;
+    private enum int    PINNED_PANE_H = 832;
+}
+
+unittest {  // LAW A ported: the gain IS the reference's own reported pixel size.
+    import std.math : PI, tan, abs;
+
+    // Our pinned pane, our hard-coded 45-degree vertical fov.
+    Viewport vp;
+    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f,
+                                  cast(float)PINNED_PANE_W / PINNED_PANE_H,
+                                  0.001f, 100.0f);
+    vp.width  = PINNED_PANE_W;
+    vp.height = PINNED_PANE_H;
+
+    const double exactPin = 2.0 * tan(22.5 * PI / 180.0) * 400.0 * (10.0 ^^ 0.4);
+    const double pinRound = exactPin / PINNED_PANE_H;   // 1.000439833...
+
+    double[] ratios;
+    foreach (c; refPixelCams) {
+        // Only the eye DISTANCE goes in; the reference's pixel size is what
+        // comes out and is never handed to the function.
+        vp.eye   = Vec3(0, 0, cast(float)c.distance);
+        vp.focus = Vec3(0, 0, 0);
+        const double got = viewPixelScale(vp);
+        assert(got > 0);
+        ratios ~= got / c.pixelSize;
+    }
+
+    // Each camera on its own: the port reproduces the number the reference
+    // reported, up to the integer pane pin and nothing else.
+    foreach (i, r; ratios)
+        assert(abs(r - pinRound) < 1e-5 * pinRound,
+               "viewPixelScale must reproduce the reference's OWN reported "
+               ~ "pixel size for " ~ refPixelCams[i].name
+               ~ " up to the pane pin's integer rounding — the 4/5 is the "
+               ~ "engine's ratio between the pixel size it reports and the "
+               ~ "one its perspective projection uses, not a fitted constant");
+
+    // And the two cameras agree with each other. Two distances, two panes,
+    // two lanes, one ratio: the quantity carries no camera, which is exactly
+    // why it can be expressed as `(4/5)·distance/focal` at all.
+    // (1e-6 is float32's own headroom on a single multiply-divide, not slack:
+    // the two ratios agree to 15 digits when the arithmetic is done in double.)
+    assert(abs(ratios[0] - ratios[1]) < 1e-6 * ratios[0],
+           "two independent reference cameras must give the SAME ratio — a "
+           ~ "difference means the gain has picked up a camera term it does "
+           ~ "not have");
+}
+
+unittest {  // LAW A ported: NO foreshortening compensation. The headline.
+    import std.math : PI, cos, abs;
+
+    auto vp = corpusViewport(corpusCams[0]);
+    // Base at the view focus, so it projects to the pane centre and a world
+    // step along the view's own `right` projects to EXACTLY +screen-x — which
+    // makes the screen direction of every axis below the same direction, and
+    // the only thing that varies the axis's foreshortening.
+    Vec3 base = vp.focus;
+    const ref float[16] v = vp.view;
+    Vec3 right = Vec3(v[0], v[4], v[8]);
+    Vec3 back  = Vec3(v[2], v[6], v[10]);
+
+    const float ps    = viewPixelScale(vp);
+    const int   pxRun = 100;
+    const float wantT = ps * pxRun;
+
+    float flat0 = 0, flatDeep = 0;
+    foreach (deg; [0.0f, 30.0f, 60.0f, 75.0f]) {
+        const float phi = deg * PI / 180.0f;
+        Vec3 axis = right * cos(phi) + back * sin(phi);   // unit, tilts into depth
+
+        bool skip;
+        float t = axisArmDelta(600 + pxRun, 400, 600, 400, base, axis, vp, skip);
+        assert(!skip);
+        assert(abs(t - wantT) < 1e-3f * wantT,
+               "the ported gain is a FLAT pixel scale: the same pixel run "
+               ~ "along an axis's screen direction must give the same world "
+               ~ "length however foreshortened that axis is. A 1/cos here "
+               ~ "means the foreshortening compensation crept back in.");
+
+        // The editor's own conversion on the same input, for contrast: its
+        // gain is `axisLen/|s|`, and `|s|` shrinks with the foreshortening.
+        // Straight into the core, in the handler entry's shape (unit
+        // direction + an arrow length), so the comparison is against the law
+        // and not against one entry point's non-unit-axis convention.
+        const float armLen = 0.01f * corpusCams[0].dist;
+        bool skipB;
+        Vec3 d = screenAxisWorldDelta(600 + pxRun, 400, 600, 400,
+                                      base, base + axis * armLen,
+                                      axis, armLen, vp, skipB);
+        assert(!skipB);
+        float dl = vlen(d);
+        if (deg == 0.0f)  flat0    = dl;
+        if (deg == 75.0f) flatDeep = dl;
+    }
+
+    // The two laws are not the same law, and the amount they differ by is the
+    // foreshortening. 1/cos(75deg) = 3.86.
+    assert(flatDeep > 3.5f * flat0,
+           "the editor's own axis conversion must still be the compensated "
+           ~ "one — if it stopped growing with the foreshortening, the port "
+           ~ "has leaked out of its scope into every other axis handle");
+
+    // Broadside, at the pivot's own depth, the two differ by exactly the 5/4
+    // the pixel-size read names: a perspective axis drag moves 0.8x as far as
+    // a cursor-locked one. This is the user-visible half of the port.
+    assert(abs(flat0 / wantT - 1.25f) < 0.01f * 1.25f,
+           "broadside, the ported conversion must be exactly 4/5 of the "
+           ~ "cursor-locked one");
+}
+
+unittest {  // LAW A ported: orthographic views carry NO 4/5.
+    import std.math : PI, tan, abs;
+
+    // The editor's own axis-view preset recipe (view.d): halfH = d*tan(PI/8).
+    const float d = 3.0f, halfH = d * tan(cast(float)(PI / 8.0));
+    Viewport vp;
+    vp.view   = lookAt(Vec3(0, d, 0), Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = orthographicMatrix(halfH, 1098.0f / 832.0f, 0.001f, 100.0f);
+    vp.width  = 1098; vp.height = 832;
+    vp.eye    = Vec3(0, d, 0); vp.focus = Vec3(0, 0, 0);
+
+    const float want = 2.0f * halfH / 832.0f;    // world units per pixel, exactly
+    assert(abs(viewPixelScale(vp) - want) < 1e-6f * want,
+           "in an orthographic view the reference's reported pixel size IS "
+           ~ "the projection's scale — the 4/5 is a perspective-only ratio "
+           ~ "and applying it here would slow every axis-view drag by 20%");
+}
+
+unittest {  // LAW A ported: measured from the press, and linear in the offset.
+    auto vp = corpusViewport(corpusCams[0]);
+    Vec3 base = Vec3(0.1f, 0.4f, -0.2f);
+    Vec3 axis = Vec3(1, 0, 0);
+    bool skip;
+
+    // At the press pixel the conversion is exactly zero, so a gesture that
+    // returns to where it started has delivered nothing. That is what the
+    // cumulative form buys over the incremental one, and it holds for any
+    // path in between because the answer depends only on the current pixel.
+    assert(axisArmDelta(731, 402, 731, 402, base, axis, vp, skip) == 0.0f);
+    assert(!skip);
+
+    const float one = axisArmDelta(731 + 120, 402 - 60, 731, 402,
+                                   base, axis, vp, skip);
+    assert(!skip && one != 0.0f);
+
+    // LINEAR in the pixel offset, in BOTH components. That is what makes the
+    // cumulative form safe to deliver as a difference of running totals: the
+    // increments a call site emits sum to the one-shot total whatever the
+    // event count, because there is no per-event term to accumulate.
+    import std.math : abs;
+    foreach (f; [0.5f, 2.0f, -1.0f]) {
+        const float scaled = axisArmDelta(731 + cast(int)(120 * f),
+                                          402 + cast(int)(-60 * f),
+                                          731, 402, base, axis, vp, skip);
+        assert(!skip);
+        assert(abs(scaled - f * one) <= 1e-4f * abs(one),
+               "the conversion must be linear in the pixel offset from the "
+               ~ "press — a non-linear term makes a delivered increment "
+               ~ "depend on how the drag was cut into events");
+    }
+
+    // Separately in y, which the flat-gain test above cannot see: it drives a
+    // purely horizontal run.
+    const float vert = axisArmDelta(731, 402 - 60, 731, 402, base, axis, vp, skip);
+    const float vert2 = axisArmDelta(731, 402 - 120, 731, 402, base, axis, vp, skip);
+    assert(!skip);
+    assert(abs(vert2 - 2.0f * vert) <= 1e-4f * abs(vert2),
+           "the vertical pixel component must enter linearly too");
 }
 
 // ===========================================================================
