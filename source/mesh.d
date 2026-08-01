@@ -1038,13 +1038,23 @@ struct Mesh {
     ///    would drop both as orphans, a net vanish rather than a weld.
     /// The first, third and fourth are `weldVertexPair`'s own rules evaluated
     /// per pair; the second is the one only a LIST can pose.
+    ///
+    /// COST: one sweep of the mesh, whatever the pair count. The two rules that
+    /// need face data are settled for EVERY pair in that single sweep rather
+    /// than by re-scanning `faces` per pair — a whole-loop weld on a dense mesh
+    /// is hundreds of pairs against tens of thousands of faces, and the naive
+    /// shape would put a visible pause on the release that fires it.
     size_t weldVertexPairs(in uint[2][] pairs) {
         if (pairs.length == 0) return 0;
         if (vertices.length < 2) return 0;
 
-        // Pass 1 — which vertices are claimed as a keep / as a drop, so the
-        // chain and double-absorb rejects below can be decided without an
-        // O(N*pairs) rescan.
+        // --- Pass 1: the rejects that need no face data.
+        //
+        // `isKeep`/`isDrop` are read for the CHAIN test, so they must describe
+        // every pair that was asked for, including ones later rejected: a pair
+        // whose target is another pair's casualty is refused whichever of the
+        // two is examined first, which is what makes the outcome independent of
+        // input order.
         bool[] isKeep = new bool[](vertices.length);
         bool[] isDrop = new bool[](vertices.length);
         foreach (p; pairs) {
@@ -1054,44 +1064,67 @@ struct Mesh {
             isDrop[p[1]] = true;
         }
 
-        int[] remap = new int[](vertices.length);
-        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
-
-        size_t welded = 0;
+        // The survivors, in input order. `claimOf[drop]` is the 1-based index
+        // of the candidate that claims that drop, so the face sweep below can
+        // go from a corner straight to its candidate without searching. A drop
+        // is claimed at most once, which is what makes that map single-valued.
+        uint[2][] cand;
+        int[] claimOf = new int[](vertices.length);
         foreach (p; pairs) {
             immutable uint keep = p[0], drop = p[1];
             if (keep == drop) continue;
             if (keep >= vertices.length || drop >= vertices.length) continue;
-            if (remap[drop] != cast(int)drop) continue;   // already absorbed
+            if (claimOf[drop] != 0) continue;             // already claimed
             if (isDrop[keep] || isKeep[drop]) continue;   // would chain
-            if (!weldPairAllowed(keep, drop)) continue;
-            remap[drop] = cast(int)keep;
+            cand ~= [keep, drop];
+            claimOf[drop] = cast(int)cand.length;
+        }
+        if (cand.length == 0) return 0;
+
+        // --- Pass 2: ONE sweep of the faces settles both face-shaped rules.
+        //
+        // `cornerPos` is scratch that holds, for the face being examined, where
+        // each involved vertex sits in its winding; it is cleared over that
+        // face's own corners on the way out, so the whole pass stays O(corners)
+        // and never O(vertices) per face.
+        bool[] rejected   = new bool[](cand.length);
+        bool[] referenced = new bool[](vertices.length);
+        int[]  cornerPos  = new int[](vertices.length);
+        cornerPos[] = -1;
+        foreach (ref face; faces) {
+            foreach (i, vid; face) {
+                if (vid >= vertices.length) continue;
+                referenced[vid] = true;
+                if (isKeep[vid] || isDrop[vid]) cornerPos[vid] = cast(int)i;
+            }
+            foreach (i, vid; face) {
+                if (vid >= vertices.length) continue;
+                immutable int c = claimOf[vid];
+                if (c == 0) continue;                      // not a claimed drop
+                immutable int pk = cornerPos[cand[c - 1][0]];
+                if (pk < 0) continue;                      // keep not in this face
+                immutable int pd = cast(int)i;
+                immutable int diff = pk > pd ? pk - pd : pd - pk;
+                if (!(diff == 1 || diff == cast(int)face.length - 1))
+                    rejected[c - 1] = true;                // non-adjacent same face
+            }
+            foreach (vid; face) if (vid < vertices.length) cornerPos[vid] = -1;
+        }
+
+        int[] remap = new int[](vertices.length);
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+
+        size_t welded = 0;
+        foreach (ci, c; cand) {
+            if (rejected[ci]) continue;
+            if (!referenced[c[0]] && !referenced[c[1]]) continue;   // both faceless
+            remap[c[1]] = cast(int)c[0];
             ++welded;
         }
         if (welded == 0) return 0;
 
         applyVertexRemapAndRebuild(remap);
         return welded;
-    }
-
-    /// The shared-face adjacency + faceless admissibility test for one weld
-    /// pair — see `weldVertexPairs`'s doc for what each rejection costs.
-    /// Both indices are assumed in range and distinct.
-    private bool weldPairAllowed(uint keep, uint drop) const {
-        bool keepRef = false, dropRef = false;
-        foreach (ref face; faces) {
-            int posKeep = -1, posDrop = -1;
-            foreach (i, vid; face) {
-                if (vid == keep) { posKeep = cast(int)i; keepRef = true; }
-                if (vid == drop) { posDrop = cast(int)i; dropRef = true; }
-            }
-            if (posKeep >= 0 && posDrop >= 0) {
-                int diff = posKeep > posDrop ? posKeep - posDrop : posDrop - posKeep;
-                bool adjacent = (diff == 1) || (diff == cast(int)face.length - 1);
-                if (!adjacent) return false;
-            }
-        }
-        return keepRef || dropRef;
     }
 
     /// Inverse of weldVerticesByMask: unweld each masked vertex so every
@@ -29562,6 +29595,58 @@ unittest { // non-adjacent same-face pairs are refused, exactly as weldVertexPai
     assert(m.vertices.length == 6 && m.faces.length == 2,
         "non-adjacent reject: the mesh must be untouched, got V="
         ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+}
+
+unittest { // a pair spanning two DISJOINT faces welds — the adjacency rule is
+           // about corners of ONE face and must not leak across the sweep
+    import std.conv : to;
+    // Two quads that share nothing. The keep sits at corner 0 of the first,
+    // the drop at corner 2 of the second: a distance of 2, which is neither
+    // adjacent nor the head/tail wrap. If the face sweep's scratch survives
+    // from one face into the next, the second face reads the keep's position
+    // in the FIRST one, computes that distance, and refuses a pair that shares
+    // no face at all. Positions chosen for exactly that reason.
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 0, 1)); m.addVertex(Vec3(0, 0, 1));
+    m.addVertex(Vec3(3, 0, 0)); m.addVertex(Vec3(4, 0, 0));
+    m.addVertex(Vec3(4, 0, 1)); m.addVertex(Vec3(3, 0, 1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([4u, 5u, 6u, 7u]);
+    m.rebuildEdges();
+    m.buildLoops();
+
+    uint[2][] pairs = [[0u, 6u]];   // keep at corner 0 of face 0, drop at corner 2 of face 1
+    assert(m.weldVertexPairs(pairs) == 1,
+        "a pair whose two ends live in DIFFERENT faces shares no winding and must weld");
+    assert(m.vertices.length == 7,
+        "cross-face weld: expected V=7, got " ~ m.vertices.length.to!string);
+    assert(m.faces.length == 2,
+        "cross-face weld: both quads survive, got F=" ~ m.faces.length.to!string);
+    foreach (i, ref f; m.faces)
+        assert(f.length == 4,
+            "cross-face weld: face " ~ i.to!string ~ " must still be a quad, got length "
+            ~ f.length.to!string);
+}
+
+unittest { // two faceless vertices cannot weld — that is a vanish, not a weld
+    import std.conv : to;
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 0, 1)); m.addVertex(Vec3(0, 0, 1));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addVertex(Vec3(5, 0, 0));      // 4 — isolated
+    m.addVertex(Vec3(5.001f, 0, 0)); // 5 — isolated
+    m.rebuildEdges();
+    m.buildLoops();
+
+    uint[2][] pairs = [[4u, 5u]];
+    assert(m.weldVertexPairs(pairs) == 0,
+        "a pair with no incident face anywhere must be refused");
+    assert(m.vertices.length == 6,
+        "faceless reject: BOTH isolated vertices must survive — honouring the pair would "
+        ~ "have run the rebuild, and compactUnreferenced would then have taken them both; "
+        ~ "got V=" ~ m.vertices.length.to!string);
 }
 
 unittest { // one vertex cannot be absorbed twice; the first pair wins
