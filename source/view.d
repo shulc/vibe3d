@@ -425,6 +425,95 @@ version(unittest) {
     import std.math : isClose, abs;
 }
 
+// ---------------------------------------------------------------------------
+// The orientation JSON codec.
+//
+// It lives here as free functions rather than inside the HTTP handler because
+// it is the CODEC, not an endpoint: any surface that needs to persist a camera
+// wants the same nine losslessly-encoded floats. Note that nothing else
+// persists a camera today — `prefs.d` says so in as many words ("Camera / view
+// / edit-mode / per-document state are deliberately NOT persisted here") and
+// the `.v3d` document has no camera field at all — so these are tested here on
+// their own terms, not only through the endpoint that currently uses them.
+// ---------------------------------------------------------------------------
+
+unittest { // the JSON codec round-trips an arbitrary orientation BIT-EXACTLY
+    import std.json : parseJSON;
+    // An orientation reached by composing turns about three different axes:
+    // no (azimuth, elevation, bank) triple names it, which is the case a
+    // lossy or chart-based encoding would silently fail.
+    Orientation want = Orientation.fromAngles(0.5f, 0.4f, 0.0f)
+                           .rotatedAbout(Vec3(1, 0, 0), 0.7f)
+                           .rotatedAbout(Vec3(0, 0, 1), -1.1f)
+                           .rotatedAbout(normalize(Vec3(1, 2, 1)), 0.55f);
+    Orientation got;
+    assert(orientationFromJson(parseJSON(orientationToJson(want)), got),
+           "the codec must accept what it produced");
+    assert(got.m == want.m,
+           "an orientation must survive JSON exactly — nine significant digits "
+           ~ "is what pins a float, and the matrix IS the camera");
+
+    // Non-vacuous: the six-decimal precision every other camera field uses
+    // would NOT survive this.
+    import std.format : format;
+    string lossy = format("[%f,%f,%f,%f,%f,%f,%f,%f,%f]",
+                          want.m[0], want.m[1], want.m[2], want.m[3], want.m[4],
+                          want.m[5], want.m[6], want.m[7], want.m[8]);
+    Orientation coarse;
+    assert(orientationFromJson(parseJSON(lossy), coarse), "the lossy form parses");
+    assert(coarse.m != want.m,
+           "if %f round-tripped exactly there would be nothing to protect and "
+           ~ "this codec would not need to exist");
+}
+
+unittest { // the codec refuses anything that is not nine numbers
+    import std.json : parseJSON;
+    Orientation sentinel = Orientation.fromAngles(1.1f, -0.2f, 0.3f);
+    foreach (bad; [`[1,0,0,0,1,0]`,              // too few
+                   `[1,0,0,0,1,0,0,0,1,0]`,      // too many
+                   `[1,0,0,0,1,0,0,0,"x"]`,      // not a number
+                   `{"m":[1,0,0,0,1,0,0,0,1]}`,  // not an array
+                   `9`, `null`, `[]`]) {
+        Orientation o = sentinel;
+        assert(!orientationFromJson(parseJSON(bad), o),
+               "the codec must reject " ~ bad);
+    }
+    // Integers are legal JSON numbers and must be accepted — an identity
+    // matrix written by hand is all 1s and 0s.
+    Orientation ident;
+    assert(orientationFromJson(parseJSON(`[1,0,0,0,1,0,0,0,1]`), ident),
+           "an all-integer matrix must parse");
+    assert(ident.m == [1.0f,0,0, 0,1,0, 0,0,1], "and land on the identity");
+}
+
+unittest { // a camera survives serialise -> parse -> camera, bit-exactly
+    // The whole point, at the level the task is about: an arbitrary rotation
+    // put on a View, written out, read back into another View, is the same
+    // camera to the last bit — INCLUDING through the re-normalising write
+    // funnel the reader goes through.
+    import std.json : parseJSON;
+    auto a = new View(0, 0, 800, 600);
+    a.setOrientation(Orientation.fromAngles(0.5f, 0.4f, 0.0f)
+                         .rotatedAbout(normalize(Vec3(0.3f, 1, -0.7f)), 1.27f));
+    a.distance = 4.75f;
+    a.focus    = Vec3(1, -2, 0.5f);
+
+    auto j = parseJSON(a.toJson());
+    auto b = new View(0, 0, 800, 600);
+    Orientation parsed;
+    assert(orientationFromJson(j["orientation"], parsed), "the published field parses");
+    b.setOrientation(parsed);
+    b.distance = cast(float) j["distance"].floating;
+    b.focus    = Vec3(cast(float) j["focus"]["x"].floating,
+                      cast(float) j["focus"]["y"].floating,
+                      cast(float) j["focus"]["z"].floating);
+
+    assert(b.orientation.m == a.orientation.m,
+           "the rotation must survive the round trip bit-exactly");
+    assert(b.viewport().view == a.viewport().view,
+           "and so must every lane of the view matrix it renders");
+}
+
 unittest { // viewport() ortho: Top preset — forward = -Y, eye above focus
     auto v = new View(0, 0, 800, 600);
     v.projKind   = ProjKind.Ortho;
