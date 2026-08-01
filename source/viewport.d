@@ -3,7 +3,7 @@ module viewport;
 import view          : View, ProjKind, ViewPreset;
 import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
-import math          : Viewport, Vec3;
+import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
 
 // ---------------------------------------------------------------------------
@@ -463,8 +463,7 @@ final class Viewport3D {
     /// single-source, 0181).
     Viewport snapshotOf() {
         return camera.viewportWith(camera.focus, camera.distance,
-                                    camera.azimuth, camera.elevation,
-                                    camera.roll);
+                                    camera.orientation);
     }
 
     /// True when this viewport's camera is using orthographic projection.
@@ -928,26 +927,26 @@ final class ViewportManager {
     void resolveFollow(int id,
                        out Vec3 focus, out float distance,
                        out float az,   out float el) const {
-        float ignored;
-        resolveFollow(id, focus, distance, az, el, ignored);
+        Orientation o;
+        resolveFollow(id, focus, distance, o);
+        float r;
+        o.toAngles(az, el, r);
     }
 
-    /// `resolveFollow` including the BANK. Roll rides on `indRotate`, with
-    /// azimuth and elevation: bank is part of the view's rotation, so a cell
-    /// that follows its master's orbit must follow its master's bank too —
-    /// splitting them would let a linked pair render mutually rotated
-    /// horizons while claiming to share a rotation.
+    /// `resolveFollow` returning the whole ROTATION. The entire orientation
+    /// rides on `indRotate` — heading, pitch and bank alike are one rotation,
+    /// so a cell that follows its master's orbit follows all of it; splitting
+    /// them would let a linked pair render mutually rotated horizons while
+    /// claiming to share a rotation.
     void resolveFollow(int id,
                        out Vec3 focus, out float distance,
-                       out float az,   out float el, out float rollOut) const {
+                       out Orientation orient) const {
         auto f   = views[id];
         int  mid = groupMasterOf(id);
         auto m   = views[mid];
-        focus    = f.indCenter ? f.camera.focus    : m.camera.focus;
-        distance = f.indScale  ? f.camera.distance : m.camera.distance;
-        az       = f.indRotate ? f.camera.azimuth  : m.camera.azimuth;
-        el       = f.indRotate ? f.camera.elevation: m.camera.elevation;
-        rollOut  = f.indRotate ? f.camera.roll     : m.camera.roll;
+        focus    = f.indCenter ? f.camera.focus       : m.camera.focus;
+        distance = f.indScale  ? f.camera.distance    : m.camera.distance;
+        orient   = f.indRotate ? f.camera.orientation : m.camera.orientation;
     }
 
     /// Resolve cell `id`'s effective linkage master: its own `masterId` if
@@ -998,9 +997,9 @@ final class ViewportManager {
     /// matrices; there is no `View` member mirror to write back into
     /// (viewport camera single-source, 0181).
     Viewport resolvedSnapshot(int id) {
-        Vec3 fo; float di, a, e, ro;
-        resolveFollow(id, fo, di, a, e, ro);
-        return views[id].camera.viewportWith(fo, di, a, e, ro);
+        Vec3 fo; float di; Orientation ro;
+        resolveFollow(id, fo, di, ro);
+        return views[id].camera.viewportWith(fo, di, ro);
     }
 
     /// Resolved snapshot for the currently active cell.
@@ -1025,9 +1024,9 @@ final class ViewportManager {
     /// Return resolved camera JSON for cell `id`.  `const`, non-mutating — safe
     /// on any thread.  Eye is recomputed from the resolved inputs.
     string resolvedCameraJson(int id) const {
-        Vec3 fo; float di, a, e, ro;
-        resolveFollow(id, fo, di, a, e, ro);
-        return views[id].camera.toJsonWith(fo, di, a, e, ro);
+        Vec3 fo; float di; Orientation ro;
+        resolveFollow(id, fo, di, ro);
+        return views[id].camera.toJsonWith(fo, di, ro);
     }
 }
 
@@ -1512,8 +1511,8 @@ unittest {
     //
     // The failure this pins: `resolvedSnapshot` used to build a follower's
     // matrices from the master's azimuth/elevation but the FOLLOWER's own
-    // object. A four-argument `viewportWith` that quietly defaulted the roll
-    // to `this.roll` would compile there and render two linked cells with
+    // object. A `viewportWith` that quietly defaulted the rotation to
+    // `this.orientation` would compile there and render two linked cells with
     // mutually rotated horizons while both reported the same rotation.
     import std.math : isClose, abs;
     auto m = new ViewportManager(0, 0, 800, 600);
@@ -1525,31 +1524,36 @@ unittest {
     m.views[1].camera.roll    = -0.70f;
     m.views[0].masterId = 1;
 
-    Vec3 fo; float di, a, e, ro;
+    Vec3 fo; float di; Orientation ro;
 
     m.views[0].indRotate = true;
-    m.resolveFollow(0, fo, di, a, e, ro);
-    assert(isClose(ro, 0.30f, 1e-5f), "own rotate: bank must be the cell's own");
+    m.resolveFollow(0, fo, di, ro);
+    assert(isClose(ro.roll, 0.30f, 1e-5f), "own rotate: bank must be the cell's own");
 
     m.views[0].indRotate = false;
-    m.resolveFollow(0, fo, di, a, e, ro);
-    assert(isClose(ro, -0.70f, 1e-5f), "follow rotate: bank must be the master's");
+    m.resolveFollow(0, fo, di, ro);
+    assert(isClose(ro.roll, -0.70f, 1e-5f), "follow rotate: bank must be the master's");
+    // The WHOLE rotation follows, not just the bank — the heading too.
+    assert(isClose(ro.azimuth, 1.5f, 1e-5f),
+           "follow rotate: the master's heading must come with its bank");
 
-    // The resolved SNAPSHOT must render that bank, not the follower's.
+    // The resolved SNAPSHOT must render that rotation, not the follower's.
     Viewport got  = m.resolvedSnapshot(0);
-    Viewport want = m.views[1].camera.viewportWith(fo, di, a, e, ro);
+    Viewport want = m.views[1].camera.viewportWith(fo, di, ro);
     assert(got.view == want.view,
-           "a follower's snapshot must be built on the master's bank");
-    // Non-vacuous: the follower's OWN bank gives a different matrix.
-    Viewport wrong = m.views[0].camera.viewportWith(fo, di, a, e, 0.30f);
+           "a follower's snapshot must be built on the master's rotation");
+    // Non-vacuous: the follower's OWN rotation gives a different matrix.
+    Viewport wrong = m.views[0].camera.viewportWith(
+        fo, di, m.views[0].camera.orientation);
     assert(got.view != wrong.view,
-           "the follower's own bank must NOT be what gets rendered");
+           "the follower's own rotation must NOT be what gets rendered");
 
     // The four-out overload still answers the four it always did.
     Vec3 fo4; float di4, a4, e4;
     m.resolveFollow(0, fo4, di4, a4, e4);
-    assert(a4 == a && e4 == e && di4 == di && fo4.x == fo.x,
-           "the four-out overload must agree with the five-out one");
+    assert(isClose(a4, ro.azimuth, 1e-5f) && isClose(e4, ro.elevation, 1e-5f) &&
+           di4 == di && fo4.x == fo.x,
+           "the four-out overload must agree with the orientation overload");
 
     // And the published JSON carries it.
     import std.json : parseJSON;

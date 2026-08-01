@@ -1026,15 +1026,15 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     // Viewport camera single-source (0181): no eye/view/proj mirror on View
     // anymore — derive the camera from the current transform inputs directly.
     //
-    // The BANK is supplied explicitly. `viewportWith` deliberately has no
-    // four-argument overload (see its docstring in `view.d`): one that
-    // defaulted to `this.roll` would also compile where a FOLLOWER cell
+    // The ORIENTATION is supplied explicitly. `viewportWith` deliberately has
+    // no two-argument overload (see its docstring in `view.d`): one that
+    // defaulted to `this.orientation` would also compile where a FOLLOWER cell
     // resolves the MASTER's rotation, and would render two linked cells with
     // mutually rotated horizons. That hazard does not exist here — the camera
-    // being mirrored into the scene IS `v` — so `v.roll` is the right operand,
-    // and passing it rather than defaulting it is what keeps the overload gone.
-    const Viewport vp = v.viewportWith(v.focus, v.distance, v.azimuth,
-                                       v.elevation, v.roll);
+    // being mirrored into the scene IS `v` — so `v.orientation` is the right
+    // operand, and passing it rather than defaulting it is what keeps the
+    // overload gone.
+    const Viewport vp = v.viewportWith(v.focus, v.distance, v.orientation);
     cd.eye    = vp.eye;
     cd.target = v.focus;
     // READ screen-up off the view matrix instead of reconstructing it from a

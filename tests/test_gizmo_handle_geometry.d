@@ -41,7 +41,7 @@ import std.math : PI, abs, cos, sin, sqrt;
 
 import handler : MoveHandler, ScaleHandler, gizmoSize, setGizmoPixels,
                  getGizmoPixels, Handler;
-import math : Vec3, Viewport, cross, normalize, projectToWindowFull;
+import math : Vec3, Viewport, cross, normalize, projectToWindowFull, Orientation;
 import view : View;
 
 void main() {}
@@ -76,7 +76,7 @@ private bool hitAtWorld(Handler h, Vec3 world, const ref Viewport vp) {
 // proper quad. An axis-aligned camera would make some of them degenerate
 // and the probes below meaningless.
 private Viewport obliqueVp(View v) {
-    return v.viewportWith(Vec3(0, 0, 0), 3.0f, 0.6f, 0.4f, v.roll);
+    return v.viewportWith(Vec3(0, 0, 0), 3.0f, Orientation.fromAngles(0.6f, 0.4f, v.roll));
 }
 
 unittest { // Plane handles sit at 0.80 of the arm, on BOTH banks
@@ -138,7 +138,7 @@ unittest { // The arm is 120 SCREEN pixels, and stays 120 as the camera dollies
     Vec3 pivot = Vec3(0, 0, 0);
 
     foreach (dist; [2.0f, 10.0f, 50.0f]) {
-        Viewport vp = v.viewportWith(pivot, dist, 0.0f, 0.0f, v.roll);
+        Viewport vp = v.viewportWith(pivot, dist, Orientation.fromAngles(0.0f, 0.0f, v.roll));
         auto mv = new MoveHandler(pivot);
         mv.syncGeometry(vp);
 
@@ -203,7 +203,7 @@ unittest { // The plane ring's RADIUS is a pixel count; its OFFSET is not
     float[2] ringPx, offsetPx;
     foreach (i, armPx; [120.0f, 480.0f]) {
         setGizmoPixels(armPx);
-        Viewport vp = v.viewportWith(pivot, 10.0f, 0.0f, 0.0f, v.roll);
+        Viewport vp = v.viewportWith(pivot, 10.0f, Orientation.fromAngles(0.0f, 0.0f, v.roll));
         auto mv = new MoveHandler(pivot);
         mv.syncGeometry(vp);
 

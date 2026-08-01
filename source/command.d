@@ -287,8 +287,7 @@ class Command {
     // `resolvedVpProvider` directly anywhere but here.
     protected final Viewport effectiveViewport() {
         if (resolvedVpProvider !is null) return resolvedVpProvider();
-        return view.viewportWith(view.focus, view.distance,
-                                  view.azimuth, view.elevation, view.roll);
+        return view.viewportWith(view.focus, view.distance, view.orientation);
     }
 
 protected:

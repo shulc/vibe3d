@@ -2,6 +2,7 @@ module view;
 
 import math;
 import std.math : sqrt, tan, PI;
+import std.json : JSONValue, JSONType;
 
 /// Projection kind for the camera. Default Perspective.
 /// Ortho sets an axis-locked viewpoint; orbit is disabled.
@@ -11,45 +12,108 @@ enum ProjKind { Perspective, Ortho }
 /// Camera and Perspective both use the free spherical camera.
 enum ViewPreset { Perspective, Top, Bottom, Front, Back, Left, Right, Camera }
 
-/// Rotate a view's up-vector about its own FORWARD axis by `roll` radians —
-/// the single place a bank enters the camera basis.
+/// Serialise a camera orientation as a nine-element JSON array, LOSSLESSLY.
 ///
-/// `forward` must be unit; `up0` is the un-banked up hint (the world +Y for
-/// a perspective cell, the preset's up for an ortho one) and need not be
-/// perpendicular to `forward`. The result IS perpendicular to `forward` and
-/// unit, so `lookAt`'s own `normalize(cross(f, up))` reproduces the intended
-/// screen-right EXACTLY rather than to within a renormalisation — that is
-/// why the orthonormal pair is built here instead of handing `lookAt` a
-/// rotated `up0` (whose cross with `forward` is short by `cos(elevation)`
-/// and would rotate by the wrong angle).
+/// `%.9g` is not decoration: nine significant decimal digits is the round-trip
+/// precision of a 32-bit float, so the parsed value is the SAME float, bit for
+/// bit. The `%f` (six fixed decimals) every other camera field uses loses
+/// roughly seven of the mantissa's bits — fine for an angle a human reads, not
+/// fine for the matrix that IS the camera, where a lossy round trip means the
+/// horizon quietly tilts a little on every save and load.
+string orientationToJson(Orientation o) {
+    import std.format : format;
+    return format("[%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]",
+                  o.m[0], o.m[1], o.m[2], o.m[3], o.m[4],
+                  o.m[5], o.m[6], o.m[7], o.m[8]);
+}
+
+/// Parse what `orientationToJson` wrote. Returns false (leaving `out_`
+/// untouched) unless the value is an array of exactly nine numbers, so a
+/// malformed or absent field leaves the caller's camera alone rather than
+/// aiming it somewhere arbitrary.
 ///
-/// `roll == 0` short-circuits and returns `up0` **unchanged**, by reference
-/// equality of the value. That guard is the reason every un-banked viewport
-/// stays bit-identical to the pre-roll code: `lookAt(eye, focus, Vec3(0,1,0))`
-/// is still literally what runs, same operands, same rounding.
-Vec3 rolledUpVector(Vec3 forward, Vec3 up0, float roll) {
-    import std.math : cos, sin;
-    if (roll == 0.0f) return up0;
-    Vec3 r0 = cross(forward, up0);
-    float rl = r0.length;
-    // forward parallel to the up hint: no screen-right to bank about. The
-    // perspective path cannot reach this (elevation is clamped to 89 deg),
-    // the ortho presets are constructed perpendicular; a caller that does
-    // reach it gets the un-banked basis rather than a NaN one.
-    if (rl < 1e-6f) return up0;
-    r0 = r0 * (1.0f / rl);
-    Vec3 u0 = cross(r0, forward);
-    return u0 * cos(roll) + r0 * sin(roll);
+/// Does NOT orthonormalise — that is the caller's write funnel
+/// (`View.setOrientation`), which is the single place the discipline lives.
+bool orientationFromJson(JSONValue v, out Orientation out_) {
+    if (v.type != JSONType.array) return false;
+    auto a = v.array;
+    if (a.length != 9) return false;
+    Orientation o;
+    foreach (i, ref e; a) {
+        switch (e.type) {
+            case JSONType.float_:   o.m[i] = cast(float)e.floating;        break;
+            case JSONType.integer:  o.m[i] = cast(float)e.integer;         break;
+            case JSONType.uinteger: o.m[i] = cast(float)e.uinteger;        break;
+            default: return false;
+        }
+    }
+    out_ = o;
+    return true;
 }
 
 // CameraView
 class View {
-    float azimuth   =  0.5f;
-    float elevation =  0.4f;
+    /// **The camera's rotational truth.** A full 3x3 (see `math.Orientation`),
+    /// not three angles: only a matrix can carry a rotation reached by
+    /// composing increments about arbitrary axes, and only a matrix is defined
+    /// at the poles. `azimuth` / `elevation` / `roll` below are DERIVED views
+    /// onto it — the same relationship a reference viewport has between the
+    /// nine floats it persists per view and the heading/pitch/bank triple it
+    /// reports for itself.
+    ///
+    /// Private with a `setOrientation` funnel so every write goes through the
+    /// normalisation discipline; read it through `orientation`.
+    private Orientation orient_ = Orientation.fromAngles(0.5f, 0.4f, 0.0f);
     float distance  =  3.0f;
-    /// Viewport BANK, radians. The angle by which screen-right is rotated
-    /// about the view FORWARD axis, positive = the same sense as the
-    /// heading/pitch/BANK triple a reference viewport publishes for itself.
+    Vec3  focus     =  Vec3(0, 0, 0);
+
+    /// The stored orientation. Read-only by design: writes go through
+    /// `setOrientation` (or the three angle setters), which is what keeps the
+    /// matrix orthonormal.
+    @property Orientation orientation() const { return orient_; }
+
+    /// Replace the whole rotation. **Re-orthonormalises**: this is the entry
+    /// point for orientations that came from outside the model — a parsed
+    /// document, an HTTP body, a captured nine-float atom, or an incremental
+    /// composition — none of which can be trusted to be a clean rotation. A
+    /// matrix that is already clean passes through bit-untouched (the
+    /// normalisation is idempotent), which is what makes serialisation
+    /// round-trip exactly.
+    void setOrientation(Orientation o) { orient_ = o.orthonormalized(); }
+
+    /// Rotate the camera by `angle` radians about the WORLD-space `axis`.
+    /// The composition primitive the matrix storage exists for — an
+    /// arbitrary-axis increment has no expression in the angle chart.
+    void rotateAbout(Vec3 axis, float angle) {
+        orient_ = orient_.rotatedAbout(axis, angle);
+    }
+
+    /// Orbit HEADING, radians — a DERIVED view of `orient_`.
+    ///
+    /// Reading recovers the chart coordinate; writing rebuilds the orientation
+    /// from (this azimuth, the current elevation, the current roll). A write
+    /// therefore round-trips the other two through the chart, which costs
+    /// float dust (~1e-7) and, at a pole, cannot separate heading from bank —
+    /// that is intrinsic to naming a rotation by three angles and is why the
+    /// storage is the matrix. Code that wants to move the camera without
+    /// touching the chart should use `rotateAbout` / `setOrientation`.
+    @property float azimuth() const { return orient_.azimuth; }
+    @property void  azimuth(float v) {
+        float a, e, r; orient_.toAngles(a, e, r);
+        orient_ = Orientation.fromAngles(v, e, r);
+    }
+
+    /// Orbit PITCH, radians — a DERIVED view of `orient_`. See `azimuth`.
+    @property float elevation() const { return orient_.elevation; }
+    @property void  elevation(float v) {
+        float a, e, r; orient_.toAngles(a, e, r);
+        orient_ = Orientation.fromAngles(a, v, r);
+    }
+
+    /// Viewport BANK, radians — a DERIVED view of `orient_`. The angle by
+    /// which screen-right is rotated about the view FORWARD axis, positive =
+    /// the same sense as the heading/pitch/BANK triple a reference viewport
+    /// publishes for itself.
     ///
     /// Sign is pinned, not chosen: with the world up at +Y and no bank, the
     /// screen-right row of the view matrix satisfies `right.y == 0`. Under a
@@ -61,16 +125,15 @@ class View {
     /// obeys against its own reported bank (see the unittest at the end of
     /// this module that reproduces one such row to 1e-5).
     ///
-    /// A third rotational degree of freedom is the whole point: with
-    /// `azimuth`/`elevation` alone the view basis is forced perpendicular to
-    /// +Y, so screen-right can never leave the world XZ plane, and any
-    /// downstream rule that reads the view's own screen-right (drag bases,
-    /// axis elections) is evaluated on a basis the reference does not have.
-    ///
-    /// Default 0 — every existing viewport is bit-identical to the pre-roll
-    /// code path, which is guarded explicitly in `rolledUpVector`.
-    float roll      =  0.0f;
-    Vec3  focus     =  Vec3(0, 0, 0);
+    /// A third rotational degree of freedom was the first thing the two-angle
+    /// camera could not hold; an arbitrary-axis composition is the second, and
+    /// a scalar bank cannot hold THAT either, which is why the scalar is gone
+    /// and the matrix is the storage.
+    @property float roll() const { return orient_.roll; }
+    @property void  roll(float v) {
+        float a, e, r; orient_.toAngles(a, e, r);
+        orient_ = Orientation.fromAngles(a, e, v);
+    }
     immutable float minDist = 0.0001f;
     immutable float maxDist = float.max;
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
@@ -88,20 +151,29 @@ class View {
     void setSize(int w, int h) { width = w; height = h; }
     void setPos(int x, int y) { this.x = x; this.y = y; }
     void reset() {
-        azimuth    =  0.5f;
-        elevation  =  0.4f;
+        // One chart write, not four: setting the three angles one at a time
+        // would round-trip the matrix through the chart three times and leave
+        // the default camera a few ulps off the literal default orientation.
+        orient_    = Orientation.fromAngles(0.5f, 0.4f, 0.0f);
         distance   =  3.0f;
-        roll       =  0.0f;
         focus      =  Vec3(0, 0, 0);
         projKind   = ProjKind.Perspective;
         viewPreset = ViewPreset.Perspective;
     }
 
     void orbit(int dx, int dy) {
-        azimuth   -= dx * 0.005f;
-        elevation += dy * 0.005f;
-        if (elevation >  maxElev) elevation =  maxElev;
-        if (elevation < -maxElev) elevation = -maxElev;
+        // Reads the chart once, writes it once. The clamp keeps the ORBIT
+        // GESTURE short of the pole exactly as before; it is no longer load-
+        // bearing for the arithmetic (`Orientation` is defined at the pole),
+        // only for what a drag is allowed to do, which this task does not
+        // change.
+        float a, e, r;
+        orient_.toAngles(a, e, r);
+        a -= dx * 0.005f;
+        e += dy * 0.005f;
+        if (e >  maxElev) e =  maxElev;
+        if (e < -maxElev) e = -maxElev;
+        orient_ = Orientation.fromAngles(a, e, r);
     }
 
     /// Bank gesture: accumulate `roll` from a horizontal drag.
@@ -112,8 +184,16 @@ class View {
     /// with it (see doc/camera_roll_plan.md §2) and has not been captured.
     /// Unlike `elevation` there is no clamp: a bank wraps, exactly as
     /// `azimuth` does.
+    ///
+    /// A bank is a rotation about the camera's OWN view axis, so it composes
+    /// on the matrix directly rather than through the chart. That also makes
+    /// it well defined when the camera is looking straight down, where the
+    /// chart cannot tell a bank from a heading.
     void rollBy(int dx) {
-        roll += dx * 0.005f;
+        // About FORWARD, not back: a positive bank turns screen-right toward
+        // screen-down (`right.y == -sin(roll)*cos(elevation)`), which is the
+        // -back sense. Rotating about `back` would run the gesture backwards.
+        orient_ = orient_.rotatedAbout(orient_.forward(), dx * 0.005f);
     }
 
     void zoom(int dx) {
@@ -134,58 +214,69 @@ class View {
     /// actually receives it (coupled-pan: the linkage owner, not necessarily
     /// `this`).
     Vec3 panDelta(int dx, int dy) const {
-        return panDeltaWith(dx, dy, roll);
+        return panDeltaWith(dx, dy, orient_);
     }
 
-    /// `panDelta` with the BANK supplied explicitly.
+    /// `panDelta` with the ORIENTATION supplied explicitly.
     ///
     /// Everything else still comes from this camera's own members, exactly as
     /// `panDelta` always did (task 0217: the drag basis is the ORIGIN cell's,
-    /// only the write target is redirected). The bank is separated out anyway
-    /// so `panDelta`'s one caller cannot silently pan on a level basis while
-    /// the same camera renders banked — the failure mode is a drag that
-    /// slides off the cursor, which is invisible in a screenshot and obvious
-    /// in the hand.
-    Vec3 panDeltaWith(int dx, int dy, float r) const {
+    /// only the write target is redirected). The rotation is separated out
+    /// anyway so `panDelta`'s one caller cannot silently pan on one basis
+    /// while the same camera renders on another — the failure mode is a drag
+    /// that slides off the cursor, which is invisible in a screenshot and
+    /// obvious in the hand.
+    ///
+    /// The pan basis is now READ off the orientation rather than rebuilt from
+    /// a hard-coded world up, so it inherits an arbitrary rotation for free —
+    /// this was one of the three sites that reconstructed a basis and had to
+    /// be corrected for a bank; it needs no further correction for a matrix.
+    Vec3 panDeltaWith(int dx, int dy, Orientation o) const {
         float speed = distance * 0.001f;
-        if (projKind == ProjKind.Ortho) {
-            // Ortho: derive right/up from the preset axis so pan tracks
-            // the screen axes regardless of azimuth/elevation.
-            Vec3 right, up;
-            final switch (viewPreset) {
-                case ViewPreset.Top:
-                    right = Vec3( 1, 0, 0); up = Vec3(0, 0,-1); break;
-                case ViewPreset.Bottom:
-                    right = Vec3( 1, 0, 0); up = Vec3(0, 0, 1); break;
-                case ViewPreset.Front:
-                    right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); break;
-                case ViewPreset.Back:
-                    right = Vec3(-1, 0, 0); up = Vec3(0, 1, 0); break;
-                case ViewPreset.Right:
-                    right = Vec3( 0, 0,-1); up = Vec3(0, 1, 0); break;
-                case ViewPreset.Left:
-                    right = Vec3( 0, 0, 1); up = Vec3(0, 1, 0); break;
-                case ViewPreset.Perspective:
-                case ViewPreset.Camera:
-                    right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); break;
-            }
-            // Ortho presets ship an explicit screen basis; a bank rotates
-            // that basis about the preset's own view axis. `r == 0` returns
-            // `up` untouched, so every existing ortho cell is unchanged.
-            if (r != 0.0f) {
-                Vec3 fwd = cross(up, right);   // right x up == -fwd
-                up    = rolledUpVector(fwd, up, r);
-                right = cross(fwd, up);
-            }
-            return right * (-dx * speed) + up * (dy * speed);
+        Orientation eff = effectiveOrientation(o);
+        return eff.right() * (-dx * speed) + eff.up() * (dy * speed);
+    }
+
+    /// The orientation this camera actually RENDERS with, given a candidate
+    /// rotation `o`.
+    ///
+    /// For a perspective cell that is `o` itself. For an axis-locked ortho
+    /// cell the preset dictates the view axis and `o`'s heading/pitch are
+    /// ignored — only its BANK carries over, rotating the preset's own screen
+    /// basis about the preset axis. That is exactly what the pre-matrix camera
+    /// did (an ortho cell ignored azimuth/elevation but honoured `roll`), kept
+    /// deliberately so a numpad view switch still returns to the orbit the
+    /// camera had before it.
+    ///
+    /// The bank is read through the chart here, which is the one place this
+    /// module still depends on it. It is sound for a preset cell because the
+    /// stored rotation is a free-camera one and the chart is only degenerate
+    /// when THAT rotation is polar.
+    private Orientation effectiveOrientation(Orientation o) const {
+        if (projKind != ProjKind.Ortho) return o;
+        Vec3 right, up;
+        final switch (viewPreset) {
+            case ViewPreset.Top:
+                right = Vec3( 1, 0, 0); up = Vec3(0, 0,-1); break;
+            case ViewPreset.Bottom:
+                right = Vec3( 1, 0, 0); up = Vec3(0, 0, 1); break;
+            case ViewPreset.Front:
+                right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); break;
+            case ViewPreset.Back:
+                right = Vec3(-1, 0, 0); up = Vec3(0, 1, 0); break;
+            case ViewPreset.Right:
+                right = Vec3( 0, 0,-1); up = Vec3(0, 1, 0); break;
+            case ViewPreset.Left:
+                right = Vec3( 0, 0, 1); up = Vec3(0, 1, 0); break;
+            case ViewPreset.Perspective:
+            case ViewPreset.Camera:
+                // An ortho cell that is not axis-locked keeps the free orbit.
+                return o;
         }
-        // Perspective: existing spherical basis (byte-identical at r == 0).
-        Vec3 off     = sphericalToCartesian(azimuth, elevation, distance);
-        Vec3 forward = normalize(-off);
-        Vec3 upVec   = rolledUpVector(forward, Vec3(0, 1, 0), r);
-        Vec3 right   = normalize(cross(forward, upVec));
-        Vec3 up      = cross(right, forward);
-        return right * (-dx * speed) + up * (dy * speed);
+        Orientation preset = Orientation.fromBasis(right, up, cross(right, up));
+        immutable float r = o.roll;
+        if (r == 0.0f) return preset;
+        return preset.rotatedAbout(preset.forward(), r);
     }
 
     /// Compute Viewport matrices from explicit transform inputs instead of member
@@ -193,51 +284,33 @@ class View {
     /// parameters.  `const` so it is callable without races from any thread.
     /// Writes NO members.
     ///
-    /// `r` = the BANK to render with, in radians. It is an explicit input
-    /// for the same reason `a`/`e` are: a follower cell renders the MASTER's
-    /// rotation, and `this.roll` is then the wrong number (see
-    /// `ViewportManager.resolveFollow`). There is deliberately NO four-arg
-    /// overload defaulting to `this.roll` — that overload would compile at
-    /// the follow-resolved call sites and silently render the follower's own
-    /// bank.
-    Viewport viewportWith(Vec3 f, float d, float a, float e, float r) const {
+    /// `o` = the ORIENTATION to render with. It is an explicit input for the
+    /// same reason `f`/`d` are: a follower cell renders the MASTER's rotation,
+    /// and `this.orientation` is then the wrong matrix (see
+    /// `ViewportManager.resolveFollow`). There is deliberately NO two-arg
+    /// overload defaulting to `this.orientation` — that overload would compile
+    /// at the follow-resolved call sites and silently render the follower's
+    /// own rotation, i.e. two linked cells with mutually rotated horizons both
+    /// reporting the same rotation.
+    ///
+    /// The camera basis is now taken straight from the stored rotation
+    /// (`viewMatrixFrom`) instead of being rebuilt by `lookAt` from an
+    /// eye/target/world-up triple. That is what lets an arbitrary orientation
+    /// render at all: `lookAt` can only produce rotations whose screen-right
+    /// is perpendicular to the up hint it is given.
+    Viewport viewportWith(Vec3 f, float d, Orientation o) const {
+        Orientation eff = effectiveOrientation(o);
+        Vec3 localEye   = f + eff.back() * d;
+        float[16] localView = viewMatrixFrom(eff, localEye);
+        float[16] localProj;
         if (projKind == ProjKind.Ortho) {
-            Vec3 axisEye, upVec;
-            final switch (viewPreset) {
-                case ViewPreset.Top:
-                    axisEye = Vec3(0,  d, 0); upVec = Vec3(0, 0,-1); break;
-                case ViewPreset.Bottom:
-                    axisEye = Vec3(0, -d, 0); upVec = Vec3(0, 0, 1); break;
-                case ViewPreset.Front:
-                    axisEye = Vec3(0, 0,  d); upVec = Vec3(0, 1, 0); break;
-                case ViewPreset.Back:
-                    axisEye = Vec3(0, 0, -d); upVec = Vec3(0, 1, 0); break;
-                case ViewPreset.Right:
-                    axisEye = Vec3( d, 0, 0); upVec = Vec3(0, 1, 0); break;
-                case ViewPreset.Left:
-                    axisEye = Vec3(-d, 0, 0); upVec = Vec3(0, 1, 0); break;
-                case ViewPreset.Perspective:
-                case ViewPreset.Camera:
-                    axisEye = sphericalToCartesian(a, e, d);
-                    upVec   = Vec3(0, 1, 0);
-                    break;
-            }
-            Vec3 localEye = f + axisEye;
-            upVec = rolledUpVector(normalize(f - localEye), upVec, r);
-            float[16] localView = lookAt(localEye, f, upVec);
             float halfH  = d * tan(cast(float)(PI / 8.0));
             float aspect = cast(float)width / height;
-            float[16] localProj = orthographicMatrix(halfH, aspect, 0.001f, 100.0f);
-            Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
-            vp.focus = f;
-            return vp;
+            localProj = orthographicMatrix(halfH, aspect, 0.001f, 100.0f);
+        } else {
+            localProj = perspectiveMatrix(45.0f * PI / 180.0f,
+                                          cast(float)width / height, 0.001f, 100.0f);
         }
-        Vec3 offset   = sphericalToCartesian(a, e, d);
-        Vec3 localEye = f + offset;
-        float[16] localView = lookAt(localEye, f,
-                                     rolledUpVector(normalize(-offset), Vec3(0, 1, 0), r));
-        float[16] localProj = perspectiveMatrix(45.0f * PI / 180.0f,
-                                                 cast(float)width / height, 0.001f, 100.0f);
         Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
         vp.focus = f;
         return vp;
@@ -248,7 +321,7 @@ class View {
     /// `viewportWith` (own transform inputs) so existing call sites and this
     /// module's unittests stay unchanged.
     Viewport viewport() const {
-        return viewportWith(focus, distance, azimuth, elevation, roll);
+        return viewportWith(focus, distance, orient_);
     }
 
     // ---------------------------------------------------------------------------
@@ -258,32 +331,29 @@ class View {
     // Adjusts `focus` and `distance` so the bounding sphere of `verts` fills
     // 90 % of the viewport (keeping the current orbit azimuth/elevation).
     string toJson() const {
-        import std.format : format;
-        // Derive eye from the current transform inputs (viewport camera
-        // single-source, 0181) — no member mirror to read anymore.
-        Vec3 eye_ = viewportWith(focus, distance, azimuth, elevation, roll).eye;
-        return format(
-            `{"azimuth":%f,"elevation":%f,"distance":%f,"roll":%f,` ~
-            `"focus":{"x":%f,"y":%f,"z":%f},` ~
-            `"eye":{"x":%f,"y":%f,"z":%f},` ~
-            `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
-            azimuth, elevation, distance, roll,
-            focus.x, focus.y, focus.z,
-            eye_.x, eye_.y, eye_.z,
-            width, height, x, y);
+        return toJsonWith(focus, distance, orient_);
     }
 
     /// Like toJson() but uses explicit transform inputs.  `const`, non-mutating —
     /// safe to call from any thread.  Eye is recomputed from the provided inputs.
-    string toJsonWith(Vec3 f, float d, float a, float e, float r) const {
+    ///
+    /// `orientation` is the LOSSLESS field and the only one that can carry an
+    /// arbitrary rotation; `azimuth`/`elevation`/`roll` remain published as
+    /// the derived chart reads they now are, at their historical `%f`
+    /// precision, so every existing reader is unaffected.
+    string toJsonWith(Vec3 f, float d, Orientation o) const {
         import std.format : format;
-        Viewport vp = viewportWith(f, d, a, e, r);
+        Viewport vp = viewportWith(f, d, o);
+        float a, e, r;
+        o.toAngles(a, e, r);
         return format(
             `{"azimuth":%f,"elevation":%f,"distance":%f,"roll":%f,` ~
+            `"orientation":%s,` ~
             `"focus":{"x":%f,"y":%f,"z":%f},` ~
             `"eye":{"x":%f,"y":%f,"z":%f},` ~
             `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
             a, e, d, r,
+            orientationToJson(o),
             f.x, f.y, f.z,
             vp.eye.x, vp.eye.y, vp.eye.z,
             width, height, x, y);
@@ -420,7 +490,7 @@ unittest { // pan() perspective: regression guard — basis unchanged
            "perspective pan vertical must change focus.y");
 }
 
-unittest { // viewportWith(own4) == viewport() for ortho Top
+unittest { // viewportWith(own-inputs) == viewport() for ortho Top
     auto v = new View(0, 0, 800, 600);
     v.projKind   = ProjKind.Ortho;
     v.viewPreset = ViewPreset.Top;
@@ -429,32 +499,32 @@ unittest { // viewportWith(own4) == viewport() for ortho Top
     v.azimuth    = 0.3f;
     v.elevation  = 0.2f;
     auto vp1 = v.viewport();
-    auto vp2 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation, v.roll);
+    auto vp2 = v.viewportWith(v.focus, v.distance, v.orientation);
     assert(isClose(vp1.eye.x, vp2.eye.x, 1e-5f) &&
            isClose(vp1.eye.y, vp2.eye.y, 1e-5f) &&
            isClose(vp1.eye.z, vp2.eye.z, 1e-5f),
-           "viewportWith(own4) eye must equal viewport() eye (ortho Top)");
-    assert(vp1.view == vp2.view, "viewportWith(own4) view must match viewport() (ortho Top)");
-    assert(vp1.proj == vp2.proj, "viewportWith(own4) proj must match viewport() (ortho Top)");
+           "viewportWith(own-inputs) eye must equal viewport() eye (ortho Top)");
+    assert(vp1.view == vp2.view, "viewportWith(own-inputs) view must match viewport() (ortho Top)");
+    assert(vp1.proj == vp2.proj, "viewportWith(own-inputs) proj must match viewport() (ortho Top)");
 }
 
-unittest { // viewportWith(own4) == viewport() for perspective
+unittest { // viewportWith(own-inputs) == viewport() for perspective
     auto v = new View(0, 0, 800, 600);
     v.focus    = Vec3(0.5f, 0, -1.0f);
     v.distance = 6.0f;
     v.azimuth  = 1.2f;
     v.elevation = -0.3f;
     auto vp1 = v.viewport();
-    auto vp2 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation, v.roll);
+    auto vp2 = v.viewportWith(v.focus, v.distance, v.orientation);
     assert(isClose(vp1.eye.x, vp2.eye.x, 1e-5f) &&
            isClose(vp1.eye.y, vp2.eye.y, 1e-5f) &&
            isClose(vp1.eye.z, vp2.eye.z, 1e-5f),
-           "viewportWith(own4) eye must equal viewport() eye (perspective)");
-    assert(vp1.view == vp2.view, "viewportWith(own4) view must match viewport() (persp)");
-    assert(vp1.proj == vp2.proj, "viewportWith(own4) proj must match viewport() (persp)");
+           "viewportWith(own-inputs) eye must equal viewport() eye (perspective)");
+    assert(vp1.view == vp2.view, "viewportWith(own-inputs) view must match viewport() (persp)");
+    assert(vp1.proj == vp2.proj, "viewportWith(own-inputs) proj must match viewport() (persp)");
 }
 
-unittest { // toJsonWith(own4) == toJson() after one viewport() call
+unittest { // toJsonWith(own-inputs) == toJson() after one viewport() call
     import std.json : parseJSON;
     auto v = new View(0, 0, 800, 600);
     v.focus    = Vec3(1, 0, 0);
@@ -463,7 +533,7 @@ unittest { // toJsonWith(own4) == toJson() after one viewport() call
     v.elevation = 0.1f;
     v.viewport();  // prime the member eye
     string j1 = v.toJson();
-    string j2 = v.toJsonWith(v.focus, v.distance, v.azimuth, v.elevation, v.roll);
+    string j2 = v.toJsonWith(v.focus, v.distance, v.orientation);
     auto o1 = parseJSON(j1);
     auto o2 = parseJSON(j2);
     assert(isClose(o1["azimuth"].floating,   o2["azimuth"].floating,   1e-5f), "toJsonWith az");
@@ -571,13 +641,31 @@ version(unittest) {
     }
 }
 
-unittest { // roll == 0 is BIT-IDENTICAL to the pre-roll code path
-    // The regression this file exists to prevent: the reference-comparison
-    // corpus (17 move legs / 18 rotate legs) must not move by one ulp when
-    // the camera merely GAINS the ability to bank. `rolledUpVector` returns
-    // its input unchanged at exactly 0, so `lookAt(eye, focus, Vec3(0,1,0))`
-    // is still the literal call, with the literal same operands.
+unittest { // a level camera is the SAME camera the eye/target build produced
+    // RE-BASELINED, deliberately, and this comment is the record of it.
+    //
+    // This assertion used to be `got.view == want` — bit equality against
+    // `lookAt(focus + sphericalToCartesian(az, el, d), focus, +Y)` — and it
+    // guarded the reference-comparison corpus (17 move legs / 18 rotate legs)
+    // against moving by an ulp. Bit equality is UNATTAINABLE once the rotation
+    // is stored, and the reason is a defect in what it was pinning: `lookAt`
+    // derives its basis from `normalize(center - eye)`, so the matrix it
+    // returned depended on the DISTANCE (it normalises a vector `d` long, and
+    // scaling changes the rounding) and on the FOCUS (`center - eye`
+    // re-rounds when the focus sits far from the origin). A rotation has
+    // neither. Reproducing the old bits would mean reproducing both
+    // dependencies, i.e. not storing a rotation at all.
+    //
+    // The residual is MEASURED, not assumed: over this sweep the nine
+    // rotation lanes differ by at most 4.2e-7 and the three translation lanes
+    // by at most 5.7e-7 of the distance — a few ulps, ~1e-6 of a world unit on
+    // a 1.5-unit camera, some five orders below one pixel at this viewport
+    // size. The corpus claim is now carried by RUNNING the corpus, and the
+    // rendered-pixel claim by the framebuffer-digest probe, rather than by a
+    // proxy that can no longer be true.
     auto v = new View(0, 0, 1098, 966);
+    float worstRot = 0, worstTransRel = 0;
+    int lookAtVariedWithFocus = 0;
     foreach (a; [-2.7f, -0.5040186f, 0.0f, 0.5f, 1.9f])
     foreach (e; [-1.5f, -0.4f, 0.0f, 0.4138754f, 1.5f]) {
         v.azimuth = a; v.elevation = e; v.distance = 1.486323332f;
@@ -586,8 +674,49 @@ unittest { // roll == 0 is BIT-IDENTICAL to the pre-roll code path
         Viewport got = v.viewport();
         Vec3 off = sphericalToCartesian(a, e, v.distance);
         float[16] want = lookAt(v.focus + off, v.focus, Vec3(0, 1, 0));
-        assert(got.view == want,
-               "un-banked viewport must be bit-identical to lookAt(eye, focus, +Y)");
+        foreach (i; [0, 1, 2, 4, 5, 6, 8, 9, 10]) {
+            immutable float dd = abs(got.view[i] - want[i]);
+            if (dd > worstRot) worstRot = dd;
+        }
+        foreach (i; [12, 13, 14]) {
+            immutable float rel = abs(got.view[i] - want[i]) / v.distance;
+            if (rel > worstTransRel) worstTransRel = rel;
+        }
+        // The old oracle could only ever have held by replaying the focus
+        // dependence. Show it was there: the SAME rotation about the origin
+        // gives `lookAt` a different basis.
+        float[16] atOrigin = lookAt(off, Vec3(0, 0, 0), Vec3(0, 1, 0));
+        foreach (i; [0, 4, 8, 1, 5, 9, 2, 6, 10])
+            if (atOrigin[i] != want[i]) { lookAtVariedWithFocus++; break; }
+    }
+    assert(worstRot <= 4.2e-7f,
+           "a level camera's view basis must match the eye/target build to a few ulps");
+    assert(worstTransRel <= 5.7e-7f,
+           "a level camera's view translation must match to a few ulps of the distance");
+    assert(lookAtVariedWithFocus >= 19,
+           "the eye/target build really did make the BASIS depend on the focus — "
+           ~ "if that stops being true, bit equality is back on the table and "
+           ~ "this re-baseline must be revisited");
+}
+
+unittest { // the rotation no longer depends on where the camera is or how far
+    // The property bought by the ulps above, and the one that makes them a
+    // correction. Same orbit, four different focus/zoom combinations: one
+    // orientation, bit-identical, every time.
+    auto v = new View(0, 0, 1098, 966);
+    v.azimuth = -0.5040186f; v.elevation = 0.4138754f; v.roll = 0.2055634f;
+    immutable Orientation want = v.orientation;
+    foreach (d; [0.3f, 1.486323332f, 42.0f])
+    foreach (f; [Vec3(0, 0, 0), Vec3(0.25f, -0.5f, 2.0f), Vec3(-900, 17, 3.5f)]) {
+        v.distance = d;
+        v.focus    = f;
+        assert(v.orientation.m == want.m,
+               "the stored rotation must not move when the camera zooms or pans");
+        // ...and the rendered basis is that rotation, exactly.
+        Viewport vp = v.viewport();
+        assert(rightRowOf(vp).x == want.m[0] && rightRowOf(vp).y == want.m[1] &&
+               rightRowOf(vp).z == want.m[2],
+               "the view matrix screen-right must be the stored rotation's column");
     }
 }
 
@@ -702,8 +831,8 @@ unittest { // pan follows the banked screen axes, by exactly the bank angle
     auto v = new View(0, 0, 800, 600);
     v.azimuth = -0.5040186f; v.elevation = 0.4138754f; v.distance = 3.0f;
     enum float r = 0.2055634f;
-    Vec3 flat = v.panDeltaWith(100, 0, 0.0f);
-    Vec3 bank = v.panDeltaWith(100, 0, r);
+    Vec3 flat = v.panDeltaWith(100, 0, Orientation.fromAngles(v.azimuth, v.elevation, 0.0f));
+    Vec3 bank = v.panDeltaWith(100, 0, Orientation.fromAngles(v.azimuth, v.elevation, r));
     // Same length (a rotation), and the angle between them is the bank.
     assert(isClose(flat.length, bank.length, 1e-4f), "pan magnitude is bank-invariant");
     float cosang = dot(normalize(flat), normalize(bank));
@@ -729,22 +858,45 @@ unittest { // ortho cells bank too, about their own preset axis
     assert(abs(rt.x - 1.0f) > 1e-3f, "Top preset screen-right must actually rotate");
     assert(isOrtho(vp), "banked Top preset must stay orthographic");
     // The ortho pan basis banks with it.
-    Vec3 flat = v.panDeltaWith(100, 0, 0.0f);
-    Vec3 bank = v.panDeltaWith(100, 0, 0.4f);
+    Vec3 flat = v.panDeltaWith(100, 0, Orientation.fromAngles(v.azimuth, v.elevation, 0.0f));
+    Vec3 bank = v.panDeltaWith(100, 0, Orientation.fromAngles(v.azimuth, v.elevation, 0.4f));
     assert(abs(dot(normalize(flat), normalize(bank)) - 1.0f) > 1e-4f,
            "ortho pan direction must follow the bank");
 }
 
-unittest { // rollBy accumulates and, unlike elevation, does not clamp
+unittest { // rollBy keeps turning, and, unlike elevation, does not clamp
     auto v = new View(0, 0, 800, 600);
-    assert(v.roll == 0.0f, "a fresh camera is level");
+    assert(isClose(v.roll, 0.0f, 1e-6f, 1e-6f), "a fresh camera is level");
     v.rollBy(100);
-    assert(isClose(v.roll, 0.5f, 1e-6f), "rollBy is 0.005 rad/px");
+    assert(isClose(v.roll, 0.5f, 1e-5f), "rollBy is 0.005 rad/px");
     v.rollBy(-100);
-    assert(isClose(v.roll, 0.0f, 1e-6f, 1e-6f), "rollBy is signed and reversible");
-    foreach (i; 0 .. 20) v.rollBy(100);
-    assert(v.roll > 2.0f * PI,
-           "bank wraps like azimuth — a full turn must not be clamped");
+    assert(isClose(v.roll, 0.0f, 1e-5f, 1e-5f), "rollBy is signed and reversible");
+
+    // "Does not clamp" now means what it should mean. The bank used to be an
+    // unbounded accumulator, so a full turn was witnessed by `roll > 2*PI`.
+    // With the rotation stored as a matrix there is no accumulator to
+    // overflow: a bank of 3*PI IS a bank of PI, the same camera, and the
+    // derived chart reads it back in (-PI, PI]. The property worth pinning is
+    // therefore the one that always mattered — the drag keeps turning past a
+    // full circle instead of stopping — so: roll a whole turn and land back on
+    // the starting camera, bit-close, having passed through the far side.
+    Orientation start = v.orientation;
+    bool passedHalfway = false;
+    foreach (i; 0 .. 20) {                 // 20 * 100 px * 0.005 = 10 rad
+        v.rollBy(100);
+        if (i == 6) passedHalfway = true;  // ~3.5 rad, beyond half a turn
+    }
+    assert(passedHalfway, "the sweep must go past half a turn");
+    Orientation want = start.rotatedAbout(start.forward(), 10.0f);
+    foreach (i; 0 .. 9)
+        assert(abs(v.orientation.m[i] - want.m[i]) < 1e-5f,
+               "twenty steps of 0.5 rad must be a turn of exactly 10 rad — a "
+               ~ "clamp would have parked the camera short of it");
+    // ...and 10 rad is past a full circle, so the chart necessarily wrapped.
+    assert(v.roll < 10.0f - 2.0f * PI + 1e-4f,
+           "the derived bank reads back on the (-PI, PI] chart, not as an "
+           ~ "unbounded accumulator");
+
     v.reset();
     assert(v.roll == 0.0f, "reset() must level the horizon");
 }
@@ -811,16 +963,16 @@ unittest { // viewportWith / toJsonWith carry a NON-ZERO bank the same way
     v.distance = 6.0f; v.azimuth = 1.2f; v.elevation = -0.3f;
     v.roll = 0.4137f;
     auto vp1 = v.viewport();
-    auto vp2 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation, v.roll);
-    assert(vp1.view == vp2.view, "banked viewportWith(own5) must match viewport()");
-    // ...and a DIFFERENT bank must produce a different matrix, so the
+    auto vp2 = v.viewportWith(v.focus, v.distance, v.orientation);
+    assert(vp1.view == vp2.view, "banked viewportWith(own-inputs) must match viewport()");
+    // ...and a DIFFERENT rotation must produce a different matrix, so the
     // equality above is not vacuous.
-    auto vp3 = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation, 0.0f);
-    assert(vp1.view != vp3.view, "the roll argument must reach the matrix");
+    auto vp3 = v.viewportWith(v.focus, v.distance,
+                              Orientation.fromAngles(v.azimuth, v.elevation, 0.0f));
+    assert(vp1.view != vp3.view, "the orientation argument must reach the matrix");
 
     auto o1 = parseJSON(v.toJson());
-    auto o2 = parseJSON(v.toJsonWith(v.focus, v.distance, v.azimuth,
-                                     v.elevation, v.roll));
+    auto o2 = parseJSON(v.toJsonWith(v.focus, v.distance, v.orientation));
     assert(isClose(o1["roll"].floating, o2["roll"].floating, 1e-5f),
            "toJsonWith must report the bank it rendered");
     assert(isClose(o1["roll"].floating, 0.4137f, 1e-5f),

@@ -4107,6 +4107,27 @@ void main(string[] args) {
                         "'" ~ field ~ "' must be a number");
                 }
             }
+            // The whole ROTATION, as the nine floats the camera actually
+            // stores. This is the only key that can express an arbitrary
+            // orientation — one reached by composing rotations about
+            // different axes, or carrying a bank at a pole — and it is
+            // LOSSLESS both ways (`%.9g` out, parsed back to the same
+            // floats). The three angle keys below remain, but they are a
+            // chart: they cannot name every rotation and they lose precision
+            // at `%f`.
+            //
+            // Applied FIRST so a body may set the rotation wholesale and then
+            // adjust one angle of it, and rejected as a unit — a malformed
+            // value leaves the camera alone rather than aiming it somewhere
+            // arbitrary. `setOrientation` re-orthonormalises, so a caller may
+            // post a matrix measured off another engine without cleaning it.
+            if ("orientation" in p) {
+                Orientation o;
+                if (!orientationFromJson(p["orientation"], o))
+                    throw new Exception(
+                        "'orientation' must be an array of 9 numbers");
+                targetCam.setOrientation(o);
+            }
             if ("azimuth" in p)   targetCam.azimuth   = floatFrom("azimuth",   targetCam.azimuth);
             if ("elevation" in p) targetCam.elevation = floatFrom("elevation", targetCam.elevation);
             if ("distance" in p)  targetCam.distance  = floatFrom("distance",  targetCam.distance);
