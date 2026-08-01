@@ -219,6 +219,7 @@ import commands.ui.copilot_panel   : UiCopilotPanelCommand, g_copilotPanelShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
+import commands.prefs.coord_rounding : CoordRoundingCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 // AI Modeling Copilot findings panel (task 0402): the whole feature —
 // panel, overlay, and copilot.* commands — is version(WithAI)-only. The
@@ -1113,6 +1114,15 @@ void main(string[] args) {
                       || environment.get("VIBE3D_CONFIG_DIR", "").length > 0;
     }
     if (prefsActive) loadPrefs();
+    // Seed the live Coordinate Rounding setting from the loaded prefs (task
+    // 0562). Done unconditionally, not only when `prefsActive`: with prefs
+    // off `g_prefs` still holds the struct defaults, and this is also what
+    // publishes the state path the snapping popover ticks.
+    {
+        import coord_rounding : setCoordRounding, setCoordRoundingFixedIncrement;
+        setCoordRounding(g_prefs.coordRounding);
+        setCoordRoundingFixedIncrement(g_prefs.coordRoundingFixedIncrement);
+    }
 
     bool playbackMode = playbackFile.length > 0;
 
@@ -1363,6 +1373,14 @@ void main(string[] args) {
         int sw, sh;
         SDL_GetWindowSize(window, &sw, &sh);
         if (sw > 0 && sh > 0) { g_prefs.window.w = sw; g_prefs.window.h = sh; }
+        // Capture the live Coordinate Rounding setting back (task 0562): it
+        // is changed through the popover / the command, which write the live
+        // value, not `g_prefs`.
+        {
+            import coord_rounding : coordRounding, coordRoundingFixedIncrement;
+            g_prefs.coordRounding               = coordRounding();
+            g_prefs.coordRoundingFixedIncrement = coordRoundingFixedIncrement();
+        }
         try savePrefs();
         catch (Exception e) logWarn("prefs", "could not write prefs.json: " ~ e.msg);
     }
@@ -4963,6 +4981,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             snm.setModeName(pos[0].str);
+                    }
+                }
+            } else if (auto crc = cast(CoordRoundingCommand)cmd) {
+                // pref.coordRounding <none|normal|fine|fixed|forcedFixed>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            crc.setModeName(pos[0].str);
                     }
                 }
             } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {

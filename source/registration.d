@@ -1130,6 +1130,11 @@ void registerCommands(EditorApp app) {
             new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.mode"] = () => cast(Command)
             new SnapModeCommand(&mesh(), cameraView, editMode);
+        // The Coordinate Rounding setting lives beside snapping because that
+        // is what it is: the step a gizmo drag's scalar is rounded to.
+        import commands.prefs.coord_rounding : CoordRoundingCommand;
+        reg.commandFactories["pref.coordRounding"] = () => cast(Command)
+            new CoordRoundingCommand(&mesh(), cameraView, editMode);
     }
     {
         reg.commandFactories["path.define"] = () => cast(Command)

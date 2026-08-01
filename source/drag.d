@@ -4,6 +4,7 @@ import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
+import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 
 // ---------------------------------------------------------------------------
 // THE DRAG CONVERSION SEAM
@@ -63,7 +64,7 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //
 // The read (0562, static, `objdump` only — see `axisArmDelta`) is:
 //
-//     t = quantise( pixelScale * (Δpx · ŝ) )
+//     t = round( pixelScale * (Δpx · ŝ) / step ) * step
 //
 // with `Δpx` the pixel offset FROM THE PRESS, `ŝ` the UNIT screen direction of
 // the drag axis taken at the handle base frozen at the press, and `pixelScale`
@@ -79,13 +80,15 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //   2. REFERENCE PIXEL. Cumulative from the press, not incremental from the
 //      previous event.
 //   3. ANCHOR. Against a base frozen at the press, not the live gizmo centre.
-//   4. QUANTUM. The reference rounds the SCALAR `t` to the nearest 0.002
-//      before it ever becomes a world delta — on the axis coordinate, not on
-//      the resulting position. Ported (`kAxisArmSnapQuantum`, applied inside
-//      `axisArmDelta`). Our own element snap is NOT the counterpart and stays
-//      where it is: it answers to a different reference service
-//      (`SnapPosition`, the guide path) from the one that acts on `t` (the
-//      view's grid snap).
+//   4. ROUNDING. The reference rounds the SCALAR `t` to a step before it ever
+//      becomes a world delta — on the axis coordinate, not on the resulting
+//      position. The step is NOT a constant: it is the world length of one
+//      screen pixel rounded up onto a 1-2-5 ladder, so it is a staircase in
+//      the zoom (`axisDragRoundingStep`), and the whole term sits behind the user
+//      setting that selects it (`coord_rounding.d`), whose `None` value makes
+//      it the exact identity. Our own element snap is NOT the counterpart and
+//      stays where it is: it answers to a different reference service (the
+//      guide path) from the one that acts on `t` (the view's own rounding).
 //
 // SCOPE, and it is narrow on purpose:
 //   * ONLY the transform gizmo's three axis arms. That is the one dispatch
@@ -119,14 +122,21 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //   * `newT − T` has exactly one non-zero component on 12 of 12 axis-arm
 //     hits, and it equals `t`. The free control, same recording, same pixel
 //     delta, has two. The matrix sandwich really does collapse.
-//   * the reference's view snap is NOT the identity: 30 of 30 evaluations
-//     rounded `t` to the nearest 0.002. That is the one prediction the read
-//     got wrong, and the term is ported below rather than dropped.
-// Still NOT settled by that recording, so still decoded rather than observed:
-// whether the arming base is the action centre alone or the action centre plus
-// the tool's own position triple (the rig carried a zero triple), whether the
-// axis is a column of the tool axis matrix or the world basis (the rig's tool
-// axis was the identity), and where the 0.002 comes from.
+//   * the reference's view rounding is NOT the identity: 30 of 30 evaluations
+//     rounded `t` to a step. That is the one prediction the read got wrong,
+//     and the term is ported below rather than dropped.
+//   * and the step is NOT the 0.002 that first shipped here. A second read
+//     took the law itself off the same trace and off a second one already on
+//     disk: it is the world length of one screen pixel rounded up onto a
+//     1-2-5 ladder, scored on 29 rows across 18 zoom levels spanning 1024x,
+//     29 match. 0.002 is its value at ONE of those eighteen. The staircase is
+//     the refutation of the constant: two view scales 1.414x apart share a
+//     step, which no scaling law can produce.
+// Still NOT settled by those recordings, so still decoded rather than
+// observed: whether the arming base is the action centre alone or the action
+// centre plus the tool's own position triple (the rig carried a zero triple),
+// and whether the axis is a column of the tool axis matrix or the world basis
+// (the rig's tool axis was the identity).
 //
 // Deliberately NOT in this module, because they are a different quantity and a
 // separate lane: the scale tool's screen projection
@@ -405,40 +415,191 @@ float viewWorldPerPixel(const ref Viewport vp) {
     return 0.8f * dist / focalPx;
 }
 
-// The reference's grid quantum on the axis scalar, in world units.
-//
-// MEASURED, 30 evaluations out of 30, on the recording that first executed the
-// arm: the reference's view snap returns `t` rounded to the nearest multiple
-// of this. Six distinct pre-snap values across three axes and two drag
-// lengths, every one of them round-to-nearest with no exception, plus the
-// free-path control on the same recording (so the quantum belongs to the
-// shared translator, not to the arm).
-//
-// WHERE THE NUMBER COMES FROM IS NOT READ, and that is stated rather than
-// papered over. One camera, one rig, one grid setting. It could be a fixed
-// constant, a preference, or derived from the view — on that rig the view's
-// scale was 601.66 = 1/pixelScale, and 0.002 is 1.2033x the pixel size, which
-// is not a clean ratio and so does not suggest a view-derived law. The
-// discriminating capture is two legs at two view scales on one boot, and it
-// has not been run. If it ever is, this constant is the one thing that moves.
-//
-// Ties (`t` exactly on a half-quantum) were never observed, so the tie rule is
-// a choice and not a port: round-half-away-from-zero, which is at least
-// symmetric under reversing the drag.
-enum float kAxisArmSnapQuantum = 0.002f;
+// ---------------------------------------------------------------------------
+// The rounding step — a LADDER, not a constant
+// ---------------------------------------------------------------------------
 
-// The quantum, applied where the reference applies it: to the SCALAR `t`,
+// The mantissa ladder the reference rounds its view steps onto: 1, 2, 5, 10,
+// scaled by a power of ten. `10` is in the list on purpose and is not
+// redundant with `1` of the next decade — it is what makes the ladder closed
+// under x10, which in turn is what makes the `log10 / floor` split below
+// insensitive to whether an exact power of ten lands just under or just over
+// its own decade boundary. Both spellings give the same answer.
+//
+// (The reference reaches this list through a 3-bit mask over a wider table —
+// bit 0 admits 2, bit 1 admits 2.5, bit 2 admits 5 — whose shipped value
+// selects exactly {1, 2, 5, 10}. Nothing in this campaign has run under any
+// other mask, so the mask is NOT a setting here; it is this list.)
+private static immutable double[4] kStepLadder = [1.0, 2.0, 5.0, 10.0];
+
+// `x` rounded UP onto the ladder: the smallest `m * 10^n` with `m` in the
+// ladder that is at or above `|x|`, signed like `x`.
+//
+// The reference does this in LOG space — `e = floor(log10|x|)`, then pick the
+// first ladder entry whose own log10 is at or above the fraction — and the
+// spelling is preserved because the comparison it makes is between logs, not
+// between values. Comparing values directly is the same answer everywhere the
+// two agree and a different one where floating-point splits them.
+double stepLadderCeil(double x) {
+    return stepLadder(x, /*roundUp=*/true);
+}
+
+// `x` rounded to the NEAREST ladder entry, the nearness measured in log space
+// (so 3 sits nearer 2 than 5, which is not what a linear comparison says).
+// Only the `Normal` arm uses this; `Fine`, the default, rounds up.
+double stepLadderNearest(double x) {
+    return stepLadder(x, /*roundUp=*/false);
+}
+
+private double stepLadder(double x, bool roundUp) {
+    import std.math : log10, floor, isNaN, isInfinity, abs;
+
+    if (isNaN(x) || isInfinity(x)) return 0.0;
+    if (x == 0.0) return 0.0;
+
+    const double sign = x < 0 ? -1.0 : 1.0;
+    const double ax   = abs(x);
+
+    const double L    = log10(ax);
+    const double e    = floor(L);
+    const double frac = L - e;
+
+    // The ladder's logs. `1` gives 0 and `10` gives 1, so with `frac` in
+    // [0, 1) BOTH candidates always exist and neither search can come up
+    // empty — the reference's own -1 sentinels are unreachable on this
+    // ladder, and this loop reproduces that rather than relying on it.
+    size_t down = 0, up = kStepLadder.length - 1;
+    bool haveDown = false, haveUp = false;
+    foreach (i, m; kStepLadder) {
+        const double ml = log10(m);
+        if (ml <= frac) { down = i; haveDown = true; }
+        if (!haveUp && ml >= frac) { up = i; haveUp = true; }
+    }
+    if (!haveDown) down = up;
+    if (!haveUp)   up   = down;
+
+    size_t j = up;
+    if (!roundUp) {
+        const double dl = frac - log10(kStepLadder[down]);
+        const double ul = log10(kStepLadder[up]) - frac;
+        j = (dl <= ul) ? down : up;
+    }
+
+    return sign * (10.0 ^^ e) * kStepLadder[j];
+}
+
+// The view's GRID SIZE — the world length of the drawn grid's major cell.
+//
+// DERIVED LOCALLY, ON PURPOSE, and this is the note whoever merges the grid
+// lane should read first. The reference computes this once per view and caches
+// it beside the sub-step; we have no such cache, and a sibling lane is
+// building the drawn grid off the same law. Rather than reach into that lane's
+// state (or pre-empt where it decides to keep it), this recomputes it here
+// from `viewWorldPerPixel` — the one quantity both derivations share. The two
+// are the SAME formula and are meant to be reconciled into one owner at merge;
+// until then this is three lines of arithmetic with no state, so a divergence
+// between them is a code difference and not a stale-cache bug.
+//
+// `25 * pixelSize` is the reference's own constant: the major cell is the
+// nice-number ceiling of 25 screen pixels' worth of world.
+double majorGridStep(double pixelSize) {
+    if (!(pixelSize > 0)) return 0.0;
+    return stepLadderCeil(25.0 * pixelSize);
+}
+
+// THE ROUNDING STEP, per arm. This is the whole of what "Coordinate Rounding"
+// selects; `snapAxisScalar` below is the one line that applies it.
+//
+// Measured for the default arm — `Fine` — over a 1024x zoom range: the step is
+// `stepLadderCeil(1 * pixelSize)`, the world length of ONE screen pixel rounded
+// up onto the ladder, and it reproduced 29 of 29 rows with no free parameter.
+// It is a STAIRCASE, not a scaling: two view scales 1.414x apart share one
+// step (0.005 spans a whole band), and the value jumps between bands. A
+// measurement taken at one zoom cannot tell that from a constant, which is
+// exactly how a constant got shipped here in the first place.
+//
+// The arms, and what each rests on:
+//   None         0 -> the identity, exactly. Not a small step: `snapAxisScalar`
+//                gates on `step > 0` and returns its input untouched.
+//   Normal       decoded, and confirmed by one live row (a view carrying
+//                scale 100 / grid 0.5 / step 0.05, and
+//                `stepLadderNearest(0.5/10) = 0.05`).
+//   Fine         MEASURED, 29/29 over 1024x. The shipped default.
+//   Fixed        THE ONE INFERRED ARM. Two independent decodes summarise it
+//                differently — "as Normal, floored by the increment" and a
+//                longer form with a `< 12` multiple test — and no capture has
+//                ever run under it. What is implemented is the reading both
+//                summaries AND the shipped help text agree on: the increment
+//                is a LOWER LIMIT on the step, and where the step is a small
+//                number of increments across it is aligned to a whole
+//                multiple of one. Flagged here rather than presented as
+//                measured; it is a non-default arm and it is the first thing
+//                to re-read if it ever matters.
+//   ForcedFixed  decoded, and the two decodes agree exactly: the increment,
+//                and nothing else, at any zoom.
+//
+// Returns 0 (i.e. the identity) for a non-positive or non-finite pixel size,
+// so a degenerate view rounds nothing rather than rounding to garbage.
+double axisDragRoundingStep(CoordinateRounding mode, double pixelSize,
+                       double fixedIncrement)
+{
+    import std.math : isNaN, isInfinity, round, abs;
+
+    if (isNaN(pixelSize) || isInfinity(pixelSize) || !(pixelSize > 0))
+        return 0.0;
+
+    final switch (mode) {
+        case CoordinateRounding.None:
+            return 0.0;
+
+        case CoordinateRounding.Normal:
+            return stepLadderNearest(majorGridStep(pixelSize) / 10.0);
+
+        case CoordinateRounding.Fine:
+            return stepLadderCeil(pixelSize);
+
+        case CoordinateRounding.Fixed: {
+            double s = stepLadderNearest(majorGridStep(pixelSize) / 10.0);
+            const double d = fixedIncrement;
+            if (!(d > 0) || isNaN(d) || isInfinity(d)) return s;
+            if (d > s) return d;                       // the increment is a FLOOR
+            const double n = round(s / d);
+            if (n < 12.0) s = (n < 1.0 ? 1.0 : n) * d; // align to a whole multiple
+            return s;
+        }
+
+        case CoordinateRounding.ForcedFixed:
+            return (fixedIncrement > 0 && !isNaN(fixedIncrement)
+                    && !isInfinity(fixedIncrement)) ? fixedIncrement : 0.0;
+    }
+}
+
+// The rounding, applied where the reference applies it: to the SCALAR `t`,
 // before it is multiplied by the axis direction. Quantising the resulting
 // world POSITION instead would put the steps on the wrong three numbers — the
 // staircase lands on the axis coordinate, and on nothing else.
 //
-// Separated from the conversion so a test can pin the rounding against the
-// reference's own six measured (before, after) pairs without going anywhere
-// near a camera.
-float snapAxisScalar(float t) pure nothrow @nogc @safe {
+// `step <= 0` IS THE ONLY GATE ON THIS PATH. There is no second condition
+// anywhere between the pixel delta and the mesh write, and no fallback
+// constant: an unset, zero or negative step means the identity. That is what
+// makes `Coordinate Rounding = None` an exact no-op rather than a fine grid.
+//
+// The tie rule is ROUND HALF AWAY FROM ZERO, and it is not a free choice.
+// `t` is routinely negative on an axis drag — every arm dragged backwards
+// produces one — and `floor(x + 0.5)` rounds -33.5 to -33 where the reference
+// rounds it to -34. The reference's own six (before, after) pairs pin the
+// positive half (two of them round in OPPOSITE directions from nearly the same
+// step count, which rules out floor, ceiling and truncation); the negative
+// half follows from the rule being odd, which the unittest below pins
+// separately because a gesture dragged out and back must cancel exactly.
+//
+// Separated from the conversion so a test can pin the rounding against those
+// six pairs without going anywhere near a camera.
+float snapAxisScalar(float t, float step) pure nothrow @nogc @safe {
     import std.math : round;
     if (isNaN(t)) return t;
-    const double q = cast(double)kAxisArmSnapQuantum;
+    if (!(step > 0.0f) || isNaN(step)) return t;
+    const double q = cast(double)step;
     return cast(float)(q * round(cast(double)t / q));
 }
 
@@ -509,24 +670,35 @@ float axisArmDeltaUnsnapped(int mx,     int my,
 // fallback is reproduced verbatim, and it yields `t = 0` for an axis pointing
 // straight down the view ray.
 //
-// The QUANTUM is applied here, on the cumulative `t`, which is the only place
+// The ROUNDING is applied here, on the cumulative `t`, which is the only place
 // it can go without drifting. Because `Δpx` is measured from the press, the
 // snapped total is a pure function of the current pixel: a caller delivering
 // `total − alreadyApplied` emits increments that are exact multiples of the
-// quantum and that telescope back to zero at the press pixel, however the
+// step and that telescope back to zero at the press pixel, however the
 // gesture was cut into events. Snapping a per-event increment instead would
 // round the same drag differently depending on the event rate, and snapping
 // the resulting POSITION would put the steps on the wrong numbers.
+//
+// `rounding` and `fixedIncrement` are the live user setting, passed in rather
+// than read from a global so this stays pure — the same stance as the frozen
+// base and the press pixel. They are LIVE, not frozen at the press: the
+// reference re-derives its step on every zoom, so a drag that zooms changes
+// step mid-gesture, and a drag under `None` rounds nothing at all.
 float axisArmDelta(int mx,     int my,
                    int pressMX, int pressMY,
                    Vec3 base, Vec3 axisDir,
                    const ref Viewport vp,
-                   out bool skip)
+                   out bool skip,
+                   CoordinateRounding rounding,
+                   float fixedIncrement)
 {
     const float raw = axisArmDeltaUnsnapped(mx, my, pressMX, pressMY,
                                             base, axisDir, vp, skip);
     if (skip) return 0.0f;
-    return snapAxisScalar(raw);
+    const float step = cast(float)axisDragRoundingStep(rounding,
+                                                  viewWorldPerPixel(vp),
+                                                  fixedIncrement);
+    return snapAxisScalar(raw, step);
 }
 
 // ---------------------------------------------------------------------------
@@ -553,12 +725,12 @@ version (unittest) {
     private enum int    PINNED_PANE_H = 832;
 
     // The reference's OWN snap rows, verbatim: `t` read immediately before its
-    // view snap and immediately after, on the recording that first executed
-    // the axis arms. Six distinct pre-snap values — three axes x two
+    // view rounding and immediately after, on the recording that first
+    // executed the axis arms. Six distinct pre-snap values — three axes x two
     // drag lengths — and the six answers the engine gave.
     //
-    // These are not derived from our quantum; the quantum was derived from
-    // THEM. Row 2 and row 4 are the pair that matters most: 33.61 steps and
+    // These are not derived from our step; the step was derived from THEM.
+    // Row 2 and row 4 are the pair that matters most: 33.61 steps and
     // 33.40 steps, which round in opposite directions, so a floor or a ceiling
     // or a truncation reproduces at most one of the two.
     private struct RefSnap { double before, after; }
@@ -569,6 +741,45 @@ version (unittest) {
         RefSnap(0.066809004633501784, 0.066),   // 33.4045 steps -> 33
         RefSnap(0.032694010160137447, 0.032),   // 16.3470 steps -> 16
         RefSnap(0.065655147863375493, 0.066),   // 32.8276 steps -> 33
+    ];
+
+    // The view scale that recording ran at, read off the view as a field on
+    // all thirty evaluations, bit-identical every time. The step the six rows
+    // above were rounded to is NOT written down here — it is DERIVED from
+    // this number by the law under test, which is what turns those six rows
+    // from a pin on a constant into a pin on the formula.
+    private enum double REF_SNAP_SCALE = 601.66119999999989;
+
+    // THE STAIRCASE, verbatim: 18 distinct zoom levels off a trace recorded
+    // for an unrelated purpose, spanning 26.4 to 27040 pixels per world unit —
+    // a factor of 1024. Each row is the view's scale and the rounding step the
+    // view carried at that scale. `pixelSize` is `1 / scale`.
+    //
+    // These rows are the whole reason the step cannot be a constant, and they
+    // are also why it cannot be a scaling: 298.75 and 422.50 differ by 1.414x
+    // and share 0.005; 105.63 and 149.38 share 0.01; 2390, 3380 and 4780 all
+    // share 0.0005. A law continuous in the zoom cannot produce a plateau.
+    private struct RefStep { double scale, step; }
+    private immutable RefStep[] refStepRows = [
+        RefStep(   26.41, 0.05   ),
+        RefStep(   52.81, 0.02   ),
+        RefStep(  105.63, 0.01   ),
+        RefStep(  149.38, 0.01   ),
+        RefStep(  211.25, 0.005  ),
+        RefStep(  298.75, 0.005  ),
+        RefStep(  422.50, 0.005  ),
+        RefStep(  597.51, 0.002  ),
+        RefStep(  845.00, 0.002  ),
+        RefStep( 1195.01, 0.001  ),
+        RefStep( 1690.00, 0.001  ),
+        RefStep( 2390.02, 0.0005 ),
+        RefStep( 3380.00, 0.0005 ),
+        RefStep( 4780.04, 0.0005 ),
+        RefStep( 6760.00, 0.0002 ),
+        RefStep( 9560.08, 0.0002 ),
+        RefStep(13520.00, 0.0001 ),
+        RefStep(19120.20, 0.0001 ),
+        RefStep(27040.00, 0.00005),
     ];
 }
 
@@ -717,17 +928,24 @@ unittest {  // LAW A ported: measured from the press, and linear in the offset.
     // returns to where it started has delivered nothing. That is what the
     // cumulative form buys over the incremental one, and it holds for any
     // path in between because the answer depends only on the current pixel.
-    // True of the SHIPPED (snapped) entry point as well as the raw one — the
-    // quantum must not turn "back where I pressed" into half a step of drift.
+    // True of the SHIPPED (rounded) entry point as well as the raw one — the
+    // rounding must not turn "back where I pressed" into half a step of
+    // drift — and true under EVERY arm of the setting, because zero rounds to
+    // zero on any step and `None` does not round at all.
     assert(axisArmDeltaUnsnapped(731, 402, 731, 402, base, axis, vp, skip) == 0.0f);
     assert(!skip);
-    assert(axisArmDelta(731, 402, 731, 402, base, axis, vp, skip) == 0.0f);
-    assert(!skip);
+    foreach (m; [CoordinateRounding.None,  CoordinateRounding.Normal,
+                 CoordinateRounding.Fine,  CoordinateRounding.Fixed,
+                 CoordinateRounding.ForcedFixed]) {
+        assert(axisArmDelta(731, 402, 731, 402, base, axis, vp, skip,
+                            m, kFixedIncrementDefault) == 0.0f);
+        assert(!skip);
+    }
 
     // Linearity is a property of the GAIN, so it is measured pre-snap. The
     // shipped scalar is a staircase on top of this line and cannot be linear
     // by construction; asserting linearity on it would only be asserting that
-    // the quantum is absent.
+    // the rounding is absent.
     const float one = axisArmDeltaUnsnapped(731 + 120, 402 - 60, 731, 402,
                                             base, axis, vp, skip);
     assert(!skip && one != 0.0f);
@@ -759,72 +977,310 @@ unittest {  // LAW A ported: measured from the press, and linear in the offset.
            "the vertical pixel component must enter linearly too");
 }
 
-unittest {  // LAW A ported: the QUANTUM, against the reference's own six rows.
+unittest {  // LAW A ported: THE STAIRCASE, scored on 19 reference rows.
+    import std.math : abs;
+    import std.conv : to;
+    import std.format : format;
+
+    // 1. The law, row by row, over a 1024x zoom range, with no free
+    //    parameter: the step is the nice-number ceiling of ONE pixel's worth
+    //    of world. `scale` is the reference's own, `step` is what its view
+    //    carried at that scale, and only `1/scale` is handed to the function.
+    foreach (i, row; refStepRows) {
+        const double got = axisDragRoundingStep(CoordinateRounding.Fine,
+                                           1.0 / row.scale,
+                                           kFixedIncrementDefault);
+        assert(abs(got - row.step) <= 1e-12 * row.step,
+               format("the rounding step must be stepLadderCeil(pixelSize) at "
+                    ~ "every zoom: row %d, scale %.2f (pixelSize %.9g) wants "
+                    ~ "%.9g, got %.9g. A constant reproduces at most one of "
+                    ~ "these nineteen rows.",
+                    i, row.scale, 1.0 / row.scale, row.step, got));
+    }
+
+    // 2. It is a STAIRCASE — flat over a band, then a jump. This is the
+    //    property a test that samples ONE zoom cannot see, and the reason a
+    //    constant survived here as long as it did. Both halves are asserted
+    //    because either alone is satisfiable by the wrong law: a constant
+    //    passes "flat" and a scaling passes "jumps".
+    size_t plateaus = 0, jumps = 0;
+    foreach (i; 1 .. refStepRows.length) {
+        const double a = axisDragRoundingStep(CoordinateRounding.Fine,
+                                         1.0 / refStepRows[i - 1].scale,
+                                         kFixedIncrementDefault);
+        const double b = axisDragRoundingStep(CoordinateRounding.Fine,
+                                         1.0 / refStepRows[i].scale,
+                                         kFixedIncrementDefault);
+        if (a == b) plateaus++; else jumps++;
+    }
+    assert(plateaus >= 6,
+           "the law must be FLAT over bands — adjacent zoom levels sharing a "
+           ~ "step. Got only " ~ plateaus.to!string ~ " plateaus across these "
+           ~ "19 rows, which is what a law continuous in the zoom looks like");
+    assert(jumps >= 8,
+           "and it must JUMP between bands. Got only " ~ jumps.to!string
+           ~ " jumps, which is what a constant looks like");
+
+    // 3. Every value the law can produce is on the ladder, over a zoom range
+    //    far wider than the rows — a mantissa of 1, 2 or 5 times a power of
+    //    ten, and nothing else.
+    import std.math : log10, floor, pow;
+    for (double px = 1e-7; px < 1e2; px *= 1.07) {
+        const double s = axisDragRoundingStep(CoordinateRounding.Fine, px,
+                                         kFixedIncrementDefault);
+        assert(s >= px && s < 10.0 * px,
+               "the step is a CEILING of one pixel, within one decade of it");
+        const double e = floor(log10(s) + 1e-9);
+        const double m = s / (10.0 ^^ e);
+        assert(abs(m - 1) < 1e-6 || abs(m - 2) < 1e-6 || abs(m - 5) < 1e-6
+            || abs(m - 10) < 1e-6,
+               format("every step must sit on the 1-2-5 ladder; pixelSize "
+                    ~ "%.9g gave %.12g (mantissa %.9g)", px, s, m));
+    }
+}
+
+unittest {  // LAW A ported: the ROUNDING, against the reference's own six rows.
     import std.math : abs, floor;
     import std.conv : to;
+    import std.format : format;
+
+    // The step those six rows were rounded to is DERIVED from the scale the
+    // recording carried, not written down. If the law is wrong this is the
+    // wrong step and every one of the six rows fails — which is what makes
+    // this a pin on the formula rather than on a number.
+    const double step = axisDragRoundingStep(CoordinateRounding.Fine,
+                                        1.0 / REF_SNAP_SCALE,
+                                        kFixedIncrementDefault);
+    assert(abs(step - 0.002) < 1e-12,
+           format("the law must derive that recording's own step from its own "
+                ~ "scale: %.9g -> %.12g, wanted 0.002", REF_SNAP_SCALE, step));
 
     // 1. The rounding law itself, scored on reference data and nothing else.
     //    Six pre-snap scalars in, six post-snap scalars out, the engine's own.
     foreach (i, row; refSnapRows) {
-        const float got = snapAxisScalar(cast(float)row.before);
+        const float got = snapAxisScalar(cast(float)row.before,
+                                         cast(float)step);
         assert(abs(got - row.after) < 1e-6,
-               "snapAxisScalar must reproduce the engine's own snap on row "
+               "snapAxisScalar must reproduce the engine's own rounding on row "
                ~ i.to!string
-               ~ " — round to the NEAREST 0.002. Rows 2 and 4 round in "
+               ~ " — round to the NEAREST step. Rows 2 and 4 round in "
                ~ "opposite directions from nearly the same step count, so a "
                ~ "floor, a ceiling or a truncation fails one of them");
     }
 
-    // 2. It is a quantum, not a coincidence that fits six numbers: every
-    //    answer is an exact multiple of the step, over a range far wider than
-    //    the rows.
+    // 2. It is a step, not a coincidence that fits six numbers: every answer
+    //    is an exact multiple, over a range far wider than the rows.
     foreach (n; -500 .. 501) {
-        const float t   = 0.0001f * n;            // -0.05 .. +0.05, 1/20 step
-        const float got = snapAxisScalar(t);
-        const double steps = cast(double)got / kAxisArmSnapQuantum;
+        const float t   = 0.0001f * n;            // -0.05 .. +0.05
+        const float got = snapAxisScalar(t, cast(float)step);
+        const double steps = cast(double)got / step;
         assert(abs(steps - floor(steps + 0.5)) < 1e-3,
-               "every snapped scalar must land exactly on a multiple of the "
-               ~ "quantum — a residual here means the rounding is being done "
+               "every rounded scalar must land exactly on a multiple of the "
+               ~ "step — a residual here means the rounding is being done "
                ~ "against something other than the step");
-        assert(abs(cast(double)got - t) <= 0.5 * kAxisArmSnapQuantum + 1e-6,
+        assert(abs(cast(double)got - t) <= 0.5 * step + 1e-6,
                "and it must be the NEAREST multiple: no answer may be more "
-               ~ "than half a quantum from its input");
+               ~ "than half a step from its input");
     }
 
-    // 3. Symmetric about zero, which is what stops a drag and its reverse
-    //    from delivering different lengths. (The tie rule is ours — the
-    //    reference was never observed on an exact half-step — but whatever it
-    //    is it must be odd, or an out-and-back gesture ratchets.)
+    // 3. ROUND HALF AWAY FROM ZERO, and the negative half is the point. `t`
+    //    is negative on every arm dragged backwards, and `floor(x + 0.5)` —
+    //    the spelling a port reaches for first — disagrees there and only
+    //    there. Exact half-steps are precisely the inputs on which the two
+    //    differ, so those are what this drives.
+    //
+    //    The step here is a NEGATIVE POWER OF TWO, not the view's own 0.002,
+    //    and that is deliberate: `(n + 0.5) * 0.002` is not representable in
+    //    float32 and lands on either side of the tie depending on `n`, so
+    //    driving the tie rule with it measures the float format instead of
+    //    the rule. With a dyadic step every value below is exact and the
+    //    assertion is about the rounding and nothing else. The rule is a
+    //    property of `snapAxisScalar`, independent of where the step
+    //    came from.
+    foreach (dyadic; [0.25f, 0.5f, 0.03125f]) {
+        foreach (n; 0 .. 9) {
+            const float halfUp = (cast(float)n + 0.5f) * dyadic;
+            const float wantAway = (cast(float)n + 1.0f) * dyadic;
+            assert(snapAxisScalar(halfUp, dyadic) == wantAway,
+                   format("a positive half-step must round AWAY from zero: "
+                        ~ "%.9g at step %.9g wanted %.9g, got %.9g",
+                        halfUp, dyadic, wantAway,
+                        snapAxisScalar(halfUp, dyadic)));
+            assert(snapAxisScalar(-halfUp, dyadic) == -wantAway,
+                   format("a NEGATIVE half-step must round away from zero "
+                        ~ "too: %.9g at step %.9g wanted %.9g, got %.9g. "
+                        ~ "`floor(x + 0.5)` gives %.9g here — that is the "
+                        ~ "whole difference between the two spellings, and an "
+                        ~ "axis drag produces a negative `t` every time an "
+                        ~ "arm is dragged backwards.",
+                        -halfUp, dyadic, -wantAway,
+                        snapAxisScalar(-halfUp, dyadic),
+                        -(cast(float)n * dyadic)));
+        }
+    }
+
+    // 4. Symmetric about zero, which is what stops a drag and its reverse
+    //    from delivering different lengths — an out-and-back gesture that
+    //    ratchets is what an even rounding rule feels like.
     foreach (n; 1 .. 200) {
         const float t = 0.00013f * n;
-        assert(snapAxisScalar(-t) == -snapAxisScalar(t),
-               "the snap must be odd: a gesture dragged out and back must "
+        assert(snapAxisScalar(-t, cast(float)step)
+               == -snapAxisScalar(t, cast(float)step),
+               "the rounding must be odd: a gesture dragged out and back must "
                ~ "cancel exactly, and it cannot if +t and -t round differently");
     }
 
-    // 4. The shipped entry point IS the gain with this snap on top — the two
-    //    halves are pinned separately above and composed here, so neither can
-    //    drift away from the other unnoticed.
+    // 5. The shipped entry point IS the gain with this rounding on top — the
+    //    two halves are pinned separately above and composed here, so neither
+    //    can drift away from the other unnoticed.
     auto vp = corpusViewport(corpusCams[0]);
     Vec3 base = Vec3(0.1f, 0.4f, -0.2f);
     Vec3 axis = Vec3(1, 0, 0);
+    const float vpStep = cast(float)axisDragRoundingStep(
+        CoordinateRounding.Fine, viewWorldPerPixel(vp), kFixedIncrementDefault);
+    assert(vpStep > 0);
     bool skipRaw, skipSnapped;
     bool sawAnySnap = false;
     foreach (px; [3, 17, 40, 91, 137, -22, -75, -160]) {
         const float raw  = axisArmDeltaUnsnapped(731 + px, 402, 731, 402,
                                                  base, axis, vp, skipRaw);
         const float snap = axisArmDelta(731 + px, 402, 731, 402,
-                                        base, axis, vp, skipSnapped);
+                                        base, axis, vp, skipSnapped,
+                                        CoordinateRounding.Fine,
+                                        kFixedIncrementDefault);
         assert(!skipRaw && !skipSnapped);
-        assert(snap == snapAxisScalar(raw),
+        assert(snap == snapAxisScalar(raw, vpStep),
                "axisArmDelta must be exactly snapAxisScalar(axisArmDeltaUnsnapped) "
-               ~ "— if the shipped path stops going through the snap, the "
-               ~ "half-quantum staircase offset is back on every axis drag");
+               ~ "at the view's own step — if the shipped path stops going "
+               ~ "through the rounding, the half-step staircase offset is back "
+               ~ "on every axis drag");
         if (snap != raw) sawAnySnap = true;
     }
     assert(sawAnySnap,
-           "at least one of these runs must actually be moved by the snap, or "
-           ~ "this test is passing on a quantum of zero and pins nothing");
+           "at least one of these runs must actually be moved by the rounding, "
+           ~ "or this test is passing on a step of zero and pins nothing");
+}
+
+unittest {  // LAW A ported: the GATE — `None` is the exact identity.
+    import std.math : abs;
+    import std.format : format;
+
+    // The whole path has one gate and it is `step > 0`. There is no fallback
+    // constant behind it: with the setting off, `axisArmDelta` returns the
+    // gain untouched, bit for bit.
+    assert(axisDragRoundingStep(CoordinateRounding.None, 0.0017,
+                           kFixedIncrementDefault) == 0.0,
+           "the `None` arm must return a step of exactly zero — anything "
+           ~ "positive, however small, is still a grid and still lands the "
+           ~ "drag on it");
+
+    auto vp = corpusViewport(corpusCams[0]);
+    Vec3 base = Vec3(0.1f, 0.4f, -0.2f);
+    Vec3 axis = Vec3(1, 0, 0);
+    bool skipRaw, skipOff, skipOn;
+    bool sawDifference = false;
+    foreach (px; [3, 17, 40, 91, 137, -22, -75, -160]) {
+        const float raw = axisArmDeltaUnsnapped(731 + px, 402, 731, 402,
+                                                base, axis, vp, skipRaw);
+        const float off = axisArmDelta(731 + px, 402, 731, 402,
+                                       base, axis, vp, skipOff,
+                                       CoordinateRounding.None,
+                                       kFixedIncrementDefault);
+        const float on  = axisArmDelta(731 + px, 402, 731, 402,
+                                       base, axis, vp, skipOn,
+                                       CoordinateRounding.Fine,
+                                       kFixedIncrementDefault);
+        assert(!skipRaw && !skipOff && !skipOn);
+        assert(off == raw,
+               format("`None` must be the EXACT identity, not a fine step: "
+                    ~ "%d px gave %.9g against a raw %.9g", px, off, raw));
+        if (on != off) sawDifference = true;
+    }
+    assert(sawDifference,
+           "and `Fine` must actually differ from `None` on this camera — "
+           ~ "otherwise this test would pass with the whole term deleted");
+
+    // A non-positive or non-finite step is the identity too, by the same
+    // gate: no arm may fall back to a constant when its own step is unset.
+    foreach (bad; [0.0f, -0.002f, float.nan]) {
+        assert(snapAxisScalar(0.0331f, bad) == 0.0331f,
+               "a non-positive or NaN step must leave the scalar alone");
+    }
+    assert(axisDragRoundingStep(CoordinateRounding.Fine, 0.0, 0.01) == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fine, -1.0, 0.01) == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fine, double.nan, 0.01) == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fine, double.infinity, 0.01) == 0.0);
+}
+
+unittest {  // LAW A ported: the OTHER arms of the setting.
+    import std.math : abs;
+    import std.format : format;
+
+    // `Normal` — the grid's own tenth, nice-rounded. Confirmed live by one
+    // row: a view carrying scale 100 with grid 0.5 and step 0.05, and
+    // stepLadderNearest(0.5 / 10) is 0.05.
+    assert(abs(majorGridStep(1.0 / 100.0) - 0.5) < 1e-12,
+           "the grid size at scale 100 must be 0.5 — stepLadderCeil(25/100)");
+    assert(abs(axisDragRoundingStep(CoordinateRounding.Normal, 1.0 / 100.0,
+                               kFixedIncrementDefault) - 0.05) < 1e-12,
+           "the Normal arm must reproduce the one live row it has");
+
+    // `ForcedFixed` — the increment, and nothing else, at ANY zoom. That is
+    // the arm's whole content, so the test is that it does not move.
+    foreach (px; [1e-5, 1e-3, 1e-1, 1.0]) {
+        assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, px, 0.01) == 0.01,
+               "ForcedFixed must ignore the zoom entirely");
+        assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, px, 0.25) == 0.25);
+    }
+    // ...and a non-positive increment leaves nothing to round to, which the
+    // one gate turns into the identity rather than into a default.
+    assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, 1e-3, 0.0)  == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, 1e-3, -1.0) == 0.0);
+
+    // `Fixed` — the INFERRED arm. What is asserted is only the property all
+    // three prose sources agree on and that the arm exists to provide: the
+    // increment is a LOWER LIMIT. Deliberately not asserted to any particular
+    // value at a particular zoom, because no capture has ever run under it
+    // and a value assertion here would freeze an inference as a measurement.
+    foreach (px; [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]) {
+        const double d = 0.01;
+        const double s = axisDragRoundingStep(CoordinateRounding.Fixed, px, d);
+        assert(s >= d - 1e-12,
+               format("the Fixed arm's whole purpose is that the increment is "
+                    ~ "a floor: pixelSize %.9g with increment %.9g gave %.9g",
+                    px, d, s));
+    }
+    // With no increment set it degrades to Normal rather than to nothing —
+    // there is still a view-derived step to round to.
+    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, 0.0)
+        == axisDragRoundingStep(CoordinateRounding.Normal, 1e-3, 0.0));
+}
+
+unittest {  // LAW A ported: the ladder helper, including the negative half.
+    import std.math : abs;
+
+    // Exact powers of ten are the inputs where `log10` can land on either
+    // side of a decade boundary. The ladder contains both 1 and 10 precisely
+    // so both spellings agree; this is that property, asserted.
+    foreach (n; -8 .. 4) {
+        const double p = 10.0 ^^ cast(double)n;
+        assert(abs(stepLadderCeil(p) - p) <= 1e-12 * p,
+               "an exact power of ten must be its own ceiling on the ladder");
+    }
+    assert(abs(stepLadderCeil(0.0011) - 0.002) < 1e-15);
+    assert(abs(stepLadderCeil(0.0021) - 0.005) < 1e-15);
+    assert(abs(stepLadderCeil(0.0051) - 0.01 ) < 1e-15);
+
+    // Nearest is measured in LOG space: 3 is nearer 2 than 5 there
+    // (log10 3 = 0.477, which is 0.176 above log10 2 and 0.222 below log10 5)
+    // even though 3 is equidistant from 2 and 5 linearly.
+    assert(abs(stepLadderNearest(3.0) - 2.0) < 1e-12,
+           "nearest must be measured in log space, not linearly");
+    assert(abs(stepLadderNearest(4.0) - 5.0) < 1e-12);
+
+    // Odd in the sign, like the rounding it feeds.
+    assert(stepLadderCeil(-0.0011) == -stepLadderCeil(0.0011));
+    assert(stepLadderCeil(0.0) == 0.0);
 }
 
 // ===========================================================================

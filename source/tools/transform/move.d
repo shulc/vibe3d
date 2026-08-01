@@ -16,6 +16,7 @@ import d_imgui.imgui_h;
 
 import std.math;
 import drag;
+import coord_rounding : coordRounding, coordRoundingFixedIncrement;
 import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
@@ -1004,9 +1005,17 @@ public:
             // `axisDir` is the drag-start-frozen input basis, which is what
             // the reference freezes too (the constraint vector is copied once,
             // at the press).
+            //
+            // The rounding mode is read LIVE, not frozen at the press, for
+            // the same reason the step itself is derived per event: the
+            // reference re-derives its step on every zoom, so a drag that
+            // zooms changes step mid-gesture. It is the user's own setting
+            // (`coord_rounding.d`); at `None` the conversion is unrounded.
             Vec3 axisDir = dragAxis == 0 ? mi0 : dragAxis == 1 ? mi1 : mi2;
             float total = axisArmDelta(e.x, e.y, axisStartMX, axisStartMY,
-                                       axisAnchor, axisDir, cachedVp, skip);
+                                       axisAnchor, axisDir, cachedVp, skip,
+                                       coordRounding(),
+                                       coordRoundingFixedIncrement());
             if (!skip) {
                 worldDelta  = axisDir * (total - axisApplied);
                 axisApplied = total;

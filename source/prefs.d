@@ -30,9 +30,12 @@ import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
 
-import log           : logWarn;
-import viewport      : LayoutPreset;
-import display_state : DisplayStyle, WireOverlay;
+import log            : logWarn;
+import viewport       : LayoutPreset;
+import display_state  : DisplayStyle, WireOverlay;
+import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
+                        kFixedIncrementDefault, coordRoundingName,
+                        parseCoordRounding;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -89,6 +92,18 @@ struct Prefs {
     /// `kLayoutIniVersion`.
     float hRatio = 0.5f;
     float vRatio = 0.5f;
+
+    /// Coordinate Rounding (task 0562): which law rounds a gizmo axis drag's
+    /// scalar, stored by wire name so a hand-edited file is readable and a
+    /// future arm does not renumber the existing ones. `None` switches the
+    /// rounding off entirely. Default = the reference's own default.
+    /// NOT a schema bump: a file without the key reads back at the default,
+    /// which is the same call `viewportDisplay` below made.
+    CoordinateRounding coordRounding = kCoordRoundingDefault;
+
+    /// The increment (world units) the two Fixed arms of `coordRounding`
+    /// read. Ignored by the other three.
+    float coordRoundingFixedIncrement = kFixedIncrementDefault;
 
     /// Task 0559: per-viewport-cell display state — the FIRST per-cell state
     /// this app persists at all. Everything else a cell owns (camera,
@@ -293,6 +308,29 @@ Prefs loadPrefs(string dir) {
                     }
                 }
             }
+
+        // Coordinate Rounding (task 0562). An unrecognized name keeps the
+        // default rather than falling to `None`: a typo that silently
+        // switched the rounding off would look exactly like the term
+        // regressing.
+        if (auto cp = "coordRounding" in doc)
+            if (cp.type == JSONType.string) {
+                CoordinateRounding m;
+                if (parseCoordRounding(cp.str, m)) p.coordRounding = m;
+                else logWarn("prefs", format(
+                    "unknown coordRounding '%s', keeping %s",
+                    cp.str, coordRoundingName(p.coordRounding)));
+            }
+
+        if (auto fp = "coordRoundingFixedIncrement" in doc) {
+            float v = float.nan;
+            if      (fp.type == JSONType.float_)   v = cast(float) fp.floating;
+            else if (fp.type == JSONType.integer)  v = cast(float) fp.integer;
+            else if (fp.type == JSONType.uinteger) v = cast(float) fp.uinteger;
+            // A non-positive increment leaves the two Fixed arms with nothing
+            // to round to; refuse it here rather than let it reach the law.
+            if (v > 0) p.coordRoundingFixedIncrement = v;
+        }
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -336,6 +374,9 @@ void savePrefs(ref const Prefs p, string dir) {
     doc["viewportLayout"] = JSONValue(to!string(p.viewportLayout));
     doc["hRatio"] = JSONValue(p.hRatio);
     doc["vRatio"] = JSONValue(p.vRatio);
+    doc["coordRounding"] = JSONValue(coordRoundingName(p.coordRounding));
+    doc["coordRoundingFixedIncrement"] =
+        JSONValue(p.coordRoundingFixedIncrement);
 
     // Task 0559: per-cell display state. Written unconditionally for all four
     // cells, including cells the current layout does not show — a cell's

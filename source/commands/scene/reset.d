@@ -187,6 +187,14 @@ class SceneReset : Command {
             foreach (s; g_pipeCtx.pipeline.allMut())
                 s.reset();
         }
+        // And the Coordinate Rounding setting, for exactly the reason the
+        // stage loop above gives: it is session-level UI state, and without
+        // this one test that switches the rounding off corrupts every later
+        // test sharing the same vibe3d process (the runner reuses one per
+        // worker). Same policy as the camera / clipboard: NOT restored in
+        // revert() — undoing a reset restores geometry, not settings.
+        import coord_rounding : resetCoordRounding;
+        resetCoordRounding();
         if (onResetTool !is null) onResetTool();
         // Clear the geometry clipboard so cross-test bleed cannot occur: a
         // copy in one test must not survive into the next test's paste.

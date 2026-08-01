@@ -164,6 +164,30 @@ groups:
               - label: "Fixed Grid"
                 action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
                 checked: { path: "snap/fixedGrid", equals: "true" }
+              # Coordinate Rounding: the step a gizmo axis drag rounds its
+              # scalar to. Lives here because that is where the reference
+              # repeats it, next to its snapping controls. "None" turns the
+              # rounding off entirely (freehand); "Fine" is the default and
+              # puts about one step of rounding on one pixel of mouse move.
+              - { kind: divider }
+              - kind: submenu
+                label: "Coordinate Rounding"
+                items:
+                  - label: None
+                    action: { kind: script, lines: ["pref.coordRounding none"] }
+                    checked: { path: "coordRounding/mode", equals: "none" }
+                  - label: Normal
+                    action: { kind: script, lines: ["pref.coordRounding normal"] }
+                    checked: { path: "coordRounding/mode", equals: "normal" }
+                  - label: Fine
+                    action: { kind: script, lines: ["pref.coordRounding fine"] }
+                    checked: { path: "coordRounding/mode", equals: "fine" }
+                  - label: Fixed
+                    action: { kind: script, lines: ["pref.coordRounding fixed"] }
+                    checked: { path: "coordRounding/mode", equals: "fixed" }
+                  - label: Forced Fixed
+                    action: { kind: script, lines: ["pref.coordRounding forcedFixed"] }
+                    checked: { path: "coordRounding/mode", equals: "forcedFixed" }
       # Phase 7.5: Falloff (WGHT) pulldown. Type selection drives the
       # FalloffStage; auto-size on switch fits the falloff to the
       # current selection's bbox. Button face shows the active type
