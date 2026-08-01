@@ -1945,7 +1945,11 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             if (backdropPlan.drawWire) {
                 shader.useProgram(bgModel, vp);
                 shader.setDim(backdropPlan.dim);
-                bg.gpu.drawEdges(shader.locColor, -1, []);
+                // Background layers carry no selection or hover state, so the
+                // base pass is all there is here — and it reads the BACKDROP
+                // side of the activity axis, never the active side.
+                bg.gpu.drawEdges(shader.locColor, -1, [], [],
+                    BaseWire(true, shader.locAlpha, backdropPlan.wireAlpha));
                 shader.setDim(1.0f);
             }
         }
@@ -2018,6 +2022,15 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     shader.useProgram(meshModel, vp);
 
     // ---- Edges ----
+    // The plan's OVERLAY group reaches every branch of the chain below, not
+    // just the bare-wireframe one, and it reaches them through `BaseWire` —
+    // which addresses the base (unselected, unhovered) line pass INSIDE
+    // drawEdges and leaves the selection and hover passes alone. That is the
+    // whole point: switching the overlay off must not take selection feedback
+    // with it. Gating the chain itself, or early-returning from drawEdges,
+    // would do exactly that, and is the named wrong implementation.
+    immutable BaseWire baseWire = BaseWire(
+        activePlan.drawWire, shader.locAlpha, activePlan.wireAlpha);
     {
         auto zEdges = g_perf.scope_(Cat.drawEdges);
         if (editMode == EditMode.Edges) {
@@ -2051,7 +2064,8 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                          && showEdgeHover && hoveredEdge >= 0)
                     loopMask = rebuildLoopHoverMask(hoveredEdge);
             }
-            gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdges, loopMask);
+            gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdges, loopMask,
+                          baseWire);
         } else if (editMode == EditMode.Polygons) {
             if (faceSelEdgesPrevSel != mesh.selectedFaces) {
                 faceSelEdgesPrevSel = mesh.selectedFaces.dup;
@@ -2077,7 +2091,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                     }
                 }
             }
-            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
+            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache, [], baseWire);
 
             // Task 0399: Loop Slice ring-preview in Polygons mode. The
             // Edges-mode branch above previews the ring through
@@ -2106,7 +2120,8 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 && mesh.hasAnySelectedFaces()) {
                 if (auto lst = cast(LoopSliceTool) activeTool) {
                     const(bool)[] loopSelMask = lst.selectionRingPreviewMask();
-                    gpu.drawEdges(shader.locColor, -1, mesh.selectedEdges, loopSelMask);
+                    gpu.drawEdges(shader.locColor, -1, mesh.selectedEdges,
+                                  loopSelMask, baseWire);
                 }
             }
         } else if (showEdgeHover && hoveredEdge >= 0) {
@@ -2114,22 +2129,14 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 (activeTool !is null && activeTool.wantsEdgeLoopHover())
                     ? rebuildLoopHoverMask(hoveredEdge)
                     : (bool[]).init;
-            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
+            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask, baseWire);
         } else if (activePlan.drawWire) {
-            // The base wireframe overlay, and the ONLY branch of this chain
-            // that is pure overlay — no selection set, no hover index. So it
-            // is the only one the plan's OVERLAY group gates today.
-            //
-            // The branches above are NOT gated, deliberately: each of them
-            // folds selection or hover feedback into the same `drawEdges`
-            // call as the base pass, and those are separate axes that must
-            // survive the overlay being switched off. Turning this whole
-            // chain off would be the obvious — and wrong — implementation.
-            // Splitting base-from-feedback inside those branches is the
-            // overlay phase's job; until then `drawWire == false` still
-            // leaves base lines drawn underneath a hover or a selection, and
-            // no default reaches that state.
-            gpu.drawEdges(shader.locColor, -1, []);
+            // The bare-overlay branch: no selection set, no hover index, so
+            // `baseWire` is the ONLY thing it would draw. Kept as an explicit
+            // early-out rather than a `BaseWire(false, ...)` call so that an
+            // overlay of "none" with nothing selected issues no GL at all —
+            // not a VAO bind and a loop over zero batches.
+            gpu.drawEdges(shader.locColor, -1, [], [], baseWire);
         }
     }
 

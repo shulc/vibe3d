@@ -26,9 +26,10 @@ immutable string fragmentShaderSrc = q{
     #version 330 core
     uniform vec3  u_color;
     uniform float u_dim;        // brightness multiplier; 1.0 = neutral (layers Stage 5)
+    uniform float u_alpha;      // fragment opacity; 1.0 = opaque (task 0559)
     out vec4 fragColor;
     void main() {
-        fragColor = vec4(u_color * u_dim, 1.0);
+        fragColor = vec4(u_color * u_dim, u_alpha);
     }
 };
 
@@ -263,6 +264,7 @@ class Shader {
     GLint locProj;
     GLint locColor;
     GLint locDim;
+    GLint locAlpha;
 
     this() {
         program  = createProgram();
@@ -271,6 +273,19 @@ class Shader {
         locProj   = glGetUniformLocation(program, "u_proj");
         locColor  = glGetUniformLocation(program, "u_color");
         locDim    = glGetUniformLocation(program, "u_dim");
+        locAlpha  = glGetUniformLocation(program, "u_alpha");
+        // Seed u_alpha ONCE, here, and not only in useProgram(). GL
+        // initialises an unset uniform to 0, and this program is also driven
+        // by a handful of call sites that bind it with a bare
+        // glUseProgram(shader.program) instead of going through useProgram()
+        // (gizmo shapes, the pen preview, the slice overlay). Seeding in the
+        // constructor means u_alpha is 1.0 from the very first frame no
+        // matter which site binds the program first, so no draw ordering can
+        // ever expose the 0 default. The existing fillFragSrc comment warns
+        // about exactly this failure mode for a shared alpha uniform; this is
+        // how that warning is honoured while still sharing the program.
+        glUseProgram(program);
+        glUniform1f(locAlpha, 1.0f);
     }
     ~this() {  glDeleteProgram(program); }
 
@@ -284,6 +299,10 @@ class Shader {
         // dimmed background pass sets it explicitly with setDim() before
         // its draws and is responsible for restoring 1.0 afterwards.
         glUniform1f(locDim, 1.0f);
+        // Same neutrality contract as u_dim: every pass starts fully opaque.
+        // The one pass that lowers it (the base wireframe overlay, task 0559)
+        // restores 1.0 immediately after its own draws.
+        glUniform1f(locAlpha, 1.0f);
     }
 
     /// Override the brightness multiplier for the next draws on this
@@ -292,6 +311,22 @@ class Shader {
     void setDim(float dim) {
         glUseProgram(program);
         glUniform1f(locDim, dim);
+    }
+
+    /// Override fragment opacity for the next draws on this program; pass
+    /// 1.0 to restore the neutral default.
+    ///
+    /// NOT the same knob as setDim, and the difference is the whole point:
+    /// `u_dim` multiplies the colour, so it fades a line toward BLACK, while
+    /// `u_alpha` is a real coverage value, so a blended line fades toward
+    /// WHATEVER IS BEHIND IT. A faint wireframe over a lit surface needs the
+    /// second one — dimming it would just draw dark lines.
+    ///
+    /// Writing this alone changes nothing: the fragment alpha is only
+    /// observable with GL_BLEND enabled, which the caller owns.
+    void setAlpha(float a) {
+        glUseProgram(program);
+        glUniform1f(locAlpha, a);
     }
 };
 

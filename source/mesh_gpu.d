@@ -18,6 +18,33 @@ import mesh;    // Mesh, FaceList
 import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
 
 // ---------------------------------------------------------------------------
+// BaseWire — how `GpuMesh.drawEdges` should render its BASE line pass
+// ---------------------------------------------------------------------------
+
+/// The base-wireframe knobs for `drawEdges`, task 0559.
+///
+/// `drawEdges` draws up to three things: a depth-tested pass over the plain
+/// (unselected, unhovered) segments, then two depth-disabled passes for the
+/// selected and hovered ones. Only the FIRST of those is the wireframe
+/// overlay. The other two are selection and hover feedback — separate display
+/// axes that must keep working when the overlay is switched off.
+///
+/// This struct therefore addresses the base pass alone. Defaults reproduce
+/// the historical behaviour exactly (drawn, fully opaque, no blending), so
+/// every existing call site is unchanged by omitting the argument.
+struct BaseWire {
+    /// Draw the base line pass at all.
+    bool  draw     = true;
+    /// Location of the flat shader's `u_alpha`. Negative means the bound
+    /// program has no opacity uniform, in which case `alpha` is ignored
+    /// rather than silently writing to uniform slot -1.
+    GLint locAlpha = -1;
+    /// Base-line opacity, 0..1. Anything below 1.0 turns blending on for the
+    /// duration of the base pass only.
+    float alpha    = 1.0f;
+}
+
+// ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
 
@@ -779,7 +806,8 @@ struct GpuMesh {
     // empty mask the behaviour is identical to the single-edge form, so every
     // existing call site is unchanged.
     void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges,
-                   const bool[] hoveredEdges = []) {
+                   const bool[] hoveredEdges = [],
+                   BaseWire base = BaseWire.init) {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
@@ -813,22 +841,54 @@ struct GpuMesh {
             foreach (s; selectedEdges[0 .. edgeCount]) if (!s) { allEdgesSelected = false; break; }
 
         // Gray pass — depth-tested, skip hovered/selected segments.
-        glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
-        if (!anyHover && selectedEdges.length == 0) {
-            glDrawArrays(GL_LINES, 0, edgeVertCount);
-        } else if (!allEdgesSelected) {
-            int batchStart = -1;
-            for (int i = 0; i < edgeCount; i++) {
-                bool skip = segHovered(i) || segSelected(i);
-                if (!skip) {
-                    if (batchStart < 0) batchStart = i;
-                } else if (batchStart >= 0) {
-                    glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
-                    batchStart = -1;
-                }
+        //
+        // THIS PASS, AND ONLY THIS PASS, IS THE WIREFRAME OVERLAY (task 0559).
+        // The two passes below it are selection and hover FEEDBACK, which are
+        // their own display axes and must survive the overlay being switched
+        // off — turning this whole function off instead is the obvious, and
+        // wrong, way to implement an overlay mode of "none". The seam already
+        // existed; `base.draw` just names it.
+        if (base.draw) {
+            // Opacity is likewise a property of the base overlay alone: a
+            // faint wireframe must not drag the selection highlight faint
+            // with it. Blending is enabled only when it would actually do
+            // something, so the default path issues the exact same GL calls
+            // it always did.
+            immutable bool blend = base.alpha < 1.0f && base.locAlpha >= 0;
+            if (blend) {
+                glUniform1f(base.locAlpha, base.alpha);
+                glEnable(GL_BLEND);
+                // Colour blends; DESTINATION ALPHA IS LEFT ALONE. The cell
+                // FBO's alpha channel is a real attachment, and punching
+                // holes in it with a translucent line pass would leak into
+                // anything that ever composites the cell texture.
+                glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                                    GL_ZERO, GL_ONE);
             }
-            if (batchStart >= 0)
-                glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+
+            glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
+            if (!anyHover && selectedEdges.length == 0) {
+                glDrawArrays(GL_LINES, 0, edgeVertCount);
+            } else if (!allEdgesSelected) {
+                int batchStart = -1;
+                for (int i = 0; i < edgeCount; i++) {
+                    bool skip = segHovered(i) || segSelected(i);
+                    if (!skip) {
+                        if (batchStart < 0) batchStart = i;
+                    } else if (batchStart >= 0) {
+                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                        batchStart = -1;
+                    }
+                }
+                if (batchStart >= 0)
+                    glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+            }
+
+            if (blend) {
+                glDisable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glUniform1f(base.locAlpha, 1.0f);
+            }
         }
 
         // Highlight pass — draw without depth so selection shows through.
