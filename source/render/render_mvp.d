@@ -26,7 +26,7 @@ import d_imgui.imgui_h;
 
 import mesh : Mesh, SubpatchPreview, Surface;
 import view : View;
-import math : Vec3;
+import math : Vec3, Viewport;
 import change_bus : MeshChangeAll;   // modeling-side bus constant (boundary-safe)
 
 import render.backend;
@@ -142,9 +142,13 @@ private struct PanelState
 
     // Camera / framebuffer-size diff baselines. These are NOT mesh state, so
     // they keep their value-compare form (unchanged by the bus).
+    // `roll` is a camera INPUT like azimuth/elevation: a bank changes the
+    // rendered image, so it has to be in the diff or the offline image keeps
+    // the pre-bank horizon until some other input happens to move.
     float  lastSeenAzimuth = float.nan;
     float  lastSeenElevation;
     float  lastSeenDistance;
+    float  lastSeenRoll;
     Vec3   lastSeenFocus;
     int    lastSeenFbW;
     int    lastSeenFbH;
@@ -152,6 +156,7 @@ private struct PanelState
     float  appliedAzimuth = float.nan;
     float  appliedElevation;
     float  appliedDistance;
+    float  appliedRoll;
     Vec3   appliedFocus;
     int    appliedFbW;
     int    appliedFbH;
@@ -885,6 +890,7 @@ private bool inputMoving(const(Mesh)* m, View v)
            v.azimuth   != g.lastSeenAzimuth   ||
            v.elevation != g.lastSeenElevation ||
            v.distance  != g.lastSeenDistance  ||
+           v.roll      != g.lastSeenRoll      ||
            v.focus     != g.lastSeenFocus     ||
            g.fbW != g.lastSeenFbW || g.fbH != g.lastSeenFbH;
 }
@@ -898,6 +904,7 @@ private bool needsApply(const(Mesh)* m, View v)
            v.azimuth   != g.appliedAzimuth   ||
            v.elevation != g.appliedElevation ||
            v.distance  != g.appliedDistance  ||
+           v.roll      != g.appliedRoll      ||
            v.focus     != g.appliedFocus     ||
            g.fbW != g.appliedFbW || g.fbH != g.appliedFbH;
 }
@@ -913,6 +920,7 @@ private void captureLastSeen(const(Mesh)* m, View v)
     g.lastSeenAzimuth   = v.azimuth;
     g.lastSeenElevation = v.elevation;
     g.lastSeenDistance  = v.distance;
+    g.lastSeenRoll      = v.roll;
     g.lastSeenFocus     = v.focus;
     g.lastSeenFbW       = g.fbW;
     g.lastSeenFbH       = g.fbH;
@@ -930,6 +938,7 @@ private void cacheAppliedState(const(Mesh)* m, View v)
     g.appliedAzimuth   = v.azimuth;
     g.appliedElevation = v.elevation;
     g.appliedDistance  = v.distance;
+    g.appliedRoll      = v.roll;
     g.appliedFocus     = v.focus;
     g.appliedFbW       = g.fbW;
     g.appliedFbH       = g.fbH;
@@ -1015,10 +1024,27 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     CameraDesc cd;
     cd.kind   = CameraDesc.Kind.Perspective;
     // Viewport camera single-source (0181): no eye/view/proj mirror on View
-    // anymore — derive eye from the current transform inputs directly.
-    cd.eye    = v.viewportWith(v.focus, v.distance, v.azimuth, v.elevation).eye;
+    // anymore — derive the camera from the current transform inputs directly.
+    //
+    // The BANK is supplied explicitly. `viewportWith` deliberately has no
+    // four-argument overload (see its docstring in `view.d`): one that
+    // defaulted to `this.roll` would also compile where a FOLLOWER cell
+    // resolves the MASTER's rotation, and would render two linked cells with
+    // mutually rotated horizons. That hazard does not exist here — the camera
+    // being mirrored into the scene IS `v` — so `v.roll` is the right operand,
+    // and passing it rather than defaulting it is what keeps the overload gone.
+    const Viewport vp = v.viewportWith(v.focus, v.distance, v.azimuth,
+                                       v.elevation, v.roll);
+    cd.eye    = vp.eye;
     cd.target = v.focus;
-    cd.up     = Vec3(0, 1, 0);
+    // READ screen-up off the view matrix instead of reconstructing it from a
+    // hard-coded world up. `Vec3(0, 1, 0)` was correct only while every
+    // viewport was built `lookAt(eye, focus, +Y)`; a banked viewport's up is
+    // not +Y, and hard-coding it renders a banked cell LEVEL — the offline
+    // image and the GL viewport would disagree about the horizon by exactly
+    // `roll`. Row layout is the tree's standard read: screen-up is
+    // `view[1]/[5]/[9]` (`view.d`, "Camera BANK" section).
+    cd.up     = Vec3(vp.view[1], vp.view[5], vp.view[9]);
     cd.aspect              = cast(float)g.fbW / cast(float)g.fbH;
     cd.fovRadiansVertical  = 45.0f * cast(float)(PI / 180.0);
     cd.nearClip = 0.001f;
