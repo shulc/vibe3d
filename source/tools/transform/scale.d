@@ -862,8 +862,10 @@ public:
     // screen-basis election structurally unportable, and it does not apply to
     // two of this one's three branches, which compare nothing.
     //
-    // `screenRight` is passed for the third branch only (`excluded == 1`, the
-    // unconfirmed leg). That branch's single comparison IS bank-sensitive, so
+    // `screenRight` is passed for the third branch only (`excluded == 1`),
+    // which is the branch three of the shipped action-centre modes take on the
+    // reference-comparison corpus's own rig — not the rare leg an earlier
+    // comment here called it. That branch's single comparison IS bank-sensitive, so
     // it is the one place our camera model can still cost us — see the kernel.
     //
     // `center` is the action centre for this press — the relocated point in a

@@ -668,23 +668,38 @@ void applyXformMatrix(
 //    of ONE action-centre mode. A second read put six presses through five
 //    modes in one execution and found the mode changes TWO inputs, not one:
 //    the centre `C` **and** the frame `A_k`. Three of the four pinned modes
-//    installed a NON-IDENTITY frame (a rotation in the ground plane, with a
-//    negated world axis in the third slot).
+//    installed a NON-IDENTITY frame.
 //
-//    So `A_k` is a per-mode frame and must be READ, never assumed. Ours comes
-//    from the AXIS stage (`ScaleTool.pickPlaneAxes` -> `currentBasis` ->
-//    `AxisPacket`), which models exactly this: the `actr.*` presets flip the
-//    ACEN and AXIS stages together, so our frame is already per-mode and
-//    already the right quantity to hand in. If you are ever tempted to
-//    "simplify" the call site to world axes because this comment used to say
-//    the matrix was the identity: that is the bug the correction exists to
-//    prevent.
+//    `A_k` IS ALSO SUBJECT-DEPENDENT, NOT JUST MODE-DEPENDENT. A third read ran
+//    the same three modes on a DIFFERENT subject and got a different frame: a
+//    bare grid with nothing selected gave a 45-degree in-plane pair, while a
+//    single selected face gave an edge-aligned `(+X, -Z, +Y)`. Same modes, same
+//    camera, different frames — so no constant is the answer, and none is
+//    written down here. The frame's own writer has since been read: the engine
+//    copies it out of the AXIS packet's matrix field, and forces the identity
+//    when that packet names a single axis index (which is why the single-axis
+//    modes measure as the identity). It comes from the axis slot and nowhere
+//    else.
 //
-//    We do NOT port the reference's rotated frame's CONTENT. The second read
-//    gives that frame for one rig at one camera and explicitly refuses to say
-//    what each mode installs in general — its rig put `select`/`local`/
-//    `border` in a different cell than the corpus rig does. We consume our own
-//    frame; the 45 degrees is not transcribed anywhere.
+//    So `A_k` must be READ from the axis stage, never assumed. Ours comes from
+//    exactly there (`ScaleTool.pickPlaneAxes` -> `currentBasis` ->
+//    `AxisPacket`), and the reference pairs an axis tool with each
+//    action-centre tool in its shipped presets just as our `actr.*` table pairs
+//    an AXIS mode with each ACEN mode — the same two-input shape. If you are
+//    ever tempted to "simplify" the call site to world axes because this
+//    comment used to say the matrix was the identity: that is the bug the
+//    correction exists to prevent.
+//
+//    WHAT OUR FRAME IS NOT. We consume ours; its CONTENT is not the
+//    reference's. On the corpus rig the reference's `select`/`local`/`border`
+//    frame is the selected face's own (normal in slot 2), while our AXIS
+//    stage's selection basis comes out as the world axes for an axis-aligned
+//    face. Both then scale world X on that rig's horizontal drag, by different
+//    routes — ours elects index 2, the reference elects index 1 and reaches it
+//    through the comparison — and the two agree on the horizontal survivor but
+//    NOT on the vertical one. Closing that is a question for the axis stage's
+//    `select` basis, not for this function, and the read that measured the
+//    reference's frame explicitly does not name the rule that fills it.
 //
 // The consequence for the retracted rule is not that it lost a close call. At
 // the reference-comparison camera the two leading screen projections differ by
@@ -705,20 +720,55 @@ void applyXformMatrix(
 //
 // It does not apply to this one. Two of the three branches read no basis at
 // all, so on those the port is exact regardless of our camera model. The
-// refusal survives only as a narrow scope on the `excluded == 1` branch, whose
-// single comparison is the one place a bank could change the answer.
+// refusal survives on the `excluded == 1` branch, whose single comparison is
+// the one place a bank could change the answer — and THAT BRANCH IS NOT THE
+// RARE ONE. See below; the scoping sentence that used to sit here was written
+// on a sample that could not see it.
 //
-// `excluded == 1` IS THE UNCONFIRMED LEG. It never executed on the recording
-// (0 hits — every press dropped X or Z), so it is decoded statically only. It
-// is implemented here because it is reachable for us — a near-top view makes
-// `|E_y|` dominate — and refusing to answer would leave the gesture dead there
-// rather than approximately right. Treat its two outcomes as unverified.
+// `excluded == 1` IS THE MAJORITY PATH, NOT AN EDGE CASE. Two traces put 11
+// presses through this election and the branch fired 0 times, so an earlier
+// version of this comment called it "the unconfirmed leg", implemented but
+// unverified. A third read then ran the REFERENCE-COMPARISON CORPUS'S OWN RIG
+// at its own camera — a unit cube with its +Y face selected — and the branch
+// fired 15 times: it is the branch `select`, `local` and `border` all take
+// there. Those three modes install a frame with the face normal in slot 2
+// (`A = (+X, -Z, +Y)` on that rig), which puts the eye ray's argmax on index 1
+// and routes the election straight into the comparison. The clause was read at
+// its own site on all 15 hits, identical every time:
 //
-// `screenRight` for that branch is the view's own right direction. The
-// reference obtains it by unprojecting two pixels 0.01 px apart at the action
-// centre; for a symmetric frustum that difference IS the view matrix's right
-// row at any depth, which is what we pass, so the construction matches even
-// though our row can never be banked.
+//     |A0 . N0| = 0.817569  >  |A2 . N0| = 0.186885   ->  h -> A0, v -> A2
+//
+// which is the first arm implemented below.
+//
+// WHAT THAT COSTS US, PLAINLY, AND WHERE. The bank refusal is now on a LIVE
+// path rather than a dead one: three of the shipped action-centre modes reach a
+// comparison against a screen-right vector that the reference's view banks
+// (11.778 deg at the corpus camera) and ours cannot. The exposure has a precise
+// shape, and it is worth stating rather than waving at.
+//
+// The branch is only entered when index 1 is elected, which happens when the
+// eye ray lies most along `A1`. On the rigs measured so far that is a frame
+// with the face normal in slot 2 — i.e. `A2` is (near) world Y. Our
+// `screenRight` is `lookAt`'s right row, which is perpendicular to +Y BY
+// CONSTRUCTION, so `|A2 . screenRight|` is ~0 for us and the comparison
+// degenerates to "is `|A0 . screenRight|` greater than nothing" — we take the
+// first arm essentially always. The reference takes the first arm only while
+// its bank keeps that same quantity small: at the corpus camera its numbers are
+// 0.817569 against 0.186885, the first arm, agreeing with us; ours at that
+// camera are 0.8756 against 0.0000, the same arm by a wider margin.
+//
+// So: we agree with the reference wherever its bank is small relative to
+// `|A0 . screenRight|`, which covers every cell measured. We would diverge in
+// the cell where its bank grows large enough to win the comparison outright,
+// and no such cell has been recorded. That cell is unreachable for us to test
+// and nothing here closes it — it needs a viewport that can roll, which is a
+// camera-model question and not this function's.
+//
+// `screenRight` is the view's own right direction. The reference obtains it by
+// unprojecting two pixels 0.01 px apart at the action centre; for a symmetric
+// frustum that difference IS the view matrix's right row at any depth, which is
+// what we pass, so the construction matches even though our row can never be
+// banked.
 //
 // Returns false only when the eye ray is degenerate (the action centre sitting
 // exactly on the eye). The reference has no failure path here.
@@ -763,10 +813,12 @@ bool pickScalePlaneAxes(Vec3 eyeVec, Vec3 screenRight,
     final switch (excludedIdx) {
         case 0: hIdx = 2; vIdx = 1; break;   // X out: h->Z, v->Y
         case 2: hIdx = 0; vIdx = 1; break;   // Z out: h->X, v->Y
-        case 1:                              // Y out: THE UNCONFIRMED LEG
+        case 1:                              // index 1 out: THE COMMON PATH
             // The only comparison in the whole election, and the only place a
-            // camera bank can move the answer. Strict `>`; a tie takes the
-            // second arm.
+            // camera bank can move the answer. Read at its own site on 15 hits
+            // of the reference-comparison corpus's own rig, where it is the
+            // branch three of the shipped action-centre modes take. Strict `>`;
+            // a tie takes the second arm.
             if (abs(dot(ax[0], screenRight)) > abs(dot(ax[2], screenRight))) {
                 hIdx = 0; vIdx = 2;
             } else {

@@ -37,12 +37,28 @@
 // RIGHT case is therefore the discriminating one: it fails on the retracted
 // rule and passes on the read.
 //
-// ── WHAT IT DOES NOT PIN ──────────────────────────────────────────────────
+// ── THE THIRD BRANCH IS THE COMMON ONE, AND IT IS EXERCISED BELOW ─────────
 //
-// The third branch of the election (world Y elected out, the only one that
-// compares a screen projection) is NOT exercised here. It never executed on the
-// recording either — it is decoded statically and unconfirmed — so there is no
-// reference answer to assert against. Do not add a case for it without one.
+// The election's third branch — index 1 elected out, the only one that compares
+// a screen projection — was described in an earlier version of this file as
+// never executed and unconfirmed, so no case asserted it. Two traces had put 11
+// presses through the election and the branch fired 0 times.
+//
+// A third read ran the reference-comparison corpus's OWN rig at its own camera
+// and the branch fired 15 times: it is the branch three of the shipped
+// action-centre modes take there, because their frame puts the selected face's
+// normal in slot 2 and the eye ray's argmax lands on index 1. The clause was
+// read at its own site on all 15 hits and is identical every time. So there IS
+// a reference answer now, the branch is the majority path rather than an
+// exotic one, and the last case in this file drives it through the real tool.
+//
+// WHAT IS STILL NOT PINNED: the bank. That comparison is against the view's
+// screen-right, and the reference's view carries a roll (11.778 deg at the
+// corpus camera) while ours is built `lookAt(…, +Y)` and cannot. Our exposure
+// is therefore on a LIVE path, not a dead one. The case below is built where
+// the two projections differ decisively, which is where a roll of that size
+// cannot change the answer; a near-tie in this clause remains unproven for us
+// and no case here should pretend otherwise.
 
 import std.net.curl;
 import std.json;
@@ -101,16 +117,23 @@ double maxDeltaAlong(ref Outcome o, Vec3 a) {
 // it is the ONE knob that changes both of the election's inputs, so the
 // auto/origin cases below drive it and nothing else.
 Outcome runOffHandlePlaneDrag(double fx, double fy, double az = CAM_AZ,
-                              string actr = "", double el = CAM_EL) {
+                              string actr = "", double el = CAM_EL,
+                              string sel = "", double dist = CAM_DIST,
+                              Vec3 guardPivot = Vec3(0, 0, 0)) {
     post(BASE ~ "/api/reset", "");
+    // Default subject: the whole cube in vertex mode. The corpus's own rig
+    // selects ONE POLYGON instead, which is what puts a face normal in the
+    // AXIS stage's frame — pass it explicitly rather than defaulting to it,
+    // so the cases that do not care keep the simpler subject.
     auto selResp = post(BASE ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+                        sel.length ? sel
+                                   : `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
            "select failed: " ~ cast(string)selResp);
 
     auto camResp = post(BASE ~ "/api/camera",
         format(`{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,`
-               ~ `"focus":{"x":0,"y":0,"z":0}}`, az, el, CAM_DIST));
+               ~ `"focus":{"x":0,"y":0,"z":0}}`, az, el, dist));
     assert(parseJSON(cast(string)camResp)["status"].str == "ok",
            "camera set failed: " ~ cast(string)camResp);
 
@@ -137,7 +160,7 @@ Outcome runOffHandlePlaneDrag(double fx, double fy, double az = CAM_AZ,
     // measuring something else. Our gizmo's reach is ~106 px from the pivot,
     // which starts at the selection centroid.
     float gx, gy;
-    assert(projectToWindow(Vec3(0, 0, 0), vp, gx, gy),
+    assert(projectToWindow(guardPivot, vp, gx, gy),
            "the pivot must project on-screen for the off-handle check");
     o.gizmoDistPx = sqrt((o.pressX - gx) * (o.pressX - gx)
                        + (o.pressY - gy) * (o.pressY - gy));
@@ -496,4 +519,103 @@ unittest {
            ~ "): that axis has to be driven. Got " ~ alongWorld.to!string
            ~ " — which is what a call site passing world XYZ instead of "
            ~ "`currentBasis` produces");
+}
+
+// ── THE `excluded == 1` BRANCH — THE ONE WITH THE COMPARISON ───────────────
+//
+// Reachability first, because this is what changed. Two traces put 11 presses
+// through the election without this branch firing once, and the port shipped it
+// marked unconfirmed and untested. Then the reference-comparison corpus's own
+// rig was recorded — a unit cube with its +Y FACE selected — and the branch
+// fired 15 times, on three of the five action-centre modes, at the corpus's own
+// base camera. It is the common path, not the exotic one.
+//
+// It is the common path FOR US TOO, and by the same mechanism: our AXIS stage
+// gives a polygon selection a frame built from the face normal, which for the
+// +Y face is `right = +X, up = -Z, fwd = +Y` — the same signed permutation the
+// reference installs there. That puts the eye ray's largest component on
+// index 1 and routes the election into the comparison. The dot products agree
+// with the reference's recorded ones to four decimals:
+//
+//     reference   A_k . E = (+0.481707, +0.873399, -0.071640)   elects 1
+//     ours        A_k . E = (+0.4817,   +0.8734,   -0.0716)     elects 1
+//
+// The three cases below drive the branch and both of its arms.
+
+enum string SEL_TOP_FACE = `{"mode":"polygons","indices":[4]}`;
+
+// The corpus camera in the spherical terms /api/camera takes, and its own
+// distance. Its view direction is the corpus's recorded
+// (0.442173, -0.402161, -0.801717).
+enum double CORPUS_DIST = 1.486323332;
+
+unittest { // the CORPUS'S OWN RIG reaches the branch, and its frame is the read one
+    auto o = runOffHandlePlaneDrag(0.80, 0.42, CAM_AZ, "select", CAM_EL,
+                                   SEL_TOP_FACE, CORPUS_DIST, Vec3(0, 0.5, 0));
+    // The centre and the frame are the two inputs, and both match the
+    // reference's read of this rig exactly.
+    assert(fabs(o.centerX) < 1e-6 && fabs(o.centerY - 0.5) < 1e-6
+           && fabs(o.centerZ) < 1e-6,
+           "actr.select on this rig must put the action centre on the selected "
+           ~ "face at (0, 0.5, 0); got (" ~ o.centerX.to!string ~ ", "
+           ~ o.centerY.to!string ~ ", " ~ o.centerZ.to!string ~ ")");
+    assert(fabs(o.axis[0].x - 1) < 1e-5 && fabs(o.axis[1].z + 1) < 1e-5
+           && fabs(o.axis[2].y - 1) < 1e-5,
+           "the AXIS stage must give a face-normal frame (+X, -Z, +Y) here — "
+           ~ "that is what elects index 1 — got right=" ~ o.axis[0].x.to!string
+           ~ " up.z=" ~ o.axis[1].z.to!string ~ " fwd.y=" ~ o.axis[2].y.to!string);
+
+    // THE DISCRIMINATOR, and it needs saying why it is one. The moving set is
+    // one flat face, so it is PLANAR in the frame's `fwd` (+Y) — a scale along
+    // that axis moves nothing, which is why world Y stays put here whichever
+    // axis was elected. World Z is the test. Index 1 elected means `-Z` is the
+    // axis left alone; had the election picked index 2 instead (which is what
+    // it does when the frame is the world axes), the VERTICAL component would
+    // have driven `-Z` and the face's z = +/-0.5 corners would have moved.
+    assert(maxDelta(o, 2) < 1e-4,
+           "world Z must be untouched: index 1 is the elected-out axis and the "
+           ~ "frame's slot 1 IS -Z. Z moving by " ~ maxDelta(o, 2).to!string
+           ~ " means the election picked a different index — most likely 2, "
+           ~ "which is what a world-axis frame would give");
+    assert(maxDelta(o, 0) > 0.10,
+           "and world X must be driven by the horizontal — the corpus records "
+           ~ "0.16 of x on this cell; got " ~ maxDelta(o, 0).to!string);
+}
+
+unittest { // the branch's FIRST arm, where the two survivors are observable
+    // A near-top view puts the eye ray's largest component on world Y with the
+    // identity frame, so index 1 is elected on a subject that is NOT planar in
+    // either survivor — which is what the corpus rig cannot show. At this
+    // azimuth the view's right is (cos 0.20, 0, -sin 0.20), so
+    // |A0 . right| = 0.980 against |A2 . right| = 0.199: the FIRST arm, giving
+    // the horizontal to X and the vertical to Z.
+    auto o = runOffHandlePlaneDrag(0.25, 0.25, 0.20, "auto", 1.35);
+    assertPlane(o, 1, "near-top, first arm");
+    // Which survivor took WHICH component — the arm itself, not just the
+    // elected axis. The drag is +120 horizontal and 80 vertical, so the two
+    // gains are 1 + 120/312.5 = 1.384 and 1 + 80/312.5 = 1.256. Swapping the
+    // arm swaps them.
+    immutable double rx = extentRatio(o, 0), rz = extentRatio(o, 2);
+    assert(rx > 1.37 && rx < 1.40,
+           "the FIRST arm gives the horizontal to world X (gain 1.384); got "
+           ~ rx.to!string ~ ". A value near 1.256 means the arms are swapped");
+    assert(rz > 1.24 && rz < 1.27,
+           "and the vertical to world Z (gain 1.256); got " ~ rz.to!string);
+}
+
+unittest { // the branch's SECOND arm — the same clause, the other way
+    // Same near-top geometry, azimuth rotated so the comparison reverses:
+    // the view's right is (cos 1.37, 0, -sin 1.37), so |A0 . right| = 0.199
+    // against |A2 . right| = 0.980 and the strict `>` now FAILS, taking the
+    // second arm. World Y is still the axis left alone; the two survivors swap
+    // which drag component drives them.
+    auto o = runOffHandlePlaneDrag(0.25, 0.25, 1.37, "auto", 1.40);
+    assertPlane(o, 1, "near-top, second arm");
+    immutable double rx = extentRatio(o, 0), rz = extentRatio(o, 2);
+    assert(rz > 1.37 && rz < 1.40,
+           "the SECOND arm gives the horizontal to world Z (gain 1.384); got "
+           ~ rz.to!string ~ ". If this reads 1.256 the clause has stopped "
+           ~ "reversing and both arms have collapsed into one");
+    assert(rx > 1.24 && rx < 1.27,
+           "and the vertical to world X (gain 1.256); got " ~ rx.to!string);
 }
