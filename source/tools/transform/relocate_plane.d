@@ -1,0 +1,308 @@
+module tools.transform.relocate_plane;
+
+// ---------------------------------------------------------------------------
+// Where a click-relocate lands in world.
+//
+// The reference implementation is four nested functions; this module is a
+// 1:1 restatement of them as pure functions, so each can be tested on its
+// own and the composition tested against the one rig that measured it.
+//
+//   principalPlaneCenter(...)          the whole chain, entry to answer
+//     +- workPlanePoint(...)           the plane point Q and the axis k
+//     |    +- niceOrigin(...)          Q = focus, snapped, then QUANTISED on k
+//     |    |    +- vectorSnap(...)     component-wise round to a step
+//     |    +- biasedAxis(...)          the preferred-work-plane bias
+//     +- posToPrincipalPlane(...)      the ray, or the locked-axis shortcut
+//          +- vectorSnap(...)          the final snap of the ANSWER
+//
+// Two things in this file are the whole point, and both were missing:
+//
+// 1. `niceOrigin` QUANTISES the plane point's out-of-plane coordinate. The
+//    plane through the camera focus is not the plane through the focus — it
+//    is the plane through the focus ROUNDED. On a camera whose focus sits at
+//    the world origin this is the identity, which is why every fixture we own
+//    is blind to it.
+//
+// 2. `posToPrincipalPlane` does not always cast a ray. In an axis-locked
+//    orthographic view (top/bottom/front/back/left/right) it replaces one
+//    coordinate of the unprojected click and stops.
+//
+// WHAT IS MEASURED AND WHAT IS CHOSEN. The structure below is read out of the
+// reference instruction by instruction and is not fitted. Its INPUTS are a
+// different matter: vibe3d has no counterpart for any of them, and every one
+// is defaulted to the value at which the reference itself skips the feature.
+// See `RelocatePlanePrefs`, and in particular `quantumStep` — the rounding in
+// (1) is implemented and tested but NOT switched on, because the number it
+// rounds to is contradicted between the two rigs that measured it. That is
+// written up at the field.
+//
+// SO WHAT ACTUALLY CHANGES BEHAVIOUR HERE is (2), the locked-axis arm, which
+// has no free parameter and is read at two independent sites.
+// ---------------------------------------------------------------------------
+
+import math : Vec3, Viewport, isOrtho, normalize, dot;
+import std.math : abs, floor, ceil;
+
+/// Round half AWAY FROM ZERO — the reference's `Dnint`, which is Fortran's
+/// rounding and NOT C's `rint` (half-to-even).
+///
+/// The tie rule is NOT pinned by any measurement we hold: none of the 18
+/// components in the rig that fixed this law lands on an exact half. It is
+/// written half-away-from-zero because that is what `Dnint` means, not
+/// because a capture chose it.
+float dnint(float x) @safe pure nothrow @nogc {
+    return x >= 0 ? floor(x + 0.5f) : ceil(x - 0.5f);
+}
+
+/// Component-wise `Dnint(v/step)*step`. A step of zero or less is the
+/// reference's "disabled" value and returns `v` untouched — the function
+/// returns immediately in that case, it does not round by 0.
+Vec3 vectorSnap(Vec3 v, float step) @safe pure nothrow @nogc {
+    if (step <= 0) return v;
+    return Vec3(dnint(v.x / step) * step,
+                dnint(v.y / step) * step,
+                dnint(v.z / step) * step);
+}
+
+/// One component of a Vec3 by index (0=x, 1=y, 2=z).
+float axisComp(Vec3 v, int i) @safe pure nothrow @nogc {
+    return i == 0 ? v.x : (i == 1 ? v.y : v.z);
+}
+
+/// `v` with component `i` replaced.
+Vec3 withAxisComp(Vec3 v, int i, float c) @safe pure nothrow @nogc {
+    if (i == 0) return Vec3(c, v.y, v.z);
+    if (i == 1) return Vec3(v.x, c, v.z);
+    return Vec3(v.x, v.y, c);
+}
+
+/// The world axis a view is locked to, or -1 when it has none.
+///
+/// The reference reads a view TYPE field and decodes it to an axis; we have
+/// no such field on `Viewport`, so the same class of view is recognised
+/// GEOMETRICALLY: an orthographic projection whose forward vector is a world
+/// axis. In vibe3d that is exactly `ProjKind.Ortho` with one of the six
+/// `ViewPreset` axis presets, because `View.viewportWith` builds those six
+/// from a hard-coded axis eye and ignores azimuth/elevation.
+///
+/// The two ways to be ortho WITHOUT a locked axis — `ViewPreset.Perspective`
+/// or `.Camera` under `ProjKind.Ortho`, which keep the free spherical basis —
+/// return -1 here unless the free camera happens to be exactly axis-aligned.
+/// That coincidence is measure-zero and costs nothing when it happens: with
+/// the rays parallel to `e_k` the ray arm and the locked arm agree on every
+/// component except the quantum on the plane point.
+int lockedViewAxis(const ref Viewport vp) @safe pure nothrow @nogc {
+    if (!isOrtho(vp)) return -1;
+    // Column-major view matrix: forward = (-m[2], -m[6], -m[10]).
+    Vec3 f = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+    enum float axisEps = 1e-4f;
+    if (abs(abs(f.x) - 1.0f) < axisEps && abs(f.y) < axisEps && abs(f.z) < axisEps) return 0;
+    if (abs(abs(f.y) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.z) < axisEps) return 1;
+    if (abs(abs(f.z) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.y) < axisEps) return 2;
+    return -1;
+}
+
+/// The eye vector at a world point: the direction the view looks ALONG as it
+/// passes through `p`. Perspective diverges from the eye, orthographic is
+/// constant.
+Vec3 eyeVectorAt(const ref Viewport vp, Vec3 p) @safe pure nothrow @nogc {
+    if (isOrtho(vp)) return normalize(Vec3(-vp.view[2], -vp.view[6], -vp.view[10]));
+    return normalize(p - vp.eye);
+}
+
+/// The four shipped work-plane preferences, the view's own snap step, and the
+/// out-of-plane quantum.
+///
+/// EVERY DEFAULT HERE IS "OFF", AND THAT IS DELIBERATE. No capture in this
+/// campaign recorded any of them, so a default that changed behaviour would
+/// be inventing a measurement. Each default below is also the value at which
+/// the reference's own gate skips the feature, so "off" is a faithful port of
+/// the disabled state rather than a stub.
+struct RelocatePlanePrefs {
+    /// The bias toward `preferredAxis`. The reference gates the whole swap on
+    /// `strength > 0`, so zero disables it exactly.
+    float strength = 0.0f;
+    /// The preferred work-plane axis (0=X, 1=Y, 2=Z), or -1 for none. The
+    /// reference falls through to the argmax for any value outside {0,1,2}.
+    int   preferredAxis = -1;
+    /// Lock the work plane instead of letting it follow the view rotation.
+    bool  lock = false;
+    /// The position along the locked plane's axis. Read only when `lock`.
+    float lockVal = 0.0f;
+    /// The view's own vector-snap step. Zero or less disables it, which is
+    /// the reference's disabled value AND the state vibe3d is permanently in
+    /// — we have no per-view snap step to read. Kept as an input rather than
+    /// dropped because the law's shape depends on it and it is testable.
+    float viewSnapStep = 0.0f;
+    /// The out-of-plane quantum: the plane point's coordinate along the
+    /// principal axis is rounded to a multiple of this. Zero disables it.
+    ///
+    /// DEFAULTED OFF BECAUSE THE STEP IS NOT PINNED, AND THAT IS A FINDING,
+    /// NOT A GAP. The reference's rounding is real and read instruction by
+    /// instruction; what is unknown is the number it rounds to. It computes
+    /// that as `10 x <its own grid sub-division>`, and that function was
+    /// never disassembled. Two independent rigs in this tree demand
+    /// INCOMPATIBLE values for it:
+    ///
+    ///   * the plane-offset sweep — a focus of 1.8255 came back as 2.0, and
+    ///     one of -0.3551 as 0.0. Together those admit a step of 1.0 or 2.0
+    ///     and nothing else between 0.05 and 20;
+    ///   * the big-pan work-plane probe — a focus of -1.0291 on the SAME
+    ///     out-of-plane axis came back as -1.03, which admits only steps at
+    ///     or below ~0.26, two orders of magnitude away.
+    ///
+    /// No constant satisfies both. Either the step really is camera-dependent
+    /// (the grid sub-division is a zoom-decade quantity, which would explain
+    /// the spread and is the reading the cards infer) or one of the two rigs
+    /// is not measuring this term — the second probe also returned an
+    /// IN-PLANE coordinate of 0.5 against a focus of 0.3437, which the law
+    /// does not predict at all and which coincides with that capture's
+    /// selection centroid.
+    ///
+    /// vibe3d cannot settle it from here: our grid is a single fixed 1.0-unit
+    /// lattice with no zoom decade to follow, so there is no quantity to
+    /// derive the step FROM even if the dependence were known. Shipping a
+    /// constant would fit one rig and contradict the other, and would move
+    /// every panned camera's relocate by up to half of a number we guessed.
+    ///
+    /// So: the rounding is implemented, tested, and reachable — pass a step
+    /// and it runs, exactly as measured on the sweep rig. It is simply not
+    /// switched on by default, and turning it on needs the grid-size read,
+    /// not another fit.
+    float quantumStep = 0.0f;
+}
+
+/// The plane point: the camera focus, snapped, with its OUT-OF-PLANE
+/// coordinate quantised to one grid division.
+///
+/// The reference also pushes `Q` along the eye vector by the view's target
+/// distance for one further view type. That type is unresolved — it is
+/// neither the axis-locked ortho class nor, as far as anything we hold shows,
+/// the plain perspective view — so it is NOT ported. Porting an unidentified
+/// branch would mean guessing which views take it.
+Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
+        @safe pure nothrow @nogc {
+    Vec3 q = vectorSnap(focus, viewSnapStep);
+    if (quantumStep > 0)
+        q = withAxisComp(q, k, dnint(axisComp(q, k) / quantumStep) * quantumStep);
+    return q;
+}
+
+/// The preferred-work-plane bias: `if (strength > 1 - |D[j]|) k := j`.
+///
+/// `1 - |D[j]|` is near zero exactly when the view looks nearly straight down
+/// axis `j`, so this adopts the user's preferred plane when that plane is
+/// within `strength` of being perfectly face-on — a hysteresis in favour of
+/// the preference, biting only in the narrow band where `j` is nearly as
+/// face-on as the argmax winner.
+///
+/// The comparison is STRICT and the `k == j` early-out precedes it, so at
+/// exactly `strength == 1 - |D[j]|` the argmax wins.
+int biasedAxis(int k, Vec3 eyeDir, const ref RelocatePlanePrefs p)
+        @safe pure nothrow @nogc {
+    if (p.strength <= 0) return k;
+    if (p.lock) return k;
+    int j = p.preferredAxis;
+    if (j < 0 || j > 2) return k;
+    if (k == j) return k;
+    if (p.strength > 1.0f - abs(axisComp(eyeDir, j))) return j;
+    return k;
+}
+
+/// The plane point and the principal axis together.
+///
+/// `argmaxAxis` is the camera-most-facing world axis, supplied by the caller
+/// so this module does not duplicate the argmax (and so the caller's existing
+/// tie-break stays the one authority on it).
+struct PlanePoint {
+    Vec3 q;
+    int  k;
+}
+
+PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
+                          const ref RelocatePlanePrefs p)
+        @safe pure nothrow @nogc {
+    PlanePoint r;
+    r.k = argmaxAxis;
+    immutable int locked = lockedViewAxis(vp);
+
+    // An axis-locked orthographic view takes the RAW focus — no quantum at
+    // all — and is excluded from the bias. Both are the same condition in the
+    // reference and both are read at their own site.
+    if (locked >= 0) {
+        r.q = vp.focus;
+    } else {
+        r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
+        immutable int bk = biasedAxis(r.k, eyeVectorAt(vp, r.q), p);
+        if (bk != r.k) {
+            r.k = bk;
+            // The reference recomputes the plane point for the new axis, and
+            // it must: the quantum is applied to the OUT-OF-PLANE coordinate,
+            // so changing which one that is changes Q.
+            r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
+        }
+    }
+
+    if (p.lock) {
+        if (p.preferredAxis >= 0 && p.preferredAxis <= 2 && locked < 0)
+            r.k = p.preferredAxis;
+        r.q = withAxisComp(r.q, r.k, p.lockVal);
+    }
+    return r;
+}
+
+/// Put the click on the principal plane.
+///
+/// Two arms, and the first one casts NO RAY: in an axis-locked orthographic
+/// view the answer is the click with one coordinate replaced. The second is
+/// the ray, `C = P0 + [(Q[k] - P0[k]) / D[k]]*D`.
+///
+/// THE CLICK ARRIVES AS A RAY, NOT AS A POINT, AND THAT IS NOT A DEVIATION.
+/// The reference unprojects the click to a world point `P0` and then recovers
+/// `D` as the eye vector AT `P0`; vibe3d's `screenPointToRay` hands back the
+/// same line already parameterised, so `D` is read rather than recovered.
+/// Both arms are invariant to which point of the line is passed:
+///
+///   * the ray arm returns the unique point of the line whose `k` component
+///     is `Q[k]`, and that point does not depend on the parameterisation;
+///   * the locked arm only ever runs under an orthographic projection, where
+///     `screenPointToRay`'s origin IS the unprojected click, and the one
+///     component it does not preserve — the depth along the view axis — is
+///     exactly the component the locked arm overwrites.
+///
+/// Reading `D` instead of recovering it also removes a degeneracy: under a
+/// perspective projection the ray origin is the eye itself, and the eye
+/// vector AT the eye is not defined.
+///
+/// Returns false only when the ray arm degenerates (the view direction lies
+/// in the plane). The locked arm cannot fail.
+bool posToPrincipalPlane(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
+                         int k, Vec3 q, bool doSnap, float snapStep, out Vec3 c)
+        @safe pure nothrow @nogc {
+    immutable int locked = lockedViewAxis(vp);
+    if (locked >= 0) {
+        c = withAxisComp(rayOrigin, locked, axisComp(q, locked));
+    } else {
+        immutable float dk = axisComp(rayDir, k);
+        if (abs(dk) < 1e-9f) return false;
+        immutable float t = (axisComp(q, k) - axisComp(rayOrigin, k)) / dk;
+        c = rayOrigin + rayDir * t;
+    }
+    if (doSnap) c = vectorSnap(c, snapStep);
+    return true;
+}
+
+/// The whole chain: the click's ray in, the relocated centre out.
+///
+/// `argmaxAxis` is the caller's camera-most-facing axis. `axisOut` receives
+/// the principal axis actually used, which is NOT always `argmaxAxis` — the
+/// bias and the lock can both move it.
+bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
+                          int argmaxAxis, const ref RelocatePlanePrefs p,
+                          out Vec3 c, out int axisOut)
+        @safe pure nothrow @nogc {
+    immutable pp = workPlanePoint(vp, argmaxAxis, p);
+    axisOut = pp.k;
+    return posToPrincipalPlane(vp, rayOrigin, rayDir, pp.k, pp.q,
+                               true, p.viewSnapStep, c);
+}

@@ -1089,8 +1089,10 @@ protected:
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create.create_common         : currentWorkplaneFrame, pickMostFacingPlane;
-        import math : screenRay, rayPlaneIntersect, screenPointToRay, isOrtho;
+        import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis;
+        import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter;
+        import math : rayPlaneIntersect, screenPointToRay;
+        import std.math : abs;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
         auto mode = ActionCenterStage.Mode.Auto;
@@ -1102,47 +1104,63 @@ protected:
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
-                // Project onto the active work plane. currentWorkplaneFrame()
-                // reads WorkplaneStage state directly (no pipeline.evaluate,
-                // no re-entrancy) and returns the stored normal/center for a
-                // user-pinned (non-auto) work plane — that branch is
-                // unchanged. In auto mode the plane's through-point is the
-                // camera focus (not the world origin), and its normal is the
-                // principal world axis the camera is most directly facing
-                // (`pickMostFacingPlane`, the same camera-facing pick
-                // Create-tool primitive placement already uses via
-                // `pickWorkplaneFrame`) — recomputed instantaneously from the
-                // live viewport on every call, with no sticky state carried
-                // between clicks. `pickMostFacingPlane` is a pure function of
-                // `cachedVp` (no pipeline.evaluate), so this stays
-                // re-entrancy-safe on the event-handling path.
+                // The ported plane law (`tools.transform.relocate_plane`).
+                // Everything about WHERE this lands lives in that module as
+                // pure functions; this call site's only jobs are to supply
+                // the argmax axis and to state the work-plane preferences.
+                //
+                // `mostFacingAxis` is the SAME argmax `pickMostFacingPlane`
+                // runs — same function, same tie-break — so the principal
+                // axis is unchanged from the previous implementation. It is a
+                // pure function of `cachedVp` (no pipeline.evaluate), so this
+                // stays re-entrancy-safe on the event-handling path.
+                //
+                // ONE thing the law does here that the plain
+                // `rayPlaneIntersect` above it did not, and it is the only
+                // behaviour this port changes: in an AXIS-LOCKED ORTHOGRAPHIC
+                // view there is NO RAY. One coordinate of the unprojected
+                // click is replaced by the plane point's and that is the
+                // answer. This subsumes the ortho fix this branch carried
+                // since task 0226 — the degenerate parallel-ray case cannot
+                // arise in an arm that never intersects anything — and it is
+                // read at two independent sites with no free parameter.
+                //
+                // The law's other terms are implemented and tested but
+                // DORMANT, because each needs a number vibe3d has no field
+                // for and no capture pinned: the out-of-plane quantum (whose
+                // step our own two rigs contradict — see
+                // `RelocatePlanePrefs.quantumStep`), the preferred-plane
+                // bias, and the vector-snap of the answer. Each defaults to
+                // the value at which the reference itself skips it, so today's
+                // landing on every non-axis-locked view is unchanged.
+                //
+                // currentWorkplaneFrame() reads WorkplaneStage state directly
+                // (no pipeline.evaluate, no re-entrancy). A user-pinned
+                // (non-auto) work plane is the law's LOCK: a preferred axis
+                // plus a position along it, which is exactly what the pinned
+                // frame carries.
                 auto wf = currentWorkplaneFrame();
-                Vec3 planeOrigin = wf.origin;
-                Vec3 planeNormal = wf.normal;
-                if (wf.isAuto) {
-                    planeOrigin = cachedVp.focus;
-                    planeNormal = pickMostFacingPlane(cachedVp).normal;
+                RelocatePlanePrefs prefs;   // every field defaults to "off"
+                if (!wf.isAuto) {
+                    Vec3 n = wf.normal;
+                    immutable int pinnedAxis =
+                        mostFacingAxis(Vec3(abs(n.x), abs(n.y), abs(n.z)),
+                                       Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+                    prefs.lock          = true;
+                    prefs.preferredAxis = pinnedAxis;
+                    prefs.lockVal       = pinnedAxis == 0 ? wf.origin.x
+                                        : pinnedAxis == 1 ? wf.origin.y
+                                        :                   wf.origin.z;
                 }
-                // Ortho fix: an orthographic camera projects all rays parallel
-                // to its forward vector. When that forward is (near-)parallel
-                // to the chosen plane (e.g. a pinned plane edge-on to the
-                // view), the projection ray lies IN the plane —
-                // rayPlaneIntersect degenerates (denom≈0 → returns false) and
-                // the relocate silently no-ops. Swap in a camera-perpendicular
-                // plane through the same origin so the click always projects
-                // to the point under the cursor at focus depth — matching the
-                // perspective relocate in every cell. For the auto case this
-                // is now largely redundant (the principal-axis normal is
-                // already the axis most perpendicular to the parallel ortho
-                // rays, so it rarely degenerates), but it is kept — and still
-                // needed — for a user-pinned plane that happens to be edge-on
-                // to an ortho camera.
-                if (isOrtho(cachedVp))
-                    planeNormal = Vec3(cachedVp.view[2],
-                                       cachedVp.view[6],
-                                       cachedVp.view[10]);
-                return rayPlaneIntersect(crHitOrig, dir,
-                                         planeOrigin, planeNormal, worldHit);
+                Vec3 camBack = Vec3(cachedVp.view[2],
+                                    cachedVp.view[6],
+                                    cachedVp.view[10]);
+                immutable int argmaxAxis =
+                    mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+                int usedAxis;
+                return principalPlaneCenter(cachedVp, crHitOrig, dir,
+                                            argmaxAxis, prefs,
+                                            worldHit, usedAxis);
             }
             case ActionCenterStage.Mode.Screen: {
                 Vec3 selCen = currentSelectionBBoxCenter();
