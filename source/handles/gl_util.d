@@ -78,8 +78,16 @@ enum float GIZMO_MOVE_ARM             = 1.00f;
 enum float GIZMO_MOVE_SHAFT_INSET_DIV = 6.0f;
 /// Centre-box HALF-extent, fraction of the arm. → 3.6 px half / 7.2 px across.
 enum float GIZMO_CENTER_BOX_HALF      = 0.04f;
-/// Plane-circle centre offset along EACH of its two axes. → 67.5 px per axis.
-enum float GIZMO_PLANE_OFFSET         = 0.75f;
+/// Plane-circle centre offset along EACH of its two axes. → 72 px per axis.
+///
+/// Task 0553: was 0.75. The reference publishes this exact proportion as a
+/// shipped preference — a "plane handle ratio" governing the handles that
+/// constrain an action to two axes at once — and its value there is 0.80.
+/// Independently, three plane rings were measured sitting at ≈0.8 of an arm
+/// along each of their two axes, so the shipped number and the observation
+/// agree. Shared by the move bank and the scale bank, which is also what the
+/// reference does: one ratio, not one per bank.
+enum float GIZMO_PLANE_OFFSET         = 0.80f;
 /// Plane-circle radius, fraction of the arm. → 6.3 px.
 enum float GIZMO_PLANE_RADIUS         = 0.07f;
 

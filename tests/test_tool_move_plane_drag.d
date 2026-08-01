@@ -41,9 +41,14 @@ void runMovePlaneDrag(int plane) {
     Vec3 pivot = Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
 
-    // Plane handles sit at center + two basis axes * 0.75*gizmoSize:
+    // Plane handles sit at center + two basis axes * 0.80*gizmoSize:
     //   4 = XY, 5 = YZ, 6 = XZ.
-    float off = size * 0.75f;
+    // 0.80, not 0.75, since task 0553 — the reference ships that proportion
+    // as its plane-handle ratio and its rings were measured at ≈0.8 of an
+    // arm. This copy of the constant is deliberately independent of
+    // GIZMO_PLANE_OFFSET so a product-side move fails loudly here; it did
+    // (this test caught the move on the XZ plane before it was updated).
+    float off = size * 0.80f;
     Vec3 circleCenter =
         plane == 4 ? Vec3(pivot.x + off, pivot.y + off, pivot.z)
       : plane == 5 ? Vec3(pivot.x,       pivot.y + off, pivot.z + off)

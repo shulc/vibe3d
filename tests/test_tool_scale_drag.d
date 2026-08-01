@@ -62,7 +62,13 @@ void runScalePlaneDrag(int plane) {
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
     Vec3 pivot = Vec3(0, 0, 0);
-    float off = gizmoSize(pivot, vp) * 0.75f;
+    // 0.80, not 0.75, since task 0553 — the reference ships that proportion
+    // as its plane-handle ratio and its rings were measured at ≈0.8 of an
+    // arm (see GIZMO_PLANE_OFFSET). This copy of the constant is deliberately
+    // independent of the product's, and it earned that: pressing the old
+    // 0.75 point after the move landed on a neighbouring plane circle and
+    // this test failed with "v0.x did not scale for plane 6".
+    float off = gizmoSize(pivot, vp) * 0.80f;
     Vec3 circleCenter =
         plane == 4 ? Vec3(pivot.x + off, pivot.y + off, pivot.z)
       : plane == 5 ? Vec3(pivot.x,       pivot.y + off, pivot.z + off)

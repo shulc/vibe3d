@@ -107,8 +107,13 @@ unittest { // After drag1+drag2 in one tool session, rendered position = CPU mes
     // dragAxis==4 in MoveTool.hitTestAxes).
     Vec3 pivot = Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    Vec3 circleCenter = Vec3(pivot.x + size * 0.75f,
-                              pivot.y + size * 0.75f,
+    // 0.80, not 0.75, since task 0553 (the reference's shipped plane-handle
+    // ratio; see GIZMO_PLANE_OFFSET). NOTE this test did NOT catch the move:
+    // pressing the old 0.75 point still landed inside the relocated circle,
+    // because 0553 also widened the pick footprint past the drawn shape. The
+    // constant is corrected to stay honest, not to make the test pass.
+    Vec3 circleCenter = Vec3(pivot.x + size * 0.80f,
+                              pivot.y + size * 0.80f,
                               pivot.z);
     float cx, cy;
     assert(projectToWindow(circleCenter, vp, cx, cy),
