@@ -260,9 +260,11 @@ class MoveTool : TransformTool {
     // button-down.
     //
     // `axisLawPorted` is decided once, at the arm, and frozen for the gesture.
-    // It is false under the `Screen` action centre, where the reference
-    // installs a different translator and the ported law is not the one that
-    // runs — see drag.d's LAW-CHANGE POINT.
+    // It is false under the `Screen` action centre — where the reference wraps
+    // the translator in a DECORATOR that forwards to this same conversion and
+    // then adds a term nobody has read, so `Screen` is held at its pre-port
+    // behaviour rather than shipped half-ported. See drag.d's LAW-CHANGE
+    // POINT; that is a parked divergence, not a claim about `Screen`.
     int      axisStartMX, axisStartMY;
     Vec3     axisAnchor;
     float    axisApplied = 0.0f;
@@ -819,10 +821,22 @@ public:
         axisApplied = 0.0f;
     }
 
-    // The `Screen` action centre installs a DIFFERENT drag translator on the
-    // reference side, so the conversion read for the default one is not the
-    // law that runs under it. Read once at the arm and frozen for the gesture
-    // — a mode that changed mid-drag must not change the conversion mid-drag.
+    // Is the `Screen` action centre the one in force? Under it the ported
+    // conversion is NOT run — and the reason is a hold, not a match.
+    //
+    // On the reference side `actr.screen` publishes a second object over the
+    // translator slot, but that object is a DECORATOR: its `GetNewPosition`
+    // forwards to the inner translator — the very conversion that was ported
+    // — and then adds a file-scope hit-handle triple to every component,
+    // re-latched whenever the handle part changes. Nobody has read that
+    // triple. So under `Screen` the reference is neither the ported law nor
+    // the editor's own compensated one, and shipping either would be a guess.
+    // The editor's own is kept because it is what `Screen` already did, which
+    // makes this change behaviour-NEUTRAL there and leaves the open question
+    // where it was.
+    //
+    // Read once at the arm and frozen for the gesture — a mode that changed
+    // mid-drag must not change the conversion mid-drag.
     private bool screenActionCentre(ref VectorStack vts) {
         import toolpipe.packets : ActionCenterPacket;
         import toolpipe.stages.actcenter : ActionCenterStage;
@@ -1000,8 +1014,9 @@ public:
         } else if (dragAxis <= 2) {
             // LAW A, the editor's own body — incremental, per event, against
             // the live gizmo. Reached under the `Screen` action centre only,
-            // where the reference installs a different translator and the
-            // ported law is not the one that runs. `lastMX/lastMY` stay
+            // which is HELD at its pre-port behaviour because the reference's
+            // `Screen` decorator forwards to the ported conversion and then
+            // adds an unread term (see `screenActionCentre`). `lastMX/lastMY` stay
             // written below — they are the fallback for any dispatch that
             // publishes no cooked gesture, and the other half of the debug
             // cross-check inside `gesturePrevPixel`.
