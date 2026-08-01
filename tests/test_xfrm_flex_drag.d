@@ -36,6 +36,35 @@
 // underlying AxisStage select-basis DOES flip during the drag (verified
 // against an instrumented build): the handle's frozen-vs-live frame is
 // what the assertion below pins.
+//
+// COORDINATE ROUNDING IS SET TO `None` FOR THIS TEST, DELIBERATELY (task
+// 0562). This is a real setting of the editor's, not a test hook, and the
+// reason it is selected here is arithmetic rather than convenience.
+//
+// The gizmo axis drag rounds its scalar to a step that is the world length of
+// one screen pixel rounded up onto a 1-2-5 ladder — so by construction the
+// step is between 1 and 2.5 pixels' worth of world, and this test's drag
+// advances 3 px per step. That is 1.2 to 3.0 quanta per step AT EVERY ZOOM ON
+// EVERY CAMERA. A round-to-nearest step tracks a non-integer count by
+// alternating between floor and ceil, so the step-to-step response ratio is at
+// best ceil/floor = 3/2 — a 33 % jump, against the 12 % proxy below. No
+// camera, no zoom and no placement of the rounding term gets under it; the
+// proxy needs about 9 quanta per step and the law caps this drag at 3.
+//
+// The detector below is about a FROZEN BASIS. It has nothing to say about
+// coordinate rounding, and rounding has nothing to say about whether the
+// basis flipped — a flip is a sustained change of direction and gain, which
+// is still exactly what a 12 % smoothness bound catches once the staircase is
+// not superimposed on it. So the test runs in the editor mode where the
+// rounding is the exact identity, which is a mode a user can select from the
+// snapping popover ("Coordinate Rounding -> None", described in the shipped
+// help as the freehand setting). The assertion below is UNCHANGED and its
+// threshold is UNTOUCHED: what changed is which of the editor's five rounding
+// modes this scenario runs under, stated explicitly rather than inherited.
+//
+// Selecting it explicitly also protects the test from the runner's schedule:
+// one vibe3d is reused per worker across test binaries, so a mode left
+// somewhere else by an earlier test would otherwise decide this one's result.
 
 import std.net.curl;
 import std.json;
@@ -165,6 +194,14 @@ unittest {
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
     postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+
+    // Coordinate Rounding = None: this scenario's detector is a per-step
+    // smoothness proxy and the drag steps 1.2-3.0 rounding quanta, so a
+    // staircase would show up in the proxy as a >=33 % jump no matter what
+    // camera it ran on. See the header — this is a shipped editor mode
+    // ("freehand"), selected here so the proxy measures the basis and not the
+    // grid. Selected AFTER /api/reset, which restores the default.
+    cmd("pref.coordRounding none");
 
     cmd("tool.set xfrm.flex on");
 

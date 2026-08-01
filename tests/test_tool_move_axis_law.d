@@ -1,7 +1,7 @@
 // The transform gizmo's AXIS ARM drag conversion, end to end (task 0562).
 //
 // `test_tool_move_drag.d` already pins that an X-arrow drag moves the
-// selection in +X and nothing else. This file pins the CONVERSION — the four
+// selection in +X and nothing else. This file pins the CONVERSION — the five
 // properties that make the ported law a different law from the one it
 // replaced, each of them a thing a user can feel:
 //
@@ -33,18 +33,30 @@
 //      pins that the port left `Screen` exactly where it found it. It is a
 //      neutrality pin on a parked divergence, NOT a specification of Screen.
 //
-//   4. THE SCALAR IS QUANTISED. The reference rounds the axis coordinate to
-//      the nearest 0.002 before it becomes a world offset (measured, 30 of 30
-//      evaluations), so every delivered length is a multiple of that step.
-//      The rounding LAW is pinned on the scalar in `drag.d`'s unittests
-//      against the reference's own six (before, after) pairs; what is pinned
-//      here is only that the shipped drag really does come out on the grid —
-//      i.e. that the term survives the whole tool path and is not swallowed
-//      by the wrapper.
+//   4. THE SCALAR IS ROUNDED, TO A STEP THAT IS A STAIRCASE IN THE ZOOM. The
+//      reference rounds the axis coordinate before it becomes a world offset
+//      (measured, 30 of 30 evaluations), and the step is not a constant: it
+//      is the world length of ONE screen pixel rounded up onto a 1-2-5
+//      ladder, so it is flat over a band of zooms and then jumps. Measured
+//      over 18 zoom levels spanning 1024x, 29 rows scored, 29 match.
+//
+//      This test drives that ACROSS RUNGS — five camera distances chosen so
+//      the step takes several distinct values — because a test that samples
+//      one zoom cannot tell a staircase from a constant, and that is exactly
+//      how a constant shipped here in the first place. The rounding LAW and
+//      the ladder are pinned in `drag.d`'s unittests against the reference's
+//      own rows; what is pinned here is that the term survives the whole tool
+//      path at every rung and is not swallowed by the wrapper.
+//
+//   5. THE WHOLE TERM IS BEHIND A USER SETTING, AND ITS `None` IS EXACT. The
+//      reference gates coordinate rounding on a five-valued preference whose
+//      first value turns it off. The default is rounding ON; under `None` the
+//      same gesture must deliver the raw gain, off the grid.
 //
 // No reference engine is booted and none is needed: (1)'s expected value is
 // arithmetic on our own camera, (2)/(3) are relations between two of our own
-// drags, and (4) is a property of a single number.
+// drags, (4)'s step is computed here from the camera by the reference's own
+// formula, and (5) is a relation between two of our own drags.
 
 import std.net.curl;
 import std.json;
@@ -62,8 +74,23 @@ enum string BASE = "http://localhost:8080";
 
 void cmd(string c) { post(BASE ~ "/api/command", c); }
 
-void setupAxisDrag(string acen) {
+// `dist <= 0` keeps whatever camera /api/reset left; a positive value pushes
+// the camera to that eye distance, which is how (4) walks the zoom staircase.
+void setupAxisDrag(string acen, string rounding = "fine", double dist = 0) {
     post(BASE ~ "/api/reset", "");
+    // Coordinate Rounding is selected EXPLICITLY in every scenario, never
+    // inherited: the runner reuses one vibe3d per worker across test
+    // binaries, and a test that left the setting somewhere else would make
+    // every later one's grid assertion depend on the schedule. `fine` is also
+    // the shipped default, so passing it is a statement, not a change.
+    // An EMPTY string means "select nothing" — the one scenario that asserts
+    // what the untouched default is.
+    if (rounding.length) cmd("pref.coordRounding " ~ rounding);
+    if (dist > 0) {
+        post(BASE ~ "/api/camera",
+             format(`{"azimuth":0.5,"elevation":0.4,"distance":%.6f}`, dist));
+        Thread.sleep(120.msecs);
+    }
     auto sel = post(BASE ~ "/api/select", `{"mode":"vertices","indices":[6]}`);
     assert(parseJSON(cast(string)sel)["status"].str == "ok",
            "select failed: " ~ cast(string)sel);
@@ -73,6 +100,26 @@ void setupAxisDrag(string acen) {
     Thread.sleep(200.msecs);
     cmd("actr." ~ acen);
     Thread.sleep(250.msecs);   // the gizmo must redraw for /api/tool/handles
+}
+
+// The reference's rounding step at THIS camera, from the camera alone: the
+// world length of one screen pixel rounded UP onto the 1-2-5 ladder.
+// Deliberately reimplemented here rather than imported, so this test states
+// the law independently of the module that implements it — the same stance
+// `viewWorldPerPixelFromCamera` takes for the gain.
+double ladderCeil125(double x) {
+    import std.math : log10, floor, fabs;
+    if (!(x > 0)) return 0;
+    const double e    = floor(log10(x));
+    const double frac = log10(x) - e;
+    static immutable double[4] ladder = [1.0, 2.0, 5.0, 10.0];
+    foreach (m; ladder)
+        if (log10(m) >= frac) return (10.0 ^^ e) * m;
+    return (10.0 ^^ e) * 10.0;
+}
+
+double roundingStepFromCamera(CameraState c) {
+    return ladderCeil125(viewWorldPerPixelFromCamera(c));
 }
 
 // The gain the port claims, from the camera and nothing else:
@@ -161,9 +208,10 @@ string dragLog(CameraState cam, int x0, int y0, int x1, int y1,
 // pixels of the run actually landed on the arm's screen direction.
 void oneArmDrag(string acen, int runPx, bool andBack,
                 out double[3] delta, out double alongPx,
-                out CameraState cam, out double[3] pivot)
+                out CameraState cam, out double[3] pivot,
+                string rounding = "fine", double dist = 0)
 {
-    setupAxisDrag(acen);
+    setupAxisDrag(acen, rounding, dist);
     cam   = fetchCamera(BASE);
     pivot = toolPivot();
 
@@ -276,34 +324,155 @@ unittest {  // 3. Screen is HELD at its pre-port behaviour, not re-specified
                 comp, alongPx, pivotDepth(cam, pivot), focalPxOf(cam), got));
 }
 
-unittest {  // 4. the delivered length lands on the reference's 0.002 grid
-    // The rounding law is pinned on the scalar in drag.d against the
-    // reference's own six (before, after) pairs. This pins only that the term
-    // is still there at the far end of the tool path — through the wrapper,
-    // the command, and the mesh write — because a quantum that is computed and
-    // then averaged away by a downstream blend is worth nothing.
+unittest {  // 4. the delivered length lands on the step — ACROSS THE STAIRCASE
+    // The rounding law and the ladder are pinned on the scalar in drag.d
+    // against the reference's own rows. This pins that the term is still
+    // there at the far end of the tool path — through the wrapper, the
+    // command, and the mesh write — because a step that is computed and then
+    // averaged away by a downstream blend is worth nothing.
     //
-    // FIVE runs, not one. Multiple-of-the-quantum is exact when the quantum is
-    // present and, when it is absent, fails for any run whose raw value is not
-    // within 1 % of a step by chance. One run could pass by luck; five cannot.
-    enum double Q = 0.002;
-    foreach (runPx; [96, 108, 117, 129, 141]) {
-        double[3] d, pivot; double alongPx; CameraState cam;
-        oneArmDrag("auto", runPx, false, d, alongPx, cam, pivot);
+    // SAMPLED ACROSS RUNGS, and that is the content this test gained. The
+    // step is a staircase in the zoom, so five camera distances spanning 8x
+    // put the drag on several different rungs; a run at one zoom cannot
+    // distinguish the law from the constant that used to be here, and this
+    // test's earlier form could not. Each distance also drives THREE pixel
+    // runs: landing on a multiple is exact when the term is present and, when
+    // it is absent, fails for any run whose raw value is not within 1 % of a
+    // step by chance. One run could pass by luck; fifteen cannot.
+    //
+    // 8x is the span, not a round number for its own sake: the widest gap on
+    // the 1-2-5 ladder is 2.5x, so 8x crosses at least two rung boundaries
+    // whatever pane the harness happens to give us — which is what makes the
+    // "at least 3 distinct" assertion below safe rather than lucky. The lower
+    // end stops at 1.5 because at 0.75 the gizmo no longer projects at all
+    // (every handle's `screen` comes back null) and the test would be
+    // measuring the near plane.
+    double[] stepsSeen;
+    foreach (dist; [1.5, 2.4, 3.0, 6.0, 12.0]) {
+        foreach (runPx; [96, 117, 141]) {
+            double[3] d, pivot; double alongPx; CameraState cam;
+            oneArmDrag("auto", runPx, false, d, alongPx, cam, pivot,
+                       "fine", dist);
 
-        const double got   = vlen3(d);
-        assert(got > 0.05, format("the %d px arm drag did not engage", runPx));
+            // The step this camera implies, computed here from /api/camera by
+            // the reference's own formula — never read out of the editor.
+            const double q = roundingStepFromCamera(cam);
+            assert(q > 0, "the camera implies no rounding step at all");
+            stepsSeen ~= q;
 
-        const double steps = got / Q;
-        const double off   = fabs(steps - cast(double)cast(long)(steps + 0.5));
-        assert(off * Q < 2e-5,
-               format("the axis arm's delivered length must land on the "
-                    ~ "reference's 0.002 grid: %d px delivered %.9f, which is "
-                    ~ "%.4f steps — %.7f off the nearest one. The reference "
-                    ~ "rounds the SCALAR before it becomes a world offset "
-                    ~ "(measured 30/30); a value off the grid means the "
-                    ~ "quantum was dropped, or applied to the position "
-                    ~ "instead of the scalar, or averaged out downstream.",
-                    runPx, got, steps, off * Q));
+            const double got = vlen3(d);
+            assert(got > 0.02,
+                   format("the %d px arm drag at distance %.2f did not engage "
+                        ~ "(got %.9f)", runPx, dist, got));
+
+            const double n   = got / q;
+            const double off = fabs(n - cast(double)cast(long)(n + 0.5));
+            assert(off * q < 2e-5,
+                   format("the axis arm's delivered length must land on the "
+                        ~ "view's own rounding step: at eye distance %.3f the "
+                        ~ "step is %.9g, and a %d px run delivered %.9f = "
+                        ~ "%.4f steps — %.8f off the nearest one. The "
+                        ~ "reference rounds the SCALAR before it becomes a "
+                        ~ "world offset (measured 30/30); a value off the "
+                        ~ "grid means the step was dropped, computed from the "
+                        ~ "wrong quantity, applied to the position instead of "
+                        ~ "the scalar, or averaged out downstream.",
+                        dist, q, runPx, got, n, off * q));
+        }
     }
+
+    // And the sampling really did cross rungs. Without this the loop above
+    // would pass unchanged against a hard-coded constant — which is the
+    // defect that shipped here, and the reason a one-zoom test could not see
+    // it. Five distances spanning 16x must not all share one step.
+    import std.algorithm : sort, uniq;
+    import std.array     : array;
+    auto distinct = stepsSeen.dup.sort.uniq.array;
+    assert(distinct.length >= 3,
+           format("this test must sample the staircase across RUNGS: five "
+                ~ "eye distances spanning 8x produced only %d distinct "
+                ~ "step(s) (%s). With one rung the assertion above cannot "
+                ~ "tell the ported law from a constant.",
+                distinct.length, distinct));
+}
+
+unittest {  // 5. the whole term is behind the setting, and `None` is exact
+    // The rounding is a user preference with five values, shipped ON at the
+    // one-pixel step. `None` is not a fine grid — it is the exact identity,
+    // which is the only thing that makes running a quantisation-blind
+    // regression test under it legitimate rather than a fudge.
+    //
+    // WHAT THIS PINS AND WHAT IT DOES NOT, because the two are different and
+    // the difference was found by mutation, not by argument. What this pins
+    // is that the SETTING REACHES the tool path: a call site that ignored the
+    // mode and always rounded fails the off-grid assertion below, and a
+    // default of `None` fails the last one. What it does NOT pin is the
+    // EXACTNESS of the identity — a `None` that secretly rounded to 1e-4
+    // passes everything here, because 1e-4 is far inside the 1 % the raw-gain
+    // prediction has to allow (the screen direction is finite-differenced at
+    // the base, and the pixel endpoints are integers). Exactness is pinned
+    // BITWISE where a bitwise claim can be made: `drag.d`'s gate unittest
+    // asserts `axisArmDelta(..., None) == axisArmDeltaUnsnapped(...)` with
+    // `==`, and a step of 1e-9 there fails it. Do not "strengthen" the
+    // tolerance below to try to cover that — it would only make this test
+    // flaky about the finite difference.
+    //
+    // Same gesture, same camera, same everything except the setting.
+    enum int RUN = 117;
+
+    double[3] dOn, pivotOn; double alongOn; CameraState camOn;
+    oneArmDrag("auto", RUN, false, dOn, alongOn, camOn, pivotOn, "fine");
+    double[3] dOff, pivotOff; double alongOff; CameraState camOff;
+    oneArmDrag("auto", RUN, false, dOff, alongOff, camOff, pivotOff, "none");
+
+    const double q      = roundingStepFromCamera(camOn);
+    const double gotOn  = vlen3(dOn);
+    const double gotOff = vlen3(dOff);
+    assert(gotOn > 0.05 && gotOff > 0.05, "one of the two drags did not engage");
+    assert(fabs(alongOn - alongOff) < 1e-9,
+           "the two runs must be the same gesture for this comparison to mean "
+           ~ "anything");
+
+    // ON: on the grid (this is (4)'s property, restated here so the pair is
+    // read together).
+    const double nOn = gotOn / q;
+    assert(fabs(nOn - cast(double)cast(long)(nOn + 0.5)) * q < 2e-5,
+           format("with rounding on, %d px must land on the step %.9g; got "
+                ~ "%.9f = %.4f steps", RUN, q, gotOn, nOn));
+
+    // OFF: the raw gain, and specifically NOT on the grid. The predicted raw
+    // value comes from the camera, so this asserts what `None` delivers, not
+    // merely that it differs.
+    const double raw = viewWorldPerPixelFromCamera(camOff) * alongOff;
+    assert(fabs(gotOff - raw) <= 0.01 * raw,
+           format("under Coordinate Rounding = None the arm must deliver the "
+                ~ "RAW gain: want %.9f = pixelScale x %.3f px, got %.9f. A "
+                ~ "value that still lands on a grid means `None` was ported "
+                ~ "as a small step instead of as the identity.",
+                raw, alongOff, gotOff));
+    const double nOff = gotOff / q;
+    assert(fabs(nOff - cast(double)cast(long)(nOff + 0.5)) * q > 2e-5,
+           format("...and it must be OFF the grid, or this test cannot tell "
+                ~ "the setting apart: %.9f is %.4f steps of %.9g. (If the raw "
+                ~ "value lands within 2e-5 of a step by chance the run length "
+                ~ "must move — that is the other way this fires.)",
+                gotOff, nOff, q));
+
+    // The default is the reference's default, not `None`. The reset inside
+    // `setupAxisDrag` restores it — which is also what stops the `none` drag
+    // above from switching the rounding off for every later test sharing this
+    // vibe3d process — and this run selects NOTHING, so what it measures is
+    // whatever the untouched setting is.
+    double[3] dDef, pivotDef; double alongDef; CameraState camDef;
+    oneArmDrag("auto", RUN, false, dDef, alongDef, camDef, pivotDef, "");
+
+    const double qd = roundingStepFromCamera(camDef);
+    const double gd = vlen3(dDef);
+    assert(gd > 0.05, "the default-mode drag did not engage");
+    const double nd = gd / qd;
+    assert(fabs(nd - cast(double)cast(long)(nd + 0.5)) * qd < 2e-5,
+           format("the SHIPPED DEFAULT must be rounding ON: after a reset, "
+                ~ "with no mode selected, %d px delivered %.9f = %.4f steps "
+                ~ "of %.9g. A default of None would ship the measured term "
+                ~ "switched off and call it ported.", RUN, gd, nd, qd));
 }
