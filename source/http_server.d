@@ -357,6 +357,32 @@ class HttpServer {
     private alias SurfaceRaycastProvider = string delegate(int x, int y, float thresholdPx);
     private SurfaceRaycastProvider surfaceRaycastProvider;
 
+    // ----- GET /api/viewport/display — resolved draw-plan dump (test-only) --
+    // Task 0559. Returns, per viewport cell, the cell's display STATE and the
+    // resolved DRAW PLANS the renderer consumes for the active mesh and for a
+    // background layer. It is a real assertion target precisely because the
+    // renderer reads the same struct this dumps — a parallel re-derivation
+    // could silently drift from what is actually drawn; this cannot.
+    // Marshaled onto the main thread: it reads live per-cell viewport state.
+    private alias ViewportDisplayProvider = string delegate();
+    private ViewportDisplayProvider viewportDisplayProvider;
+
+    // ----- GET /api/viewport/probe — FBO pixel readback (test-only) --------
+    // Task 0559. glReadPixels against one cell's colour attachment, so a test
+    // can assert what GL actually produced rather than what the plan says it
+    // should have. Needs the GL context, hence the main-thread bridge.
+    //
+    // ⚠ KNOWN LIMITATION, and it is a silent-pass trap: under --test only the
+    // ACTIVE cell is rendered each frame (the render loop's needRender is
+    // `k == activeId` there). A probe aimed at a non-active cell reads a
+    // never-filled FBO and any assertion on it passes for the wrong reason.
+    // The response therefore carries a `renders` flag per request; assert on
+    // it, or probe the active cell only. Non-active cells are covered by
+    // /api/viewport/display state assertions, which do not need a render.
+    private alias ViewportProbeProvider =
+        string delegate(int cell, string points, bool wantHash);
+    private ViewportProbeProvider viewportProbeProvider;
+
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
     // the history service — runs on the HTTP thread like historyProvider.
@@ -446,6 +472,20 @@ class HttpServer {
     struct SurfaceRaycastReq  { int x; int y; float thresholdPx = -1.0f; }
     struct SurfaceRaycastResp { string result; string error; }
     private MainThreadBridge!(SurfaceRaycastReq, SurfaceRaycastResp) surfaceRaycastBridge;
+
+    // Task 0559 — two endpoints, TWO bridges, each with its OWN epoch pair.
+    // They must not share one (nor borrow another endpoint's): a concurrent
+    // pair of requests on a shared epoch pair cross-trips each other's spin,
+    // since either completed-bump satisfies both waiters and one of them
+    // returns a torn or empty result. Same hard rule as pathBridge and
+    // toolpipeBridge.
+    struct VpDisplayReq  { }
+    struct VpDisplayResp { string result; string error; }
+    private MainThreadBridge!(VpDisplayReq, VpDisplayResp) vpDisplayBridge;
+
+    struct VpProbeReq  { int cell = -1; string points; bool wantHash; }
+    struct VpProbeResp { string result; string error; }
+    private MainThreadBridge!(VpProbeReq, VpProbeResp) vpProbeBridge;
 
     struct RefireReq  { string action; }
     struct RefireResp { string error; }
@@ -729,6 +769,34 @@ class HttpServer {
                 }
             });
 
+        vpDisplayBridge = new MainThreadBridge!(VpDisplayReq, VpDisplayResp)(this,
+            (ref VpDisplayReq req, ref VpDisplayResp resp) {
+                if (viewportDisplayProvider is null) {
+                    resp.error = "viewport-display provider not set";
+                } else {
+                    try {
+                        resp.result = viewportDisplayProvider();
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        vpProbeBridge = new MainThreadBridge!(VpProbeReq, VpProbeResp)(this,
+            (ref VpProbeReq req, ref VpProbeResp resp) {
+                if (viewportProbeProvider is null) {
+                    resp.error = "viewport-probe provider not set";
+                } else {
+                    try {
+                        resp.result = viewportProbeProvider(req.cell, req.points, req.wantHash);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         refireBridge = new MainThreadBridge!(RefireReq, RefireResp)(this,
             (ref RefireReq req, ref RefireResp resp) {
                 if (refireHandler is null) {
@@ -906,6 +974,22 @@ class HttpServer {
     /// means "use the tool's own default".
     public void setSurfaceRaycastProvider(SurfaceRaycastProvider provider) {
         this.surfaceRaycastProvider = provider;
+    }
+
+    /// GET /api/viewport/display — per-cell display state + the resolved draw
+    /// plans the renderer consumes (task 0559). Runs on the main thread.
+    public void setViewportDisplayProvider(ViewportDisplayProvider provider) {
+        this.viewportDisplayProvider = provider;
+    }
+
+    /// GET /api/viewport/probe?cell=N[&x=&y=][&points=x,y;x,y][&hash=1] —
+    /// glReadPixels against a cell's FBO colour attachment (task 0559).
+    /// Runs on the main thread (GL context). Coordinates are FBO pixels with
+    /// the origin at the TOP-LEFT, matching screen/event coordinates; the
+    /// provider flips to GL's bottom-up convention. See the provider alias
+    /// for the --test single-rendered-cell trap.
+    public void setViewportProbeProvider(ViewportProbeProvider provider) {
+        this.viewportProbeProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -1691,6 +1775,65 @@ class HttpServer {
                 }
                 response.headers["Content-Type"] = "application/json";
             }
+        } else if (request.path.startsWith("/api/viewport/display") && request.method == "GET") {
+            // Task 0559 — dump every cell's display state + resolved draw
+            // plans. Ordered BEFORE /api/viewport/probe is irrelevant (the
+            // paths differ past the prefix), but both must sit before any
+            // future bare "/api/viewport" prefix match.
+            if (viewportDisplayProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"viewport-display provider not set"}`;
+            } else {
+                vpDisplayBridge.resp.result = "";
+                vpDisplayBridge.resp.error  = "";
+                if (!vpDisplayBridge.submitAndWait())
+                    vpDisplayBridge.resp.error = "timeout waiting for main thread";
+                if (vpDisplayBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = vpDisplayBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"`
+                                    ~ vpDisplayBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path.startsWith("/api/viewport/probe") && request.method == "GET") {
+            // Task 0559 — FBO pixel readback. `points` is "x,y;x,y;..." in
+            // TOP-LEFT-origin FBO pixels; `x`/`y` is sugar for a single
+            // point. `hash=1` additionally digests the WHOLE colour buffer,
+            // which is what makes "these two builds draw identical pixels" a
+            // checkable claim rather than an assertion.
+            if (viewportProbeProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"viewport-probe provider not set"}`;
+            } else {
+                vpProbeBridge.req.cell   = parseQueryInt(request.path, "cell", -1);
+                string _pts = parseQueryString(request.path, "points", "");
+                if (_pts.length == 0) {
+                    immutable int _px = parseQueryInt(request.path, "x", -1);
+                    immutable int _py = parseQueryInt(request.path, "y", -1);
+                    if (_px >= 0 && _py >= 0) {
+                        import std.conv : to;
+                        _pts = _px.to!string ~ "," ~ _py.to!string;
+                    }
+                }
+                vpProbeBridge.req.points   = _pts;
+                vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
+                vpProbeBridge.resp.result  = "";
+                vpProbeBridge.resp.error   = "";
+                if (!vpProbeBridge.submitAndWait())
+                    vpProbeBridge.resp.error = "timeout waiting for main thread";
+                if (vpProbeBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = vpProbeBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"`
+                                    ~ vpProbeBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path.startsWith("/api/pick") && request.method == "GET") {
             if (pickProvider is null) {
                 response.statusCode = 500;

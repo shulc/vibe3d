@@ -1689,6 +1689,10 @@ void main(string[] args) {
     // doc/viewport_phase1_plan.md §A.  gpuSelect has 0 address-of sites (class
     // ref) and needs only the init/shutdown ownership edits below.
     import viewport : ViewportManager, Viewport3D, DirtyKey;
+    // Task 0559: the N-cell FBO loop resolves each cell's draw plan for its
+    // DirtyKey term (and the HTTP display endpoint dumps the same call).
+    import display_state : ViewportDisplay, DisplayState, DisplayStyle,
+                           WireOverlay, BackdropStyle, DrawPlan, resolveDrawPlan;
     auto vpm = new ViewportManager(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
     vpm.views[0].vcache.resize(mesh.vertices.length);
     vpm.views[0].fcache.resize(mesh.vertices.length, mesh.faces.length);
@@ -3797,6 +3801,153 @@ void main(string[] args) {
             }
             buf.put(`],"model":`);
             buf.put(modelStr);
+            buf.put("}");
+            return buf.data;
+        });
+
+        // GET /api/viewport/display — task 0559 (viewport display modes).
+        // Dumps, per cell, the display STATE and the resolved DRAW PLANS.
+        // These are the same `resolveDrawPlan` calls the render loop and the
+        // cell's dirty key make, so asserting the dump is asserting drawing —
+        // there is no second derivation that could drift.
+        //
+        // `renders` reports whether this cell is actually being re-rendered
+        // under the current mode; in --test only the active cell is, and a
+        // pixel probe aimed at any other cell would read a never-filled FBO
+        // and pass for the wrong reason. State assertions do not need it.
+        httpServer.setViewportDisplayProvider(() {
+            import std.array  : appender;
+            import std.format : format;
+            import std.conv   : to;
+
+            static string planJson(in DrawPlan p) {
+                return format(
+                    `{"drawFaces":%s,"facesLit":%s,"dim":%.6f,` ~
+                    `"drawWire":%s,"wireAlpha":%.6f,` ~
+                    `"wireColor":[%.6f,%.6f,%.6f],"drawVerts":%s}`,
+                    p.drawFaces ? "true" : "false",
+                    p.facesLit  ? "true" : "false",
+                    p.dim,
+                    p.drawWire  ? "true" : "false",
+                    p.wireAlpha,
+                    p.wireColor[0], p.wireColor[1], p.wireColor[2],
+                    p.drawVerts ? "true" : "false");
+            }
+            static string stateJson(in DisplayState s) {
+                return format(`{"style":"%s","wire":"%s","wireAlpha":%.6f}`,
+                    s.style.to!string, s.wire.to!string, s.wireAlpha);
+            }
+
+            auto buf = appender!string();
+            buf.put(format(`{"activeId":%d,"cellCount":%d,"cells":[`,
+                           vpm.activeId, vpm.cellCount));
+            foreach (k; 0 .. vpm.cellCount) {
+                if (k > 0) buf.put(",");
+                Viewport3D cv = vpm.views[k];
+                immutable bool renders = testMode ? (k == vpm.activeId) : true;
+                buf.put(format(
+                    `{"id":%d,"renders":%s,` ~
+                    `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
+                    `"plan":{"active":%s,"backdrop":%s}}`,
+                    k,
+                    renders ? "true" : "false",
+                    stateJson(cv.display.active),
+                    stateJson(cv.display.backdrop),
+                    cv.display.backdropStyle.to!string,
+                    planJson(resolveDrawPlan(cv.display, false)),
+                    planJson(resolveDrawPlan(cv.display, true))));
+            }
+            buf.put("]}");
+            return buf.data;
+        });
+
+        // GET /api/viewport/probe?cell=N[&x=&y=][&points=][&hash=1] —
+        // task 0559. glReadPixels against one cell's FBO colour attachment:
+        // the only tier of this feature's testing that proves GL actually
+        // did something, as opposed to that the plan said it should.
+        //
+        // Coordinates are FBO pixels, origin TOP-LEFT (screen convention, the
+        // one every event log and every other endpoint uses); the flip to
+        // GL's bottom-up origin happens here so no caller has to know.
+        //
+        // `hash=1` digests the WHOLE colour buffer. That is what turns "this
+        // refactor changed no pixels" from an assertion into a measurement.
+        //
+        // Serviced during tickAll(), which runs BEFORE this frame's scene
+        // render — so a probe reads the last COMPLETED frame, which is what
+        // you want. Callers that just changed something must let a frame pass.
+        httpServer.setViewportProbeProvider((int cell, string points, bool wantHash) {
+            import bindbc.opengl;
+            import std.array  : appender, split;
+            import std.conv   : to;
+            import std.format : format;
+            import std.string : strip;
+
+            if (cell < 0) cell = vpm.activeId;
+            if (cell < 0 || cell >= cast(int)vpm.views.length)
+                return format(`{"error":"cell %d out of range"}`, cell);
+
+            Viewport3D cv = vpm.views[cell];
+            immutable bool renders = testMode ? (cell == vpm.activeId) : true;
+            immutable int W = cv.fbo.w;
+            immutable int H = cv.fbo.h;
+            immutable string head = format(
+                `{"cell":%d,"renders":%s,"w":%d,"h":%d`,
+                cell, renders ? "true" : "false", W, H);
+
+            if (cv.fbo.fbo == 0 || W <= 0 || H <= 0)
+                return head ~ `,"points":[],"error":"cell has no framebuffer yet"}`;
+
+            GLint prevRead = 0;
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, cv.fbo.fbo);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            scope(exit) glBindFramebuffer(GL_READ_FRAMEBUFFER, cast(GLuint)prevRead);
+
+            auto buf = appender!string();
+            buf.put(head);
+            buf.put(`,"points":[`);
+            bool first = true;
+            foreach (spec; points.split(";")) {
+                auto s = spec.strip();
+                if (s.length == 0) continue;
+                auto xy = s.split(",");
+                if (xy.length != 2) continue;
+                int px, py;
+                try {
+                    px = xy[0].strip.to!int;
+                    py = xy[1].strip.to!int;
+                } catch (Exception) {
+                    continue;
+                }
+                if (!first) buf.put(",");
+                first = false;
+                if (px < 0 || py < 0 || px >= W || py >= H) {
+                    buf.put(format(`{"x":%d,"y":%d,"error":"outside the cell"}`, px, py));
+                    continue;
+                }
+                ubyte[4] rgba;
+                // Flip Y: caller passes top-left origin, GL reads bottom-up.
+                glReadPixels(px, H - 1 - py, 1, 1,
+                             GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
+                buf.put(format(`{"x":%d,"y":%d,"r":%d,"g":%d,"b":%d,"a":%d}`,
+                               px, py, rgba[0], rgba[1], rgba[2], rgba[3]));
+            }
+            buf.put("]");
+
+            if (wantHash) {
+                // FNV-1a over the whole RGBA8 buffer. Cheap, stable, and a
+                // mismatch is a real difference — not a tolerance question.
+                auto all = new ubyte[](cast(size_t)W * cast(size_t)H * 4);
+                glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, all.ptr);
+                ulong h = 0xcbf2_9ce4_8422_2325UL;
+                foreach (b; all) {
+                    h ^= b;
+                    h *= 0x0000_0100_0000_01b3UL;
+                }
+                buf.put(format(`,"hash":"%016x"`, h));
+            }
+
             buf.put("}");
             return buf.data;
         });
@@ -10130,6 +10281,18 @@ void main(string[] args) {
                         // re-render when `hot` flips even though its own
                         // view/proj/mesh are unchanged (see DirtyKey.overlayHot doc).
                         _newKey.overlayHot = _ovlHot;
+                        // Task 0559: the display term. Note it is stamped
+                        // from `_cv` — THIS cell — not from a frame-level
+                        // value like every other term above. Display style is
+                        // the first genuinely per-cell render input; sourcing
+                        // it from anywhere but the loop variable would make
+                        // all four cells share one mode while looking like a
+                        // working implementation. It is the RESOLVED plan,
+                        // i.e. exactly what renderViewportSceneToFbo consumes
+                        // a few lines below, so the key cannot go stale
+                        // against a resolution change (see DirtyKey doc).
+                        _newKey.planActive   = resolveDrawPlan(_cv.display, false);
+                        _newKey.planBackdrop = resolveDrawPlan(_cv.display, true);
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;

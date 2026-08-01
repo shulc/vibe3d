@@ -1,9 +1,10 @@
 module viewport;
 
-import view       : View, ProjKind, ViewPreset;
-import viewcache  : VertexCache, FaceBoundsCache, EdgeCache;
-import gpu_select : GpuSelectBuffer;
-import math       : Viewport, Vec3;
+import view          : View, ProjKind, ViewPreset;
+import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
+import gpu_select    : GpuSelectBuffer;
+import math          : Viewport, Vec3;
+import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -182,6 +183,36 @@ struct DirtyKey {
     // never reaches the compare) — same neutrality argument as the other
     // overlay terms.
     int       overlayHot     = -1;
+
+    // Task 0559 (per-viewport display modes) — the display term, and the
+    // FIRST genuinely per-cell render input on this struct.
+    //
+    // Read the comment block above carefully before touching this one: every
+    // OTHER term here is SHARED — the render loop stamps the same value into
+    // all four cells' keys, because until now the only per-cell render inputs
+    // were the camera matrices and the FBO size. Display style is not shared.
+    // It must be stamped FROM THE CELL (`_cv`), never from a frame-level
+    // value, or all four cells silently share one mode and the bug looks
+    // exactly like a working implementation.
+    //
+    // WHY THE RESOLVED PLANS AND NOT THE STATE. This file documents four
+    // prior instances of the same bug — a render input added without a
+    // matching key term, so a non-hovered cell froze until its camera moved
+    // (`toolMat` :132, the overlay terms :144, `gpuUploadVer` :161,
+    // `overlayHot` :174). Every one of those was an ENUMERATED field somebody
+    // had to remember to add. So this term is not an encoding of the display
+    // state; it is the two `DrawPlan`s the render pass ACTUALLY CONSUMES,
+    // stamped from the same `resolveDrawPlan` call the renderer makes. A key
+    // derived from what a pass reads cannot miss a term the way a hand-kept
+    // list can: a future display field that reaches the plan is caught with
+    // no edit here at all, and one that does not reach the plan correctly
+    // triggers no re-render.
+    //
+    // Defaults are CTFE-constant (`DrawPlan`'s own field initialisers) and
+    // inert in --test, where the Single layout never reaches the compare —
+    // the same neutrality argument as every term above.
+    DrawPlan  planActive;
+    DrawPlan  planBackdrop;
 }
 
 unittest {
@@ -262,6 +293,61 @@ unittest {
     assert(a != b, "keys differing only in overlayHot must compare unequal");
 }
 
+unittest {
+    // Task 0559: DirtyKey must discriminate on the DISPLAY term alone — two
+    // keys identical in every other field (toolMat/overlay*/gpuUploadVer all
+    // at rest) but differing only in the resolved draw plan must compare
+    // unequal.
+    //
+    // This is the fifth instance of a bug this file has already shipped four
+    // times, and the first one that is per-CELL: without the term, switching
+    // a Quad/Split cell's display mode re-blits the cached colour texture and
+    // the mode change appears to do nothing until that cell's camera moves.
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.planActive.drawFaces = false;   // e.g. switched to a lines-only style
+    assert(a != b, "keys differing only in the active draw plan must compare unequal");
+
+    b = a;
+    b.planActive.drawWire = false;    // e.g. overlay switched off
+    assert(a != b, "keys differing only in the active overlay must compare unequal");
+
+    b = a;
+    b.planBackdrop.dim = 1.0f;        // e.g. backdrop no longer dimmed
+    assert(a != b, "keys differing only in the BACKDROP plan must compare unequal");
+}
+
+unittest {
+    // Task 0559, the per-cell half of the same trap. Every OTHER DirtyKey
+    // term is stamped identically into all four cells; this one is not. Two
+    // cells whose display state differs must therefore resolve to different
+    // plans — if `resolveDrawPlan` ever collapsed distinct states onto one
+    // plan, the key could not tell the cells apart and they would share a
+    // cached texture no matter how carefully the stamping site was written.
+    import display_state : ViewportDisplay, DisplayStyle, WireOverlay,
+                           BackdropStyle;
+
+    ViewportDisplay cell0;                                  // shipped default
+    ViewportDisplay cell1; cell1.active.style = DisplayStyle.Wireframe;
+    ViewportDisplay cell2; cell2.active.wire  = WireOverlay.None;
+    ViewportDisplay cell3; cell3.backdropStyle = BackdropStyle.Hidden;
+
+    DirtyKey k0, k1, k2, k3;
+    foreach (i, d; [cell0, cell1, cell2, cell3]) {
+        auto k = [&k0, &k1, &k2, &k3][i];
+        k.planActive   = resolveDrawPlan(d, false);
+        k.planBackdrop = resolveDrawPlan(d, true);
+    }
+
+    assert(k0 != k1, "a cell in a lines-only style must not alias the default cell");
+    assert(k0 != k2, "a cell with the overlay off must not alias the default cell");
+    assert(k0 != k3, "a cell hiding its backdrop must not alias the default cell");
+    assert(k1 != k2, "two differently-configured cells must not alias each other");
+}
+
 // ---------------------------------------------------------------------------
 // overlayDrawOrder — task 0206 Phase 0/3
 // ---------------------------------------------------------------------------
@@ -324,6 +410,16 @@ final class Viewport3D {
     ViewportFbo fbo;
     bool        dirty    = true;   // starts dirty → first frame always renders
     DirtyKey    lastKey;
+
+    // Task 0559 — this cell's display state (surface style, wireframe
+    // overlay, backdrop representation), for BOTH activity states.
+    //
+    // The FIRST per-cell render input beyond the camera and the FBO size:
+    // everything else the renderer branches on is either global (edit mode,
+    // selection) or derived from the shared frame. It is defaulted to today's
+    // exact behaviour, so a cell that is never touched renders as it always
+    // did; there is no command or preference that writes it yet.
+    ViewportDisplay display;
 
     // Phase-2..5 inert fields — declared now, unused in Phase 1.
     bool       indCenter = true;
