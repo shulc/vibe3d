@@ -2769,9 +2769,9 @@ public:
     // THE RADIUS IS IN THE ANSWER, not beside it. The reference parks the
     // nearest element in its target slot BEFORE applying the acceptance radius
     // and folds the radius into the query's RETURN only — on one recording ten
-    // evaluations had a target parked and only two were inside the radius. A
-    // port that asks "is there a target?" instead of "did the query answer?"
-    // therefore welds five times too often. Ours cannot make that mistake by
+    // evaluations had a target parked and only two were inside the radius, so
+    // a port that asks "is there a target?" instead of "did the query answer?"
+    // would have welded on the other EIGHT. Ours cannot make that mistake by
     // shape: `findSourceVertex` returns -1 unless the winner is within
     // `topoPenSnapAcceptPx`, so the answer IS the radius-gated one and there is
     // no unfiltered slot to read by accident.
