@@ -1750,6 +1750,32 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                                bool showFaceHover) {
     with (app) {
     import bindbc.opengl;
+    import display_state : DrawPlan, resolveDrawPlan;
+
+    // ---- Resolve this cell's display state into what each pass may draw ----
+    //
+    // Task 0559 Phase 1 (doc/viewport_display_modes_plan.md). Before this,
+    // every mesh pass below was unconditional: faces always, edges always,
+    // background layers always the same two passes dimmed. That left no way
+    // to observe — let alone test — what the renderer decided to draw.
+    //
+    // Now the passes read a resolved plan and nothing else, so the renderer
+    // is structurally unable to draw what the plan does not describe. The
+    // display endpoint dumps these same two structs, which is what makes a
+    // plan dump a real assertion about drawing rather than a re-derivation
+    // that can drift.
+    //
+    // The plan is resolved FROM THE CELL (`v.display`), not from a frame
+    // value — display style is the first genuinely per-cell render input, and
+    // the cell's dirty key is stamped from these same two calls.
+    //
+    // Phase-1 neutrality: `v.display` defaults to today's behaviour and
+    // nothing writes it yet, so both plans resolve to exactly the set of
+    // passes that ran before — faces lit, wireframe on, no forced vertex
+    // dots, backdrop dimmed by the same factor that used to be a local
+    // constant here.
+    immutable DrawPlan activePlan   = resolveDrawPlan(v.display, false);
+    immutable DrawPlan backdropPlan = resolveDrawPlan(v.display, true);
 
     // Bind FBO — scene draws go here instead of the default framebuffer.
     // Viewport covers the entire FBO (offsets zeroed: FBO origin IS the
@@ -1883,7 +1909,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             bgGpuByLayer.remove(lyr);
         }
 
-        enum float kBgDim = 0.45f;
+        // The dim factor moved into the display model (it is now an output of
+        // plan resolution, `backdropPlan.dim`) — it is the ONE thing that
+        // distinguishes a background layer today, and the backdrop axis is
+        // what will eventually replace it with a genuinely different
+        // representation. Cache upkeep below stays UNCONDITIONAL on purpose:
+        // a display change must never invalidate or skip a `bgGpuByLayer`
+        // upload, only the DRAWS are gated.
         foreach (i, lyr; document.layers) {
             if (document.isPrimary(lyr) || !lyr.visible) continue;
             float[16] bgModel = lyr.xform.composedMatrix();
@@ -1902,16 +1934,20 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 bg.uploadedVersion = lyr.mesh.mutationVersion;
             }
 
-            litShader.useProgram(bgModel, vp);
-            litShader.setSurfaces(lyr.mesh.surfaces);
-            litShader.setDim(kBgDim);
-            bg.gpu.drawFaces(litShader);
-            litShader.setDim(1.0f);
+            if (backdropPlan.drawFaces) {
+                litShader.useProgram(bgModel, vp);
+                litShader.setSurfaces(lyr.mesh.surfaces);
+                litShader.setDim(backdropPlan.dim);
+                bg.gpu.drawFaces(litShader);
+                litShader.setDim(1.0f);
+            }
 
-            shader.useProgram(bgModel, vp);
-            shader.setDim(kBgDim);
-            bg.gpu.drawEdges(shader.locColor, -1, []);
-            shader.setDim(1.0f);
+            if (backdropPlan.drawWire) {
+                shader.useProgram(bgModel, vp);
+                shader.setDim(backdropPlan.dim);
+                bg.gpu.drawEdges(shader.locColor, -1, []);
+                shader.setDim(1.0f);
+            }
         }
     }
 
@@ -1947,19 +1983,24 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     }
 
     // ---- Faces (Blinn-Phong) ----
+    // Gated on the plan's SHADING group. `drawFaces == false` means no face
+    // pass AT ALL — not a depth-only one: a lines-only style has to be
+    // see-through, so back-side edges stay visible.
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
-        litShader.useProgram(meshModel, vp);
-        litShader.setSurfaces(mesh.surfaces);
-        bool toolFaceHover = activeTool !is null
-                          && activeTool.wantsHoverForType(EditMode.Polygons)
-                          && hoveredFace >= 0;
-        if (editMode == EditMode.Polygons) {
-            gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
-        } else if (toolFaceHover) {
-            gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
-        } else {
-            gpu.drawFaces(litShader);
+        if (activePlan.drawFaces) {
+            litShader.useProgram(meshModel, vp);
+            litShader.setSurfaces(mesh.surfaces);
+            bool toolFaceHover = activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Polygons)
+                              && hoveredFace >= 0;
+            if (editMode == EditMode.Polygons) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
+            } else if (toolFaceHover) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
+            } else {
+                gpu.drawFaces(litShader);
+            }
         }
     }
 
@@ -2074,13 +2115,30 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                     ? rebuildLoopHoverMask(hoveredEdge)
                     : (bool[]).init;
             gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
-        } else {
+        } else if (activePlan.drawWire) {
+            // The base wireframe overlay, and the ONLY branch of this chain
+            // that is pure overlay — no selection set, no hover index. So it
+            // is the only one the plan's OVERLAY group gates today.
+            //
+            // The branches above are NOT gated, deliberately: each of them
+            // folds selection or hover feedback into the same `drawEdges`
+            // call as the base pass, and those are separate axes that must
+            // survive the overlay being switched off. Turning this whole
+            // chain off would be the obvious — and wrong — implementation.
+            // Splitting base-from-feedback inside those branches is the
+            // overlay phase's job; until then `drawWire == false` still
+            // leaves base lines drawn underneath a hover or a selection, and
+            // no default reaches that state.
             gpu.drawEdges(shader.locColor, -1, []);
         }
     }
 
     // ---- Vertex dots ----
-    if (editMode == EditMode.Vertices) {
+    // `drawVerts` is a FORCING term from the surface style (a lines-only
+    // style draws vertices as well as edges). The edit-mode gate below is a
+    // separate, unmodelled axis and keeps working exactly as before; the two
+    // are OR-ed. Today no style forces it, so this reads as it always did.
+    if (activePlan.drawVerts || editMode == EditMode.Vertices) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
     } else if (showVertHover && hoveredVertex >= 0) {
