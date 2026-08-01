@@ -249,6 +249,24 @@ class MoveTool : TransformTool {
     int      dragStartMX, dragStartMY;
     Vec3     planeAnchor;
     Vec3     planeApplied;
+    // LAW A state, the ported axis-arm body (task 0562), same shape as LAW B's
+    // above and for the same reason: the conversion is measured from the PRESS
+    // pixel against a base frozen at the press, so both are held here and
+    // `axisApplied` is the scalar total already handed to the wrapper.
+    //
+    // Its own press pixel rather than `dragStartM*`: the Ctrl-constrain path
+    // enters an axis drag PART WAY THROUGH a gesture that started on the
+    // centre box, and the axis leg's press is that hand-over, not the original
+    // button-down.
+    //
+    // `axisLawPorted` is decided once, at the arm, and frozen for the gesture.
+    // It is false under the `Screen` action centre, where the reference
+    // installs a different translator and the ported law is not the one that
+    // runs — see drag.d's LAW-CHANGE POINT.
+    int      axisStartMX, axisStartMY;
+    Vec3     axisAnchor;
+    float    axisApplied = 0.0f;
+    bool     axisLawPorted;
     // Set true at the two Ctrl-lock entry sites (button-down Ctrl path +
     // beginScreenPlaneDragAt Ctrl path); cleared at BOTH drag-end
     // (onMouseButtonUp) AND fresh button-DOWN reset so a following non-Ctrl
@@ -652,7 +670,7 @@ public:
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
-            armPlaneDrag(e.x, e.y);
+            armPlaneDrag(e.x, e.y, vts);
             // Freeze the input-projection basis for the gesture (= the
             // current idle basis = the frozen rendered orientation today).
             currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
@@ -759,7 +777,7 @@ public:
         lastMX = mx; lastMY = my;
         // The relocate has just moved the gizmo to `hit`; that relocated pivot
         // is the anchor this drag linearises about, so arm AFTER setPosition.
-        armPlaneDrag(mx, my);
+        armPlaneDrag(mx, my, vts);
         // Freeze the input-projection basis for this relocate drag.
         currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
         buildVertexCacheIfNeeded();
@@ -770,15 +788,47 @@ public:
         }
     }
 
-    // Freeze LAW B's linearisation point for one gesture: the press pixel and
-    // the gizmo pivot as it stands at the press, plus a zeroed running total.
-    // Called from BOTH drag-start sites so a relocate-then-drag and a
-    // handle-grab arm identically.
-    private void armPlaneDrag(int mx, int my) {
+    // Freeze BOTH conversions' reference point for one gesture: the press
+    // pixel and the gizmo pivot as it stands at the press, plus a zeroed
+    // running total. LAW B linearises about that point; LAW A's ported body
+    // takes the screen direction of the drag axis at it. Called from BOTH
+    // drag-start sites so a relocate-then-drag and a handle-grab arm
+    // identically.
+    //
+    // `armAxisLeg` is what decides, once per gesture, whether the axis arms
+    // run the ported reference conversion. It is separate because the
+    // Ctrl-constrain hand-over re-arms the axis leg mid-gesture without
+    // disturbing anything LAW B froze.
+    private void armPlaneDrag(int mx, int my, ref VectorStack vts) {
         dragStartMX  = mx;
         dragStartMY  = my;
         planeAnchor  = handler.center;
         planeApplied = Vec3(0, 0, 0);
+        armAxisLeg(mx, my);
+        axisLawPorted = !screenActionCentre(vts);
+    }
+
+    // Re-freeze the ported axis conversion's press pixel, base and running
+    // total. At a plain handle grab this is the button-down; at a Ctrl
+    // constrain it is the event the axis was chosen on, which is where that
+    // leg of the gesture actually starts.
+    private void armAxisLeg(int mx, int my) {
+        axisStartMX = mx;
+        axisStartMY = my;
+        axisAnchor  = handler.center;
+        axisApplied = 0.0f;
+    }
+
+    // The `Screen` action centre installs a DIFFERENT drag translator on the
+    // reference side, so the conversion read for the default one is not the
+    // law that runs under it. Read once at the arm and frozen for the gesture
+    // — a mode that changed mid-drag must not change the conversion mid-drag.
+    private bool screenActionCentre(ref VectorStack vts) {
+        import toolpipe.packets : ActionCenterPacket;
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        auto acen = vts.get!ActionCenterPacket();
+        return acen !is null
+            && acen.type == cast(int)ActionCenterStage.Mode.Screen;
     }
 
     // Re-push the (relocated) gizmo pivot into the ACEN stage after the
@@ -907,6 +957,12 @@ public:
                 handler.center, cachedVp, tdx, tdy);
             ctrlConstrain = false;
             lastMX = e.x; lastMY = e.y;
+            // The axis leg of this gesture starts HERE, not at the button-down
+            // that was still a centre-box press. Re-arm the ported
+            // conversion's press pixel and base so the ~5 px the lock consumed
+            // are not re-delivered as a jump on the next event — which is what
+            // `lastMX = e.x` did for the incremental law it replaces.
+            armAxisLeg(e.x, e.y);
             return true; // axis locked — movement starts on the next motion event
         }
 
@@ -919,13 +975,36 @@ public:
         Vec3 mi0 = inAxisX(), mi1 = inAxisY(), mi2 = inAxisZ();
         Vec3 worldDelta;
         bool skip;
-        if (dragAxis <= 2) {
-            // LAW A — incremental, per event, against the live gizmo. The
-            // conversion is unchanged; only where the previous pixel comes
-            // from has moved. `lastMX/lastMY` stay written below — they are
-            // the fallback for any dispatch that publishes no cooked gesture,
-            // and the other half of the debug cross-check inside
-            // `gesturePrevPixel`.
+        if (dragAxis <= 2 && axisLawPorted) {
+            // LAW A, PORTED (task 0562) — CUMULATIVE, against the base frozen
+            // at the press, at a flat per-pixel gain.
+            //
+            // `t = pixelScale * (Δpx · ŝ)` and the whole gesture's world
+            // offset is `axisDir * t`, so this event emits only what that
+            // total has not already delivered. Same bookkeeping as LAW B
+            // below, and for the same reason: the conversion is measured from
+            // ONE pixel against ONE base, and feeding it the previous event's
+            // pixel and the live gizmo centre would restore the incremental
+            // behaviour it replaces under a new name.
+            //
+            // `axisDir` is the drag-start-frozen input basis, which is what
+            // the reference freezes too (the constraint vector is copied once,
+            // at the press).
+            Vec3 axisDir = dragAxis == 0 ? mi0 : dragAxis == 1 ? mi1 : mi2;
+            float total = axisArmDelta(e.x, e.y, axisStartMX, axisStartMY,
+                                       axisAnchor, axisDir, cachedVp, skip);
+            if (!skip) {
+                worldDelta  = axisDir * (total - axisApplied);
+                axisApplied = total;
+            }
+        } else if (dragAxis <= 2) {
+            // LAW A, the editor's own body — incremental, per event, against
+            // the live gizmo. Reached under the `Screen` action centre only,
+            // where the reference installs a different translator and the
+            // ported law is not the one that runs. `lastMX/lastMY` stay
+            // written below — they are the fallback for any dispatch that
+            // publishes no cooked gesture, and the other half of the debug
+            // cross-check inside `gesturePrevPixel`.
             import toolpipe.packets : GesturePacket;
             int prevMX, prevMY;
             gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
