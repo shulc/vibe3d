@@ -304,6 +304,12 @@ PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
         r.q = vp.focus;
     } else {
         r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
+        // The eye vector is computed even when the bias is dormant, and is
+        // then discarded by `biasedAxis`'s first early-out. Left that way on
+        // purpose: it mirrors the reference, which also computes it before the
+        // gate, and it is one normalize per relocate CLICK. If you hoist it
+        // behind the gate, hoist the whole predicate — `biasedAxis` has four
+        // early-outs and duplicating three of them here is how they drift.
         immutable int bk = biasedAxis(r.k, eyeVectorAt(vp, r.q), p);
         if (bk != r.k) {
             r.k = bk;
