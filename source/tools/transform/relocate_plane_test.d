@@ -361,7 +361,21 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 5. The lock.
+// 5. The lock — PORTED, TESTED, AND WIRED TO NOTHING.
+//
+// The relocate call site does not use this arm; a pinned vibe3d work plane
+// is a full frame and goes through a full-frame plane intersection instead
+// (see `RelocatePlanePrefs.lock`). What is tested here is that the arm is a
+// faithful restatement of the read, so that anyone who later finds a use for
+// it starts from the reference's rule rather than from a guess.
+//
+// The asymmetry in the second half of this test is the one that made the
+// first attempt at wiring it wrong, so it is stated twice — here as
+// behaviour, and at `RelocatePlanePrefs.lockVal` as instructions. The axis
+// assignment is CONDITIONAL on the view having no locked axis of its own;
+// the value write is UNCONDITIONAL and lands on whatever the axis then is.
+// Both "obvious repairs" — assign the axis first, or skip the write with it
+// — would be deviations from the read, not corrections of it.
 // -------------------------------------------------------------------------
 
 unittest {
@@ -411,6 +425,127 @@ unittest {
                                1, Vec3(0, 0, 0), true, 0.0f, c));
     assert(nearV(c, Vec3(0.37f, 0, 0.61f)),
            "a zero snap step must leave the answer alone");
+}
+
+// -------------------------------------------------------------------------
+// 6b. THE PORT IS BEHAVIOUR-NEUTRAL TODAY, AND THAT IS CHECKED, NOT CLAIMED.
+//
+// The relocate call site used to intersect the ray with the plane through
+// the camera focus whose normal is the camera-facing world axis, and to swap
+// in a camera-perpendicular plane under an orthographic projection. The two
+// tests below say the law reproduces both of those exactly with every
+// optional term at its default — which is what licenses routing the auto
+// plane through it without a single landing moving.
+//
+// Anything that turns one of the dormant terms on breaks these. That is the
+// point: a term that changes a landing has to be argued for, not switched on
+// in passing.
+// -------------------------------------------------------------------------
+
+// PERSPECTIVE: the ray arm is a plane intersection against `x[k] = focus[k]`.
+unittest {
+    import math : rayPlaneIntersect;
+    static immutable Vec3[3] axisNormals = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+    // Focus deliberately off-lattice on every axis: were the quantum to leak
+    // in through a changed default, these would part company.
+    auto vp = perspVp(Vec3(2.3f, 3.1f, 4.7f), Vec3(0.4f, 1.7f, 0.2f));
+    RelocatePlanePrefs p;                       // defaults — nothing switched on
+    immutable Vec3[3] dirs = [normalize(Vec3(-0.4f, -0.7f, -0.9f)),
+                              normalize(Vec3(0.9f, -0.2f, -0.35f)),
+                              normalize(Vec3(-0.1f, 0.85f, -0.5f))];
+    foreach (k; 0 .. 3) {
+        foreach (d; dirs) {
+            Vec3 lawHit;
+            int used;
+            immutable bool okLaw = principalPlaneCenter(vp, vp.eye, d, k, p, lawHit, used);
+            Vec3 oldHit;
+            immutable bool okOld = rayPlaneIntersect(vp.eye, d, vp.focus,
+                                                     axisNormals[k], oldHit);
+            assert(okLaw == okOld && used == k,
+                   format("law and the plane intersection must agree on "
+                          ~ "REACHABILITY for k=%d: law %s, old %s (axis %d)",
+                          k, okLaw, okOld, used));
+            if (!okLaw) continue;
+            assert(nearV(lawHit, oldHit, 1e-4f),
+                   format("the law must reproduce the pre-port landing on k=%d: "
+                          ~ "law (%.6f, %.6f, %.6f) vs plane intersect "
+                          ~ "(%.6f, %.6f, %.6f)", k,
+                          lawHit.x, lawHit.y, lawHit.z,
+                          oldHit.x, oldHit.y, oldHit.z));
+        }
+    }
+}
+
+// AXIS-LOCKED ORTHO: the no-ray arm reproduces the camera-perpendicular
+// plane through the focus — the task-0226 fix — for all six presets. Under
+// ortho the ray is parallel to the view axis, so the intersection only ever
+// changed that one coordinate, which is the coordinate the no-ray arm
+// replaces.
+unittest {
+    import math : rayPlaneIntersect;
+    RelocatePlanePrefs p;                       // defaults
+    foreach (axis; 0 .. 3) {
+        foreach (sign; [1.0f, -1.0f]) {
+            auto vp = orthoAxisVp(axis, sign, Vec3(0.4f, 1.7f, 0.2f));
+            Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+            // An ortho ray: parallel to the view forward, offset off-axis so
+            // the two in-plane coordinates are non-trivial.
+            Vec3 fwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+            Vec3 origin = Vec3(0.9f, -0.3f, 0.55f) + fwd * (-4.0f);
+            Vec3 lawHit, oldHit;
+            int used;
+            assert(principalPlaneCenter(vp, origin, fwd, axis, p, lawHit, used),
+                   "the no-ray arm cannot fail");
+            assert(rayPlaneIntersect(origin, fwd, vp.focus, camPerp, oldHit),
+                   "premise: the camera-perpendicular plane is always hit");
+            assert(nearV(lawHit, oldHit, 1e-4f),
+                   format("preset axis=%d sign=%.0f: the no-ray arm must "
+                          ~ "reproduce the 0226 camera-perpendicular landing — "
+                          ~ "law (%.6f, %.6f, %.6f) vs old (%.6f, %.6f, %.6f)",
+                          axis, sign, lawHit.x, lawHit.y, lawHit.z,
+                          oldHit.x, oldHit.y, oldHit.z));
+        }
+    }
+}
+
+// AND THE CARVE-OUT IS LOAD-BEARING. An orthographic camera that is NOT
+// axis-aligned is a view class the reference does not have (its orthographic
+// views are exactly the six axis presets), so the read says nothing about
+// it and the relocate call site keeps the 0226 plane there. This test says
+// that carve-out is not decorative: the law and the 0226 fix genuinely
+// disagree on such a camera, so removing the carve-out WOULD move a landing.
+unittest {
+    import math : rayPlaneIntersect, lookAt, orthographicMatrix;
+    Vec3 focus = Vec3(0.4f, 1.7f, 0.2f);
+    Vec3 eye   = focus + normalize(Vec3(0.8f, 0.45f, 0.25f)) * 4.0f;
+    Viewport vp;
+    vp.eye    = eye;
+    vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
+    vp.proj   = orthographicMatrix(2.0f, 1098.0f / 832.0f, 0.001f, 100.0f);
+    vp.width  = 1098;
+    vp.height = 832;
+    vp.focus  = focus;
+
+    assert(lockedViewAxis(vp) == -1,
+           "an oblique orthographic camera must NOT read as axis-locked — if "
+           ~ "it does, the carve-out never fires and this test proves nothing");
+
+    Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    Vec3 fwd     = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+    Vec3 origin  = Vec3(1.1f, -0.4f, 0.7f) + fwd * (-4.0f);
+
+    RelocatePlanePrefs p;
+    Vec3 lawHit, orthoFixHit;
+    int used;
+    assert(principalPlaneCenter(vp, origin, fwd, 0, p, lawHit, used));
+    assert(rayPlaneIntersect(origin, fwd, vp.focus, camPerp, orthoFixHit));
+    assert(!nearV(lawHit, orthoFixHit, 1e-3f),
+           format("the law and the 0226 ortho fix must DIFFER on an oblique "
+                  ~ "orthographic camera — they agreed, so the call site's "
+                  ~ "carve-out is untested by construction: law "
+                  ~ "(%.6f, %.6f, %.6f), 0226 (%.6f, %.6f, %.6f)",
+                  lawHit.x, lawHit.y, lawHit.z,
+                  orthoFixHit.x, orthoFixHit.y, orthoFixHit.z));
 }
 
 // -------------------------------------------------------------------------
