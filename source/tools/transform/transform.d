@@ -1096,7 +1096,8 @@ protected:
         import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis;
         import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter,
                                                     lockedViewAxis;
-        import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum;
+        import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum,
+                          viewGridSize, viewGridSubStep;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
@@ -1228,8 +1229,33 @@ protected:
                 //
                 // It is a pure function of this view's pixel size, so it needs
                 // no state and follows the camera automatically.
-                prefs.quantumStep = relocateQuantum(viewWorldPerPixel(cachedVp),
-                                                    g_viewGrid);
+                immutable float _relPx = viewWorldPerPixel(cachedVp);
+                prefs.quantumStep = relocateQuantum(_relPx, g_viewGrid);
+                // THE VIEW'S VECTOR SNAP, SWITCHED ON (task 0570). A second,
+                // separate and much finer term: every component is rounded to
+                // the grid's SUB-step, which is the world length of ONE screen
+                // pixel nice-ceiled — not a tenth of the drawn step. It is
+                // applied to the plane point BEFORE the quantum above, and
+                // `principalPlaneCenter` also feeds it to the final snap of
+                // the answer.
+                //
+                // ONLY THE PLANE-POINT SNAP. The reference stores one
+                // sub-step and would feed both this and the snap of the
+                // ANSWER from it, and the first cut of this change did the
+                // same — which moved a frozen characterization row by ~0.001
+                // on a term the grid read does not cover. The read traces the
+                // snap inside the plane-point routine; the answer-side snap
+                // is the plane-law port's own reading, with no measurement
+                // behind it here. So `RelocatePlanePrefs.answerSnapStep` is a
+                // separate field and stays at zero until its own read
+                // arrives. See its doc comment.
+                //
+                // Sub-pixel by construction: at most half a screen pixel of
+                // world, and it cannot disturb the quantum above, which is
+                // always a whole number of sub-steps.
+                prefs.viewSnapStep =
+                    viewGridSubStep(_relPx, viewGridSize(_relPx, g_viewGrid),
+                                    g_viewGrid);
                 int usedAxis;
                 return principalPlaneCenter(cachedVp, crHitOrig, dir,
                                             argmaxAxis, prefs,

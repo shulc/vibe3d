@@ -202,6 +202,64 @@ unittest {
            ~ "'contradiction' and this assertion is what keeps it refuted");
 }
 
+// THE PLANE-POINT SNAP IS MASKED BY THE QUANTUM, MEASURED RATHER THAN ARGUED.
+//
+// `niceOrigin` snaps all three components of Q and then quantises Q[k]. The
+// quantum is `10 * gridSize` and the sub-step is `niceCeil(pixelSize)`; both
+// are ladder values and the first is hundreds of times the second, so the
+// quantum is always a whole number of sub-steps. Rounding to the sub-step
+// first therefore cannot change what rounding to the quantum produces —
+// except when the focus sits within half a sub-step of a quantum HALF-
+// boundary, where the two roundings disagree by one quantum.
+//
+// This matters because vibe3d's relocate path consumes ONLY Q[k]: the ray arm
+// reads `axisComp(q, k)` and the locked arm reads `axisComp(q, locked)`. So
+// the snap of the other two components cannot reach a landing at all, and the
+// snap of the surviving one is masked here. The term is ported and correct;
+// in this consumer it is inert. Anyone who expects a landing to move because
+// of it should read this block first.
+unittest {
+    import viewgrid : ViewGridPrefs, viewGridSize, viewGridSubStep,
+                      relocateQuantum;
+
+    ViewGridPrefs g;
+    int agree = 0, disagree = 0;
+    foreach (i; 0 .. 2000) {
+        immutable float px = 0.004f;                 // a plain modelling zoom
+        immutable float q  = relocateQuantum(px, g);
+        immutable float ss = viewGridSubStep(px, viewGridSize(px, g), g);
+        assert(q > 0 && ss > 0);
+        // A focus sweeping across several quanta, off any lattice.
+        immutable float fy = -3.7f + 0.0037f * i;
+        immutable float withSnap = niceOrigin(Vec3(0, fy, 0), 1, q, ss).y;
+        immutable float bare     = niceOrigin(Vec3(0, fy, 0), 1, q, 0.0f).y;
+        if (abs(withSnap - bare) < 1e-5f) ++agree; else ++disagree;
+    }
+    // Overwhelmingly masked, and the exceptions are exactly the half-boundary
+    // ties. Asserted as a RATE rather than "always", because "always" is false
+    // and a test that claimed it would be wrong in a way nobody would notice.
+    assert(agree > 1990,
+           format("the sub-step snap must be masked by the quantum on the "
+                  ~ "quantised axis: %d of 2000 sweeps disagreed", disagree));
+    assert(disagree <= 10,
+           "the disagreements must be the rare half-boundary ties, not a rule");
+
+    // ...and the other two components never reach the answer at all: the ray
+    // arm reads only component k.
+    Viewport vp = perspVp(Vec3(2, 3, 4), Vec3(0.4f, 1.7f, 0.2f));
+    Vec3 c1, c2;
+    immutable Vec3 qA = Vec3(11.0f, 2.0f, -7.0f);
+    immutable Vec3 qB = Vec3(-99.0f, 2.0f, 42.0f);   // same k=1 component
+    assert(posToPrincipalPlane(vp, Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
+                               1, qA, false, 0.0f, c1));
+    assert(posToPrincipalPlane(vp, Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
+                               1, qB, false, 0.0f, c2));
+    assert(nearV(c1, c2, 1e-9f),
+           "the ray arm must read ONLY Q[k] — if this ever fails, the "
+           ~ "plane point's in-plane snap stops being inert and the product "
+           ~ "assertions about it have to be revisited");
+}
+
 // The default is OFF, and that is a decision, not an oversight: with it off
 // the plane point is the RAW focus, which is what every fixture in this tree
 // was captured against.

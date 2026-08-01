@@ -13,7 +13,8 @@ module tools.transform.relocate_plane;
 //     |    |    +- vectorSnap(...)     component-wise round to a step
 //     |    +- biasedAxis(...)          the preferred-work-plane bias
 //     +- posToPrincipalPlane(...)      the ray, or the locked-axis shortcut
-//          +- vectorSnap(...)          the final snap of the ANSWER
+//          +- vectorSnap(...)          the final snap of the ANSWER (dormant:
+//                                      see `RelocatePlanePrefs.answerSnapStep`)
 //
 // Two things in this file are the whole point, and both were missing:
 //
@@ -31,29 +32,19 @@ module tools.transform.relocate_plane;
 // reference instruction by instruction and is not fitted. Its INPUTS are a
 // different matter: vibe3d has no counterpart for any of them, and every one
 // is defaulted to the value at which the reference itself skips the feature.
-// See `RelocatePlanePrefs`, and in particular `quantumStep` — the rounding in
-// (1) is implemented and tested but NOT switched on, because the number it
-// rounds to is contradicted between the two rigs that measured it. That is
-// written up at the field.
+// TWO OF THOSE INPUTS ARE NOW FED (task 0570), and the rest are not. The grid
+// step became a derived quantity — the world length of 25 screen pixels on a
+// mantissa ladder — which gave `quantumStep` and `viewSnapStep` numbers they
+// never had, so the call site supplies both and the plane point is genuinely
+// snapped and quantised. Everything else here (the bias, the lock arm, the
+// snap of the ANSWER) is still ported-but-unfed, each for a reason written at
+// its own field.
 //
-// WHAT THIS CHANGES IN THE PRODUCT TODAY: NOTHING. That is a claim about the
-// wiring, and it is checked in both directions:
-//
-//   * with every optional term at its default the ray arm is
-//     `t = (Q[k] - P0[k]) / D[k]` with `Q = focus`, which is a plane
-//     intersection against `x[k] = focus[k]` — the plane the relocate call
-//     site already built from `pickMostFacingPlane`, term for term;
-//   * the no-ray arm (2) fires only in an axis-locked orthographic view,
-//     where the ray is parallel to `e_k`, so replacing coordinate `k` is
-//     exactly what intersecting the camera-perpendicular plane through the
-//     focus already did.
-//
-// The port's gain is therefore structural, not numerical: the law is stated
-// where it was read, every term it has is named and testable, and the
-// parallel-ray degeneracy the old code dodged with a plane swap cannot arise
-// in an arm that never intersects anything. Nothing here is a licence to
-// change a landing; a term that would change one is dormant until a
-// measurement turns it on.
+// The rule this file runs on, and the reason those three are still off: a term
+// we can RESTATE is not thereby a term we can SWITCH ON. Restating is a read;
+// switching on is a claim about behaviour, and it needs a measurement of its
+// own. `answerSnapStep` exists as a separate field precisely because feeding
+// it from the evidenced one moved a frozen row on no evidence at all.
 //
 // THE LOCK ARM IS PORTED BUT NOT WIRED, and that is deliberate. See
 // `RelocatePlanePrefs.lock`.
@@ -194,11 +185,41 @@ struct RelocatePlanePrefs {
     /// origin along a DIFFERENT axis than the one it would be written to; that
     /// caller no longer exists (see `lock`).
     float lockVal = 0.0f;
-    /// The view's own vector-snap step. Zero or less disables it, which is
-    /// the reference's disabled value AND the state vibe3d is permanently in
-    /// — we have no per-view snap step to read. Kept as an input rather than
-    /// dropped because the law's shape depends on it and it is testable.
+    /// The view's own vector-snap step: EVERY component of the plane point is
+    /// rounded to a multiple of it, unconditionally, before the out-of-plane
+    /// quantum below — and `principalPlaneCenter` feeds the same step to the
+    /// final snap of the answer.
+    ///
+    /// Zero or less disables it, which is the reference's disabled value and
+    /// was vibe3d's permanent state until task 0570: this comment used to say
+    /// "we have no per-view snap step to read", which was true only because
+    /// the grid had no zoom in it. The step is the grid's SUB-step — the world
+    /// length of ONE screen pixel, rounded up onto the mantissa ladder, which
+    /// is a different and much finer number than a tenth of the drawn grid
+    /// step. The call site supplies it; see
+    /// `XfrmTransformTool.computeClickRelocateHitRaw`.
+    ///
+    /// Still defaulted off HERE because this module is pure and has no view.
     float viewSnapStep = 0.0f;
+
+    /// The step for the snap of the ANSWER — the landing, after the ray has
+    /// crossed the plane — as opposed to `viewSnapStep` above, which snaps
+    /// the plane POINT before the quantum.
+    ///
+    /// SEPARATE FIELD, AND DORMANT, BECAUSE THE EVIDENCE IS SEPARATE. In the
+    /// reference these are one stored number, and the obvious thing is to
+    /// feed both from one field. But the read that pinned the sub-step traces
+    /// the snap inside the plane-point routine only; the answer-side snap is
+    /// where the plane-law port placed its own reading of the operation, and
+    /// nothing measured here speaks to it. Feeding both from one field made
+    /// the answer snap fire, which moved a frozen characterization row by
+    /// ~0.001 — a real, unevidenced behaviour change riding along on an
+    /// evidenced one.
+    ///
+    /// So the arm stays ported and reachable and stays OFF until its own read
+    /// arrives, which is this file's standing rule for a term we can restate
+    /// but cannot yet justify switching on.
+    float answerSnapStep = 0.0f;
     /// The out-of-plane quantum: the plane point's coordinate along the
     /// principal axis is rounded to a multiple of this. Zero disables it.
     ///
@@ -383,5 +404,5 @@ bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
     immutable pp = workPlanePoint(vp, argmaxAxis, p);
     axisOut = pp.k;
     return posToPrincipalPlane(vp, rayOrigin, rayDir, pp.k, pp.q,
-                               true, p.viewSnapStep, c);
+                               true, p.answerSnapStep, c);
 }
