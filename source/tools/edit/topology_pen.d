@@ -2748,19 +2748,49 @@ public:
     // single cursor pixel returns a single element and cannot account for four
     // absorptions in one gesture.
     //
-    // WHAT WAS ASSUMED, stated because it is genuinely open: the reference
-    // runs its query from the cursor's own screen ray and keeps up to three
-    // target slots, and the third condition of its weld branch — an equality
-    // of the first machine word of the grabbed element's accessor and of the
-    // snapped target's — is undecoded (two readings survive: "the target is
-    // the same KIND of element I grabbed", and "the target is in the same
-    // mesh"). We resolve per moved vertex instead of per cursor, and we
-    // enforce the same-mesh reading implicitly (the query answers with primary-
-    // layer vertices only, `PenSnapGuide.admits`). The two agree on every cell
-    // that has been measured; they can differ when a grabbed edge's two
-    // endpoints come to rest near vertices of two DIFFERENT edges, where a
-    // same-kind reading would weld neither and this welds both. One breakpoint
-    // on that comparison would settle it.
+    // SAME MESH, and this is READ rather than assumed. The third condition of
+    // the reference's weld branch compares the first machine word of the
+    // grabbed element's id against the snapped target's, and that word is the
+    // element's OWNER — the very pointer the tool holds for the mesh instance
+    // it is editing (measured on two independent welds, and on 40 of 40 slot
+    // samples the owner field equals it; corroborated statically, since the
+    // candidate-admission callback tests the same field against the same
+    // quantity). It is not a vtable and not a kind tag. So the gate reads:
+    // weld only if the target belongs to the SAME MESH as the grab.
+    //
+    // We satisfy it by CONSTRUCTION rather than by comparing: this query walks
+    // the primary layer's mesh and `PenSnapGuide.admits` refuses every slot but
+    // 0, so a background layer can be a placement surface and never a weld
+    // target. If that admission is ever widened, an explicit owner check has to
+    // arrive with it — the reference's refusal arm (differing owners fall
+    // through to a plain Move) is read off the branch and has not been
+    // observed, so there is no measured behaviour to lean on there either.
+    //
+    // THE RADIUS IS IN THE ANSWER, not beside it. The reference parks the
+    // nearest element in its target slot BEFORE applying the acceptance radius
+    // and folds the radius into the query's RETURN only — on one recording ten
+    // evaluations had a target parked and only two were inside the radius. A
+    // port that asks "is there a target?" instead of "did the query answer?"
+    // therefore welds five times too often. Ours cannot make that mistake by
+    // shape: `findSourceVertex` returns -1 unless the winner is within
+    // `topoPenSnapAcceptPx`, so the answer IS the radius-gated one and there is
+    // no unfiltered slot to read by accident.
+    //
+    // WHAT IS STILL OURS RATHER THAN MEASURED: the reference runs ONE query
+    // from the cursor and, when it answers, dispatches on the TYPE OF THE HIT
+    // (not of the grab) into a vertex / edge / polygon weld. That dispatch is
+    // inert here and reachable only through a decision taken elsewhere: this
+    // tool's snap query admits VERTICES ONLY (`PenSnapGuide.admits`, measured —
+    // a landing mid-span is a no-op, not a weld), so the hit type is invariably
+    // Vertex and the vertex weld is the only copy that can be selected. Anyone
+    // who widens that admission to edges or polygons must bring the matching
+    // weld with it and not leave this running per-vertex underneath.
+    //
+    // The remaining difference is the one the loop measurement forces: we
+    // resolve a target PER MOVED VERTEX, the reference resolves one per cursor.
+    // They agree on every cell that has been measured. They can differ where a
+    // grabbed edge's two endpoints come to rest near vertices of two DIFFERENT
+    // edges — we weld both, a single cursor hit reaches at most one of them.
     //
     // AT RELEASE, not per motion event, and that is a divergence in TIMING
     // only. The reference re-evaluates its whole tool from the pre-gesture
@@ -11786,6 +11816,88 @@ unittest {
                m.vertices.length, m.edges.length, m.faces.length));
     assert((m.vertices[1] - landing).length < 1e-5f,
         "the grabbed vertex must sit exactly where the drag put it, unmerged");
+}
+
+// ---------------------------------------------------------------------------
+// THE ACCEPTANCE RADIUS is the gate, not "is there a nearest vertex at all"
+// (task 0555).
+//
+// The reference parks the nearest element in its target slot BEFORE applying
+// the radius and folds the radius into the query's RETURN — so "a target
+// exists" is true far more often than "the query answered", and a port that
+// gates on the former welds well outside the radius. Ours gates on the answer
+// (`findSourceVertex` returns -1 outside `topoPenSnapAcceptPx`), and this is
+// the case that says so out loud.
+//
+// Same rig and same grab as the welding element case below; only the landing
+// distance changes. 0.375 world units is 30px at this camera's 80px-per-unit,
+// outside the 24px acceptance — and the case asserts that v2 IS the nearest
+// admissible vertex, so what stops the weld is demonstrably the radius and not
+// an empty query.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    vts.put(penTestSnapOn());
+
+    immutable Vec3 landing = m.vertices[2] + Vec3(-0.375f, 0, 0);
+
+    // The precondition, computed here rather than asked of the code under
+    // test: vertex 2 is the NEAREST other vertex to that landing, and it sits
+    // outside the acceptance. Without the first half the case could pass
+    // because the query found nothing at all — a different reason from the one
+    // it names.
+    ImVec2 pl;
+    assert(TopologyPenTool.projectPt(landing, vp, pl), "setup: the landing must project");
+    float best = float.infinity;
+    size_t bestVi = size_t.max;
+    foreach (vi; 0 .. m.vertices.length) {
+        if (vi == 1) continue;                    // the grab itself, always excluded
+        ImVec2 pc;
+        if (!TopologyPenTool.projectPt(m.vertices[vi], vp, pc)) continue;
+        immutable float d = hypot(pc.x - pl.x, pc.y - pl.y);
+        if (d < best) { best = d; bestVi = vi; }
+    }
+    assert(bestVi == 2,
+        format("setup: vertex 2 must be the nearest candidate to the landing; got %d", bestVi));
+    assert(best > topoPenSnapAcceptPx(vp, *penTestSnapOn()),
+        format("setup: and it must sit OUTSIDE the %.0fpx acceptance, or the radius is not "
+             ~ "what refuses it; distance %.1fpx",
+               topoPenSnapAcceptPx(vp, *penTestSnapOn()), best));
+
+    driveWeldingVertexGrab(t, m, vp, vts, 1u, landing);
+
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("a landing OUTSIDE the acceptance radius must only move (V=9 E=12 F=4); "
+             ~ "got V=%d E=%d F=%d", m.vertices.length, m.edges.length, m.faces.length));
+    assert((m.vertices[1] - landing).length < 1e-5f,
+        "the grabbed vertex must sit exactly where the drag put it, unabsorbed");
 }
 
 // ---------------------------------------------------------------------------
