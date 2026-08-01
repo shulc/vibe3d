@@ -671,6 +671,83 @@ void drawViewportPropsPanel(EditorApp app) {
             commandHandlerDelegate("viewport.indRotate",
                                   ir ? `{"value":"yes"}` : `{"value":"no"}`);
 
+        // Display: surface style + wireframe overlay, for the ACTIVE cell.
+        //
+        // Task 0559. This panel is the home for it rather than a widget
+        // inside the viewport cell itself, and that is a deliberate hold, not
+        // an oversight: the cell already hosts a view-preset combo at its top
+        // left, and adding a second permanent dropdown beside it changes what
+        // every 3D viewport LOOKS LIKE for everyone. That is the owner's call
+        // to make, so it is written up rather than shipped. This panel is
+        // already the place viewport settings live, it is opt-in under
+        // --test, and it adds no viewport chrome at all.
+        //
+        // Only the values a render pass actually consumes are offered. The
+        // enums are wider; the commands refuse the rest by name.
+        ImGui.Dummy(ImVec2(0, 2));
+        ImGui.SeparatorText("Active Cell Display");
+        {
+            import display_state : DisplayStyle, WireOverlay;
+            import std.format : format;
+
+            static immutable string[2] styleLabels = ["Shaded", "Wireframe"];
+            static immutable string[2] styleIds    = ["shaded", "wireframe"];
+            static immutable DisplayStyle[2] styleVals =
+                [DisplayStyle.Shaded, DisplayStyle.Wireframe];
+
+            int si = 0;
+            foreach (i, sv; styleVals) if (sv == v.display.active.style) si = cast(int)i;
+            ImGui.Text("Style");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpDisplayStyle", styleLabels[si])) {
+                foreach (i, sl; styleLabels) {
+                    bool sel = (i == si);
+                    if (ImGui.Selectable(sl, sel) && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("viewport.displayStyle",
+                            `{"_positional":["` ~ styleIds[i] ~ `"]}`);
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            static immutable string[2] wireLabels = ["Uniform", "None"];
+            static immutable string[2] wireIds    = ["uniform", "none"];
+            static immutable WireOverlay[2] wireVals =
+                [WireOverlay.Uniform, WireOverlay.None];
+
+            int wi = 0;
+            foreach (i, wv; wireVals) if (wv == v.display.active.wire) wi = cast(int)i;
+            ImGui.Text("Wire");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpWireOverlay", wireLabels[wi])) {
+                foreach (i, wl; wireLabels) {
+                    bool sel = (i == wi);
+                    if (ImGui.Selectable(wl, sel) && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("viewport.wireOverlay",
+                            `{"_positional":["` ~ wireIds[i] ~ `"]}`);
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            float wa = v.display.active.wireAlpha;
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.SliderFloat("##vpWireAlpha", &wa, 0.0f, 1.0f, "Opacity %.2f")) {
+                // Clamped HERE, not trusted from the widget: a slider's
+                // ctrl-click text entry can return a value outside its own
+                // range, and the command rejects out-of-range input (it does
+                // not clamp) — so an unclamped write would surface as a
+                // thrown command from a drag of a UI slider.
+                if (wa < 0.0f) wa = 0.0f;
+                if (wa > 1.0f) wa = 1.0f;
+                if (commandHandlerDelegate !is null)
+                    commandHandlerDelegate("viewport.wireAlpha",
+                        `{"_positional":[` ~ format("%.6f", wa) ~ `]}`);
+            }
+        }
+
         // Master selector
         ImGui.Dummy(ImVec2(0, 2));
         ImGui.SeparatorText("Master");
