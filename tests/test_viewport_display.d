@@ -502,6 +502,470 @@ bool testFlowF() {
     return true;
 }
 
+// ==========================================================================
+// Phase 2/3 — the state becomes settable, the overlay axis becomes real, and
+// the lines-only surface style becomes reachable.
+// ==========================================================================
+
+// --------------------------------------------------------------------------
+// Restoring shared state — READ THIS BEFORE ADDING A FLOW BELOW.
+//
+// The runner reuses ONE `vibe3d --test` per worker across that worker's whole
+// slice of test binaries, and its between-tests reset covers the document,
+// the event player, the active tool and the undo stack — NOT the viewport's
+// display state and NOT the cell layout. Neither is document state, so
+// /api/reset does not touch them either.
+//
+// So every flow from here down mutates state that would otherwise still be
+// set when an unrelated test binary starts. A lines-only viewport left behind
+// would be invisible here and would surface as an inexplicable failure
+// somewhere else in the slice. Each mutating flow therefore restores in a
+// `scope(exit)`, not at the end of its body: the runner catches a failing
+// flow's exception and keeps going, so a mid-flow failure must still put the
+// viewport back.
+// --------------------------------------------------------------------------
+
+void restoreDisplayDefaults() {
+    foreach (cell; 0 .. 4) {
+        // Addressed per cell, and tolerant of the layout: cells the current
+        // layout does not show reject the write, which is fine — this is a
+        // best-effort restore, and a cell that cannot be addressed cannot
+        // have been changed either.
+        try {
+            postCommandRaw("viewport.displayStyle",
+                format(`{"_positional":["shaded"],"viewport":%d}`, cell));
+            postCommandRaw("viewport.wireOverlay",
+                format(`{"_positional":["uniform"],"viewport":%d}`, cell));
+            postCommandRaw("viewport.wireAlpha",
+                format(`{"_positional":[1.0],"viewport":%d}`, cell));
+        } catch (Exception) { /* cell not in this layout */ }
+    }
+    try { postCommand("viewport.layout", "Single"); } catch (Exception) {}
+    Thread.sleep(250.msecs);
+}
+
+// POST a command in ARGSTRING form ("id arg arg ..."). The endpoint routes a
+// body that does not start with '{' through its argstring parser, which is
+// what fills `_positional` — the JSON form with a bare string `params` does
+// NOT, so the selection commands below have to use this one.
+void postArgstring(string line) {
+    auto r = parseJSON(httpPost("/api/command", line));
+    enforce("status" !in r || r["status"].str != "error",
+            "argstring command `" ~ line ~ "` failed: " ~ r.toString);
+}
+
+// POST a command whose `params` is a JSON OBJECT rather than a bare string —
+// needed for the cell selector, which no other viewport command has.
+void postCommandRaw(string cmd, string paramsJson) {
+    string body_ = `{"id":"` ~ cmd ~ `","params":` ~ paramsJson ~ `}`;
+    string resp = httpPost("/api/command", body_);
+    auto r = parseJSON(resp);
+    enforce("status" !in r || r["status"].str != "error",
+            "command " ~ cmd ~ " " ~ paramsJson ~ " failed: " ~ resp);
+}
+
+/// POST a command and REQUIRE it to be refused, returning the message.
+string postCommandExpectingRefusal(string cmd, string paramsJson) {
+    string body_ = `{"id":"` ~ cmd ~ `","params":` ~ paramsJson ~ `}`;
+    auto r = parseJSON(httpPost("/api/command", body_));
+    enforce("status" in r && r["status"].str == "error",
+        "expected " ~ cmd ~ " " ~ paramsJson ~ " to be REFUSED, but it "
+        ~ "succeeded — a command that accepts a value the renderer does not "
+        ~ "draw is a silent lie, and a test written against it passes forever");
+    return ("message" in r) ? r["message"].str : "";
+}
+
+string bufferHash(int cell = 0) {
+    Thread.sleep(500.msecs);          // let the change land in a completed frame
+    auto j = parseJSON(httpGet(format("/api/viewport/probe?cell=%d&hash=1", cell)));
+    enforce("hash" in j, "probe did not return a buffer digest: " ~ j.toString);
+    return j["hash"].str;
+}
+
+// Pixel-classification helpers. CATEGORICAL only — never a shading value.
+bool isSurfaceGrey(Px p) {
+    // Lit cube surface: near-neutral, and not the background.
+    return abs(p.r - p.g) <= 8 && abs(p.g - p.b) <= 12 && !isClear(p);
+}
+bool isSaturated(Px p) {
+    // A coloured line (the world axes). Nothing on the lit cube, and nothing
+    // in the background, comes close to this much channel spread.
+    int mx = p.r; if (p.g > mx) mx = p.g; if (p.b > mx) mx = p.b;
+    int mn = p.r; if (p.g < mn) mn = p.g; if (p.b < mn) mn = p.b;
+    return mx - mn > 30;
+}
+
+// --------------------------------------------------------------------------
+// Flow G — the lines-only surface style.
+//
+// Two separate claims, and they need different sampling, which is the whole
+// lesson of this flow:
+//
+//   * "faces are off" is an AREA claim, and an area grid answers it with an
+//     enormous margin.
+//   * "you can see THROUGH the model" is a claim about a 1-pixel line, and a
+//     grid is the wrong instrument for it — during development a grid whose
+//     x-stride happened to land on odd columns found zero line pixels in an
+//     image that was full of them. Lines are sampled with FULL-DENSITY
+//     scanlines laid ACROSS them: the world axis renders as a near-horizontal
+//     line, so vertical scanlines cross it, and every column crosses it
+//     exactly once. That is a construction that cannot miss, not a stride
+//     that happened to work.
+//
+// The see-through claim is also made self-locating: the evidence is found in
+// the lines-only image (saturated axis pixels) and then checked against the
+// shaded one (the same pixels were opaque surface). So the test does not need
+// to know where anything is on screen.
+// --------------------------------------------------------------------------
+
+bool testFlowG() {
+    writeln("  [G] Lines-only style: faces off, and the model is see-through...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    auto geom = probe(0, "");
+    immutable int W = geom.w, H = geom.h;
+    enforce(W > 64 && H > 64, "implausible cell size");
+
+    // Vertical scanlines (cross the near-horizontal axis line) + an area grid.
+    string pts;
+    int[] colXs;
+    foreach (i; 0 .. 11) {
+        immutable int x = cast(int)(W * (0.30 + 0.04 * i));
+        colXs ~= x;
+        for (int y = cast(int)(H * 0.24); y < cast(int)(H * 0.76); y++)
+            pts ~= format("%d,%d;", x, y);
+    }
+    size_t areaStart;
+    {
+        // Remember where the area samples begin so the two claims stay separate.
+        areaStart = 0;
+        foreach (ch; pts) if (ch == ';') areaStart++;
+    }
+    for (int y = cast(int)(H * 0.30); y < cast(int)(H * 0.64); y += 4)
+        for (int x = cast(int)(W * 0.26); x < cast(int)(W * 0.76); x += 4)
+            pts ~= format("%d,%d;", x, y);
+
+    postCommand("viewport.displayStyle", "shaded");
+    Thread.sleep(400.msecs);
+    auto shaded = probe(0, pts);
+    postCommand("viewport.displayStyle", "wireframe");
+    Thread.sleep(400.msecs);
+    auto wire = probe(0, pts);
+    enforce(shaded.points.length == wire.points.length,
+            "probe returned a different number of points for the two styles");
+
+    // --- the PLAN, first: what the renderer was told to do ---
+    auto pa = displayDump()["cells"].array[0]["plan"]["active"];
+    enforce(!jsonBool(pa, "drawFaces"),
+        "the lines-only style must draw NO faces — not even a depth-only pass, "
+        ~ "or the model stops being see-through");
+    enforce(jsonBool(pa, "drawWire"), "the lines-only style must draw lines");
+    enforce(jsonBool(pa, "drawVerts"),
+        "the lines-only style draws vertices as well as the edges between them");
+    writeln("    G1 PASS: plan = no faces, lines on, vertex dots forced on");
+
+    // --- claim 1 (AREA): the solid surface is gone ---
+    size_t surf = 0, surfGone = 0;
+    foreach (i; areaStart .. shaded.points.length) {
+        if (!shaded.points[i].valid || !wire.points[i].valid) continue;
+        if (!isSurfaceGrey(shaded.points[i])) continue;
+        surf++;
+        if (isClear(wire.points[i])) surfGone++;
+    }
+    enforce(surf >= 200, format("too few surface samples to conclude anything (%d)", surf));
+    immutable double gone = cast(double)surfGone / cast(double)surf;
+    enforce(gone >= 0.90,
+        format("only %.1f%% of the %d lit-surface samples became background in "
+               ~ "the lines-only style — the face pass is still writing colour",
+               gone * 100, surf));
+    writefln("    G2 PASS: %d/%d (%.1f%%) lit-surface samples became background",
+             surfGone, surf, gone * 100);
+
+    // --- claim 2 (LINES): geometry BEHIND the model became visible ---
+    // The world axis is drawn before the mesh and is depth-occluded by the
+    // faces. With no faces it shows through. This is the difference between
+    // line soup and hidden-line removal, and it is the one property most
+    // likely to be "improved" away later.
+    // NOTE the conjunction, and why there is no precondition about the shaded
+    // image as a whole: a sample only counts when it was OPAQUE LIT SURFACE
+    // when shaded and is a COLOURED LINE when lines-only. A pixel that was lit
+    // surface cannot itself have been the axis, so the pairing alone proves
+    // the axis was behind the model and became visible. An earlier revision
+    // also demanded that NO sample anywhere on these scanlines be coloured in
+    // the shaded image; that is a claim about where the model happens to sit
+    // on screen, not about this feature, and it broke the moment a preceding
+    // flow left the camera somewhere else.
+    int revealed = 0, saturatedWhenShaded = 0;
+    foreach (i; 0 .. areaStart) {
+        if (!shaded.points[i].valid || !wire.points[i].valid) continue;
+        if (isSaturated(shaded.points[i])) saturatedWhenShaded++;
+        if (isSaturated(wire.points[i]) && isSurfaceGrey(shaded.points[i]))
+            revealed++;
+    }
+    enforce(revealed >= 4,
+        format("only %d sample(s) went from opaque surface to a coloured line "
+               ~ "behind the model. The lines-only style must be see-through — "
+               ~ "if this dropped to zero, something turned it into hidden-line "
+               ~ "removal, or added a depth-only face pass", revealed));
+    writefln("    G3 PASS: %d samples show geometry BEHIND the model, opaque "
+             ~ "surface when shaded (%d columns sampled, %d already-coloured "
+             ~ "samples ignored)",
+             revealed, cast(int)colXs.length, saturatedWhenShaded);
+
+    // --- lines are actually still drawn (an empty viewport would pass G2) ---
+    int linePx = 0;
+    foreach (i; 0 .. areaStart)
+        if (wire.points[i].valid && !isClear(wire.points[i])) linePx++;
+    enforce(linePx > 0,
+        "the lines-only style drew nothing at all over the scanlines — G2 "
+        ~ "alone is also satisfied by an empty viewport, which is why this "
+        ~ "assertion exists");
+    writefln("    G4 PASS: %d non-background samples remain (the lines)", linePx);
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow H — the overlay axis, and the wrong implementation of it.
+//
+// Deliberately hash-based rather than pixel-counted. The overlay is a
+// 1-pixel-wide feature and the sampling problem in Flow G applies here with
+// no convenient scanline geometry to exploit; a whole-buffer digest answers
+// "did this reach the framebuffer at all" exactly, with no stride to get
+// wrong. The digest was verified bit-stable across repeated reads.
+//
+// The load-bearing assertion is H3. Switching the overlay off must NOT take
+// selection feedback with it — selection highlight is its own display axis.
+// The obvious implementation (gate the edge draw, or early-return from it)
+// passes every other assertion in this file and fails only this one.
+// --------------------------------------------------------------------------
+
+bool testFlowH() {
+    writeln("  [H] Overlay axis on/off, and selection surviving it...");
+    resetApp();
+    scope(exit) { postArgstring("select.element edge set");
+                  restoreDisplayDefaults(); }
+
+    postArgstring("select.typeFrom edge");
+    postArgstring("select.element edge set 0 1 2 3 4 5 6 7");
+
+    postCommand("viewport.wireOverlay", "uniform");
+    immutable string hUniformSel = bufferHash();
+    postCommand("viewport.wireOverlay", "none");
+    immutable string hNoneSel    = bufferHash();
+
+    auto pa = displayDump()["cells"].array[0]["plan"]["active"];
+    enforce(!jsonBool(pa, "drawWire"), "overlay None must resolve drawWire=false");
+    writeln("    H1 PASS: overlay None resolves to drawWire=false");
+
+    enforce(hUniformSel != hNoneSel,
+        "switching the wireframe overlay off changed no pixels at all — it is "
+        ~ "resolved but not consumed");
+    writeln("    H2 PASS: the overlay axis reaches the framebuffer");
+
+    // THE assertion. Same overlay setting (off), selection dropped: if the
+    // framebuffer is unchanged, the selection was never being drawn once the
+    // overlay went off.
+    postArgstring("select.element edge set");
+    immutable string hNoneNoSel = bufferHash();
+    enforce(hNoneSel != hNoneNoSel,
+        "with the overlay switched OFF, selecting edges changed nothing on "
+        ~ "screen. Selection highlight is a separate display axis and must "
+        ~ "survive the overlay being off — this is what a blanket gate on the "
+        ~ "edge draw looks like from the outside");
+    writeln("    H3 PASS: selection feedback still draws with the overlay off");
+
+    // And the forcing relation: a lines-only surface with the overlay off is
+    // not an empty viewport.
+    postCommand("viewport.displayStyle", "wireframe");
+    Thread.sleep(300.msecs);
+    auto pw = displayDump()["cells"].array[0]["plan"]["active"];
+    enforce(jsonBool(pw, "drawWire"),
+        "a lines-only surface style with the overlay set to None must still "
+        ~ "force lines on, or the viewport is empty");
+    writeln("    H4 PASS: lines-only + overlay None still forces lines on");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow I — overlay opacity reaches the pixels.
+//
+// wireAlpha was resolved and dumped by the display endpoint from the first
+// commit of this feature, and consumed by nothing. That is precisely the
+// shape of assertion that passes forever while the feature does not work, so
+// it gets a directional pixel check on top of the digest.
+// --------------------------------------------------------------------------
+
+bool testFlowI() {
+    writeln("  [I] Overlay opacity reaches the pixels...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    auto geom = probe(0, "");
+    immutable int W = geom.w, H = geom.h;
+    string pts;
+    foreach (i; 0 .. 11) {
+        immutable int x = cast(int)(W * (0.30 + 0.04 * i));
+        for (int y = cast(int)(H * 0.24); y < cast(int)(H * 0.76); y++)
+            pts ~= format("%d,%d;", x, y);
+    }
+    foreach (i; 0 .. 11) {
+        immutable int y = cast(int)(H * (0.30 + 0.035 * i));
+        for (int x = cast(int)(W * 0.22); x < cast(int)(W * 0.80); x++)
+            pts ~= format("%d,%d;", x, y);
+    }
+
+    postCommand("viewport.displayStyle", "shaded");
+    postCommand("viewport.wireOverlay", "uniform");
+    postCommand("viewport.wireAlpha", "1.0");
+    Thread.sleep(400.msecs);
+    auto opaque = probe(0, pts);
+
+    // The measurement set is defined BY the opaque image — the pixels the
+    // base line pass actually covers — so the test never needs to know where
+    // an edge is.
+    size_t[] linePx;
+    foreach (i, p; opaque.points) {
+        if (!p.valid) continue;
+        immutable int mn = (p.r < p.g ? (p.r < p.b ? p.r : p.b) : (p.g < p.b ? p.g : p.b));
+        if (mn >= 200) linePx ~= i;
+    }
+    enforce(linePx.length >= 20,
+        format("only %d fully-lit line samples found; too few to measure "
+               ~ "opacity against", linePx.length));
+
+    double meanRedAt(string alpha) {
+        postCommand("viewport.wireAlpha", alpha);
+        Thread.sleep(400.msecs);
+        auto s = probe(0, pts);
+        double acc = 0;
+        foreach (i; linePx) acc += s.points[i].r;
+        return acc / cast(double)linePx.length;
+    }
+
+    immutable double m10 = meanRedAt("1.0");
+    immutable double m05 = meanRedAt("0.5");
+    immutable double m00 = meanRedAt("0.0");
+
+    // Directional and categorical: lines get closer to what is behind them as
+    // opacity falls. No shading value is asserted.
+    enforce(m10 > m05 + 12.0 && m05 > m00 + 12.0,
+        format("overlay opacity did not reach the pixels: means were "
+               ~ "%.1f (opaque) / %.1f (half) / %.1f (clear) over %d line "
+               ~ "samples — expected a strict, substantial decrease",
+               m10, m05, m00, linePx.length));
+    writefln("    I1 PASS: %d line samples fade %.1f -> %.1f -> %.1f as "
+             ~ "opacity drops 1.0 -> 0.5 -> 0.0", linePx.length, m10, m05, m00);
+
+    enforce(jsonNum(displayDump()["cells"].array[0], "plan", "active", "wireAlpha") == 0.0,
+        "the plan must report the opacity that was set");
+    writeln("    I2 PASS: the dumped plan agrees with what was set");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow J — a display change reaches EXACTLY ONE cell.
+//
+// Every other term of a cell's dirty key is shared: the render loop stamps
+// the same value into all four cells. Display style is the first genuinely
+// per-cell render input, and an implementation that stamped it from a frame
+// value instead of from the cell would look completely correct in the
+// single-cell layout everything else is tested in.
+//
+// This is a STATE assertion on purpose. Under --test only the active cell is
+// rendered, so a pixel assertion aimed at cell 2 would pass against an FBO
+// that was never drawn (Flow E pins that limitation).
+// --------------------------------------------------------------------------
+
+bool testFlowJ() {
+    writeln("  [J] A per-cell display change reaches exactly one cell...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    postCommand("viewport.layout", "Quad");
+    Thread.sleep(400.msecs);
+    enforce(cast(int)jsonNum(displayDump(), "cellCount") == 4,
+        "precondition: Quad must report four cells");
+
+    postCommandRaw("viewport.displayStyle",
+        `{"_positional":["wireframe"],"viewport":2}`);
+    postCommandRaw("viewport.wireAlpha", `{"_positional":[0.25],"viewport":2}`);
+    Thread.sleep(300.msecs);
+
+    auto cells = displayDump()["cells"].array;
+    foreach (i, c; cells) {
+        immutable bool isTarget = (i == 2);
+        immutable string style  = c["state"]["active"]["style"].str;
+        immutable double alpha  = jsonNum(c, "state", "active", "wireAlpha");
+        enforce(style == (isTarget ? "Wireframe" : "Shaded"),
+            format("cell %d style is %s; a display write addressed at cell 2 "
+                   ~ "must reach cell 2 and no other — if every cell changed, "
+                   ~ "the state is not per-cell", i, style));
+        enforce(abs(alpha - (isTarget ? 0.25 : 1.0)) < 1e-4,
+            format("cell %d opacity is %.3f, expected %.2f", i, alpha,
+                   isTarget ? 0.25 : 1.0));
+        // The resolved plan has to follow the state, per cell.
+        enforce(jsonBool(c, "plan", "active", "drawFaces") == !isTarget,
+            format("cell %d: the resolved plan does not follow that cell's "
+                   ~ "own state", i));
+    }
+    writeln("    J1 PASS: cell 2 changed, cells 0/1/3 untouched, plans follow");
+
+    // Addressing a cell the layout does not have must FAIL rather than
+    // silently land on the active cell — a test that quietly retargeted would
+    // assert nothing.
+    postCommand("viewport.layout", "Single");
+    Thread.sleep(300.msecs);
+    auto msg = postCommandExpectingRefusal("viewport.displayStyle",
+        `{"_positional":["wireframe"],"viewport":3}`);
+    enforce(msg.length > 0, "the refusal must carry a message");
+    writefln("    J2 PASS: out-of-layout cell refused — %s", msg);
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow K — the commands refuse what no pass can draw.
+//
+// The display enums are declared wider than the renderer honours, so the
+// value space is right from the start. That is only safe if the unreachable
+// values are genuinely unreachable: a command that accepts one and then
+// renders something else is a lie that no assertion in this file could catch,
+// because the endpoint would faithfully report the state it was given.
+// --------------------------------------------------------------------------
+
+bool testFlowK() {
+    writeln("  [K] Values no pass draws are refused, not silently accepted...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    postCommandExpectingRefusal("viewport.displayStyle", `"solid"`);
+    postCommandExpectingRefusal("viewport.wireOverlay",  `"colored"`);
+    writeln("    K1 PASS: the unlit style and the per-item overlay colour are refused");
+
+    postCommandExpectingRefusal("viewport.displayStyle", `"gouraud"`);
+    postCommandExpectingRefusal("viewport.wireOverlay",  `"dotted"`);
+    writeln("    K2 PASS: unknown names are refused");
+
+    postCommandExpectingRefusal("viewport.wireAlpha", `1.7`);
+    postCommandExpectingRefusal("viewport.wireAlpha", `-0.5`);
+    postCommandExpectingRefusal("viewport.wireAlpha", `"opaque"`);
+    writeln("    K3 PASS: opacity outside 0..1, and non-numeric opacity, are refused");
+
+    // A refusal must leave the viewport exactly as it was.
+    auto after = displayDump()["cells"].array[0];
+    enforce(after["state"]["active"]["style"].str == "Shaded"
+         && after["state"]["active"]["wire"].str == "Uniform"
+         && jsonNum(after, "state", "active", "wireAlpha") == 1.0,
+        "a refused command must not partially apply: " ~ after["state"].toString);
+    writeln("    K4 PASS: refusals leave the display state untouched");
+
+    return true;
+}
+
 // --------------------------------------------------------------------------
 // Main
 // --------------------------------------------------------------------------
@@ -531,6 +995,17 @@ int main(string[] args) {
     run(&testFlowD, "Flow D — plan and pixels agree about which passes ran");
     run(&testFlowE, "Flow E — per-cell renders flag reports the --test limit");
     run(&testFlowF, "Flow F — backdrop plan reaches the pixels");
+    run(&testFlowG, "Flow G — lines-only style: faces off, model see-through");
+    run(&testFlowH, "Flow H — overlay axis on/off, selection surviving None");
+    run(&testFlowI, "Flow I — overlay opacity reaches the pixels");
+    run(&testFlowJ, "Flow J — a display change reaches exactly one cell");
+    run(&testFlowK, "Flow K — undrawable values are refused");
+
+    // Belt-and-suspenders: the runner shares one app across a worker's whole
+    // slice and its between-tests reset does not cover viewport display state
+    // or layout. Every mutating flow restores in a scope(exit); this catches
+    // the case where a flow died somewhere that skipped even that.
+    restoreDisplayDefaults();
 
     writefln("\n%d passed, %d failed", passed, failed);
     return failed > 0 ? 1 : 0;
