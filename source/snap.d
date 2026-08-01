@@ -232,8 +232,21 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // registry carries a per-GUIDE priority, and the reference's element-snap
 // guide answers with ONE priority for vertex, edge and polygon alike — an
 // immediate store with no branch on element type — so "vertex beats edge" is
-// not expressible on that channel at all. The registry stays empty here and
-// its behaviour is unchanged by this block; see the neutrality unittest.
+// not expressible on that channel at all. Nothing per-type is therefore put
+// into the registry, and it stays empty.
+//
+// The two mechanisms DO meet, and the meeting is not a no-op — an earlier
+// revision of this block claimed the registry's behaviour was "unchanged",
+// and that claim was false. The cascade ranks by distance and tolerance and
+// reads no priority whatsoever, so a cascade asked BEFORE the priority is
+// resolved silently drops a priority difference between two classes, in both
+// directions. `foldCascadeChampion` therefore resolves priority FIRST and
+// hands the cascade only the classes that survive at the top priority: the
+// registry keeps its documented rule (higher priority wins outright, at any
+// distance), and the cascade settles what the registry has left tied. That
+// ordering is load-bearing, it is the reference's own nesting, and it is
+// pinned by a two-class unittest that fails if the classes are cascaded
+// before their priorities are compared.
 //
 // MEASURED (task 0551, static; corroborated independently by the press-pick
 // lane a day earlier, which decoded the same comparator in a different
@@ -405,6 +418,13 @@ alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
 /// for a guide that mirrors the distance rule, is proved by the unittest at
 /// the bottom of this module, because that agreement is what phase (b) rests
 /// on.
+///
+/// Priority remains the FIRST term of the key across the cross-type cascade
+/// too. The cascade (`cascadeClassWins`) ranks Vertex / Edge / Polygon by
+/// distance and tolerance and reads no priority at all, so it is asked only
+/// about the classes that TIE at the top priority — a guide that outranks a
+/// class removes it from the cascade rather than being overruled by it. With
+/// an empty registry every class ties at 0 and nothing is removed.
 SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                       const ref Viewport vp,
                       const ref Mesh mesh,
@@ -639,11 +659,45 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // does not matter that the champion arrives after Grid / Workplane / Pivot
     // / Box have already been considered.
     void foldCascadeChampion() {
+        // PRIORITY FIRST, CASCADE SECOND — and the nesting is the whole of the
+        // registry's contract surviving this block.
+        //
+        // The registry's rule is that priority strictly DOMINATES: a candidate
+        // at a higher priority wins outright, at any distance. The cascade
+        // below ranks by distance and tolerance and reads no priority at all,
+        // so asking it first would silently discard a priority difference
+        // BETWEEN two classes — a guide that put Edge above Vertex would still
+        // get the Vertex the cascade prefers, and the reverse pairing would
+        // break the other way. Resolving priority first, and only then asking
+        // the cascade to settle the classes that remain, keeps both rules
+        // whole: priority decides between classes, the cascade decides within
+        // one priority.
+        //
+        // It is also the reference's own nesting. There, the cascade lives
+        // INSIDE one source's proximity answer and has already reduced to a
+        // single candidate before that source reports one priority; the
+        // priority comparison is the outer loop over sources and the cascade
+        // can never overturn it. Ours is asked per CANDIDATE rather than per
+        // source, so the same nesting has to be written down instead of coming
+        // for free — but it is the same nesting.
+        //
+        // Neutral where it has always been neutral: with an empty registry
+        // every candidate carries priority 0, so `topPrio` is 0, no class is
+        // masked, and the cascade sees exactly what it saw before.
+        int topPrio = int.min;
+        foreach (ref cb; clsBest)
+            if (cb.has && cb.prio > topPrio) topPrio = cb.prio;
+
         bool[3]  has;
         float[3] dist = [kAbsentClassDist, kAbsentClassDist, kAbsentClassDist];
         foreach (i, ref cb; clsBest) {
-            has[i]  = cb.has;
-            if (cb.has) dist[i] = cb.dist;
+            // An outranked class is absent as far as the cascade is concerned
+            // — not merely far away. Handing it in at its true distance would
+            // let it lose the *other* classes their tolerance clauses, which
+            // is a vote it does not get to cast.
+            if (!cb.has || cb.prio < topPrio) continue;
+            has[i]  = true;
+            dist[i] = cb.dist;
         }
 
         // The tolerance base. The reference builds it as `min(callerRange,
@@ -2959,6 +3013,188 @@ unittest {
         ~ "it always was");
     assert(abs(e.worldPos.y - 0.0f) < 1e-6f,
         "and the edge's snapped point is the closest point ON the segment");
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// TASK 0551 — THE REGISTRY MEETS THE CASCADE: PRIORITY IS STILL THE FIRST TERM.
+//
+// This block exists because the four S4 guide unittests above CANNOT observe
+// this. Their fixture is `enabledTypes = SnapType.Vertex` over a vertices-only
+// mesh — ONE cascade class — so no candidate of theirs can ever reach a second
+// cascade slot, and they would have stayed green whatever the cascade did to
+// priority between classes. Citing them as evidence that the registry is
+// unaffected was a null control, and this is the test that could have failed.
+//
+// The two directions are asserted separately because a fold that reads no
+// priority breaks BOTH, and each direction fails on its own:
+//
+//   * Elevate the EDGE over a vertex the cascade would have preferred.
+//   * Elevate the VERTEX over an edge the cascade would have preferred.
+//
+// Each half first pins, with the SAME guide at a flat priority, that the
+// cascade really does prefer the other class — otherwise "the higher priority
+// won" would be indistinguishable from "the cascade happened to agree".
+// ---------------------------------------------------------------------------
+version (unittest) {
+    /// A guide that answers with the service's own screen distance and a
+    /// priority that depends on the candidate's TYPE.
+    ///
+    /// Deliberately not a knob on `MirrorGuide`: that guide keys its promotion
+    /// on element INDEX, which is the one axis that cannot express "this class
+    /// outranks that class", and it carries five other switches this block must
+    /// be seen not to depend on.
+    private class TypePriorityGuide : SnapGuide {
+        Viewport vp;
+        int      sx, sy;
+        SnapType elevateType = SnapType.None;
+        int      elevatePrio = 1;
+        int      basePrio    = 0;
+
+        this(Viewport v, int x, int y) { vp = v; sx = x; sy = y; }
+
+        void limits(float i, float o) {}
+
+        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+                       out float distPx, ref int priority)
+        {
+            float qx, qy, qz;
+            if (!projectToWindowFull(candWorld, vp, qx, qy, qz)) return false;
+            immutable float dx = qx - cast(float)sx;
+            immutable float dy = qy - cast(float)sy;
+            distPx  = sqrt(dx * dx + dy * dy);
+            priority = (type == elevateType) ? elevatePrio : basePrio;
+            return true;
+        }
+
+        void setDrawState(GuideDrawState s) {}
+        uint flags() const { return 0; }
+    }
+}
+
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, round;
+
+    invalidateSnapGrids();
+
+    // The same 80 px per world unit at z = 0 the behavioural test above uses:
+    // screen = (400 + 80x, 400 - 80y).
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    // Vertex 0 is the contested vertex; the edge runs out of it along +X, so
+    // the edge's nearest point is always at least as close as the vertex.
+    Mesh m;
+    m.vertices = [ Vec3(0, 0, 0), Vec3(1, 0, 0) ];
+    m.edges    = [ [0u, 1u] ];
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex | SnapType.Edge;   // TWO cascade classes
+
+    immutable float base = kCandidateToleranceBasePx;
+    immutable float tolV = kVertexToleranceScale * base;
+
+    float[2] pixelOf(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return [qx, qy];
+    }
+
+    // Distances the two classes will carry into the cascade, for a cursor.
+    void measure(Vec3 cursorWorld, out int sx, out int sy,
+                 out float dVert, out float dEdge)
+    {
+        auto cpix = pixelOf(cursorWorld);
+        sx = cast(int)round(cpix[0]);
+        sy = cast(int)round(cpix[1]);
+        auto a = pixelOf(m.vertices[0]);
+        auto b = pixelOf(m.vertices[1]);
+        dVert = sqrt((a[0] - sx) * (a[0] - sx) + (a[1] - sy) * (a[1] - sy));
+        float t;
+        dEdge = sqrt(closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
+                                               a[0], a[1], b[0], b[1], t));
+    }
+
+    // --- direction 1: the guide puts EDGE above the vertex the cascade wants -
+    // Geometry is the reported case: the vertex trails by more than one base
+    // and less than the doubled one, so the cascade prefers the VERTEX.
+    {
+        immutable Vec3 cursorWorld = Vec3(0.2f, 0.05f, 0);
+        int sx, sy; float dVert, dEdge;
+        measure(cursorWorld, sx, sy, dVert, dEdge);
+        immutable float trail = dVert - dEdge;
+        assert(dEdge < dVert && trail > base && trail < tolV,
+            "fixture: the cascade must prefer the VERTEX here, or elevating "
+            ~ "the edge would prove nothing about priority");
+
+        // Control: the same guide at a FLAT priority must leave the cascade's
+        // own answer standing. Without this line "the edge won" could be the
+        // guide's mere presence rather than its priority.
+        invalidateSnapGrids();
+        auto flat = new TypePriorityGuide(vp, sx, sy);
+        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                  [flat]);
+        assert(f.snapped && f.targetType == SnapType.Vertex,
+            "control: at a flat priority the cascade decides, and it says "
+            ~ "Vertex");
+
+        invalidateSnapGrids();
+        auto edgeUp = new TypePriorityGuide(vp, sx, sy);
+        edgeUp.elevateType = SnapType.Edge;
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                  [edgeUp]);
+        assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
+            "a guide that outranks the vertex class must WIN, even though the "
+            ~ "cross-type cascade prefers the vertex on distance. Resolving "
+            ~ "Vertex here means the cascade was asked before the priorities "
+            ~ "were compared, and the registry's rule — higher priority wins "
+            ~ "outright, at any distance — was silently dropped");
+    }
+
+    // --- direction 2: the guide puts VERTEX above the edge the cascade wants -
+    // Same geometry, cursor further out along the edge: now the vertex trails
+    // by MORE than its doubled tolerance, so the cascade prefers the EDGE.
+    {
+        immutable Vec3 cursorWorld = Vec3(0.28f, 0.05f, 0);
+        int sx, sy; float dVert, dEdge;
+        measure(cursorWorld, sx, sy, dVert, dEdge);
+        immutable float trail = dVert - dEdge;
+        assert(trail >= tolV,
+            "fixture: the vertex must trail by its WHOLE doubled tolerance, or "
+            ~ "the cascade would prefer it and elevating it would prove "
+            ~ "nothing");
+        assert(dVert <= cfg.innerRangePx,
+            "fixture: and the vertex must still be inside the acceptance "
+            ~ "range, or promoting it would produce a highlight and not a snap");
+
+        invalidateSnapGrids();
+        auto flat = new TypePriorityGuide(vp, sx, sy);
+        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                  [flat]);
+        assert(f.snapped && f.targetType == SnapType.Edge,
+            "control: at a flat priority the cascade decides, and at this "
+            ~ "distance it says Edge");
+
+        invalidateSnapGrids();
+        auto vertUp = new TypePriorityGuide(vp, sx, sy);
+        vertUp.elevateType = SnapType.Vertex;
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+                                  [vertUp]);
+        assert(r.snapped && r.targetType == SnapType.Vertex
+            && r.targetIndex == 0,
+            "and the other direction: a guide that outranks the EDGE class "
+            ~ "must win against the class the cascade prefers. The two "
+            ~ "directions are asserted separately because a fold that reads no "
+            ~ "priority at all breaks both, and neither one alone shows it");
+    }
 
     invalidateSnapGrids();
 }
