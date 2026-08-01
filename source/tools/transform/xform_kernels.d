@@ -21,7 +21,7 @@ module tools.transform.xform_kernels;
 // "snapshot at drag start" invariant the tools already maintain via
 // captureFalloffForDrag / captureSymmetryForDrag.
 
-import math    : Vec3, Viewport, dot;
+import math    : Vec3, Viewport, dot, cross;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
 import mesh    : Mesh;
@@ -611,261 +611,389 @@ void applyXformMatrix(
 // A press that misses every handle, in an action-centre mode that lets the
 // pivot relocate, scales in a PLANE rather than along one axis: the drag's
 // horizontal component drives one basis axis, its vertical component drives
-// another, and the third is left at exactly 1. Which axis takes which screen
-// component is a property of the CAMERA alone — a reference drag deliberately
-// aimed exactly along one axis's screen projection left THAT axis untouched
-// and scaled the other two, so the assignment cannot be a function of the drag
-// direction.
+// another, and the third is left at exactly 1. That much is measured — the map
+// is rank 2, and a reference drag deliberately aimed exactly along one axis's
+// screen projection left THAT axis untouched and scaled the other two, so the
+// assignment cannot be a function of the drag direction.
 //
-// The projection is DIRECTIONAL — the axis direction resolved through the view
-// basis handed in — and NOT the difference of two projected points. That is a
-// measured choice, and the measurement is scored rather than asserted: the
-// scorer prints its table and its inclusion rule, and the unittest below
-// carries its result. Over eleven reference legs on seven cameras, the
-// difference-of-projected-points reading is not merely outscored, it is
-// EXCLUDED: it depends on where the pivot is, so it returns different axes for
-// legs that share a camera, while the reference returns the same axis for
-// every leg at a camera. A rule that varies where the measurement does not
-// cannot be the rule.
+// ── THE ELECTION IS A READ, NOT A FIT ────────────────────────────────────
 //
-// ── WHICH BASIS THIS IS EVALUATED IN, AND WHY IT MATTERS ─────────────────
+// An earlier version of this function asked "which world axis is the most
+// screen-HORIZONTAL?" and gave that axis to the horizontal drag component.
+// That rule was chosen by scoring three candidates against captured legs; it
+// won 6 of 7 cameras and was shipped. It is the wrong rule, and the reference
+// was subsequently read rather than scored — statically for the structure, and
+// then on a recorded execution of the gesture itself.
 //
-// This function takes the basis as an argument and has no opinion about it.
-// The caller (`ScaleTool.pickPlaneAxes`) hands it `cachedVp.view` rows 0/1,
-// and `view.d` builds every perspective viewport as `lookAt(eye, focus,
-// Vec3(0,1,0))` — so OUR camera's right row is perpendicular to +Y by
-// construction and our screen can never be rolled.
+// The reference never asks which axis is most screen-horizontal. It asks
+// **which axis to LEAVE ALONE**, answers with the **eye ray at the action
+// centre**, and hands the two survivors to the two screen components by a
+// **fixed permutation**:
 //
-// The reference's can, and is: its view carries a roll that varies with the
-// orbit (6.4 deg to 27.5 deg across the seven measured cameras, and it changes
-// sign). That roll is not a recording artefact — the reference's own drag
-// captures reproduce their world motion to 0.26 deg through the rolled basis
-// and are 10 deg out through an unrolled one.
+//     press:  E        = the unit eye ray at the action centre C
+//             A_k      = basis axis k (reference: column k of the tool axis
+//                        matrix, measured exactly identity -> the world axes)
+//             excluded = argmax_k |A_k . E|      -- held for the whole drag
 //
-// So the same rule, evaluated on OUR screen and on the reference's, does not
-// always elect the same axis: it agrees on 4 of the 7 measured cameras and
-// differs on 3, all three where the two leading candidates are close enough
-// that a roll of a few degrees moves the argmax across them. The unittest
-// below runs BOTH bases over all seven cameras and asserts each result
-// separately, so the divergence is a recorded number rather than a surprise,
-// and so the test exercises the basis the product actually supplies instead of
-// only the one the reference reported.
+//     drag:   excluded 0 (X):  horizontal -> Z,  vertical -> Y   (no compare)
+//             excluded 2 (Z):  horizontal -> X,  vertical -> Y   (no compare)
+//             excluded 1 (Y):  |A0.R| > |A2.R| ? (h->X, v->Z)
+//                                              : (h->Z, v->X)
 //
-// This is a camera-model difference, not a defect in the law: where the two
-// screens elect the same axis, the plane scale reproduces the reference to
-// 0.009-0.012 on a unit cube. It is also NOT something a tie-break can fix —
-// on the three divergent cameras our own reading is decisive (margin 0.05 to
-// 0.17), not marginal. Closing it would require our viewport to carry a roll,
-// which is a camera-model question and not this function's.
+// World Y takes the vertical component in two of the three branches,
+// unconditionally. A screen projection is compared in EXACTLY ONE branch — the
+// one where Y is itself the axis being dropped, i.e. the only case where both
+// survivors are horizontal-ish and a comparison is actually needed.
 //
-// Returns false when a projection is degenerate (an axis edge-on to the eye).
-bool pickScreenPlaneAxes(Vec3 camRight, Vec3 camUp,
-                         Vec3 axisX, Vec3 axisY, Vec3 axisZ,
-                         out int hIdx, out int vIdx,
-                         out float hSign, out float vSign,
-                         out float hMargin)
+// Evidence, term by term:
+//
+//  * `E` — recorded on five presses, `|E| == 1.000000` each time and 15.6 deg
+//    off the view direction on every one, consistently in the direction of the
+//    press offset. It is the eye ray AT THE ACTION CENTRE, not the camera
+//    forward axis. That 15.6 deg is the whole finding, because it is enough to
+//    move the argmax: at the reference-comparison camera the view direction's
+//    argmax is z by 0.359544 while `E`'s is x by 0.013749, and the reference
+//    elected x.
+//  * the permutation — read off the write sites, and confirmed live on the two
+//    branches that executed (`excluded 0` on four presses, `excluded 2` on one).
+//  * the tie rule — 22 instructions, no epsilon, strict `>` at index 0 and at
+//    index 1's second test. An exact tie goes to the HIGHER index. Read, not
+//    fitted; never reached on the recorded corpus.
+//  * `A_k` — columns of the tool axis matrix, which came back exactly identity
+//    (`max|dev| = 0.000e+00`) on all five presses, so `A_k . E == E_k` there.
+//    We pass our own action-centre basis, which is the same quantity.
+//
+// The consequence for the retracted rule is not that it lost a close call. At
+// the reference-comparison camera the two leading screen projections differ by
+// 0.00026 — but that is the margin of a comparison THE REFERENCE DOES NOT MAKE
+// there. The quantity it does compare has a margin 53x larger and on the other
+// side. The unittest below carries all five recorded presses and scores the
+// retracted rule on them, in the reference's OWN basis: 1 of 5.
+//
+// ── WHAT THE ELECTION DOES *NOT* DEPEND ON, AND WHY THAT MATTERS HERE ────
+//
+// `E` is the ray from the eye through the action centre. It does not read the
+// view's up vector, so it is **ROLL-INVARIANT**. `source/view.d:139` builds
+// every perspective viewport as `lookAt(eye, focus, Vec3(0,1,0))`, so our
+// screen can never carry a roll while the reference's does (6.4 to 27.5 deg
+// across the measured cameras, sign-changing, and real rather than a recording
+// artefact). The previous rule read a screen basis and was therefore
+// structurally unportable — that refusal was correct FOR THAT RULE.
+//
+// It does not apply to this one. Two of the three branches read no basis at
+// all, so on those the port is exact regardless of our camera model. The
+// refusal survives only as a narrow scope on the `excluded == 1` branch, whose
+// single comparison is the one place a bank could change the answer.
+//
+// `excluded == 1` IS THE UNCONFIRMED LEG. It never executed on the recording
+// (0 hits — every press dropped X or Z), so it is decoded statically only. It
+// is implemented here because it is reachable for us — a near-top view makes
+// `|E_y|` dominate — and refusing to answer would leave the gesture dead there
+// rather than approximately right. Treat its two outcomes as unverified.
+//
+// `screenRight` for that branch is the view's own right direction. The
+// reference obtains it by unprojecting two pixels 0.01 px apart at the action
+// centre; for a symmetric frustum that difference IS the view matrix's right
+// row at any depth, which is what we pass, so the construction matches even
+// though our row can never be banked.
+//
+// Returns false only when the eye ray is degenerate (the action centre sitting
+// exactly on the eye). The reference has no failure path here.
+bool pickScalePlaneAxes(Vec3 eyeVec, Vec3 screenRight,
+                        Vec3 axisX, Vec3 axisY, Vec3 axisZ,
+                        out int hIdx, out int vIdx,
+                        out int excludedIdx, out float electMargin)
 {
     import std.math : abs, sqrt;
-    hIdx = vIdx = -1; hSign = vSign = 1.0f; hMargin = 0.0f;
+    hIdx = vIdx = excludedIdx = -1;
+    electMargin = 0.0f;
+
+    immutable float el = sqrt(eyeVec.x * eyeVec.x + eyeVec.y * eyeVec.y
+                            + eyeVec.z * eyeVec.z);
+    if (!(el > 1e-6f)) return false;
+    immutable Vec3 e = Vec3(eyeVec.x / el, eyeVec.y / el, eyeVec.z / el);
+
     Vec3[3] ax = [axisX, axisY, axisZ];
-    float[3] sx, sy;
-    foreach (i, a; ax) {
-        immutable float px =  dot(camRight, a);
-        immutable float py = -dot(camUp,    a);    // screen Y grows downward
-        immutable float m  = sqrt(px * px + py * py);
-        if (!(m > 1e-6f)) return false;
-        sx[i] = px / m; sy[i] = py / m;
-    }
-    static int argmaxAbs(ref float[3] v, int skip) {
-        int best = -1; float bv = -1.0f;
-        foreach (i; 0 .. 3) {
-            if (i == skip) continue;
-            import std.math : abs;
-            if (abs(v[i]) > bv) { bv = abs(v[i]); best = cast(int)i; }
-        }
-        return best;
-    }
-    hIdx = argmaxAbs(sx, -1);
-    vIdx = argmaxAbs(sy, -1);
-    if (hIdx == vIdx) {
-        // One axis fits both screen directions best. It goes to the one it fits
-        // BETTER; the other takes its own runner-up. The two are then always
-        // distinct and the third is untouched by construction.
-        if (abs(sx[hIdx]) >= abs(sy[vIdx])) vIdx = argmaxAbs(sy, hIdx);
-        else                                hIdx = argmaxAbs(sx, vIdx);
-    }
-    if (hIdx < 0 || vIdx < 0 || hIdx == vIdx) return false;
-    // How far the elected horizontal axis beat its nearest rival. Reported so a
-    // caller (and the tests) can say when the election was decided by a margin
-    // too small for the rule to be trusted at all.
+    float[3] d = [dot(ax[0], e), dot(ax[1], e), dot(ax[2], e)];
+
+    // The elector, transcribed. Strict `>` at index 0 and at index 1's second
+    // test, `>=` at index 1's first: an exact tie goes to the HIGHER index,
+    // with no tolerance anywhere.
+    immutable float a0 = abs(d[0]), a1 = abs(d[1]), a2 = abs(d[2]);
+    if      (a0 >  a1 && a0 >  a2) excludedIdx = 0;
+    else if (a1 >= a0 && a1 >  a2) excludedIdx = 1;
+    else                           excludedIdx = 2;
+
+    // How far the excluded axis beat its nearest rival, on the quantity the
+    // reference actually compares. Reported so a caller (and the tests) can
+    // say when the election was decided by a margin too small to trust.
     {
         float top = -1.0f, second = -1.0f;
         foreach (i; 0 .. 3) {
-            immutable float v = abs(sx[i]);
+            immutable float v = abs(d[i]);
             if (v > top) { second = top; top = v; }
             else if (v > second) second = v;
         }
-        hMargin = top - second;
+        electMargin = top - second;
     }
-    hSign = sx[hIdx] >= 0 ? 1.0f : -1.0f;
-    vSign = sy[vIdx] >= 0 ? 1.0f : -1.0f;
+
+    final switch (excludedIdx) {
+        case 0: hIdx = 2; vIdx = 1; break;   // X out: h->Z, v->Y
+        case 2: hIdx = 0; vIdx = 1; break;   // Z out: h->X, v->Y
+        case 1:                              // Y out: THE UNCONFIRMED LEG
+            // The only comparison in the whole election, and the only place a
+            // camera bank can move the answer. Strict `>`; a tie takes the
+            // second arm.
+            if (abs(dot(ax[0], screenRight)) > abs(dot(ax[2], screenRight))) {
+                hIdx = 0; vIdx = 2;
+            } else {
+                hIdx = 2; vIdx = 0;
+            }
+            break;
+    }
     return true;
 }
 
 /// Gain on one of the plane's two axes for an accumulated drag component.
 /// Linear in the pixels and passing through zero — a long enough drag the other
 /// way MIRRORS rather than clamping.
+///
+/// `sign` carries the SCREEN CONVENTION, not the elected axis's orientation.
+/// The reference accumulates `cur.x - last.x` for the horizontal and
+/// `last.y - cur.y` for the vertical, and writes both straight into the elected
+/// attributes with no per-axis sign at all: an elected axis whose screen
+/// projection points LEFT still grows on a rightward drag. So the caller passes
+/// `+1` for the horizontal and `-1` for the vertical (our deltas are y-down),
+/// and nothing here consults the geometry.
 float screenPlaneScaleGain(float pixels, float sign, float pixelsPerUnit) {
     return 1.0f + pixels * sign / pixelsPerUnit;
 }
 
 unittest {
-    import std.math : abs;
-    // ── The election's whole measured record, in BOTH bases ───────────────
+    import std.math : abs, sqrt;
+
+    // ── THE FIVE RECORDED PRESSES ─────────────────────────────────────────
     //
-    // Seven cameras, carrying eleven reference legs between them. `refRight`
-    // / `refUp` are the reference view's OWN basis, verbatim out of the drag
-    // captures; `ourRight` / `ourUp` are `lookAt(eye, focus, +Y)` at the SAME
-    // view direction — the basis `ScaleTool.pickPlaneAxes` actually hands this
-    // function, since no viewport we build can be rolled.
+    // `eye` and `screenRight` are the reference's OWN values at the instant of
+    // the press, read off a recorded execution — not reconstructed from a
+    // camera, not fitted. `excluded` / `h` / `v` are what the reference then
+    // did, read at its write sites. Press 0 and 1 are two presses that landed
+    // on identical inputs and are kept as two rows because that is what was
+    // recorded.
     //
-    // `refAxis` is the axis the reference actually scaled under a horizontal
-    // drag; the reference elects one axis per camera and never disagreed with
-    // itself across the legs at a camera. `legs` is how many of the eleven
-    // sit here — it is NOT decoration: five of the eleven sit on one camera,
-    // so a per-leg count and a per-camera count tell different stories about
-    // the same rule, and the totals below assert both.
+    // Press 0/1 sit on the reference-comparison camera — the one the corpus
+    // uses and the one where every miss of the retracted rule lives. There the
+    // view direction's argmax is z and the EYE RAY's is x; the reference
+    // elected x, gave the horizontal to Z, and the corpus recorded z scaling.
     //
-    // A previous version of this test carried only the reference's basis and
-    // only five of the seven cameras. It passed while the product computed
-    // something else on input this function is never given, and it recorded
-    // 8/10 for a rule that scores 6/11.
-    static struct Cam {
+    // If a row here has to change, the recording is what says so. Re-read it;
+    // do not edit a row to make a rule pass.
+    static struct Press {
         string name;
-        Vec3 refRight, refUp;      // the reference's own, rolled
-        Vec3 ourRight, ourUp;      // ours at the same view direction
-        int  refAxis;              // what the reference scaled
-        int  legs;                 // captured legs on this camera
-        bool refAgrees;            // rule in THEIR basis == refAxis
-        bool ourAgrees;            // rule in OUR basis   == refAxis
+        Vec3   eye;           // E,  the unit eye ray at the action centre
+        Vec3   screenRight;   // N0, the view's own right (banked)
+        Vec3   screenDown;    // N1, the view's own down  (banked)
+        int    excluded;      // what the reference left alone
+        int    h, v;          // which axis each screen component drove
     }
-    immutable Cam[7] cams = [
-        Cam("orbit +45deg",
-            Vec3( 0.8739288099f, -0.4584904913f, -0.1613533535f),
-            Vec3( 0.4240210914f,  0.8814365630f, -0.2080281216f),
-            Vec3( 0.9709841480f,  0.0000000000f, -0.2391438570f),
-            Vec3(-0.0271152171f,  0.9935511790f, -0.1100945945f),
-            0, 1, true,  true),
-        Cam("orbit -11deg",
-            Vec3( 0.8757562418f, -0.2667204598f,  0.4023819096f),
-            Vec3( 0.3813299601f,  0.8933330733f, -0.2377887333f),
-            Vec3( 0.9482465583f,  0.0000000000f,  0.3175349819f),
-            Vec3( 0.1148477177f,  0.9323002647f, -0.3429667887f),
-            0, 1, true,  true),
-        Cam("orbit -3.7deg",
-            Vec3( 0.8396802984f, -0.2141613469f,  0.4990710511f),
-            Vec3( 0.3730158460f,  0.8953329110f, -0.2433889012f),
-            Vec3( 0.9034194433f,  0.0000000000f,  0.4287578681f),
-            Vec3( 0.1674429283f,  0.9205900846f, -0.3528126441f),
-            0, 1, true,  true),
-        // The reference-comparison camera, and five of the eleven legs. Its
-        // two leading candidates are near-mirror images about the horizontal:
-        // in the reference's basis the margin is 0.00026 and it elects the
-        // runner-up, so the rule misses there. In OURS the roll is gone, the
-        // margin opens to 0.168, and we miss the same camera DECISIVELY —
-        // which is why no tie-break would close it.
-        Cam("three-quarter",
-            Vec3( 0.8175685763f, -0.1868847946f,  0.5446610842f),
-            Vec3( 0.3688699304f,  0.8962929064f, -0.2461584864f),
-            Vec3( 0.8756488587f,  0.0000000000f,  0.4829483164f),
-            Vec3( 0.1942227555f,  0.9155691675f, -0.3521514174f),
-            2, 5, false, false),
-        // Two cameras where the roll alone decides it: the reference's basis
-        // elects z and matches, ours elects x and does not.
-        Cam("orbit +3.7deg",
-            Vec3( 0.7927495660f, -0.1589893939f,  0.5884475322f),
-            Vec3( 0.3647134956f,  0.8972307127f, -0.2489198955f),
-            Vec3( 0.8442250028f,  0.0000000000f,  0.5359889408f),
-            Vec3( 0.2207984442f,  0.9112083072f, -0.3477750249f),
-            2, 1, true,  false),
-        Cam("orbit +11deg",
-            Vec3( 0.7348514819f, -0.1014420422f,  0.6705988456f),
-            Vec3( 0.3563143958f,  0.8990512830f, -0.2544540073f),
-            Vec3( 0.7701682103f,  0.0000000000f,  0.6378408327f),
-            Vec3( 0.2716754992f,  0.9047561536f, -0.3280376895f),
-            2, 1, true,  false),
-        Cam("orbit -45deg",
-            Vec3( 0.2907773420f,  0.1922549149f,  0.9372761520f),
-            Vec3( 0.3117943793f,  0.9070900236f, -0.2827931294f),
-            Vec3( 0.2198106154f,  0.0000000000f,  0.9755425636f),
-            Vec3( 0.3653087611f,  0.9272401325f, -0.0823118812f),
-            2, 1, true,  true),
+    immutable Press[5] presses = [
+        Press("press 0 (corpus camera)",
+              Vec3(+0.632126f, -0.466933f, -0.618377f),
+              Vec3(+0.817569f, -0.186885f, +0.544661f),
+              Vec3(-0.368870f, -0.896293f, +0.246158f), 0, 2, 1),
+        Press("press 1 (corpus camera)",
+              Vec3(+0.632126f, -0.466933f, -0.618377f),
+              Vec3(+0.817569f, -0.186885f, +0.544661f),
+              Vec3(-0.368870f, -0.896293f, +0.246158f), 0, 2, 1),
+        Press("press 2",
+              Vec3(+0.912497f, -0.401305f, +0.079394f),
+              Vec3(+0.269283f, +0.148164f, +0.951596f),
+              Vec3(-0.371322f, -0.895723f, +0.244541f), 0, 2, 1),
+        Press("press 3",
+              Vec3(+0.656215f, -0.116679f, +0.745499f),
+              Vec3(-0.434452f, +0.398292f, +0.807846f),
+              Vec3(-0.372142f, -0.896155f, +0.241696f), 2, 0, 1),
+        Press("press 4",
+              Vec3(+0.748319f, +0.330960f, +0.574877f),
+              Vec3(-0.435557f, +0.395600f, +0.808573f),
+              Vec3(+0.086892f, -0.875582f, +0.475191f), 0, 2, 1),
     ];
 
-    int refCams, ourCams, refLegs, ourLegs, totalLegs, totalCams;
-    foreach (c; cams) {
-        totalCams++;
-        totalLegs += c.legs;
-        foreach (theirs; [true, false]) {
-            immutable Vec3 r = theirs ? c.refRight : c.ourRight;
-            immutable Vec3 u = theirs ? c.refUp    : c.ourUp;
-            immutable string where = c.name ~ (theirs ? " (their basis)"
-                                                      : " (OUR basis)");
-            int h, v; float hs, vs, margin;
-            assert(pickScreenPlaneAxes(r, u,
-                                       Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
-                                       h, v, hs, vs, margin),
-                   "projection must resolve on " ~ where);
-            // The vertical component drives world Y on every camera in both
-            // bases, and world Y points UP on screen, so a downward drag
-            // shrinks. The vertical half of the law is NOT basis-sensitive.
-            assert(v == 1, "vertical axis on " ~ where);
-            assert(h != v, "the two axes must differ on " ~ where);
-            assert(vs < 0.0f, "vertical sign on " ~ where);
-            immutable bool agrees = (h == c.refAxis);
-            immutable bool want   = theirs ? c.refAgrees : c.ourAgrees;
-            assert(agrees == want,
-                   "the recorded election on " ~ where ~ " has CHANGED — "
-                   ~ "re-run the private election scorer and re-measure "
-                   ~ "before editing this row");
-            if (agrees) {
-                if (theirs) { refCams++; refLegs += c.legs; }
-                else        { ourCams++; ourLegs += c.legs; }
-            }
+    // The retracted rule, kept executable so its retraction is a MEASUREMENT
+    // rather than a sentence: "the axis whose unit screen projection is the
+    // most horizontal takes the horizontal component". This is what shipped
+    // for two commits, scored 6 of 7 cameras on a camera-only corpus, and is
+    // what the read replaced. It runs here on the reference's OWN recorded
+    // basis — the most favourable input it could be given — and it is the
+    // per-axis NORMALISATION that decides three of its four misses, so the
+    // body is reproduced faithfully rather than shortened to an argmax.
+    static int retractedHorizontalAxis(Vec3 camRight, Vec3 camUp,
+                                       out float nearTieMargin) {
+        Vec3[3] ax = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
+        float[3] sx;
+        foreach (i, a; ax) {
+            immutable float px =  dot(camRight, a);
+            immutable float py = -dot(camUp,    a);
+            immutable float m  = sqrt(px * px + py * py);
+            sx[i] = px / m;
         }
-        // The three-quarter camera is a near-tie in THEIR basis and decisive
-        // in ours. Asserted because it is the reason a tie-break cannot help.
-        int h2, v2; float hs2, vs2, mRef, mOurs;
-        pickScreenPlaneAxes(c.refRight, c.refUp,
-                            Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
-                            h2, v2, hs2, vs2, mRef);
-        pickScreenPlaneAxes(c.ourRight, c.ourUp,
-                            Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
-                            h2, v2, hs2, vs2, mOurs);
-        if (c.name == "three-quarter") {
-            assert(mRef  < 0.0003f, "the near-tie must read as a near-tie");
-            assert(mOurs > 0.1f,
-                   "our basis must read the same camera as DECISIVE — that "
-                   ~ "is why no tie-break closes this divergence");
+        int best = 0;
+        foreach (i; 1 .. 3) if (abs(sx[i]) > abs(sx[best])) best = cast(int)i;
+        float top = -1.0f, second = -1.0f;
+        foreach (i; 0 .. 3) {
+            immutable float v = abs(sx[i]);
+            if (v > top) { second = top; top = v; }
+            else if (v > second) second = v;
         }
+        nearTieMargin = top - second;
+        return best;
     }
-    // The totals. These are the numbers the toolcard and the commit message
-    // must agree with; a rule change moves them and the test says so.
-    assert(totalCams == 7 && totalLegs == 11,
-           "the scored set is eleven legs on seven cameras");
-    assert(refCams == 6 && refLegs == 6,
-           "in the reference's OWN basis the rule matches 6 of 7 cameras "
-           ~ "and 6 of 11 legs");
-    assert(ourCams == 4 && ourLegs == 4,
-           "in OUR basis — the one the product supplies — it matches 4 of 7 "
-           ~ "cameras and 4 of 11 legs");
 
-    // The gains the reference produced, to the pixel counts it was driven with.
-    // 200 px right on the horizontal axis, 200 px down on the vertical one.
+    int reproduced, retractedHits;
+    foreach (p; presses) {
+        int h, v, ex; float margin;
+        assert(pickScalePlaneAxes(p.eye, p.screenRight,
+                                  Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                  h, v, ex, margin),
+               "the election must resolve on " ~ p.name);
+        assert(ex == p.excluded,
+               "the excluded axis on " ~ p.name ~ " does not match the "
+               ~ "recording — re-read the trace, do not edit this row");
+        assert(h == p.h && v == p.v,
+               "the screen-component assignment on " ~ p.name ~ " does not "
+               ~ "match the recording");
+        reproduced++;
+        // The reference never dropped world Y on any recorded press, so the
+        // one branch that reads a basis never ran. That is the unconfirmed leg.
+        assert(ex != 1, "no recorded press elected Y — see the unconfirmed leg");
+
+        // Score the retracted rule on the same press, in the reference's own
+        // basis (both rows recorded, so nothing here is reconstructed).
+        float unused;
+        if (retractedHorizontalAxis(p.screenRight, p.screenDown, unused) == p.h)
+            retractedHits++;
+    }
+    assert(reproduced == 5,
+           "the read rule reproduces the reference on 5 of 5 recorded presses");
+    assert(retractedHits == 1,
+           "the retracted screen-horizontal rule reproduces 1 of the 5 recorded "
+           ~ "presses, in the reference's OWN basis. That number replaces "
+           ~ "'6 of 7 cameras', which was a per-CAMERA score of a camera-only "
+           ~ "rule against a reference whose election is per-PRESS");
+
+    // The 0.00026 the campaign spent three phases on, located exactly: it is
+    // the retracted rule's own margin at the corpus camera. The reference does
+    // not make that comparison there, so the near-tie was never a tie in
+    // anything the reference computes.
+    {
+        float m; retractedHorizontalAxis(presses[0].screenRight,
+                                         presses[0].screenDown, m);
+        assert(m < 0.0003f,
+               "the retracted rule reads the corpus camera as a 0.00026 "
+               ~ "near-tie — that is where the campaign's famous number "
+               ~ "lived, and it belongs to a comparison the reference skips");
+    }
+
+    // The margin at the corpus camera, on the quantity the reference compares.
+    // 0.013749, against the 0.00026 the campaign spent three phases on — which
+    // was the margin of a comparison the reference does not make there.
+    {
+        int h, v, ex; float margin;
+        pickScalePlaneAxes(presses[0].eye, presses[0].screenRight,
+                           Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                           h, v, ex, margin);
+        assert(abs(margin - 0.013749f) < 1e-5f,
+               "the corpus camera's election margin is 0.013749 on the eye "
+               ~ "ray — 53x the 0.00026 near-tie it was mistaken for");
+    }
+
+    // ── ROLL-INVARIANCE ───────────────────────────────────────────────────
+    //
+    // The reason the basis refusal does NOT carry over to this rule. Roll the
+    // screen-right arbitrarily about the eye ray: the two branches that make no
+    // comparison must not move. This is what makes our unbanked viewport
+    // irrelevant to them.
+    foreach (p; presses) {
+        Vec3 rolled = cross(p.eye, p.screenRight);   // 90 deg of roll
+        immutable float rl = sqrt(dot(rolled, rolled));
+        rolled = Vec3(rolled.x / rl, rolled.y / rl, rolled.z / rl);
+        int h0, v0, e0, h1, v1, e1; float m0, m1;
+        pickScalePlaneAxes(p.eye, p.screenRight, Vec3(1,0,0), Vec3(0,1,0),
+                           Vec3(0,0,1), h0, v0, e0, m0);
+        pickScalePlaneAxes(p.eye, rolled, Vec3(1,0,0), Vec3(0,1,0),
+                           Vec3(0,0,1), h1, v1, e1, m1);
+        assert(e0 == e1 && h0 == h1 && v0 == v1 && m0 == m1,
+               "a roll must not move the election on " ~ p.name);
+    }
+
+    // ── THE TIE RULE ──────────────────────────────────────────────────────
+    //
+    // Strict `>` at index 0 and at index 1's second test, no epsilon: an exact
+    // tie goes to the HIGHER index. Read off 22 instructions; never reached on
+    // the recorded corpus, so this is the decode's own claim and nothing else.
+    {
+        static int electedFor(Vec3 e) {
+            int h, v, ex; float m;
+            pickScalePlaneAxes(e, Vec3(1,0,0), Vec3(1,0,0), Vec3(0,1,0),
+                               Vec3(0,0,1), h, v, ex, m);
+            return ex;
+        }
+        assert(electedFor(Vec3(1, 1, 0)) == 1, "x==y ties to y");
+        assert(electedFor(Vec3(0, 1, 1)) == 2, "y==z ties to z");
+        assert(electedFor(Vec3(1, 0, 1)) == 2, "x==z ties to z");
+        assert(electedFor(Vec3(1, 1, 1)) == 2, "a three-way tie goes to z");
+        // Signs are irrelevant — the elector compares magnitudes.
+        assert(electedFor(Vec3(-1, 1, 0)) == 1, "the elector is sign-blind");
+        assert(electedFor(Vec3(0.9f, 0, -1)) == 2, "the largest magnitude wins");
+    }
+
+    // ── THE UNCONFIRMED LEG (excluded == 1) ───────────────────────────────
+    //
+    // Decoded statically, executed zero times on the recording. Both arms are
+    // asserted so a rule change is visible, but neither is confirmed against
+    // the reference and neither should be cited as measured.
+    {
+        immutable Vec3 nearTop = Vec3(0.1f, 0.99f, 0.05f);   // |E_y| dominates
+        int h, v, ex; float m;
+        // Arm 1: X projects more strongly onto screen-right than Z does.
+        assert(pickScalePlaneAxes(nearTop, Vec3(0.9f, 0.0f, 0.1f),
+                                  Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                  h, v, ex, m));
+        assert(ex == 1, "a near-top eye ray must drop world Y");
+        assert(h == 0 && v == 2, "|X.R| > |Z.R| gives h=X, v=Z");
+        // Arm 2: Z wins the same comparison.
+        assert(pickScalePlaneAxes(nearTop, Vec3(0.1f, 0.0f, 0.9f),
+                                  Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                  h, v, ex, m));
+        assert(ex == 1 && h == 2 && v == 0, "|Z.R| > |X.R| gives h=Z, v=X");
+        // Arm 2 again by the tie: the comparison is strict, so an exact tie
+        // takes the second arm.
+        assert(pickScalePlaneAxes(nearTop, Vec3(0.5f, 0.0f, -0.5f),
+                                  Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                  h, v, ex, m));
+        assert(ex == 1 && h == 2 && v == 0,
+               "an exact tie in the Y-out comparison takes the second arm");
+    }
+
+    // ── DEGENERACY ────────────────────────────────────────────────────────
+    {
+        int h, v, ex; float m;
+        assert(!pickScalePlaneAxes(Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                   Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                   h, v, ex, m),
+               "an action centre sitting on the eye has no eye ray");
+    }
+
+    // ── THE FACTOR LAW — unchanged, and measured ──────────────────────────
+    //
+    // 200 px on a component gives 1.64 / 0.36; the recording's own writes were
+    // 1.10 1.14 1.20 1.28 1.32 on +100 px horizontal and 0.90 0.86 0.80 0.72
+    // 0.68 on +100 px down, i.e. 1 +/- px/312.5 exactly.
     assert(abs(screenPlaneScaleGain( 200.0f,  1.0f, 312.5f) - 1.64f) < 1e-6f);
     assert(abs(screenPlaneScaleGain( 200.0f, -1.0f, 312.5f) - 0.36f) < 1e-6f);
     assert(abs(screenPlaneScaleGain(-200.0f, -1.0f, 312.5f) - 1.64f) < 1e-6f);
     assert(abs(screenPlaneScaleGain( 100.0f,  1.0f, 312.5f) - 1.32f) < 1e-6f);
+    assert(abs(screenPlaneScaleGain( 100.0f, -1.0f, 312.5f) - 0.68f) < 1e-6f);
     // It passes through zero and goes negative rather than clamping.
     assert(screenPlaneScaleGain(-400.0f, 1.0f, 312.5f) < 0.0f);
 }

@@ -96,10 +96,11 @@ private:
 
     // ── the off-handle PLANE drag (dragAxis == PLANE_DRAG_AXIS) ─────────────
     // A press that misses every handle, in an action-centre mode that lets the
-    // pivot relocate, scales in a PLANE: the two basis axes whose screen
-    // projections are the most horizontal and the most vertical, driven by the
-    // drag's horizontal and vertical components RESPECTIVELY. The third axis is
-    // untouched. Armed in `onMouseButtonDownWithResolvedAxis`, consumed in
+    // pivot relocate, scales in a PLANE. One basis axis is ELECTED OUT — the
+    // one most nearly along the eye ray through the action centre — and the
+    // two survivors take the drag's horizontal and vertical components by a
+    // fixed table (`pickScalePlaneAxes`). The excluded axis is left at exactly
+    // 1. Armed in `onMouseButtonDownWithResolvedAxis`, consumed in
     // `onMouseMotion`, cleared on mouse-up with every other drag mode.
     enum int   PLANE_DRAG_AXIS = 7;
     // Screen pixels per unit of scale gain. The gain on each of the two axes is
@@ -114,7 +115,6 @@ private:
     // from `dragAxis == -1` the way it could while the relocate started no drag.
     public bool lastClickWasRelocate = false;
     int   planeAxisH = -1, planeAxisV = -1;   // basis-axis indices 0/1/2
-    float planeSignH = 1.0f, planeSignV = 1.0f;
     float planeAccumX = 0.0f, planeAccumY = 0.0f;
 
     // Phase C.3: Tool Properties state at the start of the current edit
@@ -802,55 +802,74 @@ public:
         lastClickWasRelocate = true;
         // The relocate already moved the ACEN pivot via notifyAcenUserPlaced
         // above. It is ALSO the start of a scale gesture: an off-handle press
-        // in a relocating action-centre mode scales in the plane of the two
-        // basis axes that lie most nearly along the screen's own axes, one per
-        // drag component. Arming here mirrors Rotate's off-ring arcball, which
+        // in a relocating action-centre mode scales in a PLANE — the reference
+        // elects one basis axis to LEAVE ALONE from the eye ray through the
+        // action centre, and hands the survivors to the two drag components by
+        // a fixed table. Arming here mirrors Rotate's off-ring arcball, which
         // relocates and then arms in exactly the same place.
         //
-        // If the plane cannot be resolved (a degenerate projection — the pivot
-        // or an axis edge-on to the eye), the press still relocates and still
-        // consumes the click, exactly as it did before: returning true keeps a
-        // scale-tool click away from the gizmo from falling through to
+        // `hit` is passed rather than re-read from the handler because it IS
+        // the action centre this press just placed, and the election is a
+        // function of it: the eye ray through it is the ray through the press
+        // pixel, so two presses at one camera can elect different axes.
+        //
+        // If the plane cannot be resolved (a degenerate eye ray — the action
+        // centre landing exactly on the eye), the press still relocates and
+        // still consumes the click, exactly as it did before: returning true
+        // keeps a scale-tool click away from the gizmo from falling through to
         // selection-picking and dropping the user's selection.
-        armPlaneDrag(e, vts);
+        armPlaneDrag(e, vts, hit);
         return true;
     }
 
-    // Choose the two basis axes the two screen components drive, and their
-    // signs. Delegates to the pure kernel so the law lives in exactly one
-    // place and is pinned by tests built from measured reference cameras.
-    // Returns false when the projection is degenerate.
+    // Choose the two basis axes the two screen components drive. Delegates to
+    // the pure kernel so the law lives in exactly one place; the kernel's
+    // docstring carries the read it implements and the evidence for each term.
+    // Returns false only when the eye ray is degenerate.
     //
-    // THE BASIS THIS SUPPLIES IS OUR OWN, AND IT IS NOT THE REFERENCE'S.
-    // `cachedVp.view` rows 0/1 come from `view.d`'s
-    // `lookAt(eye, focus, Vec3(0,1,0))`, so our right row is perpendicular to
-    // +Y and our screen carries no roll. The reference's does (6.4 to 27.5 deg
-    // across the measured cameras, sign-changing), and the same rule on the
-    // two screens elects the same axis on 4 of the 7 measured cameras and a
-    // different one on 3. That is recorded and asserted camera by camera in
-    // `pickScreenPlaneAxes`'s unittest, which runs BOTH bases; read its
-    // docstring before treating a corpus divergence here as a bug in the law.
-    // Regenerate the numbers with the election scorer in the private
-    // reference-comparison toolkit; it prints its table and its inclusion
-    // rule.
-    private bool pickPlaneAxes(ref VectorStack vts,
-                               out int hIdx, out int vIdx,
-                               out float hSign, out float vSign)
+    // WHAT THIS SUPPLIES, AND WHY THE OLD BASIS REFUSAL DOES NOT BITE HERE.
+    // The election consumes the EYE RAY at the action centre — `center - eye`,
+    // which reads no up vector and is therefore roll-invariant. Our viewports
+    // are built `lookAt(eye, focus, Vec3(0,1,0))` (`view.d:139`) and can never
+    // be banked while the reference's are; that made the PREVIOUS,
+    // screen-basis election structurally unportable, and it does not apply to
+    // two of this one's three branches, which compare nothing.
+    //
+    // `screenRight` is passed for the third branch only (`excluded == 1`, the
+    // unconfirmed leg). That branch's single comparison IS bank-sensitive, so
+    // it is the one place our camera model can still cost us — see the kernel.
+    //
+    // `center` is the action centre the press just placed. In every mode that
+    // arms this drag the placement is the click projected onto a plane, so the
+    // action centre lies ON the press ray and the eye ray through it is
+    // exactly the ray through the press pixel — which is what makes this
+    // election press-dependent rather than camera-only.
+    private bool pickPlaneAxes(ref VectorStack vts, Vec3 center,
+                               out int hIdx, out int vIdx)
     {
-        import tools.transform.xform_kernels : pickScreenPlaneAxes;
+        import tools.transform.xform_kernels : pickScalePlaneAxes;
+        import math : isOrtho;
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
-        Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
-        Vec3 camUp    = Vec3(cachedVp.view[1], cachedVp.view[5], cachedVp.view[9]);
-        float margin;
-        return pickScreenPlaneAxes(camRight, camUp, bX, bY, bZ,
-                                   hIdx, vIdx, hSign, vSign, margin);
+        immutable Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4],
+                                       cachedVp.view[8]);
+        // Perspective: the ray from the eye through the action centre. Ortho
+        // has no eye point — every ray is the view direction, which is what
+        // the reference's own accessor would return there too.
+        immutable Vec3 eyeVec = isOrtho(cachedVp)
+            ? Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10])
+            : Vec3(center.x - cachedVp.eye.x,
+                   center.y - cachedVp.eye.y,
+                   center.z - cachedVp.eye.z);
+        int excluded; float margin;
+        return pickScalePlaneAxes(eyeVec, camRight, bX, bY, bZ,
+                                  hIdx, vIdx, excluded, margin);
     }
 
     private bool armPlaneDrag(ref const SDL_MouseButtonEvent e,
-                              ref VectorStack vts)
+                              ref VectorStack vts, Vec3 center)
     {
-        if (!pickPlaneAxes(vts, planeAxisH, planeAxisV, planeSignH, planeSignV))
+        if (!pickPlaneAxes(vts, center, planeAxisH, planeAxisV))
             return false;
         dragAxis = PLANE_DRAG_AXIS;
         lastMX = e.x; lastMY = e.y;
@@ -953,10 +972,17 @@ public:
             planeAccumX += cast(float)dxRel;
             planeAccumY += cast(float)dyRel;
             import tools.transform.xform_kernels : screenPlaneScaleGain;
+            // The signs here are the SCREEN CONVENTION and nothing else. The
+            // reference accumulates `cur.x - last.x` and `last.y - cur.y` and
+            // writes both into the elected attributes with NO per-axis sign —
+            // an elected axis whose screen projection points left still GROWS
+            // on a rightward drag. Our deltas are y-down, so the vertical
+            // carries the -1 and the horizontal carries +1, whichever axes the
+            // election handed us.
             immutable float fH = clampScaleFactor(screenPlaneScaleGain(
-                planeAccumX, planeSignH, PLANE_DRAG_PIXELS));
+                planeAccumX, +1.0f, PLANE_DRAG_PIXELS));
             immutable float fV = clampScaleFactor(screenPlaneScaleGain(
-                planeAccumY, planeSignV, PLANE_DRAG_PIXELS));
+                planeAccumY, -1.0f, PLANE_DRAG_PIXELS));
             setAxisScale(planeAxisH, fH);
             setAxisScale(planeAxisV, fV);
             publishScaleGesture();
