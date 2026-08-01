@@ -224,15 +224,22 @@ class ToolHandles {
 
     // Serialize the registered handles for test introspection (task 0234,
     // /api/tool/handles). `entries` stays private to this module; this is the
-    // only exported view of it. Thread-safety: called from the HTTP
-    // background thread with no lock, same quiescence contract as
-    // /api/selection — the caller (Tool.toolHandlesJson override) is read-only
-    // over data that only the main thread's draw()/update() ever writes, and
-    // tests only probe between play-events settles, never mid-drag. This is
-    // NOT the marshal-to-main-thread pattern used by /api/toolpipe/eval or
-    // /api/snap: those mutate shared g_pipeCtx caches on evaluation, so they
-    // must run on the main thread. Do not extend this "read on the HTTP
-    // thread" shortcut to any state this method would have to MUTATE to read.
+    // only exported view of it.
+    //
+    // THREAD-SAFETY — MAIN THREAD ONLY. This used to be called straight from
+    // the HTTP background thread with no lock, on the same "tests only probe
+    // between play-events settles" quiescence contract as /api/selection. That
+    // contract was wrong for THIS structure, and task 0563 moved the endpoint
+    // behind a main-thread bridge because of it. The discriminator is not
+    // whether the read mutates (it does not) — it is that `entries` has a
+    // per-frame LIFETIME: begin() truncates it and the register pass refills
+    // it on every interactive draw. So there is no lock-free instant at which
+    // a reader can be sure it sees a complete list, and no amount of settling
+    // helps a caller that reads before the first draw following its own change
+    // (it gets the previous tool's parts, or none).
+    //
+    // Keep this on the main thread. The rule to carry away: marshal a read
+    // whose backing state is REBUILT PER FRAME, not merely one that mutates.
     //
     // Shape: {"parts":[{part,state,visible,screen:[sx,sy]|null}, ...],
     //         "hot":N, "captured":N, "secondaryDefault":N}

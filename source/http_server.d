@@ -104,15 +104,31 @@ class HttpServer {
     // id / hover-state / visibility / screen anchor per handle, plus the
     // shared hot/captured part), and GET /api/tool/state — its per-tool
     // transient dump (task 0234, doc/tool_handles_state_plan.md). Both are
-    // read-only test-introspection endpoints served straight from the HTTP
-    // thread — same quiescence contract as /api/selection: the provider
-    // reads live tool state (registered handles, cached viewport, transient
-    // fields) with no lock, which is safe because tests only probe between
-    // play-events settles, never mid-drag, and the reads MUTATE nothing (no
-    // g_pipeCtx cache write, unlike /api/toolpipe/eval or /api/snap, which
-    // ARE marshaled to the main thread because their read evaluates the
-    // pipeline). Do not extend this no-lock pattern to a tool-state read
-    // that would need to mutate shared state to answer.
+    // read-only test-introspection endpoints, and neither MUTATES anything
+    // (no g_pipeCtx cache write, unlike /api/toolpipe/eval or /api/snap).
+    //
+    // They no longer share a thread contract, and the difference is not
+    // arbitrary — it follows the lifetime of what each one reads:
+    //
+    //   * /api/tool/handles is MARSHALED onto the main thread
+    //     (toolHandlesBridge, task 0563). The handle registry is not resident
+    //     state: it is destroyed and rebuilt on every interactive draw, so
+    //     "read it with no lock between settles" is not a contract it can
+    //     honour — there is no moment at which the list is both complete and
+    //     guaranteed to describe the caller's most recent change. See the
+    //     bridge declaration below.
+    //   * /api/tool/state is still served straight from the HTTP thread. Its
+    //     provider reads RESIDENT per-tool transient fields, which are not
+    //     torn down per frame, so the original quiescence contract (tests
+    //     probe between play-events settles, never mid-drag) still holds for
+    //     it. Note it inherits the weaker half of the problem regardless: a
+    //     read issued immediately after a mutating POST may still observe
+    //     pre-change values, because nothing forces a main-loop pass in
+    //     between. Marshal it too if that ever shows up as a flake.
+    //
+    // Do not serve a tool-state read from the HTTP thread if answering it
+    // would require mutating shared state, or if what it reads is rebuilt
+    // per frame — use a bridge.
     private alias ToolHandlesDataProvider = string delegate();
     private ToolHandlesDataProvider toolHandlesDataProvider;
     private alias ToolStateDataProvider = string delegate();
@@ -464,6 +480,39 @@ class HttpServer {
     struct AiAnalyzeResp { string result; string error; }
     private MainThreadBridge!(AiAnalyzeReq, AiAnalyzeResp) aiAnalyzeBridge;
 
+    // GET /api/tool/handles — own bridge/epoch pair (MUST NOT share any other
+    // bridge's, same rule as pathBridge/toolpipeBridge above). The
+    // null-provider case is decided on the HTTP thread (200 {"handles":null}),
+    // so this bridge's service only ever runs when the provider is set.
+    //
+    // WHY THIS IS MARSHALED AND NOT SERVED FROM THE HTTP THREAD — the handle
+    // registry is not a resident structure that can be read at any time. It is
+    // REBUILT FROM EMPTY on every interactive draw of the owner cell:
+    // `ToolHandles.begin()` truncates the entry list and the register pass
+    // immediately refills it (handles/arbiter.d, and the two call sites in
+    // tools/transform/xfrm_transform.d). A lock-free read from the HTTP thread
+    // therefore has two distinct failure modes, and both were live:
+    //
+    //   1. TORN — the read lands between `begin()` and the last `add()` and
+    //      observes an empty or half-filled parts array for a tool that has
+    //      handles.
+    //   2. STALE — no interactive draw has happened yet SINCE the state the
+    //      caller just changed. A test that POSTs `tool.set` and then GETs this
+    //      endpoint is asking about a registry that does not exist until the
+    //      next draw builds it, so it reads the previous tool's parts, or none.
+    //
+    // Mode 2 is the one that broke CI. It is invisible on a fast desktop, where
+    // a frame lands inside the POST/GET round-trip, and reproducible on a
+    // loaded software-GL host, where it does not. Marshaling fixes both at
+    // once: the service body runs on the main thread, so nothing can be
+    // observed mid-rebuild, and the epoch handshake cannot be satisfied until
+    // the main loop has come round again — which, since a command POST is
+    // drained by that same loop one pass earlier, guarantees the registry was
+    // rebuilt by a draw that saw the caller's change.
+    struct ToolHandlesReq  { }
+    struct ToolHandlesResp { string result; string error; }
+    private MainThreadBridge!(ToolHandlesReq, ToolHandlesResp) toolHandlesBridge;
+
     public this(ushort port = 8080) {
         this.port = port;
         this.isRunning = false;
@@ -514,6 +563,18 @@ class HttpServer {
                         resp.result = toolpipeProvider();
                     else
                         resp.error = "toolpipe provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        toolHandlesBridge = new MainThreadBridge!(ToolHandlesReq, ToolHandlesResp)(this,
+            (ref ToolHandlesReq req, ref ToolHandlesResp resp) {
+                try {
+                    if (toolHandlesDataProvider !is null)
+                        resp.result = toolHandlesDataProvider();
+                    else
+                        resp.error = "tool handles provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -1248,21 +1309,30 @@ class HttpServer {
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/tool/handles" && request.method == "GET") {
-            // Task 0234. Read-only; served straight from the HTTP thread —
-            // see the ToolHandlesDataProvider doc comment (above, near its
-            // field declaration) for the thread-safety discriminator.
+            // Task 0234; marshaled onto the main thread by 0563. The registry
+            // this serializes is rebuilt from empty on every interactive draw,
+            // so it can be read neither concurrently nor before the draw that
+            // builds it — see the toolHandlesBridge declaration for the two
+            // failure modes that forced this.
             response.headers["Content-Type"] = "application/json";
             if (toolHandlesDataProvider is null) {
+                // Preserve the pre-marshaling null-provider contract exactly:
+                // 200 {"handles":null}, decided on the HTTP thread BEFORE ever
+                // touching the bridge.
                 response.statusCode = 200;
                 response.body = `{"handles":null}`;
             } else {
-                try {
+                toolHandlesBridge.resp.result = "";
+                toolHandlesBridge.resp.error  = "";
+                if (!toolHandlesBridge.submitAndWait())
+                    toolHandlesBridge.resp.error = "timeout waiting for main thread";
+                if (toolHandlesBridge.resp.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = toolHandlesDataProvider();
-                } catch (Exception e) {
+                    response.body = toolHandlesBridge.resp.result;
+                } else {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   toolHandlesBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
                 }
             }
         } else if (request.path == "/api/tool/state" && request.method == "GET") {
