@@ -539,10 +539,24 @@ unittest { // fresh-from-Perspective: each key's first press is independent of t
 //     screen-up    = (view[1], view[5], view[9])
 //     forward      = (-view[2], -view[6], -view[10])
 // which is exactly how every consumer in the tree already reads it (drag
-// bases, gizmo shapes, handle depth, arcball). Those consumers therefore
-// inherit the bank for free; the two places that RECONSTRUCTED the basis
-// from a hard-coded world up instead of reading it are `viewportWith` and
-// `panDeltaWith`, and they are what these tests cover.
+// bases, gizmo shapes, handle depth, arcball). Those consumers do inherit the
+// bank for free.
+//
+// The consumers that RECONSTRUCTED the basis from a hard-coded world up
+// instead of reading it are the ones that had to be fixed, and there are
+// THREE, not the two an earlier version of this comment claimed:
+//     `viewportWith`   — here
+//     `panDeltaWith`   — here
+//     `render_mvp.d`'s IPR camera (`cd.up`) — outside the default build
+// The audit that produced this list was run over the modeling configuration,
+// and `source/render/*` is `version (WithRender)`-gated and therefore not
+// compiled by a plain `dub build`. So the third site was neither flagged by
+// the compiler (its call to `viewportWith` was a stale 4-arg one that only
+// `--config=with-render` would reject) nor caught by reading. The lesson is
+// the general one: "every consumer" must be established over BOTH build
+// configurations, or it means "every consumer the default build compiles".
+// These tests cover the two in this module; the render site is covered by
+// `--config=with-render` compiling at all.
 // ---------------------------------------------------------------------------
 
 version(unittest) {

@@ -711,12 +711,20 @@ void applyXformMatrix(
 // ── WHAT THE ELECTION DOES *NOT* DEPEND ON, AND WHY THAT MATTERS HERE ────
 //
 // `E` is the ray from the eye through the action centre. It does not read the
-// view's up vector, so it is **ROLL-INVARIANT**. `source/view.d:139` builds
-// every perspective viewport as `lookAt(eye, focus, Vec3(0,1,0))`, so our
-// screen can never carry a roll while the reference's does (6.4 to 27.5 deg
-// across the measured cameras, sign-changing, and real rather than a recording
-// artefact). The previous rule read a screen basis and was therefore
-// structurally unportable — that refusal was correct FOR THAT RULE.
+// view's up vector, so it is **ROLL-INVARIANT**. That property is
+// unconditional and is why this rule ports at all.
+//
+// The sentence that used to sit here said our screen "can never carry a roll"
+// while the reference's does (6.4 to 27.5 deg across the measured cameras,
+// sign-changing, and real rather than a recording artefact). THAT IS NO LONGER
+// TRUE: `View` carries a bank (`view.d`, the "Camera BANK" section), so a
+// perspective viewport is no longer forced to `lookAt(eye, focus, Vec3(0,1,0))`
+// and screen-right is no longer pinned to the world XZ plane. Default is still
+// a level horizon, so nothing here moves unless a camera is deliberately banked.
+//
+// The previous rule read a screen basis and was refused as structurally
+// unportable. That refusal's PREMISE is now gone. It is not re-opened here:
+// the refusal was about a DIFFERENT rule, and this one is elected on `E`.
 //
 // It does not apply to this one. Two of the three branches read no basis at
 // all, so on those the port is exact regardless of our camera model. The
@@ -740,35 +748,44 @@ void applyXformMatrix(
 //
 // which is the first arm implemented below.
 //
-// WHAT THAT COSTS US, PLAINLY, AND WHERE. The bank refusal is now on a LIVE
-// path rather than a dead one: three of the shipped action-centre modes reach a
-// comparison against a screen-right vector that the reference's view banks
-// (11.778 deg at the corpus camera) and ours cannot. The exposure has a precise
-// shape, and it is worth stating rather than waving at.
+// WHERE THE BANK ENTERS, PLAINLY. This branch is on a LIVE path, not a dead
+// one: three of the shipped action-centre modes reach a comparison against a
+// screen-right vector that the reference's view banks (11.778 deg at the corpus
+// camera). The exposure has a precise shape, and it is worth stating rather
+// than waving at.
 //
 // The branch is only entered when index 1 is elected, which happens when the
 // eye ray lies most along `A1`. On the rigs measured so far that is a frame
-// with the face normal in slot 2 — i.e. `A2` is (near) world Y. Our
-// `screenRight` is `lookAt`'s right row, which is perpendicular to +Y BY
-// CONSTRUCTION, so `|A2 . screenRight|` is ~0 for us and the comparison
-// degenerates to "is `|A0 . screenRight|` greater than nothing" — we take the
-// first arm essentially always. The reference takes the first arm only while
-// its bank keeps that same quantity small: at the corpus camera its numbers are
-// 0.817569 against 0.186885, the first arm, agreeing with us; ours at that
-// camera are 0.8756 against 0.0000, the same arm by a wider margin.
+// with the face normal in slot 2 — i.e. `A2` is (near) world Y. AT A LEVEL
+// HORIZON — still the default — `screenRight` is perpendicular to +Y, so
+// `|A2 . screenRight|` is ~0 and the comparison degenerates to "is
+// `|A0 . screenRight|` greater than nothing": we take the first arm essentially
+// always. The reference takes the first arm only while its bank keeps that same
+// quantity small: at the corpus camera its numbers are 0.817569 against
+// 0.186885, the first arm, agreeing with us; a level camera gives 0.8756
+// against 0.0000, the same arm by a wider margin.
 //
-// So: we agree with the reference wherever its bank is small relative to
-// `|A0 . screenRight|`, which covers every cell measured. We would diverge in
-// the cell where its bank grows large enough to win the comparison outright,
-// and no such cell has been recorded. That cell is unreachable for us to test
-// and nothing here closes it — it needs a viewport that can roll, which is a
-// camera-model question and not this function's.
+// WHAT CHANGED, AND WHAT DID NOT. The degenerate operand was a property of the
+// camera model, not of this rule, and the camera model no longer imposes it: at
+// the reference's own recorded bank our basis reproduces BOTH of its operands
+// (a `view.d` unittest pins 0.817569 / 0.186885 against the trace's
+// 0.817568576 / 0.186884795). So the cell is no longer unreachable for us to
+// test, and the clause is no longer being ported against a structurally zero
+// quantity.
+//
+// The ELECTION IS DELIBERATELY UNCHANGED, and the reason is measured rather
+// than assumed: at the corpus camera 0.817569 > 0.186885 picks the same arm the
+// degenerate 0.817569 > 0 picked, so every corpus row keeps its outcome. The
+// flip point at that camera is a bank of 0.66801 rad = 38.27 deg; the reference
+// view carries 11.78 deg. A bank-capable camera by itself therefore moves no
+// scale-parity row. Divergence still needs a cell whose bank wins the
+// comparison outright, and none has been recorded.
 //
 // `screenRight` is the view's own right direction. The reference obtains it by
 // unprojecting two pixels 0.01 px apart at the action centre; for a symmetric
 // frustum that difference IS the view matrix's right row at any depth, which is
-// what we pass, so the construction matches even though our row can never be
-// banked.
+// what we pass, so the construction matches — and now matches at a non-zero
+// bank too, not only at a level one.
 //
 // Returns false only when the eye ray is degenerate (the action centre sitting
 // exactly on the eye). The reference has no failure path here.

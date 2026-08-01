@@ -854,19 +854,32 @@ public:
     // docstring carries the read it implements and the evidence for each term.
     // Returns false only when the eye ray is degenerate.
     //
-    // WHAT THIS SUPPLIES, AND WHY THE OLD BASIS REFUSAL DOES NOT BITE HERE.
+    // WHAT THIS SUPPLIES, AND WHAT BECAME OF THE OLD BASIS REFUSAL.
     // The election consumes the EYE RAY at the action centre — `center - eye`,
-    // which reads no up vector and is therefore roll-invariant. Our viewports
-    // are built `lookAt(eye, focus, Vec3(0,1,0))` (`view.d:139`) and can never
-    // be banked while the reference's are; that made the PREVIOUS,
-    // screen-basis election structurally unportable, and it does not apply to
-    // two of this one's three branches, which compare nothing.
+    // which reads no up vector and is therefore roll-invariant no matter what
+    // the camera can do. That much is unconditional and unchanged.
+    //
+    // The refusal itself rested on a premise that is NO LONGER TRUE. It used to
+    // read: our viewports are built `lookAt(eye, focus, Vec3(0,1,0))` and can
+    // never be banked while the reference's are, so a screen-basis election is
+    // structurally unportable. `View` now carries a bank (`view.d`, the
+    // "Camera BANK" section) — screen-right can leave the world XZ plane, and
+    // the reference's own recorded bank is reproducible here.
+    //
+    // WHAT SURVIVES is the conclusion for THIS function, and it never rested on
+    // the camera model: two of the three branches compare nothing at all, so
+    // they are basis-independent either way. The bank is what makes the third
+    // branch TESTABLE — it is not what made the other two safe. So the scoping
+    // decision this comment justifies (delegate the law, pass `screenRight`
+    // only for the branch that reads it) stands on its original footing.
     //
     // `screenRight` is passed for the third branch only (`excluded == 1`),
     // which is the branch three of the shipped action-centre modes take on the
     // reference-comparison corpus's own rig — not the rare leg an earlier
-    // comment here called it. That branch's single comparison IS bank-sensitive, so
-    // it is the one place our camera model can still cost us — see the kernel.
+    // comment here called it. That branch's single comparison IS bank-sensitive,
+    // and it is now exercisable at a non-zero bank rather than only against a
+    // structurally zero operand — see the kernel for what that measured, and
+    // for why no parity row moves.
     //
     // `center` is the action centre for this press — the relocated point in a
     // mode that relocates, the pipeline's published centre in one that pins.
