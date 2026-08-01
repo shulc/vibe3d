@@ -846,3 +846,134 @@ unittest {
 // ray lying exactly on the mirror plane. `ms.mirrored` itself is not read
 // anywhere on the `pickFace`/`pickSurfaceRay` path -- see §3.7/§3.8, which
 // gate on it only in the LOCAL front-facing culls outside this module.)
+
+// ---------------------------------------------------------------------------
+// Task 0576 — CHARACTERISATION of the face picker's visibility rule.
+//
+// These two tests add no behaviour. They exist because the rule was being
+// described wrongly in prose — CLAUDE.md's "Picking Strategy" section claimed
+// a screen-space bounding box plus a face-normal-versus-view-direction cull,
+// a path `pickFace` has not taken since the BVH picker landed. That section
+// has since been rewritten off these measurements; this block is what keeps
+// it honest. Any lane that wants to change what
+// is selectable needs the CURRENT rule pinned as an executable fact first,
+// because the two candidate rules differ in exactly the case that matters:
+//
+//   * a FACING term (cull by normal vs. view direction) would make a
+//     back-facing face unpickable even with nothing in front of it;
+//   * a DEPTH term (nearest hit along the ray) makes it unpickable only
+//     while something nearer is in the way.
+//
+// `pickFace` has the second and not the first. That is what these pin.
+// ---------------------------------------------------------------------------
+
+unittest {
+    // NO FACING TERM: winding does not affect pickability.
+    //
+    // One quad, one camera, two windings. The fan triangle the BVH is built
+    // from is (face[0], face[1], face[2]), so reversing the index order
+    // reverses the geometric normal — the fixture asserts that inversion
+    // rather than assuming it. Both windings must pick.
+    import std.conv : to;
+    import std.math : PI;
+    import math : lookAt, perspectiveMatrix, dot;
+
+    Vec3[] quad = [
+        Vec3(-1f, 0f, -1f),
+        Vec3( 1f, 0f, -1f),
+        Vec3( 1f, 0f,  1f),
+        Vec3(-1f, 0f,  1f),
+    ];
+
+    Vec3 eye  = Vec3(0f, 5f, 0f);
+    float[16] view = lookAt(eye, Vec3(0f, 0f, 0f), Vec3(0f, 0f, -1f));
+    float[16] proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    Viewport vp = Viewport(view, proj, 200, 200, 0, 0, eye);
+
+    static Vec3 fanNormal(in Vec3[] v, in uint[] f) {
+        return cross(v[f[1]] - v[f[0]], v[f[2]] - v[f[0]]);
+    }
+
+    uint[] toEye   = [0, 3, 2, 1];   // fan normal +Y — towards an eye at +Y
+    uint[] fromEye = [0, 1, 2, 3];   // fan normal -Y — away from that eye
+
+    // Fixture self-check: the two windings really are front- and back-facing
+    // with respect to THIS camera, or the test below proves nothing.
+    Vec3 toEyeDir  = eye - quad[0];
+    assert(dot(fanNormal(quad, toEye),   toEyeDir) > 0f,
+        "fixture: the `toEye` winding must face the camera");
+    assert(dot(fanNormal(quad, fromEye), toEyeDir) < 0f,
+        "fixture: the `fromEye` winding must face AWAY from the camera");
+
+    foreach (i, w; [toEye, fromEye]) {
+        Mesh src;
+        src.vertices = quad.dup;
+        src.faces    = [w.dup];
+
+        GpuMesh gpu;
+        gpu.uploadVersion = 1;
+
+        auto pick = new BvhPick();
+        int face = pick.pickFace(100, 100, vp, src, gpu);
+        assert(face == 0,
+            "pickFace has NO facing term: a face must pick from either side "
+            ~ "with nothing in front of it. Winding #" ~ i.to!string
+            ~ " returned " ~ face.to!string
+            ~ ". If this now fails, a facing cull was introduced — and that "
+            ~ "is a change to what a click selects, not a rendering change.");
+    }
+}
+
+unittest {
+    // THE ONLY OCCLUSION TERM IS NEAREST-HIT.
+    //
+    // Two quads with the SAME winding — so the facing relation to the camera
+    // is identical for both and cannot explain any difference — stacked along
+    // the view ray. The near one wins. Remove it and the far one becomes
+    // pickable at the very same pixel: it was hidden by depth, by nothing
+    // else.
+    import std.conv : to;
+    import std.math : PI;
+    import math : lookAt, perspectiveMatrix;
+
+    static Mesh stack(bool withNear) {
+        Mesh m;
+        // Far quad at y = 0 -> face index 0 in both meshes, so the assertions
+        // below compare like with like.
+        m.vertices = [
+            Vec3(-1f, 0f, -1f), Vec3( 1f, 0f, -1f),
+            Vec3( 1f, 0f,  1f), Vec3(-1f, 0f,  1f),
+        ];
+        m.faces = [ cast(uint[])[0, 3, 2, 1] ];
+        if (withNear) {
+            // Near quad at y = 2, same winding.
+            m.vertices ~= [
+                Vec3(-1f, 2f, -1f), Vec3( 1f, 2f, -1f),
+                Vec3( 1f, 2f,  1f), Vec3(-1f, 2f,  1f),
+            ];
+            m.faces ~= cast(uint[])[4, 7, 6, 5];
+        }
+        return m;
+    }
+
+    Vec3 eye  = Vec3(0f, 5f, 0f);
+    float[16] view = lookAt(eye, Vec3(0f, 0f, 0f), Vec3(0f, 0f, -1f));
+    float[16] proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    Viewport vp = Viewport(view, proj, 200, 200, 0, 0, eye);
+
+    GpuMesh gpu;
+    gpu.uploadVersion = 1;
+
+    Mesh both = stack(true);
+    int hitBoth = (new BvhPick()).pickFace(100, 100, vp, both, gpu);
+    assert(hitBoth == 1,
+        "with two same-winding quads stacked along the ray the NEAR one "
+        ~ "(face 1, y=2) must win; got " ~ hitBoth.to!string);
+
+    Mesh farOnly = stack(false);
+    int hitFar = (new BvhPick()).pickFace(100, 100, vp, farOnly, gpu);
+    assert(hitFar == 0,
+        "and the far quad must be pickable at the SAME pixel once nothing "
+        ~ "is in front of it — proving it was hidden by DEPTH, not by its "
+        ~ "orientation; got " ~ hitFar.to!string);
+}
