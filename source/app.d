@@ -316,7 +316,7 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 // Enums shared across tools and main
 // ---------------------------------------------------------------------------
 
-enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
+enum DragMode { None, Orbit, Zoom, Pan, Roll, Select, SelectAdd, SelectRemove }
 
 // Task 0206 (Quad/Split multi-cell overlays) — overlay draw mode for a
 // single viewport cell's renderViewportSceneToFbo() call. `OverlayMode`
@@ -3891,9 +3891,12 @@ void main(string[] args) {
         });
 
         // POST /api/camera — set live View. Accepts azimuth, elevation,
-        // distance (radians/world-units) and optional focus[x,y,z] +
+        // distance, roll (radians/world-units) and optional focus[x,y,z] +
         // width/height. Used by the cross-engine drag test to align
-        // vibe3d's camera with a reference engine's before replaying.
+        // vibe3d's camera with a reference engine's before replaying —
+        // `roll` is the third rotational term such a reference publishes for
+        // its own view and which, until it existed here, could not be
+        // transferred at all.
         httpServer.setCameraSetHandler((JSONValue p) {
             import math : Vec3;
             // Resolve target cell: _viewport injected by http_server.d from ?viewport=N
@@ -3921,6 +3924,9 @@ void main(string[] args) {
             if ("azimuth" in p)   targetCam.azimuth   = floatFrom("azimuth",   targetCam.azimuth);
             if ("elevation" in p) targetCam.elevation = floatFrom("elevation", targetCam.elevation);
             if ("distance" in p)  targetCam.distance  = floatFrom("distance",  targetCam.distance);
+            // Bank, radians. Absent key leaves the current bank alone, so
+            // every existing camera-set body is unaffected.
+            if ("roll" in p)      targetCam.roll      = floatFrom("roll",      targetCam.roll);
             if ("focus" in p) {
                 auto f = p["focus"];
                 float comp(string k, float def) {
@@ -6334,6 +6340,19 @@ void main(string[] args) {
             commitInteractiveSelEdit();
             return;
         }
+        // Alt+MMB — camera BANK, the reference's own dedicated roll chord.
+        // Placed AFTER the active-tool dispatch above so a tool that owns
+        // the middle button (Slice) keeps first refusal, exactly as the
+        // Alt+LMB camera chords do. Bare MMB is untouched.
+        if (btn.button == SDL_BUTTON_MIDDLE) {
+            SDL_Keymod mmods = SDL_GetModState();
+            if ((mmods & KMOD_ALT) && !(mmods & KMOD_SHIFT) && !(mmods & KMOD_CTRL)) {
+                dragMode   = DragMode.Roll;
+                lastMouseX = btn.x;
+                lastMouseY = btn.y;
+            }
+            return;
+        }
         if (btn.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods = SDL_GetModState();
             bool ctrl  = (mods & KMOD_CTRL)  != 0;
@@ -6693,6 +6712,10 @@ void main(string[] args) {
             // was a camera drag (no selection touched), commit is a no-op.
             commitInteractiveSelEdit();
         }
+        // MMB up ends a bank drag. Guarded on the mode so a tool's own
+        // middle-button gesture (which never arms Roll) is not disturbed.
+        if (btn.button == SDL_BUTTON_MIDDLE && dragMode == DragMode.Roll)
+            dragMode = DragMode.None;
     }
 
     void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
@@ -6762,6 +6785,7 @@ void main(string[] args) {
         bool modOk = (dragMode == DragMode.Zoom)      ? (ctrl && alt)
                    : (dragMode == DragMode.Pan)       ? (alt && shift)
                    : (dragMode == DragMode.Orbit)     ? (alt && !shift)
+                   : (dragMode == DragMode.Roll)      ? (alt && !shift && !ctrl)
                    : (dragMode == DragMode.Select    ||
                       dragMode == DragMode.SelectAdd  ||
                       dragMode == DragMode.SelectRemove) ? true
@@ -6781,6 +6805,10 @@ void main(string[] args) {
         // independently exactly as before.
         int originId = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
         if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) vpm.originCamera().orbit(dx, dy);
+        // Bank writes the ORIGIN cell's own camera, mirroring orbit exactly
+        // (orbit does not redirect through a rotate-owner either). Whatever
+        // coupling orbit grows, bank inherits by construction.
+        else if (dragMode == DragMode.Roll)  vpm.originCamera().rollBy(dx);
         else if (dragMode == DragMode.Zoom)  vpm.scaleOwnerCamera(originId).zoom(dx);
         else if (dragMode == DragMode.Pan ||
                  (dragMode == DragMode.Orbit && vpm.originIsOrtho())) {
@@ -8873,7 +8901,8 @@ void main(string[] args) {
 
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
-                                dragMode == DragMode.Pan);
+                                dragMode == DragMode.Pan   ||
+                                dragMode == DragMode.Roll);
 
         // Invalidate the screen-space pick caches when the MESH actually
         // changed this frame (change-notification bus, Stage 2). The bus

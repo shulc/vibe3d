@@ -288,7 +288,7 @@ class Command {
     protected final Viewport effectiveViewport() {
         if (resolvedVpProvider !is null) return resolvedVpProvider();
         return view.viewportWith(view.focus, view.distance,
-                                  view.azimuth, view.elevation);
+                                  view.azimuth, view.elevation, view.roll);
     }
 
 protected:

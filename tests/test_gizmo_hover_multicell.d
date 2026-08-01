@@ -75,8 +75,8 @@ private bool vec3Close(Vec3 a, Vec3 b, float eps = 1e-6f) {
 unittest { // Rotate ring: syncGeometry() is a pure function of the current viewport
     auto v = new View(0, 0, 800, 600);
     // 90 degrees apart in azimuth (see module doc comment for why not 180).
-    Viewport vpA = v.viewportWith(Vec3(0, 0, 0), 3.0f, 0.0f,      0.3f);
-    Viewport vpB = v.viewportWith(Vec3(0, 0, 0), 3.0f, PI / 2.0f, 0.3f);
+    Viewport vpA = v.viewportWith(Vec3(0, 0, 0), 3.0f, 0.0f,      0.3f, v.roll);
+    Viewport vpB = v.viewportWith(Vec3(0, 0, 0), 3.0f, PI / 2.0f, 0.3f, v.roll);
 
     auto rot = new RotateHandler(Vec3(0, 0, 0));
 
@@ -140,8 +140,8 @@ unittest { // Rotate ring: syncGeometry() is a pure function of the current view
 
 unittest { // Scale center disc: syncGeometry() is a pure function of the current viewport
     auto v = new View(0, 0, 800, 600);
-    Viewport vpA = v.viewportWith(Vec3(0, 0, 0), 3.0f, 0.0f,      0.3f);
-    Viewport vpB = v.viewportWith(Vec3(0, 0, 0), 3.0f, PI / 2.0f, 0.3f);
+    Viewport vpA = v.viewportWith(Vec3(0, 0, 0), 3.0f, 0.0f,      0.3f, v.roll);
+    Viewport vpB = v.viewportWith(Vec3(0, 0, 0), 3.0f, PI / 2.0f, 0.3f, v.roll);
 
     auto sc = new ScaleHandler(Vec3(0, 0, 0));
 
