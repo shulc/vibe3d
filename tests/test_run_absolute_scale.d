@@ -182,7 +182,7 @@ void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                 out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
@@ -195,7 +195,7 @@ void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                  out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
@@ -232,7 +232,8 @@ double[3] scaleGestureOnHandle(long wantCount, double mag = 70.0) {
 // routes to Scale, the move shaft to Move — the clean cross-bank separation.
 // Drag outward (+X) to grow the axis factor. Verify-and-retry on the UNDO COUNT
 // AND a positive SX (so a stray Move steal does not satisfy the gate).
-// AXIS_BOX_DISTANCE = 1.18 (handler.d).
+// GIZMO_SCALE_ARM = 1.00 (handles/gl_util.d) — was 1.18 until task 0553;
+// the reference ends the scale and move arms at the same point.
 double[3] scaleGestureViaAxisBox(long wantCount, double mag = 80.0) {
     foreach (attempt; 0 .. 6) {
         settle();
@@ -241,10 +242,10 @@ double[3] scaleGestureViaAxisBox(long wantCount, double mag = 80.0) {
         Vec3 piv = evalPivot();
         float size = gizmoSize(piv, vp);
         float bx, by;          // the +X axis box (head) screen position
-        projectToWindow(Vec3(piv.x + size * 1.18f, piv.y, piv.z), vp, bx, by);
+        projectToWindow(Vec3(piv.x + size * 1.00f, piv.y, piv.z), vp, bx, by);
         // screen-space +X direction for the drag.
         float s0x, s0y, s1x, s1y;
-        projectToWindow(Vec3(piv.x + size / 6.0f, piv.y, piv.z), vp, s0x, s0y);
+        projectToWindow(Vec3(piv.x + size / 5.0f, piv.y, piv.z), vp, s0x, s0y);
         projectToWindow(Vec3(piv.x + size,         piv.y, piv.z), vp, s1x, s1y);
         double dx = s1x - s0x, dy = s1y - s0y;
         double len = sqrt(dx*dx + dy*dy);

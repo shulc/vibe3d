@@ -32,12 +32,22 @@ private FillState g_fill;
 // Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.
 // Change via setGizmoPixels() at runtime. The unit is screen pixels (the
 // target on-screen length of the main gizmo arm) and the result is
-// independent of viewport height — the transform gizmos stay ~90 px tall
-// regardless of window size. The previous semantic was "fraction of
+// independent of viewport height — the transform gizmos stay a fixed pixel
+// height regardless of window size. The previous semantic was "fraction of
 // viewport height", which made the gizmo grow with the window.
+//
+// Task 0553: 120, was 90. The reference computes its arm as
+// `handleScale * 6.0` SCREEN units, converts at 20 pixels per screen unit,
+// and ships `handleScale = 1.0` — so 120 px, read out of the two length
+// functions rather than measured off a screenshot. The same read settles the
+// units question this file's header asserts: the conversion divides by the
+// view's own scale, and on one recorded execution the world arm moved by
+// exactly 1024x across four cameras while the SCREEN length stayed
+// bit-identical. Screen-constant, confirmed; world-constant, clamped and
+// viewport-relative models all refuted.
 // ---------------------------------------------------------------------------
 
-private float g_gizmoPixels = 90.0f;  // ~90px gizmo arm at any vp height
+private float g_gizmoPixels = 120.0f;  // 120px gizmo arm at any vp height
 
 void  setGizmoPixels(float px)  { g_gizmoPixels = px; }
 float getGizmoPixels()          { return g_gizmoPixels; }
@@ -72,11 +82,16 @@ float getGizmoPixels()          { return g_gizmoPixels; }
 // ---------------------------------------------------------------------------
 
 // -- Move bank: three axis arrows, centre box, three plane circles ----------
-/// Arrow tip, as a fraction of the arm. 1.0 = the arm itself → 90 px.
+/// Arrow tip, as a fraction of the arm. 1.0 = the arm itself → 120 px.
 enum float GIZMO_MOVE_ARM             = 1.00f;
-/// Arrow shaft start = arm / this. → 15 px out from the centre.
-enum float GIZMO_MOVE_SHAFT_INSET_DIV = 6.0f;
-/// Centre-box HALF-extent, fraction of the arm. → 3.6 px half / 7.2 px across.
+/// Arrow shaft start = arm / this. → 24 px out from the centre.
+///
+/// Task 0553: was 6 (15 px). The reference starts BOTH banks' shafts at
+/// `screenLength / 5` = 24 px, leaving the inner 24 px to the centre handle.
+/// We had two different divisors, /6 here and /7 for scale; there is one
+/// inset, and this is it. See GIZMO_SCALE_SHAFT_INSET_DIV.
+enum float GIZMO_MOVE_SHAFT_INSET_DIV = 5.0f;
+/// Centre-box HALF-extent, fraction of the arm. → 4.8 px half / 9.6 px across.
 enum float GIZMO_CENTER_BOX_HALF      = 0.04f;
 /// Plane-circle centre offset along EACH of its two axes. → 72 px per axis.
 ///
@@ -88,8 +103,16 @@ enum float GIZMO_CENTER_BOX_HALF      = 0.04f;
 /// agree. Shared by the move bank and the scale bank, which is also what the
 /// reference does: one ratio, not one per bank.
 enum float GIZMO_PLANE_OFFSET         = 0.80f;
-/// Plane-circle radius, fraction of the arm. → 6.3 px.
-enum float GIZMO_PLANE_RADIUS         = 0.07f;
+/// Plane-circle radius, in WINDOW PIXELS — not a fraction of the arm.
+///
+/// Task 0553: was 0.07 of the arm (6.3 px at the old 90-px arm, 8.4 at the
+/// new 120). The reference sets this ring's radius to a plain 8 pixels, next
+/// to an OFFSET it computes from the arm length — the two sit in the same
+/// function and only one of them scales. So the ring keeps its size when the
+/// user grows the gizmo; only its distance from the centre grows. Consumed
+/// through `gizmoPixelSize` below, which is our name for the reference's
+/// "model units per pixel" conversion.
+enum float GIZMO_PLANE_RADIUS_PX      = 8.0f;
 
 // -- Rotate bank: three principal semicircles + the view-plane ring ---------
 /// Principal (X/Y/Z) ring radius, fraction of the arm. → 90 px.
@@ -98,11 +121,20 @@ enum float GIZMO_RING_RADIUS          = 1.00f;
 enum float GIZMO_VIEW_RING_RADIUS     = 1.10f;
 
 // -- Scale bank: three axis boxes on stems, centre disc, plane circles ------
-/// Axis box distance from the centre, fraction of the arm. → 106.2 px, i.e.
-/// 18 % FURTHER OUT than the move arrow tip, not co-located with it.
-enum float GIZMO_SCALE_ARM            = 1.18f;
-/// Scale stem start = arm / this. → 12.9 px out from the centre.
-enum float GIZMO_SCALE_SHAFT_INSET_DIV = 7.0f;
+/// Axis box distance from the centre, fraction of the arm. → 120 px, i.e.
+/// the SAME point the move arrow's tip reaches.
+///
+/// Task 0553: was 1.18, which put the scale boxes 18 % beyond the move tips.
+/// The reference ends both banks' arms at the same `screenLength`; the
+/// stagger was ours. (Its scale CUBE is centred 5 px inside that end, on a
+/// line that still runs the full length — a distinction our CubicArrow
+/// cannot draw, since `end` is at once the stem's end and the head's centre.
+/// Splitting those two would license the remaining 5 px; nothing else does.)
+enum float GIZMO_SCALE_ARM            = 1.00f;
+/// Scale stem start = arm / this. → 24 px out from the centre — the same
+/// inset as the move bank (task 0553; see GIZMO_MOVE_SHAFT_INSET_DIV). Was
+/// 7, which made it 12.9 px against move's 15.
+enum float GIZMO_SCALE_SHAFT_INSET_DIV = 5.0f;
 /// Half-extent of the LIVE (drag-feedback) scale box, fraction of the arm.
 /// → 2.7 px. The STATIC axis box uses GIZMO_CUBE_HEAD_HALF_OF_LEN below,
 /// which is relative to the stem length, and lands at 2.80 px — the two are
@@ -143,11 +175,24 @@ enum float GIZMO_PICK_SCALE_HEAD_PX   = 12.0f;
 // term to name: the centre box (point-in-projected-cube-silhouette), the
 // plane circles (point-in-projected-32-gon) and the scale centre disc
 // (point-within-projected-rim-radius).
+//
+// Task 0553 deliberately left that alone. The reference does carry a separate,
+// larger HIT size beside each DRAW size — six independent globals, selected by
+// a flag on the same draw call — but the mechanism is "re-emit the SAME
+// geometry with the width constant swapped", not "inflate the drawn shape by a
+// factor": nothing derives one from the other, the arm's LENGTH is identical
+// in both passes (which is why the grab region ends exactly at the drawn arm),
+// and for the transform gizmo specifically the draw stroke is a hardcoded 2.0
+// while the hit stroke is the 1.25 preference — i.e. NARROWER, not wider. So
+// "hit = 1.2x draw" is not a law the reference contains, and porting it would
+// have been fitting. The 6-12 px hot half-width measured by hovering is still
+// unexplained by any constant that has been read; our 8 px above sits inside
+// that band and stays until it is.
 
 // World-space size for a gizmo element at `pos` so that it occupies a
 // constant pixel size on screen, regardless of FOV, camera distance, or
 // window size. `scale` lets callers produce smaller/larger variants
-// (e.g. 0.04 for box handles → ~3.6 px at the default 90-px target).
+// (e.g. 0.04 for box handles → ~4.8 px at the default 120-px target).
 //
 // Derivation: in column-major perspective, an NDC delta `dy_ndc` covers
 // `dy_ndc * vp.height / 2` pixels, and a world-space length `L` at
@@ -170,6 +215,20 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float scale = 1.0f) {
     if (isOrtho(vp))
         return 2.0f * g_gizmoPixels * scale / (vp.proj[5] * vh);
     return 2.0f * g_gizmoPixels * scale * depth / (vp.proj[5] * vh);
+}
+
+// World-space length of `px` WINDOW PIXELS at `pos` — i.e. "model units per
+// pixel", the same quantity the reference multiplies a plain pixel count by
+// when a handle's size is specified in pixels rather than as a share of the
+// arm (its plane ring's 8-px radius is the case that forced this seam; its
+// ring OFFSET, in the same function, scales with the arm instead).
+//
+// Expressed through `gizmoSize` rather than repeating its derivation, so the
+// two can never drift and `gizmoSize`'s bit-identity regression below keeps
+// covering both. Independent of `g_gizmoPixels` by construction: the division
+// here cancels the multiplication inside.
+float gizmoPixelSize(Vec3 pos, const ref Viewport vp, float px) {
+    return gizmoSize(pos, vp, px / g_gizmoPixels);
 }
 
 unittest {

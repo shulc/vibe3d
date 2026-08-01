@@ -129,7 +129,7 @@ unittest { // hammer GET /api/toolpipe during a live Local-mode drag
     // much that it matters numerically (this test does not assert on the
     // resulting geometry, only on the concurrently-polled toolpipe reads).
     float size = gizmoSize(pivot, vp);
-    Vec3 aStart = Vec3(pivot.x, pivot.y + size / 6.0f, pivot.z);
+    Vec3 aStart = Vec3(pivot.x, pivot.y + size / 5.0f, pivot.z);
     Vec3 aEnd   = Vec3(pivot.x, pivot.y + size,         pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(aStart, vp, sx1, sy1), "Y-arrow start off-camera");

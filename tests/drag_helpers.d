@@ -139,8 +139,16 @@ bool projectToWindow(Vec3 world, const ref Viewport vp,
 }
 
 // Same formula as source/handler.d:gizmoSize — produces the world-space
-// arrow length matching the running gizmo's pixel target (90px default).
-float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 90.0f) {
+// arrow length matching the running gizmo's pixel target (120px default).
+//
+// 120, not 90, since task 0553: the reference's arm is its handle scale x 6.0
+// SCREEN units at 20 pixels per screen unit = 120 px at shipped defaults,
+// read out of the engine's own length functions. This is an independent copy
+// of `g_gizmoPixels` on purpose — it is what makes a product-side geometry
+// move fail loudly here instead of silently following. It did: 28 tests went
+// red on the arm change alone, most of them rotate-ring grabs, because a ring
+// whose radius IS the arm moved 30 px outward past an 8 px grab band.
+float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 120.0f) {
     float depth = -(vp.view[2]*pos.x + vp.view[6]*pos.y + vp.view[10]*pos.z + vp.view[14]);
     if (depth < 1e-4f) depth = 1e-4f;
     float vh = vp.height > 0 ? cast(float)vp.height : 1.0f;
@@ -247,15 +255,23 @@ JSONValue fetchSnapLast(string baseUrl = "http://localhost:8080") {
 // Projects the X-axis scale/move arrow handle at `pivot` to screen space and
 // returns the grab pixel (gx,gy) at 70% along the shaft, plus the normalised
 // screen-space drag direction (ux,uy). Matches the CubicArrow / ArrowHandler
-// endpoints: shaft starts at pivot + X*(size/7) and ends at pivot + X*(size*1.18).
+// endpoints: shaft starts at pivot + X*(size/5) and ends at pivot + X*(size).
+//
+// /5 and 1.00 since task 0553, both measured: the reference starts BOTH banks'
+// shafts at screenLength/5 (24 px) and ends BOTH banks' arms at screenLength
+// (120 px). The /7 and 1.18 this replaces were the scale bank's own inset and
+// an 18 % stagger past the move tip; neither exists in the reference, and this
+// helper was applied to the MOVE arrow as well, where the /7 start was never
+// right — it only went unnoticed because 78 px landed inside the move arrow's
+// grab band anyway.
 // Requires projectToWindow and gizmoSize from this module.
 void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                 out double ux, out double uy)
 {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 7.0f,  pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z), vp, sx2, sy2);
+    projectToWindow(Vec3(pivot.x + size / 5.0f,  pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z), vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
     double dx = sx2 - sx1, dy = sy2 - sy1;

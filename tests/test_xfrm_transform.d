@@ -253,7 +253,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
     auto vp  = viewportFromCamera(cam);
     drag_helpers.Vec3 pivot = drag_helpers.Vec3(0.5f, 0.5f, 0.5f);
     float size = gizmoSize(pivot, vp);
-    auto arrowStart = drag_helpers.Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z);
+    auto arrowStart = drag_helpers.Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
     auto arrowEnd   = drag_helpers.Vec3(pivot.x + size,         pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1));
@@ -304,7 +304,7 @@ unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
     float cx, cy;
     assert(projectToWindow(pivot, vp, cx, cy));
 
-    int x0 = cast(int)(cx + 95);
+    int x0 = cast(int)(cx + 132);
     int y0 = cast(int)cy;
     int x1 = x0;
     int y1 = y0 - 70;
@@ -351,7 +351,7 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
     auto vp  = viewportFromCamera(cam);
     drag_helpers.Vec3 pivot = drag_helpers.Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    auto arrowEnd = drag_helpers.Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
+    auto arrowEnd = drag_helpers.Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
     float sx, sy;
     assert(projectToWindow(arrowEnd, vp, sx, sy));
 
@@ -397,8 +397,8 @@ unittest { // Bare Transform: rotate then move must not re-apply the rotation.
     assert(projectToWindow(pivot, vp, cx, cy));
 
     string rotLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                 cast(int)(cx + 95), cast(int)cy,
-                                 cast(int)(cx + 95), cast(int)(cy - 70), 20);
+                                 cast(int)(cx + 132), cast(int)cy,
+                                 cast(int)(cx + 132), cast(int)(cy - 70), 20);
     playAndWait(rotLog);
 
     double[3][3] afterRotate;

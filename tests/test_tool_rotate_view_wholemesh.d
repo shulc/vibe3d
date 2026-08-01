@@ -56,9 +56,9 @@ void viewRingGrab(Vec3 pivot, Viewport vp,
 
     float size = gizmoSize(pivot, vp);
     Vec3[3] axisEnds = [
-        Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z),
-        Vec3(pivot.x, pivot.y + size * 1.18f, pivot.z),
-        Vec3(pivot.x, pivot.y, pivot.z + size * 1.18f),
+        Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z),
+        Vec3(pivot.x, pivot.y + size * 1.00f, pivot.z),
+        Vec3(pivot.x, pivot.y, pivot.z + size * 1.00f),
     ];
     float[2][3] axisPx;
     foreach (i; 0 .. 3) {
@@ -74,8 +74,8 @@ void viewRingGrab(Vec3 pivot, Viewport vp,
     foreach (deg; [20.0, 50.0, 80.0, 110.0, 140.0, 170.0,
                    200.0, 230.0, 260.0, 290.0, 320.0]) {
         double a = deg * PI / 180.0;
-        double px = cx + 95.0 * cos(a);
-        double py = cy + 95.0 * sin(a);
+        double px = cx + 132.0 * cos(a);
+        double py = cy + 132.0 * sin(a);
         double score = double.max;
         foreach (i; 0 .. 3) {
             double d = distPointSegment(px, py, cx, cy,
@@ -87,8 +87,8 @@ void viewRingGrab(Vec3 pivot, Viewport vp,
     assert(bestScore > 12.0,
         "could not find view-ring grab away from axis handles");
 
-    x0 = cast(int)(cx + 95.0 * cos(bestA));
-    y0 = cast(int)(cy + 95.0 * sin(bestA));
+    x0 = cast(int)(cx + 132.0 * cos(bestA));
+    y0 = cast(int)(cy + 132.0 * sin(bestA));
     // Tangential drag along the screen-space ring.
     x1 = x0 + cast(int)(70.0 * -sin(bestA));
     y1 = y0 + cast(int)(70.0 *  cos(bestA));

@@ -626,7 +626,10 @@ class MoveHandler : Handler {
         centerBox.pos  = center;
         centerBox.size = size * GIZMO_CENTER_BOX_HALF * centerBoxScale;
 
-        float circR = size * GIZMO_PLANE_RADIUS;
+        // The ring's RADIUS is a plain pixel count; its OFFSET scales with the
+        // arm. That asymmetry is the reference's (task 0553) — grow the gizmo
+        // and the rings move outward without growing.
+        float circR = gizmoPixelSize(center, vp, GIZMO_PLANE_RADIUS_PX);
         float cirOffset = size * GIZMO_PLANE_OFFSET;
         // Plane handles sit at the corners of the basis quads; their
         // normals are the basis axis perpendicular to the plane.
@@ -1266,7 +1269,8 @@ class ScaleHandler : Handler {
         centerDisk.normal = camFwd;
         centerDisk.radius = size * GIZMO_DISC_RADIUS;
 
-        float circR      = size * GIZMO_PLANE_RADIUS;
+        // Pixel radius, arm-scaled offset — see MoveHandler.updateGeometry.
+        float circR      = gizmoPixelSize(center, vp, GIZMO_PLANE_RADIUS_PX);
         float cirOffset  = size * GIZMO_PLANE_OFFSET;
         circleXY.center = center + axisX * cirOffset + axisY * cirOffset;
         circleXY.normal = axisZ; circleXY.radius = circR;

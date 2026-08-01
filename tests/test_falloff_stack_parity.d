@@ -125,7 +125,7 @@ unittest {
 
     Vec3 pivot     = Vec3(0, 0, 0);
     float size     = gizmoSize(pivot, vp);
-    Vec3 arrowBot  = Vec3(pivot.x, pivot.y + size / 6.0f, pivot.z);
+    Vec3 arrowBot  = Vec3(pivot.x, pivot.y + size / 5.0f, pivot.z);
     Vec3 arrowTip  = Vec3(pivot.x, pivot.y + size,         pivot.z);
 
     float sx1, sy1, sx2, sy2;

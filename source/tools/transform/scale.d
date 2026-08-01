@@ -56,6 +56,23 @@ private class ScaleHeadHandle : Handler {
         float dy = cast(float)my - ey;
         return sqrt(dx*dx + dy*dy);
     }
+
+    // Task 0553. Without this override `/api/tool/handles` reported
+    // `screen: null` for every scale handle in the `compact` presentation —
+    // i.e. there was no test-introspectable "press here to grab scale" point
+    // in exactly the preset where scale has its OWN pick tolerance
+    // (GIZMO_PICK_SCALE_HEAD_PX around `target.end`, not the stem capsule the
+    // other presentations use). Unlike ShaftedArrow's 70 %-along-the-shaft
+    // anchor, the anchor here is `target.end` itself, because that is the
+    // exact centre of this handle's grab disc — the anchor and the hit test
+    // read the same point, so a press at the anchor cannot miss.
+    override bool screenAnchor(const ref Viewport vp,
+                               out float sx, out float sy) const
+    {
+        if (!target.isVisible()) return false;
+        float ndcZ;
+        return projectToWindowFull(target.end, vp, sx, sy, ndcZ);
+    }
 }
 
 class ScaleTool : TransformTool {

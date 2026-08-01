@@ -14,7 +14,7 @@
 // the gizmo, so this test pins both arms of that single discriminator.
 //
 // Drag mechanics: the view-aligned rotate ring (arcView, dragAxis==3) lives at a
-// constant ~99 px screen radius around the projected gizmo pivot (gizmoSize
+// constant ~132 px screen radius around the projected gizmo pivot (gizmoSize
 // compensates depth). We project the pivot per-mode (the flex BORDER center and
 // the auto SELECTION centroid differ), place the ring-grab pixel at
 // projected_pivot + (95, 0), and drag up ~70 px in CHUNKS (one play-events per
@@ -146,7 +146,7 @@ RotResult driveViewRingRotate(Cam cam) {
     double ppx, ppy;
     assert(project(pivot, view, proj, cam.w, cam.h, cam.vpX, cam.vpY, ppx, ppy),
         "gizmo pivot projects off-camera — camera setup changed");
-    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;   // on the view-ring
+    int x0 = cast(int)(ppx + 132), y0 = cast(int)ppy;   // on the view-ring
     int y1 = y0 - 70;                                    // tangent drag up
 
     enum int steps = 20;

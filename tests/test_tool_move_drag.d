@@ -13,7 +13,7 @@
 // Task 0234 (M3): the press point comes from `/api/tool/handles` part 0
 // (the X-move arrow — MOVE_BASE+0, source/tools/move.d:registerHandles) —
 // the tool's OWN serialization of its OWN gizmo geometry — instead of this
-// test reconstructing `ShaftedArrow` start/end offsets (size/6, size*1.18…)
+// test reconstructing `ShaftedArrow` start/end offsets (size/5, size*1.00…)
 // by hand. The DRAG DIRECTION still comes from projecting the world +X
 // pivot offset (`/api/tool/state`'s `pivot` + a world-space nudge) — that
 // part isn't semantic, it's just "which way is +X on screen right now",

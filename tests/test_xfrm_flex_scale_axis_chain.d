@@ -136,7 +136,7 @@ double gizmoUnits(Cam cam, V3 center) {
     double rx, ry;
     if (!projWorld(cam, add(center, camRight), rx, ry)) return 0.5;
     double pxPerUnit = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
-    return pxPerUnit > 1e-6 ? 90.0 / pxPerUnit : 0.5;
+    return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 
 void play(string log) {

@@ -251,7 +251,7 @@ unittest {
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
-    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;   // on the view-ring
+    int x0 = cast(int)(ppx + 132), y0 = cast(int)ppy;   // on the view-ring
     int y1 = y0 - 70;
 
     enum int steps = 20;
@@ -395,7 +395,7 @@ unittest {
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
-    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;   // on the view-ring
+    int x0 = cast(int)(ppx + 132), y0 = cast(int)ppy;   // on the view-ring
     int y1 = y0 - 70;
 
     enum int steps = 20;

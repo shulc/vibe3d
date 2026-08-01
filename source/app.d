@@ -2005,11 +2005,18 @@ void main(string[] args) {
     bool              pendingSelOpen = false;
 
     // Gizmo size in screen pixels: 9 levels — clustered around the
-    // default (90 px) and stretched upward for users who prefer a larger
-    // hit area. Independent of viewport height.
+    // default and stretched upward for users who prefer a larger hit area.
+    // Independent of viewport height.
+    //
+    // Task 0553: the default is 120 px (was 90) — the reference's arm length
+    // at its shipped handle scale, read out of the engine. 120 was already a
+    // level, so only the starting index moves. The LADDER's span (50..480) is
+    // still ours: the reference clamps its handle scale to [0.5, 5.0], i.e.
+    // 60..600 px, but that is a continuous clamp on a preference, not a set
+    // of discrete steps, so nothing measured says where our steps go.
     enum float[9] gizmoLevels = [50.0f, 70.0f, 90.0f, 120.0f, 160.0f,
                                   220.0f, 290.0f, 380.0f, 480.0f];
-    int gizmoLevelIdx = 2;  // = 90 px default
+    int gizmoLevelIdx = 3;  // = 120 px default (must match g_gizmoPixels)
 
     Tool   activeTool   = null;
     string activeToolId = "";

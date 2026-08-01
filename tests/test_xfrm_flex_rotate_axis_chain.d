@@ -114,7 +114,7 @@ bool projWorld(Cam cam, V3 w, out double px, out double py) {
     auto proj = persp(45.0 * PI / 180.0, cast(double)cam.w / cam.h, 0.001, 100.0);
     return project(w, view, proj, cam.w, cam.h, cam.vpX, cam.vpY, px, py);
 }
-// World-space gizmo radius (matches source/handler.d:gizmoSize, 90px default).
+// World-space gizmo radius (matches source/handler.d:gizmoSize, 120px default since task 0553).
 double gizmoRadius(Cam cam, V3 center) {
     double cx, cy, ex, ey;
     if (!projWorld(cam, center, cx, cy)) return 0.5;
@@ -124,7 +124,7 @@ double gizmoRadius(Cam cam, V3 center) {
     double rx, ry;
     if (!projWorld(cam, add(center, camRight), rx, ry)) return 0.5;
     double pxPerUnit = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
-    return pxPerUnit > 1e-6 ? 90.0 / pxPerUnit : 0.5;
+    return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 
 void play(string log) {

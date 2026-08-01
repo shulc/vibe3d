@@ -314,7 +314,7 @@ unittest { // Auto off-gizmo click relocates onto the camera-facing PRINCIPAL-AX
     auto pivot = evalPivotLocal();
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     // Grab point: 0.7 along the arrow (matches arrowGrabPx).
     int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
@@ -453,7 +453,7 @@ unittest { // Auto relocate plane passes through the camera FOCUS, not the ORIGI
     auto pivot = evalPivotLocal();
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
@@ -553,7 +553,7 @@ unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tra
     auto pivot = evalPivotLocal();
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
@@ -670,7 +670,7 @@ unittest { // Focus-far-from-origin discriminator: X-dominant camera
     auto pivot = evalPivotLocal();
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
@@ -746,7 +746,7 @@ unittest { // Focus-far-from-origin discriminator: Z-dominant camera
     auto pivot = evalPivotLocal();
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));

@@ -128,9 +128,11 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
 
     Vec3 pivot = Vec3(0, 0, 0);  // ACEN.Auto centroid for full cube = origin
     float size = gizmoSize(pivot, vp);
-    // ScaleHandler arrow shaft: center + axis*(size/7) → center + axis*(size*1.18).
-    Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
+    // ScaleHandler arrow shaft: center + axis*(size/5) → center + axis*(size).
+    // /5 and 1.00 since task 0553: one shaft inset for both banks, and both
+    // banks end at the arm — the reference staggers neither.
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
+    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1),
         "X-arrow start projects off-camera");
@@ -202,8 +204,8 @@ unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
 
     Vec3 pivot = Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
+    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1),
         "X-arrow start projects off-camera");
@@ -273,8 +275,8 @@ unittest { // X-axis scale reaches zero with finite reverse drag
 
     Vec3 pivot = Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
+    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1),
         "X-arrow start projects off-camera");

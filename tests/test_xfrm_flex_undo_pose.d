@@ -167,7 +167,7 @@ bool projWorld(Cam cam, V3 w, out double px, out double py) {
     auto proj = persp(45.0 * PI / 180.0, cast(double)cam.w / cam.h, 0.001, 100.0);
     return project(w, view, proj, cam.w, cam.h, cam.vpX, cam.vpY, px, py);
 }
-// World-space gizmo radius (matches source/handler.d:gizmoSize, 90px default).
+// World-space gizmo radius (matches source/handler.d:gizmoSize, 120px default since task 0553).
 double gizmoRadius(Cam cam, V3 center) {
     double cx, cy;
     if (!projWorld(cam, center, cx, cy)) return 0.5;
@@ -176,7 +176,7 @@ double gizmoRadius(Cam cam, V3 center) {
     double rx, ry;
     if (!projWorld(cam, add(center, camRight), rx, ry)) return 0.5;
     double pxPerUnit = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
-    return pxPerUnit > 1e-6 ? 90.0 / pxPerUnit : 0.5;
+    return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 void localFrame(V3 normal, out V3 right, out V3 up) {
     V3 fwd = norm(normal);
@@ -289,7 +289,7 @@ unittest {
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera");
-    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;
+    int x0 = cast(int)(ppx + 132), y0 = cast(int)ppy;
     int y1 = y0 - 70;
 
     // PRE-gesture pose (before any motion).
@@ -465,7 +465,7 @@ unittest {
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera");
-    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;
+    int x0 = cast(int)(ppx + 132), y0 = cast(int)ppy;
     int y1 = y0 - 70;
 
     V3 preRotRight = rotateRight();

@@ -619,7 +619,7 @@ unittest {
     auto vp  = viewportFromCamera(cam);
     float size = gizmoSize(autoPivot, vp);
     float s0x, s0y, s1x, s1y;
-    projectToWindow(Vec3(autoPivot.x + size/6.0f, autoPivot.y, autoPivot.z), vp, s0x, s0y);
+    projectToWindow(Vec3(autoPivot.x + size/5.0f, autoPivot.y, autoPivot.z), vp, s0x, s0y);
     projectToWindow(Vec3(autoPivot.x + size,        autoPivot.y, autoPivot.z), vp, s1x, s1y);
     int xa = cast(int)(s0x + 0.7f * (s1x - s0x));
     int ya = cast(int)(s0y + 0.7f * (s1y - s0y));

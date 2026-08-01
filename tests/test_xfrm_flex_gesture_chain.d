@@ -193,7 +193,7 @@ bool projectPivot(Cam cam, out double ppx, out double ppy) {
 double driveBorderRotate(Cam cam, int dragPx = 70) {
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "rotate: gizmo pivot off-camera");
-    int rx0 = cast(int)(ppx + 95), ry0 = cast(int)ppy;
+    int rx0 = cast(int)(ppx + 132), ry0 = cast(int)ppy;
     int ry1 = ry0 - dragPx;
     enum int rsteps = 20;
     play(format(
@@ -294,7 +294,7 @@ unittest {
     // ---- flex ROTATE (view ring, chunked) ----
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
-    int rx0 = cast(int)(ppx + 95), ry0 = cast(int)ppy;
+    int rx0 = cast(int)(ppx + 132), ry0 = cast(int)ppy;
     int ry1 = ry0 - 70;
     enum int rsteps = 20;
     play(format(

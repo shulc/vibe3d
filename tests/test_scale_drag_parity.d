@@ -102,8 +102,8 @@ unittest { // single-axis (X) scale-arrow drag == numeric SX, per vertex
     // Transform compact presentation dispatches Scale only from the axis head.
     // The full ScaleTool hit-test still accepts the shaft, but the wrapper
     // priority gate checks hitTestAxisHeads before dispatching to Scale.
-    Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
+    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1),
         "X-arrow start projects off-camera");

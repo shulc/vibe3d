@@ -174,7 +174,7 @@ double dragYArrowAllVerts(int px) {
 
     Vec3 pivot = evalPivot();           // ACEN.Auto, whole cube ⇒ ~origin
     float size = gizmoSize(pivot, vp);
-    Vec3 aStart = Vec3(pivot.x, pivot.y + size / 6.0f, pivot.z);
+    Vec3 aStart = Vec3(pivot.x, pivot.y + size / 5.0f, pivot.z);
     Vec3 aEnd   = Vec3(pivot.x, pivot.y + size,         pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(aStart, vp, sx1, sy1), "Y-arrow start off-camera");
@@ -204,7 +204,7 @@ Vec3 dragViewRingAllVerts(int px) {
     float cx, cy;
     assert(projectToWindow(pivot, vp, cx, cy), "rotate pivot off-camera");
 
-    int x0 = cast(int)(cx + 95);
+    int x0 = cast(int)(cx + 132);
     int y0 = cast(int)cy;
     int x1 = x0;
     int y1 = y0 - px;
@@ -423,7 +423,7 @@ unittest {
         ~ " pivot1=" ~ pivot1.to!string);
 
     float size = gizmoSize(piv, vp);
-    Vec3 aStart = Vec3(piv.x, piv.y + size / 6.0f, piv.z);
+    Vec3 aStart = Vec3(piv.x, piv.y + size / 5.0f, piv.z);
     Vec3 aEnd   = Vec3(piv.x, piv.y + size,         piv.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(aStart, vp, sx1, sy1), "g2 Y-arrow start off-camera");
@@ -552,7 +552,7 @@ unittest {
     // Two on-arrow projections give a screen-space arrow direction; the click is
     // placed perpendicular to it, far enough to clear every handle.
     float sx1, sy1, sx2, sy2;
-    assert(projectToWindow(Vec3(piv.x, piv.y + size/6.0f, piv.z), vp, sx1, sy1),
+    assert(projectToWindow(Vec3(piv.x, piv.y + size/5.0f, piv.z), vp, sx1, sy1),
         "arrow start off-camera");
     assert(projectToWindow(Vec3(piv.x, piv.y + size, piv.z), vp, sx2, sy2),
         "arrow end off-camera");

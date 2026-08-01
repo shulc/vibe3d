@@ -150,7 +150,7 @@ unittest { // a 20-step move-tool drag produces ONE undo entry
     auto vp  = viewportFromCamera(cam);
     Vec3 pivot = Vec3(0.5f, 0.5f, 0.5f);
     float size = gizmoSize(pivot, vp);
-    Vec3 arrowStart = Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
     Vec3 arrowEnd   = Vec3(pivot.x + size,         pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1), "off-camera");
@@ -210,7 +210,7 @@ Vec3 evalPivot() {
 void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
     float size = gizmoSize(pivot, vp);
     Vec3 arrowEnd   = Vec3(pivot.x + size,          pivot.y, pivot.z);
-    Vec3 arrowStart = Vec3(pivot.x + size / 6.0f,   pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f,   pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     projectToWindow(arrowStart, vp, sx1, sy1);
     projectToWindow(arrowEnd,   vp, sx2, sy2);

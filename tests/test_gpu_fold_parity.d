@@ -165,8 +165,8 @@ void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                 out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 7.0f,  pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z), vp, sx2, sy2);
+    projectToWindow(Vec3(pivot.x + size / 5.0f,  pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z), vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
     double dx = sx2 - sx1, dy = sy2 - sy1;

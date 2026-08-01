@@ -48,7 +48,7 @@ unittest { // X-symm: drag v6.x → v6.x grows, v7.x shrinks by same Δ
 
     Vec3 pivot = Vec3(0.5f, 0.5f, 0.5f);  // ACEN.Auto centroid = v6
     float size = gizmoSize(pivot, vp);
-    Vec3 arrowStart = Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z);
     Vec3 arrowEnd   = Vec3(pivot.x + size,         pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1), "arrowStart off-camera");

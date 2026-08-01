@@ -246,7 +246,7 @@ ClusterInfo readClusters() {
 void arrowGrabPx(Vec3 pivot, Vec3 axisDir, ref Viewport vp,
                  out int gx, out int gy, out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
-    Vec3 a0 = pivot + axisDir * (size / 6.0f);
+    Vec3 a0 = pivot + axisDir * (size / 5.0f);
     Vec3 a1 = pivot + axisDir * size;
     float sx1, sy1, sx2, sy2;
     projectToWindow(a0, vp, sx1, sy1);

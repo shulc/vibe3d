@@ -4,8 +4,8 @@
 // frame (RotateHandler.applyStart in handler.d), so picking a reliable
 // click pixel on them requires replicating that camera-relative math
 // test-side. The view-aligned ring (`arcView`) is much simpler — a full
-// circle in the camera plane at world radius `size * 1.1` (≈ 99 px on
-// screen at the default 90 px gizmo target), so we drive the drag
+// circle in the camera plane at world radius `size * 1.1` (≈ 132 px on
+// screen at the default 120 px gizmo target), so we drive the drag
 // through it instead.
 //
 // What this pins down:
@@ -85,13 +85,14 @@ unittest { // dragging the view-axis ring rotates top face rigidly
         "gizmo center projects off-camera (camera changed?)");
 
     // arcView (view-aligned ring) lives at world radius gizmoSize(pivot)*1.1,
-    // which corresponds to ~99 px around the gizmo center on screen. The
-    // ring's hit-test threshold is 8 px so a click at +95 px on the right
+    // which corresponds to ~132 px around the gizmo center on screen (the arm
+    // is 120 px since task 0553, so the view ring moved out from 99). The
+    // ring's hit-test threshold is 8 px so a click at +132 px on the right
     // side lands solidly inside. The drag then traces a tangent — up by
     // ~70 px — which both passes the ≥ 25 px ctrl-constraint deadzone
     // (rotate has no such gate; harmless either way) and produces a
     // visibly large angle in the dragAxis==3 path.
-    int x0 = cast(int)(cx + 95);
+    int x0 = cast(int)(cx + 132);
     int y0 = cast(int)cy;
     int x1 = x0;
     int y1 = y0 - 70;

@@ -185,7 +185,7 @@ double[3] vert(int idx) {
 void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
     float size = gizmoSize(pivot, vp);
     Vec3 arrowEnd   = Vec3(pivot.x + size,         pivot.y, pivot.z);
-    Vec3 arrowStart = Vec3(pivot.x + size / 6.0f,  pivot.y, pivot.z);
+    Vec3 arrowStart = Vec3(pivot.x + size / 5.0f,  pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     projectToWindow(arrowStart, vp, sx1, sy1);
     projectToWindow(arrowEnd,   vp, sx2, sy2);
@@ -197,7 +197,7 @@ void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
 void arrowDirPx(Vec3 pivot, ref Viewport vp, out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
     double dx = sx2 - sx1, dy = sy2 - sy1;
     double len = sqrt(dx*dx + dy*dy);
