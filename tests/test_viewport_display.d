@@ -583,6 +583,13 @@ string bufferHash(int cell = 0) {
 }
 
 // Pixel-classification helpers. CATEGORICAL only — never a shading value.
+/// Two probe samples that are the same pixel, to within byte rounding.
+/// Software GL is deterministic here, so this is an equality test with a
+/// driver-rounding allowance and NOT a similarity threshold.
+bool samePixel(Px a, Px b) {
+    return abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2 && abs(a.b - b.b) <= 2;
+}
+
 bool isSurfaceGrey(Px p) {
     // Lit cube surface: near-neutral, and not the background.
     return abs(p.r - p.g) <= 8 && abs(p.g - p.b) <= 12 && !isClear(p);
@@ -666,21 +673,49 @@ bool testFlowG() {
     writeln("    G1 PASS: plan = no faces, lines on, vertex dots forced on");
 
     // --- claim 1 (AREA): the solid surface is gone ---
-    size_t surf = 0, surfGone = 0;
+    //
+    // "GONE" MEANS *CHANGED*, NOT "BECAME THE CLEAR COLOUR", and the
+    // difference is not pedantry — the original oracle was
+    // `isClear(wire.points[i])`, which silently assumed that the only thing
+    // behind the model was the background. That was true while the ground
+    // grid was a fixed 1-unit world lattice (the stock cube spanned two
+    // cells, so almost nothing was behind it). Task 0570 made the grid a
+    // SCREEN length — about forty lines across the pane at any zoom — so a
+    // real fraction of these samples now show a grid line through the
+    // model instead of the background, and the old oracle scored that as
+    // "the face pass is still writing colour" (77% against a 90% floor).
+    //
+    // A grid line reads as `isSurfaceGrey` too (it is a neutral grey blended
+    // over a neutral background), so tightening the classifier does not help
+    // and would only move the confound.
+    //
+    // The claim this flow actually makes is that the FACE PASS STOPPED
+    // WRITING THESE PIXELS. If it had not, each sample would be byte-identical
+    // between the two styles — faces are drawn last over the grid and are
+    // opaque. So "differs from the shaded image" is exactly the claim, and it
+    // is independent of whatever is behind. Note this is the SAME phenomenon
+    // G3 below asserts on purpose: geometry behind the model becoming
+    // visible is the feature, and the grid is geometry behind the model.
+    size_t surf = 0, surfGone = 0, surfToBackground = 0;
     foreach (i; areaStart .. shaded.points.length) {
         if (!shaded.points[i].valid || !wire.points[i].valid) continue;
         if (!isSurfaceGrey(shaded.points[i])) continue;
         surf++;
-        if (isClear(wire.points[i])) surfGone++;
+        if (!samePixel(shaded.points[i], wire.points[i])) surfGone++;
+        if (isClear(wire.points[i])) surfToBackground++;
     }
     enforce(surf >= 200, format("too few surface samples to conclude anything (%d)", surf));
     immutable double gone = cast(double)surfGone / cast(double)surf;
     enforce(gone >= 0.90,
-        format("only %.1f%% of the %d lit-surface samples became background in "
-               ~ "the lines-only style — the face pass is still writing colour",
+        format("only %.1f%% of the %d lit-surface samples changed at all in "
+               ~ "the lines-only style — the face pass is still writing colour "
+               ~ "(an unchanged pixel is the signature: faces draw last and "
+               ~ "opaque, so a drawn face reproduces the shaded image exactly)",
                gone * 100, surf));
-    writefln("    G2 PASS: %d/%d (%.1f%%) lit-surface samples became background",
-             surfGone, surf, gone * 100);
+    writefln("    G2 PASS: %d/%d (%.1f%%) lit-surface samples stopped showing "
+             ~ "the surface (%d of them are bare background; the rest are "
+             ~ "grid/axis lines that were behind the model)",
+             surfGone, surf, gone * 100, surfToBackground);
 
     // --- claim 2 (LINES): geometry BEHIND the model became visible ---
     // The world axis is drawn before the mesh and is depth-occluded by the
