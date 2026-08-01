@@ -269,6 +269,16 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // STILL NOT MEASURED, and therefore not modelled: how these three rank against
 // Grid / Workplane / Pivot / Box (a different arbitration layer — see
 // `arbitrate`). Those keep the bare distance ranking they have always had.
+//
+// That unmeasured layer did MOVE under this change, and it is worth naming
+// rather than discovering later. A centre-refined leg now meets Grid and the
+// item types at its ELEMENT's distance, where it used to meet them at the
+// centre's own — and an element is never farther from the cursor than its
+// centre. So a centre now beats a grid point strictly more often than it did.
+// That is forced: "the centre inherits the leg's rank" is the measured half,
+// and re-ranking the refined point to keep this layer's old outcomes would
+// simply reinstate the contest the measurement removed. It is a consequence
+// accepted with open eyes, not a second thing that was measured.
 // ---------------------------------------------------------------------------
 
 /// Upper bound on the cross-type tolerance base, in pixels. The base itself is
