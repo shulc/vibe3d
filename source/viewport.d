@@ -4,7 +4,7 @@ import view          : View, ProjKind, ViewPreset;
 import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3;
-import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan;
+import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -303,6 +303,12 @@ unittest {
     // times, and the first one that is per-CELL: without the term, switching
     // a Quad/Split cell's display mode re-blits the cached colour texture and
     // the mode change appears to do nothing until that cell's camera moves.
+    //
+    // Note the mutated values below are all DIFFERENT from `DrawPlan`'s own
+    // defaults. Writing a field's default value back is a no-op assignment and
+    // the assertion that follows it proves nothing — which is how the first
+    // draft of this block managed to fail, by "changing" the backdrop dim to
+    // 1.0f when 1.0f is what an unresolved plan already holds.
     DirtyKey a, b;
     a.fboW = 640; b.fboW = 640;
     a.fboH = 480; b.fboH = 480;
@@ -316,7 +322,9 @@ unittest {
     assert(a != b, "keys differing only in the active overlay must compare unequal");
 
     b = a;
-    b.planBackdrop.dim = 1.0f;        // e.g. backdrop no longer dimmed
+    b.planBackdrop.dim = kBackdropDim;  // backdrop picked up its dim (0.45 != 1.0)
+    assert(b.planBackdrop.dim != a.planBackdrop.dim,
+        "sanity: the mutation must actually change the field");
     assert(a != b, "keys differing only in the BACKDROP plan must compare unequal");
 }
 
