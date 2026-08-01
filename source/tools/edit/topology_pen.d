@@ -2689,10 +2689,9 @@ public:
     /// `exclude` (task 0555) names vertices that may not be answered with —
     /// the vertices the querying GESTURE is itself moving. Without it a
     /// dragged vertex is its own nearest candidate at zero distance and every
-    /// query answers "you have landed on yourself", which is the same
-    /// self-snap the transform path excludes for at
-    /// `move.d:applySnapToDelta`. Empty for the Split caller, which moves
-    /// nothing.
+    /// query answers "you have landed on yourself" — the same self-snap the
+    /// transform path already excludes for, at `move.d:applySnapToDelta`.
+    /// Empty for the Split caller, which moves nothing.
     private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp,
                                       const(uint)[] exclude = null) {
         if (!dragSnap_.enabled) return -1;
