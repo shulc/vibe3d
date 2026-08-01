@@ -71,6 +71,14 @@ enum int kGridMaskDefault = GridRung.two | GridRung.five;   // == 5
 /// The grid step is the world length of this many screen pixels, nice-ceiled.
 enum double kGridSizePixels = 25.0;
 
+/// Half-extent of the drawn lattice, in CELLS. The grid mesh is built once as
+/// a unit lattice spanning [-kGridHalfCells, +kGridHalfCells] and scaled by
+/// the step at draw time, so its world extent is `kGridHalfCells * gridSize`
+/// and its SCREEN extent is a constant 50 * 25..62.5 pixels — the grid always
+/// covers the same fraction of the viewport at every zoom, which is the point
+/// of a screen-anchored grid.
+enum int kGridHalfCells = 50;
+
 /// The click-relocate quantum is this many grid steps. Read at its own site;
 /// kept here because it is the ladder's `x10` closure that makes it exact.
 enum double kRelocateQuantumSteps = 10.0;
@@ -358,6 +366,22 @@ float viewWorldPerPixel(const ref Viewport vp) @safe pure nothrow @nogc {
 float viewGridSizeFor(const ref Viewport vp, const ref ViewGridPrefs p)
         @safe pure nothrow @nogc {
     return viewGridSize(viewWorldPerPixel(vp), p);
+}
+
+/// The world radius at which the drawn grid has faded to nothing: its OWN
+/// half-extent, so the lattice always ends where it becomes invisible.
+///
+/// This used to be a multiple of the camera distance, which is a different
+/// quantity that merely happened to sit inside a fixed 50-unit lattice at
+/// ordinary zooms. Once the lattice's extent follows the step, the two come
+/// apart and the grid's square boundary becomes visible — captured at a
+/// zoom whose step sits at the bottom of a rung.
+///
+/// A function rather than an expression at the draw site because the display
+/// endpoint reports it: a re-derivation in the reporter is exactly how a dump
+/// starts lying about what was drawn.
+float viewGridFadeRadius(float gridStep) @safe pure nothrow @nogc {
+    return kGridHalfCells * gridStep;
 }
 
 // ===========================================================================

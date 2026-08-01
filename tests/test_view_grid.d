@@ -14,7 +14,7 @@
 // pin the arithmetic. This pins that the arithmetic is what the RUNNING APP
 // uses and DRAWS — a pure function nothing calls is not a grid.
 //
-// Three tiers, in increasing strength:
+// Four tiers, in increasing strength:
 //
 //   Flow A — the endpoint reports the law, at the app's own camera, over a
 //            zoom sweep. Numbers, from the same snapshot the renderer gets.
@@ -23,10 +23,16 @@
 //            monotone, and never lands between rungs. A grid that glided
 //            would pass every assertion in Flow A and fail here.
 //   Flow C — the ladder is a SETTING and it is refused when nonsense.
+//   Flow D — PIXELS. Changing the ladder with the camera frozen changes the
+//            framebuffer exactly when it changes the step, and leaves it
+//            byte-identical when it does not. This is the tier that proves
+//            the drawn grid follows the computed step rather than merely
+//            existing alongside it.
 //
-// A PIXEL tier is deliberately absent HERE: at this commit the law is
-// computed and reported but nothing draws it, so a pixel assertion would have
-// nothing to assert. It arrives with the commit that wires the grid.
+// Flow D's shape is the part worth explaining. The obvious pixel test —
+// "zoom, see the grid change" — proves nothing: the camera moved, so every
+// pixel moved. Freezing the camera and moving only the LADDER is the only way
+// to vary the step while holding everything else in the frame fixed.
 module test_view_grid;
 
 import std.stdio     : writeln, writefln;
@@ -203,6 +209,25 @@ bool testFlowA() {
     enforce(ss3 < jsonNum(g3, "size"),
         "the sub-step must be finer than the drawn step");
     writeln("    A3 PASS: subStep == niceCeil(one pixel), finer than the step");
+
+    // The distance fade is the grid's OWN half-extent, so it moves with the
+    // step and not with the camera. Before this task it was `2 * distance` —
+    // a different quantity that merely happened to sit inside a fixed
+    // 50-unit lattice at ordinary zooms. Once the lattice follows the step
+    // the two come apart and the grid's square boundary shows; asserting the
+    // RATIO across the same zoom spread is what pins which of the two is
+    // wired, because the ratio is constant for one and not for the other.
+    foreach (dist; [0.4, 1.0, 3.86, 20.0, 200.0]) {
+        setCamera(0.5, 0.3, dist);
+        auto g = gridDump();
+        immutable double size = jsonNum(g, "size");
+        immutable double fade = jsonNum(g, "fadeRadius");
+        enforce(fabs(fade / size - 50.0) <= 1e-4,
+            format("dist %g: fade radius %.9g is %.4f steps, not the lattice's "
+                   ~ "own 50 — the grid would end before it faded",
+                   dist, fade, fade / size));
+    }
+    writeln("    A4 PASS: the fade radius is 50 steps at every zoom (the lattice's own extent)");
     return true;
 }
 
@@ -329,6 +354,75 @@ bool testFlowC() {
 }
 
 // --------------------------------------------------------------------------
+// Flow D — the DRAWN grid follows the computed step
+// --------------------------------------------------------------------------
+
+string probeHash() {
+    // The probe returns the last COMPLETED frame, so read until two
+    // consecutive reads agree before believing either (task 0559's warm-up
+    // race — a single read after a scene change catches the previous frame).
+    string prev;
+    foreach (i; 0 .. 8) {
+        auto j = parseJSON(httpGet("/api/viewport/probe?cell=0&hash=1"));
+        enforce("hash" in j, "probe carried no hash: " ~ j.toString);
+        enforce(j["renders"].type == JSONType.TRUE,
+                "cell 0 does not render — the digest would be vacuous");
+        string cur = j["hash"].str;
+        if (i > 0 && cur == prev) return cur;
+        prev = cur;
+        Thread.sleep(220.msecs);
+    }
+    throw new Exception("framebuffer digest never settled");
+}
+
+bool testFlowD() {
+    writeln("  [D] the drawn framebuffer follows the step, and only the step...");
+    resetApp();
+    scope(exit) restoreLadder();
+
+    // Freeze the camera. From here on the ONLY thing that varies is the
+    // ladder, so any pixel difference is the grid and nothing else.
+    setCamera(0.5, 0.3, 3.86);
+    Thread.sleep(250.msecs);
+
+    string[double] hashByStep;   // step -> digest
+    string[] order;
+    foreach (mask; 0 .. 8) {
+        setLadder(format("%d", mask));
+        Thread.sleep(250.msecs);
+        immutable double step = jsonNum(gridDump(), "size");
+        string h = probeHash();
+        order ~= format("mask %d step %.4g %s", mask, step, h);
+
+        if (auto seen = step in hashByStep) {
+            // SAME step from a different ladder must draw the SAME pixels.
+            // This is the half that catches a renderer which scaled the grid
+            // by something correlated with the mask instead of by the step.
+            enforce(*seen == h,
+                format("mask %d gives step %.9g, already drawn under another "
+                       ~ "ladder — the framebuffer must be identical, got %s vs %s",
+                       mask, step, h, *seen));
+        } else {
+            // A step nothing has drawn yet must NOT reproduce another step's
+            // picture: if it did, the grid is not consuming the step at all.
+            foreach (s, hh; hashByStep)
+                enforce(hh != h,
+                    format("step %.9g drew the same pixels as step %.9g — the "
+                           ~ "renderer is not using the computed step", step, s));
+            hashByStep[step] = h;
+        }
+    }
+    writefln("    D1 PASS: %d ladders -> %d distinct steps -> %d distinct "
+             ~ "framebuffers, one per step", 8, hashByStep.length,
+             hashByStep.length);
+    foreach (o; order) writeln("        ", o);
+    enforce(hashByStep.length >= 2,
+        "this camera produced only one distinct step across all eight ladders — "
+        ~ "the flow would pass without measuring anything; pick another camera");
+    return true;
+}
+
+// --------------------------------------------------------------------------
 
 int main(string[] args) {
     // NOTE: keep the literal "http://localhost:8080" — run_test.d isolates
@@ -352,6 +446,7 @@ int main(string[] args) {
     run(&testFlowA, "Flow A — gridSize is niceCeil(25 * pixelSize) in the app");
     run(&testFlowB, "Flow B — the step is a staircase, not a continuum");
     run(&testFlowC, "Flow C — the ladder is a setting, and out-of-range is refused");
+    run(&testFlowD, "Flow D — the drawn framebuffer follows the step");
 
     // The runner shares one app across a worker's slice and its between-tests
     // reset does not cover the grid ladder (an app-wide setting, not document

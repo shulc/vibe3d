@@ -39,7 +39,8 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
-                  kGridMaskMin, kGridMaskMax, gridRungs;
+                  kGridMaskMin, kGridMaskMax, kGridHalfCells, gridRungs,
+                  viewGridFadeRadius;
 
 import tools.transform.transform;
 import tools.transform.move;
@@ -2012,7 +2013,10 @@ void main(string[] args) {
     glGenBuffers(1, &gridVbo);
     scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
     {
-        immutable int   N = 50;   // grid half-extent in cells
+        // Built as a UNIT lattice and scaled by the grid step at draw time
+        // (task 0570), so this buffer is uploaded once and never touched
+        // again no matter how the zoom moves the step.
+        immutable int   N = kGridHalfCells;   // grid half-extent in cells
         immutable float F = cast(float)N;
         float[] verts;
 
@@ -3930,11 +3934,15 @@ void main(string[] args) {
                 immutable float px = viewWorldPerPixel(gv);
                 immutable float gs = viewGridSize(px, g_viewGrid);
                 immutable float ss = viewGridSubStep(px, gs, g_viewGrid);
+                // `fadeRadius` is read through the same function the draw
+                // site calls, not recomputed here — a reporter with its own
+                // copy of a formula is how a dump starts lying.
                 return format(
                     `{"mask":%d,"pixelSize":%.9g,"size":%.9g,"subStep":%.9g,` ~
-                    `"cellPixels":%.9g}`,
+                    `"cellPixels":%.9g,"fadeRadius":%.9g}`,
                     g_viewGrid.rungMask, px, gs, ss,
-                    px > 0 ? gs / px : 0.0f);
+                    px > 0 ? gs / px : 0.0f,
+                    viewGridFadeRadius(gs > 0 ? gs : 1.0f));
             }
 
             auto buf = appender!string();

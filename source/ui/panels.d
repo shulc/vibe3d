@@ -58,6 +58,7 @@ import toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
+import viewgrid : g_viewGrid, viewGridSizeFor, viewGridFadeRadius;
 import shader;
 import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
@@ -1930,23 +1931,62 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    float[16] gridModel = identityMatrix;
+    // ---- The grid step (task 0570) ----
+    //
+    // The lattice in `gridVao` is a UNIT lattice; the step it is drawn at is
+    // this cell's own, derived from this cell's own zoom. So the model matrix
+    // carries a uniform scale of `gridStep` and the buffer is never rebuilt.
+    //
+    // `gridStep` is always a LADDER RUNG, so the drawn spacing moves in
+    // visible steps as the camera zooms rather than gliding — that difference
+    // is the feature, not a rounding of it.
+    //
+    // A zero step means the view has no usable scale (a degenerate camera);
+    // fall back to the unit lattice rather than collapsing the grid to a
+    // point.
+    float gridStep = viewGridSizeFor(vp, g_viewGrid);
+    if (!(gridStep > 0)) gridStep = 1.0f;
+
+    float[16] gridModel = [
+        gridStep, 0, 0, 0,
+        0, gridStep, 0, 0,
+        0, 0, gridStep, 0,
+        0, 0, 0,        1,
+    ];
     if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
         if (!wp.isAuto) {
             Vec3 n, a1, a2;
             wp.currentBasis(n, a1, a2);
             Vec3 c = wp.center;
+            // Same scale, applied to the work plane's own basis. The
+            // translation column is NOT scaled: the plane's origin is a
+            // world point, not a lattice coordinate.
             gridModel = [
-                a1.x, a1.y, a1.z, 0,
-                n.x,  n.y,  n.z,  0,
-                a2.x, a2.y, a2.z, 0,
-                c.x,  c.y,  c.z,  1,
+                a1.x * gridStep, a1.y * gridStep, a1.z * gridStep, 0,
+                n.x  * gridStep, n.y  * gridStep, n.z  * gridStep, 0,
+                a2.x * gridStep, a2.y * gridStep, a2.z * gridStep, 0,
+                c.x,             c.y,             c.z,             1,
             ];
         }
     }
+    // The distance fade radius is the grid's OWN half-extent, not a multiple
+    // of the camera distance.
+    //
+    // It used to be `camera.distance * 2`, which happened to sit inside the
+    // fixed 50-unit lattice at ordinary zooms and outside it when you pulled
+    // far back — a latent hard square edge nobody hit often. With a
+    // screen-anchored step the coincidence is gone in the other direction:
+    // the lattice's half-extent becomes `50 * step`, which at the bottom of a
+    // rung is ~1250 screen pixels while `2 * distance` is ~3 * the pane
+    // height, so on a tall pane the fade would reach PAST the lattice and the
+    // square boundary would be visible at every zoom. Tying the fade to the
+    // extent removes that class of defect at every zoom and every pane size:
+    // the grid always fades to nothing exactly where it ends.
+    immutable float gridFade = viewGridFadeRadius(gridStep);
+
     // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
     gridShader.useProgram(gridModel, vp,
-        v.camera.distance * 2.0f,
+        gridFade,
         cast(float)v.fbo.w, cast(float)v.fbo.h,
         0.0f, 0.0f);
     glBindVertexArray(gridVao);
@@ -1959,6 +1999,14 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     glBindVertexArray(0);
 
     // ---- Symmetry plane ----
+    //
+    // DELIBERATELY NOT scaled by the grid step (task 0570), even though it
+    // borrows the same lattice buffer. This is a plane INDICATOR — it exists
+    // to show where the mirror is — not a measuring grid, and the read that
+    // makes the ground grid a screen length says nothing about it. Tying its
+    // size to zoom would be a second appearance change smuggled in on the
+    // first one's evidence. It keeps its unit lattice and its
+    // camera-distance fade until someone decides otherwise on purpose.
     {
         import toolpipe.stages.symmetry : SymmetryStage;
         auto sym = cast(SymmetryStage)
