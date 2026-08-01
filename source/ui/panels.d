@@ -748,6 +748,47 @@ void drawViewportPropsPanel(EditorApp app) {
             }
         }
 
+        // Grid: the mantissa ladder the zoom-derived step may land on.
+        //
+        // Task 0570. APPLICATION-WIDE, unlike everything above it in this
+        // panel — the grid step is derived from each cell's own zoom, so the
+        // only thing there is to configure is which rungs it may land on.
+        // Housed here rather than in a new Preferences window because this
+        // panel is already where viewport settings live and this is the only
+        // grid setting there is.
+        ImGui.Dummy(ImVec2(0, 2));
+        ImGui.SeparatorText("Grid Steps");
+        {
+            import viewgrid : g_viewGrid, gridRungs, kGridMaskMin, kGridMaskMax;
+            import std.format : format;
+
+            // Labelled by the SET, not by the mask number: "1, 2, 5, 10" is
+            // what the user sees on screen; "5" is an implementation detail
+            // that happens to be the persisted form.
+            static string rungLabel(int mask) {
+                string s;
+                foreach (v; gridRungs(mask)) {
+                    if (s.length) s ~= ", ";
+                    s ~= (v == cast(double)cast(long)v)
+                         ? format("%d", cast(long)v) : format("%.1f", v);
+                }
+                return s;
+            }
+
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpGridSteps", rungLabel(g_viewGrid.rungMask))) {
+                foreach (m; kGridMaskMin .. kGridMaskMax + 1) {
+                    bool sel = (m == g_viewGrid.rungMask);
+                    if (ImGui.Selectable(rungLabel(m), sel)
+                        && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("viewport.gridSteps",
+                            `{"_positional":[` ~ format("%d", m) ~ `]}`);
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+        }
+
         // Master selector
         ImGui.Dummy(ImVec2(0, 2));
         ImGui.SeparatorText("Master");

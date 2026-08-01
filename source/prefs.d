@@ -143,6 +143,21 @@ struct Prefs {
     /// viewport, or "no default changed" quietly stops being true after one
     /// save.
     ViewportCellDisplay[4] viewportDisplay;
+
+    /// Task 0570: the grid's mantissa-ladder mask — which rungs the
+    /// zoom-derived grid step is allowed to land on. A 3-bit set (bit 0
+    /// admits 2, bit 1 admits 2.5, bit 2 admits 5; 1 and 10 are always in),
+    /// so the legal range is 0..7 and the default 5 is the set {1, 2, 5, 10}.
+    ///
+    /// APPLICATION-WIDE, not per cell — unlike `viewportDisplay` above. A
+    /// cell's grid differs from its neighbour's only through its own zoom,
+    /// which is the whole law; making the ladder per-cell would offer a knob
+    /// with no meaning attached to it.
+    ///
+    /// See `viewgrid.ViewGridPrefs.rungMask`, which is the LIVE value the
+    /// renderer reads; this field is its persisted mirror, seeded into it at
+    /// startup and written back by `viewport.gridSteps`.
+    int gridStepMask = 5;
 }
 
 /// One cell's persisted display state (task 0559).
@@ -378,6 +393,17 @@ Prefs loadPrefs(string dir) {
         }
         p.trackballSpeed       = readNumber("trackballSpeed",       p.trackballSpeed);
         p.trackballTabletSpeed = readNumber("trackballTabletSpeed", p.trackballTabletSpeed);
+        // Task 0570: the grid rung mask. Out of range is REJECTED (falls back
+        // to the default), not clamped: 0..7 is a bit SET, so "8" is not a
+        // coarser 7 — it is a value with no meaning, and clamping it would
+        // silently answer a question the file did not ask.
+        if (auto gsp = "gridStepMask" in doc) {
+            long m = long.min;
+            if (gsp.type == JSONType.integer)       m = gsp.integer;
+            else if (gsp.type == JSONType.uinteger) m = cast(long)gsp.uinteger;
+            else if (gsp.type == JSONType.float_)   m = cast(long)gsp.floating;
+            if (m >= 0 && m <= 7) p.gridStepMask = cast(int)m;
+        }
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -441,6 +467,9 @@ void savePrefs(ref const Prefs p, string dir) {
         vd ~= cj;
     }
     doc["viewportDisplay"] = JSONValue(vd);
+
+    // Task 0570: the grid's mantissa-ladder mask (app-wide).
+    doc["gridStepMask"] = JSONValue(p.gridStepMask);
 
     mkdirRecurse(dir);
     write(prefsFilePath(dir), doc.toPrettyString());
@@ -644,6 +673,37 @@ unittest {
         `{ "version": 1, "viewportLayout": "NotARealPreset" }`);
     auto r = loadPrefs(dir);
     assert(r.viewportLayout == LayoutPreset.Single, "unrecognized -> default Single");
+}
+
+// Task 0570: gridStepMask round-trip, default, and rejection-on-load.
+unittest {
+    import viewgrid : kGridMaskDefault;
+
+    auto dir = makeScratch("gridstepmask");
+    scope(exit) cleanScratch(dir);
+
+    auto def = loadPrefs(dir);
+    assert(def.gridStepMask == kGridMaskDefault,
+           "unset -> the shipped ladder {1,2,5,10}");
+    assert(def.gridStepMask == 5);
+
+    // Every legal mask round-trips, including 0 (which a `if (m)` truthiness
+    // bug would drop back to the default while looking like it worked).
+    foreach (m; 0 .. 8) {
+        Prefs p;
+        p.gridStepMask = m;
+        savePrefs(p, dir);
+        assert(loadPrefs(dir).gridStepMask == m, "every mask 0..7 must round-trip");
+    }
+
+    // Out of range is REJECTED, not clamped: the mask is a bit set, so 8 is
+    // not "a coarser 7".
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "gridStepMask": 8 }`);
+    assert(loadPrefs(dir).gridStepMask == 5, "8 -> default, not clamped to 7");
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "gridStepMask": -1 }`);
+    assert(loadPrefs(dir).gridStepMask == 5, "-1 -> default");
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "gridStepMask": "five" }`);
+    assert(loadPrefs(dir).gridStepMask == 5, "a non-number -> default");
 }
 
 // Task 0223: hRatio/vRatio round-trip, default, and clamp-on-load.

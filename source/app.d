@@ -38,6 +38,8 @@ import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
+import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
+                  kGridMaskMin, kGridMaskMax, gridRungs;
 
 import tools.transform.transform;
 import tools.transform.move;
@@ -1797,6 +1799,12 @@ void main(string[] args) {
             vpm.views[k].display.active.wire      = cd.wire;
             vpm.views[k].display.active.wireAlpha = cd.wireAlpha;
         }
+        // Task 0570: seed the LIVE grid ladder from the persisted mask.
+        // Inside the same !testMode gate as everything above, for the same
+        // reason: --test must draw the shipped ladder every run regardless of
+        // whichever profile is on the machine. loadPrefs() already rejected
+        // an out-of-range mask, so this needs no validation.
+        g_viewGrid.rungMask = g_prefs.gridStepMask;
     }
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
@@ -3913,6 +3921,22 @@ void main(string[] args) {
                     s.style.to!string, s.wire.to!string, s.wireAlpha);
             }
 
+            // Task 0570: the grid terms, per cell, straight from the
+            // renderer's own inputs. Reported at %.9g rather than a fixed
+            // number of decimals because a rung spans nine decades (1e-4 to
+            // 1e5 are all reachable zooms) and a %.6f would print the fine
+            // end as 0.000000 — an assertion about a step it cannot see.
+            static string gridJson(const ref Viewport gv) {
+                immutable float px = viewWorldPerPixel(gv);
+                immutable float gs = viewGridSize(px, g_viewGrid);
+                immutable float ss = viewGridSubStep(px, gs, g_viewGrid);
+                return format(
+                    `{"mask":%d,"pixelSize":%.9g,"size":%.9g,"subStep":%.9g,` ~
+                    `"cellPixels":%.9g}`,
+                    g_viewGrid.rungMask, px, gs, ss,
+                    px > 0 ? gs / px : 0.0f);
+            }
+
             auto buf = appender!string();
             buf.put(format(`{"activeId":%d,"cellCount":%d,"cells":[`,
                            vpm.activeId, vpm.cellCount));
@@ -3920,17 +3944,22 @@ void main(string[] args) {
                 if (k > 0) buf.put(",");
                 Viewport3D cv = vpm.views[k];
                 immutable bool renders = testMode ? (k == vpm.activeId) : true;
+                // The SAME snapshot the render loop feeds
+                // renderViewportSceneToFbo, so the reported grid cannot
+                // disagree with the drawn one by construction.
+                Viewport gvp = vpm.resolvedSnapshot(k);
                 buf.put(format(
                     `{"id":%d,"renders":%s,` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
-                    `"plan":{"active":%s,"backdrop":%s}}`,
+                    `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
                     stateJson(cv.display.active),
                     stateJson(cv.display.backdrop),
                     cv.display.backdropStyle.to!string,
                     planJson(resolveDrawPlan(cv.display, false)),
-                    planJson(resolveDrawPlan(cv.display, true))));
+                    planJson(resolveDrawPlan(cv.display, true)),
+                    gridJson(gvp)));
             }
             buf.put("]}");
             return buf.data;
@@ -5499,6 +5528,96 @@ void main(string[] args) {
                     g_prefs.viewportDisplay[cell].wire      = tv.display.active.wire;
                     g_prefs.viewportDisplay[cell].wireAlpha = tv.display.active.wireAlpha;
                 }
+                return;
+            }
+
+            // viewport.gridSteps <mask> — the grid's mantissa ladder (task
+            // 0570). APPLICATION-WIDE, so no cell selector: the ladder is one
+            // setting and a cell's grid differs from its neighbour's only
+            // through its own zoom.
+            //
+            // Accepts the mask as a number 0..7, or as the rung set spelled
+            // out ("1,2,5,10"). The second form exists because the number is
+            // a bit set and unreadable at a call site, and because it is what
+            // the panel shows — a test and a UI naming the same thing the
+            // same way is worth the parse.
+            //
+            // Out of range is an ERROR, not a clamp: 8 is not a coarser 7,
+            // it is a value with no ladder behind it.
+            if (id == "viewport.gridSteps") {
+                import std.string : strip, toLower, split, join;
+                import std.conv   : to, ConvException;
+                import std.format : format;
+
+                string sval = "";
+                long   mval = long.min;
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    void takeScalar(JSONValue v) {
+                        switch (v.type) {
+                            case JSONType.string:   sval = v.str;                  break;
+                            case JSONType.integer:  mval = v.integer;              break;
+                            case JSONType.uinteger: mval = cast(long)v.uinteger;   break;
+                            case JSONType.float_:   mval = cast(long)v.floating;   break;
+                            default: break;
+                        }
+                    }
+                    if (pjv.type != JSONType.object) takeScalar(pjv);
+                    else {
+                        if (auto pp = "_positional" in pjv)
+                            if (pp.type == JSONType.array && pp.array.length >= 1)
+                                takeScalar(pp.array[0]);
+                        if (sval.length == 0 && mval == long.min)
+                            foreach (key; ["value", "mask", "steps", "rungs"])
+                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
+                    }
+                }
+
+                if (sval.length > 0 && mval == long.min) {
+                    immutable string s = sval.strip;
+                    // Plain number in a string ("5"), else a rung set.
+                    try { mval = to!long(s); }
+                    catch (ConvException) {
+                        // Match the spelled-out set against the eight ladders.
+                        string canon(const(double)[] r) {
+                            string[] parts;
+                            foreach (v; r) {
+                                // 2.5 keeps its decimal; the rest print whole.
+                                parts ~= (v == cast(double)cast(long)v)
+                                         ? format("%d", cast(long)v)
+                                         : format("%.1f", v);
+                            }
+                            return parts.join(",");
+                        }
+                        string want;
+                        foreach (piece; s.split(",")) want ~= (want.length ? "," : "") ~ piece.strip;
+                        foreach (m; kGridMaskMin .. kGridMaskMax + 1)
+                            if (canon(gridRungs(m)) == want) { mval = m; break; }
+                        if (mval == long.min)
+                            throw new Exception(format(
+                                "viewport.gridSteps: '%s' is neither a mask 0..7 "
+                                ~ "nor one of the eight rung sets (e.g. \"1,2,5,10\")", s));
+                    }
+                }
+
+                if (mval == long.min)
+                    throw new Exception(
+                        "viewport.gridSteps: expected a mask 0..7 or a rung set");
+                if (mval < kGridMaskMin || mval > kGridMaskMax)
+                    throw new Exception(format(
+                        "viewport.gridSteps: %d is outside 0..7 — the mask is a "
+                        ~ "3-bit SET (bit 0 admits 2, bit 1 admits 2.5, bit 2 "
+                        ~ "admits 5), so out-of-range is refused rather than "
+                        ~ "clamped to a ladder that was not asked for", mval));
+
+                g_viewGrid.rungMask = cast(int)mval;
+                g_prefs.gridStepMask = cast(int)mval;
+
+                // Every cell must re-render: the grid step is not part of any
+                // cell's camera, so without this a cell keeps re-blitting its
+                // cached texture and the ladder change appears to do nothing
+                // until that cell's camera happens to move.
+                foreach (k; 0 .. vpm.views.length) vpm.views[k].dirty = true;
                 return;
             }
 
