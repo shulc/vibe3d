@@ -1254,8 +1254,12 @@ public:
         //
         // NOTE (task 0032, plan invariant ★): the claim that the apply path
         // "already lands worldDelta" held only for the ROTATED-INPUT case
-        // (axis=Select/SelectAuto/Local, where the move projects onto run.r·B0 and
-        // the fold's run.r cancels it). For the WORLD-INPUT case (Auto/None ACEN
+        // (the selection-derived axis modes — Select/Local, and SelectAuto until
+        // its frame was corrected to the auto one — where the move projects onto
+        // run.r·B0 and the fold's run.r cancels it). The set is whatever
+        // `AxisStage.modeTracksSelection` returns, read below; this note names
+        // the modes only to say which case the 0032 claim covered.
+        // For the WORLD-INPUT case (Auto/None ACEN
         // where the rotate settles WORLD frame into `frame`, giving inputBasis=B0
         // and run.t=worldDelta), the old apply path yielded M=run.r·T(worldDelta)
         // — a rotated geometry delta. The `applyFold` translate de-rotation fix

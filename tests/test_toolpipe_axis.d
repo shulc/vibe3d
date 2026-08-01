@@ -174,15 +174,53 @@ unittest { // Select mode — back face (face 0) — normal −Z.
 // emit a finite right/up/fwd vector.
 // -------------------------------------------------------------------------
 
-unittest { // SelectAuto — same algorithm as Select.
+unittest { // SelectAuto — the AUTO frame, NOT Select's.
+    // THIS ASSERTION USED TO SAY THE OPPOSITE, and the measurement is why it
+    // moved. It read "SelectAuto — same algorithm as Select" and asserted the
+    // back face's selection frame, which is what the stage computed while the
+    // mode was a stub of Select. A read of the shipped reference presets pairs
+    // the selection ACTION CENTRE with the *auto* AXIS tool for this mode, and a
+    // recording confirmed it: on a cube with its +Y face selected, `select` and
+    // `selectauto` hand over a bit-identical action centre and still install
+    // DIFFERENT frames — (+X, −Z, +Y) against the identity.
+    //
+    // The centre half of that pairing is unchanged and still tested next to
+    // Select's in tests/test_toolpipe_acen.d; only the FRAME moved.
     resetCube();
     postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
     postJson("/api/command", "tool.pipe.attr axis mode selectauto");
     auto a = getAxisAttrs();
     assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
-    // Back face (−Z normal): up=+Y, right=−X (same rule as Select).
-    assert(abs(floatAttr(a, "rightX") - (-1.0f)) < 1e-3, "rightX: " ~ a["rightX"]);
-    assert(abs(floatAttr(a, "upY")    - 1.0f)    < 1e-3, "upY: "    ~ a["upY"]);
+    // Back face selected (−Z normal). Select would answer right=−X, up=+Y,
+    // fwd=−Z; SelectAuto answers the world axes, whatever is selected.
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3,
+        "SelectAuto must publish the AUTO/world frame, not the selection's; "
+        ~ "rightX: " ~ a["rightX"] ~ " (−1 means it is running Select's basis)");
+    assert(abs(floatAttr(a, "upY")  - 1.0f) < 1e-3, "upY: "  ~ a["upY"]);
+    assert(abs(floatAttr(a, "fwdZ") - 1.0f) < 1e-3,
+        "fwdZ: " ~ a["fwdZ"] ~ " (−1 means it is running Select's basis)");
+}
+
+unittest { // Local — the SELECTION frame, not the world axes.
+    // The companion divergence to the SelectAuto one above, and the exact
+    // reverse of it: this branch returned the workplane/world frame while the
+    // reference gives the selected face's own. Measured on a cube with its +Y
+    // face selected, `local` and `select` install a bit-identical (+X, −Z, +Y).
+    //
+    // The mode's OTHER frame — the per-cluster one published when the action
+    // centre splits the selection into ≥2 clusters — was already selection-
+    // derived, so before this the same mode answered with a face frame per
+    // cluster and the world axes globally, on one selection.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode local");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "local", "got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "rightX") - 1.0f)    < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "upZ")    - (-1.0f)) < 1e-3,
+        "upZ: " ~ a["upZ"] ~ " — Local must take the selection's frame (up = −Z "
+        ~ "for a +Y face). 0 here means it fell back to the world axes");
+    assert(abs(floatAttr(a, "fwdY")   - 1.0f)    < 1e-3, "fwdY: " ~ a["fwdY"]);
 }
 
 unittest { // Origin — alias of World (identity basis).
@@ -195,8 +233,11 @@ unittest { // Origin — alias of World (identity basis).
     assert(abs(floatAttr(a, "fwdZ") - 1.0f)   < 1e-6, "fwdZ");
 }
 
-unittest { // Local — currently degrades to Auto basis (workplane).
-           // Smoke test: mode label set + finite vectors.
+unittest { // Local with NOTHING SELECTED — the Auto basis (workplane / world).
+           // This is the preserved half: the selection frame needs a selection,
+           // and the empty-selection path in the reference is a separate body
+           // that has not been read, so this branch deliberately still falls
+           // back to Auto rather than guessing. Smoke: label + finite vectors.
     resetCube();
     postJson("/api/command", "tool.pipe.attr axis mode local");
     auto a = getAxisAttrs();

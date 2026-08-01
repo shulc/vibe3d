@@ -30,8 +30,14 @@ import document          : Layer;
 //   - Workplane  — workplane.axis1/normal/axis2 from upstream WORK
 //                  stage. Mapping: right=axis1, up=normal, fwd=axis2
 //                  (per phase7_2_plan §6 — Y-up convention).
-//   - Select / SelectAuto / Element / Local / Origin / Screen / Manual
-//                  stubbed (degrade to Auto until 7.2d/7.2e/7.2f land).
+//   - Select      — the selection's own frame (computeSelectionBboxBasis);
+//                  world/workplane when nothing is selected.
+//   - Local       — the same selection frame globally, plus a per-cluster
+//                  frame when ACEN.Local splits the selection.
+//   - SelectAuto  — selection ACTION CENTRE, AUTO axis. Deliberately NOT the
+//                  selection frame: centre and frame are separate inputs and
+//                  this is the mode that separates them.
+//   - Element / Origin / Screen / Manual / Pivot / Parent — see computeBasis.
 //
 // AxisPacket layout: right / up / fwd (forward); axIndex hint stays at
 // -1 in 7.2 — populated when an axis-locked tool needs the principal
@@ -141,8 +147,15 @@ class AxisStage : Stage, Operator {
     // is a PURE function of the mode — no drag/mutable state — so the idle /
     // listAttrs deterministic path is untouched (Risk 6). The gizmo never names
     // a mode; it asks this single declared capability of the axis sub-tool.
+    //
+    // SelectAuto is NOT in the list, and the reason is the whole point of that
+    // mode: its action centre follows the selection but its AXIS is the auto
+    // one (see computeBasis). A basis that is world-fixed must not co-rotate
+    // with a gesture, so the declared capability has to follow the frame's
+    // source and not the mode's name — it was listed here while the mode still
+    // computed the selection basis.
     static bool modeTracksSelection(Mode m) pure nothrow @nogc @safe {
-        return m == Mode.Select || m == Mode.SelectAuto || m == Mode.Local;
+        return m == Mode.Select || m == Mode.Local;
     }
     bool axisTracksSelection() const pure nothrow @nogc @safe {
         return modeTracksSelection(mode);
@@ -288,19 +301,55 @@ private:
             case Mode.Element:
                 if (computeElementBasis(r, u, f)) return;
                 goto case Mode.Auto;       // fall back to workplane basis
-            case Mode.Select:
             case Mode.SelectAuto:
+                // THE CENTRE AND THE FRAME ARE SEPARATE INPUTS, AND THIS MODE
+                // IS THE PROOF. `selectauto` hands over the SAME action centre
+                // as `select` — bit-identical to nine digits on the recorded
+                // rig — and still orients differently, because the reference's
+                // preset pairs the selection ACTION CENTRE with the *auto* AXIS
+                // tool, not the selection one. Measured: with a cube's +Y face
+                // selected, `select` installs (+X, −Z, +Y) while `selectauto`
+                // installs the identity, and the two elect different indices
+                // off the identical centre. So this mode must NOT run the
+                // selection basis; it takes Auto's, which is the workplane when
+                // one is set manually and world XYZ otherwise.
+                //
+                // It shared `computeSelectionBboxBasis` with Select from 7.2d
+                // (both were stubs of one another) until that pairing was read
+                // out of the shipped presets.
+                goto case Mode.Auto;
+            case Mode.Select:
                 if (computeSelectionBboxBasis(r, u, f)) return;
                 goto case Mode.Auto;
-            case Mode.Local: {
-                // Local GLOBAL fallback = workplane (manual) or world XYZ. The real
-                // per-cluster Local basis is published separately in evaluate()
-                // (clusterRight/Up/Fwd when ACEN.Local has ≥2 clusters).
-                Vec3 a1, n, a2;
-                if (queryWorkplaneBasis(a1, n, a2)) { r = a1; u = n; f = a2; }
-                else { r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1); }
-                return;
-            }
+            case Mode.Local:
+                // Local's GLOBAL frame is the SELECTION's frame, the same
+                // computation Select runs. Measured on a cube with its +Y face
+                // selected: `local` and `select` install a bit-identical
+                // (+X, −Z, +Y) — the reference reaches it through a different
+                // axis tool, but on a component selection the two agree and the
+                // frame is emphatically not the world axes, which is what this
+                // branch used to return.
+                //
+                // WHAT SEPARATES THEM IS NOT MEASURED HERE. The reference runs
+                // `local` and `select` as different code; a subject whose ITEM
+                // transform is rotated would separate them and no such rig has
+                // been recorded. Our item-oriented frame is Mode.Pivot, so
+                // routing Local at the selection is the reading that fits this
+                // stage; revisit if a rotated-item measurement lands.
+                //
+                // No selection ⇒ fall through to Auto (workplane / world),
+                // exactly what this branch did before, so the whole-mesh
+                // subject is untouched. That fallback is deliberate: the
+                // reference takes a separate no-box path when the selection is
+                // empty and that path has NOT been read, so we do not guess it.
+                //
+                // The per-cluster Local basis is published separately in
+                // evaluate() (clusterRight/Up/Fwd when ACEN.Local has ≥2
+                // clusters) and is unchanged; this is the frame the gizmo uses
+                // when there is one cluster, which until now disagreed with the
+                // per-cluster one on the very same selection.
+                if (computeSelectionBboxBasis(r, u, f)) return;
+                goto case Mode.Auto;
             case Mode.Screen: {
                 // Screen basis = camera frame remapped (capture-verified,
                 // selection-independent):
