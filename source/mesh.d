@@ -885,6 +885,29 @@ struct Mesh {
             }
         }
 
+        applyVertexRemapAndRebuild(remap);
+        return welded;
+    }
+
+    /// Rewrite every face through `remap`, drop the corners and faces the
+    /// rewrite collapses, and rebuild the derived arrays. The shared tail of
+    /// `weldVerticesByMask` and `weldVertexPairs` — extracted verbatim from
+    /// the former so both spellings of "these vertices are now that vertex"
+    /// produce the identical mesh, and so a future weld producer cannot
+    /// forget one of the six things that must follow a corner rewrite.
+    ///
+    /// `remap` is indexed by vertex id and must be AT MOST ONE LEVEL DEEP
+    /// (`remap[remap[i]] == remap[i]` for every i): the face rewrite reads it
+    /// once per corner and does not chase chains, so a two-level entry would
+    /// leave a corner pointing at a vertex that is itself dead. Both callers
+    /// guarantee that — `weldVerticesByMask` by never re-targeting an
+    /// already-remapped index, `weldVertexPairs` by rejecting any pair whose
+    /// keep is another pair's drop.
+    ///
+    /// Consecutive duplicates that arise post-remap are dropped (so a quad
+    /// whose two adjacent corners merged becomes a triangle); faces left with
+    /// fewer than 3 distinct corners are removed entirely.
+    private void applyVertexRemapAndRebuild(in int[] remap) {
         uint[][] newFaces;
         bool[]   newSubpatch;
         int[]    newOrder;
@@ -922,7 +945,6 @@ struct Mesh {
         buildLoops();
         // Geometry-class: faces rewritten, edges + loops rebuilt.
         commitChange(MeshEditScope.Geometry);
-        return welded;
     }
 
     /// Weld vertex `drop` into vertex `keep`. `drop`'s incident faces are
@@ -978,6 +1000,97 @@ struct Mesh {
         mask[keep] = true;
         mask[drop] = true;
         return weldVerticesByMask(mask, 1e-12);
+    }
+
+    /// Weld SEVERAL `[keep, drop]` vertex pairs in ONE pass: every `drop` is
+    /// absorbed into its OWN `keep`, independently, and the mesh is rebuilt
+    /// once at the end. Returns the number of pairs actually welded.
+    ///
+    /// WHY THIS EXISTS RATHER THAN A LOOP OVER `weldVertexPair`: that function
+    /// rebuilds and COMPACTS the mesh, so every index the caller is holding is
+    /// stale the moment it returns. A caller with N independent absorptions to
+    /// perform (dragging a whole edge or a whole loop onto other geometry, one
+    /// target per grabbed vertex) cannot express that as N calls without
+    /// re-deriving its indices between each one. It also collapses N geometry
+    /// rebuilds and N `commitChange` notifications into one.
+    ///
+    /// POSITION RULE, and it differs from `weldVertexPair` deliberately: the
+    /// survivor is `keep` itself and stays exactly where `keep` was — the drop
+    /// is absorbed INTO the target, the target does not move to meet it.
+    /// `weldVertexPair` reaches the same geometry by snapping drop onto keep
+    /// and letting the mask pass pick the lower index as survivor; expressing
+    /// the remap directly here means no position is written before the rewrite
+    /// and no coincidence test can pull in a bystander vertex that happens to
+    /// sit on the target.
+    ///
+    /// A pair is REFUSED (skipped, the rest still weld) when:
+    ///  - `keep == drop`, or either index is out of range;
+    ///  - `drop` appears as the drop of an earlier pair (a vertex can only be
+    ///    absorbed once) or as the keep of any pair, or `keep` appears as the
+    ///    drop of any pair — either would build a two-level remap, which
+    ///    `applyVertexRemapAndRebuild` does not chase;
+    ///  - `keep` and `drop` are NON-ADJACENT corners of one face: that leaves
+    ///    `[keep,A,keep,B]`, a self-touching polygon the rewrite cannot
+    ///    collapse cleanly. Adjacent same-face pairs (consecutive corners,
+    ///    including the head/tail wrap) are the ordinary edge-collapse case and
+    ///    ARE allowed — the quad becomes a triangle.
+    ///  - neither `keep` nor `drop` is referenced by any face: `compactUnreferenced`
+    ///    would drop both as orphans, a net vanish rather than a weld.
+    /// The same four rules `weldVertexPair` documents, evaluated per pair.
+    size_t weldVertexPairs(in uint[2][] pairs) {
+        if (pairs.length == 0) return 0;
+        if (vertices.length < 2) return 0;
+
+        // Pass 1 — which vertices are claimed as a keep / as a drop, so the
+        // chain and double-absorb rejects below can be decided without an
+        // O(N*pairs) rescan.
+        bool[] isKeep = new bool[](vertices.length);
+        bool[] isDrop = new bool[](vertices.length);
+        foreach (p; pairs) {
+            if (p[0] == p[1]) continue;
+            if (p[0] >= vertices.length || p[1] >= vertices.length) continue;
+            isKeep[p[0]] = true;
+            isDrop[p[1]] = true;
+        }
+
+        int[] remap = new int[](vertices.length);
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+
+        size_t welded = 0;
+        foreach (p; pairs) {
+            immutable uint keep = p[0], drop = p[1];
+            if (keep == drop) continue;
+            if (keep >= vertices.length || drop >= vertices.length) continue;
+            if (remap[drop] != cast(int)drop) continue;   // already absorbed
+            if (isDrop[keep] || isKeep[drop]) continue;   // would chain
+            if (!weldPairAllowed(keep, drop)) continue;
+            remap[drop] = cast(int)keep;
+            ++welded;
+        }
+        if (welded == 0) return 0;
+
+        applyVertexRemapAndRebuild(remap);
+        return welded;
+    }
+
+    /// The shared-face adjacency + faceless admissibility test for one weld
+    /// pair — see `weldVertexPairs`'s doc for what each rejection costs.
+    /// Both indices are assumed in range and distinct.
+    private bool weldPairAllowed(uint keep, uint drop) const {
+        bool keepRef = false, dropRef = false;
+        foreach (ref face; faces) {
+            int posKeep = -1, posDrop = -1;
+            foreach (i, vid; face) {
+                if (vid == keep) { posKeep = cast(int)i; keepRef = true; }
+                if (vid == drop) { posDrop = cast(int)i; dropRef = true; }
+            }
+            if (posKeep >= 0 && posDrop >= 0) {
+                int diff = posKeep > posDrop ? posKeep - posDrop : posDrop - posKeep;
+                bool adjacent = (diff == 1) || (diff == cast(int)face.length - 1);
+                if (!adjacent) return false;
+            }
+        }
+        return keepRef || dropRef;
     }
 
     /// Inverse of weldVerticesByMask: unweld each masked vertex so every
@@ -29347,6 +29460,125 @@ unittest { // adjacent same-face weld: edge collapse → succeeds, quad collapse
     assert(foundKeep, "adjacent-weld: survivor position (0,0,0) missing");
     assert(!foundDrop, "adjacent-weld: drop position (1,0,0) must be absent after weld");
 }
+
+// ---------------------------------------------------------------------------
+// weldVertexPairs (task 0555) — N independent absorptions in one pass.
+//
+// The rig is a two-quad strip, which is the shape the reference measurement
+// was taken on and the smallest mesh where the interesting deltas appear:
+//
+//     3 ---- 4 ---- 5          F0 = [0,1,4,3]   F1 = [1,2,5,4]
+//     |  F0  |  F1  |          V=6  E=7  F=2
+//     0 ---- 1 ---- 2
+// ---------------------------------------------------------------------------
+private Mesh makeWeldPairStrip() {
+    Mesh m;
+    m.addVertex(Vec3(-1, 0, 0)); m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(-1, 1, 0)); m.addVertex(Vec3(0, 1, 0)); m.addVertex(Vec3(1, 1, 0));
+    m.addFace([0u, 1u, 4u, 3u]);
+    m.addFace([1u, 2u, 5u, 4u]);
+    m.rebuildEdges();
+    m.buildLoops();
+    return m;
+}
+
+unittest { // the EDGE-grab cell: two pairs, welded independently, in ONE call
+    import std.conv : to;
+    import std.math : abs;
+    Mesh m = makeWeldPairStrip();
+    assert(m.vertices.length == 6 && m.edges.length == 7 && m.faces.length == 2,
+        "strip rig: expected V=6 E=7 F=2, got V=" ~ m.vertices.length.to!string
+        ~ " E=" ~ m.edges.length.to!string ~ " F=" ~ m.faces.length.to!string);
+
+    // Drag the middle edge 1-4 onto the right edge 2-5: vertex 1 is absorbed
+    // by 2 and vertex 4 by 5, each into its OWN target. This is the measured
+    // delta (task 0545): dV -2, dE -3, dF -1.
+    uint[2][] pairs = [[2u, 1u], [5u, 4u]];
+    assert(m.weldVertexPairs(pairs) == 2,
+        "both endpoints must be absorbed, independently — one call, two welds");
+
+    assert(m.vertices.length == 4,
+        "edge-grab weld: expected V=4 (dV -2), got " ~ m.vertices.length.to!string);
+    assert(m.edges.length == 4,
+        "edge-grab weld: expected E=4 (dE -3), got " ~ m.edges.length.to!string);
+    assert(m.faces.length == 1,
+        "edge-grab weld: expected F=1 (dF -1) — the quad the grabbed edge was "
+        ~ "dragged across collapses; got " ~ m.faces.length.to!string);
+
+    // The survivors sit where the TARGETS were, never at a midpoint: the grab
+    // is absorbed INTO the target, the target does not move to meet it.
+    bool at10 = false, at11 = false;
+    foreach (v; m.vertices) {
+        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y)        < 1e-6f) at10 = true;
+        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y - 1.0f) < 1e-6f) at11 = true;
+    }
+    assert(at10 && at11, "both weld targets must survive at their own positions");
+    foreach (v; m.vertices)
+        assert(abs(v.x) > 1e-6f,
+            "no survivor may sit at x=0 — that is where the absorbed grab was");
+}
+
+unittest { // the VERTEX-grab cell: one pair, and BOTH quads become triangles
+    import std.conv : to;
+    Mesh m = makeWeldPairStrip();
+    uint[2][] pairs = [[4u, 1u]];      // vertex 1 dragged onto vertex 4
+    assert(m.weldVertexPairs(pairs) == 1, "the single grab must be absorbed");
+    assert(m.vertices.length == 5,
+        "vertex-grab weld: expected V=5 (dV -1), got " ~ m.vertices.length.to!string);
+    assert(m.faces.length == 2,
+        "vertex-grab weld: both faces survive, got " ~ m.faces.length.to!string);
+    foreach (i, ref f; m.faces)
+        assert(f.length == 3,
+            "vertex-grab weld: face " ~ i.to!string ~ " must be a TRIANGLE (the "
+            ~ "measured 'two quads become triangles'), got length " ~ f.length.to!string);
+}
+
+unittest { // a CHAIN is refused whole, not silently followed one link deep
+    import std.conv : to;
+    Mesh m = makeWeldPairStrip();
+    // [4,1] absorbs 1 into 4 while [1,0] absorbs 0 into 1 — vertex 1 is both a
+    // target and a casualty. BOTH links are refused rather than one being
+    // applied and the other left pointing at a dead vertex: the rewrite reads
+    // the remap once per corner and does not chase, so a surviving link would
+    // be silent corruption. Order-independent by construction.
+    uint[2][] pairs = [[4u, 1u], [1u, 0u]];
+    immutable size_t welded = m.weldVertexPairs(pairs);
+    assert(welded == 0,
+        "a chain must be refused whole — expected 0 welds, got " ~ welded.to!string);
+    assert(m.vertices.length == 6 && m.faces.length == 2,
+        "chain reject: the mesh must be untouched, got V="
+        ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+}
+
+unittest { // non-adjacent same-face pairs are refused, exactly as weldVertexPair
+    import std.conv : to;
+    Mesh m = makeWeldPairStrip();
+    // 0 and 4 are the diagonal of F0 = [0,1,4,3] — welding them would leave a
+    // self-touching polygon.
+    uint[2][] pairs = [[4u, 0u]];
+    assert(m.weldVertexPairs(pairs) == 0,
+        "a non-adjacent same-face pair must be refused");
+    assert(m.vertices.length == 6 && m.faces.length == 2,
+        "non-adjacent reject: the mesh must be untouched, got V="
+        ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+}
+
+unittest { // one vertex cannot be absorbed twice; the first pair wins
+    import std.conv : to;
+    Mesh m = makeWeldPairStrip();
+    uint[2][] pairs = [[4u, 1u], [2u, 1u]];
+    assert(m.weldVertexPairs(pairs) == 1,
+        "a second claim on the same drop must be refused — expected 1 weld");
+    assert(m.vertices.length == 5,
+        "double-absorb reject: expected V=5, got " ~ m.vertices.length.to!string);
+}
+
+// The extracted tail (`applyVertexRemapAndRebuild`) deliberately gets no test
+// of its own: it is `weldVerticesByMask`'s own body, unchanged, and the
+// collapse/weld tests already in this file are its net. Verified by mutation —
+// dropping the post-remap consecutive-duplicate strip, and dropping the
+// head/tail wrap strip, each break `collapseFacesByMask` (mesh.d:1477 and
+// mesh.d:1500) before any weld test is reached.
 
 unittest { // weldVerticesByMask average flag: survivor at cluster centroid
     import std.math : abs;
