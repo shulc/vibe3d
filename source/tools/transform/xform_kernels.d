@@ -631,8 +631,9 @@ void applyXformMatrix(
 // **fixed permutation**:
 //
 //     press:  E        = the unit eye ray at the action centre C
-//             A_k      = basis axis k (reference: column k of the tool axis
-//                        matrix, measured exactly identity -> the world axes)
+//             A_k      = basis axis k = column k of the TOOL AXIS FRAME
+//                        (ours: the AXIS stage's packet, per action-centre
+//                        mode — NOT the world axes; see below)
 //             excluded = argmax_k |A_k . E|      -- held for the whole drag
 //
 //     drag:   excluded 0 (X):  horizontal -> Z,  vertical -> Y   (no compare)
@@ -659,9 +660,31 @@ void applyXformMatrix(
 //  * the tie rule — 22 instructions, no epsilon, strict `>` at index 0 and at
 //    index 1's second test. An exact tie goes to the HIGHER index. Read, not
 //    fitted; never reached on the recorded corpus.
-//  * `A_k` — columns of the tool axis matrix, which came back exactly identity
-//    (`max|dev| = 0.000e+00`) on all five presses, so `A_k . E == E_k` there.
-//    We pass our own action-centre basis, which is the same quantity.
+//  * `A_k` — columns of the tool axis frame. A LATER READ CORRECTED THIS TERM,
+//    and the correction is the reason this function takes the axes as
+//    parameters instead of assuming them. The first read recorded the matrix
+//    as exactly identity (`max|dev| = 0.000e+00`) on all five presses and this
+//    docstring generalised that to "-> the world axes". It was five readings
+//    of ONE action-centre mode. A second read put six presses through five
+//    modes in one execution and found the mode changes TWO inputs, not one:
+//    the centre `C` **and** the frame `A_k`. Three of the four pinned modes
+//    installed a NON-IDENTITY frame (a rotation in the ground plane, with a
+//    negated world axis in the third slot).
+//
+//    So `A_k` is a per-mode frame and must be READ, never assumed. Ours comes
+//    from the AXIS stage (`ScaleTool.pickPlaneAxes` -> `currentBasis` ->
+//    `AxisPacket`), which models exactly this: the `actr.*` presets flip the
+//    ACEN and AXIS stages together, so our frame is already per-mode and
+//    already the right quantity to hand in. If you are ever tempted to
+//    "simplify" the call site to world axes because this comment used to say
+//    the matrix was the identity: that is the bug the correction exists to
+//    prevent.
+//
+//    We do NOT port the reference's rotated frame's CONTENT. The second read
+//    gives that frame for one rig at one camera and explicitly refuses to say
+//    what each mode installs in general — its rig put `select`/`local`/
+//    `border` in a different cell than the corpus rig does. We consume our own
+//    frame; the 45 degrees is not transcribed anywhere.
 //
 // The consequence for the retracted rule is not that it lost a close call. At
 // the reference-comparison camera the two leading screen projections differ by

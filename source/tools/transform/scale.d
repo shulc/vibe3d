@@ -767,58 +767,85 @@ public:
             return true;
         }
 
-        // Click outside gizmo: relocate ACEN to the click projected
-        // onto the per-mode plane (most-facing world plane through
-        // origin for Auto/None; camera-perpendicular through selection
-        // center for Screen). Other ACEN modes keep the gizmo pinned
-        // and ignore the click.
-        if (!acenAllowsClickRelocate())
-            return false;
-        Vec3 hit;
-        if (!computeClickRelocateHit(e.x, e.y, hit, vts))
-            return false;
-        // Phase 7.5h: relocating to a new pivot is a new logical tool
-        // session — bake the prior session into one undo entry first,
-        // then capture a fresh baseline at the new pivot.
-        if (editIsOpen())
-            commitEdit("Scale");
-        // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's Move
-        // session may also be open. A relocate commits EVERY open session, so
-        // close the wrapper's Move run too (independent of this scale session
-        // → two distinct runs, correct). Reached via the base-typed wrapperRef
-        // cast. Null / standalone unit-test instance → skipped.
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                wrap.commitMoveSessionIfOpen();
+        // ── A PRESS OUTSIDE THE GIZMO IS TWO INDEPENDENT THINGS ─────────────
+        //
+        //   1. the PIVOT may relocate — only in the modes that allow it;
+        //   2. a plane-scale HAUL arms — in EVERY mode.
+        //
+        // They used to be one branch. The haul sat AFTER the relocate's two
+        // early returns, so a mode that pins its pivot could not reach the
+        // election at all: an off-handle drag in such a mode did nothing
+        // whatsoever, measurably (all three axes at exactly 1).
+        //
+        // The reference has no such coupling, and this is the one part of the
+        // election that is settled STRUCTURALLY rather than by observation. Its
+        // haul fetches the action centre ONCE, as a packet whose entire payload
+        // is a single position, and elects from that. There is no
+        // action-centre-mode test anywhere on the path — and a packet carrying
+        // nothing but a point could not carry one even if the code wanted it.
+        // The mode reaches the election only by changing what the two inputs
+        // ARE: the centre, and the tool axis frame. Both of those we already
+        // have (see `pickPlaneAxes`), and both are ours.
+        //
+        // So the relocate keeps its gate and the haul gets none. A press whose
+        // relocate ray missed its plane also falls through to the haul now,
+        // instead of returning without doing anything.
+        Vec3 center;
+        if (acenAllowsClickRelocate()
+            && computeClickRelocateHit(e.x, e.y, center, vts))
+        {
+            // Phase 7.5h: relocating to a new pivot is a new logical tool
+            // session — bake the prior session into one undo entry first,
+            // then capture a fresh baseline at the new pivot.
+            if (editIsOpen())
+                commitEdit("Scale");
+            // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's
+            // Move session may also be open. A relocate commits EVERY open
+            // session, so close the wrapper's Move run too (independent of
+            // this scale session → two distinct runs, correct). Reached via
+            // the base-typed wrapperRef cast. Null / standalone unit-test
+            // instance → skipped.
+            if (wrapperRef !is null) {
+                import tools.transform.xfrm_transform : XfrmTransformTool;
+                if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                    wrap.commitMoveSessionIfOpen();
+            }
+            handler.setPosition(center);
+            centerManual = true;
+            notifyAcenUserPlaced(center);
+            activationVertices = mesh.vertices.dup;
+            activationCenter   = center;
+            scaleAccum         = Vec3(1, 1, 1);
+            propScale          = Vec3(1, 1, 1);
+            lastClickWasRelocate = true;
+        } else {
+            // PINNED (or a relocate ray that missed its plane). Nothing about
+            // the pivot changes — no `notifyAcenUserPlaced`, no
+            // `centerManual`, no run boundary — so the centre the election
+            // reads is simply the one the pipeline already published for this
+            // press. That is the same single point the reference's haul
+            // fetches; the mode chose it upstream, in the ACEN stage, exactly
+            // as the mode chooses the axis frame upstream in the AXIS stage.
+            center = queryActionCenter(vts);
         }
-        handler.setPosition(hit);
-        centerManual = true;
-        notifyAcenUserPlaced(hit);
-        activationVertices = mesh.vertices.dup;
-        activationCenter   = hit;
-        scaleAccum         = Vec3(1, 1, 1);
-        propScale          = Vec3(1, 1, 1);
-        lastClickWasRelocate = true;
-        // The relocate already moved the ACEN pivot via notifyAcenUserPlaced
-        // above. It is ALSO the start of a scale gesture: an off-handle press
-        // in a relocating action-centre mode scales in a PLANE — the reference
-        // elects one basis axis to LEAVE ALONE from the eye ray through the
-        // action centre, and hands the survivors to the two drag components by
-        // a fixed table. Arming here mirrors Rotate's off-ring arcball, which
-        // relocates and then arms in exactly the same place.
+        // Arming here mirrors Rotate's off-ring arcball, which relocates and
+        // then arms in exactly the same place.
         //
-        // `hit` is passed rather than re-read from the handler because it IS
-        // the action centre this press just placed, and the election is a
-        // function of it: the eye ray through it is the ray through the press
-        // pixel, so two presses at one camera can elect different axes.
+        // `center` is passed rather than re-read from the handler because it
+        // IS the action centre for this press, and the election is a function
+        // of it. Where the press relocated, that centre lies ON the press ray,
+        // so the eye ray through it is the ray through the press pixel and two
+        // presses at one camera can elect different axes. Where the pivot is
+        // pinned it does not, and the election is camera-only for that mode —
+        // which is the whole of the auto/origin split.
         //
-        // If the plane cannot be resolved (a degenerate eye ray — the action
-        // centre landing exactly on the eye), the press still relocates and
-        // still consumes the click, exactly as it did before: returning true
-        // keeps a scale-tool click away from the gizmo from falling through to
-        // selection-picking and dropping the user's selection.
-        armPlaneDrag(e, vts, hit);
+        // Returning true keeps a scale-tool click away from the gizmo from
+        // falling through to selection-picking and dropping the user's
+        // selection, in every mode now rather than only the relocating ones.
+        // `armPlaneDrag` still returns false on a degenerate eye ray (the
+        // action centre sitting exactly on the eye); the click is consumed
+        // either way.
+        armPlaneDrag(e, vts, center);
         return true;
     }
 
@@ -839,11 +866,22 @@ public:
     // unconfirmed leg). That branch's single comparison IS bank-sensitive, so
     // it is the one place our camera model can still cost us — see the kernel.
     //
-    // `center` is the action centre the press just placed. In every mode that
-    // arms this drag the placement is the click projected onto a plane, so the
-    // action centre lies ON the press ray and the eye ray through it is
-    // exactly the ray through the press pixel — which is what makes this
-    // election press-dependent rather than camera-only.
+    // `center` is the action centre for this press — the relocated point in a
+    // mode that relocates, the pipeline's published centre in one that pins.
+    // Where it relocated it lies ON the press ray, so the eye ray through it
+    // is the ray through the press pixel and the election is press-dependent
+    // rather than camera-only. Where it is pinned it does not move with the
+    // press, and the election IS camera-only for that mode.
+    //
+    // THE AXES ARE THE AXIS STAGE'S, PER MODE — NOT THE WORLD AXES.
+    // `currentBasis` resolves to the `AxisPacket` the AXIS stage published,
+    // and the `actr.*` presets flip ACEN and AXIS together
+    // (`registration.d`'s preset table: auto->auto, origin->world,
+    // select/border->select, local->local, screen->screen). That is our own
+    // equivalent of the reference's tool axis matrix, which a second read
+    // showed to be per-mode rather than the identity it looked like when only
+    // one mode had been sampled. We hand ours in; we do not transcribe theirs.
+    // See `pickScalePlaneAxes`'s `A_k` bullet.
     private bool pickPlaneAxes(ref VectorStack vts, Vec3 center,
                                out int hIdx, out int vIdx)
     {
