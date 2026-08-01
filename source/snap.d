@@ -273,8 +273,10 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // That unmeasured layer did MOVE under this change, and it is worth naming
 // rather than discovering later. A centre-refined leg now meets Grid and the
 // item types at its ELEMENT's distance, where it used to meet them at the
-// centre's own — and an element is never farther from the cursor than its
-// centre. So a centre now beats a grid point strictly more often than it did.
+// centre's own. That is USUALLY the nearer of the two, so a centre now beats a
+// grid point more often than it did — usually, not always, because the
+// on-element distance is an approximation that can exceed the centre's own
+// (see THE EDGE LEG in `snapCursor` for the case and its numbers).
 // That is forced: "the centre inherits the leg's rank" is the measured half,
 // and re-ranking the refined point to keep this layer's old outcomes would
 // simply reinstate the contest the measurement removed. It is a consequence
@@ -838,6 +840,15 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // limit of where the enumeration lives, not a gate we added: the veto
     // itself asks no type anything.
     //
+    // NARROWER IN A SECOND WAY, and it is named here rather than left to be
+    // found: the reference's site is the ELEMENT ENUMERATOR, so its veto also
+    // runs for press-picking. Ours is in the snap arbitration only. Our
+    // press-pick path does not come through here at all (it is the screen-space
+    // pick in `viewcache.d` / the BVH surface pick), so nothing about clicking
+    // changed with this port. Putting the veto there too would change what a
+    // click selects, which is a selection change with its own evidence bar and
+    // its own task — not a rider on a snap port.
+    //
     // Returns true when the vertex slot must be treated as EMPTY.
     bool vertexSlotVetoed() {
         Vec3 mid;
@@ -1068,9 +1079,44 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // so the EdgeCenter type does not get a walk; what it gets is an edge
         // walk, because the leg it will refine has to be elected first. The
         // candidate offered to `consider` is the ON-EDGE point in both cases —
-        // that is the point the leg is ranked on, and it is never farther from
-        // the cursor than the midpoint is, so ranking on it is also what makes
-        // the grid's gather a superset.
+        // that is the point the leg is ranked on.
+        //
+        // WHAT THE ON-EDGE POINT ACTUALLY IS, and the one place this model
+        // meets a pre-existing approximation head-on. `t` below is the closest
+        // parameter on the PROJECTED segment, and it is then used as a WORLD
+        // parameter. Under perspective those are two different parameters, so
+        // `a + (b - a) * t` is NOT the world point that projects nearest to
+        // the cursor — it only is when the endpoints sit at equal depth. The
+        // gap grows with the depth ratio along the edge and it is not a
+        // rounding term: on the edge (1, 0, 4) -> (1.5, 0, -20) under this
+        // file's own test viewport, with the cursor on the world midpoint's
+        // OWN pixel, the elected on-edge point lands 13.42 px from the cursor
+        // while the midpoint is 0.46 px from it.
+        //
+        // So the on-edge point is NOT "never farther from the cursor than the
+        // midpoint" — an earlier revision of this comment said it was, and
+        // used it to claim the edge gather is a superset of the old centre
+        // gather. That is true of the true closest point on the projected
+        // segment and false of the point actually built here, and the
+        // difference is reachable rather than theoretical.
+        //
+        // WHAT DOES HOLD, unconditionally, is the reachability rule the model
+        // is actually made of: A CENTRE IS REACHABLE EXACTLY WHEN ITS ELEMENT
+        // IS. A range that cannot reach the edge cannot reach that edge's
+        // centre either — including when the cursor is sitting on the centre's
+        // own pixel. That is the measured shape (the reference queries the
+        // centre only inside a branch that already holds a hit edge), it is
+        // what makes "the centre inherits the leg's rank" a single rule
+        // instead of two, and it is pinned by a test.
+        //
+        // The approximation is the EDGE type's and it predates this model: at
+        // the same cursor the Edge type loses the same snap with both centre
+        // types switched off. What changed is that EdgeCenter now shares it
+        // instead of carrying a gather of its own. Fixing it means
+        // interpolating perspective-correctly — world parameter
+        // `u = t*wa / ((1-t)*wb + t*wa)` from the endpoints' clip w — which
+        // moves where the EDGE snap lands and is therefore its own
+        // measurement and its own task, not a rider on this one.
         //
         // `legType` is what the walk REPORTS (it reaches the `admit`
         // predicate, and it is the `SnapResult.targetType` when no refinement
@@ -3684,6 +3730,137 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// A CENTRE IS REACHABLE EXACTLY WHEN ITS ELEMENT IS (task 0560, follow-up).
+//
+// Blocks A-D above all put the centre FARTHER from the cursor than its element,
+// which is the ordinary arrangement and the one the reported defect lived in.
+// This block is the other side, and it exists because the first revision of
+// this port asserted a theorem it does not have: that the elected on-edge point
+// is never farther from the cursor than the midpoint, and therefore that the
+// edge gather covers everything the old centre gather did.
+//
+// It does not. Our on-edge candidate is a WORLD-space lerp at the SCREEN-space
+// closest parameter, and under perspective those are different parameters — see
+// THE EDGE LEG in `snapCursor`. On a strongly foreshortened edge the elected
+// point can be tens of pixels from the cursor while the midpoint is on it.
+//
+// What survives, and what this block pins, is the rule the model is made of:
+// the centre rides its ELEMENT's election, so a range that cannot reach the
+// edge cannot reach that edge's centre either — even with the cursor sitting on
+// the centre's own pixel. Under the old model, where a centre carried a gather
+// of its own, that cursor snapped. The rule is stated as reachability rather
+// than as a distance inequality on purpose: it stays true if the interpolation
+// is ever made perspective-correct, and the inequality would not.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    // Near end one unit in front of the eye, far end twenty-five: a depth ratio
+    // of 25, which is what makes the screen parameter and the world parameter
+    // disagree by more than a pixel.
+    Mesh m;
+    m.vertices = [ Vec3(1.0f, 0, 4.0f), Vec3(1.5f, 0, -20.0f) ];
+    m.edges    = [ [0u, 1u] ];
+    immutable Vec3 mid = (m.vertices[0] + m.vertices[1]) * 0.5f;
+
+    float[2] pixelOf(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return [qx, qy];
+    }
+    auto pmid = pixelOf(mid);
+    immutable int sx = cast(int)round(pmid[0]);
+    immutable int sy = cast(int)round(pmid[1]);
+    float distPx(Vec3 w) {
+        auto p = pixelOf(w);
+        return sqrt((p[0] - sx) * (p[0] - sx) + (p[1] - sy) * (p[1] - sy));
+    }
+
+    SnapPacket cfg;
+    cfg.enabled   = true;
+    cfg.snapScope = SnapMode.Global;
+
+    // What the edge leg actually elects here, asked through the public API at a
+    // range wide enough that nothing can be rejected for being far.
+    cfg.enabledTypes = SnapType.Edge;
+    cfg.innerRangePx = 400.0f;
+    cfg.outerRangePx = 400.0f;
+    invalidateSnapGrids();
+    SnapResult wide = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(wide.snapped && wide.targetType == SnapType.Edge,
+        "positive control: with a 400 px range the single edge must answer");
+
+    immutable float dOnEdge = distPx(wide.worldPos);
+    immutable float dMid    = distPx(mid);
+    assert(dMid < 1.0f,
+        "fixture: the cursor is the world midpoint's own pixel, so the centre "
+        ~ "is essentially on the cursor");
+    assert(dOnEdge > 10.0f && dMid < 10.0f,
+        "fixture, and the finding this block exists for: the ELECTED on-edge "
+        ~ "point is farther from the cursor than the midpoint is — the opposite "
+        ~ "of the inequality the first revision of this port asserted. If this "
+        ~ "fires, the edge candidate has become perspective-correct and the "
+        ~ "block below is testing nothing; re-derive it on a sharper edge "
+        ~ "rather than deleting it");
+
+    // --- the rule: 10 px reaches the centre's pixel and reaches NOTHING ------
+    cfg.innerRangePx = 10.0f;
+    cfg.outerRangePx = 10.0f;
+
+    cfg.enabledTypes = SnapType.Edge;
+    invalidateSnapGrids();
+    SnapResult e10 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(!e10.snapped && !e10.highlighted,
+        "control on the element: 10 px does not reach the elected on-edge "
+        ~ "point, and that is the EDGE type's own pre-existing arithmetic — it "
+        ~ "is true with both centre types off, so the block below is about "
+        ~ "reachability being SHARED and not about the centre being broken");
+
+    cfg.enabledTypes = SnapType.EdgeCenter;
+    invalidateSnapGrids();
+    SnapResult c10 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(!c10.snapped && !c10.highlighted
+        && c10.targetType == SnapType.None && c10.targetIndex == -1,
+        "a centre is reachable exactly when its element is: the cursor is ON "
+        ~ "the midpoint's pixel and the centre must STILL be unreachable, "
+        ~ "because the range does not reach the edge that would have to be "
+        ~ "elected first. Snapping here means a centre has a gather of its own "
+        ~ "again — which is the old model, and the one the reference cannot "
+        ~ "express");
+
+    // --- and the positive control: reach the element, get the centre --------
+    cfg.innerRangePx = 20.0f;
+    cfg.outerRangePx = 20.0f;
+    cfg.enabledTypes = SnapType.EdgeCenter;
+    invalidateSnapGrids();
+    SnapResult c20 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    assert(c20.snapped && c20.targetType == SnapType.EdgeCenter
+        && c20.targetIndex == 0
+        && abs(c20.worldPos.x - mid.x) < 1e-3f
+        && abs(c20.worldPos.y - mid.y) < 1e-3f
+        && abs(c20.worldPos.z - mid.z) < 1e-3f,
+        "…and the rule is reachability, not a ban: 20 px does reach the "
+        ~ "elected on-edge point, so the same cursor now gets the centre. A "
+        ~ "block that only asserted the refusal above would pass just as well "
+        ~ "with the centre types deleted");
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
 // THE VERTEX VETO IS A SEPARATE MECHANISM, AND IT IS NOT GATED ON ANY TYPE.
 //
 // Same geometric quantity as the refinement above — the winning edge's
@@ -3702,11 +3879,20 @@ unittest {
 //
 // WHAT THE VETO IS OBSERVABLY FOR, since it is not obvious from the rule: the
 // projected world midpoint of an edge lies ON that edge's projected segment, so
-// it is never nearer the cursor than the edge's own closest point. The veto can
-// therefore only fire when the EDGE is already nearer than the vertex — the
-// case where the vertex would otherwise win anyway, on its doubled tolerance.
-// The veto is exactly the withdrawal of that tolerance bonus once the cursor
-// has drifted past the midpoint.
+// it is never nearer the cursor than the nearest point of that segment. In the
+// ordinary case the elected edge candidate IS that nearest point, and the veto
+// then only fires when the EDGE is already nearer than the vertex — the case
+// where the vertex would otherwise win anyway, on its doubled tolerance. The
+// veto is exactly the withdrawal of that tolerance bonus once the cursor has
+// drifted past the midpoint.
+//
+// "Ordinary" is doing work in that sentence and this file no longer pretends
+// otherwise: our elected on-edge point is a WORLD-space lerp at the SCREEN-space
+// parameter, which under strong foreshortening is not the nearest point of the
+// segment (see THE EDGE LEG in `snapCursor`). There the veto can fire with the
+// edge candidate ranking WORSE than the vertex. The behaviour is still the
+// measured one — the veto reads the midpoint, not the edge — but do not lean on
+// "the edge is always nearer" as if it were a theorem about our numbers.
 // ---------------------------------------------------------------------------
 unittest {
     import math     : lookAt, perspectiveMatrix;
