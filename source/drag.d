@@ -79,11 +79,13 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //   2. REFERENCE PIXEL. Cumulative from the press, not incremental from the
 //      previous event.
 //   3. ANCHOR. Against a base frozen at the press, not the live gizmo centre.
-//   4. QUANTUM. The reference quantises the SCALAR `t`; ours quantises the
-//      world position. NOT ported and nothing was invented: our quantum on
-//      this path is element snap, which is a different reference service
-//      (`SnapPosition`, the guide path) from the one that acts on `t`
-//      (the view's grid snap). We have no grid quantum here to move.
+//   4. QUANTUM. The reference rounds the SCALAR `t` to the nearest 0.002
+//      before it ever becomes a world delta — on the axis coordinate, not on
+//      the resulting position. Ported (`kAxisArmSnapQuantum`, applied inside
+//      `axisArmDelta`). Our own element snap is NOT the counterpart and stays
+//      where it is: it answers to a different reference service
+//      (`SnapPosition`, the guide path) from the one that acts on `t` (the
+//      view's grid snap).
 //
 // SCOPE, and it is narrow on purpose:
 //   * ONLY the transform gizmo's three axis arms. That is the one dispatch
@@ -92,16 +94,39 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //     `screenAxisWorldDelta`, because whether the reference's counterpart
 //     enters the constrained mode is a per-tool question and none of those
 //     tools' handle dispatches has been read.
-//   * NOT under the `Screen` action centre. That preset installs a DIFFERENT
-//     translator over the same vtable, so this law is not the one that runs
-//     there. Scoped out at the call site, not here.
+//   * NOT under the `Screen` action centre — and that is a HOLD, not a match.
+//     `actr.screen` publishes a `ScreenAxis*` object over the translator slot,
+//     but that object's `GetNewPosition` is a DECORATOR, not a replacement
+//     conversion: it forwards to the inner translator — this same law — and
+//     then adds a file-scope hit-handle triple to every component, re-latched
+//     whenever the part number changes. So under `Screen` the reference is
+//     neither this law nor the editor's own compensated one; it is this law
+//     plus a term nobody has read. Rather than ship half of it, the `Screen`
+//     path is HELD at its pre-port behaviour. That is a known divergence
+//     parked at a known value, not a specification of what `Screen` should do.
+//     Scoped out at the call site, not here.
 //
-// EVIDENCE LIMIT, stated where it ships. This is a static decode. The axis arm
-// has never executed in any recording we hold — 32 of 32 events in the one
-// replay that could have carried it landed on the free/centre handle instead —
-// so there is no end-to-end confirmation of the arithmetic, only of the
-// dispatch that selects it. The one term that IS confirmed on reference data
-// is `pixelScale`; see `viewPixelScale`.
+// CONFIRMED BY EXECUTION, and the counts are what makes it a confirmation.
+// The read was static when it shipped; a recording made for it since has
+// pressed the arms — parts 100 / 101 / 102, six presses in leg order, 30
+// conversion evaluations, plus a free-centre press on the same recording as
+// the negative control.
+//   * `t / (Δpx · ŝ)` is BIT-CONSTANT across all 30 and equals the view's own
+//     reported pixel size to the last printed digit, over a 1.368x
+//     foreshortening range. The gain is flat, measured. The competing model —
+//     a 3D ray intersected against the axis line — mispredicts the worst arm
+//     by 36.8 % and is refuted.
+//   * `newT − T` has exactly one non-zero component on 12 of 12 axis-arm
+//     hits, and it equals `t`. The free control, same recording, same pixel
+//     delta, has two. The matrix sandwich really does collapse.
+//   * `AGLViewSnap` is NOT the identity: 30 of 30 evaluations rounded `t` to
+//     the nearest 0.002. That is the one prediction the read got wrong, and
+//     the term is ported below rather than dropped.
+// Still NOT settled by that recording, so still decoded rather than observed:
+// whether the arming base is the action centre alone or the action centre plus
+// the tool's own position triple (the rig carried a zero triple), whether the
+// axis is a column of the tool axis matrix or the world basis (the rig's tool
+// axis was the identity), and where the 0.002 comes from.
 //
 // Deliberately NOT in this module, because they are a different quantity and a
 // separate lane: the scale tool's screen projection
@@ -321,6 +346,19 @@ Vec3 screenAxisDelta(int mx,     int my,
 
 // The view's ONE scalar pixel size — the whole gain of the ported conversion.
 //
+// NAMED `viewWorldPerPixel`, not `viewPixelScale`, on purpose. `constraint.d`
+// already exports a `viewPixelScale`, it is documented there as explicitly NOT
+// a port, it returns a dimensionless 1.0, and it means the OPPOSITE thing: a
+// device-pixel ratio between two PIXEL spaces. This one is a world length per
+// pixel and it is the gain of a drag. Two functions with one name and opposite
+// meanings in one build is a trap for whoever imports both next.
+//
+// Distinct also from LAW C's `haulWorldPerPixel` below, which is likewise a
+// world length per pixel but is ANCHORED — it varies with the depth of the
+// point being hauled. This one carries no anchor at all; it is a property of
+// the view and nothing else, which is exactly the property the measurement
+// below confirms.
+//
 // The reference reads this off the view as a single number that does not
 // depend on the anchor, on the axis, or on the drag. It is a stored view state
 // variable there (the reciprocal of the view's "scale"), which our camera has
@@ -351,7 +389,7 @@ Vec3 screenAxisDelta(int mx,     int my,
 //
 // `focalPx` is the VERTICAL focal length, which is also the convention the
 // cross-engine pane pin uses to make one of our pixels subtend one of theirs.
-float viewPixelScale(const ref Viewport vp) {
+float viewWorldPerPixel(const ref Viewport vp) {
     // Pixels per world unit at unit depth: proj[5] is 1/tan(fovY/2) for a
     // perspective projection and 2/(top-bottom) for an orthographic one, and
     // half the pane height converts the NDC half-extent into pixels.
@@ -367,6 +405,79 @@ float viewPixelScale(const ref Viewport vp) {
     return 0.8f * dist / focalPx;
 }
 
+// The reference's grid quantum on the axis scalar, in world units.
+//
+// MEASURED, 30 evaluations out of 30, on the recording that first executed the
+// arm: `AGLViewSnap` returns `t` rounded to the nearest multiple of this. Six
+// distinct pre-snap values across three axes and two drag lengths, every one
+// of them round-to-nearest with no exception, plus the free-path control on
+// the same recording (so the quantum is the translator's, not the arm's).
+//
+// WHERE THE NUMBER COMES FROM IS NOT READ, and that is stated rather than
+// papered over. One camera, one rig, one grid setting. It could be a fixed
+// constant, a preference, or derived from the view — on that rig the view's
+// scale was 601.66 = 1/pixelScale, and 0.002 is 1.2033x the pixel size, which
+// is not a clean ratio and so does not suggest a view-derived law. The
+// discriminating capture is two legs at two view scales on one boot, and it
+// has not been run. If it ever is, this constant is the one thing that moves.
+//
+// Ties (`t` exactly on a half-quantum) were never observed, so the tie rule is
+// a choice and not a port: round-half-away-from-zero, which is at least
+// symmetric under reversing the drag.
+enum float kAxisArmSnapQuantum = 0.002f;
+
+// The quantum, applied where the reference applies it: to the SCALAR `t`,
+// before it is multiplied by the axis direction. Quantising the resulting
+// world POSITION instead would put the steps on the wrong three numbers — the
+// staircase lands on the axis coordinate, and on nothing else.
+//
+// Separated from the conversion so a test can pin the rounding against the
+// reference's own six measured (before, after) pairs without going anywhere
+// near a camera.
+float snapAxisScalar(float t) pure nothrow @nogc @safe {
+    import std.math : round;
+    if (isNaN(t)) return t;
+    const double q = cast(double)kAxisArmSnapQuantum;
+    return cast(float)(q * round(cast(double)t / q));
+}
+
+// The ported conversion BEFORE the quantum — the gain, and nothing else.
+//
+// This is the body every measurement of the law is made against, and it is
+// public for exactly that reason. The reference's three legs delivered
+// GEOMETRY that differed by ~3 % between axes while the underlying `t` was
+// bit-constant: the difference was entirely the snap landing on a different
+// step. Anyone testing the gain from a moved vertex is measuring the grid.
+// Test the pre-snap scalar; that is what this entry point is for.
+//
+// See `axisArmDelta` for the arguments and the arithmetic — this is that
+// function with the last line removed.
+float axisArmDeltaUnsnapped(int mx,     int my,
+                            int pressMX, int pressMY,
+                            Vec3 base, Vec3 axisDir,
+                            const ref Viewport vp,
+                            out bool skip)
+{
+    skip = false;
+
+    const float ps = viewWorldPerPixel(vp);
+    if (!(ps > 0.0f)) { skip = true; return 0.0f; }
+
+    const double k = 10.0 * ps;
+    double bx, by, tx, ty;
+    if (!projectToWindowD(base,                                vp, bx, by) ||
+        !projectToWindowD(base + axisDir * cast(float)k,       vp, tx, ty))
+    { skip = true; return 0.0f; }
+
+    const double dsx = tx - bx, dsy = ty - by;
+    const double slen = sqrt(dsx*dsx + dsy*dsy);
+    const double r    = slen > 0.0 ? 1.0 / slen : 1.0;
+
+    const double dpx = cast(double)(mx - pressMX);
+    const double dpy = cast(double)(my - pressMY);
+    return cast(float)(ps * (dpx*dsx + dpy*dsy) * r);
+}
+
 // The ported conversion, returning `t` — the SCALAR, because that is what the
 // reference's arithmetic collapses to.
 //
@@ -378,6 +489,7 @@ float viewPixelScale(const ref Viewport vp) {
 //     dS = toScreen(base + axis·k) − toScreen(base)
 //     r  = |dS| > 0 ? 1/|dS| : 1
 //     t  = 0.1 · k · (Δpx · dS) · r              ; and 0.1·k ≡ pixelScale
+//     t  = AGLViewSnap(t)                        ; round to the nearest 0.002
 //
 // so `k` cancels out of the gain exactly as it does on the free/plane path,
 // and what is left is `pixelScale · (Δpx · ŝ)`. `k` survives only as the step
@@ -395,30 +507,25 @@ float viewPixelScale(const ref Viewport vp) {
 // not project. A degenerate `|dS|` is NOT a skip: the reference's `r = 1`
 // fallback is reproduced verbatim, and it yields `t = 0` for an axis pointing
 // straight down the view ray.
+//
+// The QUANTUM is applied here, on the cumulative `t`, which is the only place
+// it can go without drifting. Because `Δpx` is measured from the press, the
+// snapped total is a pure function of the current pixel: a caller delivering
+// `total − alreadyApplied` emits increments that are exact multiples of the
+// quantum and that telescope back to zero at the press pixel, however the
+// gesture was cut into events. Snapping a per-event increment instead would
+// round the same drag differently depending on the event rate, and snapping
+// the resulting POSITION would put the steps on the wrong numbers.
 float axisArmDelta(int mx,     int my,
                    int pressMX, int pressMY,
                    Vec3 base, Vec3 axisDir,
                    const ref Viewport vp,
                    out bool skip)
 {
-    skip = false;
-
-    const float ps = viewPixelScale(vp);
-    if (!(ps > 0.0f)) { skip = true; return 0.0f; }
-
-    const double k = 10.0 * ps;
-    double bx, by, tx, ty;
-    if (!projectToWindowD(base,                                vp, bx, by) ||
-        !projectToWindowD(base + axisDir * cast(float)k,       vp, tx, ty))
-    { skip = true; return 0.0f; }
-
-    const double dsx = tx - bx, dsy = ty - by;
-    const double slen = sqrt(dsx*dsx + dsy*dsy);
-    const double r    = slen > 0.0 ? 1.0 / slen : 1.0;
-
-    const double dpx = cast(double)(mx - pressMX);
-    const double dpy = cast(double)(my - pressMY);
-    return cast(float)(ps * (dpx*dsx + dpy*dsy) * r);
+    const float raw = axisArmDeltaUnsnapped(mx, my, pressMX, pressMY,
+                                            base, axisDir, vp, skip);
+    if (skip) return 0.0f;
+    return snapAxisScalar(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +550,25 @@ version (unittest) {
     // 1/height, so that rounding is the ONLY residual the test below tolerates.
     private enum int    PINNED_PANE_W = 1098;
     private enum int    PINNED_PANE_H = 832;
+
+    // The reference's OWN snap rows, verbatim: `t` read immediately before
+    // `AGLViewSnap` and immediately after, on the recording that first
+    // executed the axis arms. Six distinct pre-snap values — three axes x two
+    // drag lengths — and the six answers the engine gave.
+    //
+    // These are not derived from our quantum; the quantum was derived from
+    // THEM. Row 2 and row 4 are the pair that matters most: 33.61 steps and
+    // 33.40 steps, which round in opposite directions, so a floor or a ceiling
+    // or a truncation reproduces at most one of the two.
+    private struct RefSnap { double before, after; }
+    private immutable RefSnap[] refSnapRows = [
+        RefSnap(0.033611330530568473, 0.034),   // 16.8057 steps -> 17
+        RefSnap(0.067222661061136946, 0.068),   // 33.6113 steps -> 34
+        RefSnap(0.033404502316750892, 0.034),   // 16.7023 steps -> 17
+        RefSnap(0.066809004633501784, 0.066),   // 33.4045 steps -> 33
+        RefSnap(0.032694010160137447, 0.032),   // 16.3470 steps -> 16
+        RefSnap(0.065655147863375493, 0.066),   // 32.8276 steps -> 33
+    ];
 }
 
 unittest {  // LAW A ported: the gain IS the reference's own reported pixel size.
@@ -465,7 +591,7 @@ unittest {  // LAW A ported: the gain IS the reference's own reported pixel size
         // comes out and is never handed to the function.
         vp.eye   = Vec3(0, 0, cast(float)c.distance);
         vp.focus = Vec3(0, 0, 0);
-        const double got = viewPixelScale(vp);
+        const double got = viewWorldPerPixel(vp);
         assert(got > 0);
         ratios ~= got / c.pixelSize;
     }
@@ -474,7 +600,7 @@ unittest {  // LAW A ported: the gain IS the reference's own reported pixel size
     // reported, up to the integer pane pin and nothing else.
     foreach (i, r; ratios)
         assert(abs(r - pinRound) < 1e-5 * pinRound,
-               "viewPixelScale must reproduce the reference's OWN reported "
+               "viewWorldPerPixel must reproduce the reference's OWN reported "
                ~ "pixel size for " ~ refPixelCams[i].name
                ~ " up to the pane pin's integer rounding — the 4/5 is the "
                ~ "engine's ratio between the pixel size it reports and the "
@@ -504,7 +630,7 @@ unittest {  // LAW A ported: NO foreshortening compensation. The headline.
     Vec3 right = Vec3(v[0], v[4], v[8]);
     Vec3 back  = Vec3(v[2], v[6], v[10]);
 
-    const float ps    = viewPixelScale(vp);
+    const float ps    = viewWorldPerPixel(vp);
     const int   pxRun = 100;
     const float wantT = ps * pxRun;
 
@@ -513,8 +639,17 @@ unittest {  // LAW A ported: NO foreshortening compensation. The headline.
         const float phi = deg * PI / 180.0f;
         Vec3 axis = right * cos(phi) + back * sin(phi);   // unit, tilts into depth
 
+        // The PRE-SNAP scalar, deliberately. The quantum is 0.002 and this
+        // run delivers ~0.24, so a half-quantum is 0.4 % — four times the
+        // tolerance the gain is worth pinning to, and it varies per axis
+        // because it depends on where each `t` falls between steps. Reading
+        // the snapped value here would measure the grid and call it the gain,
+        // which is exactly the mistake the reference's own three legs invite:
+        // their GEOMETRY differed by 3 % between axes while `t` was
+        // bit-constant. `axisArmDelta` is pinned against this body separately.
         bool skip;
-        float t = axisArmDelta(600 + pxRun, 400, 600, 400, base, axis, vp, skip);
+        float t = axisArmDeltaUnsnapped(600 + pxRun, 400, 600, 400,
+                                        base, axis, vp, skip);
         assert(!skip);
         assert(abs(t - wantT) < 1e-3f * wantT,
                "the ported gain is a FLAT pixel scale: the same pixel run "
@@ -565,7 +700,7 @@ unittest {  // LAW A ported: orthographic views carry NO 4/5.
     vp.eye    = Vec3(0, d, 0); vp.focus = Vec3(0, 0, 0);
 
     const float want = 2.0f * halfH / 832.0f;    // world units per pixel, exactly
-    assert(abs(viewPixelScale(vp) - want) < 1e-6f * want,
+    assert(abs(viewWorldPerPixel(vp) - want) < 1e-6f * want,
            "in an orthographic view the reference's reported pixel size IS "
            ~ "the projection's scale — the 4/5 is a perspective-only ratio "
            ~ "and applying it here would slow every axis-view drag by 20%");
@@ -581,11 +716,19 @@ unittest {  // LAW A ported: measured from the press, and linear in the offset.
     // returns to where it started has delivered nothing. That is what the
     // cumulative form buys over the incremental one, and it holds for any
     // path in between because the answer depends only on the current pixel.
+    // True of the SHIPPED (snapped) entry point as well as the raw one — the
+    // quantum must not turn "back where I pressed" into half a step of drift.
+    assert(axisArmDeltaUnsnapped(731, 402, 731, 402, base, axis, vp, skip) == 0.0f);
+    assert(!skip);
     assert(axisArmDelta(731, 402, 731, 402, base, axis, vp, skip) == 0.0f);
     assert(!skip);
 
-    const float one = axisArmDelta(731 + 120, 402 - 60, 731, 402,
-                                   base, axis, vp, skip);
+    // Linearity is a property of the GAIN, so it is measured pre-snap. The
+    // shipped scalar is a staircase on top of this line and cannot be linear
+    // by construction; asserting linearity on it would only be asserting that
+    // the quantum is absent.
+    const float one = axisArmDeltaUnsnapped(731 + 120, 402 - 60, 731, 402,
+                                            base, axis, vp, skip);
     assert(!skip && one != 0.0f);
 
     // LINEAR in the pixel offset, in BOTH components. That is what makes the
@@ -594,9 +737,9 @@ unittest {  // LAW A ported: measured from the press, and linear in the offset.
     // event count, because there is no per-event term to accumulate.
     import std.math : abs;
     foreach (f; [0.5f, 2.0f, -1.0f]) {
-        const float scaled = axisArmDelta(731 + cast(int)(120 * f),
-                                          402 + cast(int)(-60 * f),
-                                          731, 402, base, axis, vp, skip);
+        const float scaled = axisArmDeltaUnsnapped(731 + cast(int)(120 * f),
+                                                   402 + cast(int)(-60 * f),
+                                                   731, 402, base, axis, vp, skip);
         assert(!skip);
         assert(abs(scaled - f * one) <= 1e-4f * abs(one),
                "the conversion must be linear in the pixel offset from the "
@@ -606,11 +749,81 @@ unittest {  // LAW A ported: measured from the press, and linear in the offset.
 
     // Separately in y, which the flat-gain test above cannot see: it drives a
     // purely horizontal run.
-    const float vert = axisArmDelta(731, 402 - 60, 731, 402, base, axis, vp, skip);
-    const float vert2 = axisArmDelta(731, 402 - 120, 731, 402, base, axis, vp, skip);
+    const float vert  = axisArmDeltaUnsnapped(731, 402 - 60,  731, 402,
+                                              base, axis, vp, skip);
+    const float vert2 = axisArmDeltaUnsnapped(731, 402 - 120, 731, 402,
+                                              base, axis, vp, skip);
     assert(!skip);
     assert(abs(vert2 - 2.0f * vert) <= 1e-4f * abs(vert2),
            "the vertical pixel component must enter linearly too");
+}
+
+unittest {  // LAW A ported: the QUANTUM, against the reference's own six rows.
+    import std.math : abs, floor;
+    import std.conv : to;
+
+    // 1. The rounding law itself, scored on reference data and nothing else.
+    //    Six pre-snap scalars in, six post-snap scalars out, the engine's own.
+    foreach (i, row; refSnapRows) {
+        const float got = snapAxisScalar(cast(float)row.before);
+        assert(abs(got - row.after) < 1e-6,
+               "snapAxisScalar must reproduce the engine's own snap on row "
+               ~ i.to!string
+               ~ " — round to the NEAREST 0.002. Rows 2 and 4 round in "
+               ~ "opposite directions from nearly the same step count, so a "
+               ~ "floor, a ceiling or a truncation fails one of them");
+    }
+
+    // 2. It is a quantum, not a coincidence that fits six numbers: every
+    //    answer is an exact multiple of the step, over a range far wider than
+    //    the rows.
+    foreach (n; -500 .. 501) {
+        const float t   = 0.0001f * n;            // -0.05 .. +0.05, 1/20 step
+        const float got = snapAxisScalar(t);
+        const double steps = cast(double)got / kAxisArmSnapQuantum;
+        assert(abs(steps - floor(steps + 0.5)) < 1e-3,
+               "every snapped scalar must land exactly on a multiple of the "
+               ~ "quantum — a residual here means the rounding is being done "
+               ~ "against something other than the step");
+        assert(abs(cast(double)got - t) <= 0.5 * kAxisArmSnapQuantum + 1e-6,
+               "and it must be the NEAREST multiple: no answer may be more "
+               ~ "than half a quantum from its input");
+    }
+
+    // 3. Symmetric about zero, which is what stops a drag and its reverse
+    //    from delivering different lengths. (The tie rule is ours — the
+    //    reference was never observed on an exact half-step — but whatever it
+    //    is it must be odd, or an out-and-back gesture ratchets.)
+    foreach (n; 1 .. 200) {
+        const float t = 0.00013f * n;
+        assert(snapAxisScalar(-t) == -snapAxisScalar(t),
+               "the snap must be odd: a gesture dragged out and back must "
+               ~ "cancel exactly, and it cannot if +t and -t round differently");
+    }
+
+    // 4. The shipped entry point IS the gain with this snap on top — the two
+    //    halves are pinned separately above and composed here, so neither can
+    //    drift away from the other unnoticed.
+    auto vp = corpusViewport(corpusCams[0]);
+    Vec3 base = Vec3(0.1f, 0.4f, -0.2f);
+    Vec3 axis = Vec3(1, 0, 0);
+    bool skipRaw, skipSnapped;
+    bool sawAnySnap = false;
+    foreach (px; [3, 17, 40, 91, 137, -22, -75, -160]) {
+        const float raw  = axisArmDeltaUnsnapped(731 + px, 402, 731, 402,
+                                                 base, axis, vp, skipRaw);
+        const float snap = axisArmDelta(731 + px, 402, 731, 402,
+                                        base, axis, vp, skipSnapped);
+        assert(!skipRaw && !skipSnapped);
+        assert(snap == snapAxisScalar(raw),
+               "axisArmDelta must be exactly snapAxisScalar(axisArmDeltaUnsnapped) "
+               ~ "— if the shipped path stops going through the snap, the "
+               ~ "half-quantum staircase offset is back on every axis drag");
+        if (snap != raw) sawAnySnap = true;
+    }
+    assert(sawAnySnap,
+           "at least one of these runs must actually be moved by the snap, or "
+           ~ "this test is passing on a quantum of zero and pins nothing");
 }
 
 // ===========================================================================
