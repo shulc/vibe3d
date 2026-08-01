@@ -241,10 +241,16 @@ struct RelocatePlanePrefs {
 /// coordinate quantised to one grid division.
 ///
 /// The reference also pushes `Q` along the eye vector by the view's target
-/// distance for one further view type. That type is unresolved — it is
-/// neither the axis-locked ortho class nor, as far as anything we hold shows,
-/// the plain perspective view — so it is NOT ported. Porting an unidentified
-/// branch would mean guessing which views take it.
+/// distance for one further view type, and that branch is NOT ported. The
+/// type is the view looked THROUGH A SCENE ITEM — a camera or a light — and
+/// is distinct from both the axis-locked orthographic class and the ordinary
+/// perspective view, which is its own type and takes the plain path. So this
+/// is a gap only for a view vibe3d's relocate does not offer, not for the
+/// default viewport; an earlier note here left the type unidentified and
+/// overstated it as an open hole. (The identification is handed down rather
+/// than re-derived here; what is checked in this tree is that the six
+/// axis-preset direction names sit in one ordered table immediately ahead of
+/// the perspective and camera entries, which is consistent with it.)
 Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
         @safe pure nothrow @nogc {
     Vec3 q = vectorSnap(focus, viewSnapStep);
