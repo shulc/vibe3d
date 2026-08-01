@@ -638,6 +638,235 @@ Vec3 sphericalToCartesian(float az, float el, float dist) {
                 dist * cos(el) * cos(az));
 }
 
+// ---------------------------------------------------------------------------
+// Orientation — a camera's rotational state as a 3x3, the STORED TRUTH.
+// ---------------------------------------------------------------------------
+
+/// An orthonormal, right-handed camera orientation held as nine floats whose
+/// **columns** are the world-space camera basis:
+///
+///     m[0 .. 3]  screen-RIGHT
+///     m[3 .. 6]  screen-UP
+///     m[6 .. 9]  BACK  ( = -forward; focus -> eye, i.e. the orbit direction )
+///
+/// with `right x up == back`, matching the camera-looks-down-its-own-minus-Z
+/// convention every consumer in the tree already reads off the view matrix
+/// (`view[0]/[4]/[8]` = right, `[1]/[5]/[9]` = up, `-[2]/-[6]/-[10]` = forward).
+///
+/// **Why a matrix and not three angles.** Azimuth/elevation/roll is a CHART on
+/// the rotation group, not the group: it is singular at the poles (which is
+/// exactly why the spherical camera clamps elevation to 89 deg), and it cannot
+/// express the composition of two rotations about different axes without going
+/// back through the chart and losing the pole. A 3x3 has neither problem, and
+/// it is the representation a reference viewport persists for itself — nine
+/// floats per view, orthonormal to <= 1e-7, re-normalised on write.
+///
+/// The three angles remain available as DERIVED reads (`toAngles`), which is
+/// the same relationship that reference publishes between its stored
+/// orientation and the heading/pitch/bank triple it reports.
+/// How far an orientation may sit from a perfect rotation before
+/// `Orientation.orthonormalized` re-derives it. Two orders of magnitude above
+/// the float dust a clean construction leaves (~3e-7 on the
+/// `orthonormalityDefect` scale) and far below any drift that could matter, so
+/// the normalisation is a repair and not a per-frame bit-churn. See
+/// `orthonormalized` for why the gate is what makes that function idempotent.
+enum float kOrientationTolerance = 1e-5f;
+
+struct Orientation {
+    /// Column-major, columns = basis vectors. Default = the identity camera
+    /// (looking down -Z with +Y up), never a zero matrix: a default-init
+    /// `Orientation` must be a usable rotation, because an aggregate that
+    /// contains one is default-initialised before any constructor runs.
+    float[9] m = [1, 0, 0,  0, 1, 0,  0, 0, 1];
+
+    Vec3 right()   const @safe pure nothrow @nogc { return Vec3( m[0],  m[1],  m[2]); }
+    Vec3 up()      const @safe pure nothrow @nogc { return Vec3( m[3],  m[4],  m[5]); }
+    Vec3 back()    const @safe pure nothrow @nogc { return Vec3( m[6],  m[7],  m[8]); }
+    Vec3 forward() const @safe pure nothrow @nogc { return Vec3(-m[6], -m[7], -m[8]); }
+
+    /// Assemble from three basis vectors WITHOUT re-orthonormalising. Only for
+    /// callers that built the triple orthonormal by construction; anything
+    /// reading foreign data must go through `orthonormalized`.
+    static Orientation fromBasis(Vec3 r, Vec3 u, Vec3 b) @safe pure nothrow @nogc {
+        Orientation o;
+        o.m = [r.x, r.y, r.z,  u.x, u.y, u.z,  b.x, b.y, b.z];
+        return o;
+    }
+
+    /// The orientation of a spherical camera at (azimuth, elevation) banked by
+    /// `roll`, in radians — the chart-to-group direction.
+    ///
+    /// Closed form rather than the cross-product chain the pre-matrix camera
+    /// used, for one reason that matters: `normalize(cross(forward, +Y))` is
+    /// 0/0 at the poles, so the chain produced NaN at |elevation| = 90 deg and
+    /// the camera had to be clamped short of it. The closed form is the
+    /// analytic limit and is finite everywhere, so a pole is a representable
+    /// camera. The clamp stays where it is (in the ORBIT GESTURE, which is a
+    /// separate question) but it is no longer load-bearing for the arithmetic.
+    ///
+    /// Derivation: the unbanked basis is
+    ///     right  = ( cos az,            0,       -sin az           )
+    ///     up     = (-sin az * sin el,   cos el,  -cos az * sin el  )
+    ///     back   = ( cos el * sin az,   sin el,   cos el * cos az  )
+    /// (`back` is `sphericalToCartesian(az, el, 1)`, i.e. the orbit offset
+    /// direction), and a bank rotates the (right, up) pair about `back`.
+    static Orientation fromAngles(float az, float el, float roll)
+        @safe pure nothrow @nogc
+    {
+        immutable float ca = cos(az), sa = sin(az);
+        immutable float ce = cos(el), se = sin(el);
+        immutable Vec3 r0 = Vec3( ca,       0,   -sa);
+        immutable Vec3 u0 = Vec3(-sa * se,  ce,  -ca * se);
+        immutable Vec3 b  = Vec3( ce * sa,  se,   ce * ca);
+        if (roll == 0.0f) return fromBasis(r0, u0, b);
+        immutable float cr = cos(roll), sr = sin(roll);
+        // The sign is pinned, not chosen: it is the one for which
+        // `right.y == -sin(roll) * cos(elevation)`, the identity a reference
+        // viewport's screen-right row obeys against its own reported bank.
+        return fromBasis(r0 * cr - u0 * sr, u0 * cr + r0 * sr, b);
+    }
+
+    /// The (azimuth, elevation, roll) chart coordinates of this orientation —
+    /// a DERIVED read, the inverse of `fromAngles`.
+    ///
+    /// At a pole (`|back.y| -> 1`) the chart degenerates: heading and bank
+    /// describe the same rotation there and cannot be separated. The documented
+    /// policy is to report `roll = 0` and fold the whole rotation into
+    /// `azimuth`, which keeps `fromAngles(toAngles(o)) == o` (up to float dust)
+    /// everywhere INCLUDING the pole rather than only away from it.
+    void toAngles(out float az, out float el, out float roll)
+        const @safe pure nothrow @nogc
+    {
+        immutable Vec3 b = back(), r = right(), u = up();
+        float by = b.y;
+        if (by >  1.0f) by =  1.0f;
+        if (by < -1.0f) by = -1.0f;
+        el = asin(by);
+        immutable float ce = cos(el);
+        if (ce > 1e-6f || ce < -1e-6f) {
+            az   = atan2(b.x, b.z);
+            // right.y == -sin(roll)*cos(el), up.y == cos(roll)*cos(el)
+            roll = atan2(-r.y, u.y);
+        } else {
+            // Pole. `up` carries the heading: at el = +90 the unbanked up is
+            // (-sin az, 0, -cos az), at el = -90 it is (sin az, 0, cos az).
+            immutable float s = by > 0.0f ? -1.0f : 1.0f;
+            az   = atan2(s * u.x, s * u.z);
+            roll = 0.0f;
+        }
+    }
+
+    @property float azimuth()   const @safe pure nothrow @nogc {
+        float a, e, r; toAngles(a, e, r); return a;
+    }
+    @property float elevation() const @safe pure nothrow @nogc {
+        float a, e, r; toAngles(a, e, r); return e;
+    }
+    @property float roll()      const @safe pure nothrow @nogc {
+        float a, e, r; toAngles(a, e, r); return r;
+    }
+
+    /// How far this matrix has drifted from being an orthonormal right-handed
+    /// rotation: the sum of the three unit-length defects, the three pairwise
+    /// dot products, and the handedness residual `|right x up - back|`. Exactly
+    /// 0 for a perfect rotation. Used by the write-time discipline and by tests
+    /// (a reference viewport's shipped orientations score <= 1e-7 on this).
+    float orthonormalityDefect() const @safe pure nothrow @nogc {
+        immutable Vec3 r = right(), u = up(), b = back();
+        immutable Vec3 h = cross(r, u) - b;
+        return abs(r.length - 1.0f) + abs(u.length - 1.0f) + abs(b.length - 1.0f)
+             + abs(dot(r, u)) + abs(dot(r, b)) + abs(dot(u, b))
+             + abs(h.x) + abs(h.y) + abs(h.z);
+    }
+
+    /// Re-derive a clean orthonormal right-handed basis — the normalisation
+    /// discipline. **Every write of an orientation that was not built
+    /// orthonormal by construction goes through this**: deserialisation, the
+    /// HTTP setter, and any incremental composition, so accumulated drift can
+    /// never reach the view matrix.
+    ///
+    /// Anchored on `back`, because that is the direction the camera looks and
+    /// the one a correction must not move: `back` is normalised, `right` is
+    /// re-derived as `up x back`, and `up` as `back x right`. Degenerate inputs
+    /// (zero columns, `up` parallel to `back`) fall back through the stored
+    /// `right` column and then a world axis rather than producing NaN.
+    ///
+    /// **Idempotent, and that is a hard requirement rather than a nicety**:
+    /// `o.orthonormalized().orthonormalized()` is bit-equal to
+    /// `o.orthonormalized()`, which is what lets a serialisation round-trip be
+    /// bit-exact even though the reader re-normalises everything it reads.
+    ///
+    /// A bare Gram-Schmidt pass is NOT idempotent — `normalize` does not return
+    /// an exactly-unit vector, so a second pass moves the last bits again, and
+    /// an orientation would drift by an ulp on every save/load cycle. The fixed
+    /// point comes from the tolerance gate below: a matrix already within
+    /// `kOrientationTolerance` of a rotation is returned UNTOUCHED, and one
+    /// pass always lands inside that band, so the second call is a no-op. The
+    /// gate is also the right policy on its own terms — float dust is not
+    /// drift, and re-deriving nine floats to chase it would churn the camera
+    /// every frame for no gain.
+    Orientation orthonormalized() const @safe pure nothrow @nogc {
+        if (orthonormalityDefect() <= kOrientationTolerance) return this;
+        Vec3 b = back();
+        float bl = b.length;
+        if (!(bl > 1e-12f)) { b = Vec3(0, 0, 1); bl = 1.0f; }
+        if (bl != 1.0f) b = b * (1.0f / bl);
+
+        Vec3 r  = cross(up(), b);
+        float rl = r.length;
+        if (!(rl > 1e-6f)) {
+            // `up` is parallel to `back` (or zero): recover the roll from the
+            // stored right column instead.
+            r  = right() - b * dot(right(), b);
+            rl = r.length;
+        }
+        if (!(rl > 1e-6f)) {
+            // Both transverse columns are unusable: any perpendicular will do.
+            immutable Vec3 seed = (abs(b.y) < 0.9f) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+            r  = cross(seed, b);
+            rl = r.length;
+        }
+        if (rl != 1.0f) r = r * (1.0f / rl);
+        return fromBasis(r, cross(b, r), b);
+    }
+
+    /// This orientation followed by a rotation of `angle` radians about the
+    /// WORLD-space `axis` (Rodrigues), re-orthonormalised.
+    ///
+    /// The composition primitive a matrix truth exists for: an arbitrary-axis
+    /// increment has no expression in the angle chart, which is the whole
+    /// reason the storage changed. Used here to build test orientations no
+    /// scalar bank can represent.
+    Orientation rotatedAbout(Vec3 axis, float angle) const @safe pure nothrow @nogc {
+        immutable float al = axis.length;
+        if (!(al > 1e-12f)) return this;
+        immutable Vec3 k = axis * (1.0f / al);
+        immutable float c = cos(angle), s = sin(angle);
+        Vec3 rot(Vec3 v) {
+            return v * c + cross(k, v) * s + k * (dot(k, v) * (1.0f - c));
+        }
+        return fromBasis(rot(right()), rot(up()), rot(back())).orthonormalized();
+    }
+}
+
+/// The view matrix for a camera with orientation `o` sitting at `eye` — the
+/// world-to-camera transform `[R^T | -R^T * eye]`, column-major.
+///
+/// This is `lookAt`'s output for the same camera, but taken from a STORED
+/// orientation rather than rebuilt from an eye/target/world-up triple. The two
+/// agree exactly on the nine rotation lanes; they can differ by one ulp in the
+/// translation lanes because `lookAt` re-derives its forward from
+/// `center - eye`, whose rounding depends on where the focus happens to sit.
+float[16] viewMatrixFrom(Orientation o, Vec3 eye) @safe pure nothrow @nogc {
+    immutable Vec3 r = o.right(), u = o.up(), b = o.back();
+    return [
+         r.x,  u.x,  b.x, 0,
+         r.y,  u.y,  b.y, 0,
+         r.z,  u.z,  b.z, 0,
+        -dot(r, eye), -dot(u, eye), -dot(b, eye), 1,
+    ];
+}
+
 // Project world point to window pixel coords.
 // Returns false if behind camera or outside frustum.
 // px, py  — window-space pixels (Y down)
@@ -1698,6 +1927,232 @@ unittest { // sphericalToCartesian el=PI/2 → straight up
 unittest { // sphericalToCartesian dist=0 → zero vector
     auto v = sphericalToCartesian(1.23f, 0.45f, 0.0f);
     assert(isClose(v.x, 0) && isClose(v.y, 0) && isClose(v.z, 0));
+}
+
+// ---------------------------------------------------------------------------
+// Orientation — the camera's rotational truth.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    // The pre-matrix camera built its basis this way: a spherical offset
+    // direction, the world +Y as the up hint, and a bank applied by rotating
+    // the orthonormal (right, up) pair about the forward axis. Kept here as
+    // the INDEPENDENT oracle `Orientation.fromAngles` (a closed form) is
+    // checked against, so the closed form is pinned to the arithmetic it
+    // replaced rather than only to itself.
+    private Orientation chartBasisByCrossProducts(float az, float el, float roll) {
+        Vec3 b   = normalize(sphericalToCartesian(az, el, 1.0f));
+        Vec3 f   = -b;
+        Vec3 up0 = Vec3(0, 1, 0);
+        if (roll != 0.0f) {
+            Vec3 r0 = normalize(cross(f, up0));
+            Vec3 u0 = cross(r0, f);
+            up0 = u0 * cos(roll) + r0 * sin(roll);
+        }
+        Vec3 r = normalize(cross(f, up0));
+        return Orientation.fromBasis(r, cross(r, f), b);
+    }
+}
+
+unittest { // fromAngles reproduces the cross-product chain it replaced
+    foreach (a; [-2.7f, -0.5040186f, 0.0f, 0.5f, 1.9f])
+    foreach (e; [-1.4f, -0.4f, 0.0f, 0.4138754f, 1.4f])
+    foreach (r; [-1.2f, 0.0f, 0.2055634f, 2.5f]) {
+        Orientation got  = Orientation.fromAngles(a, e, r);
+        Orientation want = chartBasisByCrossProducts(a, e, r);
+        foreach (i; 0 .. 9)
+            assert(abs(got.m[i] - want.m[i]) < 2e-6f,
+                   "fromAngles must agree with the spherical cross-product basis");
+    }
+}
+
+unittest { // the bank law: right.y == -sin(roll) * cos(elevation)
+    // The identity that makes this `roll` the same quantity a reference
+    // viewport reports as its bank, rather than merely some rotation about
+    // the view axis. It is what lets a captured bank transfer as a number.
+    foreach (a; [-1.1f, 0.0f, 0.9f])
+    foreach (e; [-0.9f, 0.0f, 0.4138754f, 1.0f])
+    foreach (r; [-1.2f, -0.2055634f, 0.0f, 0.2055634f, 1.2f]) {
+        Orientation o = Orientation.fromAngles(a, e, r);
+        assert(isClose(o.right().y, -sin(r) * cos(e), 2e-5f, 2e-5f),
+               "screen-right.y must equal -sin(roll)*cos(elevation)");
+    }
+}
+
+unittest { // fromAngles is a rotation everywhere INCLUDING the poles
+    // The cross-product chain it replaced is 0/0 at |elevation| = 90 deg,
+    // which is why the spherical camera had to clamp short of the pole. The
+    // closed form is the analytic limit and stays a clean rotation there.
+    foreach (a; [-2.7f, 0.0f, 0.5f, 1.9f])
+    foreach (e; [-PI/2, -1.5f, 0.0f, 0.4138754f, 1.5f, PI/2])
+    foreach (r; [-1.2f, 0.0f, 2.5f]) {
+        Orientation o = Orientation.fromAngles(cast(float)a, cast(float)e, cast(float)r);
+        assert(o.orthonormalityDefect() < 1e-5f,
+               "fromAngles must be an orthonormal right-handed rotation, poles included");
+    }
+    // ...and specifically NOT NaN at the pole, which is the failure the chain had.
+    Orientation pole = Orientation.fromAngles(0.7f, cast(float)(PI / 2), 0.3f);
+    foreach (i; 0 .. 9)
+        assert(pole.m[i] == pole.m[i], "a pole orientation must not be NaN");
+}
+
+unittest { // toAngles is the inverse of fromAngles, poles included
+    foreach (a; [-2.7f, -0.5040186f, 0.0f, 0.5f, 1.9f])
+    foreach (e; [-PI/2, -1.4f, 0.0f, 0.4138754f, 1.4f, PI/2])
+    foreach (r; [-1.2f, 0.0f, 0.2055634f, 2.5f]) {
+        Orientation o = Orientation.fromAngles(cast(float)a, cast(float)e, cast(float)r);
+        float a2, e2, r2;
+        o.toAngles(a2, e2, r2);
+        Orientation back = Orientation.fromAngles(a2, e2, r2);
+        foreach (i; 0 .. 9)
+            assert(abs(o.m[i] - back.m[i]) < 4e-6f,
+                   "matrix -> angles -> matrix must reproduce the orientation");
+    }
+}
+
+unittest { // orthonormalized is IDEMPOTENT after doing REAL work — bit-exactly
+    // This is what makes a serialisation round-trip bit-exact even though the
+    // reader re-normalises everything it reads: the normalised form is a fixed
+    // point, so writing it out and reading it back cannot move it.
+    //
+    // The samples below are DRIFTED on purpose, so the first call takes the
+    // repair branch (the tolerance gate would otherwise return the input and
+    // the fixed-point claim would be vacuous). Each is checked to be over the
+    // gate going in and under it coming out.
+    int repaired = 0;
+    foreach (a; [-2.7f, -0.5040186f, 0.0f, 0.5f, 1.9f])
+    foreach (e; [-PI/2, -1.4f, 0.0f, 0.4138754f, 1.4f, PI/2])
+    foreach (r; [-1.2f, 0.0f, 0.2055634f, 2.5f]) {
+        Orientation drift = Orientation.fromAngles(cast(float)a, cast(float)e,
+                                                   cast(float)r);
+        drift.m[0] += 0.013f; drift.m[4] -= 0.021f;
+        drift.m[7] += 0.009f; drift.m[5] += 0.004f;
+        assert(drift.orthonormalityDefect() > kOrientationTolerance,
+               "the sample must actually need repair");
+        Orientation once  = drift.orthonormalized();
+        assert(once.orthonormalityDefect() <= kOrientationTolerance,
+               "one pass must land inside the tolerance band — the fixed point "
+               ~ "depends on it");
+        Orientation twice = once.orthonormalized();
+        assert(once.m == twice.m,
+               "orthonormalized must be a fixed point — a round trip through it "
+               ~ "would otherwise move the orientation every time it is read");
+        repaired++;
+    }
+    assert(repaired == 120, "every sample must have exercised the repair branch");
+
+    // And a cleanly-constructed orientation is returned bit-untouched, so a
+    // save/load cycle on a normal camera moves nothing at all.
+    Orientation clean = Orientation.fromAngles(0.5f, 0.4f, 0.2055634f);
+    assert(clean.orthonormalized().m == clean.m,
+           "a clean orientation must pass through the normalisation unchanged");
+    Orientation c = Orientation.fromAngles(0.5f, 0.4f, 0.0f)
+                        .rotatedAbout(Vec3(1, 0, 0), 0.3f)
+                        .rotatedAbout(Vec3(0, 0, 1), -0.8f);
+    assert(c.orthonormalized().m == c.m,
+           "rotatedAbout already returns the normalised fixed point");
+}
+
+unittest { // orthonormalized REPAIRS a drifted matrix, and keeps the view axis
+    Orientation o = Orientation.fromAngles(0.5f, 0.4f, 0.2f);
+    Orientation drift = o;
+    drift.m[0] += 0.02f; drift.m[4] -= 0.03f; drift.m[8] += 0.015f;
+    drift.m[3] += 0.01f;
+    assert(drift.orthonormalityDefect() > 1e-3f, "the drifted input must be measurably bad");
+    Orientation fixed = drift.orthonormalized();
+    assert(fixed.orthonormalityDefect() < 1e-6f, "orthonormalized must repair the drift");
+    // Anchored on `back`: the direction the camera looks survives the repair.
+    assert(isClose(dot(fixed.back(), normalize(drift.back())), 1.0f, 1e-6f),
+           "the repair must not swing the view direction");
+}
+
+unittest { // degenerate columns produce a rotation, never NaN
+    Orientation z; z.m = [0, 0, 0,  0, 0, 0,  0, 0, 0];
+    assert(z.orthonormalized().orthonormalityDefect() < 1e-6f,
+           "an all-zero matrix must normalise to some valid rotation");
+    Orientation par; par.m = [1, 0, 0,  0, 0, 1,  0, 0, 1];  // up parallel to back
+    assert(par.orthonormalized().orthonormalityDefect() < 1e-6f,
+           "up parallel to back must fall back, not divide by zero");
+}
+
+unittest { // rotatedAbout carries a rotation the two-angle camera cannot hold
+    // A pure spherical camera forces `right.y == 0` — screen-right can never
+    // leave the world XZ plane. Composing an off-axis increment leaves it, and
+    // that is the state the storage change exists to carry.
+    Orientation level = Orientation.fromAngles(0.5f, 0.4f, 0.0f);
+    assert(level.right().y == 0.0f, "an unbanked spherical camera has right.y exactly 0");
+    Orientation tilted = level.rotatedAbout(normalize(Vec3(1, 0.3f, -0.7f)), 0.6f);
+    assert(abs(tilted.right().y) > 1e-2f,
+           "an off-axis composition must leave the level-horizon subspace");
+    assert(tilted.orthonormalityDefect() < 1e-6f, "and stay a rotation");
+    // Rotating back by the same axis/angle returns to the level camera.
+    Orientation home = tilted.rotatedAbout(normalize(Vec3(1, 0.3f, -0.7f)), -0.6f);
+    foreach (i; 0 .. 9)
+        assert(abs(home.m[i] - level.m[i]) < 1e-5f,
+               "rotatedAbout must be invertible by the negated angle");
+}
+
+unittest { // a stored orientation is the SAME camera lookAt built, to one ulp
+    // Not bit-identical, and the gap is the point rather than a tolerance
+    // granted to make this pass. `lookAt` derives its basis from
+    // `normalize(center - eye)`, so the matrix it returns depends on the
+    // DISTANCE (the offset it normalises is `distance` long, and normalising a
+    // scaled vector rounds differently) and on the FOCUS (`center - eye`
+    // re-rounds when the focus is far from the origin). Neither dependency is
+    // real: a rotation has no distance and no position. Removing them costs
+    // one ulp on the lanes, and the size is measured, not guessed: across a
+    // 5x5x3 sweep of azimuth, elevation and distance the nine ROTATION lanes
+    // differ by at most 1.2e-7 (one ulp at unit magnitude) and the three
+    // TRANSLATION lanes, which carry the eye and therefore scale with the
+    // distance, by at most 1.7e-7 of that distance.
+    float worstRot = 0, worstTransRel = 0;
+    foreach (a; [-2.7f, -0.5040186f, 0.0f, 0.5f, 1.9f])
+    foreach (e; [-1.5f, -0.4f, 0.0f, 0.4138754f, 1.5f])
+    foreach (d; [1.486323332f, 3.0f, 7.5f]) {
+        immutable Vec3 focus = Vec3(0, 0, 0);
+        Vec3 off = sphericalToCartesian(a, e, d);
+        float[16] want = lookAt(focus + off, focus, Vec3(0, 1, 0));
+        Orientation o = Orientation.fromAngles(a, e, 0.0f);
+        float[16] got = viewMatrixFrom(o, focus + o.back() * d);
+        foreach (i; [0, 1, 2, 4, 5, 6, 8, 9, 10]) {
+            immutable float dd = abs(got[i] - want[i]);
+            if (dd > worstRot) worstRot = dd;
+        }
+        foreach (i; [12, 13, 14]) {
+            immutable float rel = abs(got[i] - want[i]) / d;
+            if (rel > worstTransRel) worstTransRel = rel;
+        }
+    }
+    assert(worstRot <= 1.2e-7f,
+           "the view basis must reproduce lookAt's to one ulp");
+    assert(worstTransRel <= 1.7e-7f,
+           "the view translation must reproduce lookAt's to one ulp of the distance");
+}
+
+unittest { // the orientation no longer depends on distance or focus
+    // The property the previous model did NOT have, and the reason the ulp
+    // above is a correction rather than a regression: with `lookAt` the same
+    // azimuth/elevation produced a DIFFERENT basis at a different zoom or a
+    // different look-at point. That is measured here on the old construction,
+    // then shown absent from the new one.
+    int lookAtVaried = 0;
+    foreach (a; [-2.7f, -0.5040186f, 0.5f, 1.9f])
+    foreach (e; [-1.5f, -0.4f, 0.4138754f, 1.5f]) {
+        // OLD: same rotation, two zooms and two look-at points -> four bases.
+        float[16] m1 = lookAt(sphericalToCartesian(a, e, 3.0f), Vec3(0, 0, 0), Vec3(0,1,0));
+        float[16] m2 = lookAt(sphericalToCartesian(a, e, 7.5f), Vec3(0, 0, 0), Vec3(0,1,0));
+        Vec3 fc = Vec3(0.25f, -0.5f, 2.0f);
+        float[16] m3 = lookAt(fc + sphericalToCartesian(a, e, 3.0f), fc, Vec3(0,1,0));
+        foreach (i; [0, 4, 8, 1, 5, 9, 2, 6, 10])
+            if (m1[i] != m2[i] || m1[i] != m3[i]) { lookAtVaried++; break; }
+
+        // NEW: one rotation, one matrix, whatever the zoom or the focus.
+        Orientation o = Orientation.fromAngles(a, e, 0.0f);
+        assert(o.m == Orientation.fromAngles(a, e, 0.0f).m);
+    }
+    assert(lookAtVaried >= 12,
+           "the eye/target construction really did vary its basis with zoom and "
+           ~ "focus — if this stops being true the ulp above needs re-explaining");
 }
 
 unittest { // pointInPolygon2D square
