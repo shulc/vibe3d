@@ -3956,9 +3956,10 @@ public:
     // come from one function: a highlight that names a different element than
     // the press takes is worse than no highlight, because the user aims by it.
     //
-    // Proximity order — vertex within `topoPenPressPickPx`, else edge within the
-    // same radius, else the face under the cursor. `index` is the resolved
-    // element's own index in its own array (vertex / edge / face), or -1.
+    // Proximity order — vertex within `topoPenPressPickPx` (unless the veto
+    // below clears it), else edge within the same radius, else the face under
+    // the cursor. `index` is the resolved element's own index in its own array
+    // (vertex / edge / face), or -1.
     //
     // `pickPrimaryFace` needs `gpu_` and answers -1 without it, so under a
     // bare `dub test` (no GL) only the vertex and edge terms are live — the
@@ -3970,10 +3971,21 @@ public:
 
         // Explicit `>= 0` on every pick, never a truthiness test: these
         // answer -1 on a miss, and index 0 is a perfectly ordinary element.
+        //
+        // The edge is resolved BEFORE the vertex clause answers, because the
+        // veto needs the winning edge to have something to veto WITH. That
+        // costs a vertex-hit press one edge scan it did not use to pay; it is
+        // not avoidable, since the whole rule is a comparison against the
+        // winning edge.
         immutable int vi = findSourceVertex(mx, my, vp);
-        if (vi >= 0 && vi < cast(int)m.vertices.length) { index = vi; return MoveElem.Vertex; }
-
         immutable int ei = findRingSeedEdge(mx, my, vp);
+
+        if (vi >= 0 && vi < cast(int)m.vertices.length
+                && !pressVertexVetoed(mx, my, vp, vi, ei)) {
+            index = vi;
+            return MoveElem.Vertex;
+        }
+
         if (ei >= 0 && ei < cast(int)m.edges.length) { index = ei; return MoveElem.Edge; }
 
         immutable int fi = pickPrimaryFace(mx, my, vp);
@@ -3982,6 +3994,86 @@ public:
             return MoveElem.Face;
         }
         return MoveElem.None;
+    }
+
+    // ------------------------------------------------------------------
+    // THE VERTEX-SLOT VETO ON THE PEN'S PRESS PICK (measured static).
+    //
+    // THE RULE: clear the vertex slot when the cursor is nearer the WINNING
+    // EDGE'S MIDPOINT than it is to the best vertex, provided that midpoint is
+    // inside the caller's range. A cleared slot is not demoted — it is removed
+    // from the cascade outright, so the next clause answers and the press
+    // grabs the EDGE.
+    //
+    // WHY IT EXISTS, since the rule does not say: the projected midpoint of an
+    // edge lies on that edge's projected segment, so "the midpoint is nearer
+    // than the vertex" is a sharper way of asking "is the cursor out along the
+    // edge rather than parked on its endpoint" than the raw vertex distance
+    // is. Near a shared corner every incident edge is within a pixel or two of
+    // the vertex, and without this a press aimed at the middle of an edge
+    // grabs the corner instead.
+    //
+    // A SEPARATE MECHANISM from the snapping service's centre refinement, and
+    // this is the correction a sibling read had to be given: it is built from
+    // the same number (the winning edge's midpoint) at a different site, with
+    // different gating and a different effect. The refinement MOVES a point
+    // and is gated on a snap type; this REMOVES a candidate and is gated on
+    // nothing. Modelling it as "edge-centre snapping" would make it switch off
+    // with a preference it has no relationship to.
+    //
+    // NOT THE SAME PORT `snap.d` ALREADY HAS. `snap.vertexSlotVetoed` is the
+    // same rule inside the snap arbitration, reached only when a snap type
+    // asked for an edge leg. This one is the PRESS PICK's, it runs on every
+    // press, and no snap setting can reach it. The two are deliberately not
+    // shared: they read different ranges (the pen's own press reach vs. the
+    // configured acceptance), from different origins, over different candidate
+    // sets.
+    //
+    // NOT PORTED INTO THE ORDINARY SELECTION CLICK, and that was checked
+    // rather than assumed: our selection click goes through a different
+    // resolver that carries no cross-type slots, so there is nothing there to
+    // veto and our view-cache/BVH pick is already the right shape.
+    //
+    // WHERE IT IS APPLIED, and the limit is named rather than left to be
+    // found. Exactly the two press picks that already hold BOTH a vertex slot
+    // and an edge slot and already run a vertex-then-edge cascade:
+    // `resolveGrabTarget` (Move / Point, and the hover indicator that must
+    // name what a press will grab) and `onShiftLmbDown` (Duplicate). The pen's
+    // vertex-ONLY press picks — Split's, and the build's source-vertex
+    // resolution — are deliberately left alone: they run no edge query at all,
+    // so applying the veto there would mean inventing an edge candidate for
+    // the sole purpose of DECLINING a press those modes currently honour.
+    // Declining is a behaviour claim nothing measured; the veto's own effect
+    // is to hand the press to an edge branch, and those modes have none.
+    //
+    // Returns true when the resolved vertex must be treated as if it had never
+    // been found.
+    private bool pressVertexVetoed(int mx, int my, const ref Viewport vp,
+                                   int vi, int ei) {
+        // Both slots must be occupied. In the reference these are two null
+        // tests on a hit record; here they are the two picks having answered,
+        // which is the same question asked one step earlier.
+        if (vi < 0 || ei < 0) return false;
+        auto m = mesh;
+        if (m is null) return false;
+        if (vi >= cast(int)m.vertices.length || ei >= cast(int)m.edges.length)
+            return false;
+        auto e = m.edges[ei];
+        if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) return false;
+
+        immutable Vec3 mid = (m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f;
+        ImVec2 pm, pv;
+        if (!projectPt(mid, vp, pm)) return false;             // does not project
+        if (!projectPt(m.vertices[vi], vp, pv)) return false;
+
+        immutable float dMid = hypot(pm.x - cast(float)mx, pm.y - cast(float)my);
+        // The RANGE clause, and it uses the pen's own single press reach —
+        // the same number that gated both picks above. The pen's press pick is
+        // type-uniform by construction, so there is exactly one range here and
+        // no question of which one the veto borrows.
+        if (dMid >= topoPenPressPickPx(vp)) return false;
+        immutable float dVert = hypot(pv.x - cast(float)mx, pv.y - cast(float)my);
+        return dMid < dVert;
     }
 
     // The hover indicator element `draw()` actually paints: the RESOLVED grab
@@ -4447,6 +4539,14 @@ public:
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
         int src = findSourceVertex(e.x, e.y, vp);
+        // The press pick's vertex-slot veto (`pressVertexVetoed`) — the same
+        // one `resolveGrabTarget` runs, at the pen's other vertex-then-edge
+        // press cascade. The edge is resolved up front because the veto needs
+        // it, and it is the very edge the fall-through branch takes, so the
+        // scan is not duplicated — only moved ahead of a branch that used to
+        // skip it on a vertex hit.
+        immutable int seedEi = findRingSeedEdge(e.x, e.y, vp);
+        if (src >= 0 && pressVertexVetoed(e.x, e.y, vp, src, seedEi)) src = -1;
         if (src < 0) {
             // Not a vertex — try an EDGE (task 0485). The reference's
             // Duplicate mode "duplicates an edge as you drag it", and widens
@@ -4458,7 +4558,7 @@ public:
             // therefore builds the quad between it and its duplicate — the
             // single most common retopo stroke, and the one this slot used to
             // decline outright.
-            int ei = findRingSeedEdge(e.x, e.y, vp);
+            immutable int ei = seedEi;
             if (ei < 0) return false;   // neither vertex nor edge -> no documented gesture
 
             // Task 0486 (contract C-1): this slot READS `edgeLoop_` — measured
@@ -18732,4 +18832,146 @@ unittest { // a bare retopo chain elsewhere in the mesh SURVIVES a dissolve
     assert(gridVertAt(m, wc) >= 0,
         "and so must a placed point with no edge at all — the kernel's tail compaction "
       ~ "drops every face-less vertex in the mesh, not only the ones this edit touched");
+}
+
+// ---------------------------------------------------------------------------
+// THE PRESS PICK'S VERTEX-SLOT VETO.
+//
+// A press whose cursor is nearer the winning edge's MIDPOINT than it is to the
+// best vertex grabs the EDGE, even though the vertex is comfortably inside the
+// press-pick reach and the ordinary cascade would have answered `Vertex`.
+//
+// THE PAIR IS BUILT SO EVERYTHING ELSE IS EQUAL. One mesh, one edge, one
+// contested vertex, and TWO cursors five pixels apart. In both of them the
+// vertex is in range AND the edge is in range — a rig where only one type
+// resolves cannot see the veto at all, because the veto's whole subject is
+// which of two live candidates the press takes. What differs between the two
+// cursors is only the sign of `midpoint-distance − vertex-distance`, so an
+// answer that differs between them can be nothing but the veto.
+//
+// The range clause (`dMid < press reach`) is deliberately NOT probed here, and
+// that is a statement about this call site rather than an omission: the pen's
+// press pick is type-uniform — one reach, no doubled tolerance for the vertex
+// class — so a vertex that resolved at all is already inside the reach, and
+// `dMid < dVert <= reach` makes the clause vacuous by construction. It is kept
+// in the code because it is the rule, not because it is reachable from here.
+// (The snapping service's copy of the veto DOES have an observable range
+// clause, because there the vertex class carries a doubled tolerance and can
+// be resolved from outside the acceptance range; that block tests it.)
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : hypot;
+    import toolpipe.packets : SubjectPacket;
+
+    auto t = new TopologyPenTool();
+
+    // 80 px per world unit at z = 0 under this viewport: screen = (400 + 80x,
+    // 400 - 80y). Every pixel quoted below is that identity, and every one of
+    // them is asserted rather than trusted.
+    auto vp = makeHoverIndicatorTestViewport();
+
+    Mesh m;
+    m.vertices = [
+        Vec3( 0.00f,  0.00f, 0),   // 0 — the contested vertex, px (400, 400)
+        Vec3(-0.45f,  0.05f, 0),   // 1 — edge end,             px (364, 396)
+        Vec3( 0.55f, -0.05f, 0),   // 2 — edge end,             px (444, 404)
+    ];
+    m.edges = [ [1u, 2u] ];        // midpoint (0.05, 0, 0) -> px (404, 400)
+    t.meshSrc_ = () => &m;
+
+    ImVec2 pv, pa, pb;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, pv), "setup: the vertex must project");
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: edge end A must project");
+    assert(TopologyPenTool.projectPt(m.vertices[2], vp, pb), "setup: edge end B must project");
+    immutable ImVec2 pmid = ImVec2((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
+
+    immutable float reach = topoPenPressPickPx(vp);
+
+    // ---- CURSOR A: out along the edge. The midpoint beats the vertex. ------
+    {
+        immutable int cx = 405, cy = 400;
+        immutable float dVert = hypot(pv.x   - cx, pv.y   - cy);
+        immutable float dMid  = hypot(pmid.x - cx, pmid.y - cy);
+
+        assert(t.findSourceVertex(cx, cy, vp) == 0,
+            "setup: the vertex must resolve — a rig where it does not cannot "
+            ~ "show a veto, because there would be no slot to clear");
+        assert(t.findRingSeedEdge(cx, cy, vp) == 0,
+            "setup: and the edge must resolve too, or the veto has nothing to "
+            ~ "veto WITH and nothing to fall through to");
+        assert(dVert < reach && dVert > 1.0f,
+            "setup: the vertex must be comfortably inside the reach, so that "
+            ~ "an answer of Edge cannot be explained by the vertex falling out "
+            ~ "of range");
+        assert(dMid < dVert,
+            "setup: and the midpoint must be the NEARER of the two — that "
+            ~ "inequality IS the veto's condition");
+
+        int idx = -99;
+        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx);
+        assert(got == MoveElem.Edge && idx == 0,
+            "the press pick must clear the vertex slot and answer with the "
+            ~ "EDGE: the cursor is nearer that edge's midpoint than it is to "
+            ~ "the vertex. Answering Vertex here means the veto is not "
+            ~ "modelled — the plain vertex-then-edge cascade");
+    }
+
+    // ---- CURSOR B: parked on the vertex. The vertex beats the midpoint. ----
+    {
+        immutable int cx = 400, cy = 400;
+        immutable float dVert = hypot(pv.x   - cx, pv.y   - cy);
+        immutable float dMid  = hypot(pmid.x - cx, pmid.y - cy);
+
+        assert(t.findSourceVertex(cx, cy, vp) == 0,
+            "setup: the same vertex must resolve");
+        assert(t.findRingSeedEdge(cx, cy, vp) == 0,
+            "setup: and the SAME edge must still resolve, so the two cursors "
+            ~ "differ in nothing but the two distances below");
+        assert(dMid < reach,
+            "setup: the midpoint is still inside the reach, so this control "
+            ~ "isolates the NEARER clause and not the range one");
+        assert(dVert < dMid,
+            "setup: and here the vertex is the nearer of the two");
+
+        int idx = -99;
+        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx);
+        assert(got == MoveElem.Vertex && idx == 0,
+            "the veto must NOT fire when the vertex is the nearer of the two. "
+            ~ "Answering Edge here means the rule was ported without its "
+            ~ "comparison and now demotes every vertex that has an edge beside "
+            ~ "it — which is every vertex in a mesh");
+    }
+
+    // ---- The SECOND press cascade: Duplicate's slot runs the same veto. ----
+    // `onShiftLmbDown` does its own vertex-then-edge pick rather than going
+    // through `resolveGrabTarget`, so a veto wired into only one of the two
+    // would leave the pen's own press paths disagreeing about which element a
+    // press grabs.
+    {
+        SubjectPacket subj;
+        subj.mesh     = &m;
+        subj.viewport = vp;
+        VectorStack vts;
+        vts.put(&subj);
+
+        SDL_MouseButtonEvent eA;
+        eA.x = 405; eA.y = 400;
+        t.resetAllGestureArms();
+        assert(t.onShiftLmbDown(eA, vts), "the press must still be consumed");
+        assert(!t.dragArmed_,
+            "Duplicate's slot must not take the vertex drag-build when the "
+            ~ "veto cleared the vertex — its pick sees the same two candidates "
+            ~ "`resolveGrabTarget` does and must resolve them the same way");
+        assert(t.anyGestureArmed(),
+            "and it must have armed the edge outcome rather than declining: a "
+            ~ "veto that turns a live press into a no-op is not the rule");
+
+        SDL_MouseButtonEvent eB;
+        eB.x = 400; eB.y = 400;
+        t.resetAllGestureArms();
+        assert(t.onShiftLmbDown(eB, vts), "the control press must be consumed");
+        assert(t.dragArmed_ && t.sourceVert_ == 0,
+            "and on the vertex the drag-build must still arm, untouched — the "
+            ~ "veto is a comparison, not a ban on grabbing vertices");
+    }
 }
