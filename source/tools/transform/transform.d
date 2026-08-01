@@ -1083,8 +1083,12 @@ protected:
     // decides separately what to do with the hit).
     // Both projection kinds are handled: screenPointToRay builds a
     // perspective ray from the eye or an ortho ray parallel to the view
-    // forward, and the Auto/None branch swaps in a camera-perpendicular
-    // plane under ortho so the parallel ray never degenerates (task 0226).
+    // forward. Under ortho a plane edge-on to the view would hold that
+    // parallel ray and degenerate, so the Auto/None branch never leaves one
+    // reachable — a PINNED plane and a non-axis-aligned ortho camera swap in
+    // a camera-perpendicular plane (task 0226), and an axis-aligned ortho
+    // camera on the AUTO plane goes through the ported law's no-ray arm,
+    // which computes the same landing without intersecting anything.
     protected bool computeClickRelocateHitRaw(int sx, int sy, out Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
