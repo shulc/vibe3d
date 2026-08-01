@@ -1,7 +1,7 @@
 // The transform gizmo's AXIS ARM drag conversion, end to end (task 0562).
 //
 // `test_tool_move_drag.d` already pins that an X-arrow drag moves the
-// selection in +X and nothing else. This file pins the CONVERSION — the three
+// selection in +X and nothing else. This file pins the CONVERSION — the four
 // properties that make the ported law a different law from the one it
 // replaced, each of them a thing a user can feel:
 //
@@ -22,16 +22,29 @@
 //      leaves a 0.0024 residual — 0.7 %, and it does not cancel out over a
 //      session, it accumulates.
 //
-//   3. IT IS SCOPED OUT OF `Screen`. Under the Screen action centre the
-//      reference installs a different translator, so the ported law is not the
-//      one that runs there and the editor's own compensated conversion is kept
-//      instead. Same selection, same pivot, same pixel run — a measurably
-//      different world length, and this test says which law produced it rather
-//      than only that the two differ.
+//   3. IT IS SCOPED OUT OF `Screen`, AND THAT IS A HOLD. Under the Screen
+//      action centre the ported law does not run and the editor's own
+//      compensated conversion is kept — not because the reference is known to
+//      do that, but because it is known NOT to be readable yet. The reference
+//      wraps its translator under `Screen` in a DECORATOR whose
+//      `GetNewPosition` forwards to the inner conversion — the one that was
+//      ported — and then adds a file-scope hit-handle triple that nobody has
+//      read. So the reference under `Screen` is neither law, and this test
+//      pins that the port left `Screen` exactly where it found it. It is a
+//      neutrality pin on a parked divergence, NOT a specification of Screen.
+//
+//   4. THE SCALAR IS QUANTISED. The reference rounds the axis coordinate to
+//      the nearest 0.002 before it becomes a world offset (measured, 30 of 30
+//      evaluations), so every delivered length is a multiple of that step.
+//      The rounding LAW is pinned on the scalar in `drag.d`'s unittests
+//      against the reference's own six (before, after) pairs; what is pinned
+//      here is only that the shipped drag really does come out on the grid —
+//      i.e. that the term survives the whole tool path and is not swallowed
+//      by the wrapper.
 //
 // No reference engine is booted and none is needed: (1)'s expected value is
-// arithmetic on our own camera, and (2)/(3) are relations between two of our
-// own drags.
+// arithmetic on our own camera, (2)/(3) are relations between two of our own
+// drags, and (4) is a property of a single number.
 
 import std.net.curl;
 import std.json;
@@ -65,7 +78,7 @@ void setupAxisDrag(string acen) {
 // The gain the port claims, from the camera and nothing else:
 //   pixelScale = (4/5) * eyeDistance / focalPx,  focalPx = (h/2) / tan(fovY/2)
 // with our hard-coded 45-degree vertical fov.
-double viewPixelScaleFromCamera(CameraState c) {
+double viewWorldPerPixelFromCamera(CameraState c) {
     Vec3 d = Vec3(c.eye.x - c.focus.x, c.eye.y - c.focus.y, c.eye.z - c.focus.z);
     double dist    = sqrt(cast(double)dot(d, d));
     return 0.8 * dist / focalPxOf(c);
@@ -172,13 +185,19 @@ unittest {  // 1. the delivered world length IS pixelScale * (pixels along the a
     double[3] d, pivot; double alongPx; CameraState cam;
     oneArmDrag("auto", 120, false, d, alongPx, cam, pivot);
 
-    const double ps   = viewPixelScaleFromCamera(cam);
+    const double ps   = viewWorldPerPixelFromCamera(cam);
     const double want = ps * alongPx;
     const double got  = vlen3(d);
     assert(ps > 0 && alongPx > 10.0);
 
     assert(got > 0.05,
            "the arm drag did not engage at all (got " ~ got.to!string ~ ")");
+    // 1 % is not slack for its own sake. Two terms live under it: the arm's
+    // screen DIRECTION is differenced over a short step while `alongPx` is
+    // laid along the drawn chord, and the delivered scalar is rounded to the
+    // nearest 0.002 (a half-step is ~0.35 % of this run). Tightening this
+    // would be pinning those two, not the gain. The gain itself is pinned
+    // exactly, pre-snap, in `drag.d`.
     assert(fabs(got - want) <= 0.01 * want,
            format("the axis arm's gain must be the view's flat pixel scale: "
                 ~ "want %.6f = pixelScale %.8f x %.3f px along the arm, got "
@@ -199,7 +218,7 @@ unittest {  // 2. out and back to the press pixel returns the mesh EXACTLY
     double[3] d, pivot; double alongPx; CameraState cam;
     oneArmDrag("auto", 160, true, d, alongPx, cam, pivot);
 
-    const double excursion = viewPixelScaleFromCamera(cam) * alongPx;
+    const double excursion = viewWorldPerPixelFromCamera(cam) * alongPx;
     assert(excursion > 0.2,
            "the out leg is too short for this test to discriminate");
 
@@ -215,27 +234,76 @@ unittest {  // 2. out and back to the press pixel returns the mesh EXACTLY
                     k, d[k], excursion));
 }
 
-unittest {  // 3. the Screen action centre keeps the editor's OWN conversion
+unittest {  // 3. Screen is HELD at its pre-port behaviour, not re-specified
     double[3] d, pivot; double alongPx; CameraState cam;
     oneArmDrag("screen", 120, false, d, alongPx, cam, pivot);
 
     const double got   = vlen3(d);
-    const double flat  = viewPixelScaleFromCamera(cam) * alongPx;
-    // The editor's own law: `axisLen/|s|` world units per projected pixel,
+    const double flat  = viewWorldPerPixelFromCamera(cam) * alongPx;
+    // The value `Screen` produced BEFORE this port, recomputed from the camera:
+    // the editor's own law is `axisLen/|s|` world units per projected pixel,
     // which for an arm lying in the screen plane (Screen's basis IS the screen
-    // frame) is exactly the pivot's depth over the focal length.
+    // frame) is exactly the pivot's depth over the focal length. This is a
+    // CHARACTERIZATION of what we already did, not a claim about the reference.
     const double comp  = alongPx * pivotDepth(cam, pivot) / focalPxOf(cam);
 
     assert(got > 0.05, "the Screen-mode arm drag did not engage");
-    assert(fabs(got - comp) <= 0.015 * comp,
-           format("under actr.screen the arm must run the EDITOR'S OWN "
-                ~ "compensated conversion — the reference installs a "
-                ~ "different translator there, so the ported law is not the "
-                ~ "one that applies. Expected %.6f (= %.3f px x depth %.4f / "
-                ~ "focal %.2f), got %.6f.",
-                comp, alongPx, pivotDepth(cam, pivot), focalPxOf(cam), got));
+
+    // The content of this test: the ported law did NOT reach Screen.
     assert(fabs(got - flat) > 0.05 * flat,
-           format("this camera cannot tell the two laws apart (flat %.6f vs "
-                ~ "compensated %.6f) — the test is vacuous here and the "
-                ~ "camera or pivot must move", flat, comp));
+           format("under actr.screen the arm must NOT deliver the ported "
+                ~ "law's flat gain — the port is scoped out there. Got %.6f "
+                ~ "against a flat prediction of %.6f. (If these two are close "
+                ~ "because the camera cannot tell the laws apart — the "
+                ~ "compensated prediction is %.6f — the test is vacuous here "
+                ~ "and the camera or pivot must move, which is the other way "
+                ~ "this assertion fires.)", got, flat, comp));
+
+    // And it is held at exactly the value it had before, so this change is
+    // behaviour-neutral under Screen. Deliberately NOT phrased as "the
+    // reference does this": the reference's Screen translator is a decorator
+    // that FORWARDS to the ported conversion and then adds an unread
+    // hit-handle term, so what Screen should deliver is an open question and
+    // this number is not an answer to it — it is the value we parked on while
+    // the question stays open.
+    assert(fabs(got - comp) <= 0.015 * comp,
+           format("actr.screen must be left exactly as the port found it: the "
+                ~ "editor's own compensated conversion, %.6f (= %.3f px x "
+                ~ "depth %.4f / focal %.2f), got %.6f. A change here means "
+                ~ "the port leaked into a mode it was scoped out of, or that "
+                ~ "Screen was re-specified without the read that would "
+                ~ "justify it.",
+                comp, alongPx, pivotDepth(cam, pivot), focalPxOf(cam), got));
+}
+
+unittest {  // 4. the delivered length lands on the reference's 0.002 grid
+    // The rounding law is pinned on the scalar in drag.d against the
+    // reference's own six (before, after) pairs. This pins only that the term
+    // is still there at the far end of the tool path — through the wrapper,
+    // the command, and the mesh write — because a quantum that is computed and
+    // then averaged away by a downstream blend is worth nothing.
+    //
+    // FIVE runs, not one. Multiple-of-the-quantum is exact when the quantum is
+    // present and, when it is absent, fails for any run whose raw value is not
+    // within 1 % of a step by chance. One run could pass by luck; five cannot.
+    enum double Q = 0.002;
+    foreach (runPx; [96, 108, 117, 129, 141]) {
+        double[3] d, pivot; double alongPx; CameraState cam;
+        oneArmDrag("auto", runPx, false, d, alongPx, cam, pivot);
+
+        const double got   = vlen3(d);
+        assert(got > 0.05, format("the %d px arm drag did not engage", runPx));
+
+        const double steps = got / Q;
+        const double off   = fabs(steps - cast(double)cast(long)(steps + 0.5));
+        assert(off * Q < 2e-5,
+               format("the axis arm's delivered length must land on the "
+                    ~ "reference's 0.002 grid: %d px delivered %.9f, which is "
+                    ~ "%.4f steps — %.7f off the nearest one. The reference "
+                    ~ "rounds the SCALAR before it becomes a world offset "
+                    ~ "(measured 30/30); a value off the grid means the "
+                    ~ "quantum was dropped, or applied to the position "
+                    ~ "instead of the scalar, or averaged out downstream.",
+                    runPx, got, steps, off * Q));
+    }
 }
