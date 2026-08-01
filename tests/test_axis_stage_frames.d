@@ -53,16 +53,18 @@
 //
 // ── WHAT THIS FILE DOES NOT PIN ───────────────────────────────────────────
 //
-// Our selection basis snaps the averaged face normal to the nearest WORLD axis;
-// the reference builds an oriented box over the selection. They agree exactly
-// on an axis-aligned subject — which is every rig recorded so far — and diverge
-// on a rotated one, where ours still answers a signed world permutation. No
-// rotated-subject recording exists and the box's orientation rule has not been
-// read, so nothing here asserts a reference answer for that case. The rotated
-// case below asserts only what this change is responsible for: that Local and
-// Select agree, and that both still TRACK the selection rather than collapsing
-// to the world identity. Both statements survive a later oriented-box fix, so
-// this file does not ossify the approximation.
+// The selection basis is now the ORIENTED bounding box of the selection
+// (`source/toolpipe/obbox.d`, and `tests/test_axis_oriented_box.d` for the
+// frame it produces). It USED to snap the averaged face normal to the nearest
+// world axis, which agrees with an oriented box exactly on an axis-aligned
+// subject — every rig recorded — and answers a signed world permutation on a
+// rotated one.
+//
+// This file is about the mode ROUTING, not about the frame's content, so the
+// rotated case below still asserts only what THIS file is responsible for:
+// that Local and Select agree, and that both still TRACK the selection rather
+// than collapsing to the world identity. What the rotated frame should BE is
+// asserted in `test_axis_oriented_box.d` and nowhere here.
 
 import std.net.curl;
 import std.json;
@@ -308,24 +310,44 @@ unittest { // Local and Select stay in lockstep off the world axes too
     auto loc = read("local");
     auto sa  = read("selectauto");
 
-    // NOT ASSERTED, DELIBERATELY: what `sel.fwd` should be. Ours snaps the
-    // face normal to the nearest world axis; the reference builds an oriented
-    // box and would keep the 30 degrees. There is no recording of a rotated
-    // subject, so no reference answer exists to assert against and this file
-    // will not invent one — nor will it freeze OUR snapped answer, which a
-    // later oriented-box fix has to be free to change.
+    // NOT ASSERTED HERE, DELIBERATELY: what `sel.fwd` should be. That is the
+    // oriented box's business and it is pinned, exactly, in
+    // `test_axis_oriented_box.d`. This file asserts the ROUTING — which mode
+    // reads which frame — and duplicating the frame's value here would mean
+    // two files to update for one law.
     assert(fabs(sel.up.x - loc.up.x) < 1e-5 && fabs(sel.up.y - loc.up.y) < 1e-5
            && fabs(sel.up.z - loc.up.z) < 1e-5,
            "local and select run one computation and must agree on a rotated "
            ~ "subject too; got select up " ~ show(sel.up) ~ " and local up "
            ~ show(loc.up));
     // Both still TRACK the selection: the frame is not the world identity.
-    // True of the snapped answer and of an oriented one, so this survives the
-    // fix that is deliberately not made here.
-    assert(fabs(loc.up.y - 1.0f) > 0.5f,
+    //
+    // This assertion was written as `fabs(loc.up.y - 1.0f) > 0.5f` — one
+    // component of one slot — because at the time `up` on a rotated subject
+    // was the SNAPPED world -Z and `up.y` was 0. The oriented-box port makes
+    // the correct answer `up = (0, 0.5, -0.866)`, so the old form evaluated
+    // `0.5 > 0.5`: FALSE, on the threshold, and worse than that — `up.y` is
+    // numerically `fwd.z` there, so which side of the threshold it landed on
+    // was float noise. A boundary coin-flip cannot state "the frame is not the
+    // world identity".
+    //
+    // Restated on the whole frame, which is what the sentence above always
+    // meant: the largest deviation of ANY slot from the world identity. On the
+    // oriented answer that is 0.866 (both `up` and `fwd` are 30 degrees off
+    // their world axes), so the margin is real, and the statement now also
+    // catches a frame that went identity in `right` or `fwd` while `up`
+    // happened not to.
+    float idDev = 0;
+    foreach (i, pair; [[loc.right, PX], [loc.up, PY], [loc.fwd, PZ]]) {
+        foreach (d; [fabs(pair[0].x - pair[1].x), fabs(pair[0].y - pair[1].y),
+                     fabs(pair[0].z - pair[1].z)])
+            if (d > idDev) idDev = d;
+    }
+    assert(idDev > 0.5f,
            "local must still take the selection's frame on a rotated subject; "
-           ~ "up = " ~ show(loc.up) ~ " is the world identity, i.e. the "
-           ~ "fallback");
+           ~ "the frame " ~ show(loc.right) ~ " " ~ show(loc.up) ~ " "
+           ~ show(loc.fwd) ~ " is within " ~ idDev.to!string
+           ~ " of the world identity, i.e. it has fallen back");
     // And selectauto still does not.
     assert(fabs(sa.up.y - 1.0f) < 1e-5,
            "selectauto must take the AUTO frame whatever the subject's "

@@ -415,41 +415,60 @@ private:
         }
     }
 
-    // Selection-derived basis (Selection / Selection Center Auto Axis
-    // algorithm):
-    // - Polygons / Vertices mode: `up` = avg face normal (snapped to
-    //   nearest world axis); `right` = world axis with the largest
-    //   in-plane (perpendicular to up) bbox extent of the selection.
-    //   For face / vertex selections handle Y always points along the
-    //   face-normal direction.
-    // - Edges mode: degrades to pure bbox-extent-sort (a more nuanced
-    //   edge-tangent axis is handled in a follow-up).
-    // fwd = cross(right, up) keeps the basis strictly right-handed.
+    // Selection-derived basis — the ORIENTED bounding box of the selection.
+    //
+    // This used to build a world-axis-ALIGNED box: per-world-axis min/max, the
+    // averaged face normal snapped to the nearest world axis, and a fixed
+    // per-axis lookup for the second row. That agrees with an oriented box
+    // exactly on a world-aligned subject — every rig ever recorded — and
+    // answers a signed world permutation on a rotated one. The law is now in
+    // `toolpipe.obbox`; this function's job is only ENUMERATION: which points,
+    // which reference direction, and which of the four constructions the count
+    // selects.
+    //
+    // SPACE. Every term here is in the mesh's own coordinates, which is the
+    // space the whole transform pipe works in (`ActionCenterStage` takes its
+    // selection centres from raw mesh vertices too). The reference stores its
+    // enumerated positions already in WORLD space and applies the layer's 3x3
+    // to the NORMALS only — an asymmetry a port must not flatten by
+    // transforming both. We transform neither, which keeps each term
+    // transformed exactly as often as it needs to be. A layer with a non-
+    // identity transform is a separate, pre-existing divergence of this whole
+    // stage and is deliberately not opened here.
     bool computeSelectionBboxBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        import toolpipe.obbox : ObbFrame, obbFromPoints, obbFromVertexNormal,
+                                obbFromEdge, axisFrameFromBox;
         if (mesh_ is null || editMode_ is null) return false;
-        // World-axis bbox of vertices touched by the selection.
+
+        Vec3[] pts;
+        uint[] vids;
         bool[] visited = new bool[](mesh_.vertices.length);
-        float[3] mn = [float.infinity, float.infinity, float.infinity];
-        float[3] mx = [-float.infinity, -float.infinity, -float.infinity];
-        Vec3 normalAcc = Vec3(0, 0, 0);   // sum of face normals (face / vert)
-        bool any = false;
+        Vec3 normalAcc = Vec3(0, 0, 0);
         void touchVert(uint vi) {
             if (visited[vi]) return;
             visited[vi] = true;
-            Vec3 v = mesh_.vertices[vi];
-            float[3] p = [v.x, v.y, v.z];
-            foreach (k; 0 .. 3) {
-                if (p[k] < mn[k]) mn[k] = p[k];
-                if (p[k] > mx[k]) mx[k] = p[k];
-            }
-            any = true;
+            pts  ~= mesh_.vertices[vi];
+            vids ~= vi;
+        }
+        // The sign-fix reference direction. The reference sums POLYGON normals
+        // and falls back to `normalize(boxCentre - aabbCentre)` when the sum is
+        // degenerate. Which polygons it sums is the one place the read is not
+        // decisive — the static read says a vertex-only selection contributes
+        // none, while the recorded 25-vertex lattice rig came back with its box
+        // NEGATED, which needs a non-zero reference. So this is a DECLARED
+        // choice where the evidence is split: sum the normals of the faces the
+        // selection TOUCHES, which is exactly what this stage summed before the
+        // port and therefore keeps every shipped sign, and reduces to the read
+        // verbatim in Polygons mode.
+        void touchFaceNormal(uint fi) {
+            normalAcc = normalAcc + mesh_.faceNormal(fi);
         }
         final switch (*editMode_) {
             case EditMode.Polygons:
                 if (!mesh_.hasAnySelectedFaces()) return false;
                 foreach (i, face; mesh_.faces) {
                     if (!mesh_.isFaceSelected(i)) continue;
-                    normalAcc = normalAcc + mesh_.faceNormal(cast(uint)i);
+                    touchFaceNormal(cast(uint)i);
                     foreach (vi; face) touchVert(vi);
                 }
                 break;
@@ -459,85 +478,74 @@ private:
                     if (!mesh_.isEdgeSelected(i)) continue;
                     foreach (vi; edge) touchVert(vi);
                 }
+                foreach (fi, face; mesh_.faces) {
+                    bool touches = false;
+                    foreach (fvi; face) if (visited[fvi]) { touches = true; break; }
+                    if (touches) touchFaceNormal(cast(uint)fi);
+                }
                 break;
             case EditMode.Vertices:
                 if (!mesh_.hasAnySelectedVertices()) return false;
-                foreach (vi; 0 .. mesh_.vertices.length) {
-                    if (!mesh_.isVertexSelected(vi)) continue;
-                    touchVert(cast(uint)vi);
-                    // Per-vert normal = sum of incident face normals.
-                    foreach (fi, face; mesh_.faces) {
-                        foreach (fvi; face)
-                            if (fvi == vi) {
-                                normalAcc = normalAcc
-                                          + mesh_.faceNormal(cast(uint)fi);
-                                break;
-                            }
-                    }
+                foreach (vi; 0 .. mesh_.vertices.length)
+                    if (mesh_.isVertexSelected(vi)) touchVert(cast(uint)vi);
+                foreach (fi, face; mesh_.faces) {
+                    bool touches = false;
+                    foreach (fvi; face) if (visited[fvi]) { touches = true; break; }
+                    if (touches) touchFaceNormal(cast(uint)fi);
                 }
                 break;
         }
-        if (!any) return false;
+        if (pts.length == 0) return false;
 
-        Vec3[3] worldAxes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
-        float[3] extents = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
-
-        // Decide the selection local frame.
-        bool haveNormal = normalAcc.x != 0 || normalAcc.y != 0 || normalAcc.z != 0;
-        if (haveNormal && (*editMode_ == EditMode.Polygons
-                           || *editMode_ == EditMode.Vertices))
-        {
-            // Selection local frame convention (axis-aligned faces):
-            //   fwd  = snapped face normal (outward, keeps sign).
-            //   up   = per-normal-AXIS fixed vector, sign-independent:
-            //            normal on X-axis → up = world −Y
-            //            normal on Y-axis → up = world −Z
-            //            normal on Z-axis → up = world +Y
-            //   right = cross(up, fwd)  — right-handed.
+        // THE COUNT SELECTS THE CONSTRUCTION.
+        ObbFrame box;
+        if (pts.length == 1) {
+            // The vertex's geometric normal — the uniform average of its
+            // incident face normals. `normalAcc` already holds exactly that
+            // sum for a one-vertex selection.
             //
-            // For a non-axis-aligned normalAcc (e.g. a diagonal or mixed
-            // selection where no single world axis dominates cleanly),
-            // the frame falls through to the edge bbox-extent sort below.
-            // This matches the observed identity/default frame the
-            // reference returns for such cases (not a bisector).
-
-            // Snap avg normal to the nearest world axis. Sign follows
-            // the dominant component so fwd points outward.
-            float ax = abs(normalAcc.x);
-            float ay = abs(normalAcc.y);
-            float az = abs(normalAcc.z);
-            int fwdIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
-            float fwdSign = ((fwdIdx == 0 ? normalAcc.x
-                            : fwdIdx == 1 ? normalAcc.y
-                                          : normalAcc.z) >= 0) ? 1.0f : -1.0f;
-            fwd = worldAxes[fwdIdx] * fwdSign;
-
-            // Per-axis in-plane secondary (up/Y): fixed lookup, sign-
-            // independent of the face normal's sign.
-            //   X-axis → up = −Y   (upIdx=1, upSign=−1)
-            //   Y-axis → up = −Z   (upIdx=2, upSign=−1)
-            //   Z-axis → up = +Y   (upIdx=1, upSign=+1)
-            int upIdx;
-            float upSign;
-            if (fwdIdx == 0) { upIdx = 1; upSign = -1.0f; }       // X→−Y
-            else if (fwdIdx == 1) { upIdx = 2; upSign = -1.0f; }  // Y→−Z
-            else { upIdx = 1; upSign = 1.0f; }                    // Z→+Y
-            up = worldAxes[upIdx] * upSign;
-
-            // right = cross(up, fwd) — right-handed (right × up = fwd).
-            right = cross(up, fwd);
-            return true;
+            // The up-hint when the normal is world-Y dominant: the reference
+            // asks the viewport's work plane there, and that query has not
+            // been read, so it is NOT invented here. World Z is used, declared
+            // as ours. It is also the reference's ONLY view-dependent term in
+            // this whole computation, so keeping it constant is what makes our
+            // selection frame camera-independent everywhere.
+            enum int UP_HINT_WHEN_Y_DOMINANT = 2;
+            box = obbFromVertexNormal(pts[0], normalAcc,
+                                      UP_HINT_WHEN_Y_DOMINANT);
+        } else if (pts.length == 2) {
+            Vec3 eNrm; bool haveENrm = false;
+            if (edgeAverageNormal(vids[0], vids[1], eNrm)) haveENrm = true;
+            box = obbFromEdge(pts[0], pts[1], eNrm, haveENrm);
+        } else {
+            box = obbFromPoints(pts, normalAcc);
         }
-        // Edge mode (no robust normal) — fall back to pure bbox-extent
-        // sort. Largest extent → right, middle → up, smallest → fwd.
-        int[3] idx = [0, 1, 2];
-        if (extents[idx[1]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[1]; idx[1] = t; }
-        if (extents[idx[2]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[2]; idx[2] = t; }
-        if (extents[idx[2]] > extents[idx[1]]) { int t = idx[1]; idx[1] = idx[2]; idx[2] = t; }
-        right = worldAxes[idx[0]];
-        up    = worldAxes[idx[1]];
-        fwd   = cross(right, up);
+        if (!box.ok) return false;
+        axisFrameFromBox(box, right, up, fwd);
         return true;
+    }
+
+    // The average polygon normal of the edge bounded by two vertices, if they
+    // bound one. The two-point construction uses it as its second row; when
+    // the pair does NOT bound a polygon edge the reference degrades to a world
+    // basis vector instead, which is what `false` here selects.
+    private bool edgeAverageNormal(uint a, uint b, out Vec3 nrm) const {
+        Vec3 acc = Vec3(0, 0, 0);
+        int n = 0;
+        foreach (fi, face; mesh_.faces) {
+            foreach (k; 0 .. face.length) {
+                uint u = face[k];
+                uint v = face[(k + 1) % face.length];
+                if ((u == a && v == b) || (u == b && v == a)) {
+                    acc = acc + mesh_.faceNormal(cast(uint)fi);
+                    ++n;
+                    break;
+                }
+            }
+        }
+        if (n == 0) return false;
+        nrm = acc * (1.0f / n);
+        return nrm.length > 1e-12f;
     }
 
     // Per-cluster basis (Phase 4 of the action-center parity plan). Same

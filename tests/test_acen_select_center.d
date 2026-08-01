@@ -21,45 +21,66 @@
 //   Per-vertex avg = ( (−0.5+0.5−0.5)/3, (−0.5−0.5+0.5)/3, −0.5 )
 //               = (−1/6, −1/6, −0.5) ≈ (−0.1667, −0.1667, −0.5)  ← REJECTED
 //
-// Operation: SX = 2 (scale along local-X of the selection frame).
+// The PROBE HAD TO MOVE FROM SX TO SY, AND THAT IS ITSELF THE FINDING.
+//
+// The probe is a single-axis scale, and a single-axis scale only sees the pivot
+// at all along the axis it scales. When the selection frame became the ORIENTED
+// bounding box (`source/toolpipe/obbox.d`) this three-point L-shape stopped
+// answering a world axis: three points of a right isoceles triangle have their
+// principal in-plane axis along the HYPOTENUSE, at 45 degrees, and that is
+// exactly PERPENDICULAR to the difference between the two candidate pivots
+// (bbox centre minus per-vertex average = (1/6, 1/6, 0)). An SX probe on the
+// new frame gives the SAME answer for both pivots — not a wrong answer, a
+// BLIND one, and a blind probe would have kept passing while proving nothing.
+//
+// So the probe scales along local-Y instead, which IS parallel to the pivot
+// difference, and it discriminates on all THREE selected vertices where the
+// SX form discriminated on three too — same count, but a probe that can see
+// the pivot at all. The rig, the claim and the rejected alternative are
+// unchanged; only the axis the claim is read along moved.
 //
 // Selection local frame (axis.d computeSelectionBboxBasis, vertex mode):
-//   normalAcc = sum of incident face normals of selected verts
-//             = (−1,−1,−1) + (1,−1,−1) + (−1,1,−1) = (−1,−1,−3)
-//   dominant axis: |z| = 3 > |x| = |y| = 1 → fwdIdx = 2, fwdSign = −1
-//   fwd   = (0, 0, −1)  (world −Z, back-face normal outward)
-//   up    = (0, +1,  0)  (Z-axis rule: upIdx=1, upSign=+1 → world +Y)
-//   right = cross(up, fwd) = cross((0,1,0),(0,0,−1)) = (−1,0,0)  (world −X)
+//   the three selected points are planar at z = −0.5 and their covariance's
+//   principal axis is the hypotenuse direction; the thinnest axis is the plane
+//   normal, oriented against the summed incident face normals (−1,−1,−3):
+//   fwd   = (0, 0, −1)
+//   right = (−0.70711, +0.70711, 0)     principal in-plane axis
+//   up    = fwd × right = (+0.70711, +0.70711, 0)
 //
-// Scale SX = 2 along local-X (right = (−1,0,0)) about pivot P = (0,0,−0.5):
-//   new_v = P + d + (2−1)·(d·right)·right,  where d = v − P
-//   d·right = −d_x  →  correction = (d_x, 0, 0)
-//   → new_x = 2·v_x,  new_y = v_y,  new_z = v_z  (for selected verts)
+// Operation: SY = 2 (scale along local-Y = `up`).
+//
+//   new_v = P + d + (2−1)·(d·up)·up,  where d = v − P, P = (0, 0, −0.5)
+//   v0: d = (−0.5,−0.5,0), d·up = −0.70711 → (−1.0, −1.0, −0.5)
+//   v1: d = ( 0.5,−0.5,0), d·up = 0        → unchanged
+//   v3: d = (−0.5, 0.5,0), d·up = 0        → unchanged
 //   Non-selected verts are unchanged.
 //
-// Under the REJECTED avg pivot (−1/6, −1/6, −0.5):
-//   new_x = 2·v_x − (−1/6) = 2·v_x + 1/6
-//   v0 → x = −0.8333  (vs −1.0 under bbox pivot)  ← WOULD FAIL the test
-//   v1 → x =  1.1667  (vs  1.0)                   ← WOULD FAIL the test
-//   v3 → x = −0.8333  (vs −1.0)                   ← WOULD FAIL the test
+// Under the REJECTED avg pivot (−1/6, −1/6, −0.5) every one of the three
+// selected verts lands somewhere else:
+//   v0 → (−0.8333, −0.8333, −0.5)   (vs (−1.0, −1.0, −0.5))   ← WOULD FAIL
+//   v1 → ( 0.6667, −0.3333, −0.5)   (vs ( 0.5, −0.5, −0.5))    ← WOULD FAIL
+//   v3 → (−0.3333,  0.6667, −0.5)   (vs (−0.5,  0.5, −0.5))    ← WOULD FAIL
 //
 // SelectAuto shares the same center path (actcenter.d:737
-// selectionCentroid(SelectSubMode.Center)) and this vertex selection's
-// normalAcc dominant axis is Z for both modes, so the same frame + pivot
-// applies. The second test case asserts SelectAuto produces the same result.
+// selectionCentroid(SelectSubMode.Center)) but pairs it with the AUTO axis
+// tool, i.e. the WORLD identity — which is why the second case below keeps its
+// SX probe unchanged: on the identity frame local-X is world X, the pivot
+// difference has an x component of 1/6, and the probe still discriminates.
+// That the two cases now scale along different axes is the separability the
+// axis stage is built on, not an inconsistency.
 
 import fixture_helpers;
 
 void main() {}
 
-unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SX=2.
-    // Verts that MOVE (selected — v0, v1, v3):
-    //   v0 (−0.5,−0.5,−0.5) → (−1.0, −0.5, −0.5)
-    //   v1 ( 0.5,−0.5,−0.5) → ( 1.0, −0.5, −0.5)
-    //   v3 (−0.5, 0.5,−0.5) → (−1.0,  0.5, −0.5)
-    // Verts that do NOT move (v2, v4–v7): unchanged.
+unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SY=2.
+    // Verts that MOVE (selected — only v0; v1 and v3 sit on the scale axis'
+    // own zero and stay put, which is what makes v0's landing point the whole
+    // claim):
+    //   v0 (−0.5,−0.5,−0.5) → (−1.0, −1.0, −0.5)
+    // Verts that do NOT move: everything else.
     enum string json = `{
-      "name": "acen_select_center/l_shape_sx2",
+      "name": "acen_select_center/l_shape_sy2",
       "source": "analytic golden — selection bbox center pivot, vertex mode",
       "provenance": {
         "schema": 1,
@@ -69,11 +90,11 @@ unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SX=2.
         "captured_utc": "unknown",
         "harness": null,
         "task": null,
-        "notes": "analytic golden -- selection bbox center pivot, vertex mode; source-grounded against actcenter.d/mesh.d (see file header derivation)."
+        "notes": "analytic golden -- selection bbox center pivot, vertex mode; source-grounded against actcenter.d/mesh.d and the oriented selection frame in toolpipe/obbox.d (see file header derivation)."
       },
       "tolerance": 1e-4,
       "cases": [{
-        "name": "acen.select L-shape SX=2 (bbox pivot discriminates avg)",
+        "name": "acen.select L-shape SY=2 (bbox pivot discriminates avg)",
         "input": [
           { "reset": true },
           { "select": { "mode": "vertices",
@@ -84,14 +105,14 @@ unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SX=2.
                         ] } }
         ],
         "op": [
-          { "acen_transform": { "tool": "scale", "attr": "SX", "value": 2.0,
+          { "acen_transform": { "tool": "scale", "attr": "SY", "value": 2.0,
                                 "acen": "select" } }
         ],
         "expected_pairs": [
-          { "before": [-0.5, -0.5, -0.5], "after": [-1.0, -0.5, -0.5] },
-          { "before": [ 0.5, -0.5, -0.5], "after": [ 1.0, -0.5, -0.5] },
+          { "before": [-0.5, -0.5, -0.5], "after": [-1.0, -1.0, -0.5] },
+          { "before": [ 0.5, -0.5, -0.5], "after": [ 0.5, -0.5, -0.5] },
           { "before": [ 0.5,  0.5, -0.5], "after": [ 0.5,  0.5, -0.5] },
-          { "before": [-0.5,  0.5, -0.5], "after": [-1.0,  0.5, -0.5] },
+          { "before": [-0.5,  0.5, -0.5], "after": [-0.5,  0.5, -0.5] },
           { "before": [-0.5, -0.5,  0.5], "after": [-0.5, -0.5,  0.5] },
           { "before": [ 0.5, -0.5,  0.5], "after": [ 0.5, -0.5,  0.5] },
           { "before": [ 0.5,  0.5,  0.5], "after": [ 0.5,  0.5,  0.5] },
@@ -104,9 +125,12 @@ unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SX=2.
 
 unittest { // ACEN-SelectAuto, same L-shape: center path is lockstep with Select.
     // SelectAuto calls selectionCentroid(SelectSubMode.Center) directly
-    // (actcenter.d:737) — same centroidWithGeometryFallback() path as Select.
-    // This vertex selection's normalAcc = (−1,−1,−3); dominant axis = Z → same
-    // frame as Select. SX=2 about pivot (0,0,−0.5) gives identical results.
+    // (actcenter.d:737) — same centroidWithGeometryFallback() path as Select,
+    // and this case asserts THE CENTRE, which is the only thing the two modes
+    // share. Their FRAMES differ by construction (selectauto pairs the
+    // selection centre with the AUTO axis tool), so this case keeps the SX
+    // probe: on the world identity local-X is world X and the two candidate
+    // pivots differ by 1/6 along it.
     enum string json = `{
       "name": "acen_select_center/selectauto_lockstep",
       "source": "analytic golden — SelectAuto center lockstep with Select",
