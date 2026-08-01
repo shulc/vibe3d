@@ -4151,7 +4151,7 @@ unittest {
 // chosen at a CLAMP, which is where E-1 and E-3 separate the most.
 unittest {
     import math     : lookAt, perspectiveMatrix;
-    import std.math : PI, fabs;
+    import std.math : PI;
 
     invalidateSnapGrids();
 

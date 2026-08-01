@@ -18879,11 +18879,14 @@ unittest {
     m.edges = [ [1u, 2u] ];        // midpoint (0.05, 0, 0) -> px (404, 400)
     t.meshSrc_ = () => &m;
 
-    ImVec2 pv, pa, pb;
+    ImVec2 pv, pmid;
     assert(TopologyPenTool.projectPt(m.vertices[0], vp, pv), "setup: the vertex must project");
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: edge end A must project");
-    assert(TopologyPenTool.projectPt(m.vertices[2], vp, pb), "setup: edge end B must project");
-    immutable ImVec2 pmid = ImVec2((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
+    // The projection of the WORLD midpoint, which is what the rule measures —
+    // not the midpoint of the two projected endpoints. On this z = 0 rig the
+    // two coincide, but the rule is stated on the world point and the fixture
+    // has to ask the same question the code does.
+    assert(TopologyPenTool.projectPt((m.vertices[1] + m.vertices[2]) * 0.5f, vp, pmid),
+        "setup: the edge midpoint must project");
 
     immutable float reach = topoPenPressPickPx(vp);
 
