@@ -1019,6 +1019,126 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// closestOnSegmentToRay — the parameter on the world segment a→b of the point
+// of CLOSEST APPROACH to the ray LINE (origin, dir), clamped to [0, 1].
+//
+// This is the ordinary 3D line/segment closest approach, and it is the law a
+// cursor-to-edge election runs on. It is NOT the screen-nearest point on the
+// segment, and the difference is not a rounding term: the two agree only when
+// the eye, the cursor ray and the edge are coplanar, and disagree by up to 0.61
+// in parameter otherwise (a clamp disagreement — one model wants a point past
+// an endpoint and the other does not). Anyone reaching for "the point that
+// projects nearest the cursor" wants a different function; the RANK that goes
+// with this election is the re-projected screen distance of the point this
+// returns, which the caller computes, not this.
+//
+// The construction, written as the perpendicular it is:
+//
+//     E = b − a
+//     M = (dir × E) × dir      -- E's component perpendicular to `dir`, times
+//                                 |dir|²; the plane the closest approach lives in
+//     t = dot(origin − a, M) / dot(E, M)
+//
+// The usual statement of this normalises M first. That is redundant here and
+// deliberately skipped: M appears once in the numerator and once in the
+// denominator, so any positive scale on it cancels exactly, and dropping the
+// normalise removes both a square root and its epsilon. `dot(E, M)` is then
+// |M|²/|dir|² — always non-negative — so the single `> 0` denominator test
+// below covers BOTH degeneracies the normalising form needs two tests for:
+// a zero-length segment, and a segment parallel to the ray (where M vanishes).
+//
+// `dir` need not be unit-length; the ratio is invariant under its scale.
+//
+// DEGENERATE ⇒ false, with `t = 0`. A segment parallel to the view ray projects
+// to a single pixel, so every parameter on it is equally near the cursor in
+// screen space and no choice among them is more correct than another; `t = 0`
+// is a choice, not a measurement, and the `false` return lets a caller that
+// cares say so.
+bool closestOnSegmentToRay(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, out float t)
+{
+    t = 0.0f;
+    Vec3 e = b - a;
+    Vec3 m = cross(cross(dir, e), dir);
+    float den = dot(e, m);
+    if (!(den > 0.0f)) return false;      // also rejects NaN
+    float u = dot(origin - a, m) / den;
+    if (u < 0.0f) u = 0.0f;
+    else if (u > 1.0f) u = 1.0f;
+    t = u;
+    return true;
+}
+
+unittest { // closestOnSegmentToRay — the interior solution, on a rig where the
+           // screen-nearest and the 3D-nearest points are NOT the same point.
+    // Eye at the origin looking down -Z; the ray through a point that is off
+    // the plane containing the segment, so coplanarity cannot hide a
+    // difference. Segment spans a 5:1 depth ratio.
+    Vec3 o = Vec3(0, 0, 0);
+    Vec3 d = normalize(Vec3(0.2f, 0.1f, -1.0f));
+    Vec3 a = Vec3(1.0f, 0.0f, -2.0f);
+    Vec3 b = Vec3(0.0f, 1.0f, -10.0f);
+    float t;
+    assert(closestOnSegmentToRay(o, d, a, b, t), "a well-conditioned rig must solve");
+    assert(t > 0.0f && t < 1.0f, "the closest approach is interior here");
+
+    // The defining property, checked directly rather than against a second
+    // implementation of the same formula: the elected point's perpendicular
+    // distance to the ray line is a MINIMUM over the segment.
+    float perp(float u) {
+        Vec3 p = a + (b - a) * u;
+        Vec3 w = p - o;
+        Vec3 c = cross(w, d);
+        return c.length / d.length;
+    }
+    immutable float best = perp(t);
+    foreach (i; 0 .. 2001) {
+        immutable float u = cast(float)i / 2000.0f;
+        assert(perp(u) >= best - 1e-5f,
+            "the elected parameter must minimise the distance to the ray line");
+    }
+}
+
+unittest { // closestOnSegmentToRay — clamping, degeneracies, and dir-scale
+           // invariance.
+    Vec3 o = Vec3(0, 0, 0);
+    Vec3 d = Vec3(0, 0, -1);
+    float t;
+
+    // Closest approach beyond b -> clamps to 1.
+    assert(closestOnSegmentToRay(o, d, Vec3(1, 0, -5), Vec3(0.2f, 0, -5), t),
+        "a segment across the ray must solve");
+    assert(t == 1.0f, "a solution past the far endpoint must clamp to 1");
+
+    // Closest approach before a -> clamps to 0.
+    assert(closestOnSegmentToRay(o, d, Vec3(0.2f, 0, -5), Vec3(1, 0, -5), t),
+        "the reversed segment must solve");
+    assert(t == 0.0f, "a solution before the near endpoint must clamp to 0");
+
+    // Zero-length segment -> degenerate.
+    t = 0.5f;
+    assert(!closestOnSegmentToRay(o, d, Vec3(1, 0, -5), Vec3(1, 0, -5), t),
+        "a zero-length segment has no closest-approach parameter");
+    assert(t == 0.0f, "a degenerate answer must be the documented t = 0");
+
+    // Segment parallel to the ray -> degenerate (M vanishes).
+    t = 0.5f;
+    assert(!closestOnSegmentToRay(o, d, Vec3(1, 0, -2), Vec3(1, 0, -9), t),
+        "a segment along the view ray has no distinguished parameter");
+    assert(t == 0.0f, "a degenerate answer must be the documented t = 0");
+
+    // Scaling `dir` must not move the answer — the normalise this function
+    // omits is what would otherwise have to guarantee that.
+    Vec3 dd = normalize(Vec3(0.3f, -0.2f, -1.0f));
+    Vec3 a2 = Vec3(-1.0f, 0.5f, -3.0f), b2 = Vec3(2.0f, -0.5f, -12.0f);
+    float t1, t2;
+    assert(closestOnSegmentToRay(o, dd,        a2, b2, t1));
+    assert(closestOnSegmentToRay(o, dd * 7.5f, a2, b2, t2));
+    import std.math : abs;
+    assert(abs(t1 - t2) < 1e-6f,
+        "the elected parameter must be invariant under the ray direction's scale");
+}
+
 // Build the camera plane through the eye and the screen-space line (ax,ay)→(bx,by).
 //
 // For perspective: two rays from vp.eye span a unique plane through the eye.

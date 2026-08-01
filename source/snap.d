@@ -5,7 +5,7 @@ import core.sync.mutex : Mutex;
 
 import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
-              closestOnSegment2DSquared, cross, dot,
+              closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
               closestPointOnLineToRay;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
@@ -1081,42 +1081,63 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // candidate offered to `consider` is the ON-EDGE point in both cases —
         // that is the point the leg is ranked on.
         //
-        // WHAT THE ON-EDGE POINT ACTUALLY IS, and the one place this model
-        // meets a pre-existing approximation head-on. `t` below is the closest
-        // parameter on the PROJECTED segment, and it is then used as a WORLD
-        // parameter. Under perspective those are two different parameters, so
-        // `a + (b - a) * t` is NOT the world point that projects nearest to
-        // the cursor — it only is when the endpoints sit at equal depth. The
-        // gap grows with the depth ratio along the edge and it is not a
-        // rounding term: on the edge (1, 0, 4) -> (1.5, 0, -20) under this
-        // file's own test viewport, with the cursor on the world midpoint's
-        // OWN pixel, the elected on-edge point lands 13.42 px from the cursor
-        // while the midpoint is 0.46 px from it.
+        // WHAT THE ON-EDGE POINT IS — MEASURED (task 0567 / the edge-point
+        // election read), and it is a two-stage law with two DIFFERENT metrics
+        // on purpose:
         //
-        // So the on-edge point is NOT "never farther from the cursor than the
-        // midpoint" — an earlier revision of this comment said it was, and
-        // used it to claim the edge gather is a superset of the old centre
-        // gather. That is true of the true closest point on the projected
-        // segment and false of the point actually built here, and the
-        // difference is reachable rather than theoretical.
+        //   1. the SEGMENT is elected in SCREEN space. For a straight edge
+        //      that is one segment and the stage collapses to "does this edge
+        //      project at all", which is the endpoint guard below. (The
+        //      reference tessellates curved edges and really does pick among
+        //      several segments here; our edges are straight, so the stage has
+        //      nothing to choose between.)
+        //   2. the POINT ON that segment is elected in 3D: the closest
+        //      approach between the world segment and the cursor's eye RAY,
+        //      clamped to [0, 1] — `closestOnSegmentToRay`.
+        //   3. the RANK is the elected point's TRUE SCREEN distance, obtained
+        //      by re-projecting it. Not the stage-1 metric and not the 3D
+        //      distance. `consider` below already does exactly that, so the
+        //      rank half of the law was never the missing half.
         //
-        // WHAT DOES HOLD, unconditionally, is the reachability rule the model
-        // is actually made of: A CENTRE IS REACHABLE EXACTLY WHEN ITS ELEMENT
-        // IS. A range that cannot reach the edge cannot reach that edge's
-        // centre either — including when the cursor is sitting on the centre's
-        // own pixel. That is the measured shape (the reference queries the
-        // centre only inside a branch that already holds a hit edge), it is
-        // what makes "the centre inherits the leg's rank" a single rule
-        // instead of two, and it is pinned by a test.
+        // The two-metric structure is the part a port gets wrong, because the
+        // natural implementation ranks with whatever it elected with.
         //
-        // The approximation is the EDGE type's and it predates this model: at
-        // the same cursor the Edge type loses the same snap with both centre
-        // types switched off. What changed is that EdgeCenter now shares it
-        // instead of carrying a gather of its own. Fixing it means
-        // interpolating perspective-correctly — world parameter
-        // `u = t*wa / ((1-t)*wb + t*wa)` from the endpoints' clip w — which
-        // moves where the EDGE snap lands and is therefore its own
-        // measurement and its own task, not a rider on this one.
+        // WHAT THIS REPLACED, and why it was a defect rather than a parity
+        // choice. The old code took the closest parameter on the PROJECTED
+        // segment and applied it as a WORLD parameter, so `a + (b - a) * t`
+        // was the nearest point only when the endpoints sat at equal depth.
+        // Over 55 514 random near-cursor edges the old elected point sat a
+        // median 12.58 px from the cursor with a tail to 593 px; this law's
+        // sits a median 3.71 px away with a tail that stops at 13.6 px.
+        //
+        // NOT THE SCREEN-NEAREST POINT, and the distinction is the whole
+        // reason this is written out. The perspective-correct screen-nearest
+        // parameter `u = t*wa / ((1-t)*wb + t*wa)` is a THIRD law — it was the
+        // one 0567 originally filed — and it is not this one. The two agree to
+        // the last bit whenever the eye, the cursor ray and the edge are
+        // COPLANAR, which is exactly the rig 0567 measured on; off that plane
+        // they disagree by up to 0.61 in parameter, at the clamps, where one
+        // wants a point past an endpoint and the other does not. So a test
+        // written on a coplanar rig cannot tell the two apart and would pass
+        // either way — the test that guards this line spans depth deliberately.
+        // This form also needs no clip `w` at all, and is cheaper for it.
+        //
+        // WHAT HOLDS UNCHANGED is the reachability rule the centre model is
+        // made of: A CENTRE IS REACHABLE EXACTLY WHEN ITS ELEMENT IS. A range
+        // that cannot reach the edge cannot reach that edge's centre either —
+        // including when the cursor is sitting on the centre's own pixel. That
+        // is the measured shape (the reference queries the centre only inside
+        // a branch that already holds a hit edge), it is what makes "the
+        // centre inherits the leg's rank" a single rule instead of two, and it
+        // is pinned by a test. It survives this fix because it never depended
+        // on WHICH on-edge point was elected, only on the edge being elected
+        // at all.
+        //
+        // STILL UNREAD, and therefore still wrong the old way: the polygon
+        // leg's BOUNDARY RING (`closestOnPolygonSurface`) runs the same
+        // projected-t-as-world-t arithmetic. Its reference site is a different
+        // function and nobody has read it, so it is not "the same fix one leg
+        // over" — it is an open item on 0567 with a named thing to read first.
         //
         // `legType` is what the walk REPORTS (it reaches the `admit`
         // predicate, and it is the `SnapResult.targetType` when no refinement
@@ -1137,17 +1158,35 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                                     : SnapType.EdgeCenter;
             auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
+            // The cursor's eye ray — one per call, not one per edge.
+            Vec3 rayOrig, rayDir;
+            screenPointToRay(cast(float)sx, cast(float)sy, vp, rayOrig, rayDir);
             foreach (ei; cands) {
                 auto edge = m.edges[ei];
                 if (!edgeVisible(edge[0], edge[1])) continue;
-                float px0, py0, ndcZ0, px1, py1, ndcZ1;
                 Vec3 a = m.vertices[edge[0]];
                 Vec3 b = m.vertices[edge[1]];
+                // STAGE 1, and the only thing left of it for a straight edge:
+                // an edge with an endpoint behind the camera is not elected.
+                // The candidate grid already drops those (`projectElementCells`
+                // fails on the first behind-camera vertex), so this repeats the
+                // grid on the normal path — but `queryCandidateGrid` returns
+                // EVERY index unfiltered when the range is degenerate
+                // (`outerRangePx <= 0`), and on that path this guard is the
+                // only one there is.
+                float px0, py0, ndcZ0, px1, py1, ndcZ1;
                 if (!projectToWindowFull(a, vp, px0, py0, ndcZ0)) continue;
                 if (!projectToWindowFull(b, vp, px1, py1, ndcZ1)) continue;
+                // STAGE 2 — the election, in 3D. A degenerate answer (a
+                // zero-length edge, or an edge pointing straight down the view
+                // ray) leaves `t` at 0 and elects endpoint `a`: every point on
+                // such an edge shares one pixel, so the rank is the same
+                // whichever is chosen, and `consider` ranks it correctly either
+                // way.
                 float t;
-                closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
-                                           px0, py0, px1, py1, t);
+                closestOnSegmentToRay(rayOrig, rayDir, a, b, t);
+                // STAGE 3 — the rank. `consider` re-projects and measures the
+                // true screen distance; that IS the reference's ranking metric.
                 consider(a + (b - a) * t, cast(int)ei, legType, slot);
             }
         }
@@ -3767,11 +3806,31 @@ unittest {
 
     immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
 
-    // Near end one unit in front of the eye, far end twenty-five: a depth ratio
-    // of 25, which is what makes the screen parameter and the world parameter
-    // disagree by more than a pixel.
+    // RIG MIGRATED, on this block's own written instruction. The message below
+    // used to say "if this fires, the edge candidate has become
+    // perspective-correct — re-derive it on a sharper edge rather than deleting
+    // it", and it fired the moment the edge election became the 3D closest
+    // approach to the eye ray. Every RULE assertion below is untouched; only
+    // the geometry it is asked about moved, because the old geometry can no
+    // longer express the premise.
+    //
+    // WHY THE OLD RIG STOPPED WORKING, and it is worth writing down because it
+    // rules out a whole family of replacements. The old cursor sat on the world
+    // midpoint's OWN pixel. A point that projects onto the cursor's pixel lies
+    // ON the cursor's eye ray, at zero perpendicular distance — so under the
+    // elected-in-3D law the midpoint is always exactly what gets elected, and
+    // "the elected point is far while the midpoint is near" is unreachable for
+    // EVERY edge, not just this one. No sharpening of that arrangement helps.
+    //
+    // THE SHARP EDGE THAT DOES WORK is a CLAMP. Near end one unit in front of
+    // the eye, far end twenty: the far end is farther off the eye ray in world
+    // units yet nearer to the cursor in pixels, because it is twenty times
+    // deeper. The 3D election therefore recedes monotonically and clamps to the
+    // near endpoint at 21.5 px, while the midpoint sits at 7.8 px. Which is the
+    // same inequality the block has always needed — elected point far, midpoint
+    // near — reached by depth instead of by standing on the midpoint's pixel.
     Mesh m;
-    m.vertices = [ Vec3(1.0f, 0, 4.0f), Vec3(1.5f, 0, -20.0f) ];
+    m.vertices = [ Vec3(0.05f, 0.02f, 4.0f), Vec3(0.25f, -0.30f, -15.0f) ];
     m.edges    = [ [0u, 1u] ];
     immutable Vec3 mid = (m.vertices[0] + m.vertices[1]) * 0.5f;
 
@@ -3781,9 +3840,8 @@ unittest {
             "fixture: every fixture point must project on-screen");
         return [qx, qy];
     }
-    auto pmid = pixelOf(mid);
-    immutable int sx = cast(int)round(pmid[0]);
-    immutable int sy = cast(int)round(pmid[1]);
+    immutable int sx = 400;
+    immutable int sy = 400;
     float distPx(Vec3 w) {
         auto p = pixelOf(w);
         return sqrt((p[0] - sx) * (p[0] - sx) + (p[1] - sy) * (p[1] - sy));
@@ -3805,16 +3863,15 @@ unittest {
 
     immutable float dOnEdge = distPx(wide.worldPos);
     immutable float dMid    = distPx(mid);
-    assert(dMid < 1.0f,
-        "fixture: the cursor is the world midpoint's own pixel, so the centre "
-        ~ "is essentially on the cursor");
     assert(dOnEdge > 10.0f && dMid < 10.0f,
         "fixture, and the finding this block exists for: the ELECTED on-edge "
-        ~ "point is farther from the cursor than the midpoint is — the opposite "
-        ~ "of the inequality the first revision of this port asserted. If this "
-        ~ "fires, the edge candidate has become perspective-correct and the "
-        ~ "block below is testing nothing; re-derive it on a sharper edge "
-        ~ "rather than deleting it");
+        ~ "point is farther from the cursor than the midpoint is. That is what "
+        ~ "makes the 10 px probes below mean anything — the range has to be "
+        ~ "able to reach the centre's pixel and NOT the elected point, or the "
+        ~ "reachability rule is never actually put to the question. If this "
+        ~ "fires, the edge election changed again; re-derive it on a sharper "
+        ~ "edge rather than deleting it, and read the rig note above first — "
+        ~ "putting the cursor on the midpoint's own pixel cannot work");
 
     // --- the rule: 10 px reaches the centre's pixel and reaches NOTHING ------
     cfg.innerRangePx = 10.0f;
@@ -3842,8 +3899,10 @@ unittest {
         ~ "express");
 
     // --- and the positive control: reach the element, get the centre --------
-    cfg.innerRangePx = 20.0f;
-    cfg.outerRangePx = 20.0f;
+    // 30 px, not 20: the elected point on the migrated rig is 21.5 px out, so
+    // this is the same "one notch past the elected point" the block always had.
+    cfg.innerRangePx = 30.0f;
+    cfg.outerRangePx = 30.0f;
     cfg.enabledTypes = SnapType.EdgeCenter;
     invalidateSnapGrids();
     SnapResult c20 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
@@ -4063,6 +4122,172 @@ unittest {
             ~ "range, and here it is not — so the vertex stands and answers "
             ~ "with a highlight. Snapping to the edge here means the range "
             ~ "clause was dropped and the veto now fires on proximity alone");
+    }
+
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// THE EDGE POINT ELECTION — the elected on-edge point is the 3D closest
+// approach to the cursor's eye ray, and this test spans DEPTH because nothing
+// shallower can see the difference.
+//
+// Three laws are in play and a badly chosen rig cannot tell them apart:
+//
+//   E-1  the reference's, and now ours: the point on the world segment closest
+//        to the eye RAY, clamped to [0, 1], ranked by its re-projected screen
+//        distance.
+//   E-2  what this file used to do: the closest parameter on the PROJECTED
+//        segment, applied as a WORLD parameter.
+//   E-3  the perspective-correct SCREEN-NEAREST point,
+//        `u = t*wa / ((1-t)*wb + t*wa)`. Plausible, filed as the fix once, and
+//        NOT what the reference computes.
+//
+// E-1 and E-3 coincide exactly whenever the eye, the cursor ray and the edge
+// are COPLANAR — both then reduce to finding the zero of one affine function.
+// A coplanar fixture therefore passes under either law and proves only that
+// E-2 is gone. Both rigs below are deliberately non-coplanar (the two
+// endpoints' offsets from the ray are not parallel), and the second one is
+// chosen at a CLAMP, which is where E-1 and E-3 separate the most.
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, fabs;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float distPxAt(Vec3 w, int cx, int cy) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: the probe point must project on-screen");
+        immutable float dx = qx - cast(float)cx;
+        immutable float dy = qy - cast(float)cy;
+        return sqrt(dx * dx + dy * dy);
+    }
+    float dist3(Vec3 p, Vec3 q) {
+        immutable Vec3 d = p - q;
+        return sqrt(dot(d, d));
+    }
+
+    // -----------------------------------------------------------------------
+    // RIG 1 — the headline effect. An edge running from just in front of the
+    // camera (world z = 4, i.e. one unit of depth) out to z = -15 (twenty
+    // units), so the endpoints' depths differ by a factor of twenty. The
+    // cursor sits beside the projected segment.
+    //
+    // E-1 elects t = 0.04499, whose pixel is 0.79 px from the cursor.
+    // E-2 elects t = 0.48547, whose pixel is 25.41 px away — an EIGHT-unit
+    // world displacement along the edge, and it loses a snap the cursor is
+    // sitting on top of.
+    // -----------------------------------------------------------------------
+    {
+        immutable int cx = 415, cy = 385;
+        Mesh m;
+        m.vertices = [ Vec3(0.06f,  0.10f,   4.0f),
+                       Vec3(0.35f, -0.60f, -15.0f) ];
+        m.edges    = [ [0u, 1u] ];
+
+        immutable Vec3 a = m.vertices[0], b = m.vertices[1];
+        immutable Vec3 pE1 = a + (b - a) * 0.044985f;   // the 3D closest approach
+        immutable Vec3 pE2 = a + (b - a) * 0.485466f;   // the old projected-t point
+
+        // Premises, stated rather than trusted: this rig separates E-1 from
+        // E-2 by 25 px of rank and 8 world units of position.
+        assert(distPxAt(pE1, cx, cy) < 1.5f,
+            "fixture: the 3D closest approach must sit on the cursor's pixel");
+        assert(distPxAt(pE2, cx, cy) > 20.0f,
+            "fixture: the projected-t point must be far off it, or this rig "
+            ~ "proves nothing about which law ran");
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.Edge;      // the edge leg alone, no cascade
+        cfg.innerRangePx = 10.0f;
+        cfg.outerRangePx = 60.0f;
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
+            "an edge whose 3D-closest point is under the cursor must SNAP; a "
+            ~ "projected-t election ranks the same edge 25 px out and misses "
+            ~ "the 10 px acceptance entirely");
+        assert(dist3(r.worldPos, pE1) < 1e-3f,
+            "the elected point must be the closest approach to the eye ray");
+        assert(dist3(r.worldPos, pE2) > 1.0f,
+            "and must NOT be the projected parameter applied as a world one");
+    }
+
+    // -----------------------------------------------------------------------
+    // RIG 2 — the discriminator, at a clamp. Same depth span, but the edge
+    // recedes from the eye ray monotonically in 3D while its SCREEN offset
+    // shrinks (the far end is farther off-axis in world units and nearer to
+    // the cursor in pixels, because it is twenty times deeper).
+    //
+    //   E-1 clamps to t = 0      -> endpoint A, 21.54 px from the cursor
+    //   E-3 elects  t ~ 0.696    -> 7.80 px from the cursor
+    //   E-2 elects  t ~ 0.979    -> 7.81 px from the cursor
+    //
+    // So here the reference's law is the one that ranks WORSE in pixels, and
+    // that is the point: this is a law, not an optimisation. The three elected
+    // points are 13.2 and 18.6 world units apart, so nothing about float
+    // tolerance is doing the work.
+    //
+    // This rig is why a coplanar test is not enough. On a coplanar rig E-1 and
+    // E-3 agree to the last bit; here they disagree by 0.696 in parameter,
+    // which is the largest kind of disagreement the two laws have.
+    // -----------------------------------------------------------------------
+    {
+        immutable int cx = 400, cy = 400;
+        Mesh m;
+        m.vertices = [ Vec3(0.05f,  0.02f,   4.0f),
+                       Vec3(0.25f, -0.30f, -15.0f) ];
+        m.edges    = [ [0u, 1u] ];
+
+        immutable Vec3 a = m.vertices[0], b = m.vertices[1];
+        immutable Vec3 pE1 = a;                          // the clamp
+        immutable Vec3 pE3 = a + (b - a) * 0.695945f;    // screen-nearest
+        immutable Vec3 pE2 = a + (b - a) * 0.978622f;    // projected-t-as-world
+
+        // The premise that makes this rig a discriminator and not a tautology:
+        // the reference's answer is the FARTHEST of the three in pixels, so a
+        // test that merely demanded "the nearest pixel" would assert the wrong
+        // law and pass under both rivals.
+        immutable float d1 = distPxAt(pE1, cx, cy);
+        immutable float d3 = distPxAt(pE3, cx, cy);
+        immutable float d2 = distPxAt(pE2, cx, cy);
+        assert(d1 > d3 + 10.0f && d1 > d2 + 10.0f,
+            "fixture: at this clamp the 3D election ranks WORSE in pixels than "
+            ~ "either rival — that asymmetry is what makes the rig decisive");
+        assert(dist3(pE1, pE3) > 10.0f && dist3(pE1, pE2) > 10.0f,
+            "fixture: and the three elected points must be far apart in world "
+            ~ "space, so no tolerance can blur them together");
+
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.enabledTypes = SnapType.Edge;
+        cfg.innerRangePx = 30.0f;    // wide enough to accept the 21.5 px answer
+        cfg.outerRangePx = 60.0f;
+
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
+            "the edge must still be elected and accepted at 21.5 px");
+        assert(dist3(r.worldPos, pE1) < 1e-4f,
+            "the elected point must be the CLAMPED 3D closest approach. "
+            ~ "Landing on the screen-nearest point instead means the "
+            ~ "perspective-correct-interpolation law was implemented — a "
+            ~ "different law that happens to agree with this one on every "
+            ~ "coplanar rig, including the one this fix was first measured on");
+        assert(dist3(r.worldPos, pE3) > 10.0f && dist3(r.worldPos, pE2) > 10.0f,
+            "and it must be neither rival's point");
     }
 
     invalidateSnapGrids();
