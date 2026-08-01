@@ -95,7 +95,7 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //     enters the constrained mode is a per-tool question and none of those
 //     tools' handle dispatches has been read.
 //   * NOT under the `Screen` action centre — and that is a HOLD, not a match.
-//     `actr.screen` publishes a `ScreenAxis*` object over the translator slot,
+//     `actr.screen` publishes a SECOND object over the translator slot,
 //     but that object's `GetNewPosition` is a DECORATOR, not a replacement
 //     conversion: it forwards to the inner translator — this same law — and
 //     then adds a file-scope hit-handle triple to every component, re-latched
@@ -119,9 +119,9 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 //   * `newT − T` has exactly one non-zero component on 12 of 12 axis-arm
 //     hits, and it equals `t`. The free control, same recording, same pixel
 //     delta, has two. The matrix sandwich really does collapse.
-//   * `AGLViewSnap` is NOT the identity: 30 of 30 evaluations rounded `t` to
-//     the nearest 0.002. That is the one prediction the read got wrong, and
-//     the term is ported below rather than dropped.
+//   * the reference's view snap is NOT the identity: 30 of 30 evaluations
+//     rounded `t` to the nearest 0.002. That is the one prediction the read
+//     got wrong, and the term is ported below rather than dropped.
 // Still NOT settled by that recording, so still decoded rather than observed:
 // whether the arming base is the action centre alone or the action centre plus
 // the tool's own position triple (the rig carried a zero triple), whether the
@@ -408,10 +408,11 @@ float viewWorldPerPixel(const ref Viewport vp) {
 // The reference's grid quantum on the axis scalar, in world units.
 //
 // MEASURED, 30 evaluations out of 30, on the recording that first executed the
-// arm: `AGLViewSnap` returns `t` rounded to the nearest multiple of this. Six
-// distinct pre-snap values across three axes and two drag lengths, every one
-// of them round-to-nearest with no exception, plus the free-path control on
-// the same recording (so the quantum is the translator's, not the arm's).
+// arm: the reference's view snap returns `t` rounded to the nearest multiple
+// of this. Six distinct pre-snap values across three axes and two drag
+// lengths, every one of them round-to-nearest with no exception, plus the
+// free-path control on the same recording (so the quantum belongs to the
+// shared translator, not to the arm).
 //
 // WHERE THE NUMBER COMES FROM IS NOT READ, and that is stated rather than
 // papered over. One camera, one rig, one grid setting. It could be a fixed
@@ -489,7 +490,7 @@ float axisArmDeltaUnsnapped(int mx,     int my,
 //     dS = toScreen(base + axis·k) − toScreen(base)
 //     r  = |dS| > 0 ? 1/|dS| : 1
 //     t  = 0.1 · k · (Δpx · dS) · r              ; and 0.1·k ≡ pixelScale
-//     t  = AGLViewSnap(t)                        ; round to the nearest 0.002
+//     t  = viewSnap(t)                           ; round to the nearest 0.002
 //
 // so `k` cancels out of the gain exactly as it does on the free/plane path,
 // and what is left is `pixelScale · (Δpx · ŝ)`. `k` survives only as the step
@@ -551,9 +552,9 @@ version (unittest) {
     private enum int    PINNED_PANE_W = 1098;
     private enum int    PINNED_PANE_H = 832;
 
-    // The reference's OWN snap rows, verbatim: `t` read immediately before
-    // `AGLViewSnap` and immediately after, on the recording that first
-    // executed the axis arms. Six distinct pre-snap values — three axes x two
+    // The reference's OWN snap rows, verbatim: `t` read immediately before its
+    // view snap and immediately after, on the recording that first executed
+    // the axis arms. Six distinct pre-snap values — three axes x two
     // drag lengths — and the six answers the engine gave.
     //
     // These are not derived from our quantum; the quantum was derived from
