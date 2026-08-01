@@ -1036,7 +1036,8 @@ struct Mesh {
     ///    ARE allowed — the quad becomes a triangle.
     ///  - neither `keep` nor `drop` is referenced by any face: `compactUnreferenced`
     ///    would drop both as orphans, a net vanish rather than a weld.
-    /// The same four rules `weldVertexPair` documents, evaluated per pair.
+    /// The first, third and fourth are `weldVertexPair`'s own rules evaluated
+    /// per pair; the second is the one only a LIST can pose.
     size_t weldVertexPairs(in uint[2][] pairs) {
         if (pairs.length == 0) return 0;
         if (vertices.length < 2) return 0;
