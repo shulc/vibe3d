@@ -976,11 +976,19 @@ private:
     // arm above — by `resetAllGestureArms()`; `deactivate()` finalizes a
     // still-dirty drag first, so switching tools mid-gesture cannot leave an
     // un-undoable mutation behind.
+    //
+    // `moveWelded_` records whether the release's destructive landing (task
+    // 0555) actually absorbed anything. Set between the final placement and
+    // the undo record, and read by BOTH of the things that must behave
+    // differently after a topology change: the record's net-no-op test (which
+    // cannot compare against `moveBase_` any more — the vertex array was
+    // compacted under those indices) and the post-commit `resyncSession`.
     MoveElem     moveElem_  = MoveElem.None;
     uint[]       moveVerts_;
     Vec3[]       moveBase_;
     int          moveStartX_, moveStartY_;
     bool         moveDirty_ = false;
+    bool         moveWelded_ = false;
     MeshSnapshot moveBefore_;
 
     // --- P6 Add Loop session state (topology_pen.d,
@@ -2677,13 +2685,129 @@ public:
     /// of this query — is a no-op until the user turns snapping on. Whether the
     /// default should follow the reference is a separate decision about a
     /// different field, with six other consumers hanging off it.
-    private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp) {
+    ///
+    /// `exclude` (task 0555) names vertices that may not be answered with —
+    /// the vertices the querying GESTURE is itself moving. Without it a
+    /// dragged vertex is its own nearest candidate at zero distance and every
+    /// query answers "you have landed on yourself", which is the same
+    /// self-snap the transform path excludes for at
+    /// `move.d:applySnapToDelta`. Empty for the Split caller, which moves
+    /// nothing.
+    private int resolveSnapTargetVert(int mx, int my, const ref Viewport vp,
+                                      const(uint)[] exclude = null) {
         if (!dragSnap_.enabled) return -1;
         auto g = snapGuide();
         g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
-        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
-                                &g.admits);
+        if (exclude.length == 0)
+            return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
+                                    &g.admits);
+        // Composed, not folded into the guide: the guide states the TOOL'S
+        // admission policy (border / orientation), which is a property of the
+        // mesh and the attributes, while the moving set is a property of one
+        // gesture in flight. Keeping them separate means the guide the snap
+        // SERVICE holds keeps answering the same way for every other client.
+        scope admit = delegate bool(SnapType t, int idx, int slot) nothrow {
+            if (t == SnapType.Vertex && slot == 0)
+                foreach (x; exclude) if (cast(int)x == idx) return false;
+            return g.admits(t, idx, slot);
+        };
+        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+    }
+
+    // -----------------------------------------------------------------------
+    // THE DESTRUCTIVE LANDING (task 0555).
+    //
+    // A Move-family drag does not only re-place its grab: with the
+    // application's element snapping ON, a grabbed vertex brought to within
+    // the snap ACCEPTANCE radius of another vertex is ABSORBED into it — the
+    // grab disappears and the target survives, at the target's own position.
+    // Measured (task 0545, reproduced across two boots) at all three grabs:
+    // a vertex grab loses one vertex, an EDGE grab loses BOTH of its
+    // endpoints — independently, each into its own target — and a LOOP grab
+    // loses all four of its. Outside the radius the two configurations are
+    // bit-identical, so the radius is the whole gate.
+    //
+    // WHAT GATES IT, and this is the part that was mis-attributed once: the
+    // shared, application-wide snap ENABLE — our `SnapPacket.enabled`, the
+    // packet `SnapStage` publishes to every snapping client — and NOT any pen
+    // attribute. The reference's own weld branch tests the return of the pen's
+    // snap query, and that query returns "no target" immediately unless the
+    // framework's global snap state is on; its `innerSnap`/`backFace` rows are
+    // read only inside the candidate-ADMISSION callback, where they choose
+    // WHICH element is found and never WHETHER the branch is reachable. Both
+    // of those are already wired that way here — the gate is
+    // `resolveSnapTargetVert`'s first line, the two attributes are
+    // `PenSnapGuide.admits` — so this landing needs no gate of its own beyond
+    // asking that one query.
+    //
+    // PER ELEMENT, NOT PER ANCHOR. Each moved vertex resolves its OWN target,
+    // at its OWN post-drag screen position, and welds into it alone; a vertex
+    // whose query comes back empty is simply left where the move put it. That
+    // is what makes an edge grab lose two vertices and a loop grab four, and
+    // it is forced by the measurement rather than chosen: a single query at a
+    // single cursor pixel returns a single element and cannot account for four
+    // absorptions in one gesture.
+    //
+    // WHAT WAS ASSUMED, stated because it is genuinely open: the reference
+    // runs its query from the cursor's own screen ray and keeps up to three
+    // target slots, and the third condition of its weld branch — an equality
+    // of the first machine word of the grabbed element's accessor and of the
+    // snapped target's — is undecoded (two readings survive: "the target is
+    // the same KIND of element I grabbed", and "the target is in the same
+    // mesh"). We resolve per moved vertex instead of per cursor, and we
+    // enforce the same-mesh reading implicitly (the query answers with primary-
+    // layer vertices only, `PenSnapGuide.admits`). The two agree on every cell
+    // that has been measured; they can differ when a grabbed edge's two
+    // endpoints come to rest near vertices of two DIFFERENT edges, where a
+    // same-kind reading would weld neither and this welds both. One breakpoint
+    // on that comparison would settle it.
+    //
+    // AT RELEASE, not per motion event, and that is a divergence in TIMING
+    // only. The reference re-evaluates its whole tool from the pre-gesture
+    // mesh on every drag event, so it can show the weld mid-drag and undo it
+    // by dragging away again; our Move writes vertex positions in place and
+    // owns no per-event rebuild, so a mid-drag topology edit would invalidate
+    // the very indices the rest of the drag is addressing. The committed
+    // result — which is what was measured — is identical either way.
+    // -----------------------------------------------------------------------
+
+    /// Resolve one weld target per moved vertex and absorb each into its own,
+    /// in a single mesh pass. Returns the number of vertices absorbed.
+    ///
+    /// `verts` are the vertices the gesture moved, in their CURRENT (post-move)
+    /// indices; their live positions are what the queries are aimed at, so this
+    /// must be called AFTER the move has been written and BEFORE the mesh is
+    /// snapshotted for undo.
+    ///
+    /// Every moved vertex is excluded from every query, not just its own: the
+    /// two endpoints of a dragged edge travel together and each sits well
+    /// inside the other's acceptance radius, so a self-set narrower than the
+    /// whole moving set would weld the grab into itself and delete it.
+    private size_t weldMovedVertices(const(uint)[] verts, const ref Viewport vp) {
+        import std.math : lround;
+        if (verts.length == 0) return 0;
+        // An EARLY-OUT on the shared enable, not the gate: the gate is
+        // `resolveSnapTargetVert`'s own first line, one per moved vertex. This
+        // spares a projection and a query per vertex in the (default) case
+        // where none of them can answer, and it is deliberately redundant —
+        // removing it changes no outcome.
+        if (!dragSnap_.enabled) return 0;
+        auto m = mesh;
+        if (m is null) return 0;
+
+        uint[2][] pairs;
+        foreach (vi; verts) {
+            if (vi >= m.vertices.length) continue;   // stale arm — defensive
+            ImVec2 pt;
+            if (!projectPt(m.vertices[vi], vp, pt)) continue;   // off-screen/behind
+            immutable int t = resolveSnapTargetVert(cast(int)lround(pt.x),
+                                                    cast(int)lround(pt.y), vp, verts);
+            if (t < 0) continue;
+            pairs ~= [cast(uint)t, vi];
+        }
+        if (pairs.length == 0) return 0;
+        return m.weldVertexPairs(pairs);
     }
 
     // P3 (doc/topopen_p3_plan.md): project every vertex of the PRIMARY
@@ -4161,7 +4285,38 @@ public:
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
         applyMoveTargets(moveTargets(px, py, vp, vts));
+        // The destructive landing (task 0555), between the final placement and
+        // the undo record so the absorption rides the SAME entry the move
+        // does. Gated on `moveDirty_`: a grab that never moved anything cannot
+        // have been "brought to within" anything, and welding on a bare click
+        // would eat any vertex that merely happened to sit inside the
+        // acceptance radius all along.
+        if (moveDirty_ && weldMovedVertices(moveVerts_, vp) > 0) {
+            moveWelded_ = true;
+            afterWeld();
+        }
         recordLiveMove();
+        // A weld changed the TOPOLOGY, so — unlike a plain Move — every index
+        // any sibling gesture cached may now name different geometry. Same
+        // discipline as this tool's other topology-changing commits, and it
+        // runs AFTER the record because `resyncSession` drops the arm state
+        // `recordLiveMove` reads.
+        if (moveWelded_) resyncSession();
+    }
+
+    /// Post-weld housekeeping shared by the two Move commit paths: the mesh
+    /// has been rebuilt and compacted underneath the display, so re-sync
+    /// selection and re-upload. `weldVertexPairs` has already fired its own
+    /// `commitChange(Geometry)`.
+    private void afterWeld() {
+        auto m = mesh;
+        if (m is null) return;
+        m.syncSelection();
+        // Both calls under the gpu guard — `commitMoveLoop`'s shape, not
+        // `applyMoveTargets`'s: `refreshDisplay` dereferences the GpuMesh
+        // unconditionally once the active-mesh resolver is unset, which is
+        // exactly the state a GL-free unit rig runs in.
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
     }
 
     // Record whatever the live drag has already written, WITHOUT computing
@@ -4191,8 +4346,12 @@ public:
         // entry when they agree; only the moving set can have changed, so
         // this stays O(set), not O(mesh).
         enum float kNetEps = 1e-4f;   // the same eps `applyMoveTargets` writes by
-        bool net = false;
+        // A weld is never a net no-op — it removed geometry — and the loop
+        // below could not judge it anyway: `moveVerts_` holds PRE-weld indices
+        // and the weld compacted the vertex array under them (task 0555).
+        bool net = moveWelded_;
         foreach (i, vi; moveVerts_) {
+            if (net) break;
             if (vi >= m.vertices.length) { net = true; break; }   // stale: record, don't lose it
             if ((m.vertices[vi] - moveBase_[i]).length > kNetEps) { net = true; break; }
         }
@@ -4229,6 +4388,7 @@ public:
         moveVerts_   = null;
         moveBase_    = null;
         moveDirty_   = false;
+        moveWelded_  = false;
         moveBefore_  = MeshSnapshot.init;
     }
 
@@ -5528,7 +5688,7 @@ public:
 
         Viewport vp;
         if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
-        commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp));
+        commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp), vp);
         return true;
     }
 
@@ -6819,7 +6979,14 @@ public:
     // target within eps of its own original position — e.g. every ray
     // missed, or a whole-loop click-without-drag that slipped past the
     // release-side `kMinDragPx` gate) records no mutation and no undo entry.
-    private void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets) {
+    //
+    // `vp` is the release event's viewport, and it is a REQUIRED parameter
+    // rather than a defaulted one (task 0555): the destructive landing has to
+    // project each moved vertex to ask where it came to rest, and a caller
+    // that could omit the viewport would silently get a Move Loop that never
+    // welds — the one failure mode worth a compile error.
+    private void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets,
+                                const ref Viewport vp) {
         if (meshSrc_ is null || history_ is null || moveLoopEditFactory_ is null) return;
         auto m = mesh;
         if (m is null) return;
@@ -6836,6 +7003,12 @@ public:
         MeshSnapshot before = MeshSnapshot.capture(*m);
         foreach (i, vi; verts) m.vertices[vi] = targets[i];
         m.commitChange(MeshEditScope.Position);
+        // The destructive landing (task 0555) — the LOOP grab's copy of it,
+        // and the cell whose measurement (four vertices absorbed in one
+        // gesture) is what proves the absorption is per moved vertex rather
+        // than per cursor. Inside the snapshot pair, so the whole gesture is
+        // still ONE undo entry; a no-op unless the shared snap enable is on.
+        immutable bool welded = weldMovedVertices(verts, vp) > 0;
         MeshSnapshot after = MeshSnapshot.capture(*m);
 
         auto cmd = moveLoopEditFactory_();
@@ -6843,7 +7016,9 @@ public:
         history_.record(cmd);
 
         // Position-only: no resyncSession() — see this method's own doc
-        // comment / plan §Undo.
+        // comment / plan §Undo. UNLESS the landing welded, which rebuilds and
+        // compacts the mesh and therefore CAN dangle a sibling's cached index.
+        if (welded) resyncSession();
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
@@ -11282,7 +11457,8 @@ unittest {
     foreach (o; orig) targets ~= o + offset;
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
-    t.commitMoveLoop(verts, targets);
+    Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
+    t.commitMoveLoop(verts, targets, wvp);
 
     foreach (i, vi; verts)
         assert((m.vertices[vi] - targets[i]).length < 1e-5f,
@@ -11300,6 +11476,595 @@ unittest {
     foreach (i, vi; verts)
         assert((m.vertices[vi] - targets[i]).length < 1e-5f,
             "redo must restore every loop vertex's exact moved position");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — THE DESTRUCTIVE LANDING (task 0555).
+//
+// A loop grab brought onto other geometry with the application's snapping ON
+// does not merely re-place its vertices: each one is ABSORBED into the vertex
+// it landed on. THREE absorptions in ONE gesture, each into its own target,
+// is what makes this the "per element, not per anchor" cell — a single query
+// at a single cursor pixel answers with a single element and could not
+// account for three.
+//
+// Rig: `makeGridPlane(2)`, seen from the side its quads face
+// (`makeGridPlaneFrontViewport` — at the +Y camera every candidate is
+// back-facing and `backFace`'s measured default would refuse them all, so the
+// no-op would arrive for the wrong reason). The middle COLUMN {1,4,7} is
+// dragged onto the right column and stopped `kShort` short of it — ~4px at
+// this camera's 80px-per-unit, comfortably inside the 24px acceptance.
+//
+// STOPPED SHORT ON PURPOSE, and it is not timidity about the radius: a moved
+// vertex placed EXACTLY on its target leaves every face it belongs to
+// zero-area, `Mesh.faceNormal` answers a degenerate face with its `(0,1,0)`
+// FALLBACK, and the pen's orientation admission then reads that fallback as
+// back-facing and refuses the target. A real drag lands near, not on, so a
+// rig that lands on would be testing the fallback rather than the weld.
+//
+// Deltas, derived by hand from the rewrite rather than read back: 1→2, 4→5,
+// 7→8 leaves faces [0,2,5,3] and [3,5,8,6] standing and collapses the two
+// cells the column was dragged across, i.e. V 9→6, E 12→7, F 4→2.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_             = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        "setup: makeGridPlane(2) must be V=9 E=12 F=4");
+
+    // ~4px short of the right column at this camera — see the header.
+    enum Vec3 kShort = Vec3(-0.05f, 0, 0);
+    uint[] verts   = [1u, 4u, 7u];
+    Vec3[] targets = [m.vertices[2] + kShort,
+                      m.vertices[5] + kShort,
+                      m.vertices[8] + kShort];
+
+    auto vp = makeGridPlaneFrontViewport();
+    // The gate, said out loud: the landing is destructive only because the
+    // application's shared snap enable is on for this gesture.
+    t.dragSnap_ = *penTestSnapOn();
+
+    t.commitMoveLoop(verts, targets, vp);
+
+    assert(m.vertices.length == 6,
+        format("all THREE loop vertices must be absorbed, each into its own target "
+             ~ "(V 9 -> 6); got V=%d", m.vertices.length));
+    assert(m.edges.length == 7,
+        format("the absorbed column takes five edges with it (E 12 -> 7); got E=%d",
+               m.edges.length));
+    assert(m.faces.length == 2,
+        format("the two cells the column was dragged across collapse (F 4 -> 2); got F=%d",
+               m.faces.length));
+
+    // The survivors are the TARGETS, at their own untouched positions — the
+    // grab is absorbed into the target, not averaged with it.
+    foreach (want; [Vec3(1, 0, -1), Vec3(1, 0, 0), Vec3(1, 0, 1)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - want).length < 1e-5f) found = true;
+        assert(found, format("weld target %s must survive at its own position", want));
+    }
+
+    // ONE undo step for the whole gesture, and it puts the topology back.
+    assert(history.canUndo(), "a welding loop move must record one undo entry");
+    history.undo();
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("one undo must restore the whole gesture — move AND weld; got V=%d E=%d F=%d",
+               m.vertices.length, m.edges.length, m.faces.length));
+    assert(!history.canUndo(),
+        "the gesture must be ONE entry: after a single undo there is nothing left to undo");
+
+    history.redo();
+    assert(m.vertices.length == 6 && m.faces.length == 2,
+        "redo must re-apply the whole gesture, weld included");
+}
+
+// ---------------------------------------------------------------------------
+// commitMoveLoop — the same drag with the application's snapping OFF is
+// NON-destructive (task 0555). The gate is the shared snap enable, and this
+// is the arm that proves the case above is testing it rather than testing
+// "vertices that land on each other always merge".
+//
+// Deliberately identical to the case above in every other respect, down to
+// the targets: only `dragSnap_` differs.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_             = history;
+    t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                       "mesh.topoPen_moveloop", "Topology Move Loop",
+                                                       MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    enum Vec3 kShort = Vec3(-0.05f, 0, 0);   // the welding arm's own offset
+    uint[] verts   = [1u, 4u, 7u];
+    Vec3[] targets = [m.vertices[2] + kShort,
+                      m.vertices[5] + kShort,
+                      m.vertices[8] + kShort];
+    auto vp = makeGridPlaneFrontViewport();
+    // NO `dragSnap_` — `SnapPacket.init.enabled` is false, which is the
+    // application's own shipped default.
+    assert(!t.dragSnap_.enabled, "setup: this arm runs with snapping OFF");
+
+    t.commitMoveLoop(verts, targets, vp);
+
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("with snapping off the loop move must stay position-only (V=9 E=12 F=4); "
+             ~ "got V=%d E=%d F=%d", m.vertices.length, m.edges.length, m.faces.length));
+    foreach (i, vi; verts)
+        assert((m.vertices[vi] - targets[i]).length < 1e-5f,
+            format("loop vertex %d must still land exactly where the move put it — well "
+                 ~ "inside another vertex's acceptance radius, and NOT merged into it", vi));
+}
+
+// ---------------------------------------------------------------------------
+// THE DESTRUCTIVE LANDING on the ELEMENT grab (task 0555) — the OTHER commit
+// path, `finishMove`, driven end to end through the real SDL dispatch: a plain
+// LMB press on a vertex arms Move, and the release absorbs the grab into the
+// vertex it came to rest on.
+//
+// It is a separate case from the loop one above and not a duplicate of it:
+// `finishMove` has its own undo bookkeeping (a lazily captured baseline and a
+// net-no-op test that compares the moving set against its arm-time base — a
+// test that CANNOT judge a weld, because the vertex array was compacted under
+// the indices it holds), and this is what pins that.
+//
+// `activeMeshResolver` is pointed at a DIFFERENT mesh for the duration: this
+// rig has no GL, and `applyMoveTargets` refreshes the display unconditionally
+// once the resolver is unset. Saying "the mesh under test is not the mesh on
+// screen" is the resolver's own contract, and it makes the refresh the no-op a
+// headless rig needs. Restored on the way out — it is a `__gshared` global.
+// ---------------------------------------------------------------------------
+version (unittest) private void driveWeldingVertexGrab(TopologyPenTool t, ref Mesh m,
+                                                       const ref Viewport vp,
+                                                       ref VectorStack vts,
+                                                       uint grab, Vec3 landing) {
+    import std.format : format;
+    ImVec2 pg;
+    assert(TopologyPenTool.projectPt(m.vertices[grab], vp, pg),
+        "setup: the grabbed vertex must project");
+
+    SDL_MouseButtonEvent down;
+    down.button = SDL_BUTTON_LEFT;
+    down.x = cast(int)pg.x; down.y = cast(int)pg.y;
+    assert(t.onMouseButtonDown(down, vts),
+        "a plain-LMB press on a vertex must be consumed in Move mode");
+    assert(t.moveArmed_ && t.moveElem_ == MoveElem.Vertex,
+        format("the press must arm a VERTEX grab; armed=%s elem=%s",
+               t.moveArmed_, t.moveElem_));
+    assert(t.moveVerts_ == [grab], "the press must arm the pressed vertex");
+
+    // The release's landing is whatever the constraint stage says the cursor
+    // hit — the Vertex law rides that hit, not the pixel — so the rig states
+    // it directly.
+    auto hit = new ConstrainHitPacket;
+    hit.hit   = true;
+    hit.point = landing;
+    vts.put(hit);
+
+    ImVec2 pl;
+    assert(TopologyPenTool.projectPt(landing, vp, pl), "setup: the landing must project");
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_LEFT;
+    up.x = cast(int)pl.x; up.y = cast(int)pl.y;
+    assert(t.onMouseButtonUp(up, vts), "the release of an armed Move must be consumed");
+    assert(!t.moveArmed_, "the release must disarm whatever the outcome");
+}
+
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    vts.put(penTestSnapOn());
+
+    // Grab v1 and land it just short of v2 — the same "near, not on" reasoning
+    // the loop case documents.
+    driveWeldingVertexGrab(t, m, vp, vts, 1u, m.vertices[2] + Vec3(-0.05f, 0, 0));
+
+    assert(m.vertices.length == 8,
+        format("the grabbed vertex must be absorbed by the vertex it landed on (V 9 -> 8); "
+             ~ "got V=%d", m.vertices.length));
+    assert(m.edges.length == 11,
+        format("the edge between grab and target goes with it (E 12 -> 11); got E=%d",
+               m.edges.length));
+    assert(m.faces.length == 4,
+        format("no face is lost — the shared quad becomes a triangle (F 4); got F=%d",
+               m.faces.length));
+    size_t tris = 0;
+    foreach (ref f; m.faces) if (f.length == 3) ++tris;
+    assert(tris == 1,
+        format("exactly the one quad that held BOTH the grab and its target collapses to a "
+             ~ "triangle; got %d triangles", tris));
+    bool atTarget = false, atLanding = false;
+    foreach (v; m.vertices) {
+        if ((v - Vec3(1.00f, 0, -1)).length < 1e-5f) atTarget  = true;
+        if ((v - Vec3(0.95f, 0, -1)).length < 1e-5f) atLanding = true;
+    }
+    assert(atTarget && !atLanding,
+        "the survivor sits at the TARGET's own position, not where the drag stopped — the "
+      ~ "grab is absorbed INTO the target, not averaged with it");
+
+    // ONE undo entry for press-drag-release-absorb, and it restores everything.
+    assert(history.canUndo(), "a welding move must record one undo entry");
+    history.undo();
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("one undo must restore the whole gesture — move AND weld; got V=%d E=%d F=%d",
+               m.vertices.length, m.edges.length, m.faces.length));
+    assert(!history.canUndo(),
+        "the gesture must be ONE entry: after a single undo there is nothing left to undo");
+}
+
+// The same press and the same landing with the application's snapping OFF: the
+// vertex moves and nothing is destroyed. The gate, on the element path.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    // No SnapPacket at all — the application's shipped default is snapping off.
+
+    immutable Vec3 landing = m.vertices[2] + Vec3(-0.05f, 0, 0);
+    driveWeldingVertexGrab(t, m, vp, vts, 1u, landing);
+
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("with snapping off the grab must only MOVE (V=9 E=12 F=4); got V=%d E=%d F=%d",
+               m.vertices.length, m.edges.length, m.faces.length));
+    assert((m.vertices[1] - landing).length < 1e-5f,
+        "the grabbed vertex must sit exactly where the drag put it, unmerged");
+}
+
+// ---------------------------------------------------------------------------
+// THE EDGE GRAB — the measured headline cell (task 0555/0545): dV -2, dE -3,
+// dF -1, because BOTH endpoints are absorbed, each into its own target.
+//
+// The full gesture, through the real dispatch: press on the middle column's
+// edge, drag it right, release just short of the right column. Unlike the
+// vertex grab, an edge grab's law re-snaps every moved vertex to the
+// BACKGROUND, so this rig installs one — a big quad in the same y=0 plane the
+// grid lives in, and the camera looks straight down onto that plane, so the
+// screen-shifted point is already on the background and the nearest foot is
+// the identity. That keeps the arithmetic exact and leaves the ABSORPTION as
+// the only thing under test.
+//
+// The deltas are derived by hand from the rewrite: 1→2 and 4→5 leave [0,2,5,3]
+// and [3,5,7,6] standing as quads, [5,8,7] as a triangle, and collapse the
+// cell the edge was dragged across.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import snap : setBackgroundSnapSources;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    // The background the moved vertices re-snap onto: coplanar with the grid,
+    // so the re-snap is the identity and the drag's screen delta maps to an
+    // exact in-plane world delta.
+    Mesh bg;
+    bg.addVertex(Vec3(-3, 0, -3)); bg.addVertex(Vec3(3, 0, -3));
+    bg.addVertex(Vec3( 3, 0,  3)); bg.addVertex(Vec3(-3, 0, 3));
+    bg.addFace([0u, 1u, 2u, 3u]);
+    bg.rebuildEdges();
+    bg.buildLoops();
+    const(Mesh)*[] sources = [cast(const(Mesh)*)&bg];
+    setBackgroundSnapSources(sources);
+    scope(exit) setBackgroundSnapSources(null);
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    vts.put(penTestSnapOn());
+
+    // The press: the screen midpoint of edge 1-4, which is 40px from either
+    // endpoint and so resolves as an EDGE grab and not a vertex one.
+    ImVec2 p1, p4;
+    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    immutable int pressX = cast(int)((p1.x + p4.x) * 0.5f);
+    immutable int pressY = cast(int)((p1.y + p4.y) * 0.5f);
+
+    // The drag, stated in WORLD terms and converted: stop 0.05 short of the
+    // right column, the same "near, not on" reasoning the other cases use.
+    ImVec2 pLand;
+    assert(TopologyPenTool.projectPt(m.vertices[1] + Vec3(0.95f, 0, 0), vp, pLand));
+    immutable int dx = cast(int)(pLand.x - p1.x), dy = cast(int)(pLand.y - p1.y);
+    assert(dx * dx + dy * dy > 9,
+        "setup: the drag must clear the tool's own 3px click-vs-drag gate");
+
+    SDL_MouseButtonEvent down;
+    down.button = SDL_BUTTON_LEFT;
+    down.x = pressX; down.y = pressY;
+    assert(t.onMouseButtonDown(down, vts), "a plain-LMB press on an edge must be consumed");
+    assert(t.moveArmed_ && t.moveElem_ == MoveElem.Edge,
+        format("the press must arm an EDGE grab; armed=%s elem=%s", t.moveArmed_, t.moveElem_));
+
+    SDL_MouseMotionEvent motion;
+    motion.x = pressX + dx / 2; motion.y = pressY + dy / 2;
+    t.onMouseMotion(motion, vts);
+
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_LEFT;
+    up.x = pressX + dx; up.y = pressY + dy;
+    assert(t.onMouseButtonUp(up, vts), "the release of an armed edge Move must be consumed");
+
+    assert(m.vertices.length == 7,
+        format("BOTH endpoints must be absorbed, each into its own target (V 9 -> 7); got V=%d",
+               m.vertices.length));
+    assert(m.edges.length == 9,
+        format("dE -3, the measured cell; got E=%d", m.edges.length));
+    assert(m.faces.length == 3,
+        format("dF -1 — the cell the edge was dragged across collapses; got F=%d",
+               m.faces.length));
+    foreach (want; [Vec3(1, 0, -1), Vec3(1, 0, 0)]) {
+        bool found = false;
+        foreach (v; m.vertices) if ((v - want).length < 1e-4f) found = true;
+        assert(found, format("weld target %s must survive at its own position", want));
+    }
+    foreach (v; m.vertices)
+        assert((v - Vec3(0.95f, 0, -1)).length > 1e-3f
+            && (v - Vec3(0.95f, 0,  0)).length > 1e-3f,
+            "no vertex may be left where the drag stopped — both were absorbed");
+
+    // ONE undo entry for the whole gesture, weld included.
+    assert(history.canUndo(), "a welding edge move must record one undo entry");
+    history.undo();
+    assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
+        format("one undo must restore the whole gesture; got V=%d E=%d F=%d",
+               m.vertices.length, m.edges.length, m.faces.length));
+    assert(!history.canUndo(),
+        "the gesture must be ONE entry: after a single undo there is nothing left to undo");
+}
+
+// ---------------------------------------------------------------------------
+// A weld must never be dropped by the net-no-op test (task 0555).
+//
+// `recordLiveMove` skips the undo entry for a drag that wandered and came home
+// — it compares the moving set against its arm-time base. After a weld that
+// comparison is not merely wrong, it is MEANINGLESS: the vertex array was
+// compacted under the very indices it holds, so it reads whatever geometry
+// slid into those slots. This rig makes it read an ANSWER rather than garbage,
+// and the answer is the wrong one.
+//
+// Two coincident-but-separate vertices at the origin, one per quad (a legal
+// unwelded seam). The grab is vertex 0; absorbing it compacts vertex 1 down
+// into slot 0, at the identical position — so the net test compares the
+// arm-time base against a vertex that merely happens to sit where the grab
+// started, concludes "nothing happened", and throws away the only undo entry
+// the destroyed topology has. The gesture would be UNDOABLE-PROOF: a hard
+// failure of the one non-negotiable, one Ctrl+Z per gesture.
+// ---------------------------------------------------------------------------
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+
+    // Two quads in the XZ plane, wound like `makeGridPlane`'s cells so both
+    // face -Y (the side `makeGridPlaneFrontViewport` looks from).
+    Mesh m;
+    m.addVertex(Vec3( 0.00f, 0,  0.00f));   // 0 — quad A's corner, THE GRAB
+    m.addVertex(Vec3( 0.00f, 0,  0.00f));   // 1 — quad B's corner, coincident with 0
+    m.addVertex(Vec3( 0.25f, 0,  0.00f));   // 2 — the weld target
+    m.addVertex(Vec3( 0.25f, 0,  0.25f));   // 3
+    m.addVertex(Vec3( 0.00f, 0,  0.25f));   // 4
+    m.addVertex(Vec3(-0.25f, 0, -0.25f));   // 5
+    m.addVertex(Vec3( 0.00f, 0, -0.25f));   // 6
+    m.addVertex(Vec3(-0.25f, 0,  0.00f));   // 7
+    m.addFace([0u, 2u, 3u, 4u]);
+    m.addFace([5u, 6u, 1u, 7u]);
+    m.rebuildEdges();
+    m.buildLoops();
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    vts.put(penTestSnapOn());
+
+    // Land just short of vertex 2 — ~2px at this camera, inside the acceptance.
+    driveWeldingVertexGrab(t, m, vp, vts, 0u, Vec3(0.22f, 0, 0));
+
+    assert(m.vertices.length == 7,
+        format("the grab must be absorbed by vertex 2 (V 8 -> 7); got V=%d", m.vertices.length));
+    assert((m.vertices[0] - Vec3(0, 0, 0)).length < 1e-6f,
+        "setup: the compaction must slide the coincident twin into slot 0, or this case is "
+      ~ "not the one it names");
+
+    // THE CLAIM: the entry exists. Without the weld flag the net test above
+    // would have compared slot 0 against the grab's arm-time position, found
+    // them equal, and dropped it.
+    assert(history.canUndo(),
+        "a gesture that DESTROYED topology must record an undo entry, whatever the moving "
+      ~ "set's stale indices now happen to hold");
+    history.undo();
+    assert(m.vertices.length == 8 && m.faces.length == 2,
+        format("one undo must restore the absorbed vertex; got V=%d F=%d",
+               m.vertices.length, m.faces.length));
+    foreach (ref f; m.faces)
+        assert(f.length == 4, "undo must restore both quads");
+}
+
+// A press that never moved anything cannot have been "brought to within"
+// anything, so it must not absorb — even when the grab is already sitting
+// inside another vertex's acceptance radius, which on a dense enough mesh it
+// always is (task 0555).
+//
+// OURS, by reasoning rather than by measurement: the reference welds from its
+// per-drag-event evaluate, and a click that produces no drag event produces no
+// weld. Without this gate the tool would eat a vertex for being CLICKED, which
+// is not a behaviour anything measured shows.
+//
+// Rig: `makeGridPlane(8)` — 0.25 world units per cell, i.e. 20px at this
+// camera, so every vertex has neighbours INSIDE the 24px acceptance and the
+// gate is the only thing standing between a click and a weld.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+    import std.format : format;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_         = history;
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(8);
+    t.meshSrc_ = () => &m;
+
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    vts.put(penTestSnapOn());
+
+    immutable size_t vBefore = m.vertices.length;
+    immutable size_t fBefore = m.faces.length;
+
+    // The precondition this case rests on: vertex 0's nearest neighbour is
+    // inside the acceptance radius, so a weld is available to be wrongly taken.
+    t.dragSnap_ = *penTestSnapOn();
+    ImVec2 p0;
+    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(t.resolveSnapTargetVert(cast(int)p0.x, cast(int)p0.y, vp, [0u]) >= 0,
+        "setup: v0 must have an admissible neighbour inside the acceptance radius, or this "
+      ~ "case cannot tell a gate from an empty query");
+    t.dragSnap_ = SnapPacket.init;
+
+    // Press and release on that vertex, at the same pixel, with no surface hit
+    // — the plain stationary click.
+    SDL_MouseButtonEvent down;
+    down.button = SDL_BUTTON_LEFT;
+    down.x = cast(int)p0.x; down.y = cast(int)p0.y;
+    assert(t.onMouseButtonDown(down, vts), "a press on a vertex must be consumed");
+    assert(t.moveArmed_, "the press must arm Move");
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_LEFT;
+    up.x = cast(int)p0.x; up.y = cast(int)p0.y;
+    assert(t.onMouseButtonUp(up, vts), "the release must be consumed");
+
+    assert(m.vertices.length == vBefore && m.faces.length == fBefore,
+        format("a stationary click must not absorb anything — V %d -> %d, F %d -> %d",
+               vBefore, m.vertices.length, fBefore, m.faces.length));
+    assert(!history.canUndo(),
+        "and it must record no undo entry at all: it is not an edit");
 }
 
 // ---------------------------------------------------------------------------
@@ -11332,7 +12097,8 @@ unittest {
     foreach (vi; verts) targets ~= m.vertices[vi] + Vec3(0, 0.75f, 0);
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
-    t.commitMoveLoop(verts, targets);
+    Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
+    t.commitMoveLoop(verts, targets, wvp);
 
     foreach (i, vi; verts)
         assert((m.vertices[vi] - targets[i]).length < 1e-5f,
@@ -11373,7 +12139,8 @@ unittest {
     foreach (vi; verts) targets ~= m.vertices[vi];   // exactly the current positions
 
     auto before = MeshSnapshot.capture(m);
-    t.commitMoveLoop(verts, targets);
+    Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
+    t.commitMoveLoop(verts, targets, wvp);
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices, "an all-stationary target set must not move any vertex");
@@ -11420,7 +12187,8 @@ unittest {
     // ray MISS for the middle loop vertex.
     Vec3[] targets = [orig[0] + Vec3(0, 1.0f, 0), orig[1], orig[2] + Vec3(0, 1.0f, 0)];
 
-    t.commitMoveLoop(verts, targets);
+    Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
+    t.commitMoveLoop(verts, targets, wvp);
 
     assert((m.vertices[3] - targets[0]).length < 1e-5f, "the HIT vertex (3) must move to its target");
     assert((m.vertices[4] - orig[1]).length < 1e-6f,
@@ -11479,7 +12247,8 @@ unittest {
     float preD01 = (orig[1] - orig[0]).length;
     float preD12 = (orig[2] - orig[1]).length;
 
-    t.commitMoveLoop(verts, targets);
+    Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
+    t.commitMoveLoop(verts, targets, wvp);
 
     // On-surface: re-derive the expected height independently per vertex
     // (never reusing the `targets` array's own values).
