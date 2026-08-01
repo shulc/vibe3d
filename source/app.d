@@ -5230,6 +5230,144 @@ void main(string[] args) {
                 return;
             }
 
+            // viewport.displayStyle / wireOverlay / wireAlpha — per-cell
+            // display state (task 0559 Phase 2). Camera-class commands: they
+            // touch no document state, so no undo entry, exactly like
+            // viewport.indCenter above.
+            //
+            // TWO THINGS HERE ARE DIFFERENT FROM EVERY viewport.* COMMAND
+            // ABOVE, and both are deliberate.
+            //
+            // 1. A CELL SELECTOR. The four older viewport.* commands all
+            //    hardwire vpm.views[vpm.activeId]. Display style is the first
+            //    genuinely PER-CELL render input, so "set the style on a cell
+            //    that is not the active one" has to be expressible — without
+            //    it, the isolation property (a style change reaches exactly
+            //    one cell) is not testable at all, and a shipped
+            //    implementation in which all four cells share one mode would
+            //    look identical to a working one. Defaults to activeId, so
+            //    every existing call shape is unchanged.
+            //
+            // 2. UNCONSUMED ENUM VALUES ARE REJECTED, NOT ACCEPTED. The
+            //    display enums are declared wider than the renderer currently
+            //    honours, on purpose, so the value space is right from the
+            //    start. But a command that accepts a value and then renders
+            //    something else is worse than a command that refuses it: the
+            //    first is a silent lie that a test can be written against and
+            //    pass forever. So the parse below accepts exactly the values
+            //    whose plan fields a pass actually reads today, and names
+            //    what is missing for the rest.
+            if (id == "viewport.displayStyle" || id == "viewport.wireOverlay"
+                || id == "viewport.wireAlpha") {
+                import std.string : toLower, strip;
+                import std.conv   : to, ConvException;
+                import std.format : format;
+
+                string sval = "";
+                int    cell = -1;
+                bool   haveNum = false;
+                double nval = 0;
+
+                if (paramsJson.length > 0) {
+                    auto pjv = parseJSON(paramsJson);
+                    void takeScalar(JSONValue v) {
+                        switch (v.type) {
+                            case JSONType.string:   sval = v.str; break;
+                            case JSONType.float_:   nval = v.floating;          haveNum = true; break;
+                            case JSONType.integer:  nval = cast(double)v.integer;  haveNum = true; break;
+                            case JSONType.uinteger: nval = cast(double)v.uinteger; haveNum = true; break;
+                            default: break;
+                        }
+                    }
+                    if (pjv.type != JSONType.object) {
+                        takeScalar(pjv);
+                    } else {
+                        if (auto pp = "_positional" in pjv)
+                            if (pp.type == JSONType.array && pp.array.length >= 1)
+                                takeScalar(pp.array[0]);
+                        if (sval.length == 0 && !haveNum) {
+                            // Named forms: the generic "value", plus a
+                            // per-command alias so a caller can be explicit.
+                            foreach (key; ["value", "style", "wire", "overlay", "alpha"]) {
+                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
+                            }
+                        }
+                        if (auto pp = "viewport" in pjv) {
+                            if (pp.type == JSONType.integer)       cell = cast(int)pp.integer;
+                            else if (pp.type == JSONType.uinteger) cell = cast(int)pp.uinteger;
+                            else if (pp.type == JSONType.float_)   cell = cast(int)pp.floating;
+                            else if (pp.type == JSONType.string) {
+                                try { cell = to!int(pp.str.strip); }
+                                catch (ConvException) { /* keep -1 = active */ }
+                            }
+                        }
+                    }
+                }
+
+                // Out of range is an ERROR, not a silent clamp to the active
+                // cell: a test that addresses cell 2 in a Single layout and
+                // silently gets cell 0 would pass while asserting nothing.
+                if (cell == -1) cell = vpm.activeId;
+                if (cell < 0 || cell >= vpm.cellCount)
+                    throw new Exception(format(
+                        "%s: viewport %d is out of range — the current layout "
+                        ~ "has %d cell(s)", id, cell, vpm.cellCount));
+
+                Viewport3D tv = vpm.views[cell];
+
+                if (id == "viewport.displayStyle") {
+                    switch (sval.strip.toLower) {
+                        case "wireframe": tv.display.active.style = DisplayStyle.Wireframe; break;
+                        case "shaded":    tv.display.active.style = DisplayStyle.Shaded;    break;
+                        case "solid":
+                            throw new Exception(
+                                "viewport.displayStyle: 'solid' is declared in "
+                                ~ "the style set but no pass consumes it yet — "
+                                ~ "an unlit surface needs a shader uniform that "
+                                ~ "does not exist. Refusing rather than "
+                                ~ "rendering 'shaded' under a different name.");
+                        default:
+                            throw new Exception(
+                                "viewport.displayStyle: expected 'wireframe' or "
+                                ~ "'shaded', got '" ~ sval ~ "'");
+                    }
+                } else if (id == "viewport.wireOverlay") {
+                    switch (sval.strip.toLower) {
+                        case "none":    tv.display.active.wire = WireOverlay.None;    break;
+                        case "uniform": tv.display.active.wire = WireOverlay.Uniform; break;
+                        case "colored":
+                            throw new Exception(
+                                "viewport.wireOverlay: 'colored' needs a "
+                                ~ "per-item line colour that no layer carries "
+                                ~ "yet, and the colour source is still an open "
+                                ~ "question. Refusing rather than guessing.");
+                        default:
+                            throw new Exception(
+                                "viewport.wireOverlay: expected 'none' or "
+                                ~ "'uniform', got '" ~ sval ~ "'");
+                    }
+                } else {
+                    if (!haveNum && sval.length > 0) {
+                        try { nval = to!double(sval.strip); haveNum = true; }
+                        catch (ConvException) { /* reported below */ }
+                    }
+                    if (!haveNum)
+                        throw new Exception(
+                            "viewport.wireAlpha: expected a number in 0..1");
+                    if (nval < 0.0 || nval > 1.0)
+                        throw new Exception(format(
+                            "viewport.wireAlpha: %.4f is outside 0..1", nval));
+                    tv.display.active.wireAlpha = cast(float)nval;
+                }
+
+                // Mandatory, and the reason the older viewport.* commands all
+                // end this way: without it a non-hovered cell keeps re-blitting
+                // its cached colour texture and the change appears to do
+                // nothing until that cell's camera happens to move.
+                tv.dirty = true;
+                return;
+            }
+
             // viewport.master <id> — set per-cell master override, camera-only, no undo.
             if (id == "viewport.master") {
                 int mid = -1;
