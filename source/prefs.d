@@ -30,8 +30,9 @@ import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
 
-import log      : logWarn;
-import viewport : LayoutPreset;
+import log           : logWarn;
+import viewport      : LayoutPreset;
+import display_state : DisplayStyle, WireOverlay;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -88,6 +89,29 @@ struct Prefs {
     /// `kLayoutIniVersion`.
     float hRatio = 0.5f;
     float vRatio = 0.5f;
+
+    /// Task 0559: per-viewport-cell display state — the FIRST per-cell state
+    /// this app persists at all. Everything else a cell owns (camera,
+    /// independence flags, master override) is deliberately runtime-only and
+    /// reset on startup; only manager-level layout survived a session.
+    ///
+    /// Fixed-length rather than dynamic because the cell count is fixed at
+    /// four by the layout presets, so a short or over-long array on disk
+    /// needs no policy: extra entries are ignored, missing ones keep their
+    /// defaults.
+    ///
+    /// Defaults MUST equal the display model's own defaults. A fresh profile
+    /// and a profile whose file predates this key have to produce the same
+    /// viewport, or "no default changed" quietly stops being true after one
+    /// save.
+    ViewportCellDisplay[4] viewportDisplay;
+}
+
+/// One cell's persisted display state (task 0559).
+struct ViewportCellDisplay {
+    DisplayStyle style     = DisplayStyle.Shaded;
+    WireOverlay  wire      = WireOverlay.Uniform;
+    float        wireAlpha = 1.0f;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -222,6 +246,53 @@ Prefs loadPrefs(string dir) {
         }
         p.hRatio = readRatio("hRatio", 0.5f);
         p.vRatio = readRatio("vRatio", 0.5f);
+
+        // Task 0559: per-cell display state.
+        //
+        // Only the values a render pass ACTUALLY CONSUMES are accepted here;
+        // anything else falls back to the default, exactly like an
+        // unrecognized viewportLayout above. The display enums are
+        // deliberately wider than the renderer honours today, and the
+        // commands that write this state refuse the unconsumed values for the
+        // same reason: a hand-edited file naming a style we resolve but do
+        // not draw would otherwise come back as a viewport that silently
+        // renders something else. When a pass starts consuming one, it joins
+        // this switch and the command's, together.
+        if (auto vdp = "viewportDisplay" in doc)
+            if (vdp.type == JSONType.array) {
+                foreach (i, cellJson; vdp.array) {
+                    if (i >= p.viewportDisplay.length) break;
+                    if (cellJson.type != JSONType.object) continue;
+                    if (auto sp = "style" in cellJson)
+                        if (sp.type == JSONType.string)
+                            switch (sp.str) {
+                                case "Wireframe": p.viewportDisplay[i].style = DisplayStyle.Wireframe; break;
+                                case "Shaded":    p.viewportDisplay[i].style = DisplayStyle.Shaded;    break;
+                                default: break;   // incl. styles no pass draws yet
+                            }
+                    if (auto wp = "wire" in cellJson)
+                        if (wp.type == JSONType.string)
+                            switch (wp.str) {
+                                case "None":    p.viewportDisplay[i].wire = WireOverlay.None;    break;
+                                case "Uniform": p.viewportDisplay[i].wire = WireOverlay.Uniform; break;
+                                default: break;   // incl. the per-item colour we cannot resolve
+                            }
+                    // Out-of-range opacity is CLAMPED, not rejected: unlike a
+                    // style name there is a sane nearest meaning, and the
+                    // ratios above set the precedent for a numeric field.
+                    if (auto ap = "wireAlpha" in cellJson) {
+                        float a = float.nan;
+                        if (ap.type == JSONType.float_)        a = cast(float)ap.floating;
+                        else if (ap.type == JSONType.integer)  a = cast(float)ap.integer;
+                        else if (ap.type == JSONType.uinteger) a = cast(float)ap.uinteger;
+                        if (a == a) {   // not NaN
+                            if (a < 0.0f) a = 0.0f;
+                            if (a > 1.0f) a = 1.0f;
+                            p.viewportDisplay[i].wireAlpha = a;
+                        }
+                    }
+                }
+            }
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -265,6 +336,19 @@ void savePrefs(ref const Prefs p, string dir) {
     doc["viewportLayout"] = JSONValue(to!string(p.viewportLayout));
     doc["hRatio"] = JSONValue(p.hRatio);
     doc["vRatio"] = JSONValue(p.vRatio);
+
+    // Task 0559: per-cell display state. Written unconditionally for all four
+    // cells, including cells the current layout does not show — a cell's
+    // setting has to survive a round trip through Single and back to Quad.
+    JSONValue[] vd;
+    foreach (ref c; p.viewportDisplay) {
+        JSONValue cj = JSONValue(cast(JSONValue[string]) null);
+        cj["style"]     = JSONValue(to!string(c.style));
+        cj["wire"]      = JSONValue(to!string(c.wire));
+        cj["wireAlpha"] = JSONValue(c.wireAlpha);
+        vd ~= cj;
+    }
+    doc["viewportDisplay"] = JSONValue(vd);
 
     mkdirRecurse(dir);
     write(prefsFilePath(dir), doc.toPrettyString());
@@ -498,6 +582,82 @@ unittest {
     auto s = loadPrefs(dir);
     assert(s.hRatio == 0.95f, "integer 1 clamped to max");
     assert(s.vRatio == 0.05f, "integer 0 clamped to min");
+}
+
+// Task 0559: per-cell display state — defaults, round-trip, per-cell
+// independence, and tolerant reads.
+unittest {
+    auto dir = makeScratch("viewportdisplay");
+    scope(exit) cleanScratch(dir);
+
+    // The default here is load-bearing well beyond this file: a fresh profile
+    // and a profile saved before this key existed both have to reproduce the
+    // viewport the app has always drawn. If someone "improves" a default to
+    // match something prettier, this is where it gets caught, before any
+    // pixel is involved.
+    auto def = loadPrefs(dir);
+    foreach (i, ref c; def.viewportDisplay) {
+        assert(c.style == DisplayStyle.Shaded,
+            format("cell %d: unset style must default to Shaded", i));
+        assert(c.wire == WireOverlay.Uniform,
+            format("cell %d: unset overlay must default to Uniform", i));
+        assert(c.wireAlpha == 1.0f,
+            format("cell %d: unset opacity must default to fully opaque", i));
+    }
+
+    // Round-trip, and PER-CELL INDEPENDENCE: writing one cell must not
+    // disturb its neighbours. This is the persisted-side mirror of the
+    // isolation property the four-cell HTTP test asserts at runtime — a
+    // schema that collapsed the cells into one shared record would pass every
+    // single-cell assertion and fail here.
+    Prefs p;
+    p.viewportDisplay[2].style     = DisplayStyle.Wireframe;
+    p.viewportDisplay[2].wire      = WireOverlay.None;
+    p.viewportDisplay[2].wireAlpha = 0.25f;
+    savePrefs(p, dir);
+    auto q = loadPrefs(dir);
+    assert(q.viewportDisplay[2].style == DisplayStyle.Wireframe, "cell 2 style round-trip");
+    assert(q.viewportDisplay[2].wire  == WireOverlay.None,       "cell 2 overlay round-trip");
+    assert(q.viewportDisplay[2].wireAlpha == 0.25f,              "cell 2 opacity round-trip");
+    foreach (i; [0, 1, 3]) {
+        assert(q.viewportDisplay[i].style == DisplayStyle.Shaded,
+            format("cell %d must be untouched by a write to cell 2", i));
+        assert(q.viewportDisplay[i].wire == WireOverlay.Uniform,
+            format("cell %d overlay must be untouched by a write to cell 2", i));
+        assert(q.viewportDisplay[i].wireAlpha == 1.0f,
+            format("cell %d opacity must be untouched by a write to cell 2", i));
+    }
+
+    // A name we resolve but do not DRAW falls back to the default rather than
+    // coming back as a viewport that renders something other than what it
+    // reports. Same stance the commands take, for the same reason.
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"style":"Solid","wire":"Colored"} ] }`);
+    auto r = loadPrefs(dir);
+    assert(r.viewportDisplay[0].style == DisplayStyle.Shaded,
+        "a style no pass draws must fall back to the default");
+    assert(r.viewportDisplay[0].wire == WireOverlay.Uniform,
+        "an overlay mode no pass draws must fall back to the default");
+
+    // Garbage, a short array, and an out-of-range opacity: none may throw,
+    // and a short array must leave the remaining cells at their defaults.
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"style":"Wireframe","wireAlpha":9.5},`
+        ~ ` "not-an-object" ] }`);
+    auto t = loadPrefs(dir);
+    assert(t.viewportDisplay[0].style == DisplayStyle.Wireframe);
+    assert(t.viewportDisplay[0].wireAlpha == 1.0f, "opacity above 1 clamps to opaque");
+    assert(t.viewportDisplay[1].style == DisplayStyle.Shaded, "junk entry -> defaults");
+    assert(t.viewportDisplay[3].style == DisplayStyle.Shaded, "absent entry -> defaults");
+
+    // Wrong type for the whole key, and a negative opacity.
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "viewportDisplay": 17 }`);
+    assert(loadPrefs(dir).viewportDisplay[0].style == DisplayStyle.Shaded,
+        "a non-array value must be ignored, not throw");
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"wireAlpha":-3} ] }`);
+    assert(loadPrefs(dir).viewportDisplay[0].wireAlpha == 0.0f,
+        "negative opacity clamps to fully transparent");
 }
 
 // missing file → defaults, no throw.

@@ -1722,6 +1722,23 @@ void main(string[] args) {
         // validation is needed here.
         vpm.hRatio = g_prefs.hRatio;
         vpm.vRatio = g_prefs.vRatio;
+        // Task 0559: restore each cell's display state. loadPrefs() already
+        // rejected anything no pass draws and clamped the opacity, so what
+        // arrives here is always renderable.
+        //
+        // Applied to ALL FOUR views, not just the ones the current layout
+        // shows: `views` is a fixed array that is never reallocated, so a
+        // setting made in Quad has to still be there after a session spent in
+        // Single. Gated with the layout restore for the same reason it is —
+        // --test must start from the shipped defaults every run, or a test
+        // asserting default behaviour would pass or fail depending on
+        // whichever profile happened to be on the machine.
+        foreach (k, ref cd; g_prefs.viewportDisplay) {
+            if (k >= vpm.views.length) break;
+            vpm.views[k].display.active.style     = cd.style;
+            vpm.views[k].display.active.wire      = cd.wire;
+            vpm.views[k].display.active.wireAlpha = cd.wireAlpha;
+        }
     }
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
@@ -5365,6 +5382,17 @@ void main(string[] args) {
                 // its cached colour texture and the change appears to do
                 // nothing until that cell's camera happens to move.
                 tv.dirty = true;
+
+                // Mirror into the in-memory prefs, exactly like
+                // viewport.layout above: no per-command file write, one flush
+                // at clean shutdown, harmless no-op under --test (never
+                // saved). Mirrored from the VIEW rather than from the parsed
+                // input so the two can never disagree about what was applied.
+                if (cell < g_prefs.viewportDisplay.length) {
+                    g_prefs.viewportDisplay[cell].style     = tv.display.active.style;
+                    g_prefs.viewportDisplay[cell].wire      = tv.display.active.wire;
+                    g_prefs.viewportDisplay[cell].wireAlpha = tv.display.active.wireAlpha;
+                }
                 return;
             }
 
