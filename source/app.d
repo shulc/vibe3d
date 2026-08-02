@@ -34,7 +34,8 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
-import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
+import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot,
+                    g_fc, DrawPass, FrameWork;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
@@ -7658,6 +7659,11 @@ void main(string[] args) {
         // the FIRST statement of the loop body; endFrame (below, before the
         // present/flush conditional) closes it. No-op in the default build.
         g_frames.beginFrame();
+        // Always-on work counters (perf_probe.d FrameWorkProbe). Paired with
+        // g_frames deliberately: same frame boundary, so a `perf`-build
+        // timing and a default-build count describe the SAME frame and can be
+        // put side by side without an alignment argument.
+        g_fc.beginFrame();
 
         // Perf: events phase — playback tick + HTTP event-player drain +
         // the SDL_PollEvent dispatch loop. `toolNs` (the live geometry apply
@@ -10562,6 +10568,12 @@ void main(string[] args) {
 
             foreach (k; overlayDrawOrder(vpm.cellCount, overlayOwner)) {
                 Viewport3D _cv = vpm.views[k];
+                // Perf (always-on): the cell-level render decision. The
+                // `considered` vs `rendered` PAIR is the point — the dirty-key
+                // gate below means a frame with zero draws is normal, not a
+                // broken measurement, and only these two counters distinguish
+                // "nothing changed" from "the scene stopped drawing".
+                g_fc.bumpCellConsidered();
 
                 // Per-cell overlay mode: Interactive for the owner cell,
                 // Visual for every other multi-cell-eligible cell, None
@@ -10665,6 +10677,7 @@ void main(string[] args) {
                     // per-call so it accumulates across every rendered cell
                     // this frame. No-op in the default build.
                     auto zFramesDraw = g_frames.phase(Phase.draw);
+                    g_fc.bumpCellRendered();
                     renderViewportSceneToFbo(app, _cv, vpk, _ovMode,
                         showVertHover && _hovK,
                         showEdgeHover && _hovK,
@@ -10737,6 +10750,7 @@ void main(string[] args) {
         // `totalNs` in BOTH run modes, keeping it pure CPU submission cost.
         // No-op in the default build.
         g_frames.endFrame();
+        g_fc.endFrame();
 
         // In --test mode the window is HIDDEN and nothing reads back a
         // presented frame (picking / ViewCache are projection-matrix math;

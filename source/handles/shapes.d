@@ -2,6 +2,7 @@ module handles.shapes;
 
 import handles.gl_util;
 import math;
+import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import shader;
 import bindbc.sdl;
 import bindbc.opengl;
@@ -207,6 +208,7 @@ class Arrow : ShaftedArrow {
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+        g_fc.draw(DrawPass.handles, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -277,6 +279,7 @@ class CubicArrow : ShaftedArrow {
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+        g_fc.draw(DrawPass.handles, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -306,6 +309,7 @@ class CubicArrow : ShaftedArrow {
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+        g_fc.draw(DrawPass.handles, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -885,6 +889,7 @@ public:
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, vertCount);
+        g_fc.draw(DrawPass.handles, vertCount);
         glBindVertexArray(0);
 
         glEnable(GL_DEPTH_TEST);
@@ -1030,6 +1035,7 @@ public:
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
         glBindVertexArray(fillVao);
         glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
+        g_fc.draw(DrawPass.handles, fillVertCount);
 
         // ---- Outline ----
         drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth, shader.program);
@@ -1380,6 +1386,7 @@ public:
         glDisable(GL_DEPTH_TEST);
         glBindVertexArray(vao);
         glDrawArrays(GL_LINES, 0, vertCount);
+        g_fc.draw(DrawPass.handles, vertCount);
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);

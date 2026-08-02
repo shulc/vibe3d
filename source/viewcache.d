@@ -1,7 +1,7 @@
 module viewcache;
 
 import math;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_fc;
 
 // Screen space cache for vertex picking
 struct VertexCache {
@@ -24,6 +24,7 @@ struct VertexCache {
 
     void invalidate() {
         auto z = g_perf.scope_(Cat.viewcacheRebuild);
+        g_fc.bumpViewCacheRebuild();
         foreach (ref v; valid) v = false;
     }
 
@@ -73,6 +74,7 @@ struct FaceBoundsCache {
 
     void invalidate() {
         auto z = g_perf.scope_(Cat.viewcacheRebuild);
+        g_fc.bumpViewCacheRebuild();
         foreach (ref v; valid) v = false;
         foreach (ref v; centerValid) v = false;
         foreach (ref v; projected) v = false;
@@ -121,6 +123,7 @@ struct EdgeCache {
 
     void invalidate() {
         auto z = g_perf.scope_(Cat.viewcacheRebuild);
+        g_fc.bumpViewCacheRebuild();
         foreach (ref v; valid) v = false;
         foreach (ref v; bothVisible) v = false;
     }

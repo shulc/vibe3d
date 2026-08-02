@@ -6,7 +6,7 @@ import std.string : toStringz;
 import math   : Viewport;
 import mesh   : GpuMesh, Mesh;
 import shader : compileShader;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
 // ---------------------------------------------------------------------------
 // GpuSelectBuffer — offscreen ID-buffer picker for vertices, edges, faces.
@@ -211,6 +211,7 @@ public:
              ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
+        g_fc.bumpHoverPick();
         if (vp.width <= 0 || vp.height <= 0) return -1;
         ensureSize(vp.width, vp.height);
 
@@ -488,6 +489,7 @@ private:
             glPolygonOffset(1.0f, 1.0f);
             glBindVertexArray(gpu.faceVao);
             glDrawArrays(GL_TRIANGLES, 0, gpu.faceVertCount);
+            g_fc.draw(DrawPass.idPick, gpu.faceVertCount);
             glDisable(GL_POLYGON_OFFSET_FILL);
         }
 
@@ -501,6 +503,7 @@ private:
                     glUniformMatrix4fv(vertLocView, 1, GL_FALSE, vp.view.ptr);
                     glUniformMatrix4fv(vertLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_POINTS, 0, gpu.vertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.vertCount);
                 }
                 break;
             case SelectMode.Edge:
@@ -510,6 +513,7 @@ private:
                     glUniformMatrix4fv(edgeLocView, 1, GL_FALSE, vp.view.ptr);
                     glUniformMatrix4fv(edgeLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_LINES, 0, gpu.edgeVertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.edgeVertCount);
                 }
                 break;
             case SelectMode.Face:
@@ -519,6 +523,7 @@ private:
                     glUniformMatrix4fv(faceLocView, 1, GL_FALSE, vp.view.ptr);
                     glUniformMatrix4fv(faceLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_TRIANGLES, 0, gpu.faceVertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.faceVertCount);
                 }
                 break;
         }

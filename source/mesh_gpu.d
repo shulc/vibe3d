@@ -16,6 +16,7 @@ import math;    // Vec3
 import shader;  // LitShader
 import mesh;    // Mesh, FaceList
 import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
+import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 
 // ---------------------------------------------------------------------------
 // BaseWire — how `GpuMesh.drawEdges` should render its BASE line pass
@@ -153,6 +154,13 @@ struct GpuMesh {
             return;
         }
         ++uploadVersion;
+        // Counted AFTER the suppress/layout-mismatch early-returns above, so
+        // `uploadCalls` means uploads that actually touched a buffer, not
+        // upload REQUESTS. `uploadVerts` is the mesh's vertex count, i.e. the
+        // size of the data this path is responsible for — not the byte count,
+        // which differs per buffer and would need four separate sums to state
+        // honestly.
+        g_fc.upload(cast(long)mesh.vertices.length);
         enum FACE_STRIDE = 6;
 
         // P3 counting pre-pass: derive exact final sizes for the four
@@ -398,6 +406,13 @@ struct GpuMesh {
         if (faceTriStart.length != mesh.faces.length)
             return;   // layout mismatch — caller should fall back to upload().
         ++uploadVersion;
+        // Counted AFTER the suppress/layout-mismatch early-returns above, so
+        // `uploadCalls` means uploads that actually touched a buffer, not
+        // upload REQUESTS. `uploadVerts` is the mesh's vertex count, i.e. the
+        // size of the data this path is responsible for — not the byte count,
+        // which differs per buffer and would need four separate sums to state
+        // honestly.
+        g_fc.upload(cast(long)mesh.vertices.length);
 
         enum FACE_STRIDE = 6;
 
@@ -518,6 +533,10 @@ struct GpuMesh {
     void refreshNonFacePositions(ref const Mesh mesh,
                                   const uint[] edgeOrigin = null,
                                   const uint[] vertOrigin = null) {
+        // This path has no `++uploadVersion` (it deliberately leaves the face
+        // VBO alone), so the counter bump is at entry rather than beside a
+        // version bump like the other three.
+        g_fc.upload(cast(long)mesh.vertices.length);
         if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
             float* ep = cast(float*)glMapBufferRange(
@@ -581,6 +600,13 @@ struct GpuMesh {
             return;
         }
         ++uploadVersion;
+        // Counted AFTER the suppress/layout-mismatch early-returns above, so
+        // `uploadCalls` means uploads that actually touched a buffer, not
+        // upload REQUESTS. `uploadVerts` is the mesh's vertex count, i.e. the
+        // size of the data this path is responsible for — not the byte count,
+        // which differs per buffer and would need four separate sums to state
+        // honestly.
+        g_fc.upload(cast(long)mesh.vertices.length);
         enum FACE_STRIDE = 6;
 
         // Face VBO — flat-shaded fan triangulation, one normal per face.
@@ -663,6 +689,27 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
+    // ---- counted draw submission -------------------------------------
+    //
+    // EVERY glDrawArrays in this struct goes through here, and that is the
+    // point: the alternative — sprinkling a counter bump beside each call —
+    // is a thing you forget at the twentieth site and then quietly
+    // under-report forever. A wrapper cannot be forgotten, because forgetting
+    // it means calling glDrawArrays directly, which is greppable.
+    //
+    // Pure pass-through: no `count <= 0` guard, no reordering. A zero-vertex
+    // submission is still a submission (the driver call happens either way),
+    // so it is counted as one call with zero vertices rather than dropped —
+    // dropping it would make "this pass ran but had nothing to draw"
+    // indistinguishable from "this pass did not run".
+    //
+    // `g_fc.draw` is live in every build (see perf_probe.d's FrameWorkProbe
+    // header): two integer adds per GL call, no allocation, no lock.
+    private void dcArrays(DrawPass p, GLenum mode, int first, int count) {
+        glDrawArrays(mode, first, count);
+        g_fc.draw(p, count);
+    }
+
     // Draw faces only (writes depth buffer). Material colour comes from
     // the Materials UBO (LitShader.setSurfaces); u_overrideMix is left
     // at its useProgram default of 0 so the shader uses mat_base[matId].
@@ -670,7 +717,7 @@ struct GpuMesh {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
-        glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+        dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindVertexArray(0);
     }
@@ -698,7 +745,7 @@ struct GpuMesh {
         int vboFaceCount = cast(int)faceTriStart.length;
 
         if (hoveredFace < 0) {
-            glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+            dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
             return;
         }
 
@@ -710,20 +757,20 @@ struct GpuMesh {
         // Cage-mode single-face fast path.
         if (!preview) {
             if (hoveredFace >= vboFaceCount) {
-                glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+                dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
                 return;
             }
             int hs = faceTriStart[hoveredFace];
             int hc = faceTriCount[hoveredFace];
             // Surrounding non-hover faces: material colour.
-            if (hs > 0) glDrawArrays(GL_TRIANGLES, 0, hs);
+            if (hs > 0) dcArrays(DrawPass.faces, GL_TRIANGLES, 0, hs);
             if (hs + hc < faceVertCount)
-                glDrawArrays(GL_TRIANGLES, hs + hc, faceVertCount - hs - hc);
+                dcArrays(DrawPass.faces, GL_TRIANGLES, hs + hc, faceVertCount - hs - hc);
             // Hover face: hard override to the legacy highlight blue.
             if (hc > 0) {
                 glUniform1f(shader.locOverrideMix, 1.0f);
                 glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
-                glDrawArrays(GL_TRIANGLES, hs, hc);
+                dcArrays(DrawPass.faces, GL_TRIANGLES, hs, hc);
             }
             return;
         }
@@ -738,13 +785,13 @@ struct GpuMesh {
                 } else if (batchStart >= 0) {
                     int s = faceTriStart[batchStart];
                     int e = faceTriStart[i];
-                    if (e > s) glDrawArrays(GL_TRIANGLES, s, e - s);
+                    if (e > s) dcArrays(DrawPass.faces, GL_TRIANGLES, s, e - s);
                     batchStart = -1;
                 }
             }
             if (batchStart >= 0) {
                 int s = faceTriStart[batchStart];
-                if (faceVertCount > s) glDrawArrays(GL_TRIANGLES, s, faceVertCount - s);
+                if (faceVertCount > s) dcArrays(DrawPass.faces, GL_TRIANGLES, s, faceVertCount - s);
             }
         }
         // Non-hover preview triangles: material colour.
@@ -775,7 +822,7 @@ struct GpuMesh {
                 if (batchStart >= 0) {
                     int startIdx = faceTriStart[batchStart];
                     int endIdx   = faceTriStart[i];
-                    glDrawArrays(GL_TRIANGLES, startIdx, endIdx - startIdx);
+                    dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, endIdx - startIdx);
                     batchStart = -1;
                 }
             } else if (batchStart < 0) {
@@ -786,7 +833,7 @@ struct GpuMesh {
         // Draw final batch if exists
         if (batchStart >= 0) {
             int startIdx = faceTriStart[batchStart];
-            glDrawArrays(GL_TRIANGLES, startIdx, faceVertCount - startIdx);
+            dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, faceVertCount - startIdx);
         }
 
         glBindVertexArray(0);
@@ -868,7 +915,7 @@ struct GpuMesh {
 
             glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
             if (!anyHover && selectedEdges.length == 0) {
-                glDrawArrays(GL_LINES, 0, edgeVertCount);
+                dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
             } else if (!allEdgesSelected) {
                 int batchStart = -1;
                 for (int i = 0; i < edgeCount; i++) {
@@ -876,12 +923,12 @@ struct GpuMesh {
                     if (!skip) {
                         if (batchStart < 0) batchStart = i;
                     } else if (batchStart >= 0) {
-                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                        dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (i - batchStart) * 2);
                         batchStart = -1;
                     }
                 }
                 if (batchStart >= 0)
-                    glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+                    dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
             }
 
             if (blend) {
@@ -896,7 +943,7 @@ struct GpuMesh {
 
         if (allEdgesSelected && hoveredEdge < 0) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-            glDrawArrays(GL_LINES, 0, edgeVertCount);
+            dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
         } else if (selectedEdges.length > 0) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             int batchStart = -1;
@@ -904,12 +951,12 @@ struct GpuMesh {
                 if (segSelected(i) && !segHovered(i)) {
                     if (batchStart < 0) batchStart = i;
                 } else if (batchStart >= 0) {
-                    glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                    dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (i - batchStart) * 2);
                     batchStart = -1;
                 }
             }
             if (batchStart >= 0)
-                glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+                dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
         }
 
         if (anyHover) {
@@ -921,7 +968,7 @@ struct GpuMesh {
             // the single-edge case and the whole-loop case uniformly.
             for (int i = 0; i < edgeCount; i++)
                 if (segHovered(i))
-                    glDrawArrays(GL_LINES, i * 2, 2);
+                    dcArrays(DrawPass.edges, GL_LINES, i * 2, 2);
         }
 
         glEnable(GL_DEPTH_TEST);
@@ -944,7 +991,7 @@ struct GpuMesh {
         // All vertices — small gray dots, with depth test
         glPointSize(5.0f);
         glUniform3f(locColor, 0.6f, 0.6f, 0.6f);
-        glDrawArrays(GL_POINTS, 0, vertCount);
+        dcArrays(DrawPass.verts, GL_POINTS, 0, vertCount);
 
         // Selected and hovered — drawn without depth test so they show through faces.
         glDisable(GL_DEPTH_TEST);
@@ -961,14 +1008,14 @@ struct GpuMesh {
             int c = cageOf(i);
             if (c < 0) continue;
             if (c < cast(int)selected.length && selected[c])
-                glDrawArrays(GL_POINTS, i, 1);
+                dcArrays(DrawPass.verts, GL_POINTS, i, 1);
         }
 
         if (hovered >= 0) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
             for (int i = 0; i < vertCount; i++) {
                 if (cageOf(i) == hovered)
-                    glDrawArrays(GL_POINTS, i, 1);
+                    dcArrays(DrawPass.verts, GL_POINTS, i, 1);
             }
         }
 

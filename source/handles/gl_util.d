@@ -2,6 +2,7 @@ module handles.gl_util;
 
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
+import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import math;
 
 // ---------------------------------------------------------------------------
@@ -400,6 +401,7 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glUniform2f(g_thickLine.locScreen, g_thickLine.screenW, g_thickLine.screenH);
     glBindVertexArray(vao);
     glDrawArrays(mode, 0, vertCount);
+    g_fc.draw(DrawPass.handles, vertCount);
     glUseProgram(restoreProgram);
 }
 
@@ -499,6 +501,7 @@ void drawWorldQuad(Vec3[4] corners, const ref Viewport vp,
         glUniform1f(g_fill.locAlpha, alpha);
         glBindVertexArray(g_quadVao);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        g_fc.draw(DrawPass.handles, 4);
         glBindVertexArray(0);
         glUseProgram(restoreProgram);
     }

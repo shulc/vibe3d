@@ -10,7 +10,7 @@ import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket, ConstrainPacket;
 import operator : Operator, Task, VectorStack, PacketKind;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_fc;
 
 // ---------------------------------------------------------------------------
 // Pipeline — ordered list of Stages with dispatch.
@@ -196,6 +196,12 @@ public:
         // Perf: time the whole pipeline pass, then each stage by its slot.
         // No-op in the default build (g_perf.scope_ → empty struct).
         auto zTotal = g_perf.scope_(Cat.pipeTotal);
+        // Perf (always-on): one pass, and the number of operators it actually
+        // ran. `stageEvals` is the counter that would have caught a stage
+        // evaluating every frame to publish a packet nobody reads — the
+        // operator shows up in the count with no matching consumer-side work,
+        // which a timer never surfaces because the stage itself is cheap.
+        g_fc.bumpPipeEval();
         // Iterate slots in declared Task order: Work → Symm → Snap →
         // Acen → Axis → Wght → Actr. static foreach so the dispatch
         // unrolls to seven straight-line array walks; no runtime
@@ -211,6 +217,7 @@ public:
                 auto zStage = g_perf.scope_(cast(Cat)perfCatFor(slot));
             foreach (op; slotOps) {
                 checkRequiredPackets(op, vts);
+                g_fc.bumpStageEval();
                 op.evaluate(vts);
             }
         }}

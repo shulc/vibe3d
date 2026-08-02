@@ -3,7 +3,7 @@ module bvh_pick;
 import bvh.c;
 import math : Vec3, Viewport, screenRay, screenPointToRay, cross;
 import mesh : Mesh, GpuMesh;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_fc;
 
 // ---------------------------------------------------------------------------
 // bvh_pick — CPU face picking via a nanort BVH ray-cast.
@@ -108,6 +108,7 @@ public:
                  const ref Mesh sourceMesh, const ref GpuMesh gpu)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
+        g_fc.bumpHoverPick();
         size_t srcAddr = cast(size_t)&sourceMesh;
         if (_handle is null
             || _uploadVersion != gpu.uploadVersion
@@ -149,6 +150,7 @@ public:
                         out SurfaceHit result, const(GpuMesh)* gpu = null)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
+        g_fc.bumpHoverPick();
         ulong  versionKey = sourceMesh.mutationVersion;
         size_t srcAddr    = cast(size_t)&sourceMesh;
         if (_surfHandle is null

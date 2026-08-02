@@ -18,7 +18,7 @@ import std.math : sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
-import perf_probe : g_perf, Cat;
+import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
 /// Global gate for the GPU stencil evaluator. App.d flips this to true
 /// after SDL+OpenGL are loaded and the smoke test passes; it stays
@@ -1517,6 +1517,7 @@ struct OsdAccel {
         glEnable(GL_RASTERIZER_DISCARD);
         glBeginTransformFeedback(GL_POINTS);
         glDrawArrays(GL_POINTS, 0, faceVertCount);
+        g_fc.draw(DrawPass.subpatch, faceVertCount);
         glEndTransformFeedback();
         glDisable(GL_RASTERIZER_DISCARD);
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
@@ -1576,6 +1577,7 @@ struct OsdAccel {
         glEnable(GL_RASTERIZER_DISCARD);
         glBeginTransformFeedback(GL_POINTS);
         glDrawArrays(GL_POINTS, 0, dispatchCount);
+        g_fc.draw(DrawPass.subpatch, dispatchCount);
         glEndTransformFeedback();
         glDisable(GL_RASTERIZER_DISCARD);
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);

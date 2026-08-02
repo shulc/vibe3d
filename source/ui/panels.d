@@ -37,6 +37,7 @@ import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
 import log : logInfo, logWarn, logError;
+import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import prefs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -1990,12 +1991,19 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         cast(float)v.fbo.w, cast(float)v.fbo.h,
         0.0f, 0.0f);
     glBindVertexArray(gridVao);
+    // Perf: the ground grid is three fixed submissions whose vertex count
+    // tracks the lattice size, so it is a CONSTANT floor under every scene
+    // frame. Counting it separately from the mesh passes is what lets a
+    // reader say "the model costs N draws" without the grid in the number.
     glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
     glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+    g_fc.draw(DrawPass.grid, gridOnlyVertCount);
     glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
     glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
+    g_fc.draw(DrawPass.grid, 2);
     glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
     glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
+    g_fc.draw(DrawPass.grid, 2);
     glBindVertexArray(0);
 
     // ---- Symmetry plane ----
@@ -2051,6 +2059,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             glBindVertexArray(gridVao);
             glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
             glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.symmetry, gridOnlyVertCount);
             glBindVertexArray(0);
         }
     }
@@ -2100,6 +2109,12 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 bg.uploadedVersion = lyr.mesh.mutationVersion;
             }
 
+            // Perf: attribute this layer's submissions to the BACKDROP slots.
+            // The two draws below are the same GpuMesh entry points the
+            // primary uses, so without the redirect a four-layer scene's
+            // backdrop would be indistinguishable from an expensive model —
+            // and the fixes for those two are not the same fix.
+            auto zBackdrop = g_fc.backdrop();
             if (backdropPlan.drawFaces) {
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.mesh.surfaces);
