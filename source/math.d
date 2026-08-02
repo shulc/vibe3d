@@ -1,6 +1,6 @@
 module math;
 
-import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2, round;
+import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2, round, isFinite;
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -57,7 +57,13 @@ struct Viewport {
     int x = 0;   // window-space left edge
     int y = 0;   // window-space top edge
     Vec3 eye;
-    Vec3 focus;  // camera look-at target; default (0,0,0) for headless / tests
+    // Camera look-at target. NOTE, and it used to read "default (0,0,0)":
+    // `Vec3`'s own fields carry no initialiser, so `float.init` applies and a
+    // default-constructed Viewport has focus == (NaN, NaN, NaN), not the
+    // origin. Every real path sets it (`View.viewportWith`); hand-built
+    // headless fixtures routinely do not. A consumer that must survive both
+    // has to say so — see `viewPixelScale`.
+    Vec3 focus;
 }
 
 Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
@@ -1137,6 +1143,544 @@ unittest { // closestOnSegmentToRay — clamping, degeneracies, and dir-scale
     import std.math : abs;
     assert(abs(t1 - t2) < 1e-6f,
         "the elected parameter must be invariant under the ray direction's scale");
+}
+
+// ---------------------------------------------------------------------------
+// THE POLYGON-SURFACE ELECTION'S PRIMITIVES (task 0588).
+//
+// The five functions below exist for one caller — `snap.d`'s
+// `closestOnPolygonSurface` — and they are here rather than there because
+// `rayPlaneIntersect`, `closestOnSegmentToRay` and `pointInPolygon2D`, the
+// primitives the same function used to be built from, are here.
+//
+// The law they compose is: triangulate the polygon, and per triangle either
+// intersect the cursor's eye ray with it or take the closest point OF THE
+// TRIANGLE measured in a frame perpendicular to that ray. Interior, edge and
+// corner therefore fall out of ONE operation instead of an interior test plus
+// a boundary ring. See `closestOnPolygonSurface` for the whole law and for
+// what it replaced.
+// ---------------------------------------------------------------------------
+
+// The view's WORLD UNITS PER PIXEL at its own scale. Returns 0 when the view
+// is degenerate (zero height, zero/negative projection scale, eye sitting on
+// the focus); every caller must treat 0 as "no scale available" rather than
+// dividing by it.
+//
+// ORTHO is exact: `proj[5] == 1/halfH`, so the viewport spans `2/proj[5]`
+// world units of height at EVERY depth, and one pixel is that over `height`.
+//
+// PERSPECTIVE IS AN INFERENCE, and it is the one judgement call in this file's
+// half of the port. There is no single world-per-pixel in a perspective view —
+// it is a function of depth — so "the view's own scale" has to name a depth,
+// and the depth named here is the eye-to-focus distance, i.e. the radius the
+// camera orbits at. That is the depth the geometry a user is working on sits
+// at, and it makes the returned scale depend on the CAMERA alone, which is
+// what a per-view scalar has to be. It is NOT the depth of the point being
+// ranked: a rank built on this divisor is deliberately not depth-correct, and
+// that asymmetry is the whole observable content of the polygon leg's rank.
+float viewPixelScale(const ref Viewport vp) @safe pure nothrow @nogc
+{
+    if (vp.height <= 0) return 0.0f;
+    immutable float f = vp.proj[5];
+    if (!(f > 1e-9f)) return 0.0f;          // also rejects NaN
+    float dist = 1.0f;
+    if (!isOrtho(vp)) {
+        // A DEFAULT-CONSTRUCTED `focus` IS NaN, NOT THE ORIGIN (see the field's
+        // own note). Every real viewport sets it; headless fixtures that build
+        // a Viewport by hand overwhelmingly do not, and a NaN here would
+        // propagate to a NaN distance, fail the test below, and switch the
+        // whole polygon-surface leg off silently rather than loudly. Reading an
+        // unset focus AS the origin is what the field always claimed to do, and
+        // it is the reading under which such a fixture's camera distance is its
+        // eye's distance from the origin — which is what those fixtures mean.
+        Vec3 fo = vp.focus;
+        if (!isFinite(fo.x) || !isFinite(fo.y) || !isFinite(fo.z))
+            fo = Vec3(0, 0, 0);
+        immutable Vec3 e = vp.eye - fo;
+        dist = sqrt(dot(e, e));
+        if (!(dist > 1e-9f)) return 0.0f;
+    }
+    return (2.0f * dist) / (f * cast(float)vp.height);
+}
+
+// An orthonormal pair spanning the plane PERPENDICULAR to `dir`. Returns false
+// when `dir` is degenerate. `u`, `v` and `dir/|dir|` form a right-handed
+// frame; which of the infinitely many rotations about `dir` is produced does
+// not matter to any caller here, because every quantity they take from it is
+// a LENGTH in that plane, which is rotation-invariant.
+bool perpendicularFrame(Vec3 dir, out Vec3 u, out Vec3 v) @safe pure nothrow @nogc
+{
+    u = Vec3(0, 0, 0);
+    v = Vec3(0, 0, 0);
+    immutable float len = sqrt(dot(dir, dir));
+    if (!(len > 1e-9f)) return false;
+    immutable Vec3 d = dir * (1.0f / len);
+    // Cross with the axis LEAST aligned with `d`, so the cross product is the
+    // best conditioned of the three available.
+    immutable float ax = abs(d.x), ay = abs(d.y), az = abs(d.z);
+    Vec3 helper = (ax <= ay && ax <= az) ? Vec3(1, 0, 0)
+                : (ay <= az)             ? Vec3(0, 1, 0)
+                                         : Vec3(0, 0, 1);
+    Vec3 a = cross(d, helper);
+    immutable float alen = sqrt(dot(a, a));
+    if (!(alen > 1e-9f)) return false;
+    u = a * (1.0f / alen);
+    v = cross(d, u);            // unit already: |d| = |u| = 1 and d ⊥ u
+    return true;
+}
+
+// Möller-Trumbore ray/triangle intersection, DOUBLE-SIDED (a back-facing
+// triangle hits). `t` is along `dir` — NOT clamped to positive here, because
+// the caller's behind-the-eye rule is its own decision and is stated at the
+// call site. `u`/`v` are the barycentric coordinates of the hit:
+//   hit == v0 + u*(v1 - v0) + v*(v2 - v0) == origin + t*dir.
+// All three out-params are 0 on a miss.
+bool rayTriangleIntersect(Vec3 origin, Vec3 dir, Vec3 v0, Vec3 v1, Vec3 v2,
+                          out float t, out float u, out float v)
+    @safe pure nothrow @nogc
+{
+    t = 0.0f; u = 0.0f; v = 0.0f;
+    immutable Vec3 e1 = v1 - v0;
+    immutable Vec3 e2 = v2 - v0;
+    immutable Vec3 p  = cross(dir, e2);
+    immutable float det = dot(e1, p);
+    if (!(det > 1e-12f) && !(det < -1e-12f)) return false;   // also rejects NaN
+    immutable float inv = 1.0f / det;
+    immutable Vec3 s = origin - v0;
+    immutable float uu = dot(s, p) * inv;
+    if (uu < 0.0f || uu > 1.0f) return false;
+    immutable Vec3 q = cross(s, e1);
+    immutable float vv = dot(dir, q) * inv;
+    if (vv < 0.0f || uu + vv > 1.0f) return false;
+    t = dot(e2, q) * inv;
+    u = uu;
+    v = vv;
+    return true;
+}
+
+// Squared distance from (px,py) to the SOLID triangle (a,b,c) in 2D, with the
+// closest point returned in the triangle's own barycentric coordinates:
+//   closest == a + u*(b - a) + v*(c - a).
+//
+// Written as "inside ⇒ zero, otherwise the best of the three edges" rather
+// than as the Voronoi-region form, because that shape needs no guard for a
+// zero-area triangle: a degenerate triangle is simply never "inside", and its
+// three edges still answer correctly.
+float closestPointOnTriangle2D(float px, float py,
+                               float ax, float ay,
+                               float bx, float by,
+                               float cx, float cy,
+                               out float u, out float v)
+    @safe pure nothrow @nogc
+{
+    u = 0.0f; v = 0.0f;
+    immutable float abx = bx - ax, aby = by - ay;
+    immutable float acx = cx - ax, acy = cy - ay;
+    immutable float apx = px - ax, apy = py - ay;
+
+    immutable float d00 = abx*abx + aby*aby;
+    immutable float d01 = abx*acx + aby*acy;
+    immutable float d11 = acx*acx + acy*acy;
+    immutable float den = d00*d11 - d01*d01;
+    if (den > 1e-20f) {
+        immutable float d20 = apx*abx + apy*aby;
+        immutable float d21 = apx*acx + apy*acy;
+        immutable float bu = (d11*d20 - d01*d21) / den;
+        immutable float bv = (d00*d21 - d01*d20) / den;
+        if (bu >= 0.0f && bv >= 0.0f && bu + bv <= 1.0f) {
+            u = bu; v = bv;
+            return 0.0f;
+        }
+    }
+
+    // Local rather than `closestOnSegment2DSquared`, which is unannotated and
+    // would cost this function every one of its four attributes. Same formula,
+    // and the zero-length case clamps to the start point exactly as that one
+    // does.
+    static float seg(float qx, float qy, float sx0, float sy0,
+                     float sx1, float sy1, out float t) @safe pure nothrow @nogc
+    {
+        immutable float ex = sx1 - sx0, ey = sy1 - sy0;
+        immutable float len2 = ex*ex + ey*ey;
+        t = 0.0f;
+        if (len2 > 1e-20f) {
+            t = ((qx - sx0)*ex + (qy - sy0)*ey) / len2;
+            if (t < 0.0f) t = 0.0f;
+            else if (t > 1.0f) t = 1.0f;
+        }
+        immutable float rx = qx - (sx0 + t*ex), ry = qy - (sy0 + t*ey);
+        return rx*rx + ry*ry;
+    }
+
+    float best = float.infinity;
+    float t;
+    // AB: q = a + t*(b - a)  ->  (u, v) = (t, 0)
+    float d2 = seg(px, py, ax, ay, bx, by, t);
+    if (d2 < best) { best = d2; u = t;        v = 0.0f; }
+    // AC: q = a + t*(c - a)  ->  (u, v) = (0, t)
+    d2 = seg(px, py, ax, ay, cx, cy, t);
+    if (d2 < best) { best = d2; u = 0.0f;     v = t; }
+    // BC: q = b + t*(c - b) = a + (1-t)*(b-a) + t*(c-a)  ->  (1-t, t)
+    d2 = seg(px, py, bx, by, cx, cy, t);
+    if (d2 < best) { best = d2; u = 1.0f - t; v = t; }
+    return best;
+}
+
+// Triangulate a simple polygon given as world positions, returning index
+// triples into `poly`. Returns null for fewer than three vertices.
+//
+// EAR CLIPPING, NOT A FAN, and the distinction is the whole reason this exists
+// rather than the `[0, i, i+1]` loop the rest of the codebase uses for display
+// and for BVH build. A fan of a NON-CONVEX polygon emits triangles that cover
+// the notch — area the polygon does not occupy — so a hit test built on a fan
+// reports the cursor as being ON a polygon it is beside. The union of the
+// triangles this returns is the polygon itself, which is the property every
+// caller actually depends on.
+//
+// Non-planar polygons are triangulated in the plane of their Newell normal,
+// which is the standard best-fit and is what makes the answer independent of
+// the viewer. The triangles then keep their true 3D vertices, so a saddle quad
+// yields two genuinely non-coplanar triangles rather than a flattened one.
+//
+// A polygon that is self-intersecting, or degenerate enough that no ear can be
+// found, falls back to a fan for whatever remains: an answer that is wrong in
+// the way the old code was wrong is still better than a hang.
+uint[3][] triangulatePolygonEarClip(const(Vec3)[] poly)
+{
+    immutable size_t n = poly.length;
+    if (n < 3) return null;
+    if (n == 3) return [cast(uint[3])[0u, 1u, 2u]];
+
+    // Newell normal — robust for non-planar and non-convex rings alike.
+    Vec3 nrm = Vec3(0, 0, 0);
+    foreach (i; 0 .. n) {
+        const Vec3 a = poly[i];
+        const Vec3 b = poly[(i + 1) % n];
+        nrm.x += (a.y - b.y) * (a.z + b.z);
+        nrm.y += (a.z - b.z) * (a.x + b.x);
+        nrm.z += (a.x - b.x) * (a.y + b.y);
+    }
+
+    uint[3][] fan() {
+        auto outTris = new uint[3][](n - 2);
+        foreach (i; 0 .. n - 2)
+            outTris[i] = [0u, cast(uint)(i + 1), cast(uint)(i + 2)];
+        return outTris;
+    }
+
+    immutable float nlen = sqrt(dot(nrm, nrm));
+    if (!(nlen > 1e-20f)) return fan();
+    immutable Vec3 nhat = nrm * (1.0f / nlen);
+
+    Vec3 e1, e2;
+    if (!perpendicularFrame(nhat, e1, e2)) return fan();
+
+    auto xs = new float[](n);
+    auto ys = new float[](n);
+    foreach (i; 0 .. n) {
+        immutable Vec3 d = poly[i] - poly[0];
+        xs[i] = dot(d, e1);
+        ys[i] = dot(d, e2);
+    }
+    // `e2 = nhat x e1` makes (e1, e2) right-handed about the Newell normal, so
+    // the projected ring is counter-clockwise. Measured rather than assumed —
+    // a ring that comes out clockwise is flipped so the convexity test below
+    // has one sign to test against.
+    float area2 = 0.0f;
+    foreach (i; 0 .. n) {
+        immutable size_t j = (i + 1) % n;
+        area2 += xs[i]*ys[j] - xs[j]*ys[i];
+    }
+    if (area2 < 0.0f) foreach (i; 0 .. n) ys[i] = -ys[i];
+
+    static float cross2(float ox, float oy, float ax, float ay,
+                        float bx, float by) @safe pure nothrow @nogc
+    {
+        return (ax - ox)*(by - oy) - (ay - oy)*(bx - ox);
+    }
+
+    auto idx = new uint[](n);
+    foreach (i; 0 .. n) idx[i] = cast(uint)i;
+
+    auto tris = new uint[3][](n - 2);
+    size_t produced = 0;
+    size_t guard    = 0;                       // bounds the whole clip loop
+    immutable size_t guardMax = n * n + 4;
+
+    while (idx.length > 3 && guard++ < guardMax) {
+        bool clipped = false;
+        foreach (k; 0 .. idx.length) {
+            immutable size_t kp = (k + idx.length - 1) % idx.length;
+            immutable size_t kn = (k + 1) % idx.length;
+            immutable uint ip = idx[kp], ic = idx[k], inx = idx[kn];
+            // Convex corner?
+            if (!(cross2(xs[ip], ys[ip], xs[ic], ys[ic], xs[inx], ys[inx]) > 0.0f))
+                continue;
+            // No other remaining vertex inside the candidate ear.
+            bool blocked = false;
+            foreach (m; 0 .. idx.length) {
+                immutable uint iq = idx[m];
+                if (iq == ip || iq == ic || iq == inx) continue;
+                immutable float c0 = cross2(xs[ip], ys[ip], xs[ic],  ys[ic],  xs[iq], ys[iq]);
+                immutable float c1 = cross2(xs[ic], ys[ic], xs[inx], ys[inx], xs[iq], ys[iq]);
+                immutable float c2 = cross2(xs[inx], ys[inx], xs[ip], ys[ip], xs[iq], ys[iq]);
+                if (c0 >= 0.0f && c1 >= 0.0f && c2 >= 0.0f) { blocked = true; break; }
+            }
+            if (blocked) continue;
+            tris[produced++] = [ip, ic, inx];
+            idx = idx[0 .. k] ~ idx[k + 1 .. $];
+            clipped = true;
+            break;
+        }
+        if (!clipped) break;                   // no ear found — fall through
+    }
+
+    if (idx.length == 3) {
+        tris[produced++] = [idx[0], idx[1], idx[2]];
+        return tris[0 .. produced];
+    }
+    // Stalled (self-intersecting / degenerate ring): fan the remainder.
+    foreach (i; 1 .. idx.length - 1) {
+        if (produced >= tris.length) break;
+        tris[produced++] = [idx[0], idx[i], idx[i + 1]];
+    }
+    return tris[0 .. produced];
+}
+
+unittest { // viewPixelScale — the two projections, and the NaN focus a hand-built
+           // fixture leaves behind.
+    Viewport vp;
+    vp.width = 800; vp.height = 800;
+    vp.eye = Vec3(0, 0, 5);
+    vp.proj = perspectiveMatrix(cast(float)(PI / 2), 1.0f, 0.1f, 100.0f);
+    vp.view = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+
+    // proj[5] = 1/tan(45deg) = 1, so the view spans 2*dist world units of
+    // height; dist = |eye - focus| = 5; 10 world units over 800 pixels.
+    assert(vp.focus.x != vp.focus.x,
+        "fixture premise: an unassigned Vec3 is NaN, not the origin — the whole "
+        ~ "point of the fallback below");
+    assert(abs(viewPixelScale(vp) - 0.0125f) < 1e-7f,
+        "an unset focus must be read as the origin, giving the eye's own "
+        ~ "distance as the view's scale");
+
+    vp.focus = Vec3(0, 0, 0);
+    assert(abs(viewPixelScale(vp) - 0.0125f) < 1e-7f,
+        "and setting it to the origin explicitly must not change the answer");
+
+    // Twice as far from the focus -> twice the world per pixel.
+    vp.eye = Vec3(0, 0, 10);
+    assert(abs(viewPixelScale(vp) - 0.025f) < 1e-7f,
+        "the perspective scale is proportional to the eye-to-focus distance");
+
+    // Ortho carries no distance term at all: 2*halfH over the pixel height.
+    Viewport o;
+    o.width = 800; o.height = 800;
+    o.eye = Vec3(0, 0, 10); o.focus = Vec3(0, 0, 0);
+    o.proj = orthographicMatrix(4.0f, 1.0f, 0.1f, 100.0f);
+    assert(isOrtho(o), "fixture premise: this must be the ortho branch");
+    assert(abs(viewPixelScale(o) - 0.01f) < 1e-7f,
+        "ortho spans 2*halfH world units of height at every depth");
+    o.eye = Vec3(0, 0, 40);
+    assert(abs(viewPixelScale(o) - 0.01f) < 1e-7f,
+        "...and moving the ortho eye must not change it, which is what makes "
+        ~ "the distance term perspective-only");
+
+    Viewport bad;
+    bad.width = 800; bad.height = 0;
+    bad.proj = perspectiveMatrix(cast(float)(PI / 2), 1.0f, 0.1f, 100.0f);
+    assert(viewPixelScale(bad) == 0.0f, "a zero-height view has no scale");
+}
+
+unittest { // perpendicularFrame — orthonormal, spans the perpendicular plane,
+           // and reports a degenerate direction rather than returning NaNs.
+    Vec3 u, v;
+    foreach (d; [Vec3(0, 0, -1), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                 Vec3(0.3f, -0.7f, 0.2f), Vec3(-5, 5, -5)]) {
+        assert(perpendicularFrame(d, u, v), "a non-degenerate direction must solve");
+        assert(abs(sqrt(dot(u, u)) - 1.0f) < 1e-5f, "u must be unit");
+        assert(abs(sqrt(dot(v, v)) - 1.0f) < 1e-5f, "v must be unit");
+        assert(abs(dot(u, v)) < 1e-5f, "u and v must be orthogonal");
+        assert(abs(dot(u, d)) < 1e-5f * sqrt(dot(d, d)), "u must be perpendicular to d");
+        assert(abs(dot(v, d)) < 1e-5f * sqrt(dot(d, d)), "v must be perpendicular to d");
+    }
+    assert(!perpendicularFrame(Vec3(0, 0, 0), u, v),
+        "a zero direction spans no plane and must say so");
+
+    // The property the caller actually buys: for a point off the line through
+    // the origin along d, the length of its (u,v) coordinates IS its
+    // perpendicular distance to that line.
+    immutable Vec3 d = Vec3(0, 0, -1);
+    assert(perpendicularFrame(d, u, v));
+    immutable Vec3 p = Vec3(3, 4, -17);
+    immutable float du = dot(p, u), dv = dot(p, v);
+    assert(abs(sqrt(du*du + dv*dv) - 5.0f) < 1e-5f,
+        "the frame's coordinates must measure the distance to the ray line");
+}
+
+unittest { // rayTriangleIntersect — hit, backface, miss, behind, and the
+           // barycentric reconstruction agreeing with the parametric one.
+    immutable Vec3 v0 = Vec3(0, 0, -5), v1 = Vec3(2, 0, -5), v2 = Vec3(0, 2, -5);
+    float t, u, v;
+
+    assert(rayTriangleIntersect(Vec3(0.5f, 0.5f, 0), Vec3(0, 0, -1), v0, v1, v2, t, u, v),
+        "a ray through the interior must hit");
+    assert(abs(t - 5.0f) < 1e-5f, "t is measured along dir, which is unit here");
+    assert(abs(u - 0.25f) < 1e-5f && abs(v - 0.25f) < 1e-5f,
+        "and the barycentrics must locate the hit inside the triangle");
+    immutable Vec3 pPar = Vec3(0.5f, 0.5f, 0) + Vec3(0, 0, -1) * t;
+    immutable Vec3 pBar = v0 + (v1 - v0) * u + (v2 - v0) * v;
+    immutable Vec3 diff = pPar - pBar;
+    assert(sqrt(dot(diff, diff)) < 1e-5f,
+        "the two reconstructions of the hit must be the same point — the port "
+        ~ "uses one on the hit arm and the other on the miss arm");
+
+    // Back face: the same triangle from behind still hits. The reference's
+    // polygon test has no front-face rule (the caller's `faceVisible` does).
+    assert(rayTriangleIntersect(Vec3(0.5f, 0.5f, -10), Vec3(0, 0, 1), v0, v1, v2, t, u, v),
+        "the test must be double-sided");
+    assert(abs(t - 5.0f) < 1e-5f);
+
+    // Outside the triangle, in the same plane.
+    assert(!rayTriangleIntersect(Vec3(3, 3, 0), Vec3(0, 0, -1), v0, v1, v2, t, u, v),
+        "a ray past the triangle must miss");
+
+    // Behind the origin: still a HIT, with a negative t. Rejecting it is the
+    // caller's rule, deliberately not this function's.
+    assert(rayTriangleIntersect(Vec3(0.5f, 0.5f, -10), Vec3(0, 0, -1), v0, v1, v2, t, u, v),
+        "a triangle behind the ray origin still intersects the ray LINE");
+    assert(t < 0.0f, "and it must be reported by the sign of t, not by a false");
+
+    // Degenerate triangle.
+    assert(!rayTriangleIntersect(Vec3(0, 0, 0), Vec3(0, 0, -1),
+                                 v0, v0, v0, t, u, v),
+        "a zero-area triangle must not report a hit");
+}
+
+unittest { // closestPointOnTriangle2D — interior, each edge, each corner, and a
+           // degenerate triangle, checked through the barycentrics rather than
+           // through a second copy of the same arithmetic.
+    immutable float ax = 0, ay = 0, bx = 4, by = 0, cx = 0, cy = 3;
+    float u, v;
+
+    float rebuiltDist2(float px, float py, float uu, float vv) {
+        immutable float qx = ax + uu*(bx - ax) + vv*(cx - ax);
+        immutable float qy = ay + uu*(by - ay) + vv*(cy - ay);
+        return (px - qx)*(px - qx) + (py - qy)*(py - qy);
+    }
+
+    // Interior -> exactly zero, and the barycentrics locate the query point.
+    assert(closestPointOnTriangle2D(1, 1, ax, ay, bx, by, cx, cy, u, v) == 0.0f,
+        "a point inside must be at zero distance, exactly");
+    assert(rebuiltDist2(1, 1, u, v) < 1e-8f,
+        "and the barycentrics must rebuild the query point itself");
+
+    // Beyond edge AB.
+    float d2 = closestPointOnTriangle2D(2, -3, ax, ay, bx, by, cx, cy, u, v);
+    assert(abs(d2 - 9.0f) < 1e-4f, "the foot is on AB, three units below");
+    assert(abs(v) < 1e-6f, "on AB the C coefficient must vanish");
+    assert(abs(rebuiltDist2(2, -3, u, v) - d2) < 1e-4f,
+        "the returned distance and the returned point must agree");
+
+    // Beyond corner B.
+    d2 = closestPointOnTriangle2D(9, -1, ax, ay, bx, by, cx, cy, u, v);
+    assert(abs(d2 - 26.0f) < 1e-3f, "the nearest point of the triangle is B");
+    assert(abs(u - 1.0f) < 1e-5f && abs(v) < 1e-5f, "which is (u, v) = (1, 0)");
+
+    // Beyond the hypotenuse BC.
+    d2 = closestPointOnTriangle2D(4, 3, ax, ay, bx, by, cx, cy, u, v);
+    assert(abs(rebuiltDist2(4, 3, u, v) - d2) < 1e-4f,
+        "the hypotenuse case must be self-consistent too");
+    assert(u > 0.0f && v > 0.0f && abs(u + v - 1.0f) < 1e-5f,
+        "and its foot must lie ON BC, i.e. u + v == 1");
+
+    // A degenerate (zero-area) triangle must still answer — this is the case
+    // the Voronoi-region form needs a special guard for and this one does not.
+    d2 = closestPointOnTriangle2D(0, 5, 0, 0, 4, 0, 2, 0, u, v);
+    assert(abs(d2 - 25.0f) < 1e-4f,
+        "a collapsed triangle is a segment, and the foot is still on it");
+}
+
+unittest { // triangulatePolygonEarClip — THE NON-CONVEX GUARD.
+           //
+           // The property is not "n-2 triangles come back"; it is that their
+           // UNION is the polygon. The fixture is an L whose vertex 0 is chosen
+           // so that a fan from it covers the notch — the test computes that
+           // fan and asserts it DOES cover the notch, so the discriminator is
+           // carried by the test rather than asserted in prose.
+    immutable Vec3[6] L = [
+        Vec3( 0,  2, 0),   // 0 — the fan pivot, and it cannot see the whole ring
+        Vec3(-2,  2, 0),
+        Vec3(-2, -2, 0),
+        Vec3( 2, -2, 0),
+        Vec3( 2,  0, 0),
+        Vec3( 0,  0, 0),   // 5 — the reflex corner
+    ];
+    immutable float qx = 1.2f, qy = 0.5f;   // in the notch: outside the L
+
+    static bool inTri(float px, float py, Vec3 a, Vec3 b, Vec3 c) {
+        static float cr(float ox, float oy, float mx, float my, float nx, float ny) {
+            return (mx - ox)*(ny - oy) - (my - oy)*(nx - ox);
+        }
+        immutable float c0 = cr(a.x, a.y, b.x, b.y, px, py);
+        immutable float c1 = cr(b.x, b.y, c.x, c.y, px, py);
+        immutable float c2 = cr(c.x, c.y, a.x, a.y, px, py);
+        return (c0 >= 0 && c1 >= 0 && c2 >= 0) || (c0 <= 0 && c1 <= 0 && c2 <= 0);
+    }
+
+    // Premise 1: the probe really is outside the polygon.
+    float[] xs, ys;
+    foreach (p; L) { xs ~= p.x; ys ~= p.y; }
+    assert(!pointInPolygon2D(qx, qy, xs, ys),
+        "fixture: the probe must sit in the NOTCH, outside the L");
+
+    // Premise 2: a fan from vertex 0 would cover it — this is the failure the
+    // ear clip exists to avoid, computed here rather than claimed.
+    bool fanCovers = false;
+    foreach (i; 1 .. L.length - 1)
+        if (inTri(qx, qy, L[0], L[i], L[i + 1])) { fanCovers = true; break; }
+    assert(fanCovers,
+        "fixture: a fan from vertex 0 must cover the notch, or this polygon "
+        ~ "cannot tell a fan from a proper triangulation");
+
+    auto tris = triangulatePolygonEarClip(L[]);
+    assert(tris.length == L.length - 2,
+        "a simple polygon must yield exactly n-2 triangles");
+    foreach (t; tris)
+        assert(!inTri(qx, qy, L[t[0]], L[t[1]], L[t[2]]),
+            "NO ear-clipped triangle may cover the notch — a triangulation "
+            ~ "whose union exceeds the polygon reports a cursor beside the "
+            ~ "polygon as being on it");
+
+    // And the union does cover a point that IS inside.
+    bool covered = false;
+    foreach (t; tris)
+        if (inTri(-1.0f, -1.0f, L[t[0]], L[t[1]], L[t[2]])) { covered = true; break; }
+    assert(covered, "the union must still cover the polygon's own interior");
+}
+
+unittest { // triangulatePolygonEarClip — the small arities and a non-planar quad.
+    assert(triangulatePolygonEarClip([]) is null, "no polygon, no triangles");
+    assert(triangulatePolygonEarClip([Vec3(0,0,0), Vec3(1,0,0)]) is null,
+        "two vertices are not a polygon");
+
+    auto t3 = triangulatePolygonEarClip([Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)]);
+    assert(t3.length == 1 && t3[0] == [0u, 1u, 2u],
+        "a triangle is its own triangulation, in its own order");
+
+    // A saddle quad: the two triangles must stay genuinely non-coplanar, which
+    // is what lets a hit test find the FOLD rather than a best-fit plane.
+    immutable Vec3[4] saddle = [Vec3(-1,-1,0), Vec3(1,-1,0), Vec3(1,1,0), Vec3(-1,1,2)];
+    auto t4 = triangulatePolygonEarClip(saddle[]);
+    assert(t4.length == 2, "a quad yields two triangles");
+    Vec3 nrmOf(uint[3] t) {
+        return cross(saddle[t[1]] - saddle[t[0]], saddle[t[2]] - saddle[t[0]]);
+    }
+    immutable Vec3 n0 = nrmOf(t4[0]), n1 = nrmOf(t4[1]);
+    immutable Vec3 c = cross(n0, n1);
+    assert(sqrt(dot(c, c)) > 1e-3f,
+        "the saddle's two triangles must have DIFFERENT normals — a flattened "
+        ~ "triangulation would put both on one plane and lose the fold");
 }
 
 // Build the camera plane through the eye and the screen-space line (ax,ay)→(bx,by).

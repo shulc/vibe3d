@@ -6,7 +6,9 @@ import core.sync.mutex : Mutex;
 import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
               closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
-              closestPointOnLineToRay;
+              closestPointOnLineToRay, isOrtho, viewPixelScale,
+              perpendicularFrame, rayTriangleIntersect,
+              closestPointOnTriangle2D, triangulatePolygonEarClip;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
@@ -679,7 +681,24 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // mesh, 1..N = background source). It is recorded on the winner so the
     // highlight renderer can resolve the element against the right mesh — a
     // source-local index alone is ambiguous across layers (layers Stage 5).
-    void consider(Vec3 candWorld, int idx, SnapType type, int slot) {
+    //
+    // `rankPx` — A LEG THAT COMPUTES ITS OWN RANK HANDS IT IN HERE (task 0588).
+    // NaN, the default, means "rank this candidate by the re-projected screen
+    // distance of its world point", which is what every leg but the polygon
+    // one does and what this function has always done. The polygon-SURFACE leg
+    // is the single exception: its reference law ranks a ray HIT at an exact
+    // zero and a miss at a world distance divided by ONE world-per-pixel, so
+    // its rank is not a re-projection and cannot be recovered from the elected
+    // point. See `closestOnPolygonSurface`.
+    //
+    // A supplied rank REPLACES the screen distance everywhere downstream — the
+    // range reject just below, the guide arbitration's input, the cascade
+    // slot's `dist`, the acceptance test at the merge. That is the whole point:
+    // a rank that only ranked and did not gate would be a third metric nobody
+    // measured. What it does NOT replace is the projection above it, which
+    // stays as the behind-the-camera validity guard it already was.
+    void consider(Vec3 candWorld, int idx, SnapType type, int slot,
+                  float rankPx = float.nan) {
         // The client's admission rule runs FIRST — before the projection and
         // before the distance compare. Order is load-bearing, not stylistic:
         // rejecting after the compare would let an inadmissible candidate
@@ -696,6 +715,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         float dx = pxs - cast(float)sx;
         float dy = pys - cast(float)sy;
         float d  = sqrt(dx * dx + dy * dy);
+        if (!isNaN(rankPx)) d = rankPx;
         if (d > cfg.outerRangePx) return;
         // S4(a): the guide arbitration. The gather cutoff above stays ahead of
         // it deliberately — the candidate GRID is queried with `outerRangePx`
@@ -1136,11 +1156,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // on WHICH on-edge point was elected, only on the edge being elected
         // at all.
         //
-        // STILL UNREAD, and therefore still wrong the old way: the polygon
-        // leg's BOUNDARY RING (`closestOnPolygonSurface`) runs the same
-        // projected-t-as-world-t arithmetic. Its reference site is a different
-        // function and nobody has read it, so it is not "the same fix one leg
-        // over" — it is an open item on 0567 with a named thing to read first.
+        // THE POLYGON LEG DOES NOT RUN THIS LAW, and the reason is worth
+        // keeping next to it. Its reference site turned out to be a different
+        // function running a different algorithm — no boundary ring at all,
+        // a triangulation and a ray/triangle test, and a rank that is not a
+        // re-projection (task 0580's read, ported by 0588). So "the same fix
+        // one leg over" was never available; see `closestOnPolygonSurface`.
         //
         // `legType` is what the walk REPORTS (it reaches the `admit`
         // predicate, and it is the `SnapResult.targetType` when no refinement
@@ -1208,12 +1229,27 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                                     : SnapType.PolyCenter;
             auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
+            // THE GATHER AND THE RANK ARE NOW DIFFERENT METRICS HERE, and the
+            // seam is ours, not the reference's. `queryCandidateGrid` gathers
+            // by SCREEN distance (that is the only thing a screen-space bucket
+            // grid can guarantee), while the rank `closestOnPolygonSurface`
+            // returns divides a WORLD distance by the view's single
+            // world-per-pixel. The two agree exactly at the view's own scale
+            // distance and diverge as `depth / scaleDistance` away from it, so
+            // a face NEARER than that distance can rank inside `outerRangePx`
+            // while its screen distance puts it outside the grid's 3x3 block —
+            // and it is then never offered. The reference's own enumeration
+            // cutoff is unread, so this is recorded as a limit of our broad
+            // phase rather than claimed as agreement with theirs. Widening the
+            // gather to cover it is a perf decision with no measurement behind
+            // it yet, and is deliberately not taken here.
             foreach (fi; cands) {
                 auto face = m.faces[fi];
                 if (!faceVisible(face)) continue;
-                Vec3 hit;
-                if (closestOnPolygonSurface(face, m, sx, sy, vp, hit))
-                    consider(hit, cast(int)fi, legType, slot);
+                Vec3  hit;
+                float rankPx;
+                if (closestOnPolygonSurface(face, m, sx, sy, vp, hit, rankPx))
+                    consider(hit, cast(int)fi, legType, slot, rankPx);
             }
         }
 
@@ -1462,110 +1498,175 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     return res;
 }
 
-// Closest world-space point on a polygon's surface to the cursor at
-// screen pixel (sx, sy). Cursor inside the screen-projected polygon
-// ⇒ ray-plane hit (face's plane, normal from first 3 verts). Outside
-// ⇒ closest point on the polygon's boundary ring, elected in 3D against
-// the cursor ray (see the exterior leg below). Returns false on degenerate
-// faces (< 3 verts, behind-camera vert, zero-area normal) — caller skips
-// that face.
+// ---------------------------------------------------------------------------
+// THE POLYGON-SURFACE ELECTION — the reference's law, ported whole (task 0588).
 //
-// TWO KNOWN DIVERGENCES FROM THE REFERENCE, recorded and deliberately NOT
-// fixed here (task 0587 fixed only the exterior leg's parameter defect,
-// which is the one that is a bug on its own evidence):
+// Closest world-space point on a polygon's SURFACE to the cursor at screen
+// pixel (sx, sy), together with the RANK that election is worth. Returns false
+// when the face has fewer than three vertices, when the view has no usable
+// pixel scale, or when no triangle survives the behind-the-eye guard — the
+// caller then skips that face entirely.
 //
-//   D1 — the interior test. Ours is point-in-polygon on the PROJECTED
-//        outline, and the hit is against ONE plane through face[0] with the
-//        normal of the first three vertices. The reference triangulates the
-//        polygon and intersects the eye ray with each triangle. The two
-//        differ on every NON-PLANAR polygon (we have no single plane to
-//        intersect) and on every NON-CONVEX one (the projected outline is
-//        not the projected surface). This is a different algorithm, not a
-//        defect in this one, so "fixing" it is a port, not a repair.
-//   D3 — the rank. `consider()` re-projects the returned point and ranks by
-//        true screen distance, which is depth-correct. The reference divides
-//        a world distance by the view's single world-per-pixel scale and
-//        gives an interior hit a rank of EXACTLY zero, so every polygon under
-//        the cursor ties and iteration order decides. On a strongly
-//        foreshortened polygon the two orderings can disagree.
+// THE LAW, in the order it runs:
 //
-// Both are recorded in the task file; neither is measured here.
+//   1. Triangulate the polygon.
+//   2. Per triangle, intersect the cursor's eye ray with it. A hit at t >= 0
+//      elects `origin + t*dir` and ranks it EXACTLY 0.0.
+//   3. On a miss, build a frame perpendicular to the ray, project the three
+//      vertices into it, take the closest point of the projected TRIANGLE to
+//      the ray's own projection, rebuild that point in WORLD from the
+//      barycentric coordinates it came back with, and rank it
+//      `sqrt(d2) / viewPixelScale(vp)`.
+//   4. Lowest rank wins; ties keep the earlier triangle.
+//
+// THERE IS NO BOUNDARY RING, and its absence is the structural half of the
+// port. Interior, edge and corner are one operation: a cursor beside the
+// polygon lands on whichever part of a triangle is nearest, which may be an
+// edge point or a vertex, and nothing had to decide which of those it was.
+//
+// WHAT THIS REPLACED, in three parts, all of them measured against the
+// reference statically and none of them a repair of the old code on its own
+// terms:
+//
+//   D1 — THE INTERIOR TEST. Ours was point-in-polygon on the PROJECTED
+//        outline, and the hit was against ONE plane through face[0] carrying
+//        the normal of the first three vertices. That is exact for a planar
+//        polygon and meaningless otherwise: on a NON-PLANAR face the elected
+//        point sat on a plane the surface does not lie in, off the model by
+//        however far the face folds. Per-triangle intersection has no such
+//        plane to be wrong about. On a NON-CONVEX face the two agree only
+//        because `pointInPolygon2D`'s crossing rule is itself correct about
+//        notches — which is exactly why the triangulation here must be an EAR
+//        CLIP and not the fan the display path uses: a fan would cover the
+//        notch and report a cursor sitting beside the polygon as being on it,
+//        i.e. it would be a regression against the code being replaced.
+//
+//   D2 — THE EXTERIOR POINT (fixed in 0587, subsumed here). The ring took the
+//        closest parameter on the PROJECTED segment and applied it as a WORLD
+//        parameter, which is the same point only when the endpoints sit at
+//        equal depth. 0587 replaced that with a 3D election against the eye
+//        ray. Both of those minimised distance-to-the-ray over ONE segment at
+//        a time and then chose between segments by re-projected screen
+//        distance; this law minimises the same quantity over the whole
+//        triangle and chooses by the world distance itself. On a fixture where
+//        one boundary edge is plainly the near one, all three agree — which is
+//        why 0587's decisive block below still passes unchanged.
+//
+//   D3 — THE RANK. `consider()` re-projects a candidate and ranks it by true
+//        screen distance, which is depth-correct. The reference does not: it
+//        divides a world distance by the view's SINGLE world-per-pixel, so its
+//        polygon ranks are stretched by `depth / scaleDistance` relative to
+//        ours, and two faces at different depths can order the other way
+//        round. And a ray hit ranks at a literal 0.0, not at "the screen
+//        distance of a point that happens to sit on the cursor's pixel" —
+//        so every polygon the cursor is over TIES.
+//
+// THE TIE IS FAITHFUL, AND WHAT IT DECIDES IS ITERATION ORDER, NOT A
+// TIE-BREAK. `consider()` accumulates with a strict `<`, so among equal ranks
+// the FIRST candidate offered keeps the slot; the polygon leg walks
+// `queryCandidateGrid`'s ascending-index answer, so the lowest face index
+// under the cursor wins. That is the reference's mechanism exactly — first in
+// its own enumeration wins — and it is as far as fidelity can go: WHICH face
+// its enumerator reaches first is a property of its spatial structures, not of
+// this law, and inventing a tie-break to paper over that would replace a
+// faithful indeterminacy with an unfaithful certainty. Under the old rank the
+// same two faces did not tie at all; they differed in the last few bits of a
+// re-projection, so the winner was decided by float noise. Deterministic-by-
+// order is strictly more predictable than that, as well as being the port.
+//
+// ONE MORE BEHAVIOUR CHANGE, small and named: the old code returned false as
+// soon as any face vertex failed to project, so a face with a single vertex
+// behind the camera was not snappable at all. The reference has no such rule —
+// it guards per elected POINT (`dot(dir, P - origin) < 0`, perspective only) —
+// and neither does this. In practice nothing new becomes reachable, because
+// `projectElementCells` drops such faces from the candidate grid before this
+// is ever called.
+// ---------------------------------------------------------------------------
+private bool closestOnPolygonSurface(const(uint)[] face,
+                                     const ref Mesh mesh,
+                                     int sx, int sy,
+                                     const ref Viewport vp,
+                                     out Vec3 worldHit,
+                                     out float rankPx)
+{
+    worldHit = Vec3(0, 0, 0);
+    rankPx   = float.infinity;
+    if (face.length < 3) return false;
+
+    // No scale ⇒ no rank. Bailing is the only honest answer: a fallback
+    // divisor would silently produce ranks in units nothing else shares.
+    immutable float pixelScale = viewPixelScale(vp);
+    if (!(pixelScale > 0.0f)) return false;
+
+    Vec3 rayOrig, rayDir;
+    screenPointToRay(cast(float)sx, cast(float)sy, vp, rayOrig, rayDir);
+    Vec3 fu, fv;
+    if (!perpendicularFrame(rayDir, fu, fv)) return false;
+
+    auto pts = new Vec3[](face.length);
+    foreach (i, vi; face) pts[i] = mesh.vertices[vi];
+
+    auto tris = triangulatePolygonEarClip(pts);
+    if (tris.length == 0) return false;
+
+    // The behind-the-eye guard on the MISS arm is perspective-only, matching
+    // the reference's view-type test. In an ortho view every point is "in
+    // front" in the only sense the projection cares about.
+    immutable bool perspective = !isOrtho(vp);
+
+    bool  found = false;
+    float best  = float.infinity;
+    Vec3  bestP = Vec3(0, 0, 0);
+
+    foreach (tri; tris) {
+        immutable Vec3 v0 = pts[tri[0]];
+        immutable Vec3 v1 = pts[tri[1]];
+        immutable Vec3 v2 = pts[tri[2]];
+
+        Vec3  p;
+        float rank;
+        float t, hu, hv;
+        if (rayTriangleIntersect(rayOrig, rayDir, v0, v1, v2, t, hu, hv)) {
+            if (t < 0.0f) continue;               // behind the eye
+            p    = rayOrig + rayDir * t;
+            rank = 0.0f;                          // a literal zero, not an epsilon
+        } else {
+            // The projection is RELATIVE TO THE RAY ORIGIN, so the ray itself
+            // projects to (0, 0) and the 2D distance is the perpendicular
+            // distance from the ray LINE — a world length, which is what makes
+            // dividing it by a world-per-pixel produce pixels.
+            float u, v;
+            immutable Vec3 w0 = v0 - rayOrig, w1 = v1 - rayOrig, w2 = v2 - rayOrig;
+            immutable float d2 = closestPointOnTriangle2D(
+                0.0f, 0.0f,
+                dot(w0, fu), dot(w0, fv),
+                dot(w1, fu), dot(w1, fv),
+                dot(w2, fu), dot(w2, fv),
+                u, v);
+            p    = v0 + (v1 - v0) * u + (v2 - v0) * v;
+            rank = sqrt(d2) / pixelScale;
+            if (perspective && dot(rayDir, p - rayOrig) < 0.0f) continue;
+        }
+        if (rank < best) { best = rank; bestP = p; found = true; }
+    }
+
+    if (!found) return false;
+    worldHit = bestP;
+    rankPx   = best;
+    return true;
+}
+
+// Rank-discarding form. Kept so a caller that only wants the point does not
+// have to declare a variable it will not read — and so the fixtures written
+// against the election alone go on calling exactly what they called before.
 private bool closestOnPolygonSurface(const(uint)[] face,
                                      const ref Mesh mesh,
                                      int sx, int sy,
                                      const ref Viewport vp,
                                      out Vec3 worldHit)
 {
-    if (face.length < 3) return false;
-
-    float[] xs = new float[](face.length);
-    float[] ys = new float[](face.length);
-    foreach (i, vi; face) {
-        float pxs, pys, ndcZ;
-        if (!projectToWindowFull(mesh.vertices[vi], vp, pxs, pys, ndcZ))
-            return false;
-        xs[i] = pxs;
-        ys[i] = pys;
-    }
-
-    Vec3 v0 = mesh.vertices[face[0]];
-    Vec3 v1 = mesh.vertices[face[1]];
-    Vec3 v2 = mesh.vertices[face[2]];
-    Vec3 n  = cross(v1 - v0, v2 - v0);
-    float nlen = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
-    if (nlen < 1e-9f) return false;
-    n = n / nlen;
-
-    if (pointInPolygon2D(cast(float)sx, cast(float)sy, xs, ys)) {
-        Vec3 snapOrig5, ray;
-        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig5, ray);
-        return rayPlaneIntersect(snapOrig5, ray, v0, n, worldHit);
-    }
-
-    // Outside the polygon — elect a point on the boundary ring, in 3D, the
-    // same way the edge leg does (task 0567 for edges, 0587 here): the
-    // ELECTION is the closest approach of the world segment to the cursor's
-    // eye ray, and the RANK is the re-projected screen distance of the point
-    // that election returns. Two different metrics in sequence, deliberately.
-    //
-    // What this replaces: the ring used to take the closest parameter on the
-    // PROJECTED segment and then apply it as a WORLD parameter
-    // (`a + (b - a) * bestT` with `bestT` from `closestOnSegment2DSquared`).
-    // Under perspective those are different parameters, so the elected point
-    // could sit far from where the cursor actually was; the two agree only
-    // when the segment's endpoints are at equal depth, which is why a
-    // coplanar/equal-depth rig cannot tell the two laws apart.
-    Vec3 rayOrig, rayDir;
-    screenPointToRay(cast(float)sx, cast(float)sy, vp, rayOrig, rayDir);
-    float bestDist2 = float.infinity;
-    bool  found     = false;
-    foreach (i; 0 .. face.length) {
-        size_t j = (i + 1) % face.length;
-        Vec3 a = mesh.vertices[face[i]];
-        Vec3 b = mesh.vertices[face[j]];
-        // A degenerate segment (zero-length, or pointing straight down the
-        // view ray) leaves `t` at 0 and elects `a`. Every point on such a
-        // segment shares one pixel, so the rank below is identical whichever
-        // point is chosen and the `false` return needs no separate handling.
-        float t;
-        closestOnSegmentToRay(rayOrig, rayDir, a, b, t);
-        Vec3 p = a + (b - a) * t;
-        float pxs, pys, ndcZ;
-        // Cannot fail in practice: every face vertex projected successfully
-        // above (or we returned false), so a point between two of them is in
-        // front of the camera too. Guarded anyway — `found` carries the
-        // verdict rather than an assumption.
-        if (!projectToWindowFull(p, vp, pxs, pys, ndcZ)) continue;
-        immutable float dx = pxs - cast(float)sx;
-        immutable float dy = pys - cast(float)sy;
-        immutable float d2 = dx * dx + dy * dy;
-        if (d2 < bestDist2) {
-            bestDist2 = d2;
-            worldHit  = p;
-            found     = true;
-        }
-    }
-    return found;
+    float rankPx;
+    return closestOnPolygonSurface(face, mesh, sx, sy, vp, worldHit, rankPx);
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,9 +1718,24 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 //   inside the element's screen bbox, and the element was inserted into
 //   EVERY cell its bbox overlaps — so it was inserted into P's cell, and
 //   the 3×3 scan finds it. Hence any element whose closest screen point
-//   is within outerRangePx is returned. (The segment/polygon exact tests
-//   use the element's true closest point, which is <= the closest bbox
-//   point's distance, so no in-range element is missed.) Exact superset.
+//   is within outerRangePx is returned. (The segment exact test uses the
+//   element's true closest point, which is <= the closest bbox point's
+//   distance, so no in-range element is missed.) Exact superset.
+//
+// EXACT FOR EVERY KIND EXCEPT POLYGON, since task 0588. The guarantee above
+// is stated in SCREEN distance because that is the only quantity a
+// screen-space bucket grid holds. The polygon leg no longer accepts on a
+// screen distance: `closestOnPolygonSurface` returns the reference's rank, a
+// world distance over the view's single world-per-pixel, which relates to the
+// screen distance by `depth / scaleDistance`. For a face at or beyond the
+// view's scale distance the rank is >= the screen distance and the superset
+// still holds outright; for a face NEARER than it the rank is smaller, so a
+// face whose screen distance exceeds `outerRangePx` — and which this grid
+// therefore never offers — could have ranked inside it. That is a real limit
+// of this broad phase against that leg, it is bounded by how much nearer than
+// the focus distance a face is, and widening the query to close it is a perf
+// change with no measurement behind it. Recorded, not fixed. See the polygon
+// block in `snapCursor`.
 //
 // CACHE KEY (per kind): (vp.view, vp.proj, viewport rect) +
 // mesh.mutationVersion + element count + cellPx. All stable during a
@@ -4493,4 +4609,467 @@ unittest {
             "and at equal depth it agrees with BOTH laws, which is exactly why "
             ~ "the decisive rig has to span depth");
     }
+}
+
+// ---------------------------------------------------------------------------
+// D1 — THE INTERIOR TEST, on the shape that can tell the two laws apart
+// (task 0588).
+//
+// A NON-PLANAR quad. The old law tested the cursor against the polygon's
+// PROJECTED OUTLINE and, on a hit, intersected the eye ray with ONE plane —
+// the plane through face[0] carrying the normal of the first three vertices.
+// For this quad that plane is z = 0, and the fourth vertex is two units off
+// it, so the surface the user can see is nowhere near the plane the old law
+// answered with. The ported law intersects the eye ray with each TRIANGLE of
+// the polygon's own triangulation, so it answers with a point that is on the
+// model.
+//
+// WHY NON-PLANAR AND NOT NON-CONVEX. A planar non-convex polygon cannot
+// separate these two: `pointInPolygon2D`'s crossing rule is already correct
+// about a notch, and a planar polygon's one plane is already its surface, so
+// old and new agree to the last bit. Non-convexity is a constraint on the
+// TRIANGULATION, not on the interior test, and it is pinned as such in the
+// block after this one. Non-planarity is what makes the interior test itself
+// observable.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.focus  = Vec3(0, 0, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float dist3(Vec3 p, Vec3 q) {
+        immutable Vec3 d = p - q;
+        return sqrt(dot(d, d));
+    }
+
+    Mesh m;
+    m.vertices = [ Vec3(-1, -1, 0),
+                   Vec3( 1, -1, 0),
+                   Vec3( 1,  1, 0),
+                   Vec3(-1,  1, 2) ];      // lifted 2 units toward the camera
+    immutable uint[4] quad = [0u, 1u, 2u, 3u];
+    immutable int cx = 350, cy = 400;
+
+    // The two answers, stated before they are asked for.
+    immutable Vec3 pPlane = Vec3(-0.625f, 0.0f, 0.0f);   // old: on the z = 0 plane
+    immutable Vec3 pSurf  = Vec3(-0.5f,   0.0f, 1.0f);   // new: on the real surface
+
+    // --- premises ----------------------------------------------------------
+    {
+        float[] xs, ys;
+        foreach (vi; quad) {
+            float px, py, pz;
+            assert(projectToWindowFull(m.vertices[vi], vp, px, py, pz),
+                "fixture: every vertex must project");
+            xs ~= px; ys ~= py;
+        }
+        assert(pointInPolygon2D(cast(float)cx, cast(float)cy, xs, ys),
+            "fixture: the cursor must be INSIDE the projected outline, or the "
+            ~ "old law never took its interior branch and this rig says nothing "
+            ~ "about the interior test");
+    }
+    // The quad really is non-planar: vertex 3 is off the plane of 0,1,2.
+    assert(abs(m.vertices[3].z - m.vertices[0].z) > 1.0f,
+        "fixture: a planar quad cannot distinguish the two interior tests");
+    // The old answer is off the surface. The triangle the ray actually hits
+    // spans v3, v0, v1 and lies in the plane z = y + 1.
+    assert(abs(pPlane.z - (pPlane.y + 1.0f)) > 0.9f,
+        "fixture: the plane point must NOT lie on the hit triangle's plane, or "
+        ~ "the two laws agree here by accident");
+    assert(abs(pSurf.z - (pSurf.y + 1.0f)) < 1e-5f,
+        "fixture: the surface point must lie ON it");
+    assert(dist3(pPlane, pSurf) > 1.0f,
+        "fixture: and the two must be a world unit apart, so no tolerance can "
+        ~ "blur them together");
+
+    // --- the law -----------------------------------------------------------
+    Vec3  hit;
+    float rankPx;
+    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, hit, rankPx),
+        "a well-formed quad under the cursor must elect a point");
+    assert(rankPx == 0.0f,
+        "the cursor is OVER the polygon, so the eye ray hits a triangle and the "
+        ~ "rank is the reference's literal zero");
+    assert(dist3(hit, pSurf) < 1e-4f,
+        "the elected point must be the ray/TRIANGLE intersection — a point on "
+        ~ "the folded surface the user is looking at");
+    assert(dist3(hit, pPlane) > 1.0f,
+        "and must NOT be the ray/plane intersection against the first three "
+        ~ "vertices' plane, which for this quad is a full world unit away from "
+        ~ "anything the polygon occupies");
+}
+
+// ---------------------------------------------------------------------------
+// D1 — THE TRIANGULATION MUST BE AN EAR CLIP, on a NON-CONVEX polygon
+// (task 0588).
+//
+// This block does not separate the ported law from the one it replaced: on a
+// PLANAR non-convex polygon the two agree, because `pointInPolygon2D` is
+// already right about a notch. What it separates is the ported law from the
+// cheapest way of writing it. Every other triangulation in this codebase —
+// the display VBO, the BVH build, the surface constraint — is a FAN from
+// vertex 0, and a fan of a non-convex polygon covers the notch. Reusing one
+// here would have reported a cursor sitting BESIDE the polygon as being ON
+// it, i.e. it would have made the ported law worse than what it replaced.
+//
+// The fixture is an L whose vertex 0 is deliberately the one a fan cannot be
+// built from, and the block computes that fan and asserts it covers the probe
+// before asserting that the shipped law does not.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 10);
+    vp.focus  = Vec3(0, 0, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float dist3(Vec3 p, Vec3 q) {
+        immutable Vec3 d = p - q;
+        return sqrt(dot(d, d));
+    }
+
+    Mesh m;
+    m.vertices = [ Vec3( 0,  2, 0),   // 0 — the fan pivot that cannot see the ring
+                   Vec3(-2,  2, 0),
+                   Vec3(-2, -2, 0),
+                   Vec3( 2, -2, 0),
+                   Vec3( 2,  0, 0),
+                   Vec3( 0,  0, 0) ]; // 5 — the reflex corner
+    immutable uint[6] ell = [0u, 1u, 2u, 3u, 4u, 5u];
+
+    // The probe sits in the notch — the quadrant the L does not occupy.
+    immutable Vec3 notch = Vec3(1.2f, 0.5f, 0.0f);
+    immutable int cx = 448, cy = 380;         // == the projection of `notch`
+
+    static bool inTri(Vec3 q, Vec3 a, Vec3 b, Vec3 c) {
+        static float cr(Vec3 o, Vec3 mm, Vec3 nn) {
+            return (mm.x - o.x)*(nn.y - o.y) - (mm.y - o.y)*(nn.x - o.x);
+        }
+        immutable float c0 = cr(a, b, q), c1 = cr(b, c, q), c2 = cr(c, a, q);
+        return (c0 >= 0 && c1 >= 0 && c2 >= 0) || (c0 <= 0 && c1 <= 0 && c2 <= 0);
+    }
+
+    // --- premises ----------------------------------------------------------
+    {
+        float qx, qy, qz;
+        assert(projectToWindowFull(notch, vp, qx, qy, qz),
+            "fixture: the notch probe must project");
+        assert(abs(qx - cx) < 0.75f && abs(qy - cy) < 0.75f,
+            "fixture: the cursor pixel must be the notch probe's own pixel");
+        float[] xs, ys;
+        foreach (vi; ell) { xs ~= m.vertices[vi].x; ys ~= m.vertices[vi].y; }
+        assert(!pointInPolygon2D(notch.x, notch.y, xs, ys),
+            "fixture: the probe must be OUTSIDE the L");
+        bool fanCovers = false;
+        foreach (i; 1 .. ell.length - 1)
+            if (inTri(notch, m.vertices[ell[0]], m.vertices[ell[i]],
+                      m.vertices[ell[i + 1]])) { fanCovers = true; break; }
+        assert(fanCovers,
+            "fixture: a fan from vertex 0 must COVER the notch, or this polygon "
+            ~ "cannot tell a fan from a proper triangulation");
+    }
+
+    // --- the law -----------------------------------------------------------
+    Vec3  hit;
+    float rankPx;
+    assert(closestOnPolygonSurface(ell[], m, cx, cy, vp, hit, rankPx),
+        "the L must elect a point for a cursor beside it");
+    assert(rankPx > 1.0f,
+        "the cursor is in the NOTCH, so no triangle may be hit and the rank "
+        ~ "must not be the interior zero — a fan would hand back 0 here");
+    assert(abs(rankPx - 19.975f) < 0.05f,
+        "and the rank is the notch depth over one world-per-pixel: 0.4994 "
+        ~ "world units at 0.025 world/px");
+    assert(dist3(hit, Vec3(1.19701f, 0.0f, 0.0f)) < 1e-3f,
+        "the elected point must sit on the L's own boundary, on the edge that "
+        ~ "bounds the notch");
+    assert(dist3(hit, notch) > 0.4f,
+        "and must NOT be the ray/plane hit at the cursor, which is where a fan "
+        ~ "triangulation would have put it");
+}
+
+// ---------------------------------------------------------------------------
+// D3 — THE RANK, and the winner it changes (task 0588).
+//
+// TWO polygons, both beside the cursor, at very different depths. The rank
+// this port introduces divides a WORLD distance by ONE world-per-pixel — the
+// view's own, at its scale distance — instead of re-projecting the elected
+// point and measuring on screen. The two metrics differ by exactly
+// `depth / scaleDistance`, so a face NEARER than the view's scale distance
+// ranks better than it looks and a face beyond it ranks worse.
+//
+// Here the deep face is the nearer one ON SCREEN (7.0 px against 18.0 px) and
+// the near face is the nearer one BY RANK (4.5 against 14). The old law elects
+// the deep one; this one elects the near one. The block asserts both halves,
+// so it pins a BEHAVIOUR — which polygon a user snaps to — and not a number.
+//
+// The winner is also asserted under BOTH declaration orders, which is what
+// distinguishes "the rank decided" from "the enumeration decided".
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix, viewPixelScale;
+    import std.math : PI, abs;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 20);
+    vp.focus  = Vec3(0, 0, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    assert(abs(viewPixelScale(vp) - 0.05f) < 1e-7f,
+        "fixture: the view's scale is 0.05 world per pixel; every rank below "
+        ~ "is a world distance over that number");
+
+    immutable int cx = 400, cy = 400;      // the screen centre: the ray is -Z
+
+    // Face DEEP: z = -20, i.e. twice the scale distance from the eye. Its
+    // nearest point is 0.7 world from the ray -> 7.0 px on screen, rank 14.
+    immutable Vec3[4] deep = [ Vec3(0.7f, -0.1f, -20), Vec3(0.9f, -0.1f, -20),
+                               Vec3(0.9f,  0.1f, -20), Vec3(0.7f,  0.1f, -20) ];
+    // Face NEAR: z = +15, a quarter of the scale distance from the eye. Its
+    // nearest point is 0.225 world from the ray -> 18 px on screen, rank 4.5.
+    immutable Vec3[4] near = [ Vec3(0.225f, -0.025f, 15), Vec3(0.275f, -0.025f, 15),
+                               Vec3(0.275f,  0.025f, 15), Vec3(0.225f,  0.025f, 15) ];
+
+    float screenDist(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: the probe must project");
+        return sqrt((qx - cx)*(qx - cx) + (qy - cy)*(qy - cy));
+    }
+
+    // --- premises: the two metrics order these two faces OPPOSITELY ---------
+    Mesh probe;
+    probe.vertices = (deep[] ~ near[]).dup;
+    probe.addFace([0u, 1u, 2u, 3u]);
+    probe.addFace([4u, 5u, 6u, 7u]);
+
+    Vec3  hD, hN;
+    float rD, rN;
+    assert(closestOnPolygonSurface(probe.faces[0], probe, cx, cy, vp, hD, rD));
+    assert(closestOnPolygonSurface(probe.faces[1], probe, cx, cy, vp, hN, rN));
+    assert(abs(screenDist(hD) - 7.0f) < 0.05f && abs(screenDist(hN) - 18.0f) < 0.05f,
+        "fixture: ON SCREEN the deep face is much the nearer of the two — that "
+        ~ "is what the law being replaced ranked by, and it would elect it");
+    assert(screenDist(hD) < screenDist(hN),
+        "fixture, stated as the comparison the old rank actually made");
+    assert(abs(rD - 14.0f) < 0.05f && abs(rN - 4.5f) < 0.05f,
+        "fixture: BY THE PORTED RANK the order reverses");
+    assert(rN < rD,
+        "fixture, stated as the comparison the new rank makes — the two "
+        ~ "disagree, which is the only reason this rig can measure anything");
+
+    // --- the behaviour -----------------------------------------------------
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.enabledTypes = SnapType.Polygon;
+    cfg.innerRangePx = 40.0f;
+    cfg.outerRangePx = 40.0f;
+
+    // Declared deep-first.
+    {
+        Mesh m;
+        m.vertices = (deep[] ~ near[]).dup;
+        m.addFace([0u, 1u, 2u, 3u]);       // 0 = deep
+        m.addFace([4u, 5u, 6u, 7u]);       // 1 = near
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetType == SnapType.Polygon,
+            "both faces are in range under both metrics; one must win");
+        assert(r.targetIndex == 1,
+            "the NEAR face wins, because the ported rank divides by one "
+            ~ "world-per-pixel instead of re-projecting — the old, "
+            ~ "depth-correct rank elected the deep face at 7 px");
+    }
+    // Declared near-first: same winner, so it is the rank and not the order.
+    {
+        Mesh m;
+        m.vertices = (deep[] ~ near[]).dup;
+        m.addFace([4u, 5u, 6u, 7u]);       // 0 = near
+        m.addFace([0u, 1u, 2u, 3u]);       // 1 = deep
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetIndex == 0,
+            "the near face still wins when it is enumerated first, so this "
+            ~ "block measures the RANK and not the iteration order");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D3 — THE INTERIOR RANK IS A LITERAL ZERO, AND THE TIE IS THE POINT
+// (task 0588).
+//
+// Every polygon the cursor is over ranks at exactly 0.0. Two of them therefore
+// TIE, `consider()`'s strict `<` keeps whichever arrived first, and the winner
+// is decided by ITERATION ORDER — here, by which face was declared first, since
+// the candidate grid answers index-ascending.
+//
+// WHAT THIS BLOCK IS AND IS NOT. It is not a winner FLIP against the old law:
+// measured on this rig, the old law's two interior points re-project to the
+// cursor's own pixel and both come back at exactly 0.0 px too, so it would tie
+// here as well. The difference the port makes is that ours now ties BY
+// CONSTRUCTION rather than by two re-projections happening to round the same
+// way — off the screen centre the old law's two ranks differ in their last
+// bits, and the winner is then decided by float noise. The winner FLIP that
+// the rank's divisor produces is measured in the block above; what is measured
+// here is that the zero is exact and that order, not geometry, resolves it.
+//
+// The faces are stacked 35 world units apart along the view ray, and the
+// FARTHER one wins whenever it is declared first. That will read as wrong to
+// anyone expecting the nearer surface, and it is what the reference does: its
+// rank carries no depth term at all inside the hit arm, so depth cannot break
+// the tie. Which face ITS enumerator reaches first is a property of its
+// spatial structures and is not reproducible here; the mechanism — first
+// offered keeps the slot — is, and that is what is pinned.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, abs;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 20);
+    vp.focus  = Vec3(0, 0, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable int cx = 400, cy = 400;
+    // Small and near: it covers the cursor but none of the big face's corners.
+    immutable Vec3[4] nearQ = [ Vec3(-0.1f, -0.1f, 15), Vec3(0.1f, -0.1f, 15),
+                                Vec3( 0.1f,  0.1f, 15), Vec3(-0.1f, 0.1f, 15) ];
+    // Big and far: its corners project 20 px out, clear of the near face's
+    // 8 px silhouette, so the occlusion gate keeps BOTH faces live.
+    immutable Vec3[4] farQ  = [ Vec3(-2, -2, -20), Vec3(2, -2, -20),
+                                Vec3( 2,  2, -20), Vec3(-2, 2, -20) ];
+
+    // --- the ranks are the same number, exactly ----------------------------
+    {
+        Mesh m;
+        m.vertices = (nearQ[] ~ farQ[]).dup;
+        m.addFace([0u, 1u, 2u, 3u]);
+        m.addFace([4u, 5u, 6u, 7u]);
+        Vec3  h0, h1;
+        float r0, r1;
+        assert(closestOnPolygonSurface(m.faces[0], m, cx, cy, vp, h0, r0));
+        assert(closestOnPolygonSurface(m.faces[1], m, cx, cy, vp, h1, r1));
+        assert(r0 == 0.0f && r1 == 0.0f,
+            "an interior hit ranks at the reference's literal zero — not at a "
+            ~ "small number, which is what a re-projection would give");
+        assert(r0 == r1,
+            "so two polygons under one cursor TIE, and nothing about their "
+            ~ "geometry can separate them");
+        assert(abs(h0.z - 15.0f) < 1e-4f && abs(h1.z + 20.0f) < 1e-4f,
+            "fixture: and they are 35 world units apart along the ray, so a "
+            ~ "depth-aware rank could not possibly have tied");
+    }
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.enabledTypes = SnapType.Polygon;
+    cfg.innerRangePx = 40.0f;
+    cfg.outerRangePx = 40.0f;
+
+    // --- so the declaration order decides, in both directions ---------------
+    {
+        Mesh m;
+        m.vertices = (nearQ[] ~ farQ[]).dup;
+        m.addFace([0u, 1u, 2u, 3u]);       // 0 = near
+        m.addFace([4u, 5u, 6u, 7u]);       // 1 = far
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetIndex == 0 && abs(r.worldPos.z - 15.0f) < 1e-4f,
+            "declared first, the near face keeps the tie");
+    }
+    {
+        Mesh m;
+        m.vertices = (nearQ[] ~ farQ[]).dup;
+        m.addFace([4u, 5u, 6u, 7u]);       // 0 = far
+        m.addFace([0u, 1u, 2u, 3u]);       // 1 = near
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        assert(r.snapped && r.targetIndex == 0 && abs(r.worldPos.z + 20.0f) < 1e-4f,
+            "declared first, the FAR face keeps it instead — 35 units behind "
+            ~ "the other one and directly occluded by it in every ordinary "
+            ~ "sense. Nothing but the enumeration order changed between these "
+            ~ "two cases, which is exactly the claim");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CONTROL — a planar convex quad at the view's own scale distance (task 0588).
+//
+// Both halves of the port vanish on this rig, and the block records that by
+// asserting the agreement rather than by asserting a new number:
+//
+//   * the polygon is CONVEX, so a fan and an ear clip produce the same
+//     triangulation and the notch question cannot arise;
+//   * it is PLANAR, so the one plane the old interior test used IS the
+//     surface;
+//   * its depth equals the view's scale distance, so `worldDistance /
+//     pixelScale` and the re-projected screen distance are the same number.
+//
+// A decisive test built on a rig like this would have passed before the port
+// and after it, which is the failure mode this block exists to name. The two
+// blocks above deliberately break each of these three properties in turn.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix, viewPixelScale;
+    import std.math : PI, abs;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.focus  = Vec3(0, 0, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable int cx = 400, cy = 400;
+    Mesh m;
+    m.vertices = [ Vec3(0.25f, -1, 0), Vec3(2, -1, 0),
+                   Vec3(2,      1, 0), Vec3(0.25f, 1, 0) ];
+    immutable uint[4] quad = [0u, 1u, 2u, 3u];
+
+    Vec3  hit;
+    float rankPx;
+    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, hit, rankPx),
+        "the control quad must elect a point");
+
+    // The election: the nearest point of the quad to the eye ray is the middle
+    // of its near edge, and BOTH laws say so.
+    immutable Vec3 d = hit - Vec3(0.25f, 0, 0);
+    assert(sqrt(dot(d, d)) < 1e-4f,
+        "on a planar convex quad the ported election and the boundary-ring one "
+        ~ "it replaced land on the same point");
+
+    // The rank: at the view's scale distance the two metrics coincide exactly.
+    float qx, qy, qz;
+    assert(projectToWindowFull(hit, vp, qx, qy, qz));
+    immutable float screenPx = sqrt((qx - cx)*(qx - cx) + (qy - cy)*(qy - cy));
+    assert(abs(screenPx - 20.0f) < 0.05f,
+        "fixture: the elected point sits 20 px from the cursor");
+    assert(abs(rankPx - screenPx) < 0.05f,
+        "and the ported rank agrees with the re-projected screen distance it "
+        ~ "replaced, BECAUSE the polygon sits at the depth the view's single "
+        ~ "world-per-pixel was measured at. Any rig built here would have been "
+        ~ "blind to the whole of D3");
+    assert(abs(rankPx - 0.25f / viewPixelScale(vp)) < 1e-3f,
+        "...and it is still computed the ported way: a world distance over the "
+        ~ "view's own scale");
 }
