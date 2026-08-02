@@ -350,6 +350,63 @@ class SnapStage : Stage, Operator {
     bool     fixedGrid     = false;
     float    fixedGridSize = 1.0f;
 
+    // ---- startup arming: the tool-activation save/restore pair -------------
+    //
+    // A tool activation may ARM the master enable for the life of that tool and
+    // hand it back untouched when the tool is dropped. That is the reference's
+    // own mechanism, and it is measured rather than inferred: its
+    // tool-activation command carries a fourth argument meaning "snap state at
+    // startup", and supplying it PUSHES the previous value under the activating
+    // preset's NAME before writing the new one. The matching pop, keyed on that
+    // same name, restores it. Dropping a tool restores the value rather than
+    // leaking it because the drop path is a re-invocation of the same
+    // activation command.
+    //
+    // OWNED HERE, NOT BY THE ARMING TOOL, and that placement is load-bearing
+    // rather than tidiness: `reset()` — the `/api/reset` / scene-reset clean
+    // slate — runs BEFORE the tool drop that same reset triggers, so a saved
+    // value living on the tool would be written back ON TOP of the clean slate
+    // and re-arm snapping across a reset. Clearing the outstanding push inside
+    // `reset()` closes that, and it can only be cleared where it is stored.
+    // (The reference stores it framework-side for its own reasons; we land in
+    // the same place from ours.)
+    //
+    // ONE SLOT, name-keyed, mirroring the reference: a push while another is
+    // outstanding re-keys the slot to the new owner, so the older owner's pop
+    // becomes a no-op and its value is forgotten. Only one tool is active at a
+    // time here and `deactivate()` always precedes the next `activate()`, so
+    // no live path nests. What the key buys is that an UNBALANCED pop — a tool
+    // that never pushed, or a pop arriving after a reset cleared the slot — is
+    // harmless instead of a silent write of a stale value.
+    private bool   _pushedEnabled;
+    private string _pushedOwner;      // null / empty == nothing outstanding
+
+    /// Save the current master enable under `owner`, then set it to `value`.
+    /// Balanced by `popEnabled(owner)`; see the block comment above.
+    void pushEnabled(string owner, bool value) {
+        if (owner.length == 0) return;
+        _pushedEnabled = enabled;
+        _pushedOwner   = owner;
+        enabled        = value;
+        publishState();
+    }
+
+    /// Restore the master enable `owner` saved. A pop whose owner does not
+    /// match the outstanding push does nothing — the reference's own name
+    /// comparison, and our guard against restoring across a reset.
+    void popEnabled(string owner) {
+        if (owner.length == 0 || _pushedOwner != owner) return;
+        enabled      = _pushedEnabled;
+        _pushedOwner = null;
+        publishState();
+    }
+
+    /// Is `owner`'s startup arming still outstanding? Test-facing only — no
+    /// product path reads it; the push/pop pair is self-balancing.
+    bool hasPushedEnabled(string owner) const {
+        return owner.length != 0 && _pushedOwner == owner;
+    }
+
     this() { publishState(); }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Snap; }
@@ -452,6 +509,14 @@ class SnapStage : Stage, Operator {
         // would outlive the tool that owns it — the one lifecycle error the
         // measured add/remove pair rules out.
         _guides       = null;
+        // And drop any outstanding startup-arming push (see `pushEnabled`).
+        // ORDER, not hygiene: a scene reset resets every stage BEFORE it drops
+        // the active tool, so an armed tool's `popEnabled` arrives AFTER this
+        // and would otherwise write its pre-reset value back over the clean
+        // slate — snapping left on across a reset, and bleeding into whatever
+        // runs next in the same process.
+        _pushedOwner   = null;
+        _pushedEnabled = false;
         publishState();
     }
 
@@ -1431,4 +1496,107 @@ unittest {
     assert(st.snapshotConfigToPacket() == SnapPacket.init,
         "reading params() / folding a row must leave `reset()` restoring the "
         ~ "same defaults it always did");
+}
+
+// ---------------------------------------------------------------------------
+// STARTUP ARMING — `pushEnabled` / `popEnabled`.
+//
+// The reference's tool-activation command carries a "snap state at startup"
+// argument; supplying it saves the previous master enable under the activating
+// preset's NAME, writes the new one, and the drop restores it. This is that
+// pair. The four properties that make it safe to arm a global from a tool:
+//
+//   1. SAVE AND RESTORE, both polarities. Arming from OFF hands back OFF;
+//      arming from ON (a user who already had snapping on) hands back ON, not
+//      the armed value. A restore that always wrote `false` would silently
+//      switch snapping off for that user on every tool drop.
+//   2. THE POP IS NAME-KEYED. A pop from something that never pushed is inert.
+//      Without this an unbalanced drop writes a stale value into a global
+//      nobody armed.
+//   3. RESET CLEARS THE SLOT. `reset()` is the `/api/reset` clean slate and it
+//      runs BEFORE the tool drop the same reset triggers, so the drop's pop
+//      arrives afterwards; if the slot survived, it would write the pre-reset
+//      value back over the clean slate. This is the cross-test-bleed shape.
+//   4. RE-PUSH RE-KEYS. Two arms in a row leave exactly one outstanding, the
+//      newer one — the reference's single slot, not a stack.
+// ---------------------------------------------------------------------------
+unittest {
+    // --- 1. save/restore, both polarities ----------------------------------
+    {
+        auto st = new SnapStage();
+        assert(!st.enabled, "setup: the stage still ships snapping OFF");
+        st.pushEnabled("tool.a", true);
+        assert(st.enabled, "arming must set the master enable");
+        assert(st.hasPushedEnabled("tool.a"));
+        st.popEnabled("tool.a");
+        assert(!st.enabled, "the drop must hand back the OFF it was given");
+        assert(!st.hasPushedEnabled("tool.a"), "a balanced pop empties the slot");
+    }
+    {
+        auto st = new SnapStage();
+        st.enabled = true;                       // the user turned snapping on
+        st.pushEnabled("tool.a", true);
+        assert(st.enabled);
+        st.popEnabled("tool.a");
+        assert(st.enabled,
+            "a user who had snapping ON before the tool must still have it ON "
+            ~ "after the drop — the restore writes the SAVED value, never a "
+            ~ "constant");
+    }
+
+    // --- 2. the pop is name-keyed ------------------------------------------
+    {
+        auto st = new SnapStage();
+        st.enabled = true;
+        st.popEnabled("tool.a");
+        assert(st.enabled,
+            "a pop from something that never pushed must be inert — it must "
+            ~ "not write the zero-initialised saved value into the global");
+        st.pushEnabled("tool.a", true);
+        st.enabled = false;                      // as if the user toggled it off
+        st.popEnabled("tool.b");
+        assert(!st.enabled,
+            "a pop keyed to a different owner must leave the global alone");
+        assert(st.hasPushedEnabled("tool.a"),
+            "and must leave the real owner's push outstanding");
+    }
+
+    // --- 3. reset clears the slot ------------------------------------------
+    {
+        auto st = new SnapStage();
+        st.enabled = true;                       // user had snapping on ...
+        st.pushEnabled("tool.a", true);          // ... then armed a tool
+        st.reset();                              // /api/reset: clean slate
+        assert(!st.enabled, "reset() still lands on the shipped default");
+        assert(!st.hasPushedEnabled("tool.a"),
+            "reset() must drop the outstanding push");
+        st.popEnabled("tool.a");                 // the tool drop reset triggers
+        assert(!st.enabled,
+            "the tool drop that follows a reset must NOT resurrect the "
+            ~ "pre-reset value — that is snapping left armed across a reset "
+            ~ "and bleeding into the next test in the same process");
+    }
+
+    // --- 4. re-push re-keys a single slot ----------------------------------
+    {
+        auto st = new SnapStage();
+        st.pushEnabled("tool.a", true);
+        st.pushEnabled("tool.b", true);
+        assert(!st.hasPushedEnabled("tool.a") && st.hasPushedEnabled("tool.b"),
+            "one slot, re-keyed — not a stack");
+        st.popEnabled("tool.a");
+        assert(st.enabled, "the displaced owner's pop is inert");
+        st.popEnabled("tool.b");
+        assert(st.enabled,
+            "and tool.b saved the value tool.a had already armed, so the "
+            ~ "restore is that armed value");
+    }
+
+    // An empty owner is never a key — it is the 'nothing outstanding' marker.
+    {
+        auto st = new SnapStage();
+        st.pushEnabled("", true);
+        assert(!st.enabled && !st.hasPushedEnabled(""),
+            "an empty owner must not arm and must not claim the slot");
+    }
 }
