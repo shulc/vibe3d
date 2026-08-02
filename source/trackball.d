@@ -27,17 +27,17 @@
 // only a `math` import lets all four reach it without importing each other.
 // This mirrors `coord_rounding.d` exactly, for the same reason.
 //
-// NOT IMPLEMENTED HERE, DELIBERATELY: free-wheeling — the decaying spin the
-// reference arms when you release a trackball drag with the cursor still
-// moving. It is cleanly separable (it changes nothing about the gesture below;
-// it only keeps applying arcs after the button is up) and it needs a per-frame
-// camera tick, which this editor does not have. It is a separate commit, not an
-// oversight. See doc/tasks/work/0573-trackball-gesture.md.
+// THE MOMENTUM SPIN — the decaying turn a release leaves behind — is the last
+// section of this module. It was held out of the gesture's own commit because
+// it needs a per-frame camera tick this editor did not have; the tick now
+// exists (source/app.d's main loop, one bool wide when nothing spins) and the
+// two curves are here in closed form. It changes nothing about the gesture
+// above: it only keeps applying arcs after the button is up.
 // ---------------------------------------------------------------------------
 module trackball;
 
 import math : Vec3, cross, dot;
-import std.math : sqrt, atan2, isFinite;
+import std.math : sqrt, atan2, isFinite, sin, PI;
 
 // ---------------------------------------------------------------------------
 // The circle
@@ -217,10 +217,99 @@ enum float kTrackballSpeedDefault = 1.0f;
 enum float kTrackballSpeedMin = 0.01f;
 enum float kTrackballSpeedMax = 100.0f;
 
+// ---------------------------------------------------------------------------
+// Momentum spin: the spin a release leaves behind
+// ---------------------------------------------------------------------------
+
+/// The curve a released spin follows. Both are `rate * K * sin(t/K)` for a
+/// curve-specific time constant `K`; they differ ONLY in `K` — and by a factor
+/// of exactly ten, which is what turns a spin that dies into one that swings
+/// for ever (see `spinEnded`).
+enum SpinCurve : int { Settle = 0, Swing = 1 }
+
+/// The SETTLE curve's time constant in MILLISECONDS: `8000/pi`.
+///
+/// Read, not fitted. The curve is `angle(t) = rate * A * sin(t/A)`, so the
+/// angular RATE is `rate * cos(t/A)` — it starts at exactly the release rate
+/// (the spin is continuous with the drag that armed it, which is the whole
+/// feel of the gesture) and reaches zero when `t/A == pi/2`.
+enum double kSettleTimeMs = 8000.0 / PI;          // 2546.4790894703256
+
+/// ...and that zero is at `A * pi/2` = **exactly 4000 ms**. A round number out
+/// of two irrational-looking ones is the tell that `8000/pi` is the real
+/// constant and 2546.479 is its decimal shadow.
+enum double kSettleDurationMs = 4000.0;
+
+/// The SWING curve's time constant, ms: `800/pi` — Settle's, divided by ten.
+enum double kSwingTimeMs = 800.0 / PI;              // 254.64790894703253
+
+/// The swing's full period, `2*pi*C` = **1600 ms**. It NEVER terminates: the
+/// angle keeps travelling between `+rate*C` and `-rate*C` until a press cancels
+/// it. That is not a decay with a long tail — it is an undamped oscillation,
+/// which is why `spinEnded` has to answer differently for the two arms rather
+/// than comparing both against one duration.
+enum double kSwingPeriodMs = 1600.0;
+
+/// The curve's time constant, ms.
+double spinTimeConstant(SpinCurve p) @safe pure nothrow @nogc {
+    final switch (p) {
+        case SpinCurve.Settle: return kSettleTimeMs;
+        case SpinCurve.Swing:  return kSwingTimeMs;
+    }
+}
+
+/// The CUMULATIVE angle, in radians, `tMs` after a release that armed a spin of
+/// `rate` rad/ms. Cumulative rather than incremental on purpose: a frame tick
+/// applies `spinAngle(now) - spinAngle(then)`, so the total is a closed form of
+/// the clock alone and a dropped frame, a long frame or a burst of short ones
+/// all land on the same camera. Accumulating per-frame increments instead would
+/// make the spin's total depend on the frame rate.
+///
+/// Before the release (`tMs <= 0`, and any NaN) the angle is zero. After
+/// Settle's 4000 ms it is pinned at `rate * A` — the total the curve is heading
+/// for — so a tick that arrives late still lands exactly there instead of
+/// stepping past the top of the sine and running backwards.
+double spinAngle(SpinCurve p, double rate, double tMs) @safe pure nothrow @nogc {
+    if (!(tMs > 0.0)) return 0.0;
+    immutable double k = spinTimeConstant(p);
+    if (p == SpinCurve.Settle && tMs >= kSettleDurationMs)
+        return rate * k;
+    return rate * k * sin(tMs / k);
+}
+
+/// Has the curve finished at `tMs`? Settle ends; Swing does not.
+bool spinEnded(SpinCurve p, double tMs) @safe pure nothrow @nogc {
+    final switch (p) {
+        case SpinCurve.Settle: return tMs >= kSettleDurationMs;
+        case SpinCurve.Swing:    return false;
+    }
+}
+
+/// The shipped choice between the two curves.
+///
+/// **A port decision, like `kTrackballDefault`.** What is read is the SELECTOR
+/// — the reference picks the swinging arm off a navigation flag — not that
+/// flag's shipped value. Settle is the only arm that terminates, so it is the
+/// one that ships: a spin that never stops is not something to hand a user who
+/// did not ask for it. If the reference's own default is later measured to be
+/// the other arm, this constant is what moves.
+enum bool kSpinSwingDefault = false;
+
 private __gshared bool  g_trackball      = kTrackballDefault;
 private __gshared bool  g_trackballGlobalOverride = false;
 private __gshared float g_speedMouse     = kTrackballSpeedDefault;
 private __gshared float g_speedTablet    = kTrackballSpeedDefault;
+private __gshared bool  g_swing      = kSpinSwingDefault;
+
+/// The swing setting: which curve a release arms.
+bool trackballSwing() { return g_swing; }
+void setTrackballSwing(bool v) { g_swing = v; }
+
+/// The curve a release arms right now. One reader of the setting rather than a
+/// `?:` at every arming site, so the two can never disagree.
+SpinCurve activeSpinCurve() {
+    return g_swing ? SpinCurve.Swing : SpinCurve.Settle;
+}
 
 /// The global trackball setting a `Default` cell defers to.
 bool trackballGlobal() { return g_trackball; }
@@ -279,6 +368,7 @@ void resetTrackball() {
     g_trackballGlobalOverride = false;
     g_speedMouse              = kTrackballSpeedDefault;
     g_speedTablet             = kTrackballSpeedDefault;
+    g_swing               = kSpinSwingDefault;
 }
 
 /// Wire name for an option value — stable, lowercase, what the setting command
@@ -308,7 +398,7 @@ bool parseTrackballOption(string s, out TrackballOption out_) @safe pure nothrow
 // ---------------------------------------------------------------------------
 
 version (unittest) {
-    import std.math : isClose, PI, abs, sin, cos;
+    import std.math : isClose, abs, cos;   // sin/PI come from the module import
 
     // The two pane aspect ratios every radius assertion runs on. The first is
     // the corpus viewport (landscape, WIDTH is the larger dimension). The
@@ -600,6 +690,137 @@ unittest { // the speed multiplier is clamped and never lets a NaN reach a camer
     setTrackballTabletSpeed(3.5f);
     assert(trackballMouseSpeed() == 2.5f && trackballTabletSpeed() == 3.5f,
            "mouse and tablet multipliers are independent");
+}
+
+unittest { // the two time constants are what they are said to be
+    // The decimals are the shadow; the closed forms are the law. Both are
+    // asserted so a later edit cannot quietly replace `8000/pi` with the
+    // rounded 2546.479 (which would move the termination off 4000 ms by
+    // 0.7 microseconds — invisible in a test that only checked the decimal).
+    assert(isClose(kSettleTimeMs, 8000.0 / PI, 1e-15), "A is 8000/pi");
+    assert(isClose(kSettleTimeMs, 2546.4790894703256, 1e-15), "...= 2546.4790894703256");
+    assert(isClose(kSwingTimeMs, 800.0 / PI, 1e-15), "C is 800/pi");
+    assert(isClose(kSwingTimeMs, 254.64790894703253, 1e-15), "...= 254.64790894703253");
+    // Ten, exactly. The swing is the same profile run ten times faster, which
+    // is why one number governs both and why mixing them up is a factor of ten
+    // rather than a tolerance.
+    assert(isClose(kSettleTimeMs / kSwingTimeMs, 10.0, 1e-14), "A is exactly 10*C");
+    // The two durations follow from the constants, not from a second reading.
+    assert(isClose(kSettleTimeMs * PI / 2.0, kSettleDurationMs, 1e-12),
+           "settling spin ends at A*pi/2 = 4000 ms exactly");
+    assert(isClose(2.0 * PI * kSwingTimeMs, kSwingPeriodMs, 1e-12),
+           "the swing's period is 2*pi*C = 1600 ms exactly");
+}
+
+unittest { // settling spin: the closed form, the termination, and the total
+    immutable double rate = 0.003;   // rad/ms — a brisk but ordinary flick
+
+    // The profile IS `rate * A * sin(t/A)`, checked against the expression
+    // rather than against sampled numbers, at a ladder that includes both ends.
+    foreach (t; [0.0, 1.0, 250.0, 1000.0, 2000.0, 3000.0, 3999.0, 4000.0]) {
+        immutable double want = rate * kSettleTimeMs * sin(t / kSettleTimeMs);
+        assert(isClose(spinAngle(SpinCurve.Settle, rate, t), want, 1e-12, 1e-15),
+               "settling spin angle is rate*A*sin(t/A)");
+    }
+
+    // It STARTS at the release rate — this is what makes the spin continuous
+    // with the drag instead of a jump. A one-microsecond finite difference at
+    // t = 0 recovers `rate` to eleven digits.
+    immutable double d0 = (spinAngle(SpinCurve.Settle, rate, 1e-3) -
+                           spinAngle(SpinCurve.Settle, rate, 0.0)) / 1e-3;
+    assert(isClose(d0, rate, 1e-9), "the spin starts at exactly the release rate");
+
+    // ...and it STOPS: the rate at the end is zero, so the camera coasts to a
+    // halt rather than being cut off mid-motion.
+    immutable double dEnd = (spinAngle(SpinCurve.Settle, rate, 4000.0) -
+                             spinAngle(SpinCurve.Settle, rate, 3999.0)) / 1.0;
+    assert(dEnd >= 0.0 && dEnd < rate * 1e-3,
+           "the last millisecond of a settling spin moves ~nothing");
+
+    // The total is `rate * A`, and the profile is pinned there for ever after.
+    immutable double total = rate * kSettleTimeMs;
+    immutable double atEnd = spinAngle(SpinCurve.Settle, rate, 4000.0);
+    assert(isClose(atEnd, total, 1e-12), "the total extra angle is rate * 8000/pi");
+    // BIT-equal, not close: after the end the camera must stop dead, so a tick
+    // arriving at 4001 ms or an hour later applies a delta of exactly zero.
+    foreach (t; [4000.0, 4001.0, 1.0e6])
+        assert(spinAngle(SpinCurve.Settle, rate, t) == atEnd,
+               "and it does not move again, ever — not even back down the sine");
+
+    // Monotone the whole way. Without the clamp above, `sin` would turn over
+    // past 4000 ms and the camera would spin BACKWARDS to where it started —
+    // the single most likely way to get this profile wrong.
+    double prev = -1.0;
+    for (double t = 0; t <= 4000.0; t += 25.0) {
+        immutable double a = spinAngle(SpinCurve.Settle, rate, t);
+        assert(a >= prev, "the settling spin never runs backwards");
+        prev = a;
+    }
+    assert(spinAngle(SpinCurve.Settle, rate, 8000.0) > 0.5 * total,
+           "an unclamped sin(t/A) would be back at zero by 8000 ms");
+
+    // Termination is at 4000, not at 3999 and not at 4001.
+    assert(!spinEnded(SpinCurve.Settle, 3999.999), "still spinning at 3999.999 ms");
+    assert( spinEnded(SpinCurve.Settle, 4000.0),   "over at exactly 4000 ms");
+
+    // Before the release there is no angle at all (and a NaN clock cannot
+    // reach the camera through this function).
+    assert(spinAngle(SpinCurve.Settle, rate,  0.0) == 0.0, "t = 0 is no angle");
+    assert(spinAngle(SpinCurve.Settle, rate, -5.0) == 0.0, "nor is t < 0");
+    assert(spinAngle(SpinCurve.Settle, rate, double.nan) == 0.0, "nor is a NaN clock");
+}
+
+unittest { // swing: an swing that never ends, and is NOT a slow settling spin
+    immutable double rate = 0.003;
+
+    foreach (t; [0.0, 100.0, 400.0, 800.0, 1200.0, 1600.0, 5000.0]) {
+        immutable double want = rate * kSwingTimeMs * sin(t / kSwingTimeMs);
+        assert(isClose(spinAngle(SpinCurve.Swing, rate, t), want, 1e-12, 1e-15),
+               "swing angle is rate*C*sin(t/C)");
+        assert(!spinEnded(SpinCurve.Swing, t), "the swing never terminates");
+    }
+
+    // A quarter period out it is at its extreme, a half period out it is back
+    // through zero, and a full period out it is home. That is the shape the
+    // 1600 ms number NAMES, and it is what distinguishes this from a decay.
+    immutable double amp = rate * kSwingTimeMs;
+    assert(isClose(spinAngle(SpinCurve.Swing, rate, 400.0), amp, 1e-9),
+           "peak displacement at a quarter period is rate*C");
+    assert(spinAngle(SpinCurve.Swing, rate, 800.0).isClose(0.0, 1e-9, 1e-9),
+           "back through zero at half a period");
+    assert(isClose(spinAngle(SpinCurve.Swing, rate, 1200.0), -amp, 1e-9),
+           "and PAST it: the swing reverses, which a decay never does");
+    assert(spinAngle(SpinCurve.Swing, rate, 1600.0).isClose(0.0, 1e-9, 1e-9),
+           "home again after one full 1600 ms period");
+    // Same value one period later — the swing is undamped.
+    assert(isClose(spinAngle(SpinCurve.Swing, rate, 400.0),
+                   spinAngle(SpinCurve.Swing, rate, 2000.0), 1e-9),
+           "and it repeats undamped, for ever");
+
+    // The two profiles are not interchangeable, stated where they differ MOST
+    // and not where they nearly agree: both leave the release at the same rate,
+    // so at 50 ms they are within 0.5 % of each other and no assertion there
+    // discriminates. One swing period later the swing is home at zero and the
+    // settling spin has covered 59 % of its total travel and is still going.
+    assert(spinAngle(SpinCurve.Swing, rate, kSwingPeriodMs)
+             .isClose(0.0, 1e-9, 1e-9),
+           "the swing is home after one period");
+    assert(spinAngle(SpinCurve.Settle, rate, kSwingPeriodMs)
+             > 0.5 * rate * kSettleTimeMs,
+           "while the settling spin is past half its total travel — the two are "
+           ~ "not one profile with two labels");
+}
+
+unittest { // the setting selects the profile, and ships on the terminating arm
+    scope(exit) resetTrackball();
+    resetTrackball();
+    assert(!trackballSwing(), "the swing ships OFF");
+    assert(activeSpinCurve() == SpinCurve.Settle,
+           "so a release arms the settling spin");
+    setTrackballSwing(true);
+    assert(activeSpinCurve() == SpinCurve.Swing, "and the setting flips it");
+    resetTrackball();
+    assert(activeSpinCurve() == SpinCurve.Settle, "a reset puts it back");
 }
 
 unittest { // wire names round-trip
