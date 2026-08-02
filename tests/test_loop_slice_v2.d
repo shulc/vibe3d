@@ -182,6 +182,19 @@ unittest {
     auto st0 = getToolState();
     assert(st0["count"].integer == 1, "V3: fresh tool must start at count=1");
     assert(st0["positions"].array.length == 1, "V3: fresh tool must start with 1 position");
+    // PRECONDITION, previously assumed rather than asserted: the single
+    // starting slice must be at the declared default 0.5. A stale value here
+    // collides with the `insertAt 0.3` below — the kernel's coincident-position
+    // dedup then collapses the two cuts into one and the V=16 assertion fails
+    // four vertices short, naming the symptom instead of the cause. This is
+    // exactly how LoopSliceTool.positions_ aliasing the class `.init` blob
+    // reached CI (see the unittest at the end of source/tools/slice/
+    // loop_slice_tool.d): a preceding test's Count==1 Position scrub leaked
+    // into every tool built afterwards in the same shared vibe3d instance.
+    assert(abs(st0["positions"].array[0].floating - 0.5) < 1e-4,
+        "V3: fresh tool must start at positions[0]=0.5, got "
+        ~ st0["positions"].array[0].floating.to!string
+        ~ " — a leaked Position from an earlier tool instance/test");
 
     cmd("tool.attr mesh.loopSliceTool insertAt 0.3");
     auto st1 = getToolState();

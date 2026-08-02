@@ -231,7 +231,17 @@ private:
     Mode    mode_          = Mode.Uniform;   // reference default for Count>1
     int     count_         = 1;
     int     current_       = 0;             // 0-based (owner-decision D6)
-    float[] positions_     = [0.5f];         // authoritative slice offsets, length == count_
+    // Authoritative slice offsets, length == count_. Seeded to `[0.5f]` by the
+    // CONSTRUCTOR, deliberately NOT by a field initializer: in D, a field
+    // declared `float[] positions_ = [0.5f];` takes its slice from the class's
+    // `.init` blob, so EVERY instance's `positions_` aliases the SAME static
+    // backing store until the array happens to reallocate. `scrubPosition`'s
+    // Count<=1 branch writes `positions_[0] = p` IN PLACE — through that shared
+    // slice — so one tool session's Position scrub silently became the starting
+    // Position of every LoopSliceTool built afterwards in the process (the
+    // factory builds a fresh tool per activation, but a fresh tool is not a
+    // fresh array). A runtime literal in the ctor allocates per instance.
+    float[] positions_;
     float   positionProxy_ = 0.5f;           // Param-bound mirror of positions_[current_]
     float   insertAt_      = 0.5f;           // Add-trigger value (onParamChanged fires the add)
     bool    removeTrigger_ = false;          // Remove-trigger (self-resetting bool)
@@ -377,6 +387,10 @@ public:
         this.vc        = vc;
         this.ec        = ec;
         this.fc        = fc;
+        // Per-instance backing store for the slice offsets — see the
+        // `positions_` field comment. Must stay in the ctor (not a field
+        // initializer) so no two tool instances ever share it.
+        positions_     = [0.5f];
     }
 
     void setUndoBindings(CommandHistory h, LoopSliceEditFactory f) {
@@ -1359,4 +1373,57 @@ private:
     void refreshCaches() {
         refreshDisplay(mesh, gpu, vc, ec, fc);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-instance isolation of `positions_` (the CI regression this pins).
+//
+// `positions_` used to be declared `float[] positions_ = [0.5f];`. A field
+// initialized with an array LITERAL takes its slice from the class's `.init`
+// blob, so every instance aliased ONE static backing store. `scrubPosition`'s
+// Count<=1 branch writes `positions_[0] = p` IN PLACE, i.e. straight into that
+// shared store — so a single `tool.attr mesh.loopSliceTool position 0.3` at
+// Count==1 made 0.3 the starting Position of every LoopSliceTool constructed
+// later in the SAME PROCESS, even though the factory builds a brand-new tool
+// per activation and `position` is declared `.transient()` precisely so it is
+// NOT remembered.
+//
+// Cross-test symptom (why this was a CI-only flake): the run_test.d worker
+// reuses one `vibe3d --test` for its whole slice of test binaries, so whenever
+// the LPT scheduler happened to pack `test_fixture_loop_slice_attr` (whose
+// fixture scrubs Position to 0.3) ahead of `test_loop_slice_v2` on the same
+// worker, V3's `insertAt 0.3` landed on an already-0.3 slot — the kernel's
+// coincident-position dedup then collapsed the two cuts into one and V3 saw
+// V=12 instead of 16. Ordering is scheduler-dependent, so it looked like a
+// flake; the defect was always there.
+//
+// Appending (`positions_ ~= t`) reallocates, which is why only a Count<=1
+// scrub could reach the shared store — and why the poison value stuck at the
+// FIRST such scrub rather than tracking later ones.
+unittest {
+    import std.conv : to;
+
+    static LoopSliceTool build() {
+        return new LoopSliceTool(null, null, null, null, null, null, null);
+    }
+
+    auto a = build();
+    assert(a.positionsArray().length == 1 && a.positionsArray()[0] == 0.5f,
+        "a freshly built Loop Slice must start at positions == [0.5]");
+
+    // The exact product write that used to poison the shared store: a Position
+    // scrub while Count == 1 (`tool.attr … position 0.3`, or a HUD/mesh drag).
+    a.scrubPosition(0.3f);
+    assert(a.positionsArray()[0] == 0.3f, "sanity: the scrub must take effect");
+
+    auto b = build();
+    assert(b.positionsArray().length == 1 && b.positionsArray()[0] == 0.5f,
+        "a Loop Slice built AFTER another instance's Count==1 Position scrub "
+        ~ "must still start at 0.5 — got " ~ b.positionsArray()[0].to!string
+        ~ "; `positions_` is aliasing the class .init blob again (declare it "
+        ~ "WITHOUT an array-literal field initializer and seed it in the ctor)");
+    assert(a.positionsArray().ptr !is b.positionsArray().ptr,
+        "two Loop Slice instances must never share one positions_ backing store");
+    assert(a.positionsArray()[0] == 0.3f,
+        "building a second tool must not disturb the first one's positions_");
 }
