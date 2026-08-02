@@ -4,7 +4,8 @@ import math;
 import std.math : sqrt, tan, PI;
 import std.json : JSONValue, JSONType;
 import trackball : TrackballOption, resolveTrackball, trackballRadius,
-                   trackballVector, trackballStep, trackballMouseSpeed;
+                   trackballVector, trackballStep, trackballMouseSpeed,
+                   SpinCurve, spinAngle, spinEnded, activeSpinCurve;
 
 /// Projection kind for the camera. Default Perspective.
 /// Ortho sets an axis-locked viewpoint; orbit is disabled.
@@ -166,6 +167,12 @@ class View {
         // the kind of setting that resurfaces as an unrelated failure later.
         trackballOption = TrackballOption.Default;
         tbArmed_        = false;
+        // A running settling spin is in-flight gesture state as well, and it is
+        // the one piece that would keep WRITING this camera after the reset:
+        // File → New with a spin still running would re-aim the camera it just
+        // put back. Stopped here, not merely disarmed.
+        spinCancel();
+        tbHaveStep_     = false;
     }
 
     void orbit(int dx, int dy) {
@@ -218,6 +225,35 @@ class View {
     private Vec3 tbPrev_;
     private bool tbArmed_ = false;
 
+    /// The LAST composed step: its world axis, its angle, and the clock
+    /// readings of the last two motion events that produced a step. This is
+    /// everything a release needs to compute the momentum it hands to the spin,
+    /// and it is written ONLY by a step that actually rotated the camera — a
+    /// degenerate motion event advances neither the angle nor the stamps, which
+    /// is the reference's own ordering (it returns before storing them).
+    private Vec3   tbLastAxis_;
+    private float  tbLastAngle_   = 0.0f;
+    private uint   tbStepMs_      = 0;
+    private uint   tbPrevStepMs_  = 0;
+    private bool   tbHaveStep_    = false;
+
+    /// A running settling spin: the WORLD axis it turns about, the release rate in
+    /// rad/ms, the clock at the release, and how much of the profile's angle
+    /// has already been applied.
+    ///
+    /// The axis is stored in WORLD space and never re-derived, and that is not
+    /// a shortcut: a spin about a camera-frame axis and a spin about the world
+    /// axis it maps to at the release are the SAME motion, because
+    /// `R(O·a, t)·O == O·R(a, t)` and `O·R(a,t)·a == O·a` — the axis of a
+    /// rotation is fixed by that rotation. Re-deriving it every frame would
+    /// only add drift.
+    private Vec3        tbSpinAxis_;
+    private double      tbSpinRate_    = 0.0;
+    private uint        tbSpinStartMs_ = 0;
+    private double      tbSpinApplied_ = 0.0;
+    private SpinCurve tbSpinCurve_ = SpinCurve.Settle;
+    private bool        tbSpinning_    = false;
+
     /// Does an orbit drag on THIS camera run the trackball?
     ///
     /// The ortho exclusion lives here rather than at the call site because it
@@ -269,7 +305,12 @@ class View {
     /// `orbit(dx, dy)` does — drag right and the model follows right — and that
     /// fixes the sign uniquely, on both axes at once. The unittests at the end
     /// of this module assert exactly that agreement rather than a chosen sign.
-    void trackballMove(int mx, int my) {
+    /// `nowMs` is the app's millisecond clock at this motion event. It is used
+    /// for NOTHING but the release momentum (`trackballRelease`), so a caller
+    /// that has no clock — and every unit test that does not care about the
+    /// spin — can pass the same value twice and get the documented consequence:
+    /// two motion events sharing a timestamp leave no spin.
+    void trackballMove(int mx, int my, uint nowMs) {
         if (!tbArmed_) return;
         immutable Vec3 v1 = ballVectorAt(mx, my);
         Vec3 axisCam; float angle;
@@ -278,12 +319,33 @@ class View {
         // load-bearing — a degenerate step is exactly one where the two lifted
         // vectors are equal, so advancing would write the same value — and
         // `trackballStep`'s doc records the mutation that proved it.
+        //
+        // It leaves the MOMENTUM stamps alone too, and there that ordering IS
+        // observable: dragging out along a ray outside the ball is step after
+        // degenerate step, and it must neither add angle nor advance the clock
+        // the release divides by.
         if (!trackballStep(tbPrev_, v1, axisCam, angle)) return;
         immutable Vec3 axisWorld = orient_.right() * axisCam.x
                                  + orient_.up()    * axisCam.y
                                  + orient_.back()  * axisCam.z;
         orient_ = orient_.rotatedAbout(axisWorld, angle);
         tbPrev_ = v1;
+
+        tbLastAxis_   = axisWorld;
+        tbLastAngle_  = angle;
+        tbPrevStepMs_ = tbStepMs_;
+        tbStepMs_     = nowMs;
+        tbHaveStep_   = true;
+    }
+
+    version (unittest) {
+        /// A motion event with NO clock, for the tests that are about the
+        /// gesture's geometry and not about its momentum. Every step then
+        /// carries the same stamp, so by the documented rule the release
+        /// momentum is zero and no spin can leak sideways into a test that
+        /// never mentions one. Deliberately unittest-only: product code has a
+        /// clock and must pass it.
+        void trackballMove(int mx, int my) { trackballMove(mx, my, 0); }
     }
 
     /// Disarm, so a motion event that arrives without a press does nothing.
@@ -299,6 +361,101 @@ class View {
     /// Whether a trackball gesture is currently armed. Test seam only — no
     /// product code branches on this.
     bool trackballArmed() const { return tbArmed_; }
+
+    // -----------------------------------------------------------------------
+    // Momentum spin: the spin a release leaves behind
+    // -----------------------------------------------------------------------
+
+    /// Arm a settling spin from the momentum of the drag that just ended.
+    /// `nowMs` is the app's millisecond clock at the release — the epoch
+    /// `spinTick` will measure against.
+    ///
+    /// **The rate is the LAST STEP's, not the whole drag's average**: the angle
+    /// of the final composed arc divided by the interval between the last two
+    /// motion events that produced one. So a drag that decelerates into the
+    /// release leaves a slow spin and a flick leaves a fast one, which is the
+    /// entire point of the gesture — an average over the drag would launch a
+    /// camera the user had just brought to rest.
+    ///
+    /// **A still release leaves no spin.** Two motion events sharing a
+    /// timestamp make the interval zero; the reference returns a rate of zero
+    /// there rather than dividing, and so does this. That is the guard, and it
+    /// is also the honest answer for a replayed session whose events all arrive
+    /// in one frame.
+    ///
+    /// Momentum spin is TRACKBALL-ONLY (the reference's momentum block sits
+    /// inside its trackball branch), so the gate is the same `trackballActive`
+    /// the gesture itself is gated on — including the ortho exclusion, which
+    /// this inherits for free rather than restating.
+    ///
+    /// NOT SETTLED, and not asserted anywhere: the reference reaches its
+    /// momentum block only for one navigation-mode tag, and which chord that
+    /// tag is was never identified. This editor arms the spin on the release of
+    /// the drag that ran the trackball, which is the only navigation drag that
+    /// can produce the state the momentum is computed from.
+    void trackballRelease(uint nowMs) {
+        if (!trackballActive()) return;
+        if (!tbHaveStep_) return;
+        // Unsigned, so an out-of-order or wrapped pair would read as an
+        // enormous interval rather than a negative one; `<=` rejects both that
+        // and the equal-stamp case in one test.
+        if (tbStepMs_ <= tbPrevStepMs_) return;
+        immutable double dt = cast(double)(tbStepMs_ - tbPrevStepMs_);
+        immutable double rate = cast(double)tbLastAngle_ / dt;
+        if (!(rate > 0.0)) return;
+
+        tbSpinAxis_    = tbLastAxis_;
+        tbSpinRate_    = rate;
+        tbSpinStartMs_ = nowMs;
+        tbSpinApplied_ = 0.0;
+        tbSpinCurve_   = activeSpinCurve();
+        tbSpinning_    = true;
+    }
+
+    /// Advance a running spin to the app clock `nowMs`. A no-op — one bool
+    /// read, no clock arithmetic, no camera write — when nothing is spinning.
+    ///
+    /// The step applied is the DIFFERENCE of the curve's closed form at two
+    /// clock readings, never an accumulation of per-frame increments: the
+    /// camera a spin lands on is then a function of the wall clock alone, so a
+    /// dropped frame or a 200 ms hitch costs the same total rotation as a
+    /// smooth 60 Hz run. Accumulating increments would make the spin's total
+    /// depend on the frame rate, which is the classic way this feature ends up
+    /// travelling further on a fast machine.
+    void spinTick(uint nowMs) {
+        if (!tbSpinning_) return;
+        // Unsigned difference: correct across the clock's 49-day wrap, and a
+        // clock that somehow ran backwards reads as "long past the end", which
+        // stops the spin rather than reversing it.
+        immutable double t = cast(double)(nowMs - tbSpinStartMs_);
+        immutable double want = spinAngle(tbSpinCurve_, tbSpinRate_, t);
+        immutable double step = want - tbSpinApplied_;
+        tbSpinApplied_ = want;
+        if (step != 0.0)
+            orient_ = orient_.rotatedAbout(tbSpinAxis_, cast(float)step);
+        if (spinEnded(tbSpinCurve_, t)) spinCancel();
+    }
+
+    /// Stop a running spin dead. This is what a press does — the reference
+    /// re-arms the spin with a rate of zero on every navigation press, which is
+    /// the same observable — and what `reset` does.
+    void spinCancel() {
+        tbSpinning_    = false;
+        tbSpinRate_    = 0.0;
+        tbSpinApplied_ = 0.0;
+    }
+
+    /// Is a spin running on this camera? Read by the app's per-frame tick to
+    /// decide whether the tick is needed at all, so unlike `trackballArmed`
+    /// this one IS product state.
+    bool spinning() const { return tbSpinning_; }
+
+    /// The running spin's rate (rad/ms) and world axis. Test seams: they let a
+    /// unittest predict the camera the spin must land on from the curve's
+    /// closed form, instead of asserting the numbers the implementation
+    /// happened to produce.
+    double spinRate() const { return tbSpinRate_; }
+    Vec3   spinAxis() const { return tbSpinAxis_; }
 
     private Vec3 ballVectorAt(int mx, int my) const {
         return trackballVector(cast(float)(mx - x), cast(float)(my - y),
@@ -1636,4 +1793,410 @@ unittest { // the composed rotation stays a clean rotation over a long gesture
     foreach (i; 0 .. 9)
         if (abs(v.orientation.m[i] - fresh.orientation.m[i]) > 1e-3f) moved = true;
     assert(moved, "the sweep must have actually rotated the camera");
+}
+
+// ---------------------------------------------------------------------------
+// Momentum spin — the spin a release leaves behind
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    import trackball : kSettleTimeMs, kSettleDurationMs, kSwingTimeMs,
+                       kSwingPeriodMs, setTrackballSwing, spinAngle,
+                       SpinCurve;
+
+    /// One motion event every `kStepMs` milliseconds. Chosen so the spins the
+    /// tests below arm total LESS THAN pi radians: `rotAngleBetween` is an
+    /// `acos`, so a bigger total would wrap and every assertion about it would
+    /// be reading a folded angle. That is a property of the instrument, not of
+    /// the feature — the feature is happy to spin the camera eight times round.
+    private enum uint kStepMs = 20;
+
+    /// A trackball drag from the pane centre, advancing by `dxs[i]` pixels on
+    /// event `i`, one event every `kStepMs`. Returns the camera with the button
+    /// still notionally down; the tests do their own release.
+    ///
+    /// The per-step array rather than a uniform step because the momentum rule
+    /// is "the LAST step's rate", and only a drag whose steps differ can tell
+    /// that from "the drag's average rate".
+    /// The camera is LEVEL, and every drag here is horizontal along the pane's
+    /// horizontal diameter — so the step axis is exactly screen-up, which at a
+    /// level camera is exactly world-up, and the whole rotation is a heading
+    /// change the angle chart reports faithfully. That is what lets the tests
+    /// below assert the spin's DIRECTION (`azimuth`) as well as its magnitude.
+    private View draggedCamera(const(int)[] dxs, uint t0 = 1000) {
+        auto v = levelTrackballCamera(kPaneWideW, kPaneWideH);
+        immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+        v.trackballDown(cx, cy);
+        int x = 0;
+        foreach (i, d; dxs) {
+            x += d;
+            v.trackballMove(cx + x, cy, t0 + (cast(uint)i + 1) * kStepMs);
+        }
+        return v;
+    }
+
+    /// The EXACT arc a horizontal step from `x0` to `x1` pixels right of the
+    /// pane centre subtends on the ball: both points lift onto the horizontal
+    /// diameter, where the polar angle is `asin(x/r)`. The gesture's own closed
+    /// form — so a momentum assertion is checked against the law rather than
+    /// against whatever this implementation happened to compute.
+    private double armArc(double x0, double x1) {
+        import std.math : asin;
+        immutable double r = trackballRadius(kPaneWideW, kPaneWideH);
+        // Outside the rim the lift clamps onto it, i.e. onto the equator.
+        double polar(double x) { return x >= r ? PI / 2.0 : asin(x / r); }
+        return polar(x1) - polar(x0);
+    }
+
+    /// How far apart two orientations are, as the largest difference over the
+    /// nine lanes. The instrument for SMALL differences: `rotAngleBetween`
+    /// below is an `acos` near 1 there and has a noise floor around 3e-4 even
+    /// between a matrix and itself, so an assertion like "these two cameras
+    /// agree to 1e-4" is unanswerable in that metric and exact in this one.
+    private double maxEntryDiff(Orientation a, Orientation b) {
+        double worst = 0.0;
+        foreach (i; 0 .. 9) {
+            immutable double d = abs(cast(double)a.m[i] - cast(double)b.m[i]);
+            if (d > worst) worst = d;
+        }
+        return worst;
+    }
+
+    /// The angle of the rotation carrying `a` to `b`, radians in [0, pi].
+    /// Reads the trace of `b * a^T`, which is `1 + 2 cos(theta)` for any
+    /// rotation — chart-free, so it is meaningful at any camera. Use it for
+    /// the LARGE angles a spin covers; use `maxEntryDiff` for "did not move".
+    private double rotAngleBetween(Orientation a, Orientation b) {
+        import std.math : acos;
+        double tr = 0.0;
+        foreach (i; 0 .. 3)
+            foreach (k; 0 .. 3)
+                tr += cast(double)b.m[i * 3 + k] * cast(double)a.m[i * 3 + k];
+        double c = (tr - 1.0) * 0.5;
+        if (c >  1.0) c =  1.0;
+        if (c < -1.0) c = -1.0;
+        return acos(c);
+    }
+}
+
+unittest { // a release with the cursor moving spins the camera, and lands
+           // exactly where the profile's closed form says it must
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // Six 9 px steps, the last from 45 px to 54 px right of centre.
+    static immutable int[] kSteps = [9, 9, 9, 9, 9, 9];
+    auto v = draggedCamera(kSteps);
+    immutable Orientation atRelease = v.orientation;
+    v.trackballRelease(2000);
+    assert(v.spinning(), "a release with the cursor moving arms a spin");
+
+    // The rate is the last step's arc over its interval, pinned against the
+    // gesture's own closed form rather than against a number this
+    // implementation produced.
+    immutable double wantRate = armArc(45, 54) / cast(double)kStepMs;
+    assert(isClose(v.spinRate(), wantRate, 1e-5),
+           "the release rate is the last step's angle over its interval");
+
+    // Ticking is what moves the camera — the release itself does not.
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == atRelease.m[i],
+               "the release must not move the camera by itself");
+
+    // Halfway through the profile, the camera has turned by exactly
+    // rate*A*sin(t/A) about the last step's axis. This is the whole claim:
+    // ANY decaying-spin implementation would keep moving here, and only this
+    // one lands on that number.
+    v.spinTick(2000 + 2000);
+    immutable double want2s = spinAngle(SpinCurve.Settle, wantRate, 2000.0);
+    assert(isClose(rotAngleBetween(atRelease, v.orientation), want2s, 5e-3),
+           "at t = 2000 ms the spin has covered rate*A*sin(t/A)");
+
+    // ...and the axis is the one the drag ended on, unchanged: a horizontal
+    // drag along the diameter turns about screen-up, so screen-up survives the
+    // spin.
+    assert(isClose(dot(atRelease.up(), v.orientation.up()), 1.0, 1e-4),
+           "the spin turns about the LAST STEP's axis, which here is screen-up");
+
+    // And it turns THE SAME WAY the drag was turning. This is the whole
+    // user-facing promise of the feature — flick left, keep going left — and
+    // it is the one claim a magnitude-only test cannot make: at a level camera
+    // this rotation is a pure heading change, so the chart reports it exactly,
+    // and an axis that came out backwards would show up here as a spin that
+    // rewinds the drag.
+    immutable double dDrag = cast(double)atRelease.azimuth - 0.5;   // the drag
+    immutable double dSpin = cast(double)v.azimuth - cast(double)atRelease.azimuth;
+    assert(dDrag * dSpin > 0.0,
+           "the spin continues the drag's own direction, it does not rewind it");
+    assert(isClose(abs(dSpin), want2s, 5e-3),
+           "and the heading it has covered is the profile's angle exactly");
+
+    // It ends at 4000 ms — not before, not after — and the total is rate*A.
+    v.spinTick(2000 + 3999);
+    assert(v.spinning(), "still spinning at 3999 ms");
+    v.spinTick(2000 + 4000);
+    assert(!v.spinning(), "and stopped at exactly 4000 ms");
+    assert(isClose(rotAngleBetween(atRelease, v.orientation),
+                   wantRate * kSettleTimeMs, 5e-3),
+           "the total extra angle is rate * 8000/pi");
+
+    // A tick after the end is a no-op, to the bit. A profile without the
+    // post-4000 clamp would walk the camera back down the sine from here.
+    immutable Orientation settled = v.orientation;
+    foreach (t; [4001, 6000, 60_000])
+        v.spinTick(2000 + cast(uint)t);
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == settled.m[i],
+               "a tick after the spin ended must not move the camera at all");
+}
+
+unittest { // a STILL release leaves no spin, and neither does a drag that
+           // ended on degenerate steps
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // Two motion events sharing a timestamp: the interval is zero, so there is
+    // no rate to hand the profile. This is the reference's own guard and it is
+    // the difference between "released while flicking" and "released while
+    // parked", which is the whole user-facing contract of the feature.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+        v.trackballDown(cx, cy);
+        v.trackballMove(cx + 20, cy, 5000);
+        v.trackballMove(cx + 40, cy, 5000);      // same millisecond
+        immutable Orientation before = v.orientation;
+        v.trackballRelease(5000);
+        assert(!v.spinning(), "two events in one millisecond leave no spin");
+        v.spinTick(5100);
+        v.spinTick(9000);
+        foreach (i; 0 .. 9)
+            assert(v.orientation.m[i] == before.m[i],
+                   "and the camera does not move after such a release");
+    }
+
+    // A release with no motion at all since the press: nothing to be moving.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        v.trackballDown(400, 400);
+        v.trackballRelease(5000);
+        assert(!v.spinning(), "a press-and-release with no drag leaves no spin");
+    }
+
+    // Dragging straight OUT along a ray from outside the rim is step after
+    // degenerate step: the camera never moved, so there is no momentum — even
+    // though motion events kept arriving with advancing timestamps.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+        immutable int rim = cast(int)trackballRadius(kPaneWideW, kPaneWideH);
+        v.trackballDown(cx + rim + 20, cy);
+        foreach (i; 1 .. 6) v.trackballMove(cx + rim + 20 + i * 40, cy, 7000 + i);
+        v.trackballRelease(7010);
+        assert(!v.spinning(),
+               "a drag that rotated nothing leaves nothing spinning");
+    }
+}
+
+unittest { // a degenerate step advances NEITHER the arc nor the clock it is
+           // divided by
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // Real steps, then a slow slide straight outward from beyond the rim —
+    // motion events that lift onto the same rim vector and so rotate nothing —
+    // then a release. The momentum must still be the last REAL step's, because
+    // the reference stores its clock AFTER the degenerate return, not before.
+    //
+    // The slide is deliberately SLOW (a second between events) so the two
+    // orderings are 50x apart rather than a rounding argument: writing the
+    // stamps before the return would divide the same arc by 1000 ms instead of
+    // by 20, and a flick would land as a crawl.
+    auto v = trackballCamera(kPaneWideW, kPaneWideH);
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable int rim = cast(int)trackballRadius(kPaneWideW, kPaneWideH);
+    v.trackballDown(cx, cy);
+    v.trackballMove(cx + 45, cy, 1000);
+    v.trackballMove(cx + rim + 40, cy, 1000 + kStepMs);   // the last REAL step
+    v.trackballMove(cx + rim + 400, cy, 2000);            // on the rim: degenerate
+    v.trackballMove(cx + rim + 900, cy, 3000);            // still degenerate
+    v.trackballRelease(3000);
+
+    assert(v.spinning(), "the real steps still carry momentum");
+    assert(isClose(v.spinRate(), armArc(45, rim + 40) / cast(double)kStepMs, 1e-5),
+           "and the rate is theirs — the degenerate slide neither added arc "
+           ~ "nor stretched the interval");
+}
+
+unittest { // the momentum is the LAST step's rate, not the drag's average
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // A drag that DECELERATES into the release: 40, 30, 20, 10, then 2 px.
+    // The user was braking, and the camera must come to rest with them. An
+    // implementation that averaged the gesture would launch it instead — and
+    // by an order of magnitude, which is what makes this test decisive rather
+    // than a tolerance argument.
+    auto v = draggedCamera([40, 30, 20, 10, 2]);
+    v.trackballRelease(3000);
+    assert(v.spinning(), "a decelerating drag still leaves a little spin");
+
+    immutable double lastStep = armArc(100, 102) / cast(double)kStepMs;
+    immutable double average  = armArc(0, 102) / cast(double)(5 * kStepMs);
+    assert(isClose(v.spinRate(), lastStep, 1e-5),
+           "the rate is the FINAL step's arc over the final interval");
+    assert(average > 8.0 * lastStep,
+           "the average over this drag is 8x larger — the two are far apart");
+    assert(v.spinRate() < 0.25 * average,
+           "so a rate anywhere near the average would fail here");
+}
+
+unittest { // a press cancels a running spin
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    auto v = draggedCamera([9, 9, 9, 9, 9, 9]);
+    immutable Orientation atRelease = v.orientation;
+    v.trackballRelease(2000);
+    assert(v.spinning(), "armed");
+    v.spinTick(2500);                      // let it run for half a second
+    immutable Orientation midSpin = v.orientation;
+    // Half a second into a 4-second profile, most of the travel is still to
+    // come — so freezing here is visibly different from letting it finish, and
+    // the assertions below are not "the spin ended on time" in disguise.
+    immutable double remaining = v.spinRate() * kSettleTimeMs
+                               - rotAngleBetween(atRelease, midSpin);
+    assert(remaining > 0.5 * v.spinRate() * kSettleTimeMs,
+           "the cancel must land mid-profile, with most of the travel unspent");
+
+    v.spinCancel();                        // this is what a press does
+    assert(!v.spinning(), "a press stops the spin");
+    foreach (t; [2600, 3000, 6000])
+        v.spinTick(cast(uint)t);
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == midSpin.m[i],
+               "and the camera is frozen from that instant, mid-profile");
+}
+
+unittest { // the tick is inert when nothing is spinning
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // A camera that has never seen the gesture — the state a user who does not
+    // use the trackball is in on every frame of every session.
+    auto v = new View(0, 0, kPaneWideW, kPaneWideH);
+    assert(!v.spinning(), "a fresh camera is not spinning");
+    immutable Orientation before = v.orientation;
+    foreach (t; 0 .. 500) v.spinTick(cast(uint)(t * 16));
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == before.m[i],
+               "500 ticks on an idle camera must change nothing");
+
+    // ...and the release path itself arms nothing unless the camera runs the
+    // GESTURE. Both arms are checked on a camera that HAS a step recorded and
+    // would otherwise spin, because a camera with no step returns one line
+    // earlier and cannot tell whether the gate exists at all.
+    {
+        // The gesture switched off between the drag and the release.
+        auto w = draggedCamera([9, 9, 9, 9, 9, 9]);
+        setTrackballGlobal(false);
+        assert(!w.trackballActive(), "the gesture is now off for this camera");
+        w.trackballRelease(3000);
+        assert(!w.spinning(), "momentum spin is trackball-only");
+        setTrackballGlobal(true);
+    }
+    {
+        // ...and an ORTHO cell, which never takes the trackball path. The gate
+        // is `trackballActive` precisely so this exclusion is inherited rather
+        // than restated — and a restatement is what would rot.
+        auto w = draggedCamera([9, 9, 9, 9, 9, 9]);
+        w.projKind = ProjKind.Ortho;
+        assert(!w.trackballActive(), "an ortho cell never runs the gesture");
+        w.trackballRelease(3000);
+        assert(!w.spinning(), "so it never settling spins either");
+    }
+}
+
+unittest { // reset stops a spin — a new document must not keep re-aiming
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    auto v = draggedCamera([9, 9, 9, 9, 9, 9]);
+    v.trackballRelease(2000);
+    assert(v.spinning(), "armed");
+    v.reset();
+    assert(!v.spinning(), "reset stops the spin");
+    immutable Orientation after = v.orientation;
+    foreach (t; [2100, 3000, 5000]) v.spinTick(cast(uint)t);
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == after.m[i],
+               "and the reset camera stays where the reset put it");
+}
+
+unittest { // the swing arm: same rate, an swing that returns and never ends
+    scope(exit) resetTrackball();
+    resetTrackball();
+    setTrackballSwing(true);
+
+    auto v = draggedCamera([9, 9, 9, 9, 9, 9]);
+    immutable Orientation atRelease = v.orientation;
+    v.trackballRelease(2000);
+    assert(v.spinning(), "the swing arms the same way");
+
+    // A quarter period out it is at its extreme...
+    v.spinTick(2000 + cast(uint)(kSwingPeriodMs / 4));
+    immutable double amp = v.spinRate() * kSwingTimeMs;
+    assert(isClose(rotAngleBetween(atRelease, v.orientation), amp, 5e-3),
+           "the swing's peak displacement is rate*C");
+
+    // ...and a full period out it is back where it started. A decaying profile
+    // cannot do that, so this single assertion separates the two arms.
+    v.spinTick(2000 + cast(uint)kSwingPeriodMs);
+    assert(rotAngleBetween(atRelease, v.orientation) < 5e-3,
+           "and it is home again after 1600 ms");
+    assert(v.spinning(), "the swing does not terminate — only a press stops it");
+
+    // Still going a full settling spin lifetime later, which is the other half of
+    // "never terminates".
+    v.spinTick(2000 + 5000);
+    assert(v.spinning(), "still swinging well past 4000 ms");
+}
+
+unittest { // the spin's total does not depend on how the frames fell
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // The same release, ticked three ways: one tick at the end, sixty-hertz
+    // frames, and a pathological run of two long hitches. A per-frame
+    // ACCUMULATION would give three different cameras; a closed form of the
+    // clock gives one.
+    Orientation runWith(const(uint)[] ticks) {
+        auto v = draggedCamera([9, 9, 9, 9, 9, 9]);
+        v.trackballRelease(2000);
+        foreach (t; ticks) v.spinTick(t);
+        return v.orientation;
+    }
+
+    uint[] smooth;
+    for (uint t = 2000; t <= 2000 + 4000; t += 16) smooth ~= t;
+    smooth ~= 2000 + 4000;
+    uint[] hitching = [2000 + 1900, 2000 + 1901, 2000 + 4000];
+
+    immutable Orientation once  = runWith([2000 + 4000]);
+    immutable Orientation many  = runWith(smooth);
+    immutable Orientation hitch = runWith(hitching);
+
+    // The bound is on the nine lanes, not on an angle: see `maxEntryDiff`.
+    // 1e-5 against a total travel of ~2.2 radians is one part in a hundred
+    // thousand — comfortably tighter than the difference a per-frame
+    // accumulation would make, which grows with the number of ticks and is
+    // 250 times the per-step rounding here, not once.
+    assert(maxEntryDiff(once, many) < 1e-5,
+           "one tick and 250 ticks must land on the same camera");
+    assert(maxEntryDiff(once, hitch) < 1e-5,
+           "and so must a run with two 1.9-second hitches");
+    // The comparison is only worth anything if the spin went somewhere.
+    auto still = draggedCamera([9, 9, 9, 9, 9, 9]);
+    assert(rotAngleBetween(still.orientation, once) > 2.0,
+           "and the spin these three agree about covered over 2 radians");
 }

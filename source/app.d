@@ -1160,11 +1160,13 @@ void main(string[] args) {
     // Same, for the trackball navigation setting (task 0573).
     {
         import trackball : setTrackballGlobal, setTrackballGlobalOverride,
-                           setTrackballMouseSpeed, setTrackballTabletSpeed;
+                           setTrackballMouseSpeed, setTrackballTabletSpeed,
+                           setTrackballSwing;
         setTrackballGlobal(g_prefs.trackball);
         setTrackballGlobalOverride(g_prefs.trackballGlobalOverride);
         setTrackballMouseSpeed(g_prefs.trackballSpeed);
         setTrackballTabletSpeed(g_prefs.trackballTabletSpeed);
+        setTrackballSwing(g_prefs.trackballSwing);
     }
 
     bool playbackMode = playbackFile.length > 0;
@@ -1426,11 +1428,13 @@ void main(string[] args) {
         }
         {
             import trackball : trackballGlobal, trackballGlobalOverride,
-                               trackballMouseSpeed, trackballTabletSpeed;
+                               trackballMouseSpeed, trackballTabletSpeed,
+                               trackballSwing;
             g_prefs.trackball            = trackballGlobal();
             g_prefs.trackballGlobalOverride       = trackballGlobalOverride();
             g_prefs.trackballSpeed       = trackballMouseSpeed();
             g_prefs.trackballTabletSpeed = trackballTabletSpeed();
+            g_prefs.trackballSwing   = trackballSwing();
         }
         try savePrefs();
         catch (Exception e) logWarn("prefs", "could not write prefs.json: " ~ e.msg);
@@ -6102,6 +6106,23 @@ void main(string[] args) {
 
     int lastMouseX, lastMouseY;
 
+    // ---- Trackball momentum spin (task 0582) -------------------------------
+    // The camera whose trackball drag is in flight, captured on the press.
+    // Held rather than re-derived because the release CANNOT re-derive it:
+    // `vpm.dragOriginId` is cleared in the event router BEFORE the button-up
+    // reaches its handler, so `originCamera()` there is whichever cell is
+    // active — the same trap `View.trackballCancel`'s doc records. Null
+    // whenever no trackball drag is in flight, which is always for a user who
+    // has not switched the gesture on.
+    View tbSpinCam = null;
+    // Is ANY camera momentum spin? The per-frame tick's whole guard: false for
+    // every frame of every session that never uses the gesture, so the cost of
+    // this feature to everyone else is one bool test per frame — no clock read,
+    // no walk over the cells. It is self-correcting rather than a counter that
+    // must be kept balanced: the sweep below recomputes it from the cameras it
+    // just ticked, so the worst a stale `true` can cost is one extra sweep.
+    bool anySpinning = false;
+
     // The cooked 2D event, and the bookkeeping behind it. `gestureTrack` is
     // advanced once per SDL mouse event at the TOP of each of the three
     // mouse handlers (see GestureTrack.event's doc for why the placement is
@@ -6708,6 +6729,15 @@ void main(string[] args) {
         // re-anchors the gesture, which has to happen before the first
         // branch that could consume the event and return.
         GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Down, btn.x, btn.y);
+        // A PRESS CANCELS A RUNNING MOMENTUM SPIN (task 0582), before anything
+        // else can consume this event and return. The reference re-arms the
+        // spin with a rate of zero on its navigation press, which is the same
+        // observable; widening it from that one chord to any press over
+        // the cell is a port decision, and it can only ever stop the spin
+        // SOONER — a camera that kept coasting through a click would be a bug
+        // report, not parity. Cheap enough to be unconditional: `spinCancel`
+        // on a camera that is not spinning writes three fields nobody reads.
+        vpm.originCamera().spinCancel();
         // Viewport click → drop ImGui keyboard focus. The viewport is
         // raw OpenGL drawn under ImGui, so SDL clicks here don't reach
         // ImGui at all — without this, a previously-focused text input
@@ -6892,8 +6922,11 @@ void main(string[] args) {
             // is off by default: a user who has not switched the trackball on
             // reaches exactly the code they reached before.
             if (dragMode == DragMode.Orbit && !vpm.originIsOrtho()
-                && vpm.originCamera().trackballActive())
+                && vpm.originCamera().trackballActive()) {
                 vpm.originCamera().trackballDown(btn.x, btn.y);
+                // Remember WHICH camera, for the release that arms the spin.
+                tbSpinCam = vpm.originCamera();
+            }
 
             // Pick immediately on press for select clicks. A stationary
             // click (button pressed and released with no intervening motion
@@ -6953,6 +6986,17 @@ void main(string[] args) {
         // still the one the gesture started from, which is the whole point
         // of the cumulative form.
         GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Up, btn.x, btn.y);
+        // Arm the settling spin (task 0582), FIRST — this handler returns early
+        // from half a dozen branches below (the three falloff RMB paths, a
+        // tool's own gesture end, the host gizmo's), and a release that took
+        // one of them is still a release. `tbSpinCam` is non-null only when
+        // this press armed a trackball drag, so the whole block is skipped on
+        // every other button-up in the editor.
+        if (btn.button == SDL_BUTTON_LEFT && tbSpinCam !is null) {
+            tbSpinCam.trackballRelease(SDL_GetTicks());
+            anySpinning = anySpinning || tbSpinCam.spinning();
+            tbSpinCam = null;
+        }
         if (btn.button == SDL_BUTTON_RIGHT) {
             import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp,
                                      elementFalloffRMBUp;
@@ -7321,8 +7365,20 @@ void main(string[] args) {
             // happens); the two-axis orbit reads the delta. With the option off
             // — the shipped default — this is the identical `orbit(dx, dy)`
             // call this line has always made, reached past one bool read.
+            // The clock is the EVENT's, not the frame's, and the difference
+            // is the whole reason this is a parameter. It is used for one
+            // thing — dividing the last step's arc into a release rate — and
+            // the honest divisor is the interval between the two MOTIONS, which
+            // is what SDL stamps on the event when it arrives. Reading a clock
+            // here instead would divide by the interval between the FRAMES that
+            // happened to process them: identical for live input, and for a
+            // replay a measurement of how loaded the machine is. A replayed
+            // event carries the stamp its log gave it (0 unless the log says
+            // otherwise), and two events sharing a stamp leave no spin — so a
+            // log that never recorded when things happened reports, correctly,
+            // that it does not know. See `EventPlayer`'s `ts` field.
             if (vpm.originCamera().trackballActive())
-                vpm.originCamera().trackballMove(mot.x, mot.y);
+                vpm.originCamera().trackballMove(mot.x, mot.y, mot.timestamp);
             else
                 vpm.originCamera().orbit(dx, dy);
         }
@@ -7740,6 +7796,31 @@ void main(string[] args) {
                     running = false;
                     break;
                 }
+            }
+        }
+
+        // ---- Trackball momentum spin (task 0582): the per-frame camera tick
+        //
+        // Placed here, immediately after the event phase and before anything
+        // reads a camera, so a spin and a drag cannot both write the same
+        // orientation within one frame in an order that depends on where the
+        // reader sits: the events for this frame are in, the spin advances
+        // once, and every consumer below — snapshots, caches, picking, the
+        // draw — sees one settled camera.
+        //
+        // `anySpinning` is the whole cost for a user who never uses the
+        // gesture: one bool test per frame, no clock read, no walk. When it IS
+        // set, the sweep ticks every cell (a spin belongs to a CELL, and a
+        // background cell must keep coasting while you work in another) and
+        // recomputes the flag from what is still running, so the tick switches
+        // itself off one frame after the last spin ends.
+        if (anySpinning) {
+            immutable uint nowMs = SDL_GetTicks();
+            anySpinning = false;
+            foreach (cell; vpm.views) {
+                if (cell is null || cell.camera is null) continue;
+                cell.camera.spinTick(nowMs);
+                anySpinning = anySpinning || cell.camera.spinning();
             }
         }
 

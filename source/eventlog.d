@@ -275,6 +275,28 @@ struct EventPlayer {
             try { typeName = obj["type"].str; } catch (Exception) { continue; }
 
             SDL_Event e;
+            // OPTIONAL `ts` — the SDL timestamp the replayed event carries
+            // (task 0582). Absent on every log written so far and on everything
+            // the recorder writes, in which case it stays 0, exactly as before.
+            //
+            // It exists because `t` is a SCHEDULE and a timestamp is a
+            // MEASUREMENT, and one handler needs the second: the trackball's
+            // release momentum is the last step's arc divided by the interval
+            // between the last two motion events. `t` cannot answer that —
+            // playback dispatches every DUE event in one frame, so the interval
+            // a handler could measure for itself is a frame boundary, i.e. a
+            // property of how loaded the machine is. With `ts` absent all
+            // replayed events share the stamp 0, and the momentum rule's own
+            // guard ("two events sharing a timestamp leave no spin") applies —
+            // a replay of a log that never recorded when things happened
+            // reports, correctly, that it does not know.
+            //
+            // Deliberately NOT written by `EventLogger`: nothing recorded today
+            // would consume it, and starting to emit it would make every future
+            // recording's replay newly time-sensitive to serve a gesture that
+            // ships off. The recorder can start writing it the day a recorded
+            // session has to reproduce a flick.
+            e.common.timestamp = cast(uint)_jsonGet(obj, "ts", 0);
             switch (typeName) {
                 case "VIEWPORT":
                     // Meta line — store and skip; not an SDL event.
