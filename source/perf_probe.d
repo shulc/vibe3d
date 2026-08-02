@@ -653,14 +653,28 @@ __gshared FrameProbe g_frames;
 //     numbers with a baseline and a p95 and is honest about the spread.
 //
 //   * Every performance defect this project has actually shipped and fixed
-//     was CPU-side and DETERMINISTIC in shape, not a slow draw call:
-//     an O(F^2) `isSubpatch` @property called inside a face loop; `selectedFaces`
-//     allocating a fresh `bool[]` on every read from the draw path; a pipeline
-//     stage publishing a packet nobody read. Counts catch all three and a
-//     wall clock catches none of them reliably. `drawCalls`, `drawVerts`,
-//     `allocBytes` and `stageEvals` are exact integers: they reproduce
+//     was CPU-side, not draw-call bound. `drawCalls`, `drawVerts`,
+//     `allocBytes` and `stageEvals` are exact integers that reproduce
 //     bit-for-bit across runs on a loaded host, so a test can assert on them
 //     and a regression is a diff, not a judgement call.
+//
+//     Checked honestly against the three real ones rather than asserted, and
+//     the score is two and a half out of three:
+//       - `selectedFaces` allocating a fresh `bool[]` on every read from the
+//         draw path: CAUGHT, cleanly. `allocBytes` rises and, being per-frame
+//         and per-mesh, rises WITH the mesh — which is the signature.
+//       - a pipeline stage publishing a packet nobody read: SURFACED, not
+//         diagnosed. `stageEvals` shows the operator running every frame;
+//         that it has no consumer is still a question you have to go and ask.
+//       - an O(F^2) `isSubpatch` @property called inside a face loop: NOT
+//         caught. It allocates nothing and changes no counted quantity — it
+//         is purely slower. That one needs the `perf` build, and pretending
+//         otherwise is how a measurement gets trusted past its range.
+//     The gap has a shape if anyone wants to close it: a work-unit counter
+//     that scan-type code bumps by its iteration count would make O(n^2)
+//     visible as "this count grew quadratically with the mesh". It is not
+//     here because choosing which scans to instrument is a judgement call
+//     that deserves its own task, not a rider on this one.
 //
 // WHAT THIS CANNOT TELL YOU, stated up front so nobody reads more into the
 // numbers than is there:
