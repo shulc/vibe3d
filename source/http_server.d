@@ -12,7 +12,7 @@ import core.thread;
 
 import mesh : Surface;
 import core.atomic;
-import perf_probe : g_perf, g_frames;
+import perf_probe : g_perf, g_frames, g_fc;
 
 // For event player functionality
 import bindbc.sdl;
@@ -1508,6 +1508,46 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
+                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/frames/counts/reset" && request.method == "POST") {
+            // Zero the always-on frame WORK counters. Unlike its two siblings
+            // above this is NOT a no-op in the default build — see below.
+            g_fc.reset();
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/frames/counts" && request.method == "GET") {
+            // Per-frame WORK COUNTS: draw submissions and submitted vertices
+            // per pass, cells considered/rendered, GPU uploads, pick-cache
+            // rebuilds, pipeline + operator evaluations, and main-thread GC
+            // bytes. Live in EVERY build configuration, including the default
+            // `modeling` one that run_test.d builds — which is the whole
+            // reason it exists next to /api/perf and /api/frames, both of
+            // which return "{}" there and have done so for every test that
+            // ever tried to ask this question.
+            //
+            // READ `lastScene`, NOT `last`. The N-cell render loop skips cells
+            // whose dirty key is unchanged, so an arbitrary frame legitimately
+            // draws nothing; `lastScene` is the last frame that rendered at
+            // least one cell. (In --test the active cell renders every frame,
+            // so the two coincide there — do not let that habit leak into an
+            // interactive-mode assertion.)
+            //
+            // NOT A TIMING ENDPOINT. Nothing here is a duration. See the
+            // FrameWorkProbe header in source/perf_probe.d for what these
+            // numbers do and do not support.
+            //
+            // Same no-lock diagnostic-read contract as /api/perf and
+            // /api/frames: single main-thread writer, whole-record publish.
+            try {
+                response.statusCode = 200;
+                response.body = g_fc.toJson();
+                response.headers["Content-Type"] = "application/json";
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"frame-count probe read failed\",\"message\":\"" ~
                                e.msg.replace("\"", "\\\"") ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
