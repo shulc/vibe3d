@@ -4350,100 +4350,23 @@ void main(string[] args) {
         //
         // `?params=1` (task 0365, param-bounds Phase 3): additionally emits
         // `commandParams`/`toolParams`, one entry per registered id, each a
-        // JSON array of that id's live Param schema — {name, kind,
-        // enforceBounds, value, min?, max?}. Built by instantiating the
-        // factory (the same cold-construction `cacheSupportedModes()`
-        // already proves safe for every registered id at startup) and
-        // reading `.params()` exactly as `args_dialog.d`/`commands/tool/
-        // set.d` do; `value` is boxed via `paramToJson` so the wire shape
-        // matches the existing `tool.attr <id> <attr> ?` read-back
+        // JSON array of that id's Param schema — {name, kind, enforceBounds,
+        // value, min?, max?}. `value` is boxed via `paramToJson` so the wire
+        // shape matches the existing `tool.attr <id> <attr> ?` read-back
         // convention. This is the enabler for the fuzz-smoke's static
         // "born-clamped" contract check (tests/test_param_bounds.d) — a
         // generic reader instead of a hand-maintained per-tool table.
-        httpServer.setRegistryProvider((bool includeParams) {
-            import std.array     : appender;
-            import std.format    : format;
-            import std.algorithm : sort;
-            auto cmds  = reg.commandFactories.keys.dup;
-            auto tools = reg.toolFactories.keys.dup;
-            cmds.sort();
-            tools.sort();
-            auto buf = appender!string;
-            buf.put(`{"commands":[`);
-            foreach (i, k; cmds) {
-                if (i > 0) buf.put(",");
-                buf.put(format(`"%s"`, k));
-            }
-            buf.put(`],"tools":[`);
-            foreach (i, k; tools) {
-                if (i > 0) buf.put(",");
-                buf.put(format(`"%s"`, k));
-            }
-            buf.put(`],"commandNames":{`);
-            bool firstName = true;
-            foreach (k; cmds) {
-                if (!firstName) buf.put(",");
-                firstName = false;
-                buf.put(format(`"%s":"%s"`, k, reg.commandNames.get(k, "")));
-            }
-            buf.put(`}`);
-
-            if (includeParams) {
-                import params : Param, paramToJson;
-
-                // One param's schema as a JSON object literal. min/max
-                // surface whichever hint family (float or int) the Param
-                // declared — a Param only ever uses the family matching its
-                // own Kind, so there is no ambiguity in practice.
-                string paramJson(const ref Param p) {
-                    auto v = appender!string;
-                    v.put(format(`{"name":"%s","kind":"%s","enforceBounds":%s,"value":%s`,
-                        p.name, p.kind, p.enforceBounds_ ? "true" : "false",
-                        paramToJson(p).toString()));
-                    if (p.hints.hasMinF)      v.put(format(`,"min":%s`, p.hints.minF));
-                    else if (p.hints.hasMinI) v.put(format(`,"min":%d`, p.hints.minI));
-                    if (p.hints.hasMaxF)      v.put(format(`,"max":%s`, p.hints.maxF));
-                    else if (p.hints.hasMaxI) v.put(format(`,"max":%d`, p.hints.maxI));
-                    v.put(`}`);
-                    return v.data;
-                }
-
-                buf.put(`,"commandParams":{`);
-                bool firstCmd = true;
-                foreach (k; cmds) {
-                    if (!firstCmd) buf.put(",");
-                    firstCmd = false;
-                    buf.put(format(`"%s":[`, k));
-                    auto cmd = reg.commandFactories[k]();
-                    bool firstP = true;
-                    foreach (ref p; cmd.params()) {
-                        if (!firstP) buf.put(",");
-                        firstP = false;
-                        buf.put(paramJson(p));
-                    }
-                    buf.put(`]`);
-                }
-                buf.put(`},"toolParams":{`);
-                bool firstTool = true;
-                foreach (k; tools) {
-                    if (!firstTool) buf.put(",");
-                    firstTool = false;
-                    buf.put(format(`"%s":[`, k));
-                    auto t = reg.toolFactories[k]();
-                    bool firstP = true;
-                    foreach (ref p; t.params()) {
-                        if (!firstP) buf.put(",");
-                        firstP = false;
-                        buf.put(paramJson(p));
-                    }
-                    buf.put(`]`);
-                }
-                buf.put(`}`);
-            }
-
-            buf.put(`}`);
-            return buf.data;
-        });
+        //
+        // The schema text is CACHED (reg.commandParamsJson / toolParamsJson,
+        // filled by cacheSupportedModes() at startup) and the body is built
+        // by `Registry.registryJson`, which is a pure read of those caches.
+        // This closure used to instantiate every factory inline — on the HTTP
+        // thread, which is where a tool constructor's glGenVertexArrays ran
+        // with no current GL context and killed the process. The builder
+        // lives in registry.d so the "answers without calling a factory"
+        // invariant is unit-testable; keep it there.
+        httpServer.setRegistryProvider(
+            (bool includeParams) => reg.registryJson(includeParams));
 
         // Pipeline evaluation snapshot — runs pipeline.evaluate once with
         // the current mesh + selection + camera and returns the resulting
