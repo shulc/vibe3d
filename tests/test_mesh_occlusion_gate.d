@@ -204,3 +204,93 @@ unittest {
             "a candidate exactly on the occluder's plane must survive"
             ~ report(m, vis));
 }
+
+// ---------------------------------------------------------------------------
+// Task 0576/0577 — the OTHER half of this gate: it has a FACING term, and that
+// term is decided by winding alone, not by anything being in the way.
+//
+// This file's header says the occluder-set half is "not exercised here". It is
+// now, for the one clause that matters to the wireframe question, because the
+// record was wrong in BOTH directions within four days:
+//
+//   * task 0566 asserted a facing cull lives in the FACE PICKER. It does not —
+//     `bvh_pick.pickFace` is a nearest-hit ray-cast with no normal in it, and
+//     task 0576 pinned that in `source/bvh_pick.d`.
+//   * task 0576 then generalised that reading to "there is no facing term
+//     anywhere in picking". That is also false. It is right about the pickers
+//     it grepped (`bvh_pick.d`, `gpu_select.d`) and wrong about the rest of the
+//     tree: the front-facing dot below is live in `Mesh.visibleVertices`
+//     (`source/mesh.d`, feeding snap via `source/snap.d`), is repeated verbatim
+//     at `source/snap.d`'s own `faceVisible`, and again — twice — in the LASSO
+//     POLYGON branch of `source/app.d`.
+//
+// Why no existing test caught either claim: every fixture that touches facing
+// uses a CLOSED CUBE (`tests/test_toolpipe_snap.d`'s `occludedSnap`), and on a
+// closed solid a back-facing face is ALSO occluded. The two rules agree on every
+// such fixture, so those tests pass under either one and distinguish nothing.
+//
+// An OPEN mesh is what separates them. One quad, nothing else in the scene:
+//   * a DEPTH rule keeps its corners under either winding — nothing is in front
+//     of them;
+//   * a FACING rule drops them when the quad is wound away from the eye.
+// `visibleVertices` does the second. Reverse the winding and the same four
+// vertices at the same coordinates change answer, which is the whole point.
+// ---------------------------------------------------------------------------
+
+private Mesh oneQuad(bool towardsEye) {
+    Mesh m;
+    const float a = OCC_HALF;
+    m.vertices = [
+        Vec3(-a, -a, 0), Vec3(a, -a, 0), Vec3(a, a, 0), Vec3(-a, a, 0),
+    ];
+    // CCW seen from +Z gives cross(v1-v0, v2-v0) = +Z, towards an eye on +Z.
+    if (towardsEye) m.addFace([0, 1, 2, 3]);
+    else            m.addFace([3, 2, 1, 0]);
+    m.buildLoops();
+    return m;
+}
+
+unittest {
+    // Fixture self-check: the two windings really are front- and back-facing
+    // for THIS eye, stated in the gate's own algebra (`dot(n, v0 - eye)`, front
+    // iff < 0). Without this the test below could pass for the wrong reason.
+    auto vp = testViewport();
+
+    static double facingDot(const ref Mesh m, Vec3 eye) {
+        const Vec3 v0 = m.vertices[m.faces[0][0]];
+        const Vec3 v1 = m.vertices[m.faces[0][1]];
+        const Vec3 v2 = m.vertices[m.faces[0][2]];
+        const double ux = v1.x - v0.x, uy = v1.y - v0.y, uz = v1.z - v0.z;
+        const double vx = v2.x - v0.x, vy = v2.y - v0.y, vz = v2.z - v0.z;
+        const double nx = uy * vz - uz * vy;
+        const double ny = uz * vx - ux * vz;
+        const double nz = ux * vy - uy * vx;
+        return nx * (v0.x - eye.x) + ny * (v0.y - eye.y) + nz * (v0.z - eye.z);
+    }
+
+    auto toward = oneQuad(true);
+    auto away   = oneQuad(false);
+    assert(facingDot(toward, vp.eye) < 0.0,
+        "fixture: the `towardsEye` winding must be FRONT-facing for this eye");
+    assert(facingDot(away, vp.eye) > 0.0,
+        "fixture: the reversed winding must be BACK-facing for this eye");
+
+    // Same four coordinates, nothing occluding them, opposite answers.
+    auto visToward = toward.visibleVertices(vp.eye, vp);
+    foreach (vi; 0 .. 4)
+        assert(visToward[vi],
+            format("v%d of a front-facing lone quad must be visible", vi));
+
+    auto visAway = away.visibleVertices(vp.eye, vp);
+    foreach (vi; 0 .. 4)
+        assert(!visAway[vi],
+            format("v%d: `Mesh.visibleVertices` HAS a facing term — a lone quad"
+                ~ " wound away from the eye is invisible even though nothing is"
+                ~ " in front of it. If this now passes as visible, the facing"
+                ~ " term was removed, and that changes what SNAP grabs"
+                ~ " (source/snap.d walkSource) — not just what a pass draws."
+                ~ " If it was removed deliberately for a wireframe rule, see"
+                ~ " doc/tasks/backlog/0577 first: the same predicate is"
+                ~ " duplicated in three other places and they must move"
+                ~ " together or the picker and the snapper disagree.", vi));
+}
