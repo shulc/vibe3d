@@ -905,6 +905,99 @@ JSONValue paramToJson(const ref Param p)
 }
 
 // ---------------------------------------------------------------------------
+// paramSchemaJson / paramsSchemaJson — the WIRE encoding of a Param's schema
+// for `GET /api/registry?params=1`: `{name, kind, enforceBounds, value,
+// min?, max?}`, and a JSON array of those for a whole `Param[]`.
+//
+// min/max surface whichever hint family (float or int) the Param declared — a
+// Param only ever uses the family matching its own Kind, so there is no
+// ambiguity in practice.
+//
+// This lives here, next to `paramToJson`, rather than inside the endpoint,
+// because the endpoint no longer has a Param to encode at request time: the
+// schema is serialised ONCE at startup by `Registry.cacheSupportedModes()`
+// (registry.d) and the HTTP thread only ever emits the cached text. See the
+// comment there for why — building it per request meant constructing every
+// registered tool on the HTTP thread, and a tool constructor allocates GL
+// objects on a thread with no current context.
+// ---------------------------------------------------------------------------
+
+string paramSchemaJson(const ref Param p)
+{
+    import std.array  : appender;
+    import std.format : format;
+    auto v = appender!string;
+    v.put(format(`{"name":"%s","kind":"%s","enforceBounds":%s,"value":%s`,
+        p.name, p.kind, p.enforceBounds_ ? "true" : "false",
+        paramToJson(p).toString()));
+    if (p.hints.hasMinF)      v.put(format(`,"min":%s`, p.hints.minF));
+    else if (p.hints.hasMinI) v.put(format(`,"min":%d`, p.hints.minI));
+    if (p.hints.hasMaxF)      v.put(format(`,"max":%s`, p.hints.maxF));
+    else if (p.hints.hasMaxI) v.put(format(`,"max":%d`, p.hints.maxI));
+    v.put(`}`);
+    return v.data;
+}
+
+/// `[` + comma-joined `paramSchemaJson` + `]`. Empty schema → `[]`.
+string paramsSchemaJson(Param[] ps)
+{
+    import std.array : appender;
+    auto buf = appender!string;
+    buf.put(`[`);
+    bool first = true;
+    foreach (ref p; ps) {
+        if (!first) buf.put(",");
+        first = false;
+        buf.put(paramSchemaJson(p));
+    }
+    buf.put(`]`);
+    return buf.data;
+}
+
+unittest { // paramSchemaJson — wire shape per kind + hint family + enforceBounds
+    import std.json : parseJSON, JSONType;
+
+    // Int with int hints and enforcement — the shape tests/test_param_bounds.d
+    // Block A reads (it fails a count-like param whose enforceBounds is false
+    // or whose max is absent).
+    int count = 7;
+    auto pi = Param.int_("count", "Count", &count, 1).min(1).max(256).enforceBounds();
+    assert(paramSchemaJson(pi) ==
+        `{"name":"count","kind":"Int","enforceBounds":true,"value":7,"min":1,"max":256}`,
+        paramSchemaJson(pi));
+
+    // Float with float hints, no enforcement — min/max come out of the FLOAT
+    // family, and enforceBounds is false unless opted in. `%s` on a whole
+    // float prints `0`/`1`, so the bound lands on the wire as a JSON integer;
+    // read it through `.get!double` rather than `.floating`, which is what a
+    // consumer that only cares about the NUMBER has to do.
+    float ratio = 0.25f;
+    auto pf = Param.float_("ratio", "Ratio", &ratio, 0.0f).min(0.0f).max(1.0f);
+    auto jf = parseJSON(paramSchemaJson(pf));
+    assert(jf["kind"].str           == "Float");
+    assert(jf["enforceBounds"].type == JSONType.false_);
+    assert(jf["value"].get!double   == 0.25);
+    assert(jf["min"].get!double     == 0.0);
+    assert(jf["max"].get!double     == 1.0);
+
+    // No hints at all → neither key is emitted (Block A's "max=none" branch).
+    bool flag = true;
+    auto pb = Param.bool_("flag", "Flag", &flag, false);
+    auto jb = parseJSON(paramSchemaJson(pb));
+    assert(jb["kind"].str == "Bool");
+    assert(jb["value"].type == JSONType.true_);
+    assert("min" !in jb.object);
+    assert("max" !in jb.object);
+
+    // Array form: `[]` for an empty schema, and one entry per Param otherwise.
+    assert(paramsSchemaJson([]) == "[]");
+    auto arr = parseJSON(paramsSchemaJson([pi, pf]));
+    assert(arr.array.length == 2);
+    assert(arr[0]["name"].str == "count");
+    assert(arr[1]["name"].str == "ratio");
+}
+
+// ---------------------------------------------------------------------------
 // choicesOf — return the [internalTag, userLabel] choice list of an Enum /
 // IntEnum Param so the forms renderer can build a combo. Empty for every
 // other kind. Additive; used by the forms-engine popup sourcing.
