@@ -701,7 +701,11 @@ enum DrawPass {
     grid,         // ground grid + axis lines
     symmetry,     // symmetry-plane overlay
     handles,      // tool gizmo / handle shapes
-    subpatch,     // subpatch preview surface
+    subpatch,     // subpatch-preview transform-feedback evaluation (a
+                  // rasteriser-discarded dispatch, NOT a visible pass —
+                  // it appears in drawCalls because it is a GL
+                  // submission, and its own slot is what keeps it from
+                  // being mistaken for surface drawing)
     idPick,       // GPU ID-buffer pass (picking, not display)
 }
 
@@ -721,7 +725,9 @@ struct FrameWork {
     long uploadCalls;         /// GpuMesh buffer (re)uploads issued this frame
     long uploadVerts;         /// mesh vertices those uploads covered
     long viewCacheRebuilds;   /// screen-space pick-cache invalidate+update passes
-    long hoverPicks;          /// per-frame hover picks run
+    long hoverPicks;          /// pick operations run (GPU ID-buffer pass
+                              /// AND BVH ray-casts — an interaction can be
+                              /// several, so this is operations, not frames)
     long pipeEvals;           /// Pipeline.evaluate() passes
     long stageEvals;          /// individual operator evaluate() calls inside them
     long allocBytes;          /// main-thread GC bytes allocated during the frame
