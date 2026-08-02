@@ -1172,6 +1172,13 @@ private:
     // is where the gate reads; see its doc for what it costs at our default.
     SnapPacket dragSnap_;
 
+    // The key this tool's startup snap arming is filed under in the stage's
+    // single push slot (`SnapStage.pushEnabled`). The reference keys its own
+    // save/restore on the ACTIVATING PRESET'S NAME, so this is our factory id
+    // — the name every route to this tool activates through. See
+    // `armStartupSnap` for what the arming is and why it is measured.
+    private enum string kSnapArmOwner = "mesh.topoPen";
+
     // The Mode dropdown (task 0477 continuation + task 0483): the wire-tag
     // table backing `PenMode`'s `Param.intEnum_` — mirrors
     // `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. Tags and
@@ -1984,6 +1991,12 @@ public:
         // classic cross-test bleed). Cleared on the way out too, below.
         slideDecline_     = SlideDecline.None;
         slideDeclineSeed_ = -1;
+        // Arm the application-wide snap enable for the life of this tool, as
+        // every shipped route to the reference's pen does (`armStartupSnap`).
+        // BEFORE the CONS composition below and its two early returns, not
+        // after: a user-locked CONS must not decide whether snapping arms —
+        // they are independent stages and the reference arms unconditionally.
+        armStartupSnap();
         if (g_pipeCtx is null) return;
         auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
         if (cs is null) return;
@@ -2020,6 +2033,13 @@ public:
         // against a mesh nobody is editing.
         dragSnap_ = SnapPacket.init;
         unregisterSnapGuide();
+        // And hand the application-wide snap enable back to whatever had it
+        // before this tool was activated — the drop half of the reference's
+        // own save/restore pair (`armStartupSnap`). AFTER
+        // `commitLiveMoveIfDirty` above, which is the salvage of an abandoned
+        // drag and deliberately does NOT weld: restoring first would leave
+        // that path reading a snap state this tool no longer owns.
+        disarmStartupSnap();
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
@@ -2637,6 +2657,60 @@ public:
         if (auto st = snapStageForGesture()) st.removeGuide(snapGuide_);
     }
 
+    // -----------------------------------------------------------------------
+    // STARTUP SNAP ARMING — activating this tool turns the application-wide
+    // snap enable ON, and dropping it hands the previous value back.
+    //
+    // MEASURED, and it is the ACTIVATION that does it, not the tool and not
+    // the composition. The reference's tool-activation command carries a
+    // fourth argument meaning "snap state at startup"; supplying it saves the
+    // current app-global snap state and writes the new one. Every one of the
+    // twelve shipped UI routes to its pen supplies it — the toolbar button,
+    // the HUD form, the system menu, the model-context template, the two tool
+    // bars, the three background-constraint variants. Three negative controls
+    // rule out the two obvious alternative attributions: a SIBLING retopology
+    // preset omits the argument (so it is deliberate and selective, not
+    // boilerplate); a pen preset that composes NO snap tool at all still arms
+    // (so it is not the composition); and the "bring your own snap preset"
+    // atom sits on presets that both do and do not compose one (so that is a
+    // different axis — which snap TYPES apply — and not an enable).
+    //
+    // WHICH IS WHY IT LIVES ON THE TOOL AND NOT ON A PRESET. We have exactly
+    // one route to this tool, its own factory id, and every route the
+    // reference has arms; putting the arming in `activate()` is therefore
+    // "every route arms" stated in the one place all our routes pass through.
+    // The moment a pen PRESET appears it inherits the arming for free, which
+    // is the behaviour the measurement asks for.
+    //
+    // WHAT IT COSTS, stated plainly because it is destructive and it is a
+    // DEFAULT: with the gate open, a Move drag that releases within the
+    // acceptance radius of another vertex ABSORBS the grab into it — one
+    // vertex for a vertex grab, both endpoints for an edge grab, all four for
+    // a loop grab. That is the whole of the change; the weld itself is not
+    // touched here and was already ported, tested and gated on exactly this
+    // flag. What limits it at OUR configuration is `innerSnap_`, which
+    // defaults OFF: the candidate set is BORDER vertices only, so this welds
+    // onto borders and not into the interior of a mesh. The reference's plain
+    // pen button is in precisely that configuration; its Drag Weld preset —
+    // the unqualified destructive one — additionally composes a vertex-mode
+    // snap tool and turns `innerSnap` on, and we ship no such preset.
+    //
+    // THE SAVE/RESTORE PAIR IS THE STAGE'S, not ours — see
+    // `SnapStage.pushEnabled` for why the saved value cannot live on the tool
+    // (a scene reset resets the stage BEFORE it drops the tool, so a
+    // tool-owned value would be restored on top of the clean slate).
+    private void armStartupSnap() {
+        if (auto st = snapStageForGesture()) st.pushEnabled(kSnapArmOwner, true);
+    }
+
+    /// The mirror, called from `deactivate` — our equivalent of the drop the
+    /// reference restores on. Inert if nothing was armed (no pipeline, or the
+    /// slot was cleared by a scene reset in between): the pop is keyed on
+    /// `kSnapArmOwner`, so an unmatched one writes nothing.
+    private void disarmStartupSnap() {
+        if (auto st = snapStageForGesture()) st.popEnabled(kSnapArmOwner);
+    }
+
     /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
     /// does a drag land on.
     ///
@@ -2678,13 +2752,16 @@ public:
     /// reference the master enable short-circuits above the guide walk where no
     /// flag could reach it anyway.
     ///
-    /// WHAT THIS COSTS AT OUR DEFAULT, stated because it is a real user-facing
-    /// consequence and not a detail: `SnapStage.enabled` ships FALSE here,
-    /// while the reference's own enable was measured on at ITS defaults. So
-    /// with this gate and that default, the Split gesture — the only consumer
-    /// of this query — is a no-op until the user turns snapping on. Whether the
-    /// default should follow the reference is a separate decision about a
-    /// different field, with six other consumers hanging off it.
+    /// AND THE GATE IS OPEN OUT OF THE BOX, which is a change and a
+    /// user-visible one. `SnapStage.enabled` still SHIPS false — the field's
+    /// default is untouched and its six other consumers are unaffected — but
+    /// this tool ARMS it for the duration of its own activation and hands it
+    /// back on the drop (`armStartupSnap` / `disarmStartupSnap`). That is the
+    /// reference's mechanism, measured: every shipped route to its pen passes
+    /// "snap state at startup" on the activation command. So from here on a
+    /// pen drag that lands inside the acceptance radius WELDS, with no setting
+    /// touched by the user, and the Split gesture — which was a no-op until
+    /// somebody turned snapping on — now runs by default.
     ///
     /// `exclude` (task 0555) names vertices that may not be answered with —
     /// the vertices the querying GESTURE is itself moving. Without it a
@@ -18036,6 +18113,100 @@ unittest {
       ~ "admitting for a mesh nobody is editing");
 
     SDL_SetModState(cast(SDL_Keymod)0);
+}
+
+// ---------------------------------------------------------------------------
+// STARTUP SNAP ARMING — activating this tool opens the weld gate, and dropping
+// it hands the global back.
+//
+// MEASURED: every one of the twelve shipped UI routes to the reference's pen
+// passes "snap state at startup" on the activation command, which pushes the
+// previous app-global snap state and writes the new one; the drop restores it.
+// Three negative controls establish the attribution is the INVOCATION and not
+// the preset or the composition — see `armStartupSnap` for them.
+//
+// What this block pins, in the order it matters:
+//
+//   1. ACTIVATION ARMS. The gate `resolveSnapTargetVert` reads is open with no
+//      setting touched by the user. This is the user-visible change.
+//   2. THE DROP RESTORES, both polarities. Off-before stays off-after; a user
+//      who had snapping ON keeps it ON. A restore that wrote a constant would
+//      silently switch snapping off for that user every time they touched the
+//      pen.
+//   3. NO PIPELINE, NO CRASH. Every direct-construction rig in this file, and
+//      every headless path, activates with no SNAP stage to arm.
+//   4. A SCENE RESET WINS. `reset()` runs BEFORE the tool drop it triggers, so
+//      the drop's restore must not resurrect the pre-reset value. This is the
+//      cross-test-bleed shape: one test arms the pen, the next `/api/reset`s
+//      and inherits snapping still on.
+// ---------------------------------------------------------------------------
+unittest {
+    import toolpipe.pipeline : ToolPipeContext;
+
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;   // process-wide global — restore, never null
+
+    auto ctx = new ToolPipeContext();
+    auto st  = new SnapStage();
+    ctx.pipeline.add(st);
+    g_pipeCtx = ctx;
+
+    // --- 1 + 2a. arm from OFF, restore to OFF ------------------------------
+    {
+        assert(!st.enabled, "setup: the stage still SHIPS snapping off");
+        auto t = new TopologyPenTool();
+        t.activate();
+        assert(st.enabled,
+            "activating the pen must arm the application-wide snap enable — "
+            ~ "this IS the weld gate, and it is what every shipped route to "
+            ~ "the reference's pen does");
+        t.deactivate();
+        assert(!st.enabled,
+            "dropping the pen must hand back the value it was given, not "
+            ~ "leave a global permanently flipped by having touched a tool");
+    }
+
+    // --- 2b. arm from ON, restore to ON ------------------------------------
+    {
+        st.enabled = true;                       // the user turned snapping on
+        auto t = new TopologyPenTool();
+        t.activate();
+        assert(st.enabled);
+        t.deactivate();
+        assert(st.enabled,
+            "a user who already had snapping ON must still have it ON after "
+            ~ "the pen is dropped — the restore writes the SAVED value");
+        st.enabled = false;
+    }
+
+    // --- 3. no SNAP stage in the pipeline, and no pipeline at all ----------
+    {
+        auto bare = new ToolPipeContext();       // pipeline with no SNAP stage
+        g_pipeCtx = bare;
+        auto t = new TopologyPenTool();
+        t.activate();
+        t.deactivate();                          // must not throw / fault
+
+        g_pipeCtx = null;                        // no pipeline at all
+        auto t2 = new TopologyPenTool();
+        t2.activate();
+        t2.deactivate();
+        g_pipeCtx = ctx;
+    }
+
+    // --- 4. a scene reset between activate and drop wins -------------------
+    {
+        st.enabled = true;                       // user had snapping on ...
+        auto t = new TopologyPenTool();
+        t.activate();                            // ... pen arms over it
+        st.reset();                              // /api/reset — clean slate
+        assert(!st.enabled, "setup: reset() lands on the shipped default");
+        t.deactivate();                          // the drop the reset triggers
+        assert(!st.enabled,
+            "the tool drop that a scene reset triggers must NOT resurrect the "
+            ~ "pre-reset snap state — that is snapping left armed across a "
+            ~ "reset, bleeding into whatever runs next in the same process");
+    }
 }
 
 // ---------------------------------------------------------------------------
